@@ -3470,3 +3470,413 @@ button.import-choice {
 .txn-text {
   overflow-wrap: anywhere;
 }
+
+/* --- Reports (app/reports; components/ReportView.tsx, ReportsPage.tsx and
+   ReportsEntry.tsx): the page on screen in the app's cards, and print
+   styles that make a clean A4 or Letter PDF of the report alone, in black
+   and white --- */
+
+/* A link that looks like a secondary button: Open reports, and Download as
+   CSV, which is a file to save rather than an action. */
+.report-link-button {
+  display: block;
+  text-align: center;
+  margin-top: 12px;
+  padding: 12px 20px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.report-actions > .report-link-button {
+  flex: 1 1 0;
+  min-width: 0;
+  margin-top: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 12px 6px;
+  font-size: 13px;
+  line-height: 1.2;
+}
+
+/* No tab bar on this page, so none of .wrap's room for one. */
+.report-wrap {
+  padding-bottom: calc(32px + env(safe-area-inset-bottom));
+}
+
+.report-nav {
+  margin-bottom: 16px;
+  font-size: 14px;
+}
+
+.report-nav a {
+  color: var(--muted);
+  text-decoration: none;
+}
+
+.report-kind {
+  margin: 0 0 12px;
+}
+
+/* The two dates side by side, and the button under them; each date may
+   shrink below its own width, so both fit on a 320 px phone. */
+.report-dates {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 0 10px;
+}
+
+.report-dates input {
+  min-width: 0;
+  padding-left: 8px;
+  padding-right: 6px;
+}
+
+.report-dates > button {
+  grid-column: 1 / -1;
+}
+
+/* Each part of the report, on screen: one of the app's cards. */
+.report-page {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.report h1 {
+  font-size: 20px;
+  margin: 2px 0 6px;
+}
+
+.report h2 {
+  margin-top: 0;
+}
+
+.report h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 16px 0 4px;
+  color: var(--muted);
+}
+
+.report-kicker {
+  color: var(--muted);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.report-meta,
+.report-note {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 6px 0 0;
+}
+
+/* What may be missing: near the top, framed, so it can't be missed on paper
+   either. */
+.report-status {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 16px 0;
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+.report-status-short {
+  border-color: var(--warn);
+}
+
+.report-headline {
+  font-weight: 600;
+  margin: 0;
+}
+
+.report-status ul {
+  margin: 8px 0 0;
+  padding-left: 18px;
+}
+
+.report-status li + li {
+  margin-top: 4px;
+}
+
+/* A figure that may be short is marked in words, never by color alone. */
+.report-flag {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 6px 0 10px;
+}
+
+.report-bottom-line {
+  display: grid;
+  /* Columns that may shrink below their figures, so a 320 px phone never
+     scrolls sideways; the figures shrink with the screen instead. */
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-bottom: 16px;
+}
+
+.report-bottom-line .report-note {
+  grid-column: 1 / -1;
+}
+
+.report-figure {
+  font-size: clamp(14px, 4.4vw, 17px);
+  font-weight: 600;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* A wide table scrolls inside its card on a phone rather than widening the
+   page. */
+.report-scroll {
+  overflow-x: auto;
+}
+
+.report-table th,
+.report-table td {
+  padding: 7px 6px;
+}
+
+.report-table td {
+  font-size: 13px;
+  vertical-align: top;
+}
+
+.report-total-row td {
+  font-weight: 600;
+}
+
+.report-nowrap {
+  white-space: nowrap;
+}
+
+/* An imported description can be long unbroken text. */
+.report-appendix td {
+  overflow-wrap: anywhere;
+}
+
+.report-list {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+/* The two category tables, money out and money in, line up. */
+.report-cats {
+  table-layout: fixed;
+}
+
+.report-cats th:first-child {
+  width: 60%;
+}
+
+.report-cats th:last-child {
+  width: 18%;
+}
+
+/* While another report is made, the last one stays, dimmed. */
+.report-loading {
+  opacity: 0.5;
+}
+
+/* The categories to mark: one per line, the whole line a target. */
+.report-marks {
+  border: none;
+  margin: 12px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.report-mark {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 15px;
+}
+
+.report-mark input {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+@media print {
+  /* The paper's own size, A4 or Letter, whichever the print window has, with
+     a footer on every page: the report and its period on the left (a style
+     the report writes, components/ReportView.tsx footerCss), the page's
+     number on the right. */
+  @page {
+    margin: 12mm 12mm 16mm;
+
+    @bottom-left {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 8pt;
+      color: #333;
+    }
+
+    @bottom-right {
+      content: "Page " counter(page) " of " counter(pages);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      font-size: 8pt;
+      color: #333;
+    }
+  }
+
+  :root {
+    color-scheme: light;
+    --text: #000;
+    --muted: #333;
+    --card: #fff;
+    --bg: #fff;
+    --border: #777;
+    --line: #aaa;
+    --warn: #000;
+  }
+
+  html,
+  body {
+    background: #fff;
+    color: #000;
+  }
+
+  /* The report alone: no navigation, controls or drawers. */
+  .no-print,
+  .sheet,
+  .sheet-backdrop {
+    display: none !important;
+  }
+
+  .report-wrap {
+    max-width: none;
+    padding: 0;
+  }
+
+  .report {
+    font-size: 10pt;
+  }
+
+  .report-page {
+    background: none;
+    border-radius: 0;
+    padding: 0;
+    margin: 0;
+  }
+
+  /* Every part after the first starts a page of its own: the first holds the
+     period, what may be missing, the bottom line and where the data comes
+     from. */
+  .report-page + .report-page {
+    break-before: page;
+  }
+
+  .report h1 {
+    font-size: 17pt;
+  }
+
+  .report h2 {
+    font-size: 13pt;
+    margin: 0 0 6pt;
+  }
+
+  .report h3 {
+    font-size: 10pt;
+    color: #000;
+  }
+
+  .report-status {
+    border: 1.5pt solid #000;
+    border-radius: 0;
+    padding: 6pt 8pt;
+    margin: 8pt 0;
+    font-size: 9pt;
+    line-height: 1.35;
+    break-inside: avoid;
+  }
+
+  .report-status li + li {
+    margin-top: 2pt;
+  }
+
+  /* The first page holds everything a reader needs before any figure: kept
+     tight, so it stays one page with half a dozen connections. */
+  .report-meta,
+  .report-note {
+    font-size: 8.5pt;
+    margin-top: 3pt;
+  }
+
+  .report-bottom-line {
+    gap: 2pt 10pt;
+    margin-bottom: 8pt;
+  }
+
+  .report-figure {
+    font-size: 12pt;
+  }
+
+  .report .report-first h2 {
+    margin: 6pt 0 4pt;
+  }
+
+  .report .report-first h3 {
+    margin: 6pt 0 2pt;
+  }
+
+  .report .report-first table {
+    font-size: 8.5pt;
+  }
+
+  .report .report-first th,
+  .report .report-first td {
+    padding: 2pt 3pt;
+  }
+
+  .report-bottom-line {
+    break-inside: avoid;
+  }
+
+  .report table {
+    font-size: 9pt;
+  }
+
+  .report th,
+  .report td {
+    color: #000;
+    border-bottom: 0.5pt solid #999;
+    padding: 3pt 4pt;
+  }
+
+  .report th {
+    font-size: 8pt;
+  }
+
+  /* A table's header repeats on every page it runs onto, and no row is
+     split across two. */
+  .report thead {
+    display: table-header-group;
+  }
+
+  .report tr {
+    break-inside: avoid;
+  }
+
+  .report-scroll {
+    overflow: visible;
+  }
+
+  .report-loading {
+    opacity: 1;
+  }
+}

@@ -34,8 +34,8 @@
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
-import { getOverrides, getCarried, carriedCategories } from './overrides';
-import { getRenames } from './renames';
+import { readOverridesReport, getCarriedReport, carriedCategories } from './overrides';
+import { readRenamesReport } from './renames';
 import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type OlderTxn, type Txn, type TxnCoverage } from './transactions';
 import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
@@ -92,13 +92,20 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
 
 /** One institution's part in an assembly: how much of it is here, and, read
  *  from storage, as of when (null when not known, or synced just now), and
- *  why it brings in no transactions, when it doesn't (lib/item-products.ts). */
+ *  why it brings in no transactions, when it doesn't (lib/item-products.ts).
+ *  Read from storage, also the oldest day of its stored rows (`first_date`,
+ *  lib/transactions.ts storedItemTransactions); null when synced, or with
+ *  none. And whether it is `missing` because nothing was ever stored for it
+ *  (`never_synced`), not because what is stored couldn't be read; false when
+ *  synced. */
 export type BankSource = {
   item_id: string;
   institution_name: string;
   coverage: TxnCoverage;
   synced_at: string | null;
+  first_date: string | null;
   no_transactions: NoTransactionsReason | null;
+  never_synced: boolean;
 };
 
 /**
@@ -109,13 +116,26 @@ export type BankSource = {
  * accounts couldn't be read: a paused link must not carry, and without the
  * live set a paused link looks active. Best effort throughout: a failure
  * shows Plaid's categories and counts the rows, never an error; `ok` false
- * says the exclusions couldn't be read, so that answer isn't cached.
+ * says the exclusions couldn't be read, so that answer isn't cached. `read`
+ * says, for a report, whether the carried categories and exclusions were all
+ * read (the links too, and the live accounts when there are links to follow);
+ * the app goes on without them.
  */
 async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boolean) {
-  if (!links || links.size === 0 || !liveOk) return { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  // No links, read as none: nothing could be carried, so nothing is missing,
+  // whatever the live accounts' read said (a damaged record of a connection
+  // long gone must not put a gap on every report).
+  if (links && links.size === 0) return { ...nothing, read: { categories: true, exclusions: true } };
+  if (!links || !liveOk) return { ...nothing, read: { categories: false, exclusions: false } };
   const earlier = [...links.keys()];
-  const [categories, annotations] = await Promise.all([getCarried(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
-  return { categories: carriedCategories(categories, links), excluded: carriedExclusions(annotations.carried, links), ok: annotations.ok };
+  const [categories, annotations] = await Promise.all([getCarriedReport(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
+  return {
+    categories: carriedCategories(categories.carried, links),
+    excluded: carriedExclusions(annotations.carried, links),
+    ok: annotations.ok,
+    read: { categories: categories.ok, exclusions: annotations.ok },
+  };
 }
 
 /** Newest first. Within a day the posting `date` is equal, so fall back to the
@@ -138,6 +158,15 @@ export function newestFirst(a: Txn, b: Txn): number {
  * `includeHidden` keeps the hidden accounts' rows (the API's include_hidden);
  * `hidden` is every id of every hidden account either way. `withAccountIds`
  * puts each bank row's account_id on it (lib/transactions.ts displayRows).
+ * `since` reads the rows from that day on instead of the last LOOKBACK_DAYS:
+ * a report on an earlier period (lib/report/read.ts), the same rows by the
+ * same rules, further back.
+ *
+ * `own_read` says whether the person's own changes were all read: their
+ * categories (set on a transaction, or carried across a re-link), their names
+ * for merchants, and their exclusions carried across a re-link. Each is a
+ * convenience the app goes on without when it can't be read, showing the
+ * bank's; a report says so (lib/report/build.ts).
  *
  * The hidden set is read first and strictly: rows from hidden accounts are
  * filtered out inside each Item's read (the only place account_id still
@@ -146,8 +175,14 @@ export function newestFirst(a: Txn, b: Txn): number {
  */
 export async function assembleBankRows(
   ctx: Ctx,
-  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean }
-): Promise<{ payload: PlaidPayload; hidden: Set<string>; cacheable: boolean; sources: BankSource[] }> {
+  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean; since?: string }
+): Promise<{
+  payload: PlaidPayload;
+  hidden: Set<string>;
+  cacheable: boolean;
+  sources: BankSource[];
+  own_read: { categories: boolean; names: boolean; exclusions: boolean };
+}> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
   const hiddenIds = new Set(hidden.keys());
@@ -159,18 +194,19 @@ export async function assembleBankRows(
     carriedIn: carried.then((c) => c.categories),
     carriedExclusionsIn: carried.then((c) => c.excluded),
     withAccountIds: opts.withAccountIds,
+    since: opts.since,
   };
   const at = new Date().toISOString();
   const [results, overrides, renames, carry] = await Promise.all([
     Promise.all(
       items.map(async (item) =>
         opts.sync
-          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null }
+          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null, first_date: null, never_synced: false }
           : storedItemTransactions(ctx, item, inputs)
       )
     ),
-    getOverrides(ctx),
-    getRenames(ctx),
+    readOverridesReport(ctx),
+    readRenamesReport(ctx),
     carried,
   ]);
 
@@ -180,9 +216,9 @@ export async function assembleBankRows(
   const transactions = results.flatMap((r) => r.txns);
   const older = results.flatMap((r) => r.older);
   for (const t of [...transactions, ...older]) {
-    const manual = overrides[t.transaction_id];
+    const manual = overrides.overrides[t.transaction_id];
     if (manual) t.category = manual;
-    const renamed = renames[t.vendor_key];
+    const renamed = renames.renames[t.vendor_key];
     if (renamed) t.name = renamed;
   }
   const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
@@ -218,8 +254,11 @@ export async function assembleBankRows(
       institution_name: item.institution_name,
       coverage: results[i].coverage,
       synced_at: results[i].synced_at,
+      first_date: results[i].first_date,
       no_transactions: results[i].noTransactions ?? null,
+      never_synced: results[i].never_synced === true,
     })),
+    own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
   };
 }
 
@@ -237,6 +276,12 @@ export async function assembleBankRows(
  * known (`excluded: null`): it counts, and the Activity tab says a total may
  * include one the person excluded.
  *
+ * `since` is the first day of rows to read, as assembleBankRows's: by default
+ * the same trailing window as the banks' rows. The manual rows are read back
+ * to the earlier of it and the history's first day (RECURRING_LOOKBACK_DAYS),
+ * so a report on a period older than that keeps every row entered by hand or
+ * imported into it.
+ *
  * `history` is the rows before the year that recurring detection can use
  * (see BEFORE THE YEAR): the banks', as kept, and the manual accounts',
  * chosen once the exclusions are on them.
@@ -244,12 +289,23 @@ export async function assembleBankRows(
 export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
-  hidden: Set<string>
-): Promise<{ transactions: Txn[]; notes: string[]; incomplete: NonNullable<PlaidPayload['incomplete']>; history: OlderTxn[] }> {
-  const cutoff = new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
+  hidden: Set<string>,
+  opts: { since?: string } = {}
+): Promise<{
+  transactions: Txn[];
+  notes: string[];
+  incomplete: NonNullable<PlaidPayload['incomplete']>;
+  history: OlderTxn[];
+  /** The manual accounts whose rows couldn't be read (lib/manual-txns.ts
+   *  readManualTxnsForDisplay), or 'all'. */
+  manual_unread: string[] | 'all';
+}> {
+  const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
-  // The manual rows back to `since`, for the history.
-  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: since }), readExclusions(ctx)]);
+  // The manual rows back to the earlier of the two: the history's first day,
+  // and the transactions' own (a report's period can start before it).
+  const readFrom = cutoff < since ? cutoff : since;
+  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }), readExclusions(ctx)]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
   const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
@@ -292,5 +348,6 @@ export async function finishActivity(
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
+    manual_unread: manual.unread,
   };
 }
