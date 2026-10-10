@@ -84,7 +84,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `connection-notices`, `connection-syncs`, `connection-warnings`, `fire-plan`, `holdings:history`, `import-settings`, `imports`, `manual-transactions`, `report-settings` and `transaction-annotations`. (`sharing-access-log` is in `sharing`.) |
 
 ### `institutions[]`
 
@@ -374,6 +374,15 @@ Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or impor
 | `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
 
 Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`.
+
+#### `report-settings`
+
+The categories you marked as mattering for your taxes on the report page ([features.md](features.md#reports)), or `null` if you never marked any: only your choice. Nya never marks a category itself.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. A category stays marked when no transaction is in it. |
 
 #### `transaction-annotations`
 
