@@ -997,6 +997,9 @@ export default function Dashboard({
     [institutions]
   );
   const lifecycle = useAccountLifecycle({ onChanged: lifecycleChanged, onRemoveConnection: offerRemoval });
+  // Closures that can't be read stop the load: said with the load's error,
+  // wherever that shows, with the repair.
+  const lifecycleRepair = lifecycleDamage && <LifecycleRepair damage={lifecycleDamage} onRepaired={() => loadNetWorth(true)} />;
 
   /**
    * One manual-account mutation. Every call names a single account, so a stale
@@ -1657,6 +1660,7 @@ export default function Dashboard({
                 update it whenever you like; it counts toward net worth and builds its own history.
               </p>
               {error && <div className="error">{error}</div>}
+              {lifecycleRepair}
             </div>
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} />}
@@ -1768,6 +1772,7 @@ export default function Dashboard({
                   }}
                 />
                 {error && <div className="error">{error}</div>}
+                {lifecycleRepair}
               </>
             )}
 
@@ -1802,7 +1807,7 @@ export default function Dashboard({
                     </button>
                   </div>
                   {error && <div className="error">{error}</div>}
-                  {lifecycleDamage && <LifecycleRepair damage={lifecycleDamage} onRepaired={() => loadNetWorth(true)} />}
+                  {lifecycleRepair}
                   {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
                 </div>
 
