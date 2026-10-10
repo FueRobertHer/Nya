@@ -104,6 +104,9 @@ type SharedAccount = {
    *  account's can't be read. */
   transactions?: { date: string; name: string; amount: number; pending: boolean; currency: string | null }[];
   transactions_unreadable?: true;
+  /** It ended on `on` (lib/lifecycle.ts): no balance then, and only the
+   *  transactions from before it. */
+  ended?: { state: 'closed' | 'left' | 'untracked'; on: string };
 };
 /** What someone is shown of one person's share (lib/sharing.ts ShareView). */
 export type SharedView = { accounts: SharedAccount[]; expires_at: string | null };
@@ -779,7 +782,18 @@ export function sharedTxnAmount(t: { amount: number; currency: string | null }):
   return formatMoney(-t.amount, t.currency);
 }
 
+/** "Closed Mar 12, 2026": an account that ended, as the one it is shared
+ *  with reads it. Untracked is said as theirs to say: they stopped following
+ *  it, which is not the same as closing it. */
+export function endedText(e: NonNullable<SharedAccount['ended']>): string {
+  const day = new Date(`${e.on}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+  if (e.state === 'closed') return `Closed ${day}`;
+  if (e.state === 'left') return `No longer theirs since ${day}`;
+  return `Not followed since ${day}`;
+}
+
 function shownBalance(a: SharedAccount): string {
+  if (a.ended) return endedText(a.ended);
   if (a.level === 'exists') return 'Balance not shared';
   if (a.balance === null) return 'No balance yet';
   return `${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`;

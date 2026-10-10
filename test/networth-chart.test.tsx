@@ -164,6 +164,59 @@ describe('NetWorthChart when the baseline stops early', () => {
   });
 });
 
+// Notes on the timeline (#50): a marker on each noted day, the note in the
+// readout on scrub, and a list under the chart for a keyboard and a screen
+// reader. The line itself never changes: a cliff stays a cliff.
+describe('NetWorthChart notes on the timeline', () => {
+  const pts: P[] = [
+    { date: '2026-09-01', value: 5000 },
+    { date: '2026-09-02', value: 5000 },
+    { date: '2026-09-03', value: 1000 },
+    { date: '2026-09-04', value: 1000 },
+  ];
+  const notes = [
+    { date: '2026-09-03', text: 'Ally Savings closed: moved to Chase' },
+    { date: '2026-09-03', text: 'Bought the house' },
+    { date: '2025-01-01', text: 'Before the chart begins' },
+  ];
+  const lines = (h: string) => [...h.matchAll(/<path [^>]*stroke-width="2"[^>]*>/g)].map((m) => m[0]);
+
+  test('a noted day gets one marker, and a button under the chart that a keyboard reaches', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} notes={notes} />);
+    expect(html.match(/class="chart-note-mark"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Notes on this chart"');
+    expect(html).toMatch(/<button type="button" class="chart-note-btn" aria-pressed="false"><span class="chart-note-day">Sep 3<\/span> Ally Savings closed: moved to Chase; Bought the house<\/button>/);
+    // Only the notes in the range shown.
+    expect(html).not.toContain('Before the chart begins');
+    // The chart's own label says so, and the info says what the dotted lines are.
+    expect(html).toContain('One note is marked, listed below the chart.');
+    expect(html).toContain('Dotted lines mark your notes');
+    // The announcement waits for a note to be chosen.
+    expect(html).toContain('<p class="visually-hidden" aria-live="polite"></p>');
+  });
+
+  test('the line is untouched: the cliff stays a cliff', () => {
+    expect(lines(renderToStaticMarkup(<NetWorthChart points={pts} notes={notes} />))).toEqual(lines(renderToStaticMarkup(<NetWorthChart points={pts} />)));
+  });
+
+  test('a note on a day with no point marks the first point after it, where its step shows', () => {
+    const gap: P[] = [
+      { date: '2026-09-01', value: 5000 },
+      { date: '2026-09-05', value: 1000 },
+    ];
+    const html = renderToStaticMarkup(<NetWorthChart points={gap} notes={[{ date: '2026-09-03', text: 'Closed' }]} />);
+    expect(html.match(/class="chart-note-mark"/g)).toHaveLength(1);
+    expect(html).toContain('Sep 3</span> Closed');
+  });
+
+  test('no notes: no list, no markers, nothing announced', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} notes={[]} />);
+    expect(html).not.toContain('chart-notes');
+    expect(html).not.toContain('chart-note-mark');
+    expect(html).not.toContain('Dotted lines');
+  });
+});
+
 describe('NetWorthChart time ranges', () => {
   /** One point a day, rising by one a day from `start`. */
   function daily(first: string, last: string, start = 100) {

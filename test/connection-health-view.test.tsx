@@ -70,7 +70,9 @@ describe('the connection health view', () => {
     ]);
     expect(buttons(html)).toEqual(['Reconnect', 'Remove C', 'Remove D', 'Add or remove accounts', 'Remove F']);
     const t = text(html);
-    expect(t).toContain("1 account E used to report isn't in its latest answer. If you closed it, nothing to do: it is counted as closed after three days.");
+    expect(t).toContain(
+      "1 account E used to report isn't in its latest answer. Until you say whether it closed, it is counted at its last known balance and no total is saved. If nobody answers, Nya assumes it closed after three days, and you can say otherwise."
+    );
     expect(t).toContain("F Can't be repaired");
     expect(t).toContain("Plaid can no longer reach F, so reconnecting won't help.");
   });
@@ -105,6 +107,15 @@ describe('the connection health view', () => {
       'Its last known balances are from Aug 1, too old to count.',
     ]);
     expect(affectedText(inst('E', health('vanished'), { unconfirmed_missing: 2 }))).toEqual(['2 accounts not in the total.']);
+    // Held at last known balances until answered (#50), or not counted when too old.
+    const held = inst('E', health('vanished'), {
+      unconfirmed_missing: 2,
+      accounts: [
+        { name: 'Checking', mask: '4821', type: 'depository', balance: 5000, currency: 'USD', stale: true, held: { as_of: '2026-10-05' }, question: { kind: 'missing' } },
+        { name: 'Old card', mask: null, type: 'credit', balance: null, currency: 'USD', stale: true, held: { as_of: null, too_old: '2026-08-01' }, question: { kind: 'missing' } },
+      ],
+    });
+    expect(affectedText(held, (n) => `$${n}`)).toEqual(['Shown at last known balances from Oct 5, not measured now: Checking ••4821, together $5000 of net worth.', 'Not counted in net worth: Old card.']);
     expect(affectedText(inst('Citi', health('ok')))).toEqual([]);
     // Several currencies are not added up.
     const mixed = inst('Wise', health('login'), {
@@ -239,7 +250,15 @@ describe('the notes under the Home total name what is missing', () => {
       "Chase couldn't refresh; its balances are from snap 2026-09-12",
     ]);
     expect(totalNotes([{ institution_name: 'Ally', error: null, needs_reauth: false, unconfirmed_missing: 1 }], day)).toEqual([
-      '1 account at Ally stopped reporting, so this total is short by it · history is paused until that settles',
+      '1 account at Ally stopped reporting, so this total is short by it · history is paused until you answer',
+    ]);
+    // Held at its last known balance until answered (#50).
+    const ally = (accounts: { balance: number | null; held?: unknown }[]) => [{ institution_name: 'Ally', error: null, needs_reauth: false, unconfirmed_missing: accounts.length, accounts }];
+    expect(totalNotes(ally([{ balance: 900, held: { as_of: '2026-10-05' } }]), day)).toEqual([
+      '1 account at Ally stopped reporting; it is counted at its last known balance until you say whether it closed · history is paused until you answer',
+    ]);
+    expect(totalNotes(ally([{ balance: 900, held: {} }, { balance: null, held: {} }]), day)).toEqual([
+      '2 accounts at Ally stopped reporting, so this total is short by 1 of them · history is paused until you answer',
     ]);
     expect(totalNotes([{ institution_name: 'Ally', error: null, needs_reauth: false }], day)).toEqual([]);
   });

@@ -20,6 +20,9 @@ export type TotalNoteInstitution = {
   stale_missing?: number;
   unconfirmed_missing?: number;
   health?: { last_ok_at: string | null };
+  /** Its rows: an account missing from its answer is held at its last known
+   *  balance (`held`), or without one when that is too old to count. */
+  accounts?: { balance: number | null; hidden?: boolean; held?: unknown }[];
 };
 
 export type DayFormat = {
@@ -60,11 +63,21 @@ export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat)
     notes.push(`${n} ${plural(n, 'account', 'accounts')} at ${where} couldn't be shown, so this total is incomplete`);
   }
 
-  // Answered, without accounts it used to report.
+  // Answered, without accounts it used to report. Each is held at its last
+  // known balance until the person says whether it closed
+  // (lib/lifecycle-questions.ts), or left out when that is too old to count;
+  // a payload from before holds left them all out. Nothing is saved to
+  // history meanwhile.
   const vanished = institutions.filter((i) => (i.unconfirmed_missing ?? 0) > 0);
   if (vanished.length > 0) {
     const { n, where } = accountsAt(vanished, (i) => i.unconfirmed_missing ?? 0);
-    notes.push(`${n} ${plural(n, 'account', 'accounts')} at ${where} stopped reporting, so this total is short by ${plural(n, 'it', 'them')} · history is paused until that settles`);
+    const held = vanished.flatMap((i) => (i.accounts ?? []).filter((a) => a.held && !a.hidden));
+    const out = held.length === 0 ? n : held.filter((a) => a.balance === null).length;
+    const what =
+      out === 0
+        ? `; ${plural(n, 'it is', 'they are')} counted at ${plural(n, 'its last known balance', 'their last known balances')} until you say whether ${plural(n, 'it', 'they')} closed`
+        : `, so this total is short by ${out === n ? plural(n, 'it', 'them') : `${out} of them`}`;
+    notes.push(`${n} ${plural(n, 'account', 'accounts')} at ${where} stopped reporting${what} · history is paused until you answer`);
   }
 
   // Failed with nothing recovered: the total is short by all of each.

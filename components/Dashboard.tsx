@@ -31,6 +31,18 @@ import ImportSheet, { type ImportTarget } from './ImportSheet';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
+import {
+  useAccountLifecycle,
+  AccountQuestions,
+  EndedAccounts,
+  LifecycleRepair,
+  lifecycleDamageOf,
+  type AccountQuestion,
+  type EndedAccount,
+  type EndedConnection,
+  type LifecycleDamage,
+} from './AccountLifecycle';
+import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
 import { totalNotes } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
@@ -73,6 +85,11 @@ type Account = {
   // Investment accounts only: this load's holdings call failed for it, so its
   // positions are unknown (lib/networth.ts markUnanswered).
   holdings_unanswered?: boolean;
+  // Missing from its bank's answer, held at its last known balance until the
+  // person says whether it closed, and the question about it, which a zero
+  // for weeks raises too (#50, lib/lifecycle-questions.ts).
+  held?: { as_of: string | null; too_old?: string };
+  question?: AccountQuestion;
 };
 
 // Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
@@ -555,6 +572,14 @@ export default function Dashboard({
     { account_id: string; type: string; label?: string; disconnected?: boolean }[]
   >([]);
   const [togglingHidden, setTogglingHidden] = useState<string | null>(null);
+  // The accounts that ended (#50, lib/lifecycle.ts), the stored set like
+  // hiddenMeta, for the Closed, left and untracked card; closures that
+  // couldn't be read, which stop the load rather than count a closed account;
+  // and the connection whose every account ended, which the disconnect sheet
+  // then offers to remove.
+  const [ended, setEnded] = useState<EndedAccount[]>([]);
+  const [lifecycleDamage, setLifecycleDamage] = useState<LifecycleDamage | null>(null);
+  const [endedOffer, setEndedOffer] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -580,16 +605,22 @@ export default function Dashboard({
       if (!res.ok) {
         // The server's reason when it gives one (no usable container, say),
         // so the cause shows on screen rather than only in the logs.
-        const reason = await res.json().then((b) => b?.error).catch(() => null);
-        setError(reason && res.status === 503 ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
+        // Closures that can't be read say so, with their repair (#50).
+        const body = await res.json().catch(() => null);
+        const reason = body?.error ?? null;
+        const damage = lifecycleDamageOf(res.status, body);
+        setLifecycleDamage(damage);
+        setError(reason && (res.status === 503 || damage) ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
         return;
       }
       const data = await res.json();
       setError('');
+      setLifecycleDamage(null);
       setInstitutions(data.institutions);
       setNetWorth(data.netWorth);
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
+      setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
       setAsOf(data.as_of ?? null);
       setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
@@ -621,6 +652,7 @@ export default function Dashboard({
             netWorth: data.netWorth,
             history: data.history ?? [],
             hidden: data.hidden ?? [],
+            lifecycle: data.lifecycle ?? [],
             as_of: data.as_of,
           })
         );
@@ -702,6 +734,7 @@ export default function Dashboard({
           setNetWorth(snap.netWorth ?? 0);
           setHistory(Array.isArray(snap.history) ? snap.history : []);
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
+          setEnded(Array.isArray(snap.lifecycle) ? snap.lifecycle : []);
           setAsOf(snap.as_of ?? null);
           setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
@@ -941,6 +974,29 @@ export default function Dashboard({
     },
     [loadNetWorth, loadTransactions, txns]
   );
+
+  // Notes on the timeline (#50), read again with each load.
+  const timeline = useTimelineNotes(asOf);
+  const reloadTimeline = timeline.reload;
+  // Ending, reopening or answering for an account (#50) reloads what it
+  // touches: the totals, its transactions from its end, its note.
+  const lifecycleChanged = useCallback(() => {
+    loadNetWorth(true);
+    if (txns !== null) loadTransactions(true);
+    reloadTimeline();
+  }, [loadNetWorth, loadTransactions, txns, reloadTimeline]);
+  // Its last open account ended: offer to remove the connection, through the
+  // same confirmation as any removal, since Plaid bills it until then.
+  const offerRemoval = useCallback(
+    (c: EndedConnection) => {
+      const target = institutions.find((i) => i.item_id === c.item_id) ?? { ...c, accounts: [], holdings: [], error: null, needs_reauth: false };
+      setEndedOffer(c.item_id);
+      setDisconnectInput('');
+      setDisconnectTarget(target);
+    },
+    [institutions]
+  );
+  const lifecycle = useAccountLifecycle({ onChanged: lifecycleChanged, onRemoveConnection: offerRemoval });
 
   /**
    * One manual-account mutation. Every call names a single account, so a stale
@@ -1284,8 +1340,25 @@ export default function Dashboard({
         new Date(`${base.date}T00:00:00Z`).getTime()) /
         (24 * 60 * 60 * 1000)
     );
-    return { value, pct, days };
+    return { value, pct, days, from: base.date, to: current.date };
   }, [history]);
+
+  // The stored hidden set's ids, and the notes the chart marks: not those
+  // about a hidden account, which moves no day of it (#50).
+  const hiddenIds = useMemo(() => new Set(hiddenMeta.map((h) => h.account_id)), [hiddenMeta]);
+  const chartNotes = useMemo(
+    () => timeline.notes.filter((n) => !(n.kind === 'auto' && n.account_id && hiddenIds.has(n.account_id))),
+    [timeline.notes, hiddenIds]
+  );
+  // Accounts that ended within the delta's days: its change includes their
+  // leaving, which is said, so it isn't read as a gain or a loss (#50).
+  const endedInDelta = useMemo(() => {
+    if (!heroDelta) return 0;
+    return ended.filter((e) => {
+      const day = e.lifecycle.state === 'untracked' ? e.lifecycle.from : e.lifecycle.on;
+      return day > heroDelta.from && day <= heroDelta.to && !hiddenIds.has(e.account_id);
+    }).length;
+  }, [heroDelta, ended, hiddenIds]);
 
   // Plaid returns institutions/accounts in no guaranteed order; sort by name so
   // the Accounts tab renders the same every load.
@@ -1601,6 +1674,7 @@ export default function Dashboard({
                     <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
                       {heroDelta.value >= 0 ? '▲' : '▼'} {fmt(Math.abs(heroDelta.value), accountCurrency)} (
                       {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
+                      {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
                     </div>
                   )}
                   {mixedAccountCurrency && (
@@ -1626,7 +1700,7 @@ export default function Dashboard({
                     <div className="inst-name">Over time</div>
                   </div>
                   {history.length >= 2 ? (
-                    <NetWorthChart points={history} />
+                    <NetWorthChart points={history} notes={chartNotes} />
                   ) : (
                     <p className="empty-note">
                       History builds as you use the app — check back tomorrow for your first
@@ -1648,6 +1722,10 @@ export default function Dashboard({
                     </div>
                   )}
                 </div>
+
+                {/* What the chart marks (#50): the person's own notes, and
+                    the ones Nya writes when an account ends. */}
+                <TimelineNotesCard notes={timeline.notes} problem={timeline.problem} onChanged={timeline.reload} />
 
                 <Insights
                   txns={txns}
@@ -1724,6 +1802,8 @@ export default function Dashboard({
                     </button>
                   </div>
                   {error && <div className="error">{error}</div>}
+                  {lifecycleDamage && <LifecycleRepair damage={lifecycleDamage} onRepaired={() => loadNetWorth(true)} />}
+                  {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
                 </div>
 
                 {/* Every linked institution's health, last good sync and the
@@ -1741,7 +1821,21 @@ export default function Dashboard({
                     const target = institutions.find((i) => i.item_id === item_id);
                     if (!target) return;
                     setDisconnectInput('');
+                    setEndedOffer(null);
                     setDisconnectTarget(target);
+                  }}
+                  questions={(h) => {
+                    // The same questions as on the institution's card (#50).
+                    const inst = institutions.find((i) => i.item_id === h.item_id);
+                    return inst ? (
+                      <AccountQuestions
+                        accounts={inst.accounts.filter((a) => !a.hidden)}
+                        institution={inst.institution_name}
+                        busy={lifecycle.busy}
+                        onOpen={lifecycle.open}
+                        onStillOpen={lifecycle.stillOpen}
+                      />
+                    ) : null;
                   }}
                 />
 
@@ -1787,6 +1881,7 @@ export default function Dashboard({
                               className="disconnect-btn"
                               onClick={() => {
                                 setDisconnectInput('');
+                                setEndedOffer(null);
                                 setDisconnectTarget(inst);
                               }}
                               aria-label={`Disconnect ${inst.institution_name}`}
@@ -1839,6 +1934,16 @@ export default function Dashboard({
                                         Updated {fmtAsOf(a.updated_at)}
                                       </div>
                                     )}
+                                    {/* Missing from its bank's answer, held
+                                        until the question below is answered
+                                        (#50): said, not passed off as now. */}
+                                    {a.held && (
+                                      <div className="manual-updated">
+                                        {a.held.as_of
+                                          ? `Last known balance, from ${fmtDay(a.held.as_of)}`
+                                          : 'No recent balance, so not counted'}
+                                      </div>
+                                    )}
                                     {util != null && (
                                       <div className="util">
                                         <div className={`meter-track${util >= 0.9 ? ' over' : util >= 0.5 ? ' warn' : ''}`}>
@@ -1889,7 +1994,7 @@ export default function Dashboard({
                                     )}
                                   </td>
                                   <td className="num">
-                                    {fmt(signedBalance(a), a.currency)}
+                                    {a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}
                                     {(inst.manual || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
@@ -1935,6 +2040,27 @@ export default function Dashboard({
                                             onClick={() => toggleHidden(a.account_id, true)}
                                           >
                                             {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
+                                          </button>
+                                        )}
+                                        {/* Closed, no longer theirs, or not
+                                            tracked from a day (#50): unlike
+                                            Hide, every day before it counts. */}
+                                        {manageMode && (
+                                          <button
+                                            className="link-btn"
+                                            disabled={lifecycle.busy}
+                                            aria-label={`${a.name}: closed, no longer yours, or stop tracking`}
+                                            onClick={() =>
+                                              lifecycle.open({
+                                                account_id: a.account_id,
+                                                name: a.name,
+                                                mask: a.mask,
+                                                institution: inst.institution_name,
+                                                ...(a.question ? { day: a.question.end } : {}),
+                                              })
+                                            }
+                                          >
+                                            Close…
                                           </button>
                                         )}
                                         {inst.manual && manageMode && (
@@ -2158,12 +2284,22 @@ export default function Dashboard({
                           {inst.unconfirmed_missing} account
                           {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
                           report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
-                          response · this subtotal is short by{' '}
-                          {inst.unconfirmed_missing === 1 ? 'it' : 'them'}, and history is paused
-                          until the {inst.unconfirmed_missing === 1 ? 'account' : 'accounts'} either
-                          come back or stay gone
+                          response · {inst.unconfirmed_missing === 1 ? 'it is' : 'they are'} held at{' '}
+                          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance until
+                          you say whether {inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and
+                          history is paused until then
                         </div>
                       )}
+
+                      {/* The questions about its accounts (#50): missing
+                          from its answer, or at zero for weeks. */}
+                      <AccountQuestions
+                        accounts={inst.accounts}
+                        institution={inst.institution_name}
+                        busy={lifecycle.busy}
+                        onOpen={lifecycle.open}
+                        onStillOpen={lifecycle.stillOpen}
+                      />
 
                       {/* Tells someone who just tapped Enable why the button
                           vanished without any payment details appearing. */}
@@ -2266,7 +2402,9 @@ export default function Dashboard({
                       <>
                         <p className="empty-note">
                           These accounts still sync, but are left out of net worth, transactions,
-                          budgets and insights. Unhiding restores their history in full.
+                          budgets and insights, on every day, past ones too. Unhiding restores their
+                          history in full. To stop counting one only from a day on, use Close… on it
+                          and choose Stop tracking: every day before then still counts.
                         </p>
                         <table>
                           <tbody>
@@ -2302,6 +2440,17 @@ export default function Dashboard({
                     )}
                   </div>
                 )}
+
+                {/* Closed, left and untracked accounts (#50), from the
+                    stored set, with when each ended, to change or reopen. */}
+                <EndedAccounts
+                  ended={ended}
+                  hidden={hiddenIds}
+                  busy={lifecycle.busy}
+                  onOpen={lifecycle.open}
+                  onReopen={lifecycle.reopen}
+                  onStillOpen={lifecycle.stillOpen}
+                />
 
                 {/* Download my data, with the rest of the account upkeep
                     behind Manage accounts; after the accounts, so it doesn't
@@ -2598,18 +2747,42 @@ export default function Dashboard({
         )}
       </Sheet>
 
+      {lifecycle.sheet}
+
       <Sheet
         open={!!disconnectTarget}
-        title={shownDisconnectTarget ? `Disconnect ${shownDisconnectTarget.institution_name}?` : 'Disconnect'}
+        title={
+          shownDisconnectTarget
+            ? endedOffer === shownDisconnectTarget.item_id
+              ? 'Remove this connection?'
+              : `Disconnect ${shownDisconnectTarget.institution_name}?`
+            : 'Disconnect'
+        }
         onClose={() => !disconnecting && setDisconnectTarget(null)}
       >
         {shownDisconnectTarget && (
           <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
+            {/* Every account of it ended (#50): the connection still syncs
+                nothing of use, and Plaid bills it until it is removed. */}
+            {endedOffer === shownDisconnectTarget.item_id && (
+              <p className="panel-note" style={{ marginTop: 0 }}>
+                Every account at {shownDisconnectTarget.institution_name} has ended, but the connection is still
+                open, and Plaid charges for it until it is removed. Their history, and when each ended, are kept.
+              </p>
+            )}
+            <p className="panel-note" style={endedOffer === shownDisconnectTarget.item_id ? undefined : { marginTop: 0 }}>
               This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
               connection at Plaid. You can reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
+            {/* Disconnecting is about the connection; closing is about an
+                account (#50). Only the person knows which happened. */}
+            {endedOffer !== shownDisconnectTarget.item_id && (
+              <p className="panel-note">
+                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (Manage, then Close… on
+                the account): it then stops counting from that day, and the chart marks it.
+              </p>
+            )}
             {/* What Plaid itself keeps is beyond a disconnect's reach (the
                 deletion receipt says the same, lib/deletion-receipt.ts): say
                 where people can see and delete it. */}

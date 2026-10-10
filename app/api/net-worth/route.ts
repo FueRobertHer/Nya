@@ -16,7 +16,7 @@ import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
 import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
-import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, type LifecycleForClient } from '@/lib/lifecycle';
+import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, type LifecycleForClient } from '@/lib/lifecycle';
 import { holdMissingAccounts, askAboutZeroBalances } from '@/lib/lifecycle-questions';
 import { storeFailure } from '@/lib/store-failure';
 
@@ -263,8 +263,8 @@ export async function GET(req: Request) {
   } catch (err: any) {
     // No container: 503. Account closures that can't be read: 409, flagged,
     // with the ids (lib/store-failure.ts), never a total that counts an
-    // account the person closed; the Accounts tab offers to remove only the
-    // damaged ones (app/api/account-lifecycle). Anything else: 500.
-    return storeFailure(err, 'Failed to fetch net worth');
+    // account the person closed; `repair` tells the Accounts tab it may offer
+    // to remove the damaged ones (app/api/account-lifecycle). Anything else: 500.
+    return storeFailure(err, 'Failed to fetch net worth', isLifecycleUnreadable(err) ? { repair: 'account-lifecycle' } : undefined);
   }
 }

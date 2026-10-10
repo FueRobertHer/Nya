@@ -66,6 +66,9 @@ export type ForecastAccount = {
   updated_at?: string;
   /** Recovered from a past snapshot rather than fetched (lib/last-known.ts). */
   stale?: boolean;
+  /** Missing from its bank's answer, held at its last known balance until the
+   *  person says whether it closed (lib/lifecycle-questions.ts). */
+  held?: { as_of: string | null; too_old?: string };
   /** A card's or loan's payment terms, where Plaid serves them: the calendar
    *  marks the payment due (lib/calendar.ts duePayments), and the forecast
    *  names a card whose payment it doesn't hold (forecastNotes). */
@@ -504,7 +507,13 @@ export function forecastNotes(opts: {
     if (names.length > 0) notes.push(`${join(names)} at ${i.institution_name} couldn't be shown, so ${names.length === 1 ? "its balance isn't" : "their balances aren't"} in this forecast.`);
     else if (!i.unshown_accounts && (i.stale_missing ?? 0) > 0)
       notes.push(`${accountsWord(i.stale_missing!)} at ${i.institution_name} couldn't be shown, so any cash in ${i.stale_missing === 1 ? 'it' : 'them'} isn't in this forecast.`);
-    if ((i.unconfirmed_missing ?? 0) > 0)
+    // Held at their last known balances until answered, so in the forecast
+    // from those; a payload from before holds says only how many.
+    const held = i.accounts.filter((a) => a.held);
+    const heldCash = held.filter((a) => included.has(a.account_id)).map((a) => a.name);
+    if (heldCash.length > 0)
+      notes.push(`${join(heldCash)} at ${i.institution_name} stopped reporting, so this starts from ${heldCash.length === 1 ? 'its last known balance' : 'their last known balances'}.`);
+    else if (held.length === 0 && (i.unconfirmed_missing ?? 0) > 0)
       notes.push(
         `${accountsWord(i.unconfirmed_missing!)} at ${i.institution_name} stopped reporting, so any cash in ${i.unconfirmed_missing === 1 ? 'it' : 'them'} isn't in this forecast.`
       );

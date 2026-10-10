@@ -245,7 +245,8 @@ describe('the dashboard fails loudly rather than count a closed account', () => 
     await fake.hset(ctxKey('account-lifecycle'), { sav: 'damaged-bytes-damaged-bytes-damaged' });
     const { status, body } = await load('2026-03-13');
     expect(status).toBe(409);
-    expect(body).toMatchObject({ unreadable: true, unreadable_ids: ['sav'], unrecognised_ids: [] });
+    // Named as closures, so the Accounts tab may offer to remove the damaged one.
+    expect(body).toMatchObject({ unreadable: true, unreadable_ids: ['sav'], unrecognised_ids: [], repair: 'account-lifecycle' });
     expect(body.error).toMatch(/account closures could not be read/);
   });
 

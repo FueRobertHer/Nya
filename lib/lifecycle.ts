@@ -56,7 +56,7 @@
 // something it isn't. Only an entry whose bytes are damaged may be removed,
 // and only once the person confirms (removeUnreadable, app/api/account-lifecycle).
 
-import { defineMapStore, type MapStore } from './repo';
+import { defineMapStore, UnreadableEntriesError, type MapStore } from './repo';
 import type { Ctx } from './containers';
 import { isCalendarDay, addDays } from './manual-txn-input';
 import { resolveId, sameAccountIds, getLinks, effectiveLinks, type Link } from './link-core';
@@ -339,6 +339,11 @@ export function answersFrom(view: LifecycleView): LifecycleAnswers {
 export async function readLifecycleEntries(ctx: Ctx): Promise<Map<string, LifecycleEntry>> {
   return lifecycleStore.getAll(ctx);
 }
+
+/** A read that failed on closures that can't be read: the dashboard then
+ *  offers to remove the damaged ones (app/api/account-lifecycle, repair). */
+export const isLifecycleUnreadable = (err: unknown): err is UnreadableEntriesError =>
+  err instanceof UnreadableEntriesError && err.what === lifecycleStore.what;
 
 /**
  * The view, read strictly. `links` are the links that apply, when the caller
