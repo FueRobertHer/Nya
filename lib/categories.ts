@@ -329,8 +329,14 @@ export type CategoryFacts = {
 
 /** Where a transaction is filed: its category, and whether the row said
  *  anything about its category at all (a row that says nothing shows no
- *  category, as before, and is counted under the uncategorized one). */
-export type Filed = { category: Category; said: boolean };
+ *  category, as before, and is counted under the uncategorized one).
+ *  `filed` is false for a row that said something no category has a key for,
+ *  which only a set past MAX_CATEGORIES leaves: its category is then the
+ *  uncategorized one, but the row is better left as it came
+ *  (lib/category-store.ts fileRows), its words shown and counted as before
+ *  categories had kinds, so a "transfer to savings" past the limit is still a
+ *  transfer. */
+export type Filed = { category: Category; said: boolean; filed: boolean };
 
 /** The category a transaction is filed under (see RESOLUTION in the header). */
 export function resolveCategory(ix: CategoryIndex, f: CategoryFacts): Filed {
@@ -338,23 +344,24 @@ export function resolveCategory(ix: CategoryIndex, f: CategoryFacts): Filed {
   const own = !!f.category_set || f.source !== undefined;
   if (own && text) {
     const c = categoryForKey(ix, TEXT, text);
-    if (c) return { category: c, said: true };
+    if (c) return { category: c, said: true, filed: true };
   }
   // Rules (#36) go here.
   if (!own) {
     for (const value of [f.pfc_detailed, f.pfc_primary]) {
       if (!value) continue;
       const c = categoryForKey(ix, PLAID, value);
-      if (c) return { category: c, said: true };
+      if (c) return { category: c, said: true, filed: true };
     }
   }
   if (text) {
     const c = categoryForKey(ix, TEXT, text);
-    if (c) return { category: c, said: true };
+    if (c) return { category: c, said: true, filed: true };
   }
-  // A key with no category (only past MAX_CATEGORIES) is filed as
-  // uncategorized, and still said something.
-  return { category: uncategorizedOf(ix), said: !!text || !!f.pfc_primary || !!f.pfc_detailed };
+  // Said nothing: uncategorized. Said something no category has a key for
+  // (only past MAX_CATEGORIES): uncategorized too, but not filed (see Filed).
+  const said = !!text || !!f.pfc_primary || !!f.pfc_detailed;
+  return { category: uncategorizedOf(ix), said, filed: !said };
 }
 
 /** The id of the category a row is filed under, against the set loaded on
@@ -606,14 +613,29 @@ function checkUnique(t: Taxonomy, name: string, except?: string): void {
   );
 }
 
+/** Text cut to at most `max` characters, never inside a character written
+ *  as two (an emoji), with no space left at the end. */
+function cutText(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  return (/[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut).trimEnd();
+}
+
 /** A text key for a new category: its name's, or, when an earlier category
  *  already has those words (one since renamed), the first of "words (2)",
- *  "words (3)"... that none has. */
+ *  "words (3)"... that none has, the words cut so the key is never longer
+ *  than a name: what a category chosen for a transaction is stored as
+ *  (choiceText), which the release before this one refuses past 60
+ *  characters (app/api/recategorize) and cuts there in a budget's name. */
 function freeTextKey(t: Taxonomy, name: string): string {
   const taken = new Set(t.categories.flatMap((c) => c.provider_keys.filter((k) => k.provider === TEXT).map((k) => k.key)));
-  const base = textKey(name);
+  const base = cutText(textKey(name), NAME_MAX);
   if (!taken.has(base)) return base;
-  for (let n = 2; ; n++) if (!taken.has(`${base} (${n})`)) return `${base} (${n})`;
+  for (let n = 2; ; n++) {
+    const suffix = ` (${n})`;
+    const key = `${cutText(base, NAME_MAX - suffix.length)}${suffix}`;
+    if (!taken.has(key)) return key;
+  }
 }
 
 const replaceCategory = (t: Taxonomy, c: Category): Taxonomy => ({ ...t, categories: t.categories.map((x) => (x.id === c.id ? c : x)) });
@@ -713,9 +735,11 @@ export function mergeCategories(t: Taxonomy, fromId: string, intoId: unknown): T
 /** How a kind is said in a sentence. */
 export const KIND_WORDS: Readonly<Record<CategoryKind, string>> = { expense: 'spending', income: 'income', transfer: 'a transfer' };
 
-/** What still uses a category, for deleting it (lib/category-store.ts
- *  categoryUsage). */
-export type CategoryUsage = { transactions: number; budget: boolean };
+/** What still uses a category, for deleting it (lib/category-usage.ts
+ *  categoryUsage), and the keys it had when its uses were counted. */
+export type CategoryUsage = { transactions: number; budget: boolean; keys?: readonly ProviderKey[] };
+
+const keyList = (keys: readonly ProviderKey[]) => keys.map((k) => slot(k.provider, k.key)).sort().join('\n');
 
 /**
  * Deletes a category nothing uses: no transaction is filed under it and no
@@ -729,6 +753,12 @@ export function deleteCategory(t: Taxonomy, id: string, usage: CategoryUsage): T
   if (provider) {
     const who = provider === PLAID ? 'Plaid files' : `${provider} files`;
     throw new CategoryError(`${who} your bank's transactions under ${c.name}, so it can't be deleted. Archive it to hide it, or merge it into another category.`, 409);
+  }
+  // Counted for other keys: something changed it since (another device
+  // merged a category into it, bringing transactions and a budget), so what
+  // was counted no longer says whether anything uses it.
+  if (usage.keys && keyList(usage.keys) !== keyList(c.provider_keys)) {
+    throw new CategoryError(`${c.name} changed while it was being deleted (a category was merged into it, say), so it wasn't. Look again, then try again.`, 409);
   }
   if (usage.transactions > 0 || usage.budget) {
     const what = [

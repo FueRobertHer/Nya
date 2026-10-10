@@ -28,7 +28,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import { categoryOptions, type Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
-import { categoryById, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
 import { formatMoney } from '@/lib/format';
@@ -264,7 +264,10 @@ export default function ManualTxnSheet({
       amount: signed,
       currency,
       name: draft!.name.trim(),
-      ...(taxonomy ? { category_id: draft!.category_id || null } : { category: draft!.category || null }),
+      // By id, and its words beside it (choiceText), which this release
+      // ignores when the id is there: a page still open after a rollback
+      // posts to the release before, which reads only the words.
+      ...(taxonomy ? { category_id: draft!.category_id || null, category: chosen ? choiceText(chosen) : null } : { category: draft!.category || null }),
       note: draft!.note.trim() || null,
     };
     try {

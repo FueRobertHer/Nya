@@ -95,6 +95,19 @@ describe('the Budgets tab’s group meters', () => {
     expect(html).not.toContain(`category:${id(taxonomy, 'coffee')}`);
   });
 
+  test('only spending is offered: income and transfers never count against a budget, and one already on them says why it never moves', () => {
+    const html = renderToStaticMarkup(
+      <BudgetsCard taxonomy={taxonomy} budgets={{ categories: {}, groups: {} }} spent={{}} currency="USD" editable noSpending={false} onSave={async () => true} />
+    );
+    for (const name of ['income', 'transfer in', 'transfer out', 'loan payments']) expect(html).not.toContain(`category:${id(taxonomy, name)}`);
+    for (const name of ['Income', 'Transfers']) expect(html).not.toContain(`value="group:${group(taxonomy, name)}"`);
+    expect(html).toContain(`value="group:${FOOD}"`);
+    const loans = id(taxonomy, 'loan payments');
+    const t = card({ budgets: { categories: { [loans]: { amount: 900 } }, groups: {} }, open: [group(taxonomy, 'Transfers')] });
+    expect(t).toContain('Transfers $0.00 of $900.00');
+    expect(t).toContain('The categories in Transfers count as transfers, not spending, so nothing counts against a budget here.');
+  });
+
   test('a renamed category shows by its new name: one rename, everywhere', () => {
     const renamed = renameCategory(taxonomy, id(taxonomy, 'groceries'), 'Supermarket');
     const t = text(
@@ -179,6 +192,11 @@ describe('Home’s budget alerts', () => {
     ] as Txn[];
     const s = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={budgets} accounts={[]} />));
     expect(s).toContain('Approaching your groceries budget (95%)');
+    // A group without a budget of its own only adds its categories' up: no alert of its own.
+    const tight = { ...budgets, categories: { ...budgets.categories, [t.categories.find((c) => c.name === 'restaurants')!.id]: { amount: 5 } } };
+    const sum = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={tight} accounts={[]} />));
+    expect(sum).toContain('Approaching your groceries budget (95%)');
+    expect(sum).not.toContain('your Food budget');
     const capped = { ...budgets, groups: { [group(t, 'Food')]: { amount: 100 } } };
     const g = text(renderToStaticMarkup(<Insights txns={rows} taxonomy={t} budgets={capped} accounts={[]} />));
     expect(g).toContain('Approaching your Food budget (95%)');
@@ -234,5 +252,7 @@ describe('the Categories screen under Manage', () => {
       expect([view, dashboard.slice(at, dashboard.indexOf('/>', at)).includes('taxonomy={categories.taxonomy}')]).toEqual([view, true]);
     }
     expect(dashboard).toContain("field: 'budget_set'");
+    // A budget on a category the page's set lacks reads the set again.
+    expect(dashboard).toContain("useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');");
   });
 });

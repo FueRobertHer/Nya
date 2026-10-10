@@ -58,6 +58,18 @@ describe('the reconcile rule: a group’s limit is min(its own amount, its categ
     expect(m2).toMatchObject({ limit: 300, reconcile: { binds: 'categories' } });
   });
 
+  test('an archived category with spending this month and no budget is a category without one: the group’s amount stays the limit', () => {
+    // Its keys still file transactions, so what it spends counts against the
+    // group's own budget, and the categories never bind while it has none.
+    const archived = setArchived(t, id('coffee'), true);
+    const aix = indexTaxonomy(archived);
+    const b = budgets({ groceries: 300, restaurants: 200, 'food and drink': 100 }, { [food.id]: 800 });
+    const meter = (s: Map<string, number>) => budgetMeters(aix, placeBudgets(b, aix), s).groups.find((g) => g.group.id === food.id)!;
+    expect(meter(spent({ groceries: 100, coffee: 150 }))).toMatchObject({ limit: 800, reconcile: null, spent: 250 });
+    // With nothing spent there this month, it is left aside, as before.
+    expect(meter(spent({ groceries: 100 }))).toMatchObject({ limit: 600, reconcile: { binds: 'categories', group: 800, categories: 600 }, spent: 100 });
+  });
+
   test('the two agreeing say nothing', () => {
     expect(meterOf(budgets({ groceries: 300, restaurants: 200, coffee: 50, 'food and drink': 100 }, { [food.id]: 650 }), spent({})).reconcile).toBeNull();
   });
@@ -129,11 +141,18 @@ describe('budgets saved under names, and the copy the release before reads', () 
 });
 
 describe('the stored shape and what a page sends', () => {
-  test('a set as stored, later fields riding along; anything else refused', () => {
+  test('a set as stored; a field this release doesn’t know, on the set or on a budget, makes it unrecognised, never dropped by a save', () => {
     const ok = { version: 1, categories: { a: { amount: 5 } }, groups: {}, mirror: { a: 5 }, mirror_before: null };
     expect(isBudgetSet(ok)).toBe(true);
-    expect(isBudgetSet({ ...ok, later: true, categories: { a: { amount: 5, rollover: true } } })).toBe(true);
-    for (const bad of [{ ...ok, version: 2 }, { ...ok, categories: { a: { amount: 0 } } }, { ...ok, groups: { 'bad id': { amount: 1 } } }, { ...ok, mirror_before: undefined }]) {
+    for (const bad of [
+      { ...ok, later: true },
+      { ...ok, categories: { a: { amount: 5, rollover: true } } },
+      { ...ok, groups: { g: { amount: 5, months: {} } } },
+      { ...ok, version: 2 },
+      { ...ok, categories: { a: { amount: 0 } } },
+      { ...ok, groups: { 'bad id': { amount: 1 } } },
+      { ...ok, mirror_before: undefined },
+    ]) {
       expect(isBudgetSet(bad)).toBe(false);
     }
   });
@@ -147,6 +166,8 @@ describe('the stored shape and what a page sends', () => {
       { categories: { a: { amount: 0.001 } }, groups: {} },
       { categories: { a: { amount: 1e13 } }, groups: {} },
       { categories: {}, groups: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`g${i}`, { amount: 1 }])) },
+      // 50 on categories, as the release before allowed, so its page can still save the copy it reads.
+      { categories: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`c${i}`, { amount: 1 }])), groups: {} },
     ]) {
       expect(() => readBudgets(bad)).toThrow(BudgetError);
     }

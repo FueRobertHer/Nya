@@ -174,14 +174,18 @@ export default function Insights({
     for (const a of reconnectAlerts(reconnectSoon, now)) out.push({ key: a.key, text: a.text, tone: 'warn' });
 
     // Over / approaching budget (worst offenders first, max 2): each
-    // category's, and each group's limit (lib/budget-set.ts), as the Budgets
-    // tab meters them, by name as the category or group is named.
+    // category's, and the limit of each group with a budget of its own
+    // (lib/budget-set.ts), as the Budgets tab meters them, by name as the
+    // category or group is named. A group without one only adds up its
+    // categories' budgets, which alert on their own: alerting on the sum too
+    // would say the same overspending twice, and could push out the alert for
+    // a budget the person set.
     if (txns && taxonomy) {
       const ix = indexTaxonomy(taxonomy);
       const spendByCat = spendingByCategory(txns, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
       const meters = budgetMeters(ix, placeBudgets(budgets, ix), new Map(Object.entries(spendByCat)));
       const candidates = [
-        ...meters.groups.filter((m) => m.limit !== null && (m.own !== null || m.categories.filter((c) => c.budget !== null).length > 1)).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
+        ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
         ...meters.groups.flatMap((m) => m.categories.filter((c) => c.budget !== null).map((c) => ({ key: `category-${c.category.id}`, name: c.category.name, budget: c.budget!, spent: c.spent }))),
       ];
       const flagged = candidates

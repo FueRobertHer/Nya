@@ -16,6 +16,7 @@ import {
   legacyKind,
   MAX_CATEGORIES,
   mergeCategories,
+  NAME_MAX,
   moveCategory,
   observedKeys,
   orderGroups,
@@ -162,7 +163,7 @@ describe('resolution', () => {
   });
 
   test('a row that says nothing is filed as uncategorized, and says so', () => {
-    expect(filed(row('nothing'))).toEqual({ category: t.categories.find((c) => c.id === t.uncategorized)!, said: false });
+    expect(filed(row('nothing'))).toEqual({ category: t.categories.find((c) => c.id === t.uncategorized)!, said: false, filed: true });
     expect(filed({ category: 'other', source: 'manual' })).toMatchObject({ said: true });
     expect(filed({ category: 'other', source: 'manual' }).category.id).toBe(t.uncategorized);
   });
@@ -227,9 +228,11 @@ describe('growing', () => {
     expect(full.taxonomy.categories).toHaveLength(MAX_CATEGORIES);
     const past = growTaxonomy(full.taxonomy, textKeys(['a budget name']), ids('b'), { limit: Infinity });
     expect(past.added).toBe(1);
-    // A key with no room is filed as uncategorized, saying it said something.
+    // A key with no room is uncategorized, but not filed: it said something,
+    // so the row keeps its words (lib/category-store.ts fileRows).
     const ix = indexTaxonomy(full.taxonomy);
-    expect(resolveCategory(ix, { category: 'no room', source: 'manual' })).toMatchObject({ said: true, category: { id: t.uncategorized } });
+    expect(resolveCategory(ix, { category: 'no room', source: 'manual' })).toMatchObject({ said: true, filed: false, category: { id: t.uncategorized } });
+    expect(resolveCategory(ix, { category: null })).toMatchObject({ said: false, filed: true, category: { id: t.uncategorized } });
   });
 });
 
@@ -299,6 +302,11 @@ describe('managing', () => {
     const renamed = renameCategory(taxonomy, category.id, 'Cafés');
     const again = addCategory(renamed, { name: 'Coffee shops', group: groupNamed(t, 'Food').id }, ids('d'));
     expect(choiceText(again.category)).toBe('coffee shops (2)');
+    // Never longer than a name, which is what the release before takes.
+    const long = 'L'.repeat(NAME_MAX);
+    const first = addCategory(t, { name: long, group: groupNamed(t, 'Food').id }, ids('e'));
+    const second = addCategory(renameCategory(first.taxonomy, first.category.id, 'Short'), { name: long, group: groupNamed(t, 'Food').id }, ids('f'));
+    expect(choiceText(second.category)).toBe(`${'l'.repeat(NAME_MAX - 4)} (2)`);
     expect(err(() => addCategory(t, { name: 'Groceries', group: t.groups[0].id }, ids()))).toMatchObject({ status: 409 });
     const archived = setArchived(t, byName(t, 'groceries').id, true);
     expect(err(() => addCategory(archived, { name: 'groceries', group: t.groups[0].id }, ids())).message).toContain('archived: unarchive it instead');
@@ -378,6 +386,19 @@ describe('managing', () => {
     // A merge that pointed at it goes with it.
     const withMerge = mergeCategories(t, byName(t, 'gifts').id, market.id);
     expect(deleteCategory(withMerge, market.id, { transactions: 0, budget: false }).merged).toEqual({});
+  });
+
+  test('a delete counted for keys the category no longer has (merged into since) is refused, never taking the merged one with it', () => {
+    const t = fresh();
+    const market = byName(t, 'farmers market');
+    // Its uses counted, for the keys it has now...
+    const usage = { transactions: 0, budget: false, keys: market.provider_keys };
+    // ...then another device merges gifts into it before the delete lands.
+    const merged = mergeCategories(t, byName(t, 'gifts').id, market.id);
+    expect(err(() => deleteCategory(merged, market.id, usage))).toMatchObject({ status: 409 });
+    expect(err(() => deleteCategory(merged, market.id, usage)).message).toContain('changed while it was being deleted');
+    // Unchanged since it was counted, it goes.
+    expect(deleteCategory(t, market.id, usage).categories.some((c) => c.id === market.id)).toBe(false);
   });
 
   test('groups: added last with a kind, renamed, reordered whole, deleted only when empty and unbudgeted', () => {

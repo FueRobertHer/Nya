@@ -3557,18 +3557,29 @@ button.budget-own:disabled,
   opacity: 1;
 }
 
+/* A group's heading opens the group: a whole row, as tall as a category's,
+   so it is as easy to tap on a phone. */
 button.cat-manage-group {
   display: flex;
   justify-content: space-between;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
+  min-height: 44px;
   background: none;
   border: none;
-  padding: 0;
-  margin-bottom: 6px;
+  border-radius: 0;
+  padding: 6px 2px;
+  margin: 0;
   color: var(--text);
   text-align: left;
   font-weight: 400;
+}
+
+.cat-manage-group-name {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
 }
 
 .cat-manage-kind {

@@ -270,7 +270,9 @@ export type ValueStore<T> = Declared & {
    *  value with `fn` (null deletes it), and writes only if it is still what
    *  was read, else waits a moment and runs `fn` again on what is there now, a
    *  few times before UpdateConflictError. `fn` may run more than once: it
-   *  should only compute. Returns what was written. */
+   *  should only compute. `fn` answering the value it was given, unchanged,
+   *  writes nothing, so "nothing to do" never makes a concurrent update try
+   *  again. Returns what was written, or what is there. */
   update(ctx: Ctx, fn: (current: T | null) => T | null | Promise<T | null>): Promise<T | null>;
   /** Deletes the value, readable or not. */
   remove(ctx: Ctx): Promise<void>;
@@ -727,6 +729,10 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       }
       const next = await fn(current);
       if (next === null && stored === null) return null; // nothing there, nothing to write
+      // The value it was given, unchanged: nothing to write. Rewriting it would
+      // change the stored text (a new IV), and every other update of it under
+      // way would have to run again.
+      if (next === current) return current;
       let written = ''; // deletes it
       if (next !== null) {
         written = await encode(codec, serialize(codec, next));

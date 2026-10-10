@@ -144,7 +144,7 @@ export default function CategoryManager({
       <>
         <p className="panel-note" style={{ marginTop: 0 }}>
           Transactions are filed into these. Renaming one renames it everywhere at once, budgets included; a group&apos;s kind decides how its
-          categories count: spending, income, or transfers, which no total counts.
+          categories count: spending, income, or transfers, which the month&apos;s totals and budgets leave out.
         </p>
         <div className="button-pair">
           <button className="secondary" onClick={() => go({ at: 'add-category', group: null })}>
@@ -157,9 +157,7 @@ export default function CategoryManager({
         {groups.map((g) => (
           <div className="panel-section" key={g.id}>
             <button className="cat-manage-group" onClick={() => go({ at: 'group', id: g.id })} aria-label={`${g.name}, ${KIND_LABEL[g.kind]}: edit the group`}>
-              <span className="section-label" style={{ margin: 0 }}>
-                {g.name}
-              </span>
+              <span className="cat-manage-group-name">{g.name}</span>
               <span className="cat-manage-kind">{KIND_LABEL[g.kind]}</span>
             </button>
             <ul className="cat-manage-list">
@@ -226,7 +224,7 @@ export default function CategoryManager({
           <select value={kind} onChange={(e) => setKind(e.target.value as CategoryKind)} disabled={busy}>
             <option value="expense">Spending</option>
             <option value="income">Income</option>
-            <option value="transfer">Transfers (not counted)</option>
+            <option value="transfer">Transfers (left out of totals)</option>
           </select>
         </label>
         <p className="panel-note">A group keeps its kind; to count a category another way, move it into a group of that kind.</p>
@@ -247,7 +245,9 @@ export default function CategoryManager({
       ...taxonomy,
       categories: taxonomy.categories.filter((x) => x.id !== c.id && !x.archived && groupOf(ix, x).kind === kindNow),
     };
-    const intoName = ix.byId.get(into)?.name;
+    const intoCategory = ix.byId.get(into);
+    const intoName = intoCategory?.name;
+    const intoGroup = intoCategory ? groupOf(ix, intoCategory) : null;
     return (
       <div className="sheet-form">
         <label className="field">
@@ -293,7 +293,11 @@ export default function CategoryManager({
               <>
                 <p className="panel-note">
                   Every transaction filed under {displayName(c.name)} will be filed under {displayName(intoName)}, its budget is added to{' '}
-                  {displayName(intoName)}&apos;s, and {displayName(c.name)} goes. This can&apos;t be undone.
+                  {displayName(intoName)}&apos;s, and {displayName(c.name)} goes.
+                  {intoGroup && intoGroup.id !== c.group
+                    ? ` Its spending moves from ${groupOf(ix, c).name} to ${intoGroup.name}, which can change both groups’ limits.`
+                    : ''}{' '}
+                  This can&apos;t be undone.
                 </p>
                 <div className="button-pair">
                   <button className="secondary" onClick={() => setConfirm(null)} disabled={busy}>

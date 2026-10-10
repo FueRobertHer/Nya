@@ -232,19 +232,28 @@ async function exportBudgets(ctx: Ctx) {
   };
 }
 
+/** The budgets, read once for each download (exportBudgets): both parts of
+ *  the file come from one read, so they can't disagree. */
+const budgetsRead = new WeakMap<ExportSource, ReturnType<typeof exportBudgets>>();
+function budgetsOnce(src: ExportSource): ReturnType<typeof exportBudgets> {
+  let read = budgetsRead.get(src);
+  if (!read) budgetsRead.set(src, (read = exportBudgets(src.ctx)));
+  return read;
+}
+
 export const SECTIONS: readonly ExportSection[] = [
   section({
     key: 'budgets',
     what: 'budgets',
     // Monthly, per category, by its name now (exportBudgets).
-    read: async ({ ctx }) => (await exportBudgets(ctx)).categories,
+    read: async (src) => (await budgetsOnce(src)).categories,
     covers: [budgetSetStore.name],
   }),
   section({
     key: 'group_budgets',
     what: 'budgets',
     // Monthly, per category group: a cap on everything in it.
-    read: async ({ ctx }) => (await exportBudgets(ctx)).groups,
+    read: async (src) => (await budgetsOnce(src)).groups,
   }),
   section({
     key: 'goals',

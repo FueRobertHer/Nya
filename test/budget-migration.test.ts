@@ -28,7 +28,49 @@ mock.module('@/lib/plaid', () => ({
   },
 }));
 
-const fake = new FakeRedis({ deserialize: true });
+type Held = (command: 'set' | 'eval', key: string, script: string) => boolean;
+
+/** The test double, able to hold one command back until it is let go, so
+ *  two requests interleave exactly as two devices' can. */
+class HoldingRedis extends FakeRedis {
+  private holds: { match: Held; reached: () => void; until: Promise<void> }[] = [];
+
+  /** Holds the next command `match` picks: `reached` resolves once it is
+   *  held, and `release` lets it go. */
+  hold(match: Held): { reached: Promise<void>; release: () => void } {
+    let release!: () => void;
+    let reached!: () => void;
+    const until = new Promise<void>((r) => (release = r));
+    const arrived = new Promise<void>((r) => (reached = r));
+    this.holds.push({ match, reached, until });
+    return { reached: arrived, release };
+  }
+
+  private async held(command: 'set' | 'eval', key: string, script = ''): Promise<void> {
+    const i = this.holds.findIndex((h) => h.match(command, key, script));
+    if (i < 0) return;
+    const [h] = this.holds.splice(i, 1);
+    h.reached();
+    await h.until;
+  }
+
+  override async set(key: string, value: string, opts?: Parameters<FakeRedis['set']>[2]) {
+    await this.held('set', key);
+    return super.set(key, value, opts);
+  }
+
+  override async eval(script: string, keys: string[], args: string[]) {
+    await this.held('eval', keys[0] ?? '', script);
+    return super.eval(script, keys, args);
+  }
+
+  override reset(): void {
+    this.holds = [];
+    super.reset();
+  }
+}
+
+const fake = new HoldingRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
@@ -166,6 +208,10 @@ describe('what a rollback sees', () => {
     expect(res.status).toBe(200);
     expect(res.body.transaction).toMatchObject({ category: 'travel', category_id: travel.id, category_name: 'Trips', category_kind: 'expense' });
     expect((await manualTxnStore.get(ctx, 'manual_wallet-1'))!.rows[0].category).toBe('travel');
+    // The form sends the words beside the id, for the release before: the id wins here.
+    const both = await post(manualTxns, { account_id: 'manual_wallet-1', date: '2026-10-01', amount: 5, currency: 'USD', name: 'Bus', category_id: travel.id, category: 'not these words' });
+    expect(both.status).toBe(200);
+    expect(both.body.transaction).toMatchObject({ category: 'travel', category_id: travel.id });
   });
 });
 
@@ -183,6 +229,25 @@ describe('rolled forward again', () => {
     // Taken in once: read again, nothing changes.
     const again = await get();
     expect(again.body).toEqual(body);
+  });
+
+  test('a read taking in a rollback’s change, overtaken by a save, reads both again rather than taking the change over the save', async () => {
+    await setBudgets(ctx, LEGACY);
+    const t: Taxonomy = (await get()).body.categories;
+    // Rolled back, that release changed a budget.
+    await setBudgets(ctx, { groceries: 175 });
+    // A read finds the change, and is held just before taking it in...
+    const taking = fake.hold((command, key, script) => command === 'eval' && key === SET_KEY && script.startsWith('-- nya:repo-read-value'));
+    const reading = get();
+    await taking.reached;
+    // ...while another device's page saves (taking the change in itself first).
+    const travel = named(t, 'travel');
+    expect((await put({ budget_set: { categories: { [travel.id]: { amount: 300 } }, groups: {} } })).status).toBe(200);
+    taking.release();
+    const read = await reading;
+    expect(byName(read.body.categories, read.body.budget_set)).toEqual({ travel: 300 });
+    expect(byName(t, (await budgetSetStore.get(ctx))!)).toEqual({ travel: 300 });
+    expect(await getBudgets(ctx)).toEqual({ travel: 300 });
   });
 
   test('a save that stopped between its writes is finished, never taken for a rollback’s change', async () => {
@@ -206,6 +271,60 @@ describe('rolled forward again', () => {
     expect(res.status).toBe(200);
     expect(byName(res.body.categories, res.body.budget_set)).toEqual({ 'food and drink': 300, Gym: 45 });
     expect(res.body.budget_set.groups).toEqual({ [housing.id]: { amount: 1800 } });
+  });
+});
+
+describe('overlapping saves (two devices)', () => {
+  const copyWrite: Held = (command, key) => command === 'set' && key === LEGACY_KEY;
+  /** What is stored, to see a read write nothing. */
+  const stored = () => ({ set: fake.strings.get(SET_KEY), legacy: fake.strings.get(LEGACY_KEY) });
+
+  test('a slow save’s copy landing after a later save leaves the later save whole, and its copy for the release before', async () => {
+    const t: Taxonomy = (await get()).body.categories;
+    const food = named(t, 'food and drink');
+    const travel = named(t, 'travel');
+    const housing = group(t, 'Housing');
+    // Device 1 writes its set, then its copy write is held...
+    const slow = fake.hold(copyWrite);
+    const one = put({ budget_set: { categories: { [food.id]: { amount: 100 } }, groups: {} } });
+    await slow.reached;
+    // ...while device 2 saves whole, its set written last.
+    expect((await put({ budget_set: { categories: { [travel.id]: { amount: 300 } }, groups: { [housing.id]: { amount: 2000 } } } })).status).toBe(200);
+    slow.release();
+    expect((await one).status).toBe(200);
+    const set = (await budgetSetStore.get(ctx))!;
+    expect(byName(t, set)).toEqual({ travel: 300 });
+    expect(set.groups).toEqual({ [housing.id]: { amount: 2000 } });
+    expect(set.mirror_before).toBeNull();
+    // The copy is device 2's, so nothing reads as a rollback's change.
+    expect(await getBudgets(ctx)).toEqual({ travel: 300 });
+    const before = stored();
+    const { body } = await get();
+    expect(byName(body.categories, body.budget_set)).toEqual({ travel: 300 });
+    expect(body.budget_set.groups).toEqual({ [housing.id]: { amount: 2000 } });
+    expect(stored()).toEqual(before);
+  });
+
+  test('a read finishing a stopped save, overtaken by a save, leaves that save’s copy, never its own stale one', async () => {
+    await setBudgets(ctx, LEGACY);
+    const t: Taxonomy = (await get()).body.categories;
+    const food = named(t, 'food and drink');
+    const travel = named(t, 'travel');
+    // A save that stopped between its writes.
+    await budgetSetStore.update(ctx, (cur) => ({ ...cur!, categories: { [food.id]: { amount: 999 } }, mirror: { 'food and drink': 999 }, mirror_before: cur!.mirror }));
+    // A read finishes it, its copy write held while another device saves.
+    const repair = fake.hold(copyWrite);
+    const reading = get();
+    await repair.reached;
+    expect((await put({ budget_set: { categories: { [travel.id]: { amount: 300 } }, groups: {} } })).status).toBe(200);
+    repair.release();
+    expect((await reading).status).toBe(200);
+    expect(byName(t, (await budgetSetStore.get(ctx))!)).toEqual({ travel: 300 });
+    expect(await getBudgets(ctx)).toEqual({ travel: 300 });
+    const before = stored();
+    const { body } = await get();
+    expect(byName(body.categories, body.budget_set)).toEqual({ travel: 300 });
+    expect(stored()).toEqual(before);
   });
 });
 
@@ -250,7 +369,8 @@ describe('the budgets route', () => {
       { budget_set: { categories: { [food]: { amount: 5, rollover: true } }, groups: {} } },
       { budget_set: { categories: { 'bad id!': { amount: 5 } }, groups: {} } },
       { budget_set: { categories: {} } },
-      { budget_set: { categories: Object.fromEntries(Array.from({ length: 101 }, (_, i) => [`c${i}`, { amount: 1 }])), groups: {} } },
+      // 50 category budgets at most, as the release before allowed.
+      { budget_set: { categories: Object.fromEntries(Array.from({ length: 51 }, (_, i) => [`c${i}`, { amount: 1 }])), groups: {} } },
       { budgets: { food: 0 } },
       [],
     ]) {
@@ -277,6 +397,19 @@ describe('the budgets route', () => {
     expect((await get()).status).toBe(409);
     expect((await put({ budget_set: { categories: {}, groups: {} } })).status).toBe(409);
     expect(fake.strings.get(SET_KEY)).toBe('damaged-set-bytes-not-ciphertext');
+  });
+
+  test('a set a later release saved with a field this one doesn’t know is unrecognised: 409, and never saved over, so nothing of it is dropped', async () => {
+    const t: Taxonomy = (await get()).body.categories;
+    const food = named(t, 'food and drink').id;
+    const later = { version: 1, categories: { [food]: { amount: 300, rollover: 40 } }, groups: {}, mirror: { 'food and drink': 300 }, mirror_before: null };
+    await fake.set(SET_KEY, await encrypt(JSON.stringify(later)));
+    const stored = fake.strings.get(SET_KEY);
+    const read = await get();
+    expect(read.status).toBe(409);
+    expect(read.body.unreadable).toBe(true);
+    expect((await put({ budget_set: { categories: { [food]: { amount: 350 } }, groups: {} } })).status).toBe(409);
+    expect(fake.strings.get(SET_KEY)).toBe(stored);
   });
 
   test('a save too large for one request is refused whole (413), with nothing written', async () => {

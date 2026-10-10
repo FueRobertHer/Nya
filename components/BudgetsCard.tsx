@@ -154,15 +154,19 @@ export default function BudgetsCard({
       : `Every category in ${m.group.name} has a budget, and they add up to ${money(r.categories)}, less than the ${money(r.group)} set for the group, so ${money(r.categories)} is the limit.`;
   };
 
-  // What can still be budgeted: groups without one of their own, and
-  // categories without one (not archived), each with this month's spending.
+  // What can still be budgeted: spending groups without one of their own,
+  // and their categories without one (not archived), each with this month's
+  // spending. Income and transfers are never spending, so a budget on them
+  // would never move (lib/spending.ts): they aren't offered.
   const choices = useMemo(
     () =>
-      sortedGroups(taxonomy).map((g) => ({
-        group: g,
-        free: !budgets.groups[g.id],
-        categories: categoriesIn(taxonomy, g.id).filter((c) => !c.archived && !budgets.categories[c.id]),
-      })),
+      sortedGroups(taxonomy)
+        .filter((g) => g.kind === 'expense')
+        .map((g) => ({
+          group: g,
+          free: !budgets.groups[g.id],
+          categories: categoriesIn(taxonomy, g.id).filter((c) => !c.archived && !budgets.categories[c.id]),
+        })),
     [taxonomy, budgets]
   );
   const hint = (n: number | undefined) => (n ? ` (${money(n)} this month)` : '');
@@ -200,6 +204,12 @@ export default function BudgetsCard({
             </button>
             {expanded && (
               <div className="budget-children">
+                {m.group.kind !== 'expense' && (
+                  <p className="panel-note budget-note">
+                    The categories in {m.group.name} count as {m.group.kind === 'income' ? 'income' : 'transfers'}, not spending, so nothing counts
+                    against a budget here. Move a category into a spending group to budget it.
+                  </p>
+                )}
                 {m.reconcile && <p className="panel-note budget-note">{reconcileText(m)}</p>}
                 {editing === keyOf(groupTarget) ? (
                   editor(groupTarget, `${m.group.name} as a whole`)

@@ -26,6 +26,8 @@ const { readTaxonomy, ensureTaxonomy } = await import('@/lib/category-store');
 const { budgetSetStore } = await import('@/lib/budget-store');
 const route = await import('@/app/api/categories/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
+const recategorize = await import('@/app/api/recategorize/route');
+const { getOverrides } = await import('@/lib/overrides');
 type Taxonomy = import('@/lib/categories').Taxonomy;
 
 const ctx = TEST_CTX;
@@ -106,6 +108,16 @@ describe('a category', () => {
     expect(merged.body.categories.merged).toEqual({ [groceries.id]: food.id });
     expect((await budgetSetStore.get(ctx))!.categories).toEqual({ [food.id]: { amount: 550 } });
     expect(await getBudgets(ctx)).toEqual({ 'food and drink': 550 });
+    // Its budget moving can fail (budgets that can't be read): the merge, saved,
+    // is still answered as made, and the budgets are left exactly as they were.
+    const coffee = (await act({ action: 'add-category', name: 'Coffee', group: groupNamed(t, 'Food').id })).body.categories;
+    await fake.set(ctxKey('budget-set'), 'damaged-bytes-that-are-not-ciphertext');
+    const again = await act({ action: 'merge', id: named(coffee, 'Coffee')!.id, into: food.id });
+    expect(again.status).toBe(200);
+    expect(named(again.body.categories, 'Coffee')).toBeUndefined();
+    expect(await readTaxonomy(ctx)).toEqual(again.body.categories);
+    expect(fake.strings.get(ctxKey('budget-set'))).toBe('damaged-bytes-that-are-not-ciphertext');
+    await fake.del(ctxKey('budget-set'));
     // Across kinds: refused, nothing changed.
     const before = fake.strings.get(KEY);
     const across = await act({ action: 'merge', id: named(t, 'transfer out')!.id, into: food.id });
@@ -181,6 +193,15 @@ describe('the route', () => {
     expect(read.body.unreadable).toBe(true);
     expect((await act({ action: 'add-group', name: 'Kids', kind: 'expense' })).status).toBe(409);
     expect(fake.strings.get(KEY)).toBe('damaged-bytes-that-are-not-ciphertext');
+  });
+
+  test('choosing a category by id while they can’t be read answers 409, flagged, as every route on the seam does, and stores nothing', async () => {
+    const t: Taxonomy = (await get()).body.categories;
+    await fake.set(KEY, 'damaged-bytes-that-are-not-ciphertext');
+    const res = await recategorize.POST(new Request('http://x', { method: 'POST', body: JSON.stringify({ transaction_id: 'txn_1', category_id: named(t, 'travel')!.id }) }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).unreadable).toBe(true);
+    expect(await getOverrides(ctx)).toEqual({});
   });
 
   test('a container being restored answers 503', async () => {

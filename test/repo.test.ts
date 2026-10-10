@@ -315,6 +315,14 @@ function contract(b: Backend) {
       expect(await sentBy(() => list.update(A, () => null))).toEqual(['eval']);
     });
 
+    test('fn answering the value it was given, unchanged, writes nothing: only the read is sent', async () => {
+      await list.set(A, [NOTE]);
+      const before = await b.raw.get(listKey());
+      expect(await sentBy(() => list.update(A, (cur) => cur))).toEqual(['eval']);
+      expect(await b.raw.get(listKey())).toBe(before);
+      expect(await list.update(A, (cur) => cur)).toEqual([NOTE]);
+    });
+
     test('a value that would not read back is refused, and nothing is written', async () => {
       await list.set(A, [NOTE]);
       await expect(list.update(A, () => [{ text: 'x', amount: NaN }])).rejects.toThrow('Refusing to save test notes');

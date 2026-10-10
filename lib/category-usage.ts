@@ -42,5 +42,6 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   for (const rows of carried.values()) for (const text of Object.values(rows)) if (uses(text)) carriedRows++;
   for (const book of books.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
   const placed = placeBudgets(budgets.budgets, indexTaxonomy(budgets.taxonomy));
-  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id) };
+  // The keys counted for: the delete refuses if they change before it lands.
+  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), keys: c.provider_keys };
 }

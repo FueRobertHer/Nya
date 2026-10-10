@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import { setOverride } from '@/lib/overrides';
 import { clearTransactionsCache } from '@/lib/cache';
 import { editManualTxn, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
@@ -64,9 +64,9 @@ export async function POST(req: Request) {
 
     return NextResponse.json({ success: true });
   } catch (err) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(err);
-    return NextResponse.json({ error: 'Failed to recategorize' }, { status: 500 });
+    // The seam's answers (lib/store-failure.ts): categories or overrides that
+    // can't be read are 409 and flagged, a change that kept losing its
+    // compare-and-set its own 409, no usable container 503.
+    return storeFailure(err, 'Failed to recategorize');
   }
 }

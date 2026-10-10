@@ -161,7 +161,7 @@ A transaction's category is one of the person's own (#38): a set of categories, 
 2. **Rules** (#36) go here: below a choice made on one transaction, above what the bank says.
 3. **The provider's**: Plaid's detailed category, then its primary one, each a `plaid` key. Seeded, only primaries are mapped, so a detailed one falls through to its primary until a category is given it.
 4. **The words the row carries**, for a bank row stored before Plaid's values were kept.
-5. **Uncategorized**: the category the set names (`other` when seeded), for a row that says nothing.
+5. **Uncategorized**: the category the set names (`other` when seeded), for a row that says nothing. A row that says something no category has a key for (only past the 500 categories a set holds) is left unfiled instead: it shows its own words and counts by them, as before categories had kinds.
 
 A key is on exactly one category, so the answer never depends on the order of the list. The name always comes from the category, and the result says whether the row said anything at all (the API's `category` is `null` when it didn't, as before). The kind of the category's group (`expense`, `income`, `transfer`) is what decides a transfer in `lib/spending.ts`; the finer rules (recurring detection's everyday categories, the Plan's loan payments, cash and refunds) read the words the row carries (`categoryKey`), never a name.
 

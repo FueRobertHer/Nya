@@ -312,7 +312,7 @@ The name shown is always your category's, never one stored on the transaction.
 
 ### What a category counts as
 
-A group is **spending**, **income** or **transfers**, and its categories count as that. Transfers count in no total. Seeded, Transfers holds transfer in, transfer out and loan payments, exactly what the totals left out before. Moving a category into a group of another kind changes how its transactions count, in every total and budget, and the screen says so before you move it: moving loan payments into a spending group counts them as spending. A group's kind is chosen when it is added and doesn't change.
+A group is **spending**, **income** or **transfers**, and its categories count as that. Transfers are left out of the month's totals and the budgets. Seeded, Transfers holds transfer in, transfer out and loan payments, exactly what the totals left out before. Moving a category into a group of another kind changes how its transactions count, in every total and budget, and the screen says so before you move it: moving loan payments into a spending group counts them as spending. A group's kind is chosen when it is added and doesn't change.
 
 A few rules read the words the bank or you gave a transaction rather than its category's name, so renaming or regrouping never moves them: recurring detection never takes a restaurant, a food shop, a way of getting about or a general shop for a yearly bill, and counts a loan payment as a bill whatever group holds it; the Plan finds loan payments, cash and refunds the same way, and counts income by its category's kind.
 
@@ -323,7 +323,7 @@ Under **Manage** on the Accounts tab, the **Categories** card counts your catego
 - **Add** a category to a group, with an optional icon (an emoji). A name is up to 60 characters, and no two categories, or two groups, share one, whatever their capitals.
 - **Rename** a category, give it an **icon**, or **move** it to another group.
 - **Archive** one you no longer use: it leaves the lists you choose a category from, and stays on every transaction filed under it, which count as before. **Unarchive** brings it back.
-- **Merge** one into another of the same kind: every transaction filed under it is then filed under the other, its budget is added to the other's, and it goes. Past months' totals stay as they were, since they are the same transactions. Merging into another kind is refused, since it would change your totals: move it first. A merge can't be undone.
+- **Merge** one into another of the same kind: every transaction filed under it is then filed under the other, its budget is added to the other's, and it goes. Past months' totals stay as they were, since they are the same transactions, but a group's budget limit can change: the category's spending goes where it went, into another group too. Merging into another kind is refused, since it would change your totals: move it first. A merge can't be undone.
 - **Delete** a category only when nothing uses it: no transaction filed under it (one you chose it for, entered or imported with it, of any date, or a bank's from the last year), no budget, and none of Plaid's categories. Otherwise the screen says what uses it, and offers a merge or archiving instead.
 - The uncategorized category can be renamed, and moved to another spending group, but not archived, merged away or deleted.
 
@@ -337,12 +337,12 @@ The Activity tab's **Top spending** is by group: each group's total, which a tap
 
 ### Budgets on categories and groups
 
-A budget can be on a category or on a group as a whole (**Add Budget** offers both). A group's own budget is a limit on everything in it, its categories without a budget included. A group without one shows its budgeted categories added up, budgets and spending alike. When a group has both, its limit is the smaller of its own amount and its categories' budgets added up, and a line under its meter says which applies:
+A budget can be on a category or on a group as a whole (**Add Budget** offers both, for spending: income and transfers never count against a budget, so they aren't offered, and a budget already on one says so). A group's own budget is a limit on everything in it, its categories without a budget included. A group without one shows its budgeted categories added up, budgets and spending alike. When a group has both, its limit is the smaller of its own amount and its categories' budgets added up, and a line under its meter says which applies:
 
 - **Capped by the group's budget**: its categories' budgets add up to more than the group's.
-- **Limited to its categories' budgets**: every category in it has a budget (an archived one without a budget aside), and they add up to less. While a category in it has none, nothing limits that category's spending but the group's amount, which stays the limit.
+- **Limited to its categories' budgets**: every category in it has a budget, and they add up to less. An archived category without a budget is left aside while it has no spending that month; archived, it still files what its bank or you give it, and with spending and no budget of its own, nothing limits it but the group's amount, which then stays the limit, as for any category without a budget.
 
-Each group opens to its categories' meters and its own amount. The month's total counts each group once, at its limit. Home warns about a group nearing or over its limit as it does about a category, once the group has an amount of its own or more than one category with a budget.
+Each group opens to its categories' meters and its own amount. The month's total counts each group once, at its limit. Home warns about a group nearing or over its limit as it does about a category, when the group has an amount of its own (without one, its categories' budgets warn on their own).
 
 Budgets are kept by category id, so a renamed category keeps its budget, and a merged one's is added to where it went. A budget left on a category or group since deleted (on another device, say) is shown, and can be removed. The release before this one still reads the category budgets, by name ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)).
 

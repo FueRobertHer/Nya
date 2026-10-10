@@ -152,13 +152,22 @@ export async function changeTaxonomy(ctx: Ctx, op: (t: Taxonomy) => Taxonomy): P
  *  the kind it counts as (lib/spending.ts). The facts it was filed by go. */
 export type Filing = { category_id?: string; category_name?: string | null; category_kind?: CategoryKind };
 
-/** Files rows in place (lib/categories.ts resolveCategory). */
+/** Files rows in place (lib/categories.ts resolveCategory). A row whose
+ *  words no category has room for (past MAX_CATEGORIES) is left unfiled: it
+ *  shows its words and counts by them, as before categories had kinds, and
+ *  totals by category put it under the uncategorized one (filedId). */
 export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filing>): void {
   for (const r of rows) {
-    const { category, said } = resolveCategory(ix, r);
-    r.category_id = category.id;
-    r.category_name = said ? category.name : null;
-    r.category_kind = groupOf(ix, category).kind;
+    const { category, said, filed } = resolveCategory(ix, r);
+    if (filed) {
+      r.category_id = category.id;
+      r.category_name = said ? category.name : null;
+      r.category_kind = groupOf(ix, category).kind;
+    } else {
+      delete r.category_id;
+      delete r.category_name;
+      delete r.category_kind;
+    }
     delete r.category_set;
     delete r.pfc_primary;
     delete r.pfc_detailed;

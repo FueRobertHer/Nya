@@ -8,7 +8,8 @@
 // loaded it is null: those show what the rows say, and offer no list.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { isTaxonomy, type Taxonomy } from '@/lib/categories';
+import { indexTaxonomy, isTaxonomy, type Taxonomy } from '@/lib/categories';
+import { placeBudgets, type Budgets } from '@/lib/budget-set';
 
 export type CategoriesState = {
   taxonomy: Taxonomy | null;
@@ -55,4 +56,22 @@ export function useCategories(): CategoriesState {
   }, [reload]);
 
   return { taxonomy, error, accept, reload };
+}
+
+/**
+ * Reads the categories again when a budget loaded is on a category or group
+ * the set here doesn't have: the budgets route can make categories (names
+ * the release before saved, taken in after a rollback, lib/budget-store.ts)
+ * after this page loaded its set, and a budget should never show as on one
+ * since deleted only because the page's set is older. Once for each budgets
+ * loaded, so one on a category really deleted asks once, not forever.
+ */
+export function useCategoriesForBudgets(categories: CategoriesState, budgets: Budgets, loaded: boolean): void {
+  const { taxonomy, reload } = categories;
+  const checked = useRef<Budgets | null>(null);
+  useEffect(() => {
+    if (!loaded || !taxonomy || checked.current === budgets) return;
+    checked.current = budgets;
+    if (placeBudgets(budgets, indexTaxonomy(taxonomy)).orphans.length > 0) void reload();
+  }, [loaded, taxonomy, budgets, reload]);
 }

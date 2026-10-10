@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
+import { loggable } from '@/lib/log-safe';
 import {
   addCategory,
   addGroup,
@@ -128,15 +129,22 @@ export async function POST(req: Request) {
         const into = id(body, 'into');
         taxonomy = await changeTaxonomy(ctx, (t) => mergeCategories(t, target, into));
         // Its budget moves to the one it went into. Counted together already
-        // (lib/budget-set.ts placeBudgets), so a failure here loses nothing:
-        // the next save moves it.
-        await moveMergedBudgets(ctx, taxonomy);
+        // (lib/budget-set.ts placeBudgets follows the merge), so a failure here
+        // loses nothing, and the merge, saved, is answered as made: the next
+        // save of budgets moves it.
+        try {
+          await moveMergedBudgets(ctx, taxonomy);
+        } catch (err) {
+          console.error('Merged categories; their budgets move on the next save:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
+        }
         break;
       }
       case 'delete-category': {
         const target = id(body);
-        // What uses it, read strictly before anything is changed. A use added
-        // between this read and the delete (another device choosing it) is
+        // What uses it, read strictly before anything is changed, for the
+        // keys it has now: a merge into it before the delete lands changes
+        // them, and the delete is refused (lib/categories.ts deleteCategory).
+        // A use added in between otherwise (another device choosing it) is
         // words that file nowhere afterwards: the next load gives them a
         // category again.
         const usage = await categoryUsage(ctx, (await readTaxonomy(ctx)) ?? (await ensureTaxonomy(ctx)), target);

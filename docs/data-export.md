@@ -267,7 +267,7 @@ Your categories and their groups ([features.md](features.md#categories-and-group
 | Field | Meaning |
 | --- | --- |
 | `version` | The shape's version: 1. |
-| `groups[]` | `id` (random), `name`, `kind` (how its categories count: `expense`, `income` or `transfer`, which no total counts) and `order` (lowest first). |
+| `groups[]` | `id` (random), `name`, `kind` (how its categories count: `expense`, `income` or `transfer`, which the month's totals and budgets leave out) and `order` (lowest first). |
 | `categories[]` | `id` (random), `name`, `group` (its group's `id`), `icon` (absent for none), `archived` (absent unless `true`: hidden from the lists to choose from), and `provider_keys[]`, what files a transaction under it: each a `provider` and a `key`. `plaid` keys are Plaid's personal finance categories (`FOOD_AND_DRINK`, or a detailed one); `text` keys are a category as words, lower case, the way a category is stored on what was saved before categories had ids and still is: one you chose for a transaction, one carried across a re-link, one on a transaction you entered or imported, and the name a budget was saved under (`food and drink`). A key is on one category only. |
 | `uncategorized` | The `id` of the category a transaction that says nothing about its category is filed under. |
 | `merged` | Each category merged into another, by `id`, and the `id` it went into, so a budget saved on it meanwhile still finds it. Absent until a merge. |

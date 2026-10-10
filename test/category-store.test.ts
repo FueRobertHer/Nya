@@ -17,7 +17,8 @@ const { setOverride } = await import('@/lib/overrides');
 const { setBudgets } = await import('@/lib/budgets');
 const { UnreadableValueError } = await import('@/lib/repo');
 const store = await import('@/lib/category-store');
-const { indexTaxonomy, isProvisionalId, renameCategory, categoryById, mergeCategories, CategoryError, textKeys } = await import('@/lib/categories');
+const { indexTaxonomy, isProvisionalId, renameCategory, categoryById, mergeCategories, CategoryError, textKeys, MAX_CATEGORIES } = await import('@/lib/categories');
+const { isTransfer } = await import('@/lib/spending');
 type Taxonomy = import('@/lib/categories').Taxonomy;
 
 const ctx = TEST_CTX;
@@ -163,6 +164,17 @@ describe('filing transactions', () => {
     expect(notes).toEqual(["Your categories couldn't be read, so each transaction shows the category it came with until they can be."]);
     expect(r.map((x) => x.category_name)).toEqual(['food and drink', 'pet supplies', null]);
     expect(fake.strings.get(KEY)).toBe('damaged-bytes-that-are-not-ciphertext');
+  });
+
+  test('past the limit, a row whose words have no room is left as it came: its words shown, and counted by them', async () => {
+    await store.ensureTaxonomy(ctx, { observed: textKeys(Array.from({ length: MAX_CATEGORIES }, (_, i) => `category ${i}`)) });
+    expect((await store.readTaxonomy(ctx))!.categories).toHaveLength(MAX_CATEGORIES);
+    const r = [{ category: 'transfer to savings', source: 'manual', transaction_code: null } as Record<string, unknown>];
+    await store.fileTransactions(ctx, r as never, { grow: true });
+    // Not filed under uncategorized as spending: a transfer, as it was before categories had kinds.
+    expect(r[0]).toEqual({ category: 'transfer to savings', source: 'manual', transaction_code: null });
+    expect(isTransfer(r[0] as never)).toBe(true);
+    expect(named((await store.readTaxonomy(ctx))!, 'transfer to savings')).toBeUndefined();
   });
 
   test('a storage failure is an error, never rows filed by nothing', async () => {

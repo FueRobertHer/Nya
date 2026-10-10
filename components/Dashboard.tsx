@@ -36,7 +36,7 @@ import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab from './BudgetsTab';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
-import { useCategories } from './categories-state';
+import { useCategories, useCategoriesForBudgets } from './categories-state';
 import CategoriesCard from './CategoriesCard';
 import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
@@ -528,6 +528,7 @@ export default function Dashboard({
     []
   );
   const budgets = budgetsState.value;
+  useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the

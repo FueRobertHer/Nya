@@ -9,14 +9,20 @@
 // BY ID. A budget names its category or group by id, so renaming either
 // changes nothing here, and merging a category moves its budget onto the one
 // it went into (lib/budget-store.ts), where the two add up: their spending is
-// counted together from then on, so the limits are too, and the month's total
-// budget doesn't move.
+// counted together from then on, so the limits are too. A group's limit can
+// still change, and the month's total with it: merged into another group,
+// the budget and the spending go there, and a group with an amount of its own
+// caps what it holds; within one, the reconcile rule below can bind
+// differently once the category without a budget is gone.
 //
 // THE RECONCILE RULE. A group can have a budget of its own, a cap on
 // everything in it, beside budgets on its categories. The group's meter then
 // shows min(the group's amount, its categories' amounts added up), with one
 // refinement: a category with no budget has no limit, so the categories bind
-// only when every one of them (archived ones aside) has a budget. In words:
+// only when every one of them has a budget. An archived category aside, but
+// only while it has no spending in the month: archived, it still files the
+// transactions its keys bring, and spending with no budget of its own has
+// none but the group's. In words:
 //   - its categories add up to more than the group's amount: the group's
 //     amount is the limit, and the meter says the categories ask for more;
 //   - every category has a budget and they add up to less: their sum is the
@@ -59,9 +65,11 @@ export type Budgets = Pick<BudgetSet, 'categories' | 'groups'>;
 
 export const EMPTY_BUDGETS: Budgets = { categories: {}, groups: {} };
 
-/** How many budgets of each kind can be set: twice today's 50 categories,
- *  and a group's for each group there can be. */
-export const MAX_CATEGORY_BUDGETS = 100;
+/** How many budgets of each kind can be set: 50 on categories, as the
+ *  release before this one allowed, so its page, rolled back to, can still
+ *  save the copy it reads (lib/budget-store.ts MIRROR); and a group's for each
+ *  group there can be. */
+export const MAX_CATEGORY_BUDGETS = 50;
 export const MAX_GROUP_BUDGETS = 50;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -69,10 +77,11 @@ const ID = /^[A-Za-z0-9_-]{1,64}$/;
 /** An amount a budget can hold: positive and finite. */
 export const isBudgetAmount = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n) && n > 0;
 
+/** Each budget: `{ amount }` and nothing else (see isBudgetSet). */
 function isAmounts(v: unknown): v is Record<string, BudgetAmount> {
   if (!isRecord(v)) return false;
   const entries = Object.entries(v);
-  return entries.length <= 1000 && entries.every(([id, a]) => ID.test(id) && isRecord(a) && isBudgetAmount(a.amount));
+  return entries.length <= 1000 && entries.every(([id, a]) => ID.test(id) && isRecord(a) && Object.keys(a).length === 1 && isBudgetAmount(a.amount));
 }
 
 /** A name-keyed copy, as lib/budgets.ts stores budgets. */
@@ -80,11 +89,21 @@ export function isLegacyBudgets(v: unknown): v is Record<string, number> {
   return isRecord(v) && Object.values(v).every(isBudgetAmount);
 }
 
-/** The stored shape. Fields a later release adds ride along, as in
- *  lib/categories.ts; a change of meaning bumps the version. */
+const SET_FIELDS = new Set(['version', 'categories', 'groups', 'mirror', 'mirror_before']);
+
+/**
+ * The stored shape, closed: a field this release doesn't know, on the set or
+ * on a budget (one a later release added), makes the set unrecognised, so
+ * this release never saves over it and drops what that release kept there
+ * (lib/repo.ts refuses to: the budgets route answers 409). Every save here
+ * rebuilds the set from the budgets a page sends, which is why. A later
+ * release that needs more per budget, and wants a rollback to this one to
+ * keep budgets usable, keeps it beside this set, keyed by the same ids.
+ */
 export function isBudgetSet(v: unknown): v is BudgetSet {
   return (
     isRecord(v) &&
+    Object.keys(v).every((k) => SET_FIELDS.has(k)) &&
     v.version === BUDGET_SET_VERSION &&
     isAmounts(v.categories) &&
     isAmounts(v.groups) &&
@@ -279,7 +298,7 @@ export function budgetMeters(ix: CategoryIndex, placed: ReturnType<typeof placeB
       if (budget !== null) {
         categoriesTotal += budget;
         budgetedSpent += s;
-      } else if (!c.archived) allBudgeted = false;
+      } else if (!c.archived || s > 0) allBudgeted = false;
       if (budget !== null || s > 0) meters.push({ category: c, budget, spent: s });
     }
     const anyBudgeted = meters.some((m) => m.budget !== null);

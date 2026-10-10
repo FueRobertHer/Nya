@@ -27,15 +27,23 @@
 //   - changed: anything else, which only that release writes, after a
 //     rollback. Its category budgets are taken in, by name, as on the first
 //     read; the groups' budgets, which it never saw, are kept.
-// A save's three writes are each one step (the set by compare-and-set), so
-// whichever is the last to land, the next read finds one of these states.
+// OVERLAPPING SAVES (two devices) each write the set by compare-and-set, so
+// the set is always one save whole; the blob is written plainly, so a slow
+// save's blob write can land after a later save's. Whoever writes the blob
+// reads the set again after it, and writes the set's copy instead when it is
+// no longer its own (writeCopy), so the last to write the blob always leaves
+// it the copy of the set as last saved, never a copy that would read as a
+// rollback's change. What is left is the moment between such a stale write
+// and its correction: a read landing exactly then reads it as changed. A
+// read takes a change in only over the set it read beside the blob, so a
+// save landing between the two is read again, never overwritten.
 //
 // READS ARE STRICT. Both stores are read strictly before anything is decided:
 // a blob or a set that can't be read stops the read with
 // StoredDataUnreadableError (the route answers 409 and the Budgets tab says
 // so), and nothing is ever saved over either.
 
-import { defineValueStore } from './repo';
+import { defineValueStore, UpdateConflictError } from './repo';
 import type { Ctx } from './containers';
 import { getBudgets, setBudgets } from './budgets';
 import { categoryById, indexTaxonomy, isProvisionalId, textKeys, type CategoryIndex, type Taxonomy } from './categories';
@@ -71,10 +79,37 @@ function takeIn(cur: BudgetSet | null, legacy: Record<string, number>, ix: Categ
   return { version: BUDGET_SET_VERSION, categories, groups: cur?.groups ?? {}, mirror: legacy, mirror_before: null };
 }
 
-/** Forgets what the blob held before a save, once the blob is written. */
-async function settled(ctx: Ctx, copy: Record<string, number>): Promise<void> {
-  await budgetSetStore.update(ctx, (cur) => (cur && cur.mirror_before !== null && sameLegacy(cur.mirror, copy) ? { ...cur, mirror_before: null } : cur));
+/** Writes of the name-keyed copy one save makes at most, chasing saves that
+ *  land meanwhile (see OVERLAPPING SAVES). */
+const COPY_WRITES = 5;
+
+/**
+ * Writes the name-keyed copy, then reads the set again: when another save
+ * has written the set since (its copy isn't this one), writes that save's
+ * copy instead, until the blob holds the set's. Then forgets what the blob
+ * held before the save. Past COPY_WRITES the saves still landing write the
+ * blob after this one, and check it after themselves.
+ */
+async function writeCopy(ctx: Ctx, copy: Record<string, number>): Promise<void> {
+  let wrote = copy;
+  for (let writes = 1; ; writes++) {
+    await setBudgets(ctx, wrote);
+    const now = await budgetSetStore.get(ctx);
+    if (!now) return;
+    if (sameLegacy(now.mirror, wrote)) break;
+    if (writes >= COPY_WRITES) {
+      console.error(`budgets: the name-keyed copy kept changing under ${COPY_WRITES} writes; the saves still landing write it after this one`);
+      return;
+    }
+    wrote = now.mirror;
+  }
+  const settled = wrote;
+  await budgetSetStore.update(ctx, (cur) => (cur && cur.mirror_before !== null && sameLegacy(cur.mirror, settled) ? { ...cur, mirror_before: null } : cur));
 }
+
+/** Reads of both stores loadBudgets makes before giving up, when a save
+ *  keeps landing between its read and its write. */
+const LOAD_ATTEMPTS = 3;
 
 /**
  * The budgets, for the app: migrated from the name-keyed blob the first time,
@@ -83,23 +118,29 @@ async function settled(ctx: Ctx, copy: Record<string, number>): Promise<void> {
  * the budgets are in. Writes only in those three cases. Strict.
  */
 export async function loadBudgets(ctx: Ctx): Promise<{ budgets: Budgets; taxonomy: Taxonomy }> {
-  const legacy = legacyBudgets(await getBudgets(ctx));
-  const taxonomy = await ensureTaxonomy(ctx, { required: textKeys(Object.keys(legacy)) });
-  const ix = indexTaxonomy(taxonomy);
-  const set = await budgetSetStore.get(ctx);
-  const state = mirrorState(set, legacy);
-  if (state === 'in-sync') return { budgets: budgetsOf(set!), taxonomy };
-  if (state === 'unfinished') {
-    await setBudgets(ctx, set!.mirror);
-    await settled(ctx, set!.mirror);
-    return { budgets: budgetsOf(set!), taxonomy };
+  for (let attempt = 1; ; attempt++) {
+    const legacy = legacyBudgets(await getBudgets(ctx));
+    const taxonomy = await ensureTaxonomy(ctx, { required: textKeys(Object.keys(legacy)) });
+    const ix = indexTaxonomy(taxonomy);
+    const set = await budgetSetStore.get(ctx);
+    const state = mirrorState(set, legacy);
+    if (state === 'in-sync') return { budgets: budgetsOf(set!), taxonomy };
+    if (state === 'unfinished') {
+      await writeCopy(ctx, set!.mirror);
+      return { budgets: budgetsOf(set!), taxonomy };
+    }
+    // Taken in only over the set as it was read beside the blob: a save
+    // landing between the two (another request, another device) wrote both
+    // since, so both are read again rather than the blob taken over it.
+    const seen = JSON.stringify(set);
+    let moved = false;
+    const written = await budgetSetStore.update(ctx, (cur) => {
+      moved = JSON.stringify(cur) !== seen;
+      return moved ? cur : takeIn(cur, legacy, ix);
+    });
+    if (!moved) return { budgets: budgetsOf(written!), taxonomy };
+    if (attempt >= LOAD_ATTEMPTS) throw new UpdateConflictError('budgets');
   }
-  const written = await budgetSetStore.update(ctx, (cur) => {
-    // Another request may have got here first.
-    const now = mirrorState(cur, legacy);
-    return now === 'in-sync' || now === 'unfinished' ? cur : takeIn(cur, legacy, ix);
-  });
-  return { budgets: budgetsOf(written!), taxonomy };
 }
 
 /**
@@ -120,7 +161,8 @@ export async function budgetsForReading(ctx: Ctx, read: Taxonomy): Promise<{ bud
 
 /**
  * Saves the budgets whole, as the Budgets tab sends them: the set, then the
- * name-keyed copy, then the set again to settle (see MIRROR). A category or
+ * name-keyed copy until the blob holds the set's (writeCopy), then the set
+ * again to settle (see MIRROR and OVERLAPPING SAVES). A category or
  * group must be one the set has, or a budget the stored set already had on
  * one since deleted (kept, to show and remove); a merged category's budget
  * moves to where it went. Strict: refuses over a blob or set that can't be
@@ -140,9 +182,11 @@ export async function saveBudgets(ctx: Ctx, next: Budgets, taxonomy: Taxonomy): 
   }
   const budgets = budgetsAfterMerge(next, ix);
   const copy = legacyCopy(budgets, ix);
-  await budgetSetStore.update(ctx, () => ({ version: BUDGET_SET_VERSION, ...budgets, mirror: copy, mirror_before: legacyNow }));
-  await setBudgets(ctx, copy);
-  await settled(ctx, copy);
+  // What the blob holds before this save: the copy of the set it replaces
+  // (the route reads budgets first, so a rollback's change is taken in), or,
+  // with no set yet, the blob as read.
+  await budgetSetStore.update(ctx, (cur) => ({ version: BUDGET_SET_VERSION, ...budgets, mirror: copy, mirror_before: cur ? cur.mirror : legacyNow }));
+  await writeCopy(ctx, copy);
   return budgets;
 }
 
