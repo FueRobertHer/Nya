@@ -1047,7 +1047,7 @@ const PART_WORDS: Record<string, PartWords> = {
     many: 'entries',
     missing: missingFrom,
     inCsv: (counts) =>
-      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without your note or tags on them, and whether you excluded them is empty: they count, as the app counts them.`,
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row.`,
   },
   [carriedAnnotationStore.name]: {
     noun: carriedAnnotationStore.what,

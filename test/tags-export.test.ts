@@ -307,11 +307,36 @@ describe('rules, tags or what was said about a transaction that can’t be read'
     expect(file.incomplete.sort()).toEqual(['carried-annotations', 'transaction-annotations']);
     expect(file.notes).toEqual(
       expect.arrayContaining([
-        `Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without your note or tags on them, and whether you excluded them is empty: they count, as the app counts them. The JSON download lists them under problems. ${unchanged}`,
+        `Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row. The JSON download lists them under problems. ${unchanged}`,
         `Not all of your notes, tags and exclusions carried from earlier accounts could be read: 1 entry whose stored data is damaged. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${unchanged}`,
       ])
     );
     // The balances CSV holds none of it, and isn't called incomplete for it.
     expect(exportFile(await quietly(download), 'balances-csv').incomplete).toEqual([]);
+  });
+
+  test('a record that can’t be read: a bank’s statement is without your note on it, a manual account’s keeps the note written with it', async () => {
+    await fake.hset(ctxKey('transaction-annotations'), { t_hotel: DAMAGED, [MANUAL_ID]: DAMAGED });
+    const data = await quietly(() => collectUserData({ ctx, userId: 'user_me' }));
+    const doc = buildUserExport(data, NOW);
+    const noteOf = (account_id: string) => {
+      const made = ofxFile(data, doc, account_id, NOW);
+      if ('refused' in made) throw new Error(made.refused);
+      return { notes: made.file.notes, text: [...made.file.pieces()].join('') };
+    };
+    const bank = noteOf('acc_new');
+    expect(bank.notes).toContain(
+      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and its tags aren’t in its memo, nor is your note on it. The JSON download lists them under problems. ${unchanged}`
+    );
+    expect(bank.text).not.toContain('Paid back in October');
+    const wallet = noteOf('manual_wallet');
+    expect(wallet.notes).toContain(
+      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and its tags aren’t in its memo (its note, written with it, is). The JSON download lists them under problems. ${unchanged}`
+    );
+    expect(wallet.text).toContain('<MEMO>apples\r\n');
+    // The CSV likewise: the bank's row without your note, the one entered by hand with its own.
+    const [header, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    const note = (id: string) => rows.find((r) => r[header.indexOf('transaction_id')] === id)![header.indexOf('note')];
+    expect([note('t_hotel'), note(MANUAL_ID)]).toEqual(['', 'apples']);
   });
 });
