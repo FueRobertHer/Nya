@@ -267,6 +267,7 @@ describe('the Budgets tab, with the month loaded', () => {
     earliest: addMonths(NOW, -6),
     gaps: [{ month: addMonths(NOW, -1), gaps: [{ kind: 'stopped', institution: 'Chase', since: `${addMonths(NOW, -1)}-15T12:00:00.000Z` }] }],
     left_out_text: null,
+    counted_left_out_text: null,
     notes: [],
     ...over,
   });
@@ -311,6 +312,11 @@ describe('the Budgets tab, with the month loaded', () => {
     const failed = tab(state(null, 'error', 'Rollover couldn’t be worked out just now, so each budget shows its amount without it.'));
     expect(failed).toContain('$80.00 of $300.00');
     expect(failed).toContain('Rollover couldn’t be worked out just now');
+  });
+
+  test('what the earlier months counted left out for another currency is named', () => {
+    const t = tab(state(view({ counted_left_out_text: "2 transactions in EUR aren't in what rolled over from earlier months, which is in USD." })));
+    expect(t).toContain("2 transactions in EUR aren't in what rolled over from earlier months, which is in USD.");
   });
 
   test('amounts from before budgets were kept by month are said to be assumed', () => {

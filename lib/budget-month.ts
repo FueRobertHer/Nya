@@ -46,10 +46,11 @@ import { filedId, indexTaxonomy, type CategoryIndex, type Taxonomy } from './cat
 import type { Budgets } from './budget-set';
 import { LOOKBACK_DAYS, type Txn } from './transactions';
 import { spendingByCategory, summarize } from './totals';
-import { totalsCurrency } from './spending';
+import { leftOutByCurrency, totalsCurrency, type LeftOut } from './spending';
 import { stoppedConnections } from './month-coverage';
 import { noTransactionsView, quietItemIds, type NoTransactionsView } from './no-transactions';
 import {
+  addMonths,
   budgetsInMonth,
   incomePool,
   monthGapsOf,
@@ -200,6 +201,10 @@ export type BudgetMonthRead = {
   gaps: { month: string; gaps: MonthGap[] }[];
   /** The month's own rows. */
   monthRows: Txn[];
+  /** What the earlier months the carries and the pool count left out for
+   *  being in another currency (spending, and money in too while the pool
+   *  counts it): named, never added. Empty when nothing rolls over. */
+  countedLeftOut: LeftOut;
   activity: MonthActivity;
 };
 
@@ -288,6 +293,10 @@ export function monthFromActivity(input: {
   const carryInput = { earliest: activity.earliest, uncertain: (m: string) => uncertainMonths.has(m) };
 
   const view = budgetsInMonth({ ix, budgets: input.budgetsNow, months: input.months, month, today, spending, ...carryInput });
+  const pool = incomePool(input.income, month, flows, carryInput);
+  // What the earlier months counted left out for another currency.
+  const counting = Object.keys(view.carries.categories).length + Object.keys(view.carries.groups).length > 0 || pool !== null;
+  const counted = counting ? monthsFrom(from, addMonths(month, -1)).flatMap((m) => byMonth.get(m) ?? []) : [];
   return {
     month,
     today,
@@ -299,10 +308,11 @@ export function monthFromActivity(input: {
     income: input.income,
     view,
     spent: Object.fromEntries(spending(month)),
-    pool: incomePool(input.income, month, flows, carryInput),
+    pool,
     earliest: activity.earliest,
     gaps,
     monthRows: byMonth.get(month) ?? [],
+    countedLeftOut: leftOutByCurrency(pool ? counted : counted.filter((t) => t.amount > 0), currency),
     activity,
   };
 }

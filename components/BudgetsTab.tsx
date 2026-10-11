@@ -386,6 +386,7 @@ export default function BudgetsTab({
         )}
 
         {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
+        {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
         {totalBudget > 0 && namedWithout && <div className="chart-note">{namedWithout}</div>}
         {carryNotes.length > 0 && <div className="stale-note">Rollover may be off where a month is incomplete: {carryNotes.join('; ')}.</div>}
         {assumedNote && <div className="chart-note">{assumedNote}</div>}

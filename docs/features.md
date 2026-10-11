@@ -473,7 +473,7 @@ Merging a category moves its rollover with its budget, and adds its past amounts
 
 ### When a month may be incomplete
 
-A carry is only as good as the months it counts. When one of them may be missing transactions, the carry says it may be off and which months ("+$120.00 rolled over (may be off: March is incomplete)"), and a note under the budgets says why, and for which months: a connection that stopped syncing before the month ended, a bank whose transactions couldn't be loaded or whose older ones are still importing, a bank whose stored history begins after the month began, a bank account or card whose transactions Plaid doesn't provide or you didn't allow, a manual account whose transactions couldn't be read, or transactions whose exclusion couldn't be read.
+A carry is only as good as the months it counts. When one of them may be missing transactions, the carry says it may be off and which months ("+$120.00 rolled over (may be off: March is incomplete)"), and a note under the budgets says why, and for which months: a connection that stopped syncing before the month ended, a bank whose transactions couldn't be loaded or whose older ones are still importing, a bank whose stored history begins after the month began, a bank account or card whose transactions Plaid doesn't provide or you didn't allow, a manual account whose transactions couldn't be read, or transactions whose exclusion couldn't be read. As in a month's own totals, a transaction in another currency than the budgets' is left out of what rolls over, and named under the budgets ("1 transaction in EUR isn't in what rolled over from earlier months, which is in USD").
 
 ### Looking back at a month
 

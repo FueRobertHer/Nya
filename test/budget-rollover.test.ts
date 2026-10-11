@@ -221,6 +221,11 @@ describe('a month of budgets, from the stored history', () => {
     expect(body.carries.categories[named(t, 'food and drink').id].carry).toBe(70);
     expect(body.currency).toBe('USD');
     expect(body.left_out_text).toBe("1 transaction in EUR isn't in these budgets, which are in USD.");
+    // Last month's, which the carry counts, named too.
+    expect(body.counted_left_out_text).toBe("1 transaction in EUR isn't in what rolled over from earlier months, which is in USD.");
+    const api = await readBudgets(ctx, { month: NOW });
+    expect(api.rollover_left_out).toEqual([{ currency: 'EUR', count: 1 }]);
+    expect(api.rollover_left_out_text).toBe(body.counted_left_out_text);
   });
 
   test('changing this month’s amount leaves the carry of earlier months as it was', async () => {

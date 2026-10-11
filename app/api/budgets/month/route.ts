@@ -33,6 +33,8 @@ import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 //   earliest                 the first month with any transactions
 //   gaps                     months that may be incomplete, and why
 //   left_out_text, notes     what the month's totals left out, and the read's notes
+//   counted_left_out_text    what the earlier months a carry or the pool counts
+//                            left out for being in another currency
 
 export async function GET(req: Request) {
   try {
@@ -59,6 +61,7 @@ export async function GET(req: Request) {
       earliest: read.earliest,
       gaps: read.gaps,
       left_out_text: leftOutText(leftOut, read.currency, { where: 'these budgets' }),
+      counted_left_out_text: leftOutText(read.countedLeftOut, read.currency, { where: 'what rolled over from earlier months', plural: false }),
       notes: read.activity.notes,
     });
   } catch (err) {

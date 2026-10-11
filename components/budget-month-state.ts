@@ -34,6 +34,7 @@ export type BudgetMonthView = {
   earliest: string | null;
   gaps: { month: string; gaps: MonthGap[] }[];
   left_out_text: string | null;
+  counted_left_out_text: string | null;
   notes: string[];
 };
 

@@ -1089,6 +1089,10 @@ export type ApiBudgets = {
   incomplete_months: { month: string; reasons: string[] }[];
   /** The income pool, when income carryover is on; null when it is off. */
   income: ApiIncomePool | null;
+  /** What the earlier months a carry or the income pool counts left out for
+   *  being in another currency, and the same in words. */
+  rollover_left_out: LeftOut;
+  rollover_left_out_text: string | null;
   sources: ApiSource[];
   notes: string[];
 };
@@ -1196,6 +1200,8 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
       uncertain_months: read.pool.uncertain,
       months: read.pool.months,
     },
+    rollover_left_out: read.countedLeftOut,
+    rollover_left_out_text: leftOutText(read.countedLeftOut, currency, { where: 'what rolled over from earlier months', plural: false }),
     sources: [...activity.bank.sources.map(apiSourceOf), ...fed.sources],
     notes,
   };
