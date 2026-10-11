@@ -312,6 +312,13 @@ export type SplitInputs = {
    *  total, as a report for a later period counts none of it; never a part
    *  of its net answered as the whole. */
   from?: string;
+  /** For a reader that keeps the rows of accounts that ended and leaves
+   *  them out itself (lib/activity.ts keepEnded, as a report does), each
+   *  account's end day (lib/lifecycle.ts endDays). A row on one, dated from
+   *  it, is left as it is, never split nor in a group, so the reader leaves
+   *  it out whole, and a group nets only its transactions still counting,
+   *  as everywhere else (where those rows were never read). */
+  ended?: ReadonlyMap<string, string>;
 };
 
 /** What a transaction of a group counted outside what was read carries
@@ -329,7 +336,13 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
  */
 export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs): { rows: Txn[]; notes: string[] } {
   if (inputs.splits.size === 0 && inputs.splitsUnknown.size === 0 && inputs.groups.size === 0 && inputs.groupsUnknown === 0) return { rows: [...rows], notes: [] };
-  const byId = new Map(rows.map((t) => [t.transaction_id, t]));
+  // A row of an account that ended, from its end day: as it is, for the
+  // reader to leave out (SplitInputs.ended).
+  const endedRow = (t: Txn): boolean => {
+    const end = t.account_id === undefined ? undefined : inputs.ended?.get(t.account_id);
+    return end !== undefined && t.date >= end;
+  };
+  const byId = new Map(rows.filter((t) => !endedRow(t)).map((t) => [t.transaction_id, t]));
 
   // Groups first, oldest made first: a transaction in two (two devices at
   // once) counts in the first, and the other says it isn't there.
@@ -380,6 +393,10 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   let unknownCategory = 0;
   for (const given of rows) {
     if (inGroup.has(given.transaction_id)) continue;
+    if (endedRow(given)) {
+      out.push(given);
+      continue;
+    }
     const before = outside.get(given.transaction_id);
     if (before) {
       // As it is, its split unused as in any group, counted in no total.

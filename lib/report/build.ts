@@ -121,7 +121,7 @@ import type { HealthState } from '../connection-state';
 import { TRANSACTIONS_DAYS_REQUESTED, type NoTransactionsReason } from '../item-products';
 import { noSpending, type NoSpending } from '../no-transactions';
 import { isInvestmentType } from '../balance';
-import { countTransactions, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '../spending';
+import { countTransactions, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
 import { bankRows } from '../split-rows';
 import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../totals';
 import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
@@ -623,14 +623,16 @@ export function buildReport(input: ReportInput): Report {
   endedFacts.forEach((e, i) => {
     for (const id of e.ids) endedOf.set(id, i);
   });
-  const notCounted = endedFacts.map(() => 0);
+  // Transactions, never rows: a split one is one (lib/spending.ts transactionCounter).
+  const notCountedOf = endedFacts.map(() => transactionCounter());
   const rows = input.rows.filter((t) => {
     if (!inPeriod(t.date)) return false;
     const i = t.account_id === undefined ? undefined : endedOf.get(t.account_id);
     if (i === undefined || t.date < endedFacts[i].end) return true;
-    notCounted[i]++;
+    notCountedOf[i].add(t);
     return false;
   });
+  const notCounted = notCountedOf.map((c) => c.n);
   // The ended accounts the period has something to say of: their end is in
   // it, or before it and they are only assumed closed, still the person's,
   // or hold rows in it.
@@ -647,11 +649,16 @@ export function buildReport(input: ReportInput): Report {
 
   // One currency: the one asked for, if the period has any of it, else the
   // one most of its transactions are in (lib/spending.ts totalsCurrency).
-  const counts = new Map<string, number>();
+  // Transactions in each, never rows (lib/spending.ts transactionCounter).
+  const counters = new Map<string, ReturnType<typeof transactionCounter>>();
   for (const t of rows) {
     const c = currencyOf(t);
-    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+    if (!c) continue;
+    const counter = counters.get(c) ?? transactionCounter();
+    counter.add(t);
+    counters.set(c, counter);
   }
+  const counts = new Map([...counters].map(([c, counter]) => [c, counter.n] as const));
   const currency = input.currency !== null && counts.has(input.currency) ? input.currency : totalsCurrency(rows);
   const currencies = [...counts]
     .map(([c, transactions]) => ({ currency: c, transactions }))

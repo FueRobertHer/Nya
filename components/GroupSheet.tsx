@@ -240,7 +240,7 @@ export default function GroupSheet({
         {missing > 0 && (
           <p className="panel-note">
             {missing} more {missing === 1 ? 'transaction was' : 'transactions were'} in it and {missing === 1 ? 'isn’t' : 'aren’t'} here: the bank removed{' '}
-            {missing === 1 ? 'it' : 'them'}, {missing === 1 ? 'its' : 'their'} account is hidden, or {missing === 1 ? 'it' : 'they'} couldn’t be loaded.
+            {missing === 1 ? 'it' : 'them'}, {missing === 1 ? 'its' : 'their'} account is hidden or ended, or {missing === 1 ? 'it' : 'they'} couldn’t be loaded.
           </p>
         )}
         <input

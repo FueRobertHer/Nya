@@ -393,7 +393,18 @@ export async function finishActivity(
   hidden: Set<string>,
   /** `subjects`, with `followLinks` for a rule being made that reads an
    *  account: for a rule's preview (app/api/rules/preview). */
-  opts: { since?: string; grow?: boolean; keepEnded?: boolean; subjects?: Map<string, RuleSubject>; followLinks?: boolean } = {}
+  opts: {
+    since?: string;
+    grow?: boolean;
+    keepEnded?: boolean;
+    /** With keepEnded, each ended account's end day (lib/lifecycle.ts
+     *  endDays), for a reader that leaves those rows out itself (a report):
+     *  splits and groups leave them whole and out of every net, as the
+     *  Activity tab, which never reads them, does. */
+    endedFrom?: ReadonlyMap<string, string>;
+    subjects?: Map<string, RuleSubject>;
+    followLinks?: boolean;
+  } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
@@ -481,6 +492,7 @@ export async function finishActivity(
     ix,
     orderTags: (ids) => orderTagIds(tagRead.set, ids),
     from: cutoff,
+    ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
   });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that
