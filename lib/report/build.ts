@@ -242,12 +242,14 @@ export type ReportTotals = {
   money_out: number;
   net: number;
   /** Rows in the period, and of them: counted; left out as transfers, cash
-   *  withdrawals or loan payments; left out because the person excluded them;
-   *  counted although whether they did couldn't be read. */
+   *  withdrawals or loan payments; left out because the person excluded them
+   *  or a rule hides them (lib/rules.ts), and of those, how many a rule
+   *  hides; counted although whether they did couldn't be read. */
   transactions: number;
   counted: number;
   transfers: number;
   excluded: number;
+  hidden_by_rule: number;
   exclusion_unknown: number;
   /** Left out for another currency, by currency, and as a sentence. */
   left_out: LeftOut;
@@ -299,9 +301,9 @@ export type AppendixRow = {
    *  'import:ofx', ...: lib/manual-txn-input.ts sourceLabel). */
   source: string;
   pending: boolean;
-  /** Why it isn't in the totals (the person excluded it; a transfer or loan
-   *  payment; another currency), or null when it is. */
-  not_counted: 'excluded' | 'transfer' | 'currency' | null;
+  /** Why it isn't in the totals (the person excluded it; a rule hides it; a
+   *  transfer or loan payment; another currency), or null when it is. */
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
@@ -312,7 +314,8 @@ export type ReportAppendix = {
   /** Rows in the marked categories, before the limit. */
   total: number;
   limit: number;
-  /** Rows among them the person excluded: listed, not counted. */
+  /** Rows among them the person excluded or a rule hides: listed, not
+   *  counted. */
   excluded: number;
 };
 
@@ -657,7 +660,7 @@ export function buildReport(input: ReportInput): Report {
         institution: t.institution_name,
         source: t.source ?? 'plaid',
         pending: t.pending,
-        not_counted: isExcluded(t) ? 'excluded' : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
+        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
         exclusion_unknown: t.excluded === null,
         note: t.note ?? null,
       })),
@@ -706,6 +709,7 @@ export function buildReport(input: ReportInput): Report {
       counted: summary.counted,
       transfers: summary.transfers,
       excluded: summary.excluded,
+      hidden_by_rule: rows.filter((t) => isExcluded(t) && t.excluded_by_rule === true).length,
       exclusion_unknown: summary.exclusion_unknown,
       left_out: summary.left_out,
       left_out_text: summary.left_out_text,

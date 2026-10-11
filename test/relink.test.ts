@@ -216,7 +216,7 @@ describe('a re-link, end to end', () => {
     await readd();
     await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
     expect(await excludedOf('n_a')).toBe(true);
-    expect((await excludeRow('n_a', false)).body).toEqual({ transaction_id: 'n_a', excluded: false });
+    expect((await excludeRow('n_a', false)).body).toEqual({ transaction_id: 'n_a', excluded: false, tags: [], untagged: [], note: null });
     expect(await excludedOf('n_a')).toBeUndefined();
   });
 

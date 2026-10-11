@@ -27,6 +27,8 @@ import {
   type PageKey,
 } from './api-read';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
+import { readTags } from './api-tags';
+import { readRules } from './api-rules';
 import { OPERATION_SPECS, BadRequest, NotFound, type Args, type OperationSpec } from './api-spec';
 
 export { argsFromQuery, argsFromJson, inputSchema, BadRequest, NotFound, type Arg, type Args } from './api-spec';
@@ -127,6 +129,8 @@ const RUNS: Record<string, Operation['run']> = {
     const text = str(a, 'q');
     const category = str(a, 'category');
     const categoryId = str(a, 'category_id');
+    const tag = str(a, 'tag');
+    const tagId = str(a, 'tag_id');
     // The query as asked, defaults left out, so a cursor made before midnight
     // (UTC) still belongs to it after; the range it came to rides in the cursor.
     const print = fingerprint([
@@ -141,6 +145,8 @@ const RUNS: Record<string, Operation['run']> = {
       // Added after cursors were first made: absent, a query's print is as
       // before, so a cursor already handed out still works.
       ...(categoryId ? [categoryId] : []),
+      // Later still, the same way.
+      ...(tag !== undefined || tagId !== undefined ? [['tag', tag?.toLowerCase() ?? null, tagId ?? null]] : []),
     ]);
     const cursor = str(a, 'cursor');
     const resumed = cursor ? decodeCursor(cursor, print) : null;
@@ -153,6 +159,8 @@ const RUNS: Record<string, Operation['run']> = {
       text,
       category,
       categoryId,
+      tag,
+      tagId,
       minAmount: min,
       maxAmount: max,
       limit: num(a, 'limit') ?? DEFAULT_PAGE_SIZE,
@@ -172,6 +180,10 @@ const RUNS: Record<string, Operation['run']> = {
   },
 
   categories: async (auth, a) => readCategories(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  tags: async (auth, a) => readTags(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  rules: async (auth, a) => readRules(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   budgets: async (auth, a) => readBudgets(auth.ctx, { month: str(a, 'month') ?? today().slice(0, 7), includeHidden: flag(a, 'include_hidden') }),
 
