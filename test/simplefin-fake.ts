@@ -66,6 +66,20 @@ const day = (iso: string) => Math.floor(Date.parse(`${iso}T12:00:00Z`) / 1000);
 /** A Unix time at noon UTC on a day, as the protocol sends times. */
 export const at = day;
 
+/**
+ * The balance date an account is served with unless a test says otherwise:
+ * noon UTC two days before today, as a Unix time. Relative to the clock, so
+ * it never ages out: at any time of day it is 36 to 60 hours old, in the past
+ * and under OLD_BALANCE_HOURS (lib/connectors/institutions.ts), past which a
+ * bank's balance reads as too old and the bank is held.
+ */
+export function recentBalanceDate(now: number = Date.now()): number {
+  const d = new Date(now);
+  d.setUTCHours(12, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - 2);
+  return Math.floor(d.getTime() / 1000);
+}
+
 export class FakeSimplefin {
   readonly host = 'bridge.test';
   readonly user = 'nya-demo-user';
@@ -238,7 +252,7 @@ export function fakeAccount(over: Partial<FakeAccount> = {}): FakeAccount {
     currency: 'USD',
     balance: '1500.25',
     'available-balance': '1400.25',
-    'balance-date': day('2026-10-08'),
+    'balance-date': recentBalanceDate(),
     transactions: [],
     ...over,
   };
