@@ -286,7 +286,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   { name: 'categories', summary: 'The categories in use, on transactions or with a budget, each with its id and group, and every group with its categories.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
-    summary: 'Monthly budgets, per category and per group, with the month’s spending against each.',
+    summary: 'Monthly budgets, per category and per group, with the month’s spending against each, what rolled over into each, and what is left to allocate when income carryover is on.',
     args: { month: { kind: 'month', description: 'The month, YYYY-MM. Defaults to this month (UTC).' }, include_hidden: INCLUDE_HIDDEN },
   },
   {
@@ -419,7 +419,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on.',
     NARROW_HIDDEN
   ),
   fromOperation(

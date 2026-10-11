@@ -147,7 +147,7 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
   get_budgets: (r) =>
-    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}.${withoutTransactions(r)}`,
+    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available !== r.total.budget ? `, ${money(r.total.available, r.currency)} available with what rolled over` : ''}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${withoutTransactions(r)}`,
   list_recurring_bills: (r) => {
     const ended = r.bills.filter((b: any) => b.ended).length;
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;

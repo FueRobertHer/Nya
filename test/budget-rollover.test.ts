@@ -49,6 +49,9 @@ const { declaredStore } = await import('@/lib/stores');
 const { classify } = await import('@/lib/reencrypt');
 const { UpdateConflictError, StoredValueTooLargeError, UnreadableValueError } = await import('@/lib/repo');
 const { ContainerError } = await import('@/lib/containers');
+const { readBudgets } = await import('@/lib/api-read');
+const { createToken } = await import('@/lib/api-tokens');
+const v1Budgets = await import('@/app/api/v1/budgets/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
 const monthRoute = await import('@/app/api/budgets/month/route');
 const rolloverRoute = await import('@/app/api/budgets/rollover/route');
@@ -298,6 +301,45 @@ describe('a month of budgets, from the stored history', () => {
     const { body } = await month();
     expect(body.carries.groups[group(t, 'Food').id].carry).toBe(80);
     expect(body.rollover.groups[group(t, 'Food').id]).toBe(M(-1));
+  });
+});
+
+describe('the read-only API and the Budgets tab agree', () => {
+  test('the same budgets, carries, availability and pool, from the same read, with nothing written', async () => {
+    const t = await budgetBefore({ 'food and drink': 100, travel: 50 }, { Food: 300 });
+    await seedBank([
+      row('pay', on(-2, 1), -2500, 'income'),
+      row('m2', on(-2, 2), 60),
+      row('trip', on(-2, 3), 80, 'travel'),
+      row('m1', on(-1), 130),
+      row('now', on(0, 1), 7),
+    ]);
+    await rollover(t, 'food and drink', M(-2));
+    await rollover(t, 'Food', M(-2), 'group');
+    await post({ action: 'income', enabled: true, start: M(-2), month: NOW });
+    const app = (await month()).body;
+    const stored = { months: await fake.get<string>(ctxKey('budget-months')), set: await fake.get<string>(ctxKey('budget-set')) };
+    const api = await readBudgets(ctx, { month: NOW });
+    const food = named(t, 'food and drink').id;
+    const foodRow = api.budgets.find((b) => b.category_id === food)!;
+    expect(foodRow.rollover).toEqual({ ...app.carries.categories[food], uncertain_months: app.carries.categories[food].uncertain, uncertain: undefined });
+    expect(foodRow).toMatchObject({ budget: 100, available: 100 + app.carries.categories[food].carry, spent: app.spent[food] });
+    const foodGroup = api.groups.find((g) => g.id === group(t, 'Food').id)!;
+    expect(foodGroup.rollover?.carry).toBe(app.carries.groups[group(t, 'Food').id].carry);
+    expect(api.income).toMatchObject({ carried_in: app.pool.carried_in, available: app.pool.available, months: app.pool.months });
+    expect(api.earliest_month).toBe(app.earliest);
+    // The read-only API writes nothing.
+    expect({ months: await fake.get<string>(ctxKey('budget-months')), set: await fake.get<string>(ctxKey('budget-set')) }).toEqual(stored);
+  });
+
+  test('a record that can’t be read is a 409 there too, never an answer without it', async () => {
+    await budgetBefore({ 'food and drink': 100 });
+    await seedBank([]);
+    await fake.set(ctxKey('budget-months'), 'not-ciphertext-at-all-but-long-enough');
+    const { token } = await createToken(ctx, 'Tests');
+    const res = await v1Budgets.GET(new Request('https://nya.test/api/v1/budgets', { headers: { authorization: `Bearer ${token}` } }));
+    expect(res.status).toBe(409);
+    expect((await res.json()).error.code).toBe('unreadable');
   });
 });
 

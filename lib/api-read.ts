@@ -89,7 +89,9 @@ import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
 import { budgetsForReading } from './budget-store';
-import { budgetMeters, placeBudgets } from './budget-set';
+import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
+import { readBudgetMonth, windowStart } from './budget-month';
+import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
@@ -752,6 +754,14 @@ export type ApiSource = { institution: string; synced_at: string | null; complet
 
 type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
 
+/** A linked institution as a source of transactions. */
+const apiSourceOf = (s: BankSource): ApiSource => ({
+  institution: s.institution_name,
+  synced_at: s.synced_at,
+  complete: s.coverage === 'complete',
+  no_transactions: s.no_transactions,
+});
+
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
  *  (lib/no-transactions.ts), the rows before them that recurring detection
@@ -771,15 +781,7 @@ async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityR
     history,
     notes: [...notes, ...fedSources.notes],
     ix: indexTaxonomy(taxonomy),
-    sources: [
-      ...bank.sources.map((s: BankSource) => ({
-        institution: s.institution_name,
-        synced_at: s.synced_at,
-        complete: s.coverage === 'complete',
-        no_transactions: s.no_transactions,
-      })),
-      ...fedSources.sources,
-    ],
+    sources: [...bank.sources.map(apiSourceOf), ...fedSources.sources],
     hidden: bank.hidden,
     view: noTransactionsView(bank.payload),
   };
@@ -1006,20 +1008,51 @@ export async function readCategories(
 
 // ---- Budgets ----
 
+/** A budget's rollover in the month asked about (lib/rollover.ts Carry): the
+ *  month its carry counts from and why, the month its rollover began, the
+ *  carry, and the months it counts whose transactions may be incomplete. */
+export type ApiRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] };
+
+/** The income pool when income carryover is on (lib/rollover.ts IncomePool). */
+export type ApiIncomePool = {
+  start: string;
+  from: string;
+  carried_in: number;
+  income: number;
+  spending: number;
+  available: number;
+  uncertain_months: string[];
+  months: { month: string; carried_in: number; income: number; spending: number; carried_out: number; uncertain: boolean }[];
+};
+
 export type ApiBudgets = {
   month: string;
   /** The currency the budgets count, and are in: the one most transactions
    *  are in, as the app's. */
   currency: string | null;
-  /** Each category's budget, with its id and its group's (null for one the
-   *  app hasn't stored yet). */
-  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number; category_id: string | null; group_id: string | null; group: string | null }[];
+  /** Each category's budget that month (what it was then), with its id and
+   *  its group's (null for one the app hasn't stored yet), and, beside it
+   *  (#37), what is available with what rolled over. */
+  budgets: {
+    category: string;
+    budget: number;
+    spent: number;
+    remaining: number;
+    spent_share: number;
+    category_id: string | null;
+    group_id: string | null;
+    group: string | null;
+    available: number;
+    available_remaining: number;
+    rollover: ApiRollover | null;
+    assumed: boolean;
+  }[];
   /** Each group with a budget of its own or budgeted categories, in the
    *  app's order: its limit by the reconcile rule (lib/budget-set.ts), its own
    *  amount and its categories' added up, and what counts against the limit
    *  (everything in it under a budget of its own, else its budgeted
    *  categories' spending). `reconcile` says which side binds when the two
-   *  differ. */
+   *  differ. The same over what is available, with carries (#37), beside it. */
   groups: {
     id: string | null;
     name: string;
@@ -1031,10 +1064,15 @@ export type ApiBudgets = {
     remaining: number;
     spent_share: number;
     reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+    available: number;
+    available_remaining: number;
+    available_reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+    rollover: ApiRollover | null;
+    assumed: boolean;
   }[];
   /** Every limit added up (each group's, so nothing counts twice), and what
-   *  counts against them. */
-  total: { budget: number; spent: number };
+   *  counts against them; `available` the same with what rolled over. */
+  total: { budget: number; spent: number; available: number };
   /** This month's spending left out for being in another currency. */
   left_out: LeftOut;
   left_out_text: string | null;
@@ -1042,62 +1080,123 @@ export type ApiBudgets = {
    *  whether they did couldn't be read (counted). */
   excluded: number;
   exclusion_unknown: number;
+  /** The month budgets began to be kept by month: an amount before it is
+   *  assumed (`assumed`). */
+  recorded_since: string;
+  /** The first month with any transactions: no carry or pool counts before it. */
+  earliest_month: string | null;
+  /** Months read for this answer whose transactions may be incomplete, and why. */
+  incomplete_months: { month: string; reasons: string[] }[];
+  /** The income pool, when income carryover is on; null when it is off. */
+  income: ApiIncomePool | null;
   sources: ApiSource[];
   notes: string[];
 };
 
 const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
 
-/** Monthly budgets with the month's spending against each, as the Budgets
- *  tab works it out (lib/totals.ts spendingByCategory, lib/budget-set.ts
- *  budgetMeters). */
+/** A carry as the API answers it. */
+const apiRollover = (c: Carry | undefined): ApiRollover | null =>
+  c ? { from: c.from, why: c.why, start: c.start, carry: tidy(c.carry), uncertain_months: c.uncertain } : null;
+
+/** A sentence's first letter in capitals. */
+const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/**
+ * Monthly budgets with the month's spending against each, as the Budgets tab
+ * works it out (lib/budget-month.ts: the same read and the same math,
+ * lib/rollover.ts): each budget's amount that month, what it carries into it
+ * when it rolls over, what is available, and the income pool when income
+ * carryover is on. Spending is read from the stored history, back to the
+ * month asked about, or the first month a carry counts. Writes nothing.
+ */
 export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
-  const activity = await readActivity(ctx, !!opts.includeHidden);
-  const { ix, placed } = await readBudgetSet(ctx, activity.ix);
-  const currency = totalsCurrency(activity.rows);
-  const inMonth = (date: string) => date.slice(0, 7) === opts.month;
-  const spent = spendingByCategory(activity.rows, inMonth, currency);
-  const monthRows = activity.rows.filter((t) => inMonth(t.date));
-  const leftOut = leftOutByCurrency(monthRows.filter((t) => t.amount > 0), currency);
+  const today = new Date().toISOString().slice(0, 7);
+  const read = await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden });
+  const { ix, view, currency, activity } = read;
+  const spent = new Map(Object.entries(read.spent));
   const describe = describer(ix);
+  const placed = placeBudgets(view.budgets, ix);
+  const assumed = { categories: new Set(view.assumed.categories), groups: new Set(view.assumed.groups) };
+  const flat = budgetMeters(ix, placed, spent);
+  const withCarries = availableMeters(ix, view.budgets, view.carries, spent);
+  const availableOf = new Map<string, GroupMeter>(withCarries.groups.map((g) => [g.group.id, g]));
   const rows = [...placed.categories]
     .map(([id, budget]) => {
-      const s = spent[id] ?? 0;
-      return { ...describe(id), budget: tidy(budget), spent: tidy(s), remaining: tidy(budget - s), spent_share: share(s, budget) };
+      const s = spent.get(id) ?? 0;
+      const available = tidy(budget + (view.carries.categories[id]?.carry ?? 0));
+      const { category, category_id, group_id, group } = describe(id);
+      return {
+        category,
+        budget: tidy(budget),
+        spent: tidy(s),
+        remaining: tidy(budget - s),
+        spent_share: share(s, budget),
+        category_id,
+        group_id,
+        group,
+        available,
+        available_remaining: tidy(available - s),
+        rollover: apiRollover(view.carries.categories[id]),
+        assumed: assumed.categories.has(id),
+      };
     })
-    .map(({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }) => ({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }))
     .sort((a, b) => a.category.localeCompare(b.category));
-  const meters = budgetMeters(ix, placed, new Map(Object.entries(spent)));
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
-  if (placed.orphans.length > 0) {
-    notes.push(`${placed.orphans.length} budget${placed.orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
+  const fed = connectorSources(activity.fed, opts.includeHidden ? new Set() : activity.hidden);
+  const windowRows = activity.rows.filter((t) => t.date >= windowStart()).length;
+  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(activity.view, windowRows, 'totals')];
+  const orphans = placeBudgets(read.budgetsNow, ix).orphans;
+  if (orphans.length > 0) {
+    notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
   }
-  const cutoff = firstDay();
-  if (`${opts.month}-01` < cutoff) notes.push(`Only transactions from ${cutoff} on are read, so this month's spending may be short`);
+  const reconcileOf = (r: GroupMeter['reconcile']) => r && { binds: r.binds, group: tidy(r.group), categories: tidy(r.categories) };
+  const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), currency);
   return {
     month: opts.month,
     currency,
     budgets: rows,
-    groups: meters.groups
+    groups: flat.groups
       .filter((m) => m.limit !== null)
-      .map((m) => ({
-        id: shownId(m.group.id),
-        name: m.group.name,
-        kind: m.group.kind,
-        budget: tidy(m.limit!),
-        own: m.own === null ? null : tidy(m.own),
-        categories_budget: tidy(m.categories_total),
-        spent: tidy(m.spent),
-        remaining: tidy(m.limit! - m.spent),
-        spent_share: share(m.spent, m.limit!),
-        reconcile: m.reconcile && { binds: m.reconcile.binds, group: tidy(m.reconcile.group), categories: tidy(m.reconcile.categories) },
-      })),
-    total: { budget: tidy(meters.total.budget), spent: tidy(meters.total.spent) },
+      .map((m) => {
+        const a = availableOf.get(m.group.id)!;
+        return {
+          id: shownId(m.group.id),
+          name: m.group.name,
+          kind: m.group.kind,
+          budget: tidy(m.limit!),
+          own: m.own === null ? null : tidy(m.own),
+          categories_budget: tidy(m.categories_total),
+          spent: tidy(m.spent),
+          remaining: tidy(m.limit! - m.spent),
+          spent_share: share(m.spent, m.limit!),
+          reconcile: reconcileOf(m.reconcile),
+          available: tidy(a.limit!),
+          available_remaining: tidy(a.limit! - a.spent),
+          available_reconcile: reconcileOf(a.reconcile),
+          rollover: apiRollover(view.carries.groups[m.group.id]),
+          assumed: assumed.groups.has(m.group.id),
+        };
+      }),
+    total: { budget: tidy(flat.total.budget), spent: tidy(flat.total.spent), available: tidy(withCarries.total.budget) },
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
-    excluded: monthRows.filter((t) => t.excluded === true).length,
-    exclusion_unknown: monthRows.filter((t) => t.excluded === null).length,
-    sources: activity.sources,
+    excluded: read.monthRows.filter((t) => t.excluded === true).length,
+    exclusion_unknown: read.monthRows.filter((t) => t.excluded === null).length,
+    recorded_since: view.recorded_since,
+    earliest_month: read.earliest,
+    // Days as UTC days, as every other date here.
+    incomplete_months: read.gaps.map((g) => ({ month: g.month, reasons: g.gaps.map((x) => capital(gapText(x, (d) => d.slice(0, 10)))) })),
+    income: read.pool && {
+      start: read.pool.start,
+      from: read.pool.from,
+      carried_in: read.pool.carried_in,
+      income: read.pool.income,
+      spending: read.pool.spending,
+      available: read.pool.available,
+      uncertain_months: read.pool.uncertain,
+      months: read.pool.months,
+    },
+    sources: [...activity.bank.sources.map(apiSourceOf), ...fed.sources],
     notes,
   };
 }

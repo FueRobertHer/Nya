@@ -230,6 +230,33 @@ describe('tools', () => {
     expect((await call('list_categories')).structuredContent.categories.some((c: any) => c.name === 'housing')).toBe(true);
   });
 
+  test('get_budgets says what rolled over, and what is left to allocate when income carryover is on (#37)', async () => {
+    const { loadBudgets } = await import('@/lib/budget-store');
+    const { budgetMonthsStore, incomeCarryoverStore } = await import('@/lib/budget-months-store');
+    const { startMonths, setRollover, addMonths } = await import('@/lib/rollover');
+    // As the app would have stored them: categories, budgets by id, a rollover.
+    const { budgets, taxonomy } = await loadBudgets(ctx);
+    const month = daysAgo(0).slice(0, 7);
+    const last = addMonths(month, -1);
+    const food = taxonomy.categories.find((c) => c.name === 'food and drink')!.id;
+    await budgetMonthsStore.set(ctx, setRollover(startMonths(budgets, addMonths(month, -2)), 'categories', food, { on: true, from: last }, month));
+    const plain = await call('get_budgets');
+    expect(plain.structuredContent.income).toBeNull();
+    expect(plain.content[0].text).not.toContain('allocate');
+    // The fixture's food spending in the last nine days, as much of it as fell last month.
+    const lastMonths = (d: number) => daysAgo(d).slice(0, 7) === last;
+    const spentLast = (lastMonths(2) ? 5.5 : 0) + (lastMonths(1) ? 12 + 25 : 0);
+    const row = plain.structuredContent.budgets.find((b: any) => b.category === 'food and drink');
+    expect(row).toMatchObject({ budget: 100, available: 200 - spentLast, rollover: { from: last, why: 'start', start: last, carry: 100 - spentLast } });
+    expect(plain.content[0].text).toContain('available with what rolled over');
+    await incomeCarryoverStore.set(ctx, { version: 1, enabled: true, start: month });
+    const pooled = await call('get_budgets');
+    expect(pooled.structuredContent.income).toMatchObject({ start: month, from: month });
+    expect(pooled.content[0].text).toContain(`Available to allocate: `);
+    // Nothing a read-only call makes is written.
+    expect((await budgetMonthsStore.get(ctx))!.categories[food].rollover).toEqual([{ from: last }]);
+  });
+
   test('a summary says when connections bring in no transactions, in counts, never as no spending', async () => {
     await connectWithoutTransactions(fake, { item_id: 'item_cu', name: 'CreditUnion', accounts: [{ account_id: 'acc_cu', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
     for (const name of ['search_transactions', 'spending_by_category', 'get_budgets', 'list_recurring_bills', 'list_categories']) {
