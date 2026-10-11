@@ -419,9 +419,11 @@ describe('when the bank sends the same transaction', () => {
     expect(summarize(rows, (d) => d === daysAgo(50), 'USD')).toMatchObject({ money_out: 60 });
     expect(await spentOn(daysAgo(50))).toEqual({ 'food and drink': 45, 'home improvement': 15 });
     // Put back whole for the list, the bank's row is the transaction, its
-    // parts beneath it.
+    // parts beneath it; the read-only API lists it so, once.
     const whole = bankRows(rows).find((t) => t.transaction_id === 'b_corner')!;
     expect([whole.amount, whole.split_carried_from, whole.split_parts?.length]).toEqual([60, undefined, 2]);
+    const api = (await queryTransactions(ctx, { from: daysAgo(60), to: daysAgo(40), limit: 50 })).transactions;
+    expect(api.filter((t) => t.id === 'b_corner' || t.id === ids['CORNER SHOP']).map((t) => [t.id, t.amount, t.splits?.map((p) => p.amount)])).toEqual([['b_corner', 60, [45, 15]]]);
 
     // The bank taking its row back puts the imported row back, split as it was.
     await storeBank(BANK);
@@ -509,6 +511,17 @@ describe('when the bank sends the same transaction', () => {
     expect(rows.some((t) => t.transaction_id === 'b_corner' || t.transaction_id === ids['CORNER SHOP'])).toBe(false);
     // The rent, the lunch's net and the grocer's: nothing else.
     expect(summarize(rows, (d) => d >= daysAgo(55), 'USD')).toMatchObject({ money_out: 1850 + 45 + 20, money_in: 0 });
+    // The read-only API lists the bank's row once, with the group beside it,
+    // and the transactions CSV lists it under the group.
+    const api = (await queryTransactions(ctx, { from: daysAgo(60), to: daysAgo(40), limit: 50 })).transactions;
+    expect(api.filter((t) => t.id === 'b_corner' || t.id === ids['CORNER SHOP']).map((t) => [t.id, t.transaction_group?.id, t.transaction_group?.net])).toEqual([['b_corner', made.body.id, 45]]);
+    const csv = csvOf(await download());
+    expect(csv.filter((r) => r.group_id === made.body.id).map((r) => [r.transaction_id, r.nya_amount])).toEqual([
+      ['b_payback', ''],
+      ['b_tip', ''],
+      ['b_corner', ''],
+      [`group:${made.body.id}`, '45'],
+    ]);
 
     // Taken out from its row in the group, as the list does: by the id the
     // group holds.
