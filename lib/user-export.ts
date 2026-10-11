@@ -1021,43 +1021,6 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) =>
       `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}, and a transaction the bank sent that stands for one of them doesn’t show what you said about it.`,
   },
-  // What the person said about each transaction, and what was carried from
-  // earlier accounts: in a CSV, the columns that show it (excluded, note,
-  // tags), on the transaction itself and on a bank's standing for one
-  // imported from a file (lib/txn-layers.ts).
-  [txnAnnotationStore.name]: {
-    noun: txnAnnotationStore.what,
-    one: 'entry',
-    many: 'entries',
-    missing: missingFrom,
-    inCsv: (counts) =>
-      `Not all of your notes, tags and exclusions could be read: ${counts}. The transactions they are about, and a bank’s transaction standing for one of them you imported from a file, have an empty excluded column (they count, as the app counts them), and may be missing your notes and tags.`,
-  },
-  [carriedAnnotationStore.name]: {
-    noun: carriedAnnotationStore.what,
-    one: 'entry',
-    many: 'entries',
-    missing: missingFrom,
-    inCsv: (counts) =>
-      `Not all of your notes, tags and exclusions carried from earlier accounts could be read: ${counts}. The transactions of the accounts you linked those to are in this file without them.`,
-  },
-  // One value each: in a CSV, what the rows show without them, as the app
-  // shows them until they can be read.
-  [rulesStore.name]: {
-    noun: rulesStore.what,
-    one: 'rule',
-    many: 'rules',
-    missing: missingFrom,
-    valueInCsv: (why) =>
-      `Your rules could not be read (${why}), so none is applied in this file, as the app applies none until they can be read: its names, categories, tags and exclusions are as they are without your rules.`,
-  },
-  [tagStore.name]: {
-    noun: tagStore.what,
-    one: 'tag',
-    many: 'tags',
-    missing: missingFrom,
-    valueInCsv: (why) => `Your tags could not be read (${why}), so the tags column is empty, as the app shows no tags until they can be read.`,
-  },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
@@ -1072,6 +1035,41 @@ const PART_WORDS: Record<string, PartWords> = {
   // Read from the same stores as the budgets on categories: when those can't
   // be read, neither can these, and the budgets' note says it.
   group_budgets: { noun: 'budgets on category groups', one: 'budget', many: 'budgets', missing: missingFrom, saidWith: 'budgets' },
+  // What the read layer puts on each transaction (lib/txn-layers.ts): in a
+  // CSV, what each row's nya_name, tags, note and excluded lack.
+  [rulesStore.name]: {
+    noun: 'rules',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No rule is applied to the transactions in this file, as the app applies none until they can be read.',
+    valueInCsv: (why) =>
+      `Your rules could not be read (${why}), so no rule is applied to the transactions in this file: their names, categories, tags and whether they count are as the bank and you have them, as the app shows them until they can be read.`,
+  },
+  [tagStore.name]: {
+    noun: 'tags',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No transaction in this file has tags, as the app shows none until they can be read.',
+    valueInCsv: (why) => `Your tags could not be read (${why}), so no transaction in this file has tags, as the app shows none until they can be read.`,
+  },
+  [txnAnnotationStore.name]: {
+    noun: txnAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions, and a bank’s transaction standing for one you imported into a linked account, are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought, or one imported into a linked account (its file’s own memo shows instead), is missing too; a note written with one you entered, or imported into a manual account, is on its row.`,
+  },
+  [carriedAnnotationStore.name]: {
+    noun: carriedAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
