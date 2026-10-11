@@ -7,9 +7,12 @@ import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 // date (lib/connectors/): closing one through the route the app uses, the
 // dashboard and net worth from its day, its rows left out from it, and the
 // bank SimpleFIN reaches never held for an account that ended (the day's
-// total, and its history, go on without it). Nya asks no question about one
-// SimpleFIN stops returning, or holds at zero: its bank's card says what to
-// do.
+// total, and its history, go on without it). Read back as every reader reads
+// it: the API lists it once, whatever became of it (still returned, no longer
+// returned, let go and kept by hand, let go and removed); a report places it
+// under its bank; its OFX statement says where its balance is from. Nya asks
+// no question about one SimpleFIN stops returning, or holds at zero: its bank's
+// card says what to do.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -31,13 +34,18 @@ mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
 const { setTransportForTests } = await import('@/lib/connectors/http');
-const { connect, trackAccounts } = await import('@/lib/connectors/manage');
+const { connect, trackAccounts, releaseAccounts } = await import('@/lib/connectors/manage');
 const { connectorAccountsStore, connectionsStore } = await import('@/lib/connectors/store');
 const { syncConnection } = await import('@/lib/connectors/sync');
 const { lifecycleStore } = await import('@/lib/lifecycle');
-const { readSpending } = await import('@/lib/api-read');
+const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
+const { readAccounts, readSpending } = await import('@/lib/api-read');
 const { computeNetWorth, recordFetch, isRecordable } = await import('@/lib/networth');
 const { getAccountHistory } = await import('@/lib/history');
+const { readReport } = await import('@/lib/report/read');
+const { resolvePeriod } = await import('@/lib/report/period');
+const { collectUserData, buildUserExport } = await import('@/lib/user-export');
+const { ofxFile } = await import('@/lib/ofx-export');
 const { encrypt } = await import('@/lib/crypto');
 const { forgetEpochs } = await import('@/lib/sessions');
 const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
@@ -99,6 +107,16 @@ async function load() {
 
 const accountIds = (body: any) => body.institutions.flatMap((i: any) => i.accounts.map((a: any) => a.account_id));
 const myBank = <T extends { institution_name: string }>(list: T[]) => list.find((i) => i.institution_name === 'My Bank')!;
+
+/** A report on the days from `start` to today, in UTC, made now. */
+async function report(start: string) {
+  const period = resolvePeriod({ kind: 'range', start, end: dayOf(NOW) }, 'UTC', NOW);
+  if ('error' in period) throw new Error(period.error);
+  return readReport(ctx, period, { now: NOW });
+}
+
+/** How the API lists one account: every time it does. */
+const listed = async (id: string) => (await readAccounts(ctx)).accounts.filter((a) => a.id === id);
 
 describe('closing an account SimpleFIN keeps up to date', () => {
   test('is an end like any other: from its day it counts in nothing, its rows from then are left out, and reopening puts it back', async () => {
@@ -234,5 +252,98 @@ describe('no question about an account SimpleFIN keeps up to date', () => {
     expect(row.balance).toBe(0);
     expect(row.question).toBeUndefined();
     expect(await lifecycleStore.getAll(ctx)).toEqual(new Map());
+  });
+});
+
+describe('the API lists an account SimpleFIN kept up to date once, whatever became of it', () => {
+  test('ended and still returned, then no longer returned, then let go and removed', async () => {
+    const { connection_id, card } = await trackBoth();
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 7 * DAY), balance: 432.1 });
+    const closed = { state: 'closed', date: dayOf(NOW - 7 * DAY), note: null, assumed: false };
+    expect(await listed(card)).toEqual([expect.objectContaining({ source: 'simplefin', name: 'Visa', institution: 'My Bank', lifecycle: closed })]);
+
+    server.accounts = [CHECKING()];
+    await syncConnection(ctx, connection_id, { purpose: 'refresh' });
+    expect(await listed(card)).toEqual([expect.objectContaining({ source: 'simplefin', name: 'Visa', institution: 'My Bank', type: 'credit', lifecycle: closed })]);
+    expect((await readAccounts(ctx)).complete).toBe(true);
+
+    expect(await releaseAccounts(ctx, [card], false)).toMatchObject({ removed: [card] });
+    expect(await listed(card)).toEqual([expect.objectContaining({ source: 'simplefin', name: 'Visa', lifecycle: closed })]);
+    // Its end stays, with the note on its day: its past balances stay in the
+    // history, which subtracts it from that day on.
+    expect(await lifecycleStore.get(ctx, card)).toMatchObject({ lifecycle: { state: 'closed', on: dayOf(NOW - 7 * DAY) } });
+    expect(await timelineNotesStore.get(ctx, autoNoteId(card))).toMatchObject({ kind: 'auto', account_id: card, date: dayOf(NOW - 7 * DAY) });
+  });
+
+  test('let go and kept by hand: the same account, its end and its note with it, listed once, and reopened as it is', async () => {
+    const { card } = await trackBoth();
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 7 * DAY), balance: 432.1 });
+    expect(await releaseAccounts(ctx, [card], true)).toMatchObject({ kept: [card] });
+    expect(await listed(card)).toEqual([expect.objectContaining({ source: 'manual', name: 'Visa', lifecycle: expect.objectContaining({ state: 'closed' }) })]);
+    expect(await timelineNotesStore.get(ctx, autoNoteId(card))).toMatchObject({ kind: 'auto', account_id: card });
+    let { body } = await load();
+    expect(accountIds(body)).not.toContain(card);
+    expect(body.lifecycle).toEqual([expect.objectContaining({ account_id: card })]);
+
+    expect((await post({ account_id: card, state: 'active' })).body).toMatchObject({ reopened: true });
+    ({ body } = await load());
+    expect(accountIds(body)).toContain(card);
+    expect(body.lifecycle).toEqual([]);
+    expect(await timelineNotesStore.get(ctx, autoNoteId(card))).toBeNull();
+    expect(await listed(card)).toEqual([expect.objectContaining({ source: 'manual', lifecycle: null })]);
+  });
+});
+
+describe('an account SimpleFIN keeps up to date, in a report', () => {
+  const ON = 'My Bank (through SimpleFIN)';
+
+  test('its end is placed under its bank', async () => {
+    const { card } = await trackBoth();
+    await post({ account_id: card, state: 'untracked', from: dayOf(NOW - 5 * DAY) });
+    const r = await report(dayOf(NOW - 20 * DAY));
+    const bank = r.institutions.find((i) => i.institution_name === ON)!;
+    expect(bank.ended_by).toBeNull();
+    expect(r.gaps.filter((g) => g.kind === 'untracked')).toEqual([expect.objectContaining({ item_id: bank.item_id, account: 'Visa', from: dayOf(NOW - 5 * DAY) })]);
+    expect(r.ended).toEqual([expect.objectContaining({ account: 'Visa', institution: 'My Bank', state: 'untracked' })]);
+  });
+
+  test('a bank whose every account had ended by the period’s first day is listed, and short of nothing', async () => {
+    const { card, checking } = await trackBoth();
+    const start = dayOf(NOW - 140 * DAY);
+    // Its older history is still coming: the period is short of it.
+    let r = await report(start);
+    let bank = r.institutions.find((i) => i.institution_name === ON)!;
+    expect(r.gaps.filter((g) => g.item_id === bank.item_id).map((g) => g.kind)).toEqual(['importing']);
+    for (const id of [card, checking]) await post({ account_id: id, state: 'closed', on: dayOf(NOW - 150 * DAY), balance: null });
+    r = await report(start);
+    bank = r.institutions.find((i) => i.institution_name === ON)!;
+    expect(bank.ended_by).toBe(dayOf(NOW - 150 * DAY));
+    expect(r.gaps.filter((g) => g.item_id === bank.item_id)).toEqual([]);
+  });
+
+  test('one let go and kept by hand after it ended leaves nothing short from then', async () => {
+    const { card } = await trackBoth();
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 3 * DAY), balance: 432.1 });
+    await releaseAccounts(ctx, [card], true);
+    const disconnected = async () => (await report(dayOf(NOW - 20 * DAY))).gaps.filter((g) => g.kind === 'disconnected');
+    expect(await disconnected()).toEqual([]);
+    // Reopened, its later days are only what is entered by hand.
+    await post({ account_id: card, state: 'active' });
+    expect(await disconnected()).toEqual([expect.objectContaining({ accounts: ['Visa'] })]);
+  });
+});
+
+describe('the OFX statement of an account SimpleFIN keeps up to date that ended', () => {
+  test('gives the balance SimpleFIN last gave, said so, even once SimpleFIN stops returning it', async () => {
+    const { connection_id, card } = await trackBoth();
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 7 * DAY), balance: 432.1 });
+    server.accounts = [CHECKING()];
+    await syncConnection(ctx, connection_id, { purpose: 'refresh' });
+    const data = await collectUserData({ ctx, userId: null });
+    const out = ofxFile(data, buildUserExport(data, new Date(NOW)), card, new Date(NOW));
+    if (!('file' in out)) throw new Error(out.refused);
+    const balanceDay = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(ago(1) * 1000));
+    expect(out.file.notes[0]).toStartWith('This account was closed in Nya on ');
+    expect(out.file.notes[0]).toEndWith(`, and its balance is the latest SimpleFIN gave, from ${balanceDay}.`);
   });
 });

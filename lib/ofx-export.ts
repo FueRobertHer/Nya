@@ -109,7 +109,10 @@
 // app reconciling the account needs them), and the newest balance. A note
 // says when it ended in Nya, how many of its transactions are dated from
 // then (which Nya counts in nothing), and the day the balance is from, which
-// for a closure Nya noticed by the account's absence is from before it.
+// for a closure Nya noticed by the account's absence is from before it. One
+// SimpleFIN keeps up to date gives the balance SimpleFIN last gave for it,
+// even once SimpleFIN stops returning it: an account that ended holds no
+// bank's balances (lib/connectors/institutions.ts).
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
@@ -124,6 +127,7 @@ import { bookAccountTypes, missingIds, manualTransactionsIn, type ExportFile, ty
 import { connectionsStore, connectorAccountsStore } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
+import { lastEndDay } from './lifecycle';
 import { formatMoney } from './format';
 
 // ---- Text ----
@@ -496,9 +500,15 @@ const noteDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'shor
  * What the statement of an account that ended says (see AN ACCOUNT THAT
  * ENDED): when it ended in Nya, that the statement still lists every
  * transaction Nya stored for it, with how many are dated from then, and the
- * day of the balance it gives, when it gives one (`ledger`). Pure.
+ * day of the balance it gives, when it gives one (`ledger`), with where that
+ * comes from: set by hand, the newest Nya recorded, or the latest SimpleFIN
+ * gave. Pure.
  */
-export function endedNote(lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>, rows: readonly Pick<OfxRow, 'date'>[], ledger: { as_of: string; manual: boolean } | null): string {
+export function endedNote(
+  lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>,
+  rows: readonly Pick<OfxRow, 'date'>[],
+  ledger: { as_of: string; from: 'set' | 'recorded' | 'simplefin' } | null
+): string {
   const when = noteDay(lifecycle.date);
   const what =
     lifecycle.state === 'closed'
@@ -513,7 +523,8 @@ export function endedNote(lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'a
     after > 0
       ? `the statement still lists every transaction Nya stored for it, ${after.toLocaleString('en-US')} of them dated from then, which Nya leaves out of every total`
       : 'the statement lists every transaction Nya stored for it, none dated from then';
-  const balance = ledger ? `, and its balance is ${ledger.manual ? 'the one last set, on' : 'the newest Nya recorded, from'} ${noteDay(ledger.as_of)}` : '';
+  const from = ledger?.from === 'set' ? 'the one last set, on' : ledger?.from === 'simplefin' ? 'the latest SimpleFIN gave, from' : 'the newest Nya recorded, from';
+  const balance = ledger ? `, and its balance is ${from} ${noteDay(ledger.as_of)}` : '';
   return `${what}: ${listed}${balance}.`;
 }
 
@@ -649,11 +660,14 @@ export function ofxFile(
     }
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
     // date for it, where the person is: none while Nya holds it, as the
-    // Accounts tab does (lib/connectors/institutions.ts).
+    // Accounts tab does (lib/connectors/institutions.ts), for which an
+    // account that ended holds nothing.
+    const endedIds = new Set(doc.accounts.flatMap((a) => (a.lifecycle && a.lifecycle.date <= lastEndDay(now.getTime()) ? [a.account_id] : [])));
     const bank = buildConnectorInstitutions(
       data.connections,
       [...data.connected.values()].filter((a) => a.connection_id === entry.connection_id && a.institution_ref === entry.institution_ref),
-      now.getTime()
+      now.getTime(),
+      endedIds
     )[0];
     const waiting = needsSign(entry);
     const amount = nyaBalance(entry);
@@ -762,7 +776,7 @@ export function ofxFile(
   const ended = linked ? linked.lifecycle : manual!.lifecycle;
   if (ended) {
     const ledger = statementsOf({ ...account, rows }).statements.find((s) => s.ledger !== null)?.ledger ?? null;
-    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, manual: !!manual } : null));
+    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, from: manual ? 'set' : fed ? 'simplefin' : 'recorded' } : null));
   }
 
   const written = ofxDocument({ ...account, rows }, now);

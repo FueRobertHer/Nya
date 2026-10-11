@@ -81,14 +81,14 @@ import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, sameAccountIds, type Link } from './links';
-import { getEffectiveLifecycle, lifecycleOf, endOf, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
+import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
-import { connectorAccountsStore } from './connectors/store';
+import { connectorAccountsStore, endedAccountsStore } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
@@ -277,11 +277,14 @@ export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string)
 }
 
 async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsRead> {
-  const [items, remembered, effective, manual, facts, fed] = await Promise.all([
+  // Strict: a hidden account must never show for a read that failed.
+  const hiddenRead = getEffectiveHidden(ctx, { readOnly: true });
+  // Strict, through the same links: an end that can't be read throws.
+  const lifecycleRead = hiddenRead.then((effective) => getEffectiveLifecycle(ctx, effective.links));
+  const [items, remembered, effective, manual, facts, fed, lifecycle] = await Promise.all([
     getItems(ctx),
     rememberedAccountsReport(ctx),
-    // Strict: a hidden account must never show for a read that failed.
-    getEffectiveHidden(ctx, { readOnly: true }),
+    hiddenRead,
     // LENIENT, for this display only: an account that can't be read is named
     // in `missing`, and the others listed; recording a snapshot reads them all
     // strictly (lib/networth.ts). One sealed under a key this deployment
@@ -291,16 +294,23 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the manual accounts are: an account
-    // entry that can't be read is named in `missing`.
-    connectorBanksReport(ctx),
+    // entry that can't be read is named in `missing`. One that ended holds
+    // no bank (lib/connectors/institutions.ts); the strict read is below.
+    connectorBanksReport(
+      ctx,
+      Date.now(),
+      lifecycleRead.then(
+        (view) => endedNowIds(view),
+        () => new Set<string>()
+      )
+    ),
+    lifecycleRead,
   ]);
   const notes: string[] = [];
   const missing: ApiMissing[] = [];
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
-  // Strict, through the same links: an end that can't be read throws.
-  const lifecycle = await getEffectiveLifecycle(ctx, effective.links);
 
   // Each stored Item's accounts, as its last good load recorded them.
   const linked: { item: StoredItem; account: RememberedAccount }[] = [];
@@ -322,8 +332,15 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   }
   // Accounts that ended and that no live list names any more (a bank stops
   // returning a closed account): listed from what their end keeps, so the
-  // end, and whether it was assumed, can be seen.
-  const listedIds = new Set([...linked.map(({ account }) => account.account_id), ...manual.accounts.map((a) => a.account_id)]);
+  // end, and whether it was assumed, can be seen. A SimpleFIN card names
+  // one while it shows it (one that ended and isn't in SimpleFIN's latest
+  // answer is left off it), and one that can't be read is named below.
+  const listedIds = new Set([
+    ...linked.map(({ account }) => account.account_id),
+    ...manual.accounts.map((a) => a.account_id),
+    ...fed.cards.flatMap((card) => card.accounts.map((a) => a.account_id)),
+    ...fed.unreadable.map((u) => u.account_id),
+  ]);
   const endedOnly = [...lifecycle.accounts].filter(
     ([root, { entry }]) =>
       endOf(entry.lifecycle) !== null &&
@@ -409,12 +426,22 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     }
   }
   const stored = new Set(items.map((i) => i.item_id));
+  // One SimpleFIN fed is SimpleFIN's: still tracked, or let go and removed
+  // (lib/connectors/store.ts connector-ended remembers it). LENIENT: one
+  // that can't be read is said as a manual account.
+  const fedIds = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
+    ? await endedAccountsStore.getAllReport(ctx).then(
+        (r) => new Set([...r.entries.keys(), ...r.unreadable, ...r.unrecognised]),
+        () => new Set<string>()
+      )
+    : new Set<string>();
+  for (const id of fed.accounts.keys()) fedIds.add(id);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
-      source: isManualId(root) ? 'manual' : 'plaid',
+      source: isManualId(root) ? (fedIds.has(root) ? 'simplefin' : 'manual') : 'plaid',
       name: entry.label.name,
       official_name: null,
       institution: entry.label.institution,
@@ -846,8 +873,8 @@ async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityR
   const [{ transactions, notes, history, taxonomy }, fed] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
-    // assembly's own notes.
-    connectorBanksReport(ctx),
+    // assembly's own notes. One that ended holds no bank.
+    connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {

@@ -30,7 +30,13 @@
 //     reads them: its rows come with theirs kept (keepEnded) and each row's
 //     account (withAccountIds), so the report leaves out what the Activity
 //     tab leaves out, by the same rule, and says what it did (lib/report/
-//     build.ts ENDED ACCOUNTS); and the windows an account was missing.
+//     build.ts ENDED ACCOUNTS); and the windows an account was missing. An
+//     end is the person's word on an account, wherever it comes from: one
+//     SimpleFIN keeps up to date is placed under its bank, as a Plaid one is
+//     under its connection. Letting an account go from SimpleFIN is
+//     something else (`letGo` here, connector-ended): it says where its
+//     transactions come from after, never that it stopped counting; one that
+//     had ended by the day it was let go has nothing after to come.
 //
 // READ ONLY, and for display: nothing here writes, deletes or records anything
 // on what it reads (readOnly). Every read that can't be made is said on the
@@ -54,7 +60,7 @@ import { readLinks } from '../link-core';
 import { rememberedAccountsReport } from '../last-known';
 import { isInvestmentType } from '../balance';
 import { StoredDataUnreadableError } from '../repo';
-import { accountWords, endDays, endOf, type LifecycleView } from '../lifecycle';
+import { accountWords, endDays, endedNowIds, endOf, type LifecycleView } from '../lifecycle';
 import { reportSettingsStore } from './store';
 import {
   buildReport,
@@ -68,7 +74,7 @@ import {
   type SourceFacts,
 } from './build';
 import { addDays, dayIn, type Period } from './period';
-import { connectorBanksReport, needsSign, type ConnectorBanksReport } from '../connectors/institutions';
+import { connectorBanksReport, connectorCardId, needsSign, type ConnectorBanksReport } from '../connectors/institutions';
 import { connectorBadge } from '../connectors/health';
 import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
@@ -148,7 +154,7 @@ export async function readReport(
   // Each row with its account, and an ended account's later rows kept: left
   // out by buildReport, by the Activity tab's rule, and said.
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: period.start, withAccountIds: true, keepEnded: true });
-  const [activity, facts, manual, items, settings, remembered, links, fed, ended] = await Promise.all([
+  const [activity, facts, manual, items, settings, remembered, links, fed, letGo] = await Promise.all([
     finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true }),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the API lists them: an account that
@@ -178,13 +184,17 @@ export async function readReport(
     ),
     // LENIENT, for this display only: an account entry that can't be read is
     // named by the assembly's notes; a connection's that can't be read leaves
-    // its banks saying when they last synced isn't known.
-    connectorBanksReport(ctx, now),
+    // its banks saying when they last synced isn't known. One that ended
+    // holds no bank (lib/connectors/institutions.ts).
+    connectorBanksReport(ctx, now, endedNowIds(bank.lifecycle, now)),
     // LENIENT, for this display only: one that can't be read is said, as a
     // directory entry is (removed_unknown).
     endedAccountsStore.getAllReport(ctx),
   ]);
   const hidden = bank.hidden;
+  // The manual accounts, those that can't be read too: one kept on a
+  // disconnect that stopped part way is in both stores, and is the manual one.
+  const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
   const live = new Set(items.map((i) => i.item_id));
   // LENIENT, for this display only: a directory that can't be read is said on
   // the report (a gap), never read as no removals.
@@ -222,6 +232,8 @@ export async function readReport(
   const connectionOfAccount = new Map<string, string>();
   for (const item of items) for (const a of remembered.byItem[item.item_id] ?? []) connectionOfAccount.set(a.account_id, item.item_id);
   for (const a of directory?.live ?? []) if (itemOf.has(a.item_id) && !connectionOfAccount.has(a.account_id)) connectionOfAccount.set(a.account_id, a.item_id);
+  // A SimpleFIN account's is its bank's card.
+  for (const a of fed.accounts.values()) if (!own.has(a.account_id)) connectionOfAccount.set(a.account_id, connectorCardId(a));
   const lifecycle = lifecycleFacts(bank.lifecycle, hidden, (ids, item_id) => {
     for (const id of ids) {
       const item = connectionOfAccount.get(id);
@@ -260,8 +272,8 @@ export async function readReport(
     };
   });
 
-  sources.push(...connectorSources(fed, hidden, period));
-  const gone = connectorEnded(ended.entries, fed, hidden, period, new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]));
+  sources.push(...connectorSources(fed, hidden, period, endedBy));
+  const gone = connectorEnded(letGo.entries, fed, hidden, period, own, endDay);
 
   const manualFacts: ManualFacts[] = toInstitutions(manual.accounts).flatMap((inst) =>
     inst.accounts
@@ -295,7 +307,7 @@ export async function readReport(
     manualUnread: activity.manual_unread,
     removed,
     kept: gone.kept,
-    removedUnreadable: (directory ? directory.unreadable : 1) + ended.unreadable.length + ended.unrecognised.length,
+    removedUnreadable: (directory ? directory.unreadable : 1) + letGo.unreadable.length + letGo.unrecognised.length,
     liveAccounts,
     links: new Map([...links].map(([old, link]) => [old, link.to])),
     ownRead: bank.own_read,
@@ -324,9 +336,10 @@ const throughName = (institution: string, label: string) => `${institution} (thr
  * reported or an old bank balance shows as a bank that hasn't synced since;
  * still importing only when the period starts before the history that has
  * come; and, when its connection's entry can't be read, when it last synced
- * isn't known.
+ * isn't known. Every account there that had ended (`endedBy`) says so, as a
+ * Plaid connection's do.
  */
-function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>, period: Period): SourceFacts[] {
+function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>, period: Period, endedBy: (item_id: string) => string | null): SourceFacts[] {
   const label = connectorOf('simplefin').label;
   const out: SourceFacts[] = [];
   for (const card of fed.cards) {
@@ -354,6 +367,7 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
       records_unreadable: unread,
       // Their rows are all in the report, investment and loan accounts' too.
       holds: { investment: false, loans: false },
+      ended_by: endedBy(card.item_id),
       connector: {
         label,
         host: conn?.host ?? card.health?.detail?.host ?? null,
@@ -374,14 +388,17 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
  * account on the same host: its own gaps say how far back it reaches now):
  * removed, its transactions gone with it, as a removed connection is, by
  * connection and bank; or kept as a manual account (`own`, still there), its
- * later transactions only the ones entered or imported, by bank and day.
+ * later transactions only the ones entered or imported, by bank and day, but
+ * one that had ended by then (`endDay`, lib/lifecycle.ts), which counts on
+ * none of them.
  */
 function connectorEnded(
   ended: ReadonlyMap<string, EndedAccount>,
   fed: ConnectorBanksReport,
   hidden: ReadonlySet<string>,
   period: Period,
-  own: ReadonlySet<string>
+  own: ReadonlySet<string>,
+  endDay: ReadonlyMap<string, string>
 ): { removed: RemovedFacts[]; kept: KeptFacts[] } {
   const label = connectorOf('simplefin').label;
   const tracked = new Set([...fed.accounts.values()].map((a) => `${fed.connections.get(a.connection_id)?.host ?? ''}\n${a.remote_id}`));
@@ -394,6 +411,8 @@ function connectorEnded(
     const institution = throughName(e.institution_name, label);
     const day = dayOf(e.ended_at);
     if (e.kept && own.has(id)) {
+      const end = endDay.get(id);
+      if (end !== undefined && end <= day) continue;
       const key = `${institution}\n${day}`;
       const k = kept.get(key) ?? { institution, since: day, accounts: [] };
       k.accounts.push(e.name);
