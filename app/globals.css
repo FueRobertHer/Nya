@@ -4822,7 +4822,8 @@ button.pool-toggle {
    root carries data-amounts="hidden", the hook for a figure drawn without
    the formatters in lib/format.ts: an amount typed into a field shows as
    dots until the field is in use, so a form opened in public shows no
-   figure either. */
+   figure either. A percentage's field (data-percent) stays, as percentages
+   do everywhere. */
 .hide-amounts-btn[aria-pressed="true"] {
   border-color: var(--accent);
   color: var(--accent);
@@ -4840,13 +4841,13 @@ button.pool-toggle {
   margin-bottom: 0;
 }
 
-:root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not(:focus) {
+:root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus) {
   -webkit-text-security: disc;
 }
 
 /* Where the browser can't draw a field's text as dots, it is blurred. */
 @supports not (-webkit-text-security: disc) {
-  :root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not(:focus) {
+  :root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus) {
     color: transparent;
     text-shadow: 0 0 8px var(--text);
   }

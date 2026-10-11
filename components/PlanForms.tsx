@@ -328,15 +328,15 @@ export function AssumptionsForm(props: SaveProps) {
       <div className="sheet-form">
         <label className="field">
           Withdrawal rate (% a year)
-          <input type="number" inputMode="decimal" step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Real return until FI (% a year, after inflation)
-          <input type="number" inputMode="decimal" step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Tax on withdrawals (% of each withdrawal)
-          <input type="number" inputMode="decimal" step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
@@ -543,7 +543,7 @@ export function SimulationForm(
         </label>
         <label className="field">
           Fund fees (% a year)
-          <input type="number" inputMode="decimal" step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} disabled={s.saving} />
         </label>
       </div>
       {s.error && <div className="error">{s.error}</div>}

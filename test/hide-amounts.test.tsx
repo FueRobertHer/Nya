@@ -535,15 +535,19 @@ describe('the main screens with amounts hidden', () => {
     expect(meters).toContain('<span class="visually-hidden">hidden of hidden</span>');
   });
 
-  test('a field holding a figure is one the CSS hook covers, and the hook is there', () => {
+  test('a field holding an amount is one the CSS hook covers, a percentage’s is marked to stay, and the hook is there', () => {
     const { hidden } = both(SCREENS['Accounts: the payoff plan']);
     const fields = [...hidden.matchAll(/<input[^>]*>/g)].map((m) => m[0]).filter((f) => /value="[^"]*\d/.test(f));
-    expect(fields.length).toBeGreaterThan(0);
+    const value = (f: string) => f.match(/value="([^"]*)"/)![1];
+    // The card's APR, a percentage, stays; its minimum payment, an amount, is covered.
+    expect(fields.filter((f) => /data-percent/.test(f)).map(value)).toEqual(['21.24']);
+    const amounts = fields.filter((f) => !/data-percent/.test(f));
+    expect(amounts.map(value)).toEqual(['120.00']);
     // React writes inputMode as it is spelled; the browser reads attribute
     // names in any case, as the CSS hook does.
-    for (const f of fields) expect(/inputmode="decimal"|class="[^"]*budget-input/i.test(f)).toBe(true);
+    for (const f of amounts) expect(/inputmode="decimal"|class="[^"]*budget-input/i.test(f)).toBe(true);
     const css = readFileSync(join(ROOT, 'app', 'globals.css'), 'utf8');
-    expect(css).toContain(':root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not(:focus)');
+    expect(css).toContain(':root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus)');
   });
 });
 

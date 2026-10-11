@@ -840,6 +840,8 @@ function DebtRow({
             <input
               type="number"
               inputMode="decimal"
+              // A rate, not an amount: shown whether amounts are hidden or not.
+              data-percent
               min={0}
               max={MAX_APR}
               step="any"

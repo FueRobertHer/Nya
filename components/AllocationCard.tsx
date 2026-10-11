@@ -893,7 +893,7 @@ export function SplitForm({
         {ASSET_CLASSES.map((c) => (
           <label key={c} className="field">
             {FIELD_NAMES[c]} %
-            <input type="number" inputMode="decimal" step="0.1" value={fields[c]} onChange={(e) => setFields((f) => ({ ...f, [c]: e.target.value }))} disabled={saving} />
+            <input type="number" inputMode="decimal" data-percent step="0.1" value={fields[c]} onChange={(e) => setFields((f) => ({ ...f, [c]: e.target.value }))} disabled={saving} />
           </label>
         ))}
       </div>
