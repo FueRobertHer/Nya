@@ -27,6 +27,7 @@ import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
@@ -2755,6 +2756,8 @@ export default function Dashboard({
               connection at Plaid. You can reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
+            {/* What adding it back doesn't bring back (#39). */}
+            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
             {/* What Plaid itself keeps is beyond a disconnect's reach (the
                 deletion receipt says the same, lib/deletion-receipt.ts): say
                 where people can see and delete it. */}

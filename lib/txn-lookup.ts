@@ -14,6 +14,8 @@ import { getItems } from './storage';
 import { readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
 
 /** A transaction as stored: what a split or a group is checked against. */
 export type FoundTxn = {
@@ -95,4 +97,32 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
   const where = [...(unreadBanks.length > 0 && missing(bank) ? unreadBanks : []), ...(unreadBooks && missing(manual) ? ['a manual account'] : [])];
   if (where.length > 0) throw new LookupUnreadableError(where);
   return found;
+}
+
+// ---- What a disconnect takes ----
+
+/**
+ * How many of a connection's stored transactions are split, and how many are
+ * in a group: what disconnecting it takes with it (lib/disconnect-item.ts,
+ * lib/split-gone.ts), which adding it back doesn't bring back, for the
+ * confirmation to say before it happens. Strict: a store of its transactions
+ * that can't be read is LookupUnreadableError, and splits or groups that
+ * can't be read throw as the seam does, never a count of none.
+ */
+export async function splitsAndGroupsOn(ctx: Ctx, item_id: string): Promise<{ split: number; grouped: number }> {
+  let ids: Set<string>;
+  try {
+    ids = new Set((await readStoredTxns(ctx, item_id)).map((t) => t.transaction_id));
+  } catch (err) {
+    if (!(err instanceof StateUnreadableError)) throw err;
+    const item = (await getItems(ctx)).find((i) => i.item_id === item_id);
+    throw new LookupUnreadableError([item?.institution_name ?? 'a bank']);
+  }
+  if (ids.size === 0) return { split: 0, grouped: 0 };
+  const [splits, groups] = await Promise.all([splitStore.getAll(ctx), groupStore.getAll(ctx)]);
+  let split = 0;
+  for (const id of splits.keys()) if (ids.has(id)) split++;
+  let grouped = 0;
+  for (const g of groups.values()) for (const id of g.members) if (ids.has(id)) grouped++;
+  return { split, grouped };
 }

@@ -7,7 +7,7 @@ import { isTransactionId } from '@/lib/txn-annotations';
 import { isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
 import { changePart, checkPartNote, checkParts, removeSplit, saveSplit, SplitError, type PartChange } from '@/lib/splits';
 import { groupStore, memberIndex } from '@/lib/groups';
-import { findTransactions, LookupUnreadableError } from '@/lib/txn-lookup';
+import { findTransactions, LookupUnreadableError, splitsAndGroupsOn } from '@/lib/txn-lookup';
 import { isSplitOrGroupId } from '@/lib/split-rows';
 
 // Splitting one transaction into parts (#39, lib/splits.ts), applied on read
@@ -28,6 +28,9 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //   still be changed a part at a time; placing what changed is a PUT.
 // DELETE { transaction_id }
 //   unsplits it: it shows and counts whole again, exactly as before.
+// GET ?item_id=
+//   how many of a connection's transactions are split, and how many are in a
+//   group: what disconnecting it takes, which the confirmation says first.
 //
 // What can't be read is never taken for nothing: a split, a group, the
 // categories or a store of transactions that can't be read answers 409 and
@@ -137,5 +140,19 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ transaction_id, removed });
   } catch (err) {
     return failure(err, 'Failed to unsplit it');
+  }
+}
+
+/** A Plaid Item's id, as the disconnect route takes it. */
+const ITEM_ID = /^[A-Za-z0-9_-]{1,128}$/;
+
+export async function GET(req: Request) {
+  try {
+    const ctx = await dataCtx();
+    const item_id = new URL(req.url).searchParams.get('item_id');
+    if (!item_id || !ITEM_ID.test(item_id)) return NextResponse.json({ error: 'Say which connection.' }, { status: 400 });
+    return NextResponse.json(await splitsAndGroupsOn(ctx, item_id));
+  } catch (err) {
+    return failure(err, 'Could not read your splits');
   }
 }

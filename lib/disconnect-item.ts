@@ -86,7 +86,8 @@ export async function disconnectItem(
     console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
   }
   // And their splits and their places in groups, which are not carried
-  // across a re-link (lib/split-gone.ts; best effort too).
+  // across a re-link (lib/split-gone.ts; best effort too): the confirmation
+  // said how many first (lib/txn-lookup.ts splitsAndGroupsOn).
   try {
     await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx));
   } catch (err) {

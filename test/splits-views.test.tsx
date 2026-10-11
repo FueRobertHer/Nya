@@ -1,9 +1,11 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
 import { entryLabel, entryNotice } from '@/components/SplitRows';
+import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { searchEntries, searchRows } from '@/components/txn-search';
 import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
@@ -262,6 +264,31 @@ describe('what else the dashboard counts from the same rows', () => {
       ix,
     }).rows;
     expect(trailingFlows([...refund, rent] as any, today)!.largestRefund).toEqual({ amount: 40, date: today, name: 'Return' });
+  });
+});
+
+describe('the disconnect confirmation', () => {
+  test('says how many of its transactions lose their splits and groups, which adding it back doesn’t bring back', () => {
+    expect(disconnectSplitsText({ split: 0, grouped: 0 })).toBeNull();
+    expect(disconnectSplitsText({ split: 1, grouped: 0 })).toBe(
+      'You split 1 of its transactions. Disconnecting removes that split, and adding it back later doesn’t bring it back.'
+    );
+    expect(disconnectSplitsText({ split: 12, grouped: 0 })).toBe(
+      'You split 12 of its transactions. Disconnecting removes those splits, and adding it back later doesn’t bring them back.'
+    );
+    expect(disconnectSplitsText({ split: 0, grouped: 2 })).toBe(
+      '2 of its transactions are in groups. Disconnecting takes them out, and adding it back later doesn’t put them back.'
+    );
+    expect(disconnectSplitsText({ split: 3, grouped: 1 })).toBe(
+      'You split 3 of its transactions, and 1 is in a group. Disconnecting removes the splits and takes the grouped one out of its group, and adding it back later doesn’t bring either back.'
+    );
+    // Counts that couldn't be read: said without numbers, never as none.
+    expect(disconnectSplitsText(null)).toBe('Splits of its transactions, and their places in groups, go with it, and adding it back later doesn’t bring them back.');
+  });
+
+  test('the dashboard asks for the connection being disconnected', () => {
+    const dashboard = readFileSync(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
+    expect(dashboard).toContain('<DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />');
   });
 });
 

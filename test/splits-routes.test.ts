@@ -374,6 +374,29 @@ describe('what can’t be read is never taken for nothing', () => {
   });
 });
 
+describe('what a disconnect would take', () => {
+  test('how many of a connection’s transactions are split and grouped, for its confirmation to say first', async () => {
+    const { groupStore } = await import('@/lib/groups');
+    await listed();
+    expect((await splitPut('t_costco', costcoSplit())).status).toBe(200);
+    await groupStore.set(ctx, 'g1', { version: 1, name: 'Market run', category_id: catId('food and drink'), members: ['t_coffee', typed], date: daysAgo(5), currency: 'USD', created_at: new Date().toISOString(), updated_at: new Date().toISOString() });
+    const asked = async (query: string) => {
+      const mod: any = await import('@/app/api/transaction-splits/route');
+      const res: Response = await mod.GET(new Request(`http://x/api/transaction-splits${query}`));
+      return { status: res.status, body: await res.json() };
+    };
+    // The coffee is the bank's; the farmers market, a manual row, stays.
+    expect(await asked('?item_id=item_a')).toEqual({ status: 200, body: { split: 1, grouped: 1 } });
+    expect(await asked('?item_id=item_none')).toEqual({ status: 200, body: { split: 0, grouped: 0 } });
+    expect((await asked('')).status).toBe(400);
+    expect((await asked('?item_id=no%20spaces')).status).toBe(400);
+    // Splits that can't be read are never counted as none.
+    await fake.hset(ctxKey('transaction-splits'), { t_coffee: 'not-encrypted' });
+    const unread = await quietly(() => asked('?item_id=item_a'));
+    expect([unread.status, unread.body.unreadable]).toEqual([409, true]);
+  });
+});
+
 describe('a currency without an ISO code', () => {
   test('a transaction in BTC splits to the eighth place, as the sheet reads what is typed, and is saved as typed', async () => {
     const { leftToSplit } = await import('@/components/SplitSheet');
