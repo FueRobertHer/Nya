@@ -9,6 +9,8 @@ import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
+import Insights from '@/components/Insights';
+import { trailingFlows } from '@/lib/fire/inputs';
 
 // Splits and groups on the Activity tab (#39): a split transaction listed
 // once, as the bank has it, its parts nested under it with their categories
@@ -71,21 +73,31 @@ const record = (amount: number, parts: [string, number, string?][]) => ({
   updated_at: '2026-10-01T00:00:00.000Z',
 });
 
+/** The rows as the bank and the person have them. */
+const raw = (): Txn[] => [
+  txn('Costco', { amount: 150, note: 'monthly run' }),
+  txn('Bistro', { amount: 120, date: today }),
+  txn('Venmo from Sam', { amount: -60, date: today, category: 'transfer in', category_id: cat('transfer in'), category_name: 'transfer in', category_kind: 'transfer' }),
+  txn('Coffee', { amount: 4.5 }),
+];
+
 /** The rows as the server sends them: Costco split three ways, a dinner and
  *  its payback grouped. */
-function served(): Txn[] {
-  const rows = [
-    txn('Costco', { amount: 150, note: 'monthly run' }),
-    txn('Bistro', { amount: 120, date: today }),
-    txn('Venmo from Sam', { amount: -60, date: today, category: 'transfer in', category_id: cat('transfer in'), category_name: 'transfer in', category_kind: 'transfer' }),
-    txn('Coffee', { amount: 4.5 }),
-  ];
+function served({ grouped = true }: { grouped?: boolean } = {}): Txn[] {
+  const rows = raw();
   return expandSplitsAndGroups(rows as any, {
     splits: new Map([['Costco', record(150, [['groceries', 100.01, 'food'], ['household', 30], ['auto', 19.99]])]]),
     splitsUnknown: new Set(),
-    groups: new Map([
-      ['g1', { version: 1, name: 'Dinner with Sam', category_id: cat('restaurants'), members: ['Bistro', 'Venmo from Sam'], date: today, currency: 'USD', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' }],
-    ]),
+    groups: new Map(
+      grouped
+        ? [
+            [
+              'g1',
+              { version: 1, name: 'Dinner with Sam', category_id: cat('restaurants'), members: ['Bistro', 'Venmo from Sam'], date: today, currency: 'USD', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' },
+            ],
+          ]
+        : []
+    ),
     groupsUnknown: 0,
     ix,
   }).rows as unknown as Txn[];
@@ -136,6 +148,31 @@ describe('the Activity tab’s list', () => {
     const page = renderToStaticMarkup(<MonthBreakdown txns={served()} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
     expect(page).not.toContain('Split transaction');
     expect(page).not.toContain('Group transactions');
+  });
+});
+
+describe('what else the dashboard counts from the same rows', () => {
+  test('Home’s budget alerts meter the parts: the groceries in a Costco run, not the whole charge as general merchandise', () => {
+    const budgets = { categories: { [cat('groceries')]: { amount: 100 }, [cat('general merchandise')]: { amount: 100 } }, groups: {} };
+    const home = (rows: Txn[]) => text(renderToStaticMarkup(<Insights txns={rows} accounts={[]} budgets={budgets} taxonomy={taxonomy} />));
+    expect(home(raw())).toContain('Over your general merchandise budget');
+    const split = home(served());
+    expect(split).toContain('Over your groceries budget: $100.01 of $100.00');
+    expect(split).not.toContain('general merchandise budget');
+    // The biggest purchase is the whole charge, as the bank made it, never its largest part.
+    expect(split).toContain('Biggest purchase this month: Costco, $150.00');
+  });
+
+  test('the Plan’s year of spending: a split moves nothing, a group counts its net', () => {
+    const before = new Date(Date.parse(`${today}T12:00:00Z`) - 60 * 86_400_000).toISOString().slice(0, 10);
+    const rent = txn('Rent', { amount: 1000, date: before });
+    const whole = trailingFlows([...raw(), rent] as any, today)!;
+    expect(trailingFlows([...served({ grouped: false }), rent] as any, today)!.spending).toBeCloseTo(whole.spending, 8);
+    // The payback was a transfer in on its own; in the group it takes $60 off
+    // the dinner. Both are scaled up to a year alike.
+    const grouped = trailingFlows([...served(), rent] as any, today)!;
+    expect(grouped.spending / whole.spending).toBeCloseTo((1000 + 150 + 60 + 4.5) / (1000 + 150 + 120 + 4.5), 10);
+    expect([whole.income, grouped.income]).toEqual([0, 0]);
   });
 });
 
