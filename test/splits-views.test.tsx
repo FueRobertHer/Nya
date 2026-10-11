@@ -6,6 +6,7 @@ import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
 import { entryLabel, entryNotice, SplitActions } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
+import { pastPayeeRows } from '@/components/ManualTxnSheet';
 import { searchEntries, searchRows } from '@/components/txn-search';
 import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
@@ -271,6 +272,30 @@ describe('what else the dashboard counts from the same rows', () => {
   });
 });
 
+describe('the quick-add form', () => {
+  test('suggests payees from transactions as entered: a split one whole, under its own category, and never a group’s name', () => {
+    const typed = expandSplitsAndGroups(
+      [
+        txn('Farmers market', { source: 'manual', amount: 30, category: 'groceries', category_id: cat('groceries'), category_name: 'groceries' }),
+        txn('Bake sale', { source: 'manual', amount: 12 }),
+        txn('Cash from Sam', { source: 'manual', amount: -12 }),
+      ] as any,
+      {
+        splits: new Map([['Farmers market', record(30, [['household', 10], ['auto', 20]])]]),
+        splitsUnknown: new Set(),
+        groups: new Map([
+          ['g2', { version: 1, name: 'Bake sale, paid back', category_id: cat('restaurants'), members: ['Bake sale', 'Cash from Sam'], date: today, currency: 'USD', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' }],
+        ]),
+        groupsUnknown: 0,
+        ix,
+      }
+    ).rows as unknown as Txn[];
+    const rows = pastPayeeRows(typed);
+    expect(rows.map((t) => t.name).sort()).toEqual(['Bake sale', 'Cash from Sam', 'Farmers market']);
+    expect(rows.find((t) => t.name === 'Farmers market')?.category_id).toBe(cat('groceries'));
+  });
+});
+
 describe('the disconnect confirmation', () => {
   test('says how many of its transactions lose their splits and groups, which adding it back doesn’t bring back', () => {
     expect(disconnectSplitsText({ split: 0, grouped: 0 })).toBeNull();
@@ -312,7 +337,10 @@ describe('the split sheet', () => {
       ['p1', '50.00', cat('household')],
     ]);
     expect(leftToSplit(whole.amount, drafts, 'USD').left).toBe(1000);
-    const page = text(renderToStaticMarkup(<SplitSheet t={whole} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />));
+    const html = renderToStaticMarkup(<SplitSheet t={whole} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />);
+    // Each part's fields and its button say which part they are.
+    for (const label of ['Part 1 amount', 'Part 2 category', 'Put the rest in part 1', 'Put the rest in part 2']) expect(html).toContain(`aria-label="${label}"`);
+    const page = text(html);
     expect(page).toContain('Edit split');
     expect(page).toContain('The bank changed this amount from $150.00 to $160.00 since you split it.');
     expect(page).toContain('$10.00 left to split');

@@ -198,6 +198,7 @@ export default function SplitSheet({
                 <input
                   inputMode="decimal"
                   autoComplete="off"
+                  aria-label={`Part ${i + 1} amount`}
                   value={d.amount}
                   onChange={(e) => set(d.key, { amount: e.target.value })}
                   placeholder={typed(0, scale)}
@@ -207,7 +208,7 @@ export default function SplitSheet({
               </label>
               <label className="field split-category">
                 Category
-                <CategoryPicker taxonomy={taxonomy} value={d.category_id} onChange={(id) => set(d.key, { category_id: id })} disabled={saving} />
+                <CategoryPicker taxonomy={taxonomy} value={d.category_id} onChange={(id) => set(d.key, { category_id: id })} disabled={saving} label={`Part ${i + 1} category`} />
               </label>
             </div>
             <input
@@ -221,7 +222,12 @@ export default function SplitSheet({
             />
             <div className="split-part-actions">
               {left !== 0 && (
-                <button className="secondary split-small" onClick={() => fill(d.key)} disabled={saving || (left < 0 && (parsed[i] === null || toUnits(parsed[i]!, scale) + left <= 0))}>
+                <button
+                  className="secondary split-small"
+                  onClick={() => fill(d.key)}
+                  disabled={saving || (left < 0 && (parsed[i] === null || toUnits(parsed[i]!, scale) + left <= 0))}
+                  aria-label={left > 0 ? `Put the rest in part ${i + 1}` : `Take the excess off part ${i + 1}`}
+                >
                   {left > 0 ? 'Put the rest here' : 'Take the excess off'}
                 </button>
               )}
