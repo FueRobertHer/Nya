@@ -22,10 +22,14 @@
 // (lib/links.ts sameAccountIds): a transaction or a balance recorded under one
 // is the same account's.
 //
-// WHERE A MONTH MAY BE SHORT (MonthGap), as Activity says it of its months
-// (lib/month-coverage.ts): an institution whose transactions couldn't be
-// loaded or are still importing, a connection that stopped syncing before the
-// month ended, and the month an account's transactions in Nya begin in.
+// WHERE A MONTH MAY BE SHORT (MonthGap), by the account's own connection
+// (never its institution's name, which two connections can share): a
+// connection that stopped syncing before the month ended, which makes every
+// month that began after its last good sync unknown (no data at all is not
+// nothing in), an institution still importing older transactions, and the
+// month an account's transactions in Nya begin in. An account whose
+// transactions couldn't be read is paced by its recorded balance, and says
+// whose couldn't be read (AccountFlow.fallback).
 
 import { ContainerError, type Ctx } from './containers';
 import { readAccounts, type ApiAccount } from './api-read';
@@ -33,7 +37,8 @@ import { assembleBankRows, finishActivity } from './activity';
 import { rememberedAccountsReport } from './last-known';
 import { readMeasuredBalances } from './history';
 import { sameAccountIds, type Link } from './links';
-import { monthGaps, stoppedConnections, type Stopped } from './month-coverage';
+import { stoppedConnections } from './month-coverage';
+import { localDate } from './local-date';
 import { addDays } from './manual-txn-input';
 import { addMonths, flowsFromBalances, flowsFromRows, lastDay, trailingMonths, MONTH_END_DAYS, type AccountFlow, type FlowRow, type MonthGap } from './goal-projection';
 import type { KnownAccount } from './goal-save';
@@ -79,6 +84,22 @@ export type GoalFlows = {
   notes: string[];
 };
 
+/**
+ * When an account's own connection stopped bringing transactions in: the
+ * instant of its last good sync, or null when it has none recorded (it may
+ * have stopped at any time); undefined while it is working. By the account's
+ * own connection, never its institution's name: two connections can share a
+ * name (lib/month-coverage.ts). A manual account has no connection.
+ */
+function stoppedSince(a: ApiAccount): string | null | undefined {
+  const problem = a.connection?.problem;
+  if (!problem) return undefined;
+  const last = a.connection!.last_ok_at;
+  const stopped = stoppedConnections([{ institution_name: a.institution, health: { state: problem.state, last_ok_at: last } }]);
+  if (stopped.length === 0) return undefined;
+  return last && !Number.isNaN(Date.parse(last)) ? last : null;
+}
+
 /** The days whose recorded balances end each month, for the months and the
  *  one before them. */
 function monthEndDays(months: readonly string[]): string[] {
@@ -121,40 +142,44 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
     rowsOf.set(t.account_id, list);
   }
   const unread = activity.manual_unread;
-  // Connections whose transactions stopped arriving, once per institution.
-  const stopped: Stopped[] = [];
-  for (const s of stoppedConnections(
-    opts.accounts.flatMap((a) =>
-      a.connection?.problem ? [{ institution_name: a.institution, health: { state: a.connection.problem.state, last_ok_at: a.connection.last_ok_at } }] : []
-    )
-  )) {
-    if (!stopped.some((o) => o.institution_name === s.institution_name)) stopped.push(s);
-  }
+  // The banks of a SimpleFIN connection still bringing in older history, by
+  // name (a Plaid institution's is its Item's coverage, below).
+  const fedImporting = new Set(activity.incomplete.filter((i) => i.coverage === 'importing').map((i) => i.institution_name));
 
-  const byBalances: ApiAccount[] = [];
+  const byBalances: { account: ApiAccount; fallback?: AccountFlow['fallback'] }[] = [];
   for (const a of accounts) {
     const ids = sameAccountIds(a.id, links);
     const rows = ids.flatMap((id) => rowsOf.get(id) ?? []);
-    const bookUnread = a.source !== 'plaid' && (unread === 'all' || unread.includes(a.id));
-    if (bookUnread) notes.push(`${a.name}: its transactions couldn’t be read, so its pace is from its recorded balance`);
     const item = a.source === 'plaid' ? sources.get(itemOf.get(a.id) ?? '') : undefined;
+    // Its transactions couldn't be read: a manual account's book, or its
+    // Item's stored rows (missing from the read, though stored before).
+    const bookUnread = a.source !== 'plaid' && (unread === 'all' || unread.includes(a.id));
+    const itemUnread = !!item && item.coverage === 'missing' && !item.never_synced;
+    if (bookUnread || itemUnread) {
+      byBalances.push({ account: a, fallback: { unreadable: itemUnread ? item!.institution_name : a.name } });
+      continue;
+    }
     const firstRow = rows.length > 0 ? rows.reduce((min, r) => (r.date < min ? r.date : min), rows[0].date) : null;
     const quiet = !!item && item.no_transactions === null && !item.never_synced && item.coverage !== 'missing' && !!item.first_date && item.first_date <= `${months[0]}-01`;
-    if (bookUnread || (rows.length === 0 && !quiet)) {
-      byBalances.push(a);
+    if (rows.length === 0 && !quiet) {
+      byBalances.push({ account: a });
       continue;
     }
     const start = item?.first_date ?? firstRow;
     const flow: AccountFlow = { source: 'transactions', months: flowsFromRows(rows, new Set(ids), months, { start, currency: a.currency }) };
+    const importing = a.source === 'plaid' ? item?.coverage === 'importing' : fedImporting.has(a.institution);
+    const stoppedAt = stoppedSince(a);
     for (const m of flow.months) {
-      if (m.amount === null) continue;
-      const gaps = monthGaps(m.month, activity.incomplete, stopped);
-      const extra: MonthGap[] = [
-        ...(gaps.missing.includes(a.institution) ? [{ kind: 'missing' as const, institution: a.institution }] : []),
-        ...(gaps.importing.includes(a.institution) ? [{ kind: 'importing' as const, institution: a.institution }] : []),
-        ...gaps.stopped.filter((s) => s.institution_name === a.institution).map((s) => ({ kind: 'stopped' as const, institution: a.institution, since: s.last_ok_at })),
-      ];
-      if (extra.length > 0) m.gaps = [...(m.gaps ?? []), ...extra];
+      const gaps: MonthGap[] = [];
+      if (stoppedAt !== undefined) {
+        const lastOk = stoppedAt === null ? null : localDate(new Date(stoppedAt));
+        // A month that began after the last good sync has no data at all:
+        // unknown, never zero. The month it stopped in is partly known.
+        if (lastOk !== null && lastOk < `${m.month}-01`) m.amount = null;
+        if (lastOk === null || lastOk < `${addMonths(m.month, 1)}-01`) gaps.push({ kind: 'stopped', institution: a.institution, since: stoppedAt });
+      }
+      if (importing && m.amount !== null) gaps.push({ kind: 'importing', institution: a.institution });
+      if (gaps.length > 0) m.gaps = [...(m.gaps ?? []), ...gaps];
     }
     flows.set(a.id, flow);
   }
@@ -162,14 +187,14 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
   if (byBalances.length > 0) {
     const { balances, unreadable } = await readMeasuredBalances(ctx, monthEndDays(months));
     if (unreadable.length > 0) notes.push('Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown');
-    for (const a of byBalances) {
+    for (const { account: a, fallback } of byBalances) {
       const ids = sameAccountIds(a.id, links);
       const points: { date: string; value: number }[] = [];
       for (const [date, map] of balances) {
         const id = ids.find((i) => typeof map[i] === 'number');
         if (id !== undefined) points.push({ date, value: map[id] });
       }
-      flows.set(a.id, { source: 'balances', months: flowsFromBalances(points, months, a.currency) });
+      flows.set(a.id, { source: 'balances', months: flowsFromBalances(points, months, a.currency), ...(fallback ? { fallback } : {}) });
     }
   }
   return { months, flows, notes };

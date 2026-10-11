@@ -103,6 +103,8 @@ describe('before a load has succeeded', () => {
       expect(store.get().error).toContain(text);
       expect(await store.save({ Rent: 1000 })).toBe(false);
       expect(server.calls.filter((c) => c.method === 'PUT')).toEqual([]);
+      // Never "still loading": nothing is.
+      expect(store.get().saveError).toBe('Budgets could not be loaded, so they can’t be saved yet; press Refresh to try again.');
     });
   }
 

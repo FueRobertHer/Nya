@@ -28,10 +28,12 @@
 //
 // THE RATE is the average of the last three complete months it knows (fewer
 // when fewer are known), else the goal's monthly target, labelled as such. A
-// month that may be missing transactions (an institution that couldn't be
-// loaded, is still importing older ones, or stopped syncing before the month
-// ended; or the month the data begins in) makes the rate uncertain, and says
-// why. Zero or less is "no recent contributions", never an infinite date.
+// month that began after its connection's last good sync is unknown; a month
+// that may be missing transactions (one its connection stopped in, an
+// institution still importing older ones, the month the data begins in)
+// makes the rate uncertain, and says why. Zero or less is "no recent
+// contributions", never an infinite date, but only from months that can say
+// so: when every month averaged may be short, there is no rate at all.
 // When several goals share an account, its money in can't be told apart
 // between them: each is projected at its own monthly target, or not at all.
 //
@@ -66,11 +68,16 @@ export type MonthFlow = {
   /** Interest and dividends that came in, left out of `amount`
    *  (transactions only). */
   growth?: number;
+  /** Why it may be short, or, on a month that is unknown, why it is (a
+   *  connection that stopped before the month began). */
   gaps?: MonthGap[];
 };
 
-/** An account's last complete months, oldest first, and where they come from. */
-export type AccountFlow = { source: FlowSource; months: MonthFlow[] };
+/** An account's last complete months, oldest first, and where they come from.
+ *  `fallback`: it would be paced by its transactions, but they couldn't be
+ *  read (`unreadable` names whose: an institution, or a manual account), so
+ *  it is paced by its recorded balance instead. */
+export type AccountFlow = { source: FlowSource; months: MonthFlow[]; fallback?: { unreadable: string } };
 
 /** The fewest rows a figure is read from: what a stored or manual row holds. */
 export type FlowRow = {
@@ -199,6 +206,9 @@ export type Measured = {
   source: FlowSource;
   /** A month it averages may be missing some money in (see MonthGap). */
   uncertain: boolean;
+  /** Every month it averages may be: then nothing in it says that nothing
+   *  went in. */
+  allUncertain: boolean;
   gaps: MonthGap[];
   /** Interest and dividends over those months, apart (transactions only). */
   growth: number;
@@ -215,9 +225,16 @@ export function measuredRate(flow: AccountFlow | null | undefined, currency: str
     months: known.length,
     source: flow.source,
     uncertain: gaps.length > 0,
+    allUncertain: known.every((m) => (m.gaps?.length ?? 0) > 0),
     gaps,
     growth: round(known.reduce((s, m) => s + (m.growth ?? 0), 0), currency),
   };
+}
+
+/** Every gap over an account's months, known or not: why its pace may be
+ *  short, or isn't known at all. */
+export function flowGaps(flow: AccountFlow | null | undefined): MonthGap[] {
+  return flow ? flow.months.flatMap((m) => m.gaps ?? []) : [];
 }
 
 export type ProjectionStatus =
@@ -273,7 +290,8 @@ export type ProjectionInput = {
 
 /** When the goal will be reached (see THE PROJECTION in the header). */
 export function project(input: ProjectionInput): Projection {
-  const { target, saved, monthlyTarget, targetDate, measured, shared, today, currency } = input;
+  const { target, saved, monthlyTarget, targetDate, shared, today, currency } = input;
+  let { measured } = input;
   const remaining = Math.max(0, round(target - saved, currency));
   const thisMonth = today.slice(0, 7);
   const datePassed = !!targetDate && targetDate < today;
@@ -287,10 +305,14 @@ export function project(input: ProjectionInput): Projection {
 
   // The rate: the account's own when it is this goal's alone; otherwise the
   // monthly target. An account nothing went into is no recent contributions,
-  // whatever the target says.
+  // whatever the target says; but months that may all be short (a connection
+  // that stopped) can't say that nothing went in, so they are no rate at all.
   let rate: number | null = null;
   let rateFrom: Projection['rateFrom'] = null;
-  if (measured && measured.average <= 0) return { ...base, status: 'no_recent_contributions', needed, rate: measured.average, rateFrom: 'contributions' };
+  if (measured && measured.average <= 0) {
+    if (!measured.allUncertain) return { ...base, status: 'no_recent_contributions', needed, rate: measured.average, rateFrom: 'contributions' };
+    measured = null;
+  }
   if (measured && !shared) {
     rate = measured.average;
     rateFrom = 'contributions';

@@ -108,7 +108,8 @@ export function createWholeListStore<T>(opts: {
 
   async function save(next: T): Promise<boolean> {
     if (state.status !== 'ready') {
-      set({ saveError: `${Noun} are still loading. Try again in a moment.` });
+      // Loading, or a load that failed: only the first is a matter of waiting.
+      set({ saveError: state.status === 'error' ? `${Noun} could not be loaded, so they can’t be saved yet; ${reloadHint}.` : `${Noun} are still loading. Try again in a moment.` });
       return false;
     }
     if (state.saving) {

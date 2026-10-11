@@ -729,18 +729,24 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['goals[].pace', 'What went into its account over the last complete months; null unless tracked.'],
       [
         'goals[].pace.source',
-        '"transactions": the net money in, from its transactions (deposits and transfers in, less what went out; pending ones, and interest and dividends, left out). "balances": the change in its recorded balance at each month’s end, for an account whose transactions Nya doesn’t have (an investment account, say), which includes interest and market moves and is never an estimate.',
+        '"transactions": the net money in, from its transactions (deposits and transfers in, less what went out; pending ones, and interest and dividends, left out). "balances": the change in its recorded balance at each month’s end, for an account whose transactions Nya doesn’t have (an investment account, say) or couldn’t read (the notes say whose), which includes interest and market moves and is never an estimate.',
       ],
       ['goals[].pace.months', 'Each complete month, oldest first: the same months as months.'],
       ['goals[].pace.months[].month', 'The month, YYYY-MM.'],
-      ['goals[].pace.months[].amount', 'Its money in, or change in balance; null when not known (before Nya’s data for the account begins, or with no balance recorded at a month’s end), never taken for zero.'],
+      [
+        'goals[].pace.months[].amount',
+        'Its money in, or change in balance; null when not known (before Nya’s data for the account begins, after its connection’s last good sync, or with no balance recorded at a month’s end), never taken for zero.',
+      ],
       ['goals[].pace.months[].interest', 'Interest and dividends that came in that month, not counted in amount; null when the source is balances or the month isn’t known.'],
-      ['goals[].pace.months[].may_be_incomplete', 'Some of the month may be missing (its institution couldn’t be loaded, is still importing, stopped syncing before the month ended, or its data begins part way through): the notes say why.'],
+      [
+        'goals[].pace.months[].may_be_incomplete',
+        'Some of the month may be missing, or all of it is (its connection stopped syncing before the month ended, its institution is still importing older transactions, or its data begins part way through): the notes say why.',
+      ],
       ['goals[].pace.average', 'The average of the known months, or null when none is known.'],
       ['goals[].projection', 'When it will be reached; null unless tracked, and for an archived goal.'],
       [
         'goals[].projection.status',
-        '"complete" (saved is at least the target), "on_track" (reached by its target date, or at all when it has none), "behind" (after its target date, or the date has passed), "no_recent_contributions" (nothing, or less than nothing, went in over the months known: never a date) or "no_rate" (no history and no monthly target to go by, or an account other goals share and no monthly target). Version 1 may add statuses.',
+        '"complete" (saved is at least the target), "on_track" (reached by its target date, or at all when it has none), "behind" (after its target date, or the date has passed), "no_recent_contributions" (nothing, or less than nothing, went in over the months known: never a date, and never from months that may all be short) or "no_rate" (nothing to go by and no monthly target: no history, months that aren’t known or may all be short, or an account other goals share). Version 1 may add statuses.',
       ],
       ['goals[].projection.rate', 'The monthly rate it is projected at: pace.average, or the monthly target when there is no pace or its account is shared; null with neither.'],
       ['goals[].projection.rate_from', '"contributions" or "monthly_target", or null.'],

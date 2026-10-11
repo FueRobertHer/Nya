@@ -69,7 +69,7 @@ describe('contributions from transactions', () => {
   test('the average of the three months, to the cent, with the interest it left out', () => {
     const flow: AccountFlow = { source: 'transactions', months: flowsFromRows(HISTORY, SAV, MONTHS, { start: '2026-01-02', currency: 'USD' }) };
     // (375.50 + 189.75 + 330.10) / 3 = 895.35 / 3 = 298.45
-    expect(measuredRate(flow, 'USD')).toEqual({ average: 298.45, months: 3, source: 'transactions', uncertain: false, gaps: [], growth: 3.81 });
+    expect(measuredRate(flow, 'USD')).toEqual({ average: 298.45, months: 3, source: 'transactions', uncertain: false, allUncertain: false, gaps: [], growth: 3.81 });
   });
 
   test('a month with no rows is zero, but a month before the data begins is unknown, and the first one says it is partial', () => {
@@ -188,11 +188,26 @@ describe('the projection, by hand', () => {
   });
 
   test('no contributions in three months says so instead of projecting, with or without a monthly target', () => {
-    const none = { average: 0, months: 3, source: 'transactions' as const, uncertain: false, gaps: [], growth: 0 };
+    const none = { average: 0, months: 3, source: 'transactions' as const, uncertain: false, allUncertain: false, gaps: [], growth: 0 };
     expect(project({ ...base, measured: none })).toMatchObject({ status: 'no_recent_contributions', completion: null, monthsLeft: null });
     expect(project({ ...base, measured: none, monthlyTarget: 200 })).toMatchObject({ status: 'no_recent_contributions', completion: null });
     // Money taken out: still none, never a date in the past or at infinity.
     expect(project({ ...base, measured: { ...none, average: -120.5 } })).toMatchObject({ status: 'no_recent_contributions', rate: -120.5, completion: null });
+  });
+
+  test('months that may all be short never say nothing went in: no rate, or the monthly target', () => {
+    const gap = { kind: 'stopped' as const, institution: 'Chase', since: null };
+    const short = measuredRate({ source: 'transactions', months: MONTHS.map((month) => ({ month, amount: 0, gaps: [gap] })) }, 'USD')!;
+    expect(short).toMatchObject({ average: 0, uncertain: true, allUncertain: true });
+    expect(project({ ...base, measured: short })).toMatchObject({ status: 'no_rate', rate: null, completion: null });
+    expect(project({ ...base, measured: short, monthlyTarget: 200 })).toMatchObject({ status: 'on_track', rate: 200, rateFrom: 'monthly_target' });
+    // Something did come in: a lower bound, used, and said to be uncertain.
+    const some = measuredRate({ source: 'transactions', months: MONTHS.map((month) => ({ month, amount: 100, gaps: [gap] })) }, 'USD')!;
+    expect(project({ ...base, measured: some })).toMatchObject({ rate: 100, rateFrom: 'contributions' });
+    // One month that can say so is enough.
+    const one = measuredRate({ source: 'transactions', months: [{ month: MONTHS[0], amount: 0 }, { month: MONTHS[1], amount: 0, gaps: [gap] }] }, 'USD')!;
+    expect(one.allUncertain).toBe(false);
+    expect(project({ ...base, measured: one }).status).toBe('no_recent_contributions');
   });
 
   test('with no history, the monthly target is the rate, labelled as such', () => {
@@ -211,14 +226,14 @@ describe('the projection, by hand', () => {
   });
 
   test('a rate too slow to matter says not within fifty years, never a date centuries out', () => {
-    const slow = { average: 0.01, months: 3, source: 'transactions' as const, uncertain: false, gaps: [], growth: 0 };
+    const slow = { average: 0.01, months: 3, source: 'transactions' as const, uncertain: false, allUncertain: false, gaps: [], growth: 0 };
     const p = project({ ...base, measured: slow });
     expect(p).toMatchObject({ beyond: true, completion: null });
     expect(p.monthsLeft).toBeGreaterThan(MAX_PROJECTED_MONTHS);
   });
 
   test('a currency without cents rounds what is needed up to a whole unit', () => {
-    const yen = { average: 30_000, months: 3, source: 'transactions' as const, uncertain: false, gaps: [], growth: 0 };
+    const yen = { average: 30_000, months: 3, source: 'transactions' as const, uncertain: false, allUncertain: false, gaps: [], growth: 0 };
     // 1,000,000 left over 7 months (to May 2027) is 142,857.14, so 142,858 a month.
     expect(project({ target: 1_500_000, saved: 500_000, measured: yen, shared: false, today: TODAY, currency: 'JPY', targetDate: '2027-05-20' })).toMatchObject({
       needed: 142_858,

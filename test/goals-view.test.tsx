@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import GoalsCard from '@/components/GoalsCard';
+import GoalsCard, { GoalsCardView } from '@/components/GoalsCard';
 import GoalSheet from '@/components/GoalSheet';
 import { draftOf, readDraft } from '@/components/goal-draft';
 import { readFlowsAnswer } from '@/components/goal-flows-state';
@@ -124,6 +124,55 @@ describe('the card', () => {
   test('the house style: no em or en dashes', () => {
     const html = card([goal('Trip', 'sav', 3000, { allocation: 1200, monthly_target: 100 }), goal('B', null, 5), goal('C', 'card', 5)]);
     expect(html).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
+describe('the card, with the months in', () => {
+  const months = ['2026-07', '2026-08', '2026-09'];
+  const view = (goals: Goal[], flows: Map<string, any>, notes: string[] = []) =>
+    text(renderToStaticMarkup(<GoalsCardView goals={goals} accounts={ACCOUNTS} onSave={async () => true} flows={{ status: 'ready', flows, notes }} />));
+
+  test('what the server couldn’t read for the paces is said once, above the goals', () => {
+    const html = renderToStaticMarkup(
+      <GoalsCardView goals={[goal('Fund', 'sav', 20_000)]} accounts={ACCOUNTS} onSave={async () => true} flows={{ status: 'ready', flows: new Map(), notes: ['Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown'] }} />
+    );
+    expect(html).toContain('<p class="stale-note">Some recorded balances couldn’t be read, so a month whose end they hold reads as unknown</p>');
+  });
+
+  test('a connection that stopped before the months: not "no contributions", and why, as a warning', () => {
+    const stopped = { kind: 'stopped', institution: 'Chase', since: '2026-06-10T12:00:00.000Z' };
+    const t = view([goal('Fund', 'sav', 20_000)], new Map([['sav', { source: 'transactions', months: months.map((month) => ({ month, amount: null, gaps: [stopped] })) }]]));
+    expect(t).not.toContain('No contributions');
+    expect(t).toContain('What went into Savings lately isn’t known, so neither is its pace');
+    expect(t).toContain('What went into Savings lately isn’t known: Chase hasn’t synced since Jun 10.');
+  });
+
+  test('paced by its balance because Chase’s transactions couldn’t be read: said on the goal', () => {
+    const t = view([goal('Fund', 'sav', 20_000)], new Map([['sav', { source: 'balances', months: months.map((month) => ({ month, amount: 500 })), fallback: { unreadable: 'Chase' } }]]));
+    expect(t).toContain('Chase’s transactions couldn’t be read, so this goal is paced by Savings’s recorded balance instead.');
+    expect(t).toContain('Paced by its recorded balance, which includes interest and market moves');
+  });
+
+  test('information reads as information, warnings as warnings, and the marker in words too', () => {
+    const start = new Date(Date.now() - 100 * 86_400_000).toISOString().slice(0, 10);
+    const end = new Date(Date.now() + 100 * 86_400_000).toISOString().slice(0, 10);
+    const html = renderToStaticMarkup(
+      <GoalsCardView
+        goals={[goal('Trip', 'sav', 20_000, { target_date: end }, { plan_start: { date: start, amount: 0 }, relinked: true }), goal('Fund', 'sav', 30_000)]}
+        accounts={ACCOUNTS}
+        onSave={async () => true}
+        flows={{ status: 'ready', flows: new Map(), notes: [] }}
+      />
+    );
+    expect(html).toContain('<p class="panel-note goal-note">Follows Savings, which was reconnected.</p>');
+    expect(html).toMatch(/<p class="panel-note goal-note">To reach it by [^<]+, it would have \$[\d,]+\.\d\d by now\.<\/p>/);
+    expect(html).toContain('<p class="panel-note goal-note">Counts the same $10,000.00 as Fund: give each an allocation to split it.</p>');
+  });
+
+  test('every goal archived: no "No goals yet" above the archived list', () => {
+    const t = view([goal('Bike', 'sav', 900, { archived: true }, { archived_on: '2026-09-01', archived_amount: 950 })], new Map());
+    expect(t).not.toContain('No goals yet');
+    expect(t).toContain('1 archived · Show');
   });
 });
 

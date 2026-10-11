@@ -18,14 +18,14 @@
 // from the balances this page shows; the months behind each pace come from
 // the server (components/goal-flows-state.ts), and nothing derived is saved.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import { goalViews, type GoalAccount, type GoalView } from '@/lib/goal-view';
-import { archivedText, claimNotes, gapsText, meterLabel, outlookText, sourceNote, splitText, stateText } from '@/lib/goal-text';
+import { archivedText, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText } from '@/lib/goal-text';
 import { MAX_GOALS, type Goal } from '@/lib/goal-model';
-import { useGoalFlows } from './goal-flows-state';
+import { useGoalFlows, type GoalFlowsState } from './goal-flows-state';
 import GoalSheet from './GoalSheet';
 
 export type { Goal } from '@/lib/goal-model';
@@ -36,14 +36,7 @@ export type { GoalAccount } from '@/lib/goal-view';
  *  What the server works out is left out; it sends that back. */
 const forSave = (g: Goal): Goal => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id, plan: g.plan ?? {} });
 
-export default function GoalsCard({
-  goals,
-  status = 'ready',
-  error = null,
-  saveError = null,
-  accounts,
-  onSave,
-}: {
+type CardProps = {
   goals: Goal[];
   /** Until 'ready', the list is unknown: shown as loading, never as "none",
    *  with no way to add or edit (lib/whole-list-store.ts). */
@@ -58,9 +51,25 @@ export default function GoalsCard({
   accounts: GoalAccount[];
   /** Resolves true once saved; the editor only closes then. */
   onSave: (next: Goal[]) => Promise<boolean>;
-}) {
+};
+
+/** The card, with the months behind each pace read once its goals are in. */
+export default function GoalsCard(props: CardProps) {
+  const flows = useGoalFlows((props.status ?? 'ready') === 'ready');
+  return <GoalsCardView {...props} flows={flows} />;
+}
+
+/** The card as shown, given the months (components/goal-flows-state.ts). */
+export function GoalsCardView({
+  goals,
+  status = 'ready',
+  error = null,
+  saveError = null,
+  accounts,
+  onSave,
+  flows,
+}: CardProps & { flows: GoalFlowsState }) {
   const today = localDate();
-  const flows = useGoalFlows(status === 'ready');
   // The editor: a fresh form each time it opens (a new key), kept while it
   // slides shut.
   const [sheet, setSheet] = useState<{ open: boolean; goal: Goal | null; key: number }>({ open: false, goal: null, key: 0 });
@@ -77,6 +86,11 @@ export default function GoalsCard({
     }
   };
   const edit = (goal: Goal | null) => setSheet((s) => ({ open: true, goal, key: s.key + 1 }));
+  // A list that can't be loaded (a save's reload that found it unreadable,
+  // say) can't be saved either: the editor closes, and the card says why.
+  useEffect(() => {
+    if (status === 'error') setSheet((s) => (s.open ? { ...s, open: false } : s));
+  }, [status]);
 
   const { views, splits } = goalViews(goals, accounts, flows.flows, today);
   const archived = goals.filter((g) => g.plan?.archived);
@@ -136,6 +150,13 @@ export default function GoalsCard({
       {flows.status === 'error' && views.some((v) => v.projection) && (
         <p className="stale-note">How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.</p>
       )}
+      {/* What the server couldn't read for the paces, said once. */}
+      {views.some((v) => v.projection) &&
+        flows.notes.map((n) => (
+          <p className="stale-note" key={n}>
+            {n}
+          </p>
+        ))}
 
       {/* Each account with allocations on it: what they leave, or how far
           they are over its balance. */}
@@ -147,7 +168,7 @@ export default function GoalsCard({
           </p>
         ))}
 
-      {views.length === 0 && <p className="empty-note">No goals yet. Set a target, track it against an account’s balance, and see when you’ll reach it.</p>}
+      {goals.length === 0 && <p className="empty-note">No goals yet. Set a target, track it against an account’s balance, and see when you’ll reach it.</p>}
 
       {views.map((v) => {
         const goal = v.goal;
@@ -158,8 +179,8 @@ export default function GoalsCard({
         // Underfunded, as a budget target would say: short of its date, or
         // nothing went in lately.
         const behind = v.projection?.status === 'behind' || v.projection?.status === 'no_recent_contributions';
-        const gaps = v.measured && v.projection?.rateFrom === 'contributions' ? gapsText(v.measured.gaps) : null;
-        const notes = [...(gaps ? [gaps] : []), ...claimNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined)];
+        // Warnings in the warning style; what only informs, plain.
+        const notes = goalNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined);
         return (
           <div className="budget-row" key={goal.id}>
             <button className="budget-summary" onClick={() => edit(goal)}>
@@ -182,8 +203,8 @@ export default function GoalsCard({
             </button>
             {said && <p className={`goal-outlook${behind ? ' behind' : ''}`}>{said}</p>}
             {notes.map((n) => (
-              <p className="stale-note goal-note" key={n}>
-                {n}
+              <p className={`${n.warn ? 'stale-note' : 'panel-note'} goal-note`} key={n.text}>
+                {n.text}
               </p>
             ))}
           </div>

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { goalViews, type GoalAccount } from '@/lib/goal-view';
-import { claimNotes, gapsText, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
+import { fallbackText, gapNote, gapsText, goalNotes, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
 import type { Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
 
@@ -116,7 +116,8 @@ describe('two goals on one account', () => {
     const { views } = viewsOf([goal('a', 'sav', 20_000), goal('b', 'sav', 20_000)]);
     expect(views.get('a')!.saved).toBe(10_000);
     expect(views.get('b')!.saved).toBe(10_000);
-    expect(claimNotes(views.get('a')!, nameOf, undefined)).toEqual(['Counts the same $10,000.00 as B: give each an allocation to split it.']);
+    // Information, not a warning.
+    expect(goalNotes(views.get('a')!, nameOf, undefined)).toEqual([{ text: 'Counts the same $10,000.00 as B: give each an allocation to split it.', warn: false }]);
   });
 
   test('a balance that fell below the allocations: scaled to fit, flagged, and the account line says by how much', () => {
@@ -124,9 +125,10 @@ describe('two goals on one account', () => {
     const { views, splits } = viewsOf([goal('a', 'sav', 9000, { allocation: 4000 }), goal('b', 'sav', 9000, { allocation: 3500.5 })], accounts);
     expect(views.get('a')!.saved).toBe(3199.79);
     expect(views.get('b')!.saved).toBe(2800.21);
-    expect(claimNotes(views.get('a')!, nameOf, splits.get('sav'))[0]).toBe(
-      'Allocations on Savings add up to $7,500.50, more than its $6,000.00 balance, so each is shown scaled to fit. Lower them to match.'
-    );
+    expect(goalNotes(views.get('a')!, nameOf, splits.get('sav'))[0]).toEqual({
+      text: 'Allocations on Savings add up to $7,500.50, more than its $6,000.00 balance, so each is shown scaled to fit. Lower them to match.',
+      warn: true,
+    });
     expect(splitText(splits.get('sav')!, 'Savings')).toBe('Savings: allocations are $1,500.50 more than its $6,000.00 balance');
   });
 
@@ -212,10 +214,52 @@ describe('the outlook in words', () => {
 
   test('an account reconnected under a new id, and an allocation left on the account it tracked before, each say so', () => {
     const v = viewsOf([goal('fund', 'sav', 20_000, undefined, { relinked: true, earlier_allocation: 750 })]).views.get('fund')!;
-    expect(claimNotes(v, nameOf, undefined)).toEqual([
-      'Its allocation of $750.00 was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.',
-      'Follows Savings, which was reconnected.',
+    expect(goalNotes(v, nameOf, undefined)).toEqual([
+      { text: 'Its allocation of $750.00 was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.', warn: true },
+      { text: 'Follows Savings, which was reconnected.', warn: false },
     ]);
+  });
+
+  test('a connection that stopped before the months began: not "no history", not "no contributions", and why', () => {
+    const since = '2026-06-10T12:00:00.000Z';
+    const stopped = { kind: 'stopped' as const, institution: 'Chase', since };
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, null, { gaps: [stopped] })) });
+    const v = viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!;
+    expect(v.projection).toMatchObject({ status: 'no_rate', completion: null });
+    expect(outlookText(v, nameOf)).toBe('What went into Savings lately isn’t known, so neither is its pace: a monthly target projects it meanwhile');
+    expect(gapNote(v)).toBe('What went into Savings lately isn’t known: Chase hasn’t synced since Jun 10.');
+    // With a monthly target, it is projected at that, and still says why.
+    const t = viewsOf([goal('fund', 'sav', 15_000, { monthly_target: 500 })], ACCOUNTS, flows).views.get('fund')!;
+    expect(t.projection).toMatchObject({ rateFrom: 'monthly_target', completion: '2027-08' });
+    expect(goalNotes(t, nameOf, undefined)[0]).toEqual({ text: 'What went into Savings lately isn’t known: Chase hasn’t synced since Jun 10.', warn: true });
+  });
+
+  test('every month averaged may be short and nothing came in: never "no contributions"', () => {
+    const stopped = { kind: 'stopped' as const, institution: 'Chase', since: null };
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, 0, { gaps: [stopped] })) });
+    const v = viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!;
+    expect(v.projection!.status).toBe('no_rate');
+    expect(gapNote(v)).toBe('What went into Savings lately isn’t known: Chase isn’t syncing.');
+    // One month that says so is enough to say nothing went in.
+    flows.set('sav', { source: 'transactions', months: [month('2026-07', 0), month('2026-08', 0, { gaps: [stopped] }), month('2026-09', 0, { gaps: [stopped] })] });
+    expect(viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!.projection!.status).toBe('no_recent_contributions');
+  });
+
+  test('paced by its balance because its transactions couldn’t be read: said', () => {
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'balances', months: [month('2026-07', 500), month('2026-08', 500), month('2026-09', 500)], fallback: { unreadable: 'Chase' } });
+    const v = viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!;
+    expect(fallbackText(v)).toBe('Chase’s transactions couldn’t be read, so this goal is paced by Savings’s recorded balance instead.');
+    expect(goalNotes(v, nameOf, undefined)).toContainEqual({ text: fallbackText(v)!, warn: true });
+    flows.set('manual_jar', { source: 'balances', months: [month('2026-09', 5)], fallback: { unreadable: 'Jar' } });
+    expect(fallbackText(viewsOf([goal('jar', 'manual_jar', 1000)], ACCOUNTS, flows).views.get('jar')!)).toBe('Jar’s transactions couldn’t be read, so this goal is paced by its recorded balance instead.');
+  });
+
+  test('where it should be by now is said beside the meter, not only to a screen reader', () => {
+    const v = viewsOf([goal('trip', 'eur', 5000, { target_date: '2027-12-31' }, { plan_start: { date: '2026-01-01', amount: 1000 } })]).views.get('trip')!;
+    expect(goalNotes(v, nameOf, undefined)).toContainEqual({ text: 'To reach it by Dec 31, 2027, it would have €2,547.33 by now.', warn: false });
   });
 
   test('every sentence ends as one, for the API', () => {

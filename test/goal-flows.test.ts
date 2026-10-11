@@ -195,14 +195,81 @@ describe('the months behind each account’s pace', () => {
     expect(flows.acc_hid).toBeUndefined();
   });
 
-  test('a connection that stopped syncing marks the months it may be missing', async () => {
+  test('a connection that stopped syncing: the month it stopped in may be short, and a month after it is unknown, never zero', async () => {
     const lastOk = `${M2}-15T12:00:00.000Z`;
     await syncsStore.set(ctx, 'item_chase', { at: lastOk });
     await noticesStore.set(ctx, 'item_chase', { episode: 'e1', since: lastOk, state: 'needs_reauth', notified_at: null, reminded_at: null });
+    const { acc_sav, acc_quiet } = (await progress()).body.flows;
+    const stopped = { kind: 'stopped', institution: 'Chase', since: lastOk };
+    expect(acc_sav.months).toEqual([
+      { month: M1, amount: 375.5, growth: 1.23 },
+      { month: M2, amount: 189.75, gaps: [stopped] },
+      { month: M3, amount: null, gaps: [stopped] },
+    ]);
+    // A quiet account at that bank: the same.
+    expect(acc_quiet.months).toEqual([
+      { month: M1, amount: 0 },
+      { month: M2, amount: 0, gaps: [stopped] },
+      { month: M3, amount: null, gaps: [stopped] },
+    ]);
+  });
+
+  test('stopped before the months began: every one unknown, with why, never "no contributions"', async () => {
+    const lastOk = `${PRIOR}-10T12:00:00.000Z`;
+    await syncsStore.set(ctx, 'item_chase', { at: lastOk });
+    await noticesStore.set(ctx, 'item_chase', { episode: 'e1', since: lastOk, state: 'needs_reauth', notified_at: null, reminded_at: null });
+    const flow = (await progress()).body.flows.acc_sav;
+    expect(flow.months.map((m: any) => m.amount)).toEqual([null, null, null]);
+    expect(flow.months.every((m: any) => m.gaps[0].kind === 'stopped')).toBe(true);
+    const { goalViews } = await import('@/lib/goal-view');
+    const { views } = goalViews([{ id: 'g', name: 'Trip', target: 50_000, account_id: 'acc_sav' }], [{ account_id: 'acc_sav', name: 'Savings', balance: 9000, currency: 'USD', type: 'depository' }], new Map([['acc_sav', flow]]), `${THIS_MONTH}-05`);
+    expect(views[0].projection!.status).toBe('no_rate');
+  });
+
+  test('stopped with no good sync on record: the months are kept, each said to be in question', async () => {
+    await noticesStore.set(ctx, 'item_chase', { episode: 'e1', since: new Date().toISOString(), state: 'needs_reauth', notified_at: null, reminded_at: null });
     const months = (await progress()).body.flows.acc_sav.months;
-    expect(months[0].gaps).toBeUndefined();
-    expect(months[1].gaps).toEqual([{ kind: 'stopped', institution: 'Chase', since: lastOk }]);
-    expect(months[2].gaps).toEqual([{ kind: 'stopped', institution: 'Chase', since: lastOk }]);
+    expect(months.map((m: any) => m.amount)).toEqual([375.5, 189.75, 330.1]);
+    expect(months.every((m: any) => m.gaps?.[0]?.kind === 'stopped' && m.gaps[0].since === null)).toBe(true);
+  });
+
+  test('a connection that shares its institution’s name with one that stopped is not marked by it', async () => {
+    // The brokerage is also called Chase here, and it is the one that stopped.
+    await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-broker'), transactions_billed: false });
+    await noticesStore.set(ctx, 'item_broker', { episode: 'e1', since: new Date().toISOString(), state: 'needs_reauth', notified_at: null, reminded_at: null });
+    const { acc_sav } = (await progress()).body.flows;
+    expect(acc_sav.months.some((m: any) => m.gaps?.some((g: any) => g.kind === 'stopped'))).toBe(false);
+  });
+
+  test('an institution whose stored transactions can’t be read: paced by the recorded balance, saying whose couldn’t be read', async () => {
+    await fake.set(ctxKey('txns:item_chase'), 'damaged-not-a-blob');
+    const error = console.error;
+    console.error = () => {};
+    try {
+      const { acc_sav } = (await progress()).body.flows;
+      expect(acc_sav).toEqual({
+        source: 'balances',
+        months: [
+          { month: M1, amount: 375.5 },
+          { month: M2, amount: 189.75 },
+          { month: M3, amount: 330.1 },
+        ],
+        fallback: { unreadable: 'Chase' },
+      });
+    } finally {
+      console.error = error;
+    }
+  });
+
+  test('a manual account whose transactions can’t be read says so too', async () => {
+    await fake.hset(ctxKey('manual-transactions'), { manual_jar: 'damaged-not-a-blob-either' });
+    const error = console.error;
+    console.error = () => {};
+    try {
+      expect((await progress()).body.flows.manual_jar).toMatchObject({ source: 'balances', fallback: { unreadable: 'Jar' } });
+    } finally {
+      console.error = error;
+    }
   });
 
   test('an account reconnected under a new id reads its earlier id’s balances too', async () => {

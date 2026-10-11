@@ -16,7 +16,7 @@
 
 import { isOwedType } from './balance';
 import { splitBalances, type AccountSplit, type AllocAccount, type Claim } from './goal-allocation';
-import { measuredRate, project, shouldHave, type AccountFlow, type Measured, type Projection } from './goal-projection';
+import { flowGaps, measuredRate, project, shouldHave, type AccountFlow, type Measured, type MonthGap, type Projection } from './goal-projection';
 import type { Goal } from './goal-model';
 
 /** What the view needs of an account. Balances in the account's currency,
@@ -51,6 +51,12 @@ export type GoalView = {
   sharing: string[];
   /** The account's rate, from its last complete months. */
   measured: Measured | null;
+  /** Every gap over those months, known or not: why the pace may be short,
+   *  or isn't known at all. */
+  gaps: MonthGap[];
+  /** Whose transactions couldn't be read, when it is paced by its recorded
+   *  balance for that reason (AccountFlow.fallback). */
+  fallback: string | null;
   /** Null unless tracked. */
   projection: Projection | null;
   /** Where it should be by now on the way to its target date. */
@@ -102,10 +108,11 @@ export function goalViews(
     const account = goal.account_id ? (byId.get(goal.account_id) ?? null) : null;
     const currency = account?.currency ?? null;
     const sharing = goal.account_id ? active.filter((o) => o.id !== goal.id && o.account_id === goal.account_id).map((o) => o.id) : [];
-    const base: GoalView = { goal, state, account, currency, saved: null, claim: null, sharing, measured: null, projection: null, shouldHave: null };
+    const base: GoalView = { goal, state, account, currency, saved: null, claim: null, sharing, measured: null, gaps: [], fallback: null, projection: null, shouldHave: null };
     if (state !== 'tracked') return base;
     const claim = claims.get(goal.id)!;
-    const measured = measuredRate(flows?.get(goal.account_id!) ?? null, currency);
+    const flow = flows?.get(goal.account_id!) ?? null;
+    const measured = measuredRate(flow, currency);
     const projection = project({
       target: goal.target,
       saved: claim.amount,
@@ -121,6 +128,8 @@ export function goalViews(
       saved: claim.amount,
       claim,
       measured,
+      gaps: flowGaps(flow),
+      fallback: flow?.fallback?.unreadable ?? null,
       projection,
       shouldHave: projection.status === 'complete' ? null : shouldHave(goal.plan_start, goal.target, goal.plan?.target_date, today, currency),
     };

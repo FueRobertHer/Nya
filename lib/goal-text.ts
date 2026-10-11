@@ -76,6 +76,9 @@ export function outlookText(view: GoalView, nameOf: (id: string) => string): str
       if (view.sharing.length > 0) {
         return `${view.account?.name ?? 'Its account'} is shared with ${view.sharing.map(nameOf).join(' and ')}, so this goal’s own pace isn’t known: set a monthly target to see when it will be reached`;
       }
+      // Months its connection didn't bring in are not "no history": the gap
+      // note says why they aren't known.
+      if (view.gaps.length > 0) return `What went into ${view.account?.name ?? 'its account'} lately isn’t known, so neither is its pace: a monthly target projects it meanwhile`;
       return 'No history to go by yet: set a monthly target to see when it will be reached';
     case 'on_track':
     case 'behind': {
@@ -109,8 +112,8 @@ export function paceText(view: GoalView): string | null {
   return `${money(m.average)} a month went into ${where} on average over ${months}${versus}${growth}`;
 }
 
-/** Why the measured months may be short, or null when nothing says so. */
-export function gapsText(gaps: readonly MonthGap[]): string | null {
+/** Each reason in a list of gaps, once, in words. */
+function gapReasons(gaps: readonly MonthGap[]): string[] {
   const said = new Set<string>();
   for (const g of gaps) {
     switch (g.kind) {
@@ -128,7 +131,34 @@ export function gapsText(gaps: readonly MonthGap[]): string | null {
         break;
     }
   }
-  return said.size === 0 ? null : `The pace may be off: ${[...said].join('; ')}.`;
+  return [...said];
+}
+
+/** Why the measured months may be short, or null when nothing says so. */
+export function gapsText(gaps: readonly MonthGap[]): string | null {
+  const said = gapReasons(gaps);
+  return said.length === 0 ? null : `The pace may be off: ${said.join('; ')}.`;
+}
+
+/** What the goal says of its months' gaps: that its pace may be off, when it
+ *  is projected from them; otherwise that what went in lately isn't known,
+ *  and why (a connection that stopped before the months began). Null when
+ *  nothing says either. */
+export function gapNote(view: GoalView): string | null {
+  if (view.projection?.status === 'complete') return null;
+  if (view.measured && view.projection?.rateFrom === 'contributions') return gapsText(view.measured.gaps);
+  const said = gapReasons(view.gaps);
+  return said.length === 0 ? null : `What went into ${view.account?.name ?? 'its account'} lately isn’t known: ${said.join('; ')}.`;
+}
+
+/** Why it is paced by its recorded balance rather than its transactions,
+ *  when that is because they couldn't be read; null otherwise. */
+export function fallbackText(view: GoalView): string | null {
+  if (!view.fallback) return null;
+  const where = view.account?.name ?? 'its account';
+  return view.fallback === where
+    ? `${where}’s transactions couldn’t be read, so this goal is paced by its recorded balance instead.`
+    : `${view.fallback}’s transactions couldn’t be read, so this goal is paced by ${where}’s recorded balance instead.`;
 }
 
 /** Where it should be by now on the way to its target date, in words. */
@@ -147,33 +177,52 @@ export function meterLabel(view: GoalView): string {
   return `${formatMoney(saved, view.currency)} of ${formatMoney(view.goal.target, view.currency)} saved, ${pct}%.${marker ? ` ${marker}.` : ''}`;
 }
 
-/** What it says about the money it counts: scaled to fit, counted by another
- *  goal too, or an allocation it no longer applies. */
-export function claimNotes(view: GoalView, nameOf: (id: string) => string, split: AccountSplit | undefined): string[] {
-  const notes: string[] = [];
+/** A sentence a goal says beside its outlook, and whether it warns (a figure
+ *  that may be off, or money shown other than as set) or only informs. */
+export type GoalNote = { text: string; warn: boolean };
+
+/**
+ * What a goal says beside its outlook, in order: why its pace may be off or
+ * isn't known, why it is paced by its balance, the money it counts (scaled to
+ * fit, counted by another goal too, an allocation it no longer applies), that
+ * it follows a reconnected account, and where it should be by now.
+ */
+export function goalNotes(view: GoalView, nameOf: (id: string) => string, split: AccountSplit | undefined): GoalNote[] {
+  const notes: GoalNote[] = [];
   const money = (n: number) => formatMoney(n, view.currency);
   const where = view.account?.name ?? 'its account';
+  const gap = gapNote(view);
+  if (gap) notes.push({ text: gap, warn: true });
+  const fallback = fallbackText(view);
+  if (fallback) notes.push({ text: fallback, warn: true });
   if (view.claim?.scaled && split) {
-    notes.push(`Allocations on ${where} add up to ${money(split.allocated)}, more than its ${money(split.balance)} balance, so each is shown scaled to fit. Lower them to match.`);
+    notes.push({
+      text: `Allocations on ${where} add up to ${money(split.allocated)}, more than its ${money(split.balance)} balance, so each is shown scaled to fit. Lower them to match.`,
+      warn: true,
+    });
   }
   if (view.claim && view.claim.kind === 'remainder' && view.claim.sharedWith.length > 0) {
-    notes.push(
-      `Counts the same ${money(view.claim.amount)} as ${view.claim.sharedWith.map(nameOf).join(' and ')}: give ${view.claim.sharedWith.length === 1 ? 'each' : 'them'} an allocation to split it.`
-    );
+    notes.push({
+      text: `Counts the same ${money(view.claim.amount)} as ${view.claim.sharedWith.map(nameOf).join(' and ')}: give ${view.claim.sharedWith.length === 1 ? 'each' : 'them'} an allocation to split it.`,
+      warn: false,
+    });
   }
   if (view.goal.earlier_allocation !== undefined) {
-    notes.push(
-      `Its allocation of ${money(view.goal.earlier_allocation)} was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.`
-    );
+    notes.push({
+      text: `Its allocation of ${money(view.goal.earlier_allocation)} was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.`,
+      warn: true,
+    });
   }
-  if (view.goal.relinked) notes.push(`Follows ${where}, which was reconnected.`);
+  if (view.goal.relinked) notes.push({ text: `Follows ${where}, which was reconnected.`, warn: false });
+  const should = shouldHaveText(view);
+  if (should) notes.push({ text: `${should}.`, warn: false });
   return notes;
 }
 
 /** Every sentence a goal says, in order: for the API's notes. */
 export function goalSentences(view: GoalView, nameOf: (id: string) => string, split: AccountSplit | undefined): string[] {
-  const out = [stateText(view), outlookText(view, nameOf), paceText(view), view.measured ? gapsText(view.measured.gaps) : null, shouldHaveText(view)];
-  return [...out.filter((s): s is string => !!s).map((s) => (/[.!?]$/.test(s) ? s : `${s}.`)), ...claimNotes(view, nameOf, split)];
+  const out = [stateText(view), outlookText(view, nameOf), paceText(view)];
+  return [...out.filter((s): s is string => !!s).map((s) => (/[.!?]$/.test(s) ? s : `${s}.`)), ...goalNotes(view, nameOf, split).map((n) => n.text)];
 }
 
 /** One account's line above the goals: what no allocation claims, or how
