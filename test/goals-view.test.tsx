@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import GoalsCard, { GoalsCardView } from '@/components/GoalsCard';
 import GoalSheet from '@/components/GoalSheet';
-import { draftOf, readDraft } from '@/components/goal-draft';
+import { archivedGoal, draftOf, pickAccount, readDraft } from '@/components/goal-draft';
 import { readFlowsAnswer } from '@/components/goal-flows-state';
 import { localDate } from '@/lib/local-date';
 import type { Goal } from '@/lib/goal-model';
@@ -205,6 +205,18 @@ describe('the editor', () => {
     const g = goal('Old', 'card', 500);
     expect(sheet(g, [g])).toContain('Visa (Chase) · owed, not saved');
   });
+
+  test('the box to set part of the balance aside: checked with an allocation, never checked without an account', () => {
+    const html = (g: Goal) => renderToStaticMarkup(<GoalSheet open goal={g} goals={[g]} accounts={ACCOUNTS} flows={null} today={TODAY} saveError={null} onClose={() => {}} onSave={async () => true} />);
+    const box = (h: string) => h.match(/<input type="checkbox"[^>]*>/)![0];
+    const allocated = html(goal('a', 'sav', 9000, { allocation: 3000 }));
+    expect(box(allocated)).toContain('checked');
+    expect(box(allocated)).not.toContain('disabled');
+    // No account, as "No account" leaves it: nothing set aside, and Save open.
+    const none = html(goal('a', null, 9000, { allocation: 3000 }));
+    expect(box(none)).not.toContain('checked');
+    expect(none).toMatch(/<button>Save<\/button>/);
+  });
 });
 
 describe('the editor’s checks are the server’s', () => {
@@ -266,6 +278,22 @@ describe('the editor’s checks are the server’s', () => {
     expect(readDraft(draft({ name: ' ' }), base).ready).toBe(false);
   });
 
+  test('"No account" sets nothing aside, in the same step, and saves', () => {
+    const mine = goal('b', 'sav', 9000, { allocation: 3000, monthly_target: 100 });
+    const opts = { ...base, goals: [mine], goal: mine };
+    const none = pickAccount(draftOf(mine), '');
+    expect(none.allocate).toBe(false);
+    const read = readDraft(none, opts);
+    expect(read).toMatchObject({ ready: true, errors: [], entry: { account_id: null, plan: { monthly_target: 100 } } });
+    expect(read.entry.plan).not.toHaveProperty('allocation');
+    // What was typed for it stays, for an account picked again; another
+    // account keeps the box as it was.
+    expect(pickAccount(none, 'sav')).toMatchObject({ allocate: false, allocation: '3000' });
+    expect(pickAccount(draftOf(mine), 'yen')).toMatchObject({ allocate: true, allocation: '3000' });
+    // A box left checked with no account sets nothing aside, and stops nothing.
+    expect(readDraft({ ...draftOf(mine), account: '' }, opts)).toMatchObject({ ready: true, errors: [], entry: { account_id: null } });
+  });
+
   test('the goal a save sends: its plan, and a new goal’s id', () => {
     expect(readDraft(draft({ monthly: '250', date: '2027-06-01' }), base).entry).toEqual({
       id: 'new-id',
@@ -274,6 +302,32 @@ describe('the editor’s checks are the server’s', () => {
       account_id: 'sav',
       plan: { monthly_target: 250, target_date: '2027-06-01' },
     });
+  });
+});
+
+describe('archiving from the editor', () => {
+  const mine = goal('b', 'sav', 9000, { allocation: 3000, monthly_target: 100 }, { name: 'Trip' });
+  const opts = { goal: mine, goals: [mine], accounts: ACCOUNTS, today: '2026-10-10' };
+
+  test('as saved, when nothing was changed: archived, its allocation released', () => {
+    expect(archivedGoal(draftOf(mine), opts)).toEqual({ ...mine, plan: { monthly_target: 100, archived: true } });
+  });
+
+  test('with what was typed, which would otherwise be lost', () => {
+    expect(archivedGoal({ ...draftOf(mine), name: 'Trip to Japan', target: '9500', monthly: '' }, opts)).toEqual({
+      id: 'b',
+      name: 'Trip to Japan',
+      target: 9500,
+      account_id: 'sav',
+      plan: { archived: true },
+    });
+    // What was typed for the allocation doesn't matter: archiving releases it.
+    expect(archivedGoal({ ...draftOf(mine), allocation: '999999' }, opts)?.plan).toEqual({ monthly_target: 100, archived: true });
+  });
+
+  test('waits while what was typed can’t be saved, rather than drop it', () => {
+    expect(archivedGoal({ ...draftOf(mine), target: 'lots' }, opts)).toBeNull();
+    expect(archivedGoal({ ...draftOf(mine), name: ' ' }, opts)).toBeNull();
   });
 });
 

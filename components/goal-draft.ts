@@ -18,11 +18,17 @@ export const draftOf = (g: Goal | null): Draft => ({
   name: g?.name ?? '',
   target: g ? String(g.target) : '',
   account: g?.account_id ?? '',
-  allocate: g?.plan?.allocation !== undefined,
+  // An allocation is of an account's balance: none without one.
+  allocate: g?.plan?.allocation !== undefined && !!g.account_id,
   allocation: g?.plan?.allocation !== undefined ? String(g.plan.allocation) : '',
   monthly: g?.plan?.monthly_target !== undefined ? String(g.plan.monthly_target) : '',
   date: g?.plan?.target_date ?? '',
 });
+
+/** The form with another account picked: "No account" sets nothing aside,
+ *  in the same step (what was typed for it is kept, for an account picked
+ *  again). */
+export const pickAccount = (d: Draft, account: string): Draft => ({ ...d, account, allocate: account ? d.allocate : false });
 
 /** An amount as typed, in the currency's smallest unit; 0 taken where
  *  `zero` allows it (an allocation of nothing is a choice). */
@@ -58,7 +64,9 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   const id = goal?.id ?? opts.newId;
   const trackable = !!account && accountState({ id, name: '', target: 1, account_id: account.account_id }, account) === 'tracked';
   const target = amountOf(d.target, currency);
-  const allocation = d.allocate ? amountOf(d.allocation, currency, true) : undefined;
+  // Nothing is set aside without an account to set it aside from.
+  const allocate = d.allocate && !!d.account;
+  const allocation = allocate ? amountOf(d.allocation, currency, true) : undefined;
   const monthly = d.monthly.trim() ? amountOf(d.monthly, currency) : undefined;
   const room = trackable
     ? allocationRoom(id, account!.account_id, goals.map((g) => ({ id: g.id, account_id: g.account_id, allocation: g.plan?.allocation, archived: !!g.plan?.archived })), account!.balance!, currency)
@@ -71,8 +79,8 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   // What the goal has set aside already, kept as it is: the server takes it
   // whatever the balance did since (lib/goal-allocation.ts), so this does too.
   const kept = !!goal && goal.account_id === d.account && goal.plan?.allocation !== undefined && allocation === goal.plan.allocation;
-  if (d.allocate && !kept) {
-    if (!account) errors.push('Choose an account to set part of its balance aside from.');
+  if (allocate && !kept) {
+    if (!account) errors.push('That account isn’t among yours any more: choose another to set part of its balance aside from.');
     else if (!trackable) {
       const why = account.type && isOwedType(account.type) ? 'its balance is owed, not saved' : account.hidden ? 'it is hidden' : 'no balance is known for it yet';
       errors.push(`Nothing can be set aside from ${account.name}: ${why}.`);
@@ -83,11 +91,27 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   if (d.date && !(isCalendarDay(d.date) && d.date <= LATEST_TARGET_DATE && (d.date >= today || dateKept))) errors.push('Pick a target date from today on.');
 
   const plan: GoalPlan = {
-    ...(d.allocate && allocation != null ? { allocation } : {}),
+    ...(allocate && allocation != null ? { allocation } : {}),
     ...(monthly != null ? { monthly_target: monthly } : {}),
     ...(d.date ? { target_date: d.date } : {}),
   };
   const entry: Goal = { id, name: d.name.trim(), target: target ?? 0, account_id: d.account || null, plan };
-  const ready = !!d.name.trim() && target !== null && (!d.allocate || allocation != null) && errors.length === 0;
+  const ready = !!d.name.trim() && target !== null && (!allocate || allocation != null) && errors.length === 0;
   return { entry, account, currency, trackable, room, errors, ready };
+}
+
+/**
+ * The goal as "Archive goal" saves it: archived, its allocation released
+ * (lib/goal-save.ts), and with what is typed when the form was changed, which
+ * would otherwise be lost; as saved when it wasn't. Null while what is typed
+ * can't be saved: archiving waits for it rather than drop it. What is typed
+ * for the allocation doesn't matter: archiving releases it.
+ */
+export function archivedGoal(d: Draft, opts: { goal: Goal; goals: readonly Goal[]; accounts: readonly GoalAccount[]; today: string }): Goal | null {
+  const changed = JSON.stringify(d) !== JSON.stringify(draftOf(opts.goal));
+  const read = changed ? readDraft({ ...d, allocate: false }, { ...opts, newId: opts.goal.id }) : null;
+  if (read && !read.ready) return null;
+  const base = read ? read.entry : opts.goal;
+  const { allocation: _released, ...kept } = base.plan ?? {};
+  return { ...base, plan: { ...kept, archived: true } };
 }

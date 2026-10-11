@@ -17,7 +17,7 @@ import { goalViews, type GoalAccount } from '@/lib/goal-view';
 import { outlookText, sourceNote } from '@/lib/goal-text';
 import { LATEST_TARGET_DATE, MAX_GOAL_NAME_CHARS, type Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
-import { draftOf, readDraft, type Draft } from './goal-draft';
+import { archivedGoal, draftOf, pickAccount, readDraft, type Draft } from './goal-draft';
 
 export default function GoalSheet({
   open,
@@ -86,12 +86,11 @@ export default function GoalSheet({
     }
   }
   const save = () => read.ready && commit(goal ? goals.map((g) => (g.id === goal.id ? entry : g)) : [...goals, entry]);
-  // Archiving keeps the goal as it is saved, with its history, and releases
-  // what it set aside (lib/goal-save.ts).
+  // Archiving keeps the goal, with its history and what was typed in the
+  // form, and releases what it set aside (components/goal-draft.ts).
+  const archived = goal ? archivedGoal(d, { goal, goals, accounts, today }) : null;
   const archive = () => {
-    if (!goal) return;
-    const { allocation: _released, ...kept } = goal.plan ?? {};
-    void commit(goals.map((g) => (g.id === goal.id ? { ...goal, plan: { ...kept, archived: true } } : g)));
+    if (goal && archived) void commit(goals.map((g) => (g.id === goal.id ? archived : g)));
   };
 
   return (
@@ -107,7 +106,7 @@ export default function GoalSheet({
         </label>
         <label className="field">
           Account
-          <select value={d.account} onChange={(e) => set({ account: e.target.value })} disabled={saving}>
+          <select value={d.account} onChange={(e) => setD((cur) => pickAccount(cur, e.target.value))} disabled={saving}>
             <option value="">No account: not tracked</option>
             {offered.map((a) => (
               <option key={a.account_id} value={a.account_id}>
@@ -120,10 +119,11 @@ export default function GoalSheet({
           </select>
         </label>
         <label className="goal-check">
-          <input type="checkbox" checked={d.allocate} onChange={(e) => set({ allocate: e.target.checked })} disabled={saving || !d.account} />
+          {/* Never disabled while checked, so it can always be cleared. */}
+          <input type="checkbox" checked={d.allocate} onChange={(e) => set({ allocate: e.target.checked })} disabled={saving || (!d.account && !d.allocate)} />
           Set part of the balance aside for this goal
         </label>
-        {d.allocate && (
+        {d.allocate && !!d.account && (
           <label className="field">
             Set aside{currency ? ` (${currency})` : ''}
             <input inputMode="decimal" autoComplete="off" value={d.allocation} onChange={(e) => set({ allocation: e.target.value })} placeholder="0.00" disabled={saving} />
@@ -180,9 +180,10 @@ export default function GoalSheet({
           {goal && (
             <div className="goal-sheet-actions">
               {reached && <p className="panel-note">Reached. Archive it to keep it, with its history, and free what it set aside.</p>}
-              <button className="secondary" onClick={archive} disabled={saving}>
+              <button className="secondary" onClick={archive} disabled={saving || !archived}>
                 Archive goal
               </button>
+              {!archived && <p className="panel-note">Archiving saves your changes too, so it waits until they can be saved.</p>}
               {!reached && (
                 <button className="danger-outline" onClick={() => setConfirmDelete(true)} disabled={saving}>
                   Delete goal
