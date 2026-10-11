@@ -12,6 +12,7 @@ import { categoriesFor } from './category-fixture';
 import Insights from '@/components/Insights';
 import MonthFlowChart from '@/components/MonthFlowChart';
 import { trailingFlows } from '@/lib/fire/inputs';
+import { calendarMonth } from '@/lib/calendar';
 
 // Splits and groups on the Activity tab (#39): a split transaction listed
 // once, as the bank has it, its parts nested under it with their categories
@@ -193,6 +194,26 @@ describe('what else the dashboard counts from the same rows', () => {
     expect(split).not.toContain('general merchandise budget');
     // The biggest purchase is the whole charge, as the bank made it, never its largest part.
     expect(split).toContain('Biggest purchase this month: Costco, $150.00');
+  });
+
+  test('the Budgets calendar lists a split charge once, whole, and counts its parts; a group as its net', () => {
+    const day = (rows: Txn[]) => calendarMonth({ month: today.slice(0, 7), today, txns: rows, series: [], planned: [], currency: 'USD' }).days.get(today)!;
+    const shown = day(served());
+    expect(shown.entries.filter((e) => e.kind === 'posted').map((e) => [e.name, e.amount, e.parts ?? null, e.counted ?? null])).toEqual([
+      ['Costco', -150, 3, null],
+      ['Coffee', -4.5, null, null],
+      ['Dinner with Sam', -60, null, null],
+    ]);
+    expect(shown.posted).toBe(-214.5);
+    // A part left out on its own: listed whole, the day's figure without it.
+    const partOut = served().map((t) => (t.transaction_id === 'split:p2' ? { ...t, excluded: true as const, split_excluded: true as const } : t));
+    const out = day(partOut);
+    expect(out.entries.find((e) => e.name === 'Costco')).toMatchObject({ amount: -150, parts: 3, counted: -130.01 });
+    expect(out.posted).toBe(-194.51);
+    // The whole transaction excluded: listed, excluded, not in the figure.
+    const all = day(served().map((t) => (t.split_of ? { ...t, excluded: true as const } : t)));
+    expect(all.entries.find((e) => e.name === 'Costco')).toMatchObject({ excluded: true, uncounted: true });
+    expect(all.posted).toBe(-64.5);
   });
 
   test('the month’s flow chart: a split moves nothing, a group counts its net', () => {

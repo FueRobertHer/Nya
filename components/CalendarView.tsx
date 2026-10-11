@@ -147,6 +147,9 @@ export default function CalendarView({
   const postedTags = (e: CalendarEntry) =>
     [
       e.pending ? 'pending' : null,
+      // One charge, split (#39): what of it the day's figure counts when a part is left out.
+      e.parts ? `split into ${e.parts}` : null,
+      e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
       e.excluded ? "excluded, not in the day's figure" : null,
       !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
     ]
