@@ -1795,13 +1795,6 @@ export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r
   };
 }
 
-/**
- * transactions.csv: one row per transaction, newest first: every one stored
- * from the banks, and every one on a manual account (manualTransactionRow).
- * In the order the bank's rows are listed in the file (then by the event
- * time, which a manual row doesn't have, then the id), so two downloads of
- * the same data are the same file.
- */
 /** A row of the file as the read layer's function for splits and groups
  *  reads it (lib/export-splits.ts): its id, day, amount, currency, whether it
  *  is pending, and what the layers said of its exclusion and tags. */
@@ -1818,8 +1811,11 @@ function splitFacts(t: { id: string; date: string; amount: number; currency: str
     tags: t.l.tags,
   } as unknown as Txn;
 }
+/** Those facts of a bank's row, as the file has it. */
 const bankFacts = (t: ExportTransaction) =>
   splitFacts({ id: t.transaction_id, date: t.date, amount: t.amount, currency: t.iso_currency_code, unofficial: t.unofficial_currency_code, pending: t.pending, l: t });
+/** Those facts of a book's row (a manual account's, or one SimpleFIN
+ *  brought), with the layers applied as the app applies them. */
 const bookFacts = (r: ManualTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
 
 /** Every row of the file, a bank's and a book's, as the function for splits
@@ -1831,6 +1827,13 @@ export function splitFactRows(doc: UserExport): Txn[] {
   return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l))];
 }
 
+/**
+ * transactions.csv: one row per transaction, newest first: every one stored
+ * from the banks, and every one on a manual account (manualTransactionRow).
+ * In the order the bank's rows are listed in the file (then by the event
+ * time, which a manual row doesn't have, then the id), so two downloads of
+ * the same data are the same file.
+ */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
