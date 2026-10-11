@@ -147,7 +147,13 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   else if (finished.manual_unread.length > 0) unread.push(`Transactions on ${finished.manual_unread.length} manual account${finished.manual_unread.length === 1 ? '' : 's'}`);
   if (!bank.own_read.categories) unread.push('The categories you chose for some transactions');
   if (!bank.own_read.exclusions) unread.push('The exclusions you carried across a reconnect');
-  if (health === null || notices === null || health.unread.size > 0 || notices.unreadable.length + notices.unrecognised.length > 0) unread.push('How each bank connection is doing');
+  // How a connection is doing that can't be read: whether it stopped isn't
+  // known, so neither is whether a month has all of its transactions.
+  if (health === null || notices === null) unread.push('How each bank connection is doing');
+  else {
+    const damaged = new Set([...health.unread, ...notices.unreadable, ...notices.unrecognised]);
+    for (const s of bank.sources) if (damaged.has(s.item_id) && !s.no_transactions) unread.push(`How ${s.institution_name} is doing`);
+  }
 
   const exclusionUnknown = new Map<string, number>();
   for (const t of rows) if (t.excluded === null) exclusionUnknown.set(monthOf(t.date), (exclusionUnknown.get(monthOf(t.date)) ?? 0) + 1);

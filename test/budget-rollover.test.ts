@@ -257,6 +257,16 @@ describe('a month of budgets, from the stored history', () => {
     expect(body.gaps.map((g: { month: string }) => g.month)).not.toContain(M(-3));
   });
 
+  test('a connection whose health can’t be read leaves every month counted uncertain, naming it', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('m2', on(-2, 1), 30)]);
+    await fake.hset(ctxKey('connection-notices'), { item_bank: 'not-ciphertext-at-all-but-long-enough' });
+    await rollover(t, 'food and drink', M(-2));
+    const { body } = await month();
+    expect(body.carries.categories[named(t, 'food and drink').id].uncertain).toEqual([M(-2), M(-1)]);
+    expect(body.gaps[0]).toEqual({ month: M(-2), gaps: [{ kind: 'unread', what: 'How Bank is doing' }] });
+  });
+
   test('a bank whose stored history begins after a month began leaves that month uncertain', async () => {
     const t = await budgetBefore({ 'food and drink': 100 });
     await seedBank([row('m2', on(-2, 14), 30), row('m1', on(-1), 30)]);
