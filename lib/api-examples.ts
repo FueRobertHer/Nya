@@ -513,7 +513,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       rollover_left_out: [{ currency: 'EUR', count: 3 }],
       rollover_left_out_text: "3 transactions in EUR aren't in what rolled over from earlier months, which is in USD.",
       sources: EXAMPLE_SOURCES,
-      notes: [],
+      notes: ['What rolled over and the income pool count months that may be incomplete (2026-08), so they may be off: see incomplete_months'],
     },
     fields: [
       ['month', 'The month (UTC).'],
@@ -607,7 +607,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['rollover_left_out[].count', 'How many transactions in it.'],
       ['rollover_left_out_text', 'The same in words, or null when nothing was left out.'],
       ...SOURCES,
-      TXN_NOTES,
+      [
+        'notes',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; that the month may be incomplete (and why), or comes before any transaction stored, so nothing is counted as spent in it; that a carry or the income pool counts months that may be incomplete (incomplete_months says which, and why); or that the month hasn’t begun. Empty when there is nothing to say.',
+      ],
     ],
   },
 

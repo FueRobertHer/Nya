@@ -133,6 +133,20 @@ function withoutTransactions(r: { sources?: { no_transactions: string | null }[]
   return '';
 }
 
+/** For budgets, what notes says of incomplete months: the month's spending
+ *  (none counted before anything stored, or what is spent may be off), and
+ *  carries or a pool counting such months (lib/api-read.ts readBudgets). */
+function incompleteMonths(r: { month: string; earliest_month?: string | null; notes?: string[] }): string {
+  const said = (start: string) => (r.notes ?? []).some((n) => n.startsWith(start));
+  let out = '';
+  if (said('No transactions are stored from before')) out += ` No transactions are stored from before ${r.earliest_month}, so nothing is counted as spent in ${r.month}: see notes.`;
+  else if (said(`${r.month} may be incomplete`)) out += ` ${r.month} may be incomplete, so what is spent may be off: see notes.`;
+  const rolls = said('What rolled over');
+  const pools = rolls ? said('What rolled over and the income pool') : said('The income pool counts');
+  if (rolls || pools) out += ` ${rolls && pools ? 'What rolled over and the income pool count' : rolls ? 'What rolled over counts' : 'The income pool counts'} months that may be incomplete: see notes.`;
+  return out;
+}
+
 const SUMMARIES: Record<string, Tool['summary']> = {
   list_accounts: (r) => `${plural(r.accounts.length, 'account')}.${missingAccounts(r.missing_accounts)}`,
   get_net_worth: (r) =>
@@ -147,7 +161,7 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
   get_budgets: (r) =>
-    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available !== r.total.budget ? `, ${money(r.total.available, r.currency)} available with what rolled over` : ''}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${withoutTransactions(r)}`,
+    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available !== r.total.budget ? `, ${money(r.total.available, r.currency)} available with what rolled over` : ''}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`,
   list_recurring_bills: (r) => {
     const ended = r.bills.filter((b: any) => b.ended).length;
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;

@@ -257,6 +257,30 @@ describe('tools', () => {
     expect((await budgetMonthsStore.get(ctx))!.categories[food].rollover).toEqual([{ from: last }]);
   });
 
+  test('get_budgets says when the month may be incomplete, comes before anything stored, or what rolled over counts such months (#37)', async () => {
+    const { addMonths } = await import('@/lib/rollover');
+    const asked = addMonths(daysAgo(0).slice(0, 7), -30);
+    const before = await call('get_budgets', { month: asked });
+    expect(before.content[0].text).toContain(`so nothing is counted as spent in ${asked}: see notes.`);
+    expect(before.structuredContent.notes).toContainEqual(expect.stringMatching(new RegExp(`^No transactions are stored from before \\d{4}-\\d{2}, so nothing is counted as spent in ${asked}$`)));
+    // The sentence, from what the API answers.
+    const summary = TOOLS.find((t) => t.name === 'get_budgets')!.summary;
+    const base = { month: '2026-10', currency: 'USD', budgets: [], groups: [], total: { budget: 100, spent: 10, available: 100 }, income: null, sources: [], earliest_month: '2026-01', notes: [] as string[] };
+    expect(summary(base)).toBe('0 category budgets for 2026-10: 10.00 USD spent of 100.00 USD.');
+    expect(summary({ ...base, notes: ['2026-10 may be incomplete, so what is spent may be off: Chase hasn’t synced since 2026-10-03'] })).toEndWith(
+      ' 2026-10 may be incomplete, so what is spent may be off: see notes.'
+    );
+    expect(summary({ ...base, notes: ['What rolled over counts months that may be incomplete (2026-08), so it may be off: see incomplete_months'] })).toEndWith(
+      ' What rolled over counts months that may be incomplete: see notes.'
+    );
+    expect(summary({ ...base, notes: ['What rolled over and the income pool count months that may be incomplete (2026-09), so they may be off: see incomplete_months'] })).toEndWith(
+      ' What rolled over and the income pool count months that may be incomplete: see notes.'
+    );
+    expect(summary({ ...base, notes: ['The income pool counts months that may be incomplete (2026-09), so it may be off: see incomplete_months'] })).toEndWith(
+      ' The income pool counts months that may be incomplete: see notes.'
+    );
+  });
+
   test('a summary says when connections bring in no transactions, in counts, never as no spending', async () => {
     await connectWithoutTransactions(fake, { item_id: 'item_cu', name: 'CreditUnion', accounts: [{ account_id: 'acc_cu', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
     for (const name of ['search_transactions', 'spending_by_category', 'get_budgets', 'list_recurring_bills', 'list_categories']) {

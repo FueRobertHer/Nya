@@ -376,6 +376,31 @@ describe('the read-only API and the Budgets tab agree', () => {
     expect({ months: await fake.get<string>(ctxKey('budget-months')), set: await fake.get<string>(ctxKey('budget-set')) }).toEqual(stored);
   });
 
+  test('a month that may be incomplete, or comes before anything stored, is said in notes, never only in a field of its own', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('m3', on(-3, 1), 10), row('m2', on(-2), 10), row('now', on(0, 1), 5)]);
+    // The connection broke, and last synced in the middle of two months ago.
+    const lastOk = `${on(-2, 15)}T12:00:00.000Z`;
+    await syncsStore.set(ctx, 'item_bank', { at: lastOk });
+    await noticesStore.set(ctx, 'item_bank', { episode: 'e1', since: lastOk, state: 'needs_reauth', notified_at: null, reminded_at: null });
+    const now = await readBudgets(ctx, { month: NOW });
+    expect(now.notes).toContain(`${NOW} may be incomplete, so what is spent may be off: Bank hasn’t synced since ${on(-2, 15)}`);
+    // Before anything stored: nothing counted, said once.
+    const old = await readBudgets(ctx, { month: M(-30) });
+    expect(old.budgets[0].spent).toBe(0);
+    expect(old.notes).toContain(`No transactions are stored from before ${M(-3)}, so nothing is counted as spent in ${M(-30)}`);
+    expect(old.notes.filter((n) => n.includes('may be incomplete'))).toEqual([]);
+    // What rolled over counts the months since it stopped.
+    await rollover(t, 'food and drink', M(-3));
+    expect((await readBudgets(ctx, { month: NOW })).notes).toContain(
+      `What rolled over counts months that may be incomplete (${M(-2)} and ${M(-1)}), so it may be off: see incomplete_months`
+    );
+    await post({ action: 'income', enabled: true, start: M(-3), month: NOW });
+    expect((await readBudgets(ctx, { month: NOW })).notes).toContain(
+      `What rolled over and the income pool count months that may be incomplete (${M(-2)}, ${M(-1)} and ${NOW}), so they may be off: see incomplete_months`
+    );
+  });
+
   test('a month still to come, as far ahead as one can be asked: amounts, no carry, no pool, quickly', async () => {
     const t = await budgetBefore({ 'food and drink': 100 });
     await seedBank([row('m1', on(-1), 40), row('pay', on(-1, 2), -3000, 'income')]);

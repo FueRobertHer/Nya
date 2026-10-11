@@ -1109,6 +1109,11 @@ const apiRollover = (c: Carry | undefined): ApiRollover | null =>
 /** A sentence's first letter in capitals. */
 const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
+/** Months (YYYY-MM, oldest first) for a note: up to three named, else how
+ *  many since the first, never implying they run on. */
+const monthList = (ms: readonly string[]): string =>
+  ms.length <= 3 ? (ms.length <= 1 ? (ms[0] ?? '') : `${ms.slice(0, -1).join(', ')} and ${ms[ms.length - 1]}`) : `${ms.length} months since ${ms[0]}`;
+
 /**
  * Monthly budgets with the month's spending against each, as the Budgets tab
  * works it out (lib/budget-month.ts: the same read and the same math,
@@ -1158,6 +1163,23 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
   }
   // Nothing is counted past this month (lib/rollover.ts budgetsInMonth).
   if (opts.month > today) notes.push(`${opts.month} hasn’t begun, so nothing has rolled into it yet, and no income pool is worked out for it`);
+  // The month's own spending, and what the carries and the pool count, when
+  // a month may be incomplete: said here as well as in incomplete_months,
+  // which a client may not read, so no figure looks complete when it isn't.
+  // A connection that brings in no transactions is said by its own note.
+  const day = (d: string) => d.slice(0, 10);
+  const own = (read.gaps.find((g) => g.month === opts.month)?.gaps ?? []).filter((g) => g.kind !== 'without');
+  if (read.earliest !== null && opts.month < read.earliest) {
+    notes.push(`No transactions are stored from before ${read.earliest}, so nothing is counted as spent in ${opts.month}`);
+  } else if (own.length > 0) {
+    notes.push(`${opts.month} may be incomplete, so what is spent may be off: ${own.map((g) => gapText(g, day)).join('; ')}`);
+  }
+  const counted = [...new Set([...Object.values(view.carries.categories), ...Object.values(view.carries.groups)].flatMap((c) => c.uncertain))].sort();
+  const pooled = read.pool?.uncertain ?? [];
+  if (counted.length > 0 || pooled.length > 0) {
+    const what = counted.length > 0 && pooled.length > 0 ? 'What rolled over and the income pool count' : counted.length > 0 ? 'What rolled over counts' : 'The income pool counts';
+    notes.push(`${what} months that may be incomplete (${monthList([...new Set([...counted, ...pooled])].sort())}), so ${counted.length > 0 && pooled.length > 0 ? 'they' : 'it'} may be off: see incomplete_months`);
+  }
   const reconcileOf = (r: GroupMeter['reconcile']) => r && { binds: r.binds, group: tidy(r.group), categories: tidy(r.categories) };
   const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), currency);
   return {
