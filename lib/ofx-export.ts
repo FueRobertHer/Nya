@@ -106,9 +106,10 @@
 //
 // NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1). Built from the
 // document the route already read, so whatever couldn't be read is known: a
-// manual account's transactions, or whether a transaction was excluded, that
-// couldn't be read are said in a note and in the parts the file is short of
-// (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
+// manual account's transactions, whether a transaction was excluded (with
+// your note and tags on it), and the rules and tags, that couldn't be read
+// are said in a note and in the parts the file is short of (`incomplete`),
+// never left out quietly. So are an account SimpleFIN keeps
 // up to date whose older transactions may still be arriving, a few months a
 // night (in a note: nothing stored is short), its balance while held, and
 // the record of its connection when that can't be read (`incomplete` too).
@@ -116,6 +117,8 @@
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
 import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
@@ -725,9 +728,22 @@ export function ofxFile(
   const unmarked = rows.filter((r) => unknown.has(r.id)).length;
   if (unmarked > 0) {
     notes.push(
-      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${unmarked === 1 ? 'it isn’t' : 'they aren’t'} marked either way. The JSON download lists them under problems. ${UNCHANGED}`
+      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${unmarked === 1 ? 'it isn’t' : 'they aren’t'} marked either way, and your note and tags on ${unmarked === 1 ? 'it aren’t' : 'them aren’t'} in ${unmarked === 1 ? 'its memo' : 'their memos'}. The JSON download lists them under problems. ${UNCHANGED}`
     );
     incomplete.add(txnAnnotationStore.name);
+  }
+  // Rules and tags that couldn't be read: none applied, none shown, as the
+  // app does until they can be; said, as every part the file is short of.
+  const unread = (store: string) => doc.problems.some((p) => p.section === store);
+  if (rows.length > 0 && unread(rulesStore.name)) {
+    notes.push(
+      `Your rules could not be read, so none is applied to this statement: its names, and which transactions are marked as left out, are as the bank and you have them, as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    incomplete.add(rulesStore.name);
+  }
+  if (rows.length > 0 && unread(tagStore.name)) {
+    notes.push(`Your tags could not be read, so no transaction’s memo has its tags, as the app shows none until they can be read. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(tagStore.name);
   }
   if (pending > 0) {
     notes.push(
