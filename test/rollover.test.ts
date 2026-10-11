@@ -628,6 +628,12 @@ describe('which months may be incomplete', () => {
     expect(startChoices('2026-10', '2001-01').at(-1)).toBe('2016-10');
     // Not known: a year.
     expect(startChoices('2026-10', null)).toHaveLength(12);
+    // A month kept from before is offered whatever is known, within reach.
+    expect(startChoices('2026-10', null, '2025-04')).toEqual(monthsFrom('2025-04', '2026-10').reverse());
+    expect(startChoices('2026-10', '2026-08', '2025-04').at(-1)).toBe('2025-04');
+    expect(startChoices('2026-10', null, '2026-03')).toHaveLength(12);
+    expect(startChoices('2026-10', null, '2016-09')).toHaveLength(12);
+    expect(startChoices('2026-10', null, '2026-11')).toHaveLength(12);
   });
 });
 

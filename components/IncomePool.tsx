@@ -110,8 +110,10 @@ export function IncomeSetting({
   /** Resolves true once saved. */
   onChange: (change: { enabled: true; start: string } | { enabled: false }) => Promise<boolean>;
 }) {
-  const choices = startChoices(today, earliest);
-  // Turned off, it kept the month it counted from: offered again first.
+  // Turned off, it kept the month it counted from: offered again first,
+  // whether or not the first month with transactions is known yet (the
+  // month may be shown before its history is read, and this is chosen once).
+  const choices = startChoices(today, earliest, setting?.start ?? null);
   const [start, setStart] = useState(setting?.start && choices.includes(setting.start) ? setting.start : today);
   const [busy, setBusy] = useState(false);
   const save = async (change: { enabled: true; start: string } | { enabled: false }) => {

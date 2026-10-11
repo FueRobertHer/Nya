@@ -311,6 +311,17 @@ describe('income carryover', () => {
     const kept = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -2) }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />);
     expect(kept).toContain(`<option value="${addMonths(NOW, -2)}" selected="">`);
   });
+
+  test('a start kept from more than a year back is offered and chosen, before the history is read as after', () => {
+    const start = addMonths(NOW, -18);
+    for (const earliest of [null, addMonths(NOW, -30)]) {
+      const html = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start }} today={NOW} earliest={earliest} disabled={false} onChange={async () => true} />);
+      expect([earliest, html.includes(`<option value="${start}" selected="">`)]).toEqual([earliest, true]);
+    }
+    // Out of reach (more than ten years back): this month, as for none.
+    const far = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -121) }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />);
+    expect(far).toContain(`<option value="${NOW}" selected="">`);
+  });
 });
 
 describe('the Budgets tab, with the month loaded', () => {

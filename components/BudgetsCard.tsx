@@ -238,9 +238,10 @@ export default function BudgetsCard({
       );
     }
     const first = t.kind === 'category' ? rollover.starts.categories[t.id] : rollover.starts.groups[t.id];
-    const choices = startChoices(shownMonth, rollover.earliest).filter((m) => !first || m >= first);
-    // Turned off this month: the undo, which is on again from where it ran.
+    // Turned off this month: the undo, which is on again from where it ran,
+    // offered whatever is known of the first month with transactions.
     const ran = t.kind === 'category' ? rollover.ended.categories[t.id] : rollover.ended.groups[t.id];
+    const choices = startChoices(shownMonth, rollover.earliest, ran ?? null).filter((m) => !first || m >= first);
     return (
       <div className="budget-rollover">
         {ran && choices.includes(ran) && (

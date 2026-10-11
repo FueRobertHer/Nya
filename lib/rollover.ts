@@ -942,10 +942,15 @@ export function sinceText(c: Carry, month: string): string {
 
 /** Months to choose a start from, newest first: this month back to the first
  *  month with transactions (or MAX_MONTHS_BACK, if sooner), at least a year;
- *  a year when that month isn't known (none yet, or not read). */
-export function startChoices(today: string, earliest: string | null): string[] {
+ *  a year when that month isn't known (none yet, or not read). Back to `keep`
+ *  too, a month the person had (a start kept from turning income carryover
+ *  off, the month a rollover ran from), whenever it is within reach, so it is
+ *  offered whatever is known of the first month with transactions. */
+export function startChoices(today: string, earliest: string | null, keep: string | null = null): string[] {
   const floor = earliestStart(today);
   const year = addMonths(today, -11);
-  const first = earliest === null ? year : earliest > floor ? earliest : floor;
-  return monthsFrom(first < year ? first : year, today).reverse();
+  let first = earliest === null ? year : earliest > floor ? earliest : floor;
+  if (first > year) first = year;
+  if (keep !== null && isMonth(keep) && keep >= floor && keep <= today && keep < first) first = keep;
+  return monthsFrom(first, today).reverse();
 }
