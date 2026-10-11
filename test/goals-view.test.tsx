@@ -82,6 +82,14 @@ describe('the card', () => {
     expect(t).not.toContain('No history to go by');
   });
 
+  test('underfunded: short of its date, the outlook says so, flagged', () => {
+    const soon = new Date(Date.now() + 90 * 86_400_000).toISOString().slice(0, 10);
+    const html = card([goal('Trip', 'sav', 20_000, { monthly_target: 100, target_date: soon })]);
+    expect(html).toContain('class="goal-outlook behind"');
+    expect(text(html)).toMatch(/a month short of .+ at your monthly target; at this pace, reached in/);
+    expect(card([goal('Trip', 'sav', 12_000, { monthly_target: 500 })])).not.toContain('behind');
+  });
+
   test('accounts that can’t be counted say why, and a card or loan never reads as savings', () => {
     const t = text(card([goal('A', null, 100), goal('B', 'gone', 100), goal('C', 'hid', 100), goal('D', 'card', 100), goal('E', 'nobal', 100)]));
     expect(t).toContain('No account linked');

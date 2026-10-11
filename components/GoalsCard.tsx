@@ -155,6 +155,9 @@ export default function GoalsCard({
         const ratio = v.saved !== null ? Math.max(v.saved, 0) / goal.target : null;
         const marker = v.shouldHave !== null ? Math.min(Math.max(v.shouldHave, 0) / goal.target, 1) : null;
         const said = outlook(v);
+        // Underfunded, as a budget target would say: short of its date, or
+        // nothing went in lately.
+        const behind = v.projection?.status === 'behind' || v.projection?.status === 'no_recent_contributions';
         const gaps = v.measured && v.projection?.rateFrom === 'contributions' ? gapsText(v.measured.gaps) : null;
         const notes = [...(gaps ? [gaps] : []), ...claimNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined)];
         return (
@@ -177,7 +180,7 @@ export default function GoalsCard({
                 <div className="type-tag">{stateText(v)}</div>
               )}
             </button>
-            {said && <p className="goal-outlook">{said}</p>}
+            {said && <p className={`goal-outlook${behind ? ' behind' : ''}`}>{said}</p>}
             {notes.map((n) => (
               <p className="stale-note goal-note" key={n}>
                 {n}

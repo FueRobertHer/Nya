@@ -4121,6 +4121,12 @@ button.cat-manage-row.archived {
   color: var(--muted);
 }
 
+/* Underfunded: short of its target date, or nothing went in lately. The
+   words say so; the hue only draws the eye. */
+.goal-outlook.behind {
+  color: var(--warn);
+}
+
 .goal-note {
   margin-top: 4px;
 }
