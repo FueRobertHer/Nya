@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
@@ -76,6 +76,7 @@ beforeEach(async () => {
   plaidCalls.length = 0;
 });
 afterEach(() => expect(plaidCalls).toEqual([]));
+afterEach(() => setSystemTime());
 
 const CHECKING = () => fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': ago(1), transactions: [txn('c1', 3, '-12.50', 'COFFEE')] });
 const CARD = () =>
@@ -146,6 +147,23 @@ describe('closing an account SimpleFIN keeps up to date', () => {
     expect((await post({ account_id: card, state: 'active' })).body).toMatchObject({ reopened: true });
     expect((await readSpending(ctx, { from: dayOf(NOW - 30 * DAY), to: dayOf(NOW) })).money_out).toBeCloseTo(12.5 + 20 + 45.67, 6);
     expect(accountIds((await load()).body)).toEqual(expect.arrayContaining([checking, card]));
+  });
+
+  test('the chart leaves it out from its day, by the balance recorded for it, and keeps every day before', async () => {
+    const { card } = await trackBoth();
+    // Two days' totals, recorded with both, as the snapshot records them.
+    for (const n of [3, 2]) {
+      setSystemTime(new Date(NOW - n * DAY));
+      const nw = await computeNetWorth(ctx);
+      expect(await recordFetch(ctx, nw.institutions, nw.netWorth)).toMatchObject({ date: dayOf(NOW - n * DAY) });
+    }
+    setSystemTime();
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 2 * DAY), balance: 432.1 });
+    const { body } = await load();
+    const on = (n: number) => body.history.find((p: any) => p.date === dayOf(NOW - n * DAY));
+    expect(on(3).value).toBeCloseTo(1500.25 - 432.1, 6);
+    expect(on(2).value).toBeCloseTo(1500.25, 6);
+    expect(on(2).estimated).toBeUndefined();
   });
 
   test('an id no account has is still refused', async () => {
