@@ -46,10 +46,11 @@
 // its own beside the payers, never a link running back. What was left over is
 // a node beside the groups.
 //
-// SPLIT TRANSACTIONS (#39) aren't on this branch. Once a transaction can be
-// split, each part a row of its own in its own category, every part flows here
-// as the totals count it; `tally` is the one place that counts a node's
-// transactions, where the parts of one transaction would count once.
+// SPLIT TRANSACTIONS (#39). A transaction split into parts would reach here
+// as a row a part, each in its own category, and flow as the totals count it;
+// `tally` is the one place that counts a node's transactions, where the parts
+// of one transaction would count once, and pickedRows the one that lists a
+// node's rows, which would list a part's whole transaction.
 
 import { countsInTotals, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
 import { summarize, tidy, type TotalsRow } from './totals';
@@ -106,7 +107,7 @@ export type CashFlow = {
   left_out_text: string | null;
 };
 
-/** Counts a node's transactions: one a row on this branch, where a row is a
+/** Counts a node's transactions: a row each, while every row is a whole
  *  transaction (see SPLIT TRANSACTIONS above). */
 type Tally = { add: (t: FlowRow) => void; readonly n: number };
 function tally(): Tally {

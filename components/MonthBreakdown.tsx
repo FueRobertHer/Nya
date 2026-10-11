@@ -829,7 +829,7 @@ export default function MonthBreakdown({
             {query || filterTag
               ? "No transactions match your search."
               : flowPick
-                ? "None of its transactions are here now."
+                ? "Nothing to list."
                 : "No transactions this month."}
           </p>
         ) : (
