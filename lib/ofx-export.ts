@@ -106,9 +106,12 @@
 //
 // NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1). Built from the
 // document the route already read, so whatever couldn't be read is known: a
-// manual account's transactions, or whether a transaction was excluded, that
-// couldn't be read are said in a note and in the parts the file is short of
-// (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
+// manual account's transactions, whether a transaction was excluded (with
+// the tags you put on it, and your note on a bank's or a SimpleFIN one: a
+// note written with a transaction entered or imported is its own), and the
+// rules and tags, that couldn't be read
+// are said in a note and in the parts the file is short of (`incomplete`),
+// never left out quietly. So are an account SimpleFIN keeps
 // up to date whose older transactions may still be arriving, a few months a
 // night (in a note: nothing stored is short), its balance while held, and
 // the record of its connection when that can't be read (`incomplete` too).
@@ -116,6 +119,8 @@
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
 import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
@@ -555,6 +560,10 @@ export function ofxFile(
   // that couldn't be read leaves its transaction unmarked, and said.
   const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
   const links = effectiveLinks(data.links, data.live);
+  // The rows whose note is their own, written with them (entered by hand or
+  // imported): an unreadable record leaves it in the memo. A bank's, or one
+  // SimpleFIN brought, has the person's note in its record.
+  const ownNote = new Set<string>();
 
   // The rows a book holds for the account (a manual account's own, or those
   // SimpleFIN brought), as the app shows them, each side of a pair the app
@@ -572,6 +581,7 @@ export function ofxFile(
       .map((r): OfxRow => {
         const { l } = book.shown(r);
         const paired = pairs.get(r.id);
+        if (!isConnectorKind(r.source)) ownNote.add(r.id);
         return {
           id: r.id,
           date: r.date,
@@ -722,12 +732,42 @@ export function ofxFile(
       no_balance: 'Nya doesn’t know when this account’s balance was set.',
     };
   }
-  const unmarked = rows.filter((r) => unknown.has(r.id)).length;
+  const unmarkedRows = rows.filter((r) => unknown.has(r.id));
+  const unmarked = unmarkedRows.length;
   if (unmarked > 0) {
+    // The tags put on them are in the record (a rule's and a carried
+    // record's still show); so is your note on a bank's or a SimpleFIN
+    // transaction, while one written with a transaction entered or imported
+    // is its own, and still in its memo.
+    const one = unmarked === 1;
+    const own = unmarkedRows.filter((r) => ownNote.has(r.id)).length;
+    const note =
+      own === 0
+        ? one
+          ? ', nor is your note on it'
+          : ', nor are your notes on them'
+        : own === unmarked
+          ? one
+            ? ' (its note, written with it, is)'
+            : ' (their notes, written with them, are)'
+          : ', nor are your notes on those the bank or SimpleFIN brought (a note written with one you entered or imported is there)';
     notes.push(
-      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${unmarked === 1 ? 'it isn’t' : 'they aren’t'} marked either way. The JSON download lists them under problems. ${UNCHANGED}`
+      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}. The JSON download lists them under problems. ${UNCHANGED}`
     );
     incomplete.add(txnAnnotationStore.name);
+  }
+  // Rules and tags that couldn't be read: none applied, none shown, as the
+  // app does until they can be; said, as every part the file is short of.
+  const unread = (store: string) => doc.problems.some((p) => p.section === store);
+  if (rows.length > 0 && unread(rulesStore.name)) {
+    notes.push(
+      `Your rules could not be read, so none is applied to this statement: its names, and which transactions are marked as left out, are as the bank and you have them, as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    incomplete.add(rulesStore.name);
+  }
+  if (rows.length > 0 && unread(tagStore.name)) {
+    notes.push(`Your tags could not be read, so no transaction’s memo has its tags, as the app shows none until they can be read. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(tagStore.name);
   }
   if (pending > 0) {
     notes.push(
