@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import './clerk-mock';
-import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys, ctxKey } from './fake-redis';
 
 // The read-only API's cash flow (#41: app/api/v1/cash-flow, lib/api-cash-flow.ts)
 // and the MCP server's get_cash_flow: from stored data alone, the same money
@@ -133,6 +133,24 @@ describe('the same figures as spending, to the cent', () => {
     expect([f.money_in, f.money_out]).toEqual([s.money_in, s.money_out]);
     const { body: m } = await flow(`month=${month}`);
     expect(m.money_out).toBe(f.money_out);
+  });
+});
+
+describe('never short without saying so', () => {
+  test('an institution whose stored rows can’t be read is named, and the rest answered: never an empty period', async () => {
+    await fake.set(ctxKey('txns:item_chase'), 'not-a-blob-but-long-enough-to-be-tried');
+    const [error, warn] = [console.error, console.warn];
+    console.error = console.warn = () => {};
+    try {
+      const { res, body } = await flow(NINE);
+      expect(res.status).toBe(200);
+      expect(body.sources.find((x: any) => x.institution === 'Chase').complete).toBe(false);
+      expect(body.notes.some((note: string) => note.includes('Chase'))).toBe(true);
+      // What could be read is still counted: the wallet's market run.
+      expect([body.money_in, body.money_out]).toEqual([0, 25]);
+    } finally {
+      [console.error, console.warn] = [error, warn];
+    }
   });
 });
 

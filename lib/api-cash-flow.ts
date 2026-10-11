@@ -8,6 +8,11 @@
 // chart, this answer and /api/v1/spending agree to the cent: money in and out
 // are the same, and so is spending by category and by group. Unfolded: every
 // payer and every category is listed; the chart's folds are only its own.
+//
+// STRICT, as the assembly is: hidden accounts or accounts' ends that can't be
+// read fail the answer (lib/api-http.ts), and an institution or a manual
+// account whose rows can't be read is named in sources and notes, so a short
+// answer is never passed off as a period with nothing in it. It writes nothing.
 
 import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
