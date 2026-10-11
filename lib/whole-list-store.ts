@@ -58,6 +58,9 @@ export function createWholeListStore<T>(opts: {
   /** How to try loading again, for the message when a load fails: the
    *  dashboard's Refresh button unless the screen offers its own. */
   reloadHint?: string;
+  /** Fields sent beside the list with every save, worked out when it is
+   *  sent: the month the budgets are changed in, as the page has it. */
+  extraBody?: () => Record<string, unknown>;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -114,7 +117,7 @@ export function createWholeListStore<T>(opts: {
       const res = await doFetch(opts.url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [opts.field]: next }),
+        body: JSON.stringify({ ...opts.extraBody?.(), [opts.field]: next }),
       });
       ok = res.ok;
     } catch {
