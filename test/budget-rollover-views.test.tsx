@@ -154,7 +154,12 @@ describe('the meters, against what is available', () => {
 });
 
 describe('the rollover editor', () => {
-  const settings = (rolling: Record<string, string> = {}) => ({ rolling: { categories: rolling, groups: {} }, starts: { categories: { [GROCERIES]: addMonths(NOW, -3) }, groups: {} }, earliest: addMonths(NOW, -30) });
+  const settings = (rolling: Record<string, string> = {}, ended: Record<string, string> = {}) => ({
+    rolling: { categories: rolling, groups: {} },
+    starts: { categories: { [GROCERIES]: addMonths(NOW, -3) }, groups: {} },
+    ended: { categories: ended, groups: {} },
+    earliest: addMonths(NOW, -30),
+  });
 
   test('off: rolls over from a month chosen, this month first, back no further than the budget began', () => {
     const html = renderToStaticMarkup(
@@ -204,6 +209,30 @@ describe('the rollover editor', () => {
     expect(t).toMatch(/Carryover reset in \w+/);
     expect(t).toContain('Reset carryover');
     expect(t).toContain('Turn off rollover');
+  });
+
+  test('turned off this month: the way to bring its carry back is said', () => {
+    const editor = (ended: Record<string, string>) =>
+      text(
+        renderToStaticMarkup(
+          <BudgetsCard
+            taxonomy={taxonomy}
+            budgets={{ categories: { [GROCERIES]: { amount: 300 } }, groups: {} }}
+            spent={{}}
+            currency="USD"
+            editable
+            noSpending={false}
+            onSave={async () => true}
+            open={[FOOD]}
+            edit={{ kind: 'category', id: GROCERIES }}
+            month={NOW}
+            rollover={settings({}, ended)}
+            onRollover={async () => true}
+          />
+        )
+      );
+    expect(editor({ [GROCERIES]: addMonths(NOW, -2) })).toMatch(/Rollover was turned off this month\. Turn it on again from \w+( \d{4})? to bring its carry back\. Roll over what’s left/);
+    expect(editor({})).not.toContain('turned off');
   });
 
   test('without the month’s rollover loaded, it offers none', () => {
@@ -324,6 +353,7 @@ describe('the Budgets tab, with the month loaded', () => {
     carries: carries({ [GROCERIES]: { carry: 120, uncertain: [addMonths(NOW, -1)] } }),
     rollover: { categories: { [GROCERIES]: addMonths(NOW, -2) }, groups: {} },
     starts: { categories: { [GROCERIES]: addMonths(NOW, -6) }, groups: {} },
+    ended: { categories: {}, groups: {} },
     spent: { [GROCERIES]: 80 },
     income: null,
     pool: null,

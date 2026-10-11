@@ -3,7 +3,7 @@ import { dataCtx } from '@/lib/data-ctx';
 import { budgetsWithoutHistory, readAppBudgets, readBudgetMonth } from '@/lib/budget-month';
 import { leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { indexTaxonomy } from '@/lib/categories';
-import { rollingIn, rolloverStarts } from '@/lib/rollover';
+import { endedIn, rollingIn, rolloverStarts } from '@/lib/rollover';
 import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 
 // A month of budgets for the Budgets tab (#37, lib/budget-month.ts): each
@@ -38,6 +38,9 @@ import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 //   starts                   each budget now, by id: the earliest month its
 //                            rollover can count from (when it began, or as far
 //                            back as one can start, for one older than the record)
+//   ended                    each budget whose rollover was turned off this
+//                            month, by id: the month it ran from, which turning
+//                            it on again from brings its carry back
 //   spent                    that month's spending by category id
 //   income, pool             the income carryover setting, and its pool
 //   earliest                 the first month with any transactions
@@ -66,6 +69,7 @@ export async function GET(req: Request) {
         carries: plain.carries,
         rollover: rollingIn(ix, app.budgetsNow, app.months, params.today),
         starts: rolloverStarts(ix, app.budgetsNow, app.months, params.today),
+        ended: endedIn(ix, app.budgetsNow, app.months, params.today),
         spent: {},
         income: app.income,
         pool: null,
@@ -91,6 +95,7 @@ export async function GET(req: Request) {
       // now, and the earliest month each can roll over from.
       rollover: rollingIn(read.ix, read.budgetsNow, read.months, read.today),
       starts: rolloverStarts(read.ix, read.budgetsNow, read.months, read.today),
+      ended: endedIn(read.ix, read.budgetsNow, read.months, read.today),
       spent: read.spent,
       income: read.income,
       pool: read.pool,

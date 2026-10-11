@@ -212,6 +212,12 @@ describe('a month of budgets, from the stored history', () => {
     expect(now.carries.categories[food]).toBeUndefined();
     expect(now.rollover.categories[food]).toBeUndefined();
     expect((await month(M(-1))).body.carries.categories[food].carry).toBe(60);
+    // The undo is said: on again from where it ran brings the carry back.
+    expect(now.ended.categories[food]).toBe(M(-2));
+    expect((await rollover(t, 'food and drink', now.ended.categories[food])).status).toBe(200);
+    const again = (await month()).body;
+    expect(again.carries.categories[food].carry).toBe(120);
+    expect(again.ended).toEqual({ categories: {}, groups: {} });
   });
 
   test('a reset sets the carry to zero from this month', async () => {

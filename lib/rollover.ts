@@ -688,6 +688,22 @@ export function budgetsInMonth(input: MonthInput): MonthBudgets {
   return out;
 }
 
+/** Each budget whose rollover was turned off in `month` (this month, for the
+ *  editor), by id as placed: the month its last period began, which turning
+ *  it on again from brings its carry back exactly (see TURNING IT OFF AND ON
+ *  in the header). */
+export function endedIn(ix: CategoryIndex, budgets: Budgets, months: BudgetMonths | null, month: string): { categories: Record<string, string>; groups: Record<string, string> } {
+  const placed = placeMonths(budgets, months, ix);
+  const ended = (m: Map<string, Placed>) =>
+    Object.fromEntries(
+      [...m].flatMap(([id, p]) => {
+        const last = p.rollover[p.rollover.length - 1];
+        return last && last.to === month && placedAmount(p, month) !== null ? [[id, last.from]] : [];
+      })
+    );
+  return { categories: ended(placed.categories), groups: ended(placed.groups) };
+}
+
 /** Each budget rolling over in `month` (this month, for the editor), by
  *  category or group id as placed (a merged category's on the one it went
  *  into): the month its rollover period began. */

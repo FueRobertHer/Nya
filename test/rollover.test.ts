@@ -7,6 +7,7 @@ import {
   carryInto,
   carryText,
   currentMonths,
+  endedIn,
   endRollover,
   gapText,
   incomePool,
@@ -202,6 +203,21 @@ describe('turning rollover on and off, and resetting it', () => {
     expect(on.categories[GROCERIES].rollover).toEqual([{ from: '2026-02' }]);
     const off = setRollover(on, 'categories', GROCERIES, { on: false }, '2026-06');
     expect(off.categories[GROCERIES].rollover).toEqual([{ from: '2026-02', to: '2026-06' }]);
+  });
+
+  test('turned off this month: the month it ran from, to turn it on again from', () => {
+    const budgets = budgetsOf({ [GROCERIES]: 300 });
+    const on = setRollover(base, 'categories', GROCERIES, { on: true, from: '2026-02' }, '2026-04');
+    const off = setRollover(on, 'categories', GROCERIES, { on: false }, '2026-06');
+    expect(endedIn(ix, budgets, off, '2026-06')).toEqual({ categories: { [GROCERIES]: '2026-02' }, groups: {} });
+    // Not this month, still rolling, or turned on and off in one month: nothing.
+    expect(endedIn(ix, budgets, off, '2026-07').categories).toEqual({});
+    expect(endedIn(ix, budgets, on, '2026-06').categories).toEqual({});
+    const brief = setRollover(setRollover(base, 'categories', GROCERIES, { on: true, from: '2026-06' }, '2026-06'), 'categories', GROCERIES, { on: false }, '2026-06');
+    expect(endedIn(ix, budgets, brief, '2026-06').categories).toEqual({});
+    // A reset, then off: from the reset, which is the carry it had.
+    const reset = setRollover(resetCarry(on, 'categories', GROCERIES, '2026-05'), 'categories', GROCERIES, { on: false }, '2026-06');
+    expect(endedIn(ix, budgets, reset, '2026-06').categories).toEqual({ [GROCERIES]: '2026-05' });
   });
 
   test('off in the month it began leaves no period at all', () => {

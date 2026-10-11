@@ -81,10 +81,12 @@ const keyOf = (t: Target) => `${t.kind}:${t.id}`;
 
 /** What the editor knows of rollover now (app/api/budgets/month): each
  *  budget rolling over and since when, the earliest month each can start
- *  from, and the first month with any transactions. */
+ *  from, each turned off this month and the month it ran from, and the first
+ *  month with any transactions. */
 export type RolloverSettings = {
   rolling: { categories: Record<string, string>; groups: Record<string, string> };
   starts: { categories: Record<string, string>; groups: Record<string, string> };
+  ended: { categories: Record<string, string>; groups: Record<string, string> };
   earliest: string | null;
 };
 
@@ -237,8 +239,13 @@ export default function BudgetsCard({
     }
     const first = t.kind === 'category' ? rollover.starts.categories[t.id] : rollover.starts.groups[t.id];
     const choices = startChoices(shownMonth, rollover.earliest).filter((m) => !first || m >= first);
+    // Turned off this month: the undo, which is on again from where it ran.
+    const ran = t.kind === 'category' ? rollover.ended.categories[t.id] : rollover.ended.groups[t.id];
     return (
       <div className="budget-rollover">
+        {ran && choices.includes(ran) && (
+          <p className="panel-note budget-note">Rollover was turned off this month. Turn it on again from {monthName(ran, shownMonth)} to bring its carry back.</p>
+        )}
         <label className="budget-label" htmlFor={`roll-${keyOf(t)}`}>
           Roll over what’s left (or overspent) into the next month, counting from
         </label>

@@ -393,7 +393,7 @@ export default function BudgetsTab({
             carries={carries}
             month={shownMonth}
             past={past}
-            rollover={!past && view ? { rolling: view.rollover, starts: view.starts, earliest: view.earliest } : null}
+            rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
             onRollover={!past && view ? onRollover : undefined}
           />
         )}

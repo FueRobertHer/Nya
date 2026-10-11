@@ -39,6 +39,7 @@ export type BudgetMonthView = {
   carries: Carries;
   rollover: { categories: Record<string, string>; groups: Record<string, string> };
   starts: { categories: Record<string, string>; groups: Record<string, string> };
+  ended: { categories: Record<string, string>; groups: Record<string, string> };
   spent: Record<string, number>;
   income: IncomeCarryover | null;
   pool: IncomePool | null;
@@ -63,6 +64,7 @@ export function isBudgetMonthView(v: unknown): v is BudgetMonthView {
     isPair(v.carries) &&
     isPair(v.rollover) &&
     isPair(v.starts) &&
+    isPair(v.ended) &&
     isObject(v.assumed) &&
     isObject(v.spent) &&
     Array.isArray(v.gaps) &&
