@@ -439,7 +439,7 @@ Each goal's plan as stored (`lib/goal-plans.ts`), one entry per goal that has on
 | `core` | The goal's `name`, `target` and `account_id` as the save that wrote this entry left them in `goals`: how a read tells a save that finished from one that stopped part way, and both from a change the release before made after a rollback ([operations.md](operations.md#goals-plans-and-rolling-back)). |
 | `before` | The goal as it read before that save, `core` and `plan`, or `null` for a goal that save added: what it reads as when a save stopped between its writes. |
 
-An entry whose goal is not in `goals` (the release before deleted it after a rollback) belongs to no goal, is never read as one's, and the app's next save deletes it.
+After a rollback, a download from the release before has each goal's four fields only, and no `goal-plans` part: that release doesn't know the store, but leaves it as it is. Back on this release, the file has both again, each plan where it belongs: a goal the release before renamed or moved keeps its plan (an allocation only on the account it was set on), one it added has none, and the entry of one it deleted belongs to no goal, is never read as one's, and the app's next save deletes it ([operations.md](operations.md#goals-plans-and-rolling-back)).
 
 #### `holdings:history`
 
