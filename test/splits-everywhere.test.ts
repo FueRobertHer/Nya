@@ -221,10 +221,14 @@ describe('the download', () => {
     }
     // Every other row counts as itself.
     expect(col(byId.get('t_rent')!, 'nya_amount')).toBe('1200');
-    // Neither column counts anything twice: added up, they agree.
+    // Neither column counts anything twice: added up, they agree. A pending
+    // row its posted one replaced has no nya_amount, as the app lists none.
+    const superseded = rows.filter((r) => col(r, 'superseded_by_posted') === 'true');
+    expect(superseded.length).toBeGreaterThan(0);
+    expect(superseded.map((r) => col(r, 'nya_amount'))).toEqual(superseded.map(() => ''));
     const counted = rows.filter((r) => col(r, 'superseded_by_posted') !== 'true');
     const amounts = counted.reduce((n, r) => n + units(col(r, 'amount')), 0);
-    const nya = counted.reduce((n, r) => n + units(col(r, 'nya_amount')), 0);
+    const nya = rows.reduce((n, r) => n + units(col(r, 'nya_amount')), 0);
     expect(nya).toBe(amounts);
     // And by category, nya_amount is the app's spread.
     const foodNya = counted.filter((r) => col(r, 'nya_category') === 'food and drink').reduce((n, r) => n + units(col(r, 'nya_amount')), 0);

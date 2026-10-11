@@ -12,9 +12,10 @@
 // rows of their own, with nothing in `amount`. `nya_amount` is what the app
 // counts: a transaction's amount, a part's, a group's net, and nothing on a
 // split transaction or on one in a group, which count through their parts and
-// their group. So adding up `amount` gives the money as it moved, adding up
-// `nya_amount` gives the app's totals (by `nya_category`, its categories'),
-// and neither counts a transaction twice. A part says whose it is
+// their group, nor on a pending one its posted one replaced, which the app
+// doesn't list. So adding up `amount` (without those pending ones) gives the
+// money as it moved, adding up `nya_amount` gives the app's totals (by
+// `nya_category`, its categories'), and neither counts a transaction twice. A part says whose it is
 // (`split_of`, the transaction's id, and `split_index`); a transaction in a
 // group and the group's row both say which (`group_id`, `group_name`).
 //
@@ -75,6 +76,7 @@ export type CsvLine<C extends Record<string, unknown>> = { date: string; time: s
 type Filled = {
   amount: unknown;
   nya_amount: unknown;
+  superseded_by_posted: unknown;
   split_of: unknown;
   split_index: unknown;
   group_id: unknown;
@@ -111,7 +113,15 @@ export function csvLinesWithSplits<C extends Record<string, unknown> & Filled>(
   inputs: SplitInputs,
   blank: () => C
 ): CsvLine<C>[] {
-  const counted = (line: CsvLine<C>): CsvLine<C> => ({ ...line, cells: () => ({ ...line.cells(), nya_amount: line.txn.amount }) });
+  // A row counts as itself, but a pending one its posted one replaced: the
+  // app doesn't list it, so nothing counts it twice.
+  const counted = (line: CsvLine<C>): CsvLine<C> => ({
+    ...line,
+    cells: () => {
+      const cells = line.cells();
+      return { ...cells, nya_amount: cells.superseded_by_posted === true ? null : line.txn.amount };
+    },
+  });
   if (!anySplitsOrGroups(inputs) || !inputs.ix) return lines.map(counted);
   const ix = inputs.ix;
   const byId = new Map(lines.map((l) => [l.id, l]));
