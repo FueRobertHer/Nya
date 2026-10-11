@@ -10,6 +10,14 @@
 // Also the "Reconnect soon" note an institution's card carries while Plaid
 // says its connection will end on a date (ReconnectSoonNote).
 //
+// And the questions about an institution's accounts (#50,
+// lib/lifecycle-questions.ts): an account missing from its answer, held at
+// its last known balance until the person says whether it closed, one at
+// zero for weeks, and one that ended but that its bank still returns moving
+// (`ended_reported`). The dashboard draws them (`questions`), the same as on
+// the institution's own card, a hidden account's too (its absence holds every
+// total all the same); a connection with one needs attention.
+//
 // The accounts SimpleFIN feeds are rows here too, with SimpleFIN's own words
 // and its own actions (lib/connectors/health.ts): fix it at SimpleFIN and
 // refresh, connect again with a new Setup Token, or choose accounts.
@@ -18,7 +26,7 @@
 // (lib/connection-state.ts); a payload from before it existed has none, and
 // the view says nothing about such an institution rather than guess.
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ConnectionHealth as Health, HealthState } from '@/lib/connection-state';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
@@ -37,7 +45,23 @@ export type HealthInstitution = {
   connector?: string;
   connection_id?: string;
   error: string | null;
-  accounts: { name: string; mask: string | null; type: string; balance: number | null; currency: string | null; hidden?: boolean; stale?: boolean }[];
+  accounts: {
+    account_id?: string;
+    name: string;
+    mask: string | null;
+    type: string;
+    balance: number | null;
+    currency: string | null;
+    hidden?: boolean;
+    stale?: boolean;
+    /** Held at its last known balance while a question about it is open
+     *  (lib/lifecycle-questions.ts). */
+    held?: { as_of: string | null; too_old?: string };
+    question?: { kind: 'missing' | 'zero' | 'reported'; still_open?: true; again?: true };
+  }[];
+  /** Accounts that ended that its bank still returns, moved since: asked
+   *  about, and counted in nothing (lib/lifecycle-questions.ts). */
+  ended_reported?: { question?: { kind: string } }[];
   health?: Health;
   stale_as_of?: string;
   stale_as_of_at?: string;
@@ -103,7 +127,7 @@ export function reconnectText(h: Health, now: number = Date.now()): string {
 }
 
 /** What is wrong and what to do, in a sentence or two. */
-export function healthText(name: string, h: Health, inst: Pick<HealthInstitution, 'unconfirmed_missing'>, now: number = Date.now()): string | null {
+export function healthText(name: string, h: Health, inst: Pick<HealthInstitution, 'unconfirmed_missing'> & Partial<Pick<HealthInstitution, 'accounts'>>, now: number = Date.now()): string | null {
   const again = `connect ${name} again: link its new accounts to the old ones and their history carries over`;
   switch (h.cause) {
     case 'ok':
@@ -144,7 +168,13 @@ export function healthText(name: string, h: Health, inst: Pick<HealthInstitution
     case 'vanished': {
       const n = inst.unconfirmed_missing ?? 0;
       const one = n === 1;
-      return `${n} account${one ? '' : 's'} ${name} used to report ${one ? "isn't" : "aren't"} in its latest answer. If you closed ${one ? 'it' : 'them'}, nothing to do: ${one ? 'it is' : 'they are'} counted as closed after three days. If not, check with Add or remove accounts.`;
+      // Every one held is one the person said is still open: they have
+      // answered, so say what that holds, and for how long.
+      const held = (inst.accounts ?? []).filter((a) => a.held);
+      if (held.length > 0 && held.every((a) => a.question?.still_open)) {
+        return `You said ${one ? 'the account' : `the ${n} accounts`} ${name} stopped reporting ${one ? 'is' : 'are'} still open. Until ${one ? 'it comes' : 'they come'} back, ${one ? 'it is' : 'they are'} counted at ${one ? 'its' : 'their'} last known balance and no total is saved, for two weeks from your answer at most; then Nya asks again. Reconnecting may bring ${one ? 'it' : 'them'} back.`;
+      }
+      return `${n} account${one ? '' : 's'} ${name} used to report ${one ? "isn't" : "aren't"} in its latest answer. Until you say whether ${one ? 'it' : 'they'} closed, ${one ? 'it is' : 'they are'} counted at ${one ? 'its' : 'their'} last known balance and no total is saved. If nobody answers, Nya assumes ${one ? 'it' : 'them'} closed after three days, and you can say otherwise. Removed ${one ? 'it' : 'them'} on purpose? Check with Add or remove accounts.`;
     }
     default:
       return `${name} couldn't be updated${h.code ? ` (Plaid: ${h.code})` : ''}. This usually clears on its own.`;
@@ -171,6 +201,16 @@ export function sideText(name: string, h: Health): string | null {
 
 const label = (a: { name: string; mask: string | null }) => (a.mask ? `${a.name} ••${a.mask}` : a.name);
 
+type Row = HealthInstitution['accounts'][number];
+
+/** ", together $3,800 of net worth", unless several currencies would be added. */
+function together(rows: Row[], money: (n: number, currency: string | null) => string): string {
+  const currencies = new Set(rows.map((a) => a.currency).filter(Boolean));
+  if (currencies.size > 1) return '';
+  const sum = rows.reduce((n, a) => n + signedContribution(a.type, a.balance ?? 0), 0);
+  return `, together ${money(sum, dominantCurrency(rows.map((a) => ({ iso_currency_code: a.currency }))))} of net worth`;
+}
+
 /**
  * Which accounts a problem affects, and how much of net worth is shown from
  * last known balances rather than measured now, labeled as such. Hidden
@@ -181,18 +221,30 @@ export function affectedText(inst: HealthInstitution, money: (n: number, currenc
   if (!h) return [];
   const lines: string[] = [];
   if (h.state === 'partial') {
-    const n = inst.unconfirmed_missing ?? 0;
-    lines.push(`${n} account${n === 1 ? '' : 's'} not in the total.`);
+    // Held at their last known balances (lib/lifecycle-questions.ts), or not
+    // counted when none is recent enough; a payload from before holds says
+    // only how many.
+    const held = inst.accounts.filter((a) => a.held && !a.hidden);
+    const counted = held.filter((a) => a.balance != null);
+    const uncounted = held.filter((a) => a.balance == null);
+    if (counted.length > 0) {
+      const days = new Set(counted.map((a) => a.held?.as_of));
+      const first = counted[0].held?.as_of;
+      const day = days.size === 1 && first ? ` from ${calendarDay(first)}` : '';
+      lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(counted.map(label))}${together(counted, money)}.`);
+    }
+    if (uncounted.length > 0) lines.push(`Not counted in net worth: ${joinNames(uncounted.map(label))}.`);
+    if (held.length === 0) {
+      const n = inst.unconfirmed_missing ?? 0;
+      lines.push(`${n} account${n === 1 ? '' : 's'} not in the total.`);
+    }
     return lines;
   }
   if (!inst.error) return lines;
   const recovered = inst.accounts.filter((a) => a.stale && !a.hidden && a.balance != null);
   if (recovered.length > 0) {
-    const currencies = new Set(recovered.map((a) => a.currency).filter(Boolean));
-    const sum = recovered.reduce((n, a) => n + signedContribution(a.type, a.balance ?? 0), 0);
-    const amount = currencies.size > 1 ? '' : `, together ${money(sum, dominantCurrency(recovered.map((a) => ({ iso_currency_code: a.currency }))))} of net worth`;
     const day = inst.stale_as_of ? ` from ${snapshotDay(inst.stale_as_of, inst.stale_as_of_at)}` : '';
-    lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(recovered.map(label))}${amount}.`);
+    lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(recovered.map(label))}${together(recovered, money)}.`);
   }
   const unshown = inst.unshown_accounts ?? [];
   if (unshown.length > 0) {
@@ -220,6 +272,7 @@ export default function ConnectionHealth({
   onReconnect,
   onRemove,
   onManageAccounts,
+  questions,
   onConnector,
 }: {
   institutions: HealthInstitution[];
@@ -234,6 +287,8 @@ export default function ConnectionHealth({
   onReconnect: (item_id: string) => void;
   onRemove: (item_id: string) => void;
   onManageAccounts: (item_id: string) => void;
+  /** The questions about an institution's accounts, drawn as on its card. */
+  questions?: (inst: HealthInstitution) => ReactNode;
   /** What a SimpleFIN row's button asks (components/Connectors.tsx). */
   onConnector?: (ask: ConnectorAsk) => void;
 }) {
@@ -244,7 +299,7 @@ export default function ConnectionHealth({
         .sort((a, b) => ORDER.indexOf(a.health.state) - ORDER.indexOf(b.health.state) || a.institution_name.localeCompare(b.institution_name)),
     [institutions]
   );
-  const troubled = rows.filter((r) => r.health.state !== 'healthy').length;
+  const troubled = rows.filter(needsAttention).length;
   const [open, setOpen] = useState(troubled > 0 || focus);
   const ref = useRef<HTMLDivElement>(null);
   // Open when something goes wrong, or the email's link asks; the person's own
@@ -272,10 +327,16 @@ export default function ConnectionHealth({
       onReconnect={onReconnect}
       onRemove={onRemove}
       onManageAccounts={onManageAccounts}
+      questions={questions}
       onConnector={onConnector}
     />
   );
 }
+
+/** A connection that isn't working, or has a question about an account,
+ *  a hidden one's included: its absence holds every total all the same. */
+export const needsAttention = (r: HealthInstitution & { health: Health }) =>
+  r.health.state !== 'healthy' || r.accounts.some((a) => !!a.question) || (r.ended_reported ?? []).some((a) => !!a.question);
 
 /** The card itself, from rows already sorted: for tests, and the wrapper above. */
 export function ConnectionHealthView({
@@ -288,6 +349,7 @@ export function ConnectionHealthView({
   onReconnect,
   onRemove,
   onManageAccounts,
+  questions,
   onConnector,
   now = Date.now(),
 }: {
@@ -300,10 +362,11 @@ export function ConnectionHealthView({
   onReconnect: (item_id: string) => void;
   onRemove: (item_id: string) => void;
   onManageAccounts: (item_id: string) => void;
+  questions?: (inst: HealthInstitution) => ReactNode;
   onConnector?: (ask: ConnectorAsk) => void;
   now?: number;
 }) {
-  const troubled = rows.filter((r) => r.health.state !== 'healthy').length;
+  const troubled = rows.filter(needsAttention).length;
   const unread = rows.filter((r) => r.health.unread).length;
   const summary =
     troubled === 0
@@ -363,6 +426,7 @@ export function ConnectionHealthView({
                       {line}
                     </p>
                   ))}
+                  {questions?.(inst)}
                   <div className="health-meta">
                     {lastSyncedText(h)}
                     {side ? ` · ${side}` : ''}

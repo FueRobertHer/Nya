@@ -31,7 +31,11 @@
 //                          card...) and, for a card or a loan, how to read the
 //                          sign of its balance, its currency, and the balance
 //                          as the connector reported it, with the day the
-//                          institution gave it. In the download.
+//                          institution gave it; and, for one that ended
+//                          (lib/lifecycle.ts), the days answers that moved its
+//                          connection's history on left it out of, until an
+//                          answer holds it again (lib/connectors/sync.ts). In
+//                          the download.
 //   connector-ended        one entry per account the person let go (stopped
 //                          tracking, or disconnected), under its id: what it
 //                          was, the connection it came through, when it was
@@ -178,8 +182,24 @@ export type ConnectorAccount = {
    *  the answer) from the latest answer that held the account with no problem
    *  reported about it. Absent or null before one. */
   ok_at?: string | null;
+  /** For an account that ended (lib/lifecycle.ts), which holds nothing at its
+   *  bank: the days answers that moved its connection's history on left it
+   *  out of, or named a problem for it alone in, so its own transactions from
+   *  them may be missing (LeftOut). An answer that holds it again takes the
+   *  days it covers off. Absent or empty when there are none. */
+  left_out?: LeftOut[];
   created_at: string;
 };
+
+/** Days an account's own transactions may be missing from, `from` to `to`
+ *  (UTC days, both included); `to` null while the latest answers still leave
+ *  it out (it runs to the last day its connection's history reached). In day
+ *  order, apart from each other, at most MAX_LEFT_OUT of them. */
+export type LeftOut = { from: string; to: string | null };
+
+/** How many windows an account keeps: more are kept as one, from the first
+ *  day to the last, which says more may be missing, never less. */
+export const MAX_LEFT_OUT = 20;
 
 export type ConnectorSecret = { connector: ConnectorKind; secret: string };
 
@@ -282,7 +302,16 @@ export function isConnectorAccount(v: unknown): v is ConnectorAccount {
     isTimeOrNull(v.balance_at) &&
     isTimeOrNull(v.fetched_at) &&
     (v.ok_at === undefined || isTimeOrNull(v.ok_at)) &&
+    (v.left_out === undefined || isLeftOutList(v.left_out)) &&
     isTime(v.created_at)
+  );
+}
+
+function isLeftOutList(v: unknown): v is LeftOut[] {
+  return (
+    Array.isArray(v) &&
+    v.length <= MAX_LEFT_OUT &&
+    v.every((w) => isRecord(w) && isCalendarDay(w.from) && (w.to === null || (isCalendarDay(w.to) && (w.to as string) >= (w.from as string))))
   );
 }
 
@@ -306,6 +335,9 @@ export type EndedAccount = {
   /** The first day of transactions its connection had fetched, or null
    *  before any. */
   history_from: string | null;
+  /** The days answers had left it out of while it was tracked
+   *  (ConnectorAccount `left_out`), as they were when it was let go. */
+  left_out?: LeftOut[];
   /** When it was let go. */
   ended_at: string;
   /** Kept as a manual account, with its transactions; or removed, with them. */
@@ -327,6 +359,7 @@ function isEndedAccount(v: unknown): v is EndedAccount {
     /^[A-Z]{3}$/.test(v.currency) &&
     isTime(v.tracked_at) &&
     (v.history_from === null || isCalendarDay(v.history_from)) &&
+    (v.left_out === undefined || isLeftOutList(v.left_out)) &&
     isTime(v.ended_at) &&
     typeof v.kept === 'boolean'
   );

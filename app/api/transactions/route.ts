@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
-import { loggable } from '@/lib/log-safe';
+import { storeFailure } from '@/lib/store-failure';
 
 // The Activity tab's transactions: every linked institution's, synced with
 // Plaid, and the rows entered on manual accounts, with what the person said
@@ -38,6 +38,10 @@ import { loggable } from '@/lib/log-safe';
 // load and grows them by any category a row carries that none has yet, and
 // sends the set it filed by (`categories`), which the pickers and the group
 // rollups read, so renaming or regrouping a category needs no cache dropped.
+//
+// TAGS AND NOTES are applied after the cache too (lib/txn-layers.ts), with
+// the tags that exist sent beside the rows (`tags`): a tag put on, a note
+// written or a tag renamed shows on the next load with nothing dropped.
 
 export async function GET(req: Request) {
   try {
@@ -61,7 +65,8 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, incomplete, history, taxonomy } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const { transactions, notes: read, tags_note, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const notes = tags_note ? [...read, tags_note] : read;
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -73,13 +78,14 @@ export async function GET(req: Request) {
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
       recurring_history: history,
       categories: taxonomy,
+      // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
+      tags: tags?.tags ?? [],
       as_of: plaid.as_of,
       from_cache: fromCache,
     });
   } catch (err: any) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(loggable(err));
-    return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    // Account closures that can't be read (lib/lifecycle.ts) are a 409 with
+    // their ids, never rows of a closed account counted (lib/store-failure.ts).
+    return storeFailure(err, 'Failed to fetch transactions');
   }
 }

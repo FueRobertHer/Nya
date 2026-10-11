@@ -11,6 +11,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
+- [Rules, tags and notes, and rolling back](#rules-tags-and-notes-and-rolling-back)
 - [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
@@ -272,6 +273,25 @@ The release that gave categories ids and groups ([features.md](features.md#categ
 Categories chosen, carried or typed during a rollback are words, as always: the next load of the Activity tab makes a category for any words that none has yet. A category made with the same name as one of yours is the same category.
 
 **If a read fails.** Budgets or categories that can't be read answer 409 and are never saved over, as before. Transactions are still shown, each under the category it came with, with a note, until the categories can be read.
+
+## Rules, tags and notes, and rolling back
+
+The release that added tags and notes (#40) and rules (#36) ([features.md](features.md#tags-and-notes)) migrates nothing. Its new stores, `tags` and `rules`, start empty, and tags and notes are fields of the record each transaction's exclusion was already kept in (`transaction-annotations`, and `carried-annotations` for a re-link).
+
+**Vendor renames stay as they are.** They were not turned into rules. A rename is the person's own choice for a merchant, made from one of its transactions, so it stays a layer of its own above the rules: kept where it always was (`txn-vendor-renames`), written by the rename route exactly as before, and applied before the rules run, so a rename beats a rule's name, as a category chosen for a transaction beats a rule's category ([architecture.md](architecture.md#tags-notes-and-rules)). Moving renames into rules would have put them in a store the release before can't read: after a rollback every merchant's name would revert, and a rename made or changed during the rollback would be lost on rolling forward. Left where they are, both releases read and write the same renames.
+
+**Imported and SimpleFIN rows' names.** Their names came from a bank's file or feed, as a bank row's do, so rules rename them too (a row entered by hand keeps the name typed). A name the person gives an imported row in its edit form is theirs: the row keeps it under `named` (`lib/manual-txns.ts`) while it is the row's name, and no rule renames it. A SimpleFIN row's payee can't be edited (it stays the bank's), so it never has `named`, and a rule is how the person renames one. Nothing is migrated for it: a row without `named` is one whose name came with it.
+
+**What a rollback sees.** The release before reads only what it always read:
+
+- **Renames, categories chosen, exclusions**: exactly as before. A record that now also holds tags, tags taken off or a note reads to it as it always did: it sees the exclusion and keeps the rest when it saves one (fields it doesn't know ride along), and it prunes or forgets a whole record as it always did.
+- **Not applied, not shown**: rules, tags and notes. Transactions show as the bank and the person have them: one a rule hid counts again, one a rule filed is under the bank's category, one a rule renamed has the bank's name. Nothing is lost: the `rules` and `tags` stores are kept as they are, and apply again on rolling forward. Its re-encryption pass reports their keys as ones it doesn't know and leaves them alone; its data download leaves them out; backups keep them, as they keep every key in a container.
+- **During the rollback**: a disconnect carries only exclusions across a later re-link, so tags and notes on that institution's transactions don't come back with it; a category a rule uses can be deleted there, and the rule is then shown broken and does nothing until it is changed, never filing anything somewhere else. A manual row's `named` is a field that release doesn't know: its rows read and save as before, keeping it; a name it gives an imported row isn't marked as the person's, so on rolling forward a rule that matches the row may rename it (the name stays stored, and the person can give it again).
+- **The cached transactions** (at most six hours old) pass that release's check. Their rows hold three fields it doesn't strip, the account a row is on, a renamed merchant's bank name and what a row carries from an earlier account, which reach only the person's own browser, which ignores them, until the cache next expires.
+
+**Rolling forward again.** The transactions cached by the release before are a miss (they lack what rules and re-links read, `layer_facts`), so each person's next load syncs once. Rules, tags and notes are where they were.
+
+**A new field in a rule** ships in two releases, as allocation settings do: one that reads it, then one that writes it. The rules' stored shape is closed, so a rule with a field this release doesn't know makes every rule unrecognised (none applied, nothing saved over them), rather than one rule applied without a condition and matching more than it should.
 
 ## Budget rollover and rolling back
 

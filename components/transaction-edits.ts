@@ -4,7 +4,8 @@
 // kept here so the dashboard only mounts it: the quick-add form for a manual
 // account (components/ManualTxnSheet.tsx), open on a new transaction or on one
 // to edit, the category of any transaction (app/api/recategorize), and the
-// exclude flag on any transaction (app/api/transaction-annotations).
+// exclude flag, the tags and the note on any transaction
+// (app/api/transaction-annotations).
 //
 // A change shows at once. A saved row comes back from the server as the list
 // shows it and goes straight in (no spinner, nothing waits on Plaid: the
@@ -18,6 +19,8 @@ import type { ManualTxnTarget } from './ManualTxnSheet';
 import type { Incomplete } from '@/lib/month-coverage';
 import { noTransactionsView, type NoTransactionsView } from '@/lib/no-transactions';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import type { Tag } from '@/lib/tags';
+import type { TagChange } from './TxnTagsNote';
 
 /** A category chosen for a transaction: one of the person's, by id, or, with
  *  no categories loaded, words (as before categories had ids). */
@@ -38,7 +41,10 @@ export function recategorizedRow(t: Pick<Txn, 'paired'> | undefined, choice: Cat
     const c = categoryById(ix, choice.category_id);
     if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
   }
-  return t?.paired ? { ...shown, paired: undefined, subcategory: null } : shown;
+  // The person's own now: a rule's category no longer shows (category_by_rule),
+  // so the row's edit form starts from it (components/ManualTxnSheet.tsx).
+  const own = { ...shown, category_by_rule: undefined };
+  return t?.paired ? { ...own, paired: undefined, subcategory: null } : own;
 }
 
 /** Newest first, as /api/transactions orders them; the sort is stable. */
@@ -47,6 +53,32 @@ function newestFirst(a: Txn, b: Txn): number {
   const at = a.datetime ?? '';
   const bt = b.datetime ?? '';
   return at < bt ? 1 : at > bt ? -1 : 0;
+}
+
+/**
+ * A manual row as the form's save answered it, shown until the list is read
+ * again: the answer is the row as stored, without what the read layer puts on
+ * it (lib/txn-layers.ts), so that is kept from the row it replaces: its tags,
+ * the rules that match it, its exclusion, and a rule's category or name where
+ * the save left the row without one of its own.
+ */
+export function withLayersOf(saved: Txn, prev: Txn): Txn {
+  const row: Txn = { ...saved, excluded: prev.excluded, excluded_by_rule: prev.excluded_by_rule, tags: prev.tags, rule_ids: prev.rule_ids };
+  if (prev.category_by_rule && (saved.category ?? null) === null) {
+    Object.assign(row, {
+      category: prev.category,
+      category_id: prev.category_id,
+      category_name: prev.category_name,
+      category_kind: prev.category_kind,
+      category_by_rule: true,
+    });
+  }
+  if (prev.name_before_rules !== undefined && saved.name === prev.name_before_rules) {
+    row.name = prev.name;
+    row.name_before_rules = prev.name_before_rules;
+  }
+  for (const k of ['excluded', 'excluded_by_rule', 'tags', 'rule_ids'] as const) if (row[k] === undefined) delete row[k];
+  return row;
 }
 
 /** What a save or delete in the quick-add form did. */
@@ -69,6 +101,7 @@ export function useTransactionEdits({
   loadNetWorth,
   requestBackfill,
   taxonomy = null,
+  onTagMade,
 }: {
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
@@ -84,6 +117,9 @@ export function useTransactionEdits({
   /** The person's categories, for a choice to show at once as it will be
    *  filed (components/categories-state.ts). */
   taxonomy?: Taxonomy | null;
+  /** A tag made on a transaction as it was typed, for the list of tags
+   *  (components/tags-state.ts). */
+  onTagMade?: (tag: Tag) => void;
 }) {
   const [sheet, setSheet] = useState<ManualTxnTarget | null>(null);
   // Why the last change didn't save, shown on the Activity tab until the next
@@ -133,9 +169,9 @@ export function useTransactionEdits({
         setTxns((prev) => {
           if (!prev) return prev;
           const i = prev.findIndex((x) => x.transaction_id === transaction.transaction_id);
-          // What was said about the row (its exclusion) is the list's: the
-          // form's answer doesn't carry it.
-          const row = i >= 0 ? { ...transaction, excluded: prev[i].excluded } : transaction;
+          // What the read layer put on the row is the list's: the form's
+          // answer doesn't carry it (withLayersOf).
+          const row = i >= 0 ? withLayersOf(transaction, prev[i]) : transaction;
           const next = i >= 0 ? prev.map((x, j) => (j === i ? row : x)) : [...prev, row];
           return next.sort(newestFirst);
         });
@@ -199,8 +235,11 @@ export function useTransactionEdits({
     async (t: Txn, excluded: boolean) => {
       setError(null);
       changes.current++;
+      // The person's choice now decides, over a rule's hide either way.
       setTxns((prev) =>
-        prev ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined } : x)) : prev
+        prev
+          ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined } : x))
+          : prev
       );
       let res: Response | null = null;
       try {
@@ -218,5 +257,89 @@ export function useTransactionEdits({
     [setTxns, undo]
   );
 
-  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, error };
+  /** What a change to a row's record sends: a manual row's account, so the
+   *  server reads only that book when the note is the row's own. */
+  const target = (t: Txn) => ({ transaction_id: t.transaction_id, ...(t.source && t.account_id ? { account_id: t.account_id } : {}) });
+
+  /** Puts tags on a transaction or takes them off (by id), or one typed by
+   *  name, made if no tag has it: shown at once, a new tag once the server
+   *  has made it. */
+  const changeTags = useCallback(
+    async (t: Txn, change: TagChange) => {
+      setError(null);
+      changes.current++;
+      const add = change.add ?? [];
+      const remove = change.remove ?? [];
+      setTxns((prev) =>
+        prev
+          ? prev.map((x) => {
+              if (x.transaction_id !== t.transaction_id) return x;
+              const tags = [...(x.tags ?? []).filter((id) => !remove.includes(id)), ...add.filter((id) => !(x.tags ?? []).includes(id))];
+              return { ...x, tags: tags.length > 0 ? tags : undefined };
+            })
+          : prev
+      );
+      let res: Response | null = null;
+      try {
+        res = await fetch('/api/transaction-annotations', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            ...target(t),
+            ...(add.length ? { add_tags: add } : {}),
+            ...(remove.length ? { remove_tags: remove } : {}),
+            ...(change.newTag ? { new_tag: change.newTag } : {}),
+          }),
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => null);
+          const made: Tag | undefined = data?.created_tag;
+          // The tag typed: made now, or found under that name in any case.
+          const put = change.newTag && Array.isArray(data?.tags) ? (data.tags as string[]).filter((id) => !add.includes(id)) : [];
+          if (made) onTagMade?.(made);
+          if (put.length > 0) {
+            setTxns((prev) =>
+              prev
+                ? prev.map((x) =>
+                    x.transaction_id === t.transaction_id ? { ...x, tags: [...new Set([...(x.tags ?? []), ...put])] } : x
+                  )
+                : prev
+            );
+          }
+          return;
+        }
+      } catch {
+        res = null;
+      }
+      await undo(res, 'Could not change its tags. Please try again.');
+    },
+    [setTxns, undo, onTagMade]
+  );
+
+  /** Saves a transaction's note, or clears it: a manual or imported row's on
+   *  the row itself, a bank row's beside it. Shown at once. */
+  const saveNote = useCallback(
+    async (t: Txn, note: string) => {
+      setError(null);
+      changes.current++;
+      setTxns((prev) =>
+        prev ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, note: note || (x.source ? null : undefined) } : x)) : prev
+      );
+      let res: Response | null = null;
+      try {
+        res = await fetch('/api/transaction-annotations', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...target(t), note }),
+        });
+        if (res.ok) return;
+      } catch {
+        res = null;
+      }
+      await undo(res, 'Could not save the note. Please try again.');
+    },
+    [setTxns, undo]
+  );
+
+  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error };
 }

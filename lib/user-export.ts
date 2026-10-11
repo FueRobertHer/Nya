@@ -79,7 +79,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, type ManualAccount } from './manual';
+import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, normalizeInstitutionName, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -101,6 +101,10 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
+import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { ConnectorKind } from './connectors/types';
@@ -125,6 +129,8 @@ import {
   type Taxonomy,
 } from './categories';
 import { manualTxnStore, isManualTxnBook, withPairWords, type ManualTxn } from './manual-txns';
+import { lifecycleStore, effectiveLifecycle, lifecycleOf, endOf, isLifecycleEntry, type LifecycleEntry, type LifecycleView } from './lifecycle';
+import { timelineNotesStore, isTimelineNote, type TimelineNote } from './timeline-notes';
 
 export const EXPORT_FORMAT = 'nya-export';
 /** 2 since a part that can't be read is named under `problems` instead of
@@ -718,7 +724,14 @@ export type ExportAccount = {
   hidden: boolean;
   hidden_at: string | null;
   latest_balance: { balance: number; date: string } | null;
+  /** When it ended (lib/lifecycle.ts), following account links, or null. */
+  lifecycle: ExportLifecycle | null;
 };
+
+/** An account's end, as accounts[] and manual_accounts[] give it: the same
+ *  shape the read-only API gives (lib/api-read.ts ApiLifecycle). What was
+ *  stored, under the id it was set on, is in the account-lifecycle part. */
+export type ExportLifecycle = { state: 'closed' | 'left' | 'untracked'; date: string; note: string | null; assumed: boolean };
 
 export type ExportManualAccount = {
   account_id: string;
@@ -734,6 +747,7 @@ export type ExportManualAccount = {
   updated_at: string | null;
   hidden: boolean;
   hidden_at: string | null;
+  lifecycle: ExportLifecycle | null;
 };
 
 export type ExportTransaction = StoredTxn & {
@@ -751,6 +765,22 @@ export type ExportTransaction = StoredTxn & {
   your_merchant_name: string | null;
   superseded_by_posted: boolean;
   account_hidden: boolean;
+  /** The tags it carries, by name, as the app shows them (lib/txn-layers.ts):
+   *  put on by the person, carried from an earlier account, or added by a
+   *  rule. */
+  tags: string[];
+  /** The person's note on it, or null. */
+  your_note: string | null;
+  /** The name the app shows: the person's for its merchant, else a rule's,
+   *  else the bank's. */
+  nya_name: string;
+  /** Left out of budgets and reports, as the app counts it: by the person,
+   *  carried from an earlier account, or hidden by a rule (excluded_by_rule);
+   *  null when the person's record couldn't be read (it counts then). */
+  excluded: boolean | null;
+  excluded_by_rule: boolean;
+  /** The person's rules that match it, in the order they run (lib/rules.ts). */
+  rule_ids: string[];
 };
 
 export type ExportInvestmentTransaction = Record<string, unknown> & {
@@ -865,7 +895,37 @@ function mentionedAccountIds(data: UserData): Set<string> {
   for (const id of data.connected.keys()) add(id);
   const read = new Map(data.sections);
   for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
+  // The stores on the seam that name accounts: an account's end, and the
+  // notes Nya wrote about one. A note of the person's own may carry any id,
+  // which says nothing about an account.
+  for (const id of storedLifecycles(data).keys()) add(id);
+  for (const note of storedNotes(data)) if (note.kind === 'auto') add(note.account_id);
   return ids;
+}
+
+/** The section a map store on the seam was read into, as { id, value }. */
+function storeSection(data: UserData, name: string): { id: string; value: unknown }[] {
+  const value = data.sections.find(([key]) => key === name)?.[1];
+  return Array.isArray(value) ? (value as { id: string; value: unknown }[]) : [];
+}
+
+/** The account closures read into the file (lib/lifecycle.ts), by stored id. */
+function storedLifecycles(data: UserData): Map<string, LifecycleEntry> {
+  return new Map(storeSection(data, lifecycleStore.name).flatMap((e) => (isLifecycleEntry(e.value) ? [[e.id, e.value] as const] : [])));
+}
+
+/** The timeline notes read into the file (lib/timeline-notes.ts). */
+function storedNotes(data: UserData): TimelineNote[] {
+  return storeSection(data, timelineNotesStore.name).flatMap((e) => (isTimelineNote(e.value) ? [e.value] : []));
+}
+
+/** An account's end, following the links that apply, or null. */
+function exportLifecycle(view: LifecycleView, id: string): ExportLifecycle | null {
+  const entry = lifecycleOf(view, id);
+  const l = entry?.lifecycle;
+  const date = l ? endOf(l) : null;
+  if (!entry || !l || l.state === 'active' || date === null) return null;
+  return { state: l.state, date, note: (l.state === 'closed' || l.state === 'left') && l.note ? l.note : null, assumed: entry.assumed === true };
 }
 
 /**
@@ -918,7 +978,7 @@ function latestRecorded(points: StoredPoint[] | undefined): { balance: number; d
 
 /** An account SimpleFIN keeps up to date, as `accounts` lists it: what its
  *  entry in connector-accounts says, and its newest recorded balance. */
-function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap, lifecycle: LifecycleView): ExportAccount {
   const h = hidden.get(c.account_id);
   return {
     account_id: c.account_id,
@@ -940,6 +1000,7 @@ function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): Exp
     hidden: !!h,
     hidden_at: realTime(h?.hidden_at),
     latest_balance: latestRecorded(data.history.accounts.get(c.account_id)),
+    lifecycle: exportLifecycle(lifecycle, c.account_id),
   };
 }
 
@@ -947,7 +1008,7 @@ function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap): Exp
  *  which some part of the file still mentions (its balance history, say), as
  *  `accounts` lists it: what its record in connector-ended says. One kept is
  *  a manual account, in `manual_accounts`. */
-function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: HiddenMap): ExportAccount {
+function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: HiddenMap, lifecycle: LifecycleView): ExportAccount {
   const h = hidden.get(id);
   return {
     account_id: id,
@@ -969,6 +1030,7 @@ function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: Hidde
     hidden: !!h,
     hidden_at: realTime(h?.hidden_at),
     latest_balance: latestRecorded(data.history.accounts.get(id)),
+    lifecycle: exportLifecycle(lifecycle, id),
   };
 }
 
@@ -1036,6 +1098,52 @@ const PART_WORDS: Record<string, PartWords> = {
   // Read from the same stores as the budgets on categories: when those can't
   // be read, neither can these, and the budgets' note says it.
   group_budgets: { noun: 'budgets on category groups', one: 'budget', many: 'budgets', missing: missingFrom, saidWith: 'budgets' },
+  // An entry is about the account whose id it is stored under: that account's
+  // lifecycle (and its account_state in the balances CSV) can't say it ended.
+  'account-lifecycle': {
+    noun: 'account closures',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    listed: 'The JSON file lists them under problems, each by the id of the account it is about, whose lifecycle in this file is then null although it may have ended.',
+    inCsv: (counts) => `Not all of your account closures could be read: ${counts}. An account one of them is about has no account_state in this file, although it may have ended.`,
+  },
+  'timeline-notes': { noun: 'timeline notes', one: 'note', many: 'notes', missing: missingFrom },
+  // What the read layer puts on each transaction (lib/txn-layers.ts): in a
+  // CSV, what each row's nya_name, tags, note and excluded lack.
+  [rulesStore.name]: {
+    noun: 'rules',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No rule is applied to the transactions in this file, as the app applies none until they can be read.',
+    valueInCsv: (why) =>
+      `Your rules could not be read (${why}), so no rule is applied to the transactions in this file: their names, categories, tags and whether they count are as the bank and you have them, as the app shows them until they can be read.`,
+  },
+  [tagStore.name]: {
+    noun: 'tags',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No transaction in this file has tags, as the app shows none until they can be read.',
+    valueInCsv: (why) => `Your tags could not be read (${why}), so no transaction in this file has tags, as the app shows none until they can be read.`,
+  },
+  [txnAnnotationStore.name]: {
+    noun: txnAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row.`,
+  },
+  [carriedAnnotationStore.name]: {
+    noun: carriedAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
@@ -1102,6 +1210,8 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   const effective = effectiveLinks(data.links, data.live);
   // Hiding one id of an account hides every id it has had, as the app reads it.
   const hidden = expandHidden(data.hidden, effective);
+  // And an account's end reaches every id it has had, the same way.
+  const lifecycle = effectiveLifecycle(storedLifecycles(data), effective);
 
   const remembered = new Map<string, { item_id: string; a: RememberedAccount }>();
   for (const [item_id, accounts] of Object.entries(data.remembered)) for (const a of accounts) remembered.set(a.account_id, { item_id, a });
@@ -1120,9 +1230,9 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     .filter((id) => !manualIds.has(id))
     .map((id): ExportAccount => {
       const c = data.connected.get(id);
-      if (c) return fedAccount(c, data, hidden);
+      if (c) return fedAccount(c, data, hidden, lifecycle);
       const e = data.ended.get(id);
-      if (e) return endedAccount(id, e, data, hidden);
+      if (e) return endedAccount(id, e, data, hidden, lifecycle);
       const m = remembered.get(id);
       const d = data.directory.get(id);
       const s = synced.get(id);
@@ -1154,6 +1264,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
         hidden: !!h,
         hidden_at: realTime(h?.hidden_at),
         latest_balance: latestRecorded(data.history.accounts.get(id)),
+        lifecycle: exportLifecycle(lifecycle, id),
       };
     })
     .sort((a, b) => byText(a.institution_name, b.institution_name) || byText(a.name, b.name) || byCodePoint(a.account_id, b.account_id));
@@ -1171,6 +1282,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       updated_at: realTime(m.updated_at),
       hidden: !!h,
       hidden_at: realTime(h?.hidden_at),
+      lifecycle: exportLifecycle(lifecycle, m.account_id),
     };
   });
 
@@ -1217,23 +1329,39 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       { limit: Infinity }
     ).taxonomy
   );
-  const filed = (t: StoredTxn) => filedAs(filing, factsOf(t));
+  // The rules, what the person said about each row, and what was carried
+  // across a re-link, from the file's own parts, as the app applies them; and
+  // each row filed with its rule's category among the rest.
+  const sectionOf = new Map(data.sections);
+  const layers = exportLayers((key) => sectionOf.get(key), { links: effective, ix: filing, unknown: missingIds(data.problems, txnAnnotationStore.name) });
+  const shown = (t: StoredTxn) => {
+    const facts = factsOf(t);
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null);
+    return { l, filed: filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }) };
+  };
   const transactions: ExportTransaction[] = data.stores
     .flatMap((s) => {
       const superseded = supersededPendingIds(s.txns);
-      return Object.values(s.txns).map(
-        (t): ExportTransaction => ({
+      return Object.values(s.txns).map((t): ExportTransaction => {
+        const { l, filed } = shown(t);
+        return {
           ...t,
           item_id: s.item_id,
           vendor_key: vendorKey(t),
           your_category: data.overrides.get(t.transaction_id) ?? null,
           your_category_from_earlier_account: carried.get(contentKey(t.account_id, t)) ?? null,
-          ...filed(t),
+          ...filed,
           your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
           superseded_by_posted: superseded.has(t.transaction_id),
           account_hidden: hidden.has(t.account_id),
-        })
-      );
+          tags: l.tags,
+          your_note: l.note,
+          nya_name: l.name,
+          excluded: l.excluded,
+          excluded_by_rule: l.excluded_by_rule,
+          rule_ids: l.rule_ids,
+        };
+      });
     })
     // Newest first, as the app lists them; then by the event time, then the id,
     // so two downloads of the same data are the same file.
@@ -1332,7 +1460,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     if (Object.hasOwn(doc, key)) throw new Error(`Two parts of the download are both called ${key}`);
     doc[key] = value;
   }
-  manualFilings.set(doc, (row) => filedAs(filing, manualFacts(row)));
+  manualFilings.set(doc, filing);
   return doc;
 }
 
@@ -1487,6 +1615,10 @@ export const TRANSACTION_COLUMNS = [
   'nya_category',
   'nya_category_id',
   'nya_group',
+  // Added with tags (#40) and rules (#36), at the end too.
+  'tags',
+  'nya_name',
+  'excluded',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -1544,10 +1676,13 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     logo_url: t.logo_url,
     category_icon_url: t.personal_finance_category_icon_url,
     source: PROVIDER,
-    note: null,
+    note: t.your_note,
     nya_category: t.nya_category,
     nya_category_id: t.nya_category_id,
     nya_group: t.nya_group,
+    tags: t.tags.join('; '),
+    nya_name: t.nya_name,
+    excluded: t.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1561,7 +1696,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory): CsvValue[] {
+function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory, l: Layered): CsvValue[] {
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
@@ -1579,8 +1714,13 @@ function manualTransactionRow(row: ManualTxn, account: { name: string | null; in
     transaction_id: row.id,
     account_id: row.account_id,
     source: row.source,
-    note: row.note,
+    // The person's note: the row's own, or, on one SimpleFIN brought, the one
+    // kept beside it (lib/txn-layers.ts).
+    note: l.note,
     ...filed,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1608,26 +1748,32 @@ function manualRowsOf(entries: unknown): ManualTxn[] {
   });
 }
 
-/** For each document buildUserExport makes, how it files a manual row: by
- *  the same set as the bank's rows (see there). */
-const manualFilings = new WeakMap<UserExport, (row: ManualTxn) => NyaCategory>();
+/** For each document buildUserExport makes, the categories it files the
+ *  bank's rows by, which file its manual rows too (see there). */
+const manualFilings = new WeakMap<UserExport, CategoryIndex>();
 
 /**
  * The manual rows' categories, as the app files them (lib/categories.ts
- * resolveCategory), by their own words: as buildUserExport filed the bank's,
- * for a document it made. For any other, against the categories in it, grown
- * in memory by any words no category has yet (provisional, so their id is
- * empty), or, without them, the seed the app would make.
+ * resolveCategory), by their own words and the category a rule gives one:
+ * as buildUserExport filed the bank's, for a document it made. For any
+ * other, against the categories in it, grown in memory by any words no
+ * category has yet (provisional, so their id is empty), or, without them,
+ * the seed the app would make. With the categories it files by (`ix`), which
+ * the rules are read against (lib/export-layers.ts).
  */
-function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): (row: ManualTxn) => NyaCategory {
-  const made = manualFilings.get(doc);
-  if (made) return made;
+function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
+  const ix = manualFilings.get(doc) ?? grownFiling(doc, rows);
+  return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
+}
+
+/** The categories in a document buildUserExport didn't make, grown by the
+ *  manual rows' words (see manualFiling). */
+function grownFiling(doc: UserExport, rows: readonly ManualTxn[]): CategoryIndex {
   const stored = doc[taxonomyStore.name];
   let n = 0;
   const newId = () => `new:${++n}`;
   const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
-  const ix = indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(manualFacts)), newId, { limit: Infinity }).taxonomy);
-  return (r) => filedAs(ix, manualFacts(r));
+  return indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(manualFacts)), newId, { limit: Infinity }).taxonomy);
 }
 
 /** Every row of the manual accounts' books in the file, once each: a book
@@ -1664,6 +1810,39 @@ export function bookAccountTypes(doc: UserExport): Map<string, string> {
   return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
 }
 
+/** Each book account's institution as the Activity tab shows it
+ *  (lib/manual-txns.ts, lib/manual.ts toInstitutions), which a rule's
+ *  institution condition reads: a manual account's, `Manual` when it has
+ *  none, and an account SimpleFIN feeds, its bank's as SimpleFIN names it. */
+export function bookInstitutions(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].map(([id, a]) => [id, normalizeInstitutionName(a.institution_name ?? '') || 'Manual']));
+}
+
+/**
+ * The books' rows (a manual account's own, and those SimpleFIN brought) as
+ * the app shows them: each side of a pair between two SimpleFIN accounts in
+ * the pair's words (lib/manual-txns.ts withPairWords), and for each, what the
+ * read layer puts on it (its rules, tags, note and exclusion:
+ * lib/export-layers.ts layerManualRow, by its account's institution as the
+ * app shows it) and the category it is filed under. For the transactions CSV
+ * and an OFX statement alike, so the two and the app never disagree.
+ */
+export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r: ManualTxn) => { l: Layered; filed: NyaCategory } } {
+  const rows = withPairWords(manualTransactionsIn(doc), bookAccountTypes(doc));
+  const filing = manualFiling(doc, rows);
+  // A book's rows carry nothing from an earlier account, and its account is
+  // never linked: no links needed.
+  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institutionOf = bookInstitutions(doc);
+  return {
+    rows,
+    shown: (r) => {
+      const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
+      return { l, filed: filing.filed(r, l.rule_category) };
+    },
+  };
+}
+
 /**
  * transactions.csv: one row per transaction, newest first: every one stored
  * from the banks, and every one on a manual account (manualTransactionRow).
@@ -1676,22 +1855,24 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
   const accounts = bookAccountsIn(doc);
-  const typeOf = bookAccountTypes(doc);
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   // A pair of SimpleFIN rows between two of the person's accounts (a card's
   // payment, a loan's, a move between them) is worked out each time the rows
   // are read, never stored: listed as the app shows it, each side in the
   // pair's words and filed by them, so the file leaves out of a total what
-  // the app does (lib/manual-txns.ts withPairWords).
-  const manual = withPairWords(manualTransactionsIn(doc), typeOf);
-  const filed = manualFiling(doc, manual);
+  // the app does; and every row with the read layer's facts on it, as the
+  // app shows them (layeredBookRows).
+  const book = layeredBookRows(doc);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
-    ...manual.map((r) => ({
+    ...book.rows.map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
-      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed(r)),
+      cells: () => {
+        const { l, filed } = book.shown(r);
+        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
+      },
     })),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
@@ -1710,30 +1891,37 @@ export const BALANCE_COLUMNS = [
   'currency',
   'kind',
   'account_hidden',
+  'account_state',
+  'account_state_date',
+  'note',
 ] as const;
 
 /**
  * balances.csv: the net-worth total for each day ("net_worth" rows, every
- * account, hidden ones too, as recorded) and each account's own balance
- * ("account" rows), oldest day first, the total before the accounts.
+ * account, hidden ones too, as recorded), each account's own balance
+ * ("account" rows, with the account's end, if it ended: closed, left or
+ * untracked, and the day), and each note on the timeline ("note" rows, kind
+ * auto or user), oldest day first: the total, then the accounts, then the
+ * notes.
  */
 export function* balancesCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(BALANCE_COLUMNS);
-  const about = new Map<string, { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean }>();
-  for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden });
-  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: m.currency ?? null, hidden: m.hidden });
+  type About = { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean; lifecycle: ExportLifecycle | null };
+  const about = new Map<string, About>();
+  for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden, lifecycle: a.lifecycle });
+  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: m.currency ?? null, hidden: m.hidden, lifecycle: m.lifecycle });
   // A manual account that couldn't be read is in neither list (problems names
   // it). When it is hidden, hidden_accounts still holds its type and says it
   // is hidden, as transactions.csv reads it there too.
   for (const h of doc.hidden_accounts) {
-    if (!about.has(h.account_id)) about.set(h.account_id, { name: null, institution: null, type: h.type, currency: null, hidden: true });
+    if (!about.has(h.account_id)) about.set(h.account_id, { name: null, institution: null, type: h.type, currency: null, hidden: true, lifecycle: null });
   }
 
   type Row = { date: string; rank: number; cells: CsvValue[] };
   const rows: Row[] = doc.net_worth_history.points.map((p) => ({
     date: p.date,
     rank: -1,
-    cells: [p.date, 'net_worth', null, null, null, null, p.total, null, p.kind, null],
+    cells: [p.date, 'net_worth', null, null, null, null, p.total, null, p.kind, null, null, null, null],
   }));
   doc.account_history.forEach((series, rank) => {
     const a = about.get(series.account_id);
@@ -1741,10 +1929,20 @@ export function* balancesCsv(doc: UserExport): Generator<string> {
       rows.push({
         date: p.date,
         rank,
-        cells: [p.date, 'account', series.account_id, a?.name ?? null, a?.institution ?? null, a?.type ?? null, p.balance, a?.currency ?? null, p.kind, a?.hidden ?? false],
+        cells: [p.date, 'account', series.account_id, a?.name ?? null, a?.institution ?? null, a?.type ?? null, p.balance, a?.currency ?? null, p.kind, a?.hidden ?? false, a?.lifecycle?.state ?? null, a?.lifecycle?.date ?? null, null],
       });
     }
   });
+  // The notes on the timeline (lib/timeline-notes.ts), after the day's balances.
+  const notes = (doc[timelineNotesStore.name] as { id: string; value: TimelineNote }[] | null | undefined) ?? [];
+  for (const { value: n } of notes) {
+    const a = n.account_id ? about.get(n.account_id) : undefined;
+    rows.push({
+      date: n.date,
+      rank: Number.MAX_SAFE_INTEGER,
+      cells: [n.date, 'note', n.account_id ?? null, a?.name ?? null, a?.institution ?? null, a?.type ?? null, null, null, n.kind, a ? a.hidden : null, null, null, n.text],
+    });
+  }
   rows.sort((x, y) => byCodePoint(x.date, y.date) || x.rank - y.rank);
   for (const row of rows) yield csvRow(row.cells);
 }
@@ -1775,11 +1973,23 @@ export type ExportFile = {
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
   // The books of the manual accounts, the names of the accounts they are on
-  // (and the types a pair of SimpleFIN rows is worked out by), and the
-  // categories every row is filed by (nya_category).
-  'transactions-csv': ['manual-transactions', 'manual_accounts', connectorAccountsStore.name, taxonomyStore.name],
-  // The days, and the names of the manual accounts the rows are for.
-  'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
+  // (and the types a pair of SimpleFIN rows is worked out by), the categories
+  // every row is filed by (nya_category), and what the read layer puts on
+  // each row (lib/txn-layers.ts): the rules, the tags, what was said about it
+  // and what was carried to it (nya_name, tags, note, excluded).
+  'transactions-csv': [
+    'manual-transactions',
+    'manual_accounts',
+    connectorAccountsStore.name,
+    taxonomyStore.name,
+    rulesStore.name,
+    tagStore.name,
+    txnAnnotationStore.name,
+    carriedAnnotationStore.name,
+  ],
+  // The days, the names of the manual accounts the rows are for, the
+  // accounts' ends and the notes.
+  'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts', 'account-lifecycle', 'timeline-notes'],
 };
 
 export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {

@@ -4092,6 +4092,509 @@ button.cat-manage-row.archived {
   overflow-wrap: anywhere;
 }
 
+/* --- tags and notes (#40): tag chips on a transaction's row and in its
+   detail, the field to put a tag on, a note, the filter by tag, and the
+   colors a tag can have (lib/tags.ts TAG_COLORS), each a tint with text
+   that keeps its contrast on the dark cards --- */
+
+.tag-chips {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+}
+
+.tag-gray { background: rgba(139, 143, 152, 0.18); color: #c3c6cd; }
+.tag-red { background: rgba(239, 91, 91, 0.18); color: #f49a9a; }
+.tag-orange { background: rgba(240, 140, 60, 0.18); color: #f5b27c; }
+.tag-yellow { background: rgba(224, 196, 60, 0.18); color: #ead77f; }
+.tag-green { background: rgba(62, 207, 142, 0.18); color: #8ae2b9; }
+.tag-teal { background: rgba(48, 196, 196, 0.18); color: #86dede; }
+.tag-blue { background: rgba(91, 141, 239, 0.2); color: #a3bff6; }
+.tag-purple { background: rgba(160, 110, 235, 0.2); color: #c8aaf4; }
+.tag-pink { background: rgba(232, 100, 170, 0.18); color: #f0a6cd; }
+
+/* The x that takes a tag off, inside its chip: a 24px target on a 16px chip. */
+.tag-chip-remove {
+  width: auto;
+  min-width: 24px;
+  min-height: 24px;
+  margin: -4px -6px -4px 0;
+  padding: 0 4px;
+  background: none;
+  border: none;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.txn-tags-note {
+  margin-top: 8px;
+}
+
+/* A row with a note says so, as pending does: the note is in its detail. */
+.note-tag {
+  color: var(--muted);
+  font-size: 11px;
+  font-style: italic;
+}
+
+.txn-tags-row .tag-chips {
+  margin-left: 0;
+}
+
+.tag-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 2px 0 8px;
+}
+
+button.tag-suggestion {
+  width: auto;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 500;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  color: var(--text);
+  border-radius: 999px;
+}
+
+.txn-note-input {
+  margin: 4px 0 0;
+  font-size: 14px;
+  padding: 10px 12px;
+  resize: vertical;
+}
+
+.tag-filter {
+  margin: 0 0 4px;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+/* The color choice on the Tags screen: one round swatch per color. */
+.tag-colors {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+button.tag-color {
+  width: 32px;
+  height: 32px;
+  min-height: 32px;
+  padding: 0;
+  border-radius: 50%;
+  border: 2px solid transparent;
+}
+
+button.tag-color.chosen {
+  border-color: var(--text);
+}
+
+/* --- rules (#36): the rule drawer's conditions and preview, and the Rules
+   screen's list, in the order they run --- */
+
+.rule-condition {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 10px 10px 0;
+  margin-bottom: 10px;
+}
+
+.rule-condition-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.rule-condition-head .text-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.rule-condition-head .link-btn {
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+}
+
+.rule-is {
+  flex: 0 0 auto;
+  color: var(--muted);
+  font-size: 14px;
+  margin-bottom: 12px;
+}
+
+button.tag-suggestion.chosen {
+  border-color: transparent;
+}
+
+.rule-preview {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.rule-matches {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+
+.rule-samples {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  font-size: 13px;
+}
+
+.rule-samples li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.rule-list {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.rule-row {
+  border-top: 1px solid var(--line);
+  padding: 10px 0;
+}
+
+.rule-row.off .rule-sentence {
+  color: var(--muted);
+}
+
+.rule-sentence {
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.rule-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: center;
+  margin-top: 6px;
+  font-size: 13px;
+}
+
+.rule-row-actions label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+}
+
+/* The offer, after a transaction is given another category, to do the same
+   for every transaction with its name; and the rules a transaction matches,
+   in its detail. */
+.rule-offer {
+  margin: 8px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.rule-matched {
+  margin: 4px 0 6px;
+  padding-left: 18px;
+}
+
+/* --- accounts that end, and notes on the timeline (#50) ---
+   components/AccountLifecycle.tsx, components/TimelineNotes.tsx and the
+   chart's markers (components/NetWorthChart.tsx). */
+
+/* Read by a screen reader, not shown: the chart's announcement of a note. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A note's marker on the chart: drawn over the line, never in the way of a
+   finger on it. */
+.chart-note-mark {
+  pointer-events: none;
+}
+
+/* The notes in the chart's range, under it: each a button that selects its
+   day. Small, so the chart stays the thing. */
+.chart-notes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chart-note-btn {
+  width: auto;
+  max-width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.chart-note-btn[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.chart-note-day {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* A note in the readout, while its day is scrubbed: on the date's own line,
+   cut to fit it with an ellipsis, so the readout never grows under the finger.
+   The whole note is in the list under the chart. */
+.chart-readout-noted {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.chart-readout-day {
+  flex-shrink: 0;
+}
+
+.chart-readout-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The sheet's three choices: a radio and a sentence each. */
+.lifecycle-choices {
+  border: none;
+  margin: 12px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.lifecycle-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.lifecycle-choice input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.lifecycle-choice-name {
+  display: block;
+  font-weight: 600;
+}
+
+.lifecycle-choice-note {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.lifecycle-prefilled {
+  margin: -6px 0 12px;
+}
+
+.lifecycle-reopen {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lifecycle-reopen button {
+  margin-top: 8px;
+}
+
+/* A question about an account, on its institution's card and in connection
+   health: amber, like the other notes about what a total holds. */
+.lifecycle-questions {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.lifecycle-question + .lifecycle-question {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lifecycle-ask {
+  margin: 0;
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lifecycle-question .card-actions {
+  margin-top: 10px;
+}
+
+/* The Accounts that ended card: an archive, like Hidden. */
+.lifecycle-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.lifecycle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.lifecycle-row > div:first-child {
+  min-width: 0;
+}
+
+.lifecycle-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.lifecycle-assumed {
+  margin-top: 6px;
+}
+
+.lifecycle-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+/* On a phone the actions go under the text, so a name and the assumed note
+   keep the card's width instead of a column beside two buttons. */
+@media (max-width: 480px) {
+  .lifecycle-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .lifecycle-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* What an end does to net worth, and the tick a debt still owed asks for. */
+.lifecycle-effect {
+  margin-top: 8px;
+}
+
+.lifecycle-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.lifecycle-confirm input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+/* Closures that can't be read, and their repair. */
+.lifecycle-repair p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.lifecycle-repair > button {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+/* The notes card under the chart. */
+.timeline-note-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.timeline-note-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.timeline-note-row > div:first-child {
+  min-width: 0;
+}
+
+.timeline-note-row .manual-row-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+.timeline-note-day {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
 /* --- budget rollover and income carryover (#37: components/BudgetsCard.tsx,
    components/IncomePool.tsx, components/BudgetsTab.tsx) --- */
 

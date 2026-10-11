@@ -331,6 +331,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       hidden_at: null,
       // The newest RECORDED balance, with its day (a partial measurement counts).
       latest_balance: { balance: 1700, date: '2026-01-04' },
+      lifecycle: null,
     });
     expect(byId.acc_card).toMatchObject({ type: 'credit', credit_limit: 5000, hidden: true, hidden_at: '2026-03-01T00:00:00.000Z', latest_balance: { balance: 500, date: '2026-01-03' } });
     expect(byId.acc_brk).toMatchObject({ item_id: 'item_b', institution_name: 'Fidelity', connected: true, name: 'Brokerage', mask: '9999', type: 'investment', latest_balance: null });
@@ -343,7 +344,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     // Manual accounts are listed apart, once.
     expect(byId.manual_house).toBeUndefined();
     expect(doc.manual_accounts).toEqual([
-      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null },
+      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null, lifecycle: null },
     ]);
     expect(doc.hidden_accounts).toEqual([{ account_id: 'acc_card', type: 'credit', hidden_at: '2026-03-01T00:00:00.000Z' }]);
   });
@@ -383,6 +384,13 @@ describe('everything stored, decrypted, and nothing else', () => {
       nya_category: 'Treats',
       nya_category_id: null,
       nya_group: 'Other',
+      // No tags or note on it, no rule, and its name the one I gave it.
+      tags: [],
+      your_note: null,
+      nya_name: 'BB Coffee',
+      excluded: false,
+      excluded_by_rule: false,
+      rule_ids: [],
     });
     // Plaid's category and merchant are kept as they came.
     expect(coffee.category).toBe('food and drink');
@@ -1119,6 +1127,7 @@ describe('stores built on the storage seam', () => {
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'account-lifecycle',
       'allocation-settings',
       'budget-months',
       'carried-annotations',
@@ -1139,6 +1148,9 @@ describe('stores built on the storage seam', () => {
       'manual-transactions',
       'planned-items',
       'report-settings',
+      'rules',
+      'tags',
+      'timeline-notes',
       'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
@@ -1492,7 +1504,7 @@ describe('writing it out', () => {
     const file = exportFile(doc, 'transactions-csv');
     const [header, ...rows] = parseCsv([...file.pieces()].join(''));
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
-    expect(header.slice(-5)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group']);
+    expect(header.slice(-8)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group', 'tags', 'nya_name', 'excluded']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
     // Newest first, among the bank's rows; on a day, after the rows with a time.
     expect(rows.map((r) => col(r, 'transaction_id'))).toEqual(['t_evil', 't_posted', typed, 't_card', 't_pending', imported, 't_coffee', 't_bakery']);
@@ -1623,7 +1635,7 @@ describe('writing it out', () => {
       ['2026-01-03', '1050', 'recorded'],
     ]);
     const card = rows.find((r) => r[1] === 'account' && r[2] === 'acc_card' && r[0] === '2026-01-01')!;
-    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true']);
+    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true', '', '', '']);
     // Oldest day first, and on each day the total before the accounts.
     const dates = rows.map((r) => r[0]);
     expect(dates).toEqual([...dates].sort());
@@ -1651,7 +1663,7 @@ describe('writing it out', () => {
     const [header, ...rows] = parseCsv([...balances.pieces()].join(''));
     const house = rows.filter((r) => r[2] === 'manual_house').map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
     expect(house).toEqual([
-      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true' },
+      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true', account_state: '', account_state_date: '', note: '' },
     ]);
     const suffix = 'The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.';
     const said = `Not all of your manual accounts could be read: 1 account whose stored data is damaged. Their rows in this file are under their account ids, with no account name. ${suffix}`;

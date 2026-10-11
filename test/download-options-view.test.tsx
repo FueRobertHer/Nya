@@ -7,7 +7,8 @@ mock.module('@clerk/nextjs', () => ({
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { DownloadMyDataView, requestFile, formatsFor, localFilename, viewerTimeZone } = await import('@/components/DownloadMyData');
-const { ofxAccounts, accountLabel, chosenAccount, passphraseHint } = await import('@/components/DownloadOptions');
+const { ofxAccounts, accountLabel, chosenAccount, passphraseHint, downloadAccounts } = await import('@/components/DownloadOptions');
+const { endText } = await import('@/components/AccountLifecycle');
 const { localDate } = await import('@/lib/local-date');
 
 // What the download card adds to a format (components/DownloadOptions.tsx,
@@ -60,6 +61,26 @@ describe('a bank account’s or card’s statement', () => {
     expect(downloadButton(html)[0]).not.toMatch(/disabled/);
     // The picker is there only for OFX.
     expect(view({ format: 'json', accounts: ACCOUNTS })).not.toContain('<select');
+  });
+
+  test('offers the accounts that ended too, which the live list no longer holds, each once, labelled with its end', () => {
+    const closed = { state: 'closed' as const, on: '2026-09-01' };
+    const ended = [
+      { account_id: 'acc_freedom', lifecycle: closed, label: { name: 'Freedom', institution: 'Chase', mask: '9902' }, type: 'credit', item_id: 'item_chase', set_at: '2026-09-02T00:00:00.000Z' },
+      { account_id: 'manual_jar', lifecycle: { state: 'left' as const, on: '2026-08-01' }, label: { name: 'Jar', institution: 'Home', mask: null }, type: 'depository', item_id: null, set_at: '2026-08-02T00:00:00.000Z' },
+      // Hidden and ended stays in the live list: labelled there, not added twice.
+      { account_id: 'acc_sav', lifecycle: { state: 'untracked' as const, from: '2026-07-01' }, label: { name: 'Savings', institution: 'Chase', mask: '4444' }, type: 'depository', item_id: 'item_chase', set_at: '2026-07-02T00:00:00.000Z' },
+      // Of a kind not known: no statement to make.
+      { account_id: 'acc_unknown', lifecycle: closed, label: { name: 'Old', institution: 'Chase', mask: null }, type: null, item_id: 'item_chase', set_at: '2026-09-02T00:00:00.000Z' },
+    ];
+    const offered = downloadAccounts(ACCOUNTS, ended);
+    expect(offered.map((a) => a.account_id)).toEqual([...ACCOUNTS.map((a) => a.account_id), 'acc_freedom', 'manual_jar']);
+    expect(offered.find((a) => a.account_id === 'acc_sav')!.ended).toBe(endText(ended[2].lifecycle));
+    expect(accountLabel(offered.find((a) => a.account_id === 'acc_freedom')!)).toBe(`Chase · Freedom ••9902 · ${endText(closed)}`);
+    const html = view({ format: 'ofx', accounts: offered, accountId: 'acc_freedom' });
+    expect(html).toContain(`<option value="acc_freedom" selected="">Chase · Freedom ••9902 · ${endText(closed)}</option>`);
+    expect(html).toContain(`Home · Jar · ${endText(ended[1].lifecycle)}`);
+    expect(html).toContain('Bank accounts and cards only, those that ended too, with every transaction Nya stored.');
   });
 
   test('with no bank account or card, says so, and won’t start', () => {

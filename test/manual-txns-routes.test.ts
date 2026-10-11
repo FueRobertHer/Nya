@@ -642,11 +642,17 @@ describe('editing and deleting a transaction', () => {
 describe('excluding a transaction', () => {
   test('sets the flag on any transaction, Plaid’s or manual, and including it again is recorded too; no cache is dropped', async () => {
     await writeCache(ctx, CacheKey.Transactions, { plaid_only: true, transactions: [], notes: [], as_of: 'then' });
-    expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: true })).toEqual({ status: 200, body: { transaction_id: 'plaid_txn_1', excluded: true } });
+    expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: true })).toEqual({
+      status: 200,
+      body: { transaction_id: 'plaid_txn_1', excluded: true, tags: [], untagged: [], note: null },
+    });
     expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ excluded: true });
     expect(await readCache(ctx, CacheKey.Transactions)).not.toBeNull();
     // Put back: said, and kept, so it beats an exclusion carried across a re-link (and later a rule).
-    expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: false })).toEqual({ status: 200, body: { transaction_id: 'plaid_txn_1', excluded: false } });
+    expect(await exclude({ transaction_id: 'plaid_txn_1', excluded: false })).toEqual({
+      status: 200,
+      body: { transaction_id: 'plaid_txn_1', excluded: false, tags: [], untagged: [], note: null },
+    });
     expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ excluded: false });
     // A manual row's id is a transaction id like any other.
     const id = newManualTxnId();
@@ -668,7 +674,7 @@ describe('excluding a transaction', () => {
       [{ transaction_id: '__proto__', excluded: true }, 'Invalid transaction id'],
       [{ transaction_id: 7, excluded: true }, 'Invalid transaction id'],
       [{ transaction_id: 'plaid_txn_1', excluded: 'yes' }, 'Say whether to exclude it'],
-      [{ transaction_id: 'plaid_txn_1' }, 'Say whether to exclude it'],
+      [{ transaction_id: 'plaid_txn_1' }, 'Say what to change'],
     ];
     for (const [body, error] of bad) expect([body, await exclude(body)]).toEqual([body, { status: 400, body: { error } }]);
     expect(await call(annotations.PATCH, 'PATCH', undefined, 'nope')).toEqual({ status: 400, body: { error: 'Invalid request' } });
@@ -689,7 +695,7 @@ describe('excluding a transaction', () => {
     hash.set('t0', await encrypt(JSON.stringify({ excluded: true, updated_at: '2026-10-01T00:00:00.000Z' })));
     (fake as any).hashes.set(ctxKey('transaction-annotations'), hash);
     const r = await exclude({ transaction_id: 'one_more', excluded: true });
-    expect(r).toEqual({ status: 400, body: { error: 'At most 20,000 transactions can be excluded or included by hand. Clear some first.' } });
+    expect(r).toEqual({ status: 400, body: { error: 'At most 20,000 transactions can be excluded, tagged or noted by hand. Clear some first.' } });
     expect((await exclude({ transaction_id: 't0', excluded: false })).status).toBe(200);
   });
 

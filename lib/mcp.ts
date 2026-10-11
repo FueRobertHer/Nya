@@ -167,6 +167,8 @@ const SUMMARIES: Record<string, Tool['summary']> = {
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;
   },
   list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')} in use, in ${plural(r.groups.length, 'group')}.${withoutTransactions(r)}`,
+  list_tags: (r) => `${plural(r.tags.length, 'tag')}.${withoutTransactions(r)}`,
+  list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
 };
 
