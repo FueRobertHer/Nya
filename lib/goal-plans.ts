@@ -52,8 +52,11 @@
 // always was. Every goal in it has the plan one of the two saves wrote for
 // it, since each save writes the entry of every goal it lists: a goal the
 // other save deleted, which the last save still lists, comes back with the
-// plan the last save gave it, never without one. A save never deletes or
-// rewrites an entry another save has written since it read.
+// plan the last save gave it, never without one. The writes themselves are
+// plain, so the save whose HSET lands last wins each entry, as the save
+// whose blob lands last wins the list; only settling is a compare-and-set,
+// so it never deletes an entry, nor clears its `before`, once another save
+// has written it since this one read.
 //
 // READS ARE STRICT. An entry that can't be read stops the read
 // (UnreadableEntriesError, which the routes answer with 409), never "no

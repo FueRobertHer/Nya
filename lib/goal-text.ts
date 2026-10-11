@@ -141,12 +141,14 @@ export function gapsText(gaps: readonly MonthGap[]): string | null {
 }
 
 /** What the goal says of its months' gaps: that its pace may be off, when it
- *  is projected from them; otherwise that what went in lately isn't known,
- *  and why (a connection that stopped before the months began). Null when
- *  nothing says either. */
+ *  is projected from them or some of them are known (a shared account's pace
+ *  is still said, though not projected from); otherwise, with none it can go
+ *  by, that what went in lately isn't known, and why (a connection that
+ *  stopped before the months began). Null when nothing says either. */
 export function gapNote(view: GoalView): string | null {
   if (view.projection?.status === 'complete') return null;
-  if (view.measured && view.projection?.rateFrom === 'contributions') return gapsText(view.measured.gaps);
+  const m = view.measured;
+  if (m && (view.projection?.rateFrom === 'contributions' || !m.allUncertain)) return gapsText(m.gaps);
   const said = gapReasons(view.gaps);
   return said.length === 0 ? null : `What went into ${view.account?.name ?? 'its account'} lately isn’t known: ${said.join('; ')}.`;
 }

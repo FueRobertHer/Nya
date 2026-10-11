@@ -339,7 +339,7 @@ describe('two saves at once', () => {
     expect((await get()).body.goals).toEqual(shown);
   });
 
-  test('a save never deletes, nor rewrites, an entry another save wrote after it read', async () => {
+  test('a save’s settling never deletes, nor rewrites, an entry another save wrote after it read', async () => {
     await put([{ ...G(1), plan: { monthly_target: 100 } }]);
     // The first empties the plan; the second, landing between its writes,
     // sets one: the first leaves the second's entry as it is.

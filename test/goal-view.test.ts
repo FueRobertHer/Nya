@@ -247,6 +247,22 @@ describe('the outlook in words', () => {
     expect(viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!.projection!.status).toBe('no_recent_contributions');
   });
 
+  test('a shared account whose months are known says its pace may be off, never that what went in isn’t known', () => {
+    const importing = { kind: 'importing' as const, institution: 'Chase' };
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'transactions', months: [month('2026-07', 375.5), month('2026-08', 189.75), month('2026-09', 330.1, { gaps: [importing] })] });
+    const goals = [goal('fund', 'sav', 15_000, { monthly_target: 400 }), goal('trip', 'sav', 5000, { monthly_target: 100 })];
+    const v = viewsOf(goals, ACCOUNTS, flows).views.get('fund')!;
+    expect(v.projection!.rateFrom).toBe('monthly_target');
+    expect(gapNote(v)).toBe('The pace may be off: Chase is still importing older transactions.');
+    const said = goalSentences(v, nameOf, undefined);
+    expect(said).toContain('$298.45 a month went into Savings on average over the last 3 months (your target is $400.00).');
+    expect(said.join(' ')).not.toContain('isn’t known');
+    // Every month in question: then what went in lately isn't known.
+    flows.set('sav', { source: 'transactions', months: ['2026-07', '2026-08', '2026-09'].map((m) => month(m, 100, { gaps: [importing] })) });
+    expect(gapNote(viewsOf(goals, ACCOUNTS, flows).views.get('fund')!)).toBe('What went into Savings lately isn’t known: Chase is still importing older transactions.');
+  });
+
   test('paced by its balance because its transactions couldn’t be read: said', () => {
     const flows = new Map(FLOWS);
     flows.set('sav', { source: 'balances', months: [month('2026-07', 500), month('2026-08', 500), month('2026-09', 500)], fallback: { unreadable: 'Chase' } });
