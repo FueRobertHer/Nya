@@ -312,7 +312,7 @@ describe('the Budgets tab', () => {
     expect(splitChangedText(changed, '2020-01')).toBeNull();
     expect(splitChangedText(served(), today.slice(0, 7))).toBeNull();
     const budgets = readFileSync(new URL('../components/BudgetsTab.tsx', import.meta.url), 'utf8');
-    expect(budgets).toContain('<SplitChangedNote txns={txns} month={thisMonth} />');
+    expect(budgets).toContain('<SplitChangedNote txns={txns} month={shownMonth} />');
   });
 });
 

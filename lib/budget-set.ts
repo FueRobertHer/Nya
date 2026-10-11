@@ -279,7 +279,7 @@ export function budgetsAfterMerge(budgets: Budgets, ix: CategoryIndex): Budgets 
   const categories: Record<string, BudgetAmount> = {};
   for (const [id, b] of Object.entries(budgets.categories)) {
     const to = categoryById(ix, id)?.id ?? id;
-    categories[to] = { amount: (categories[to]?.amount ?? 0) + b.amount };
+    categories[to] = { amount: Math.round(((categories[to]?.amount ?? 0) + b.amount) * 100) / 100 };
   }
   return { ...budgets, categories };
 }

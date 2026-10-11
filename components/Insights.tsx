@@ -20,6 +20,7 @@ import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } fr
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { spendingByCategory } from '@/lib/totals';
 import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { withCarry, type Carries } from '@/lib/rollover';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
 
@@ -132,6 +133,7 @@ export default function Insights({
   dismissed = NO_DISMISSED,
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
+  budgetCarries = null,
 }: {
   txns: Txn[] | null;
   /** By category and group id (lib/budget-set.ts), against your categories
@@ -158,6 +160,10 @@ export default function Insights({
    *  pace or a budget alert that looks finished but isn't misleads. */
   incomplete?: Incomplete[];
   stopped?: Stopped[];
+  /** What rolled into this month's budgets (lib/rollover.ts), once the
+   *  Budgets tab's month has loaded: an alert weighs what is available, as
+   *  that tab's meters do. Null meanwhile: each budget's amount alone. */
+  budgetCarries?: Carries | null;
 }) {
   const { insights, leftOut, missing } = useMemo(() => {
     const out: Insight[] = [];
@@ -184,18 +190,31 @@ export default function Insights({
     if (txns && taxonomy) {
       const ix = indexTaxonomy(taxonomy);
       const spendByCat = spendingByCategory(txns, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
-      const meters = budgetMeters(ix, placeBudgets(budgets, ix), new Map(Object.entries(spendByCat)));
+      const meters = budgetMeters(ix, withCarry(placeBudgets(budgets, ix), budgetCarries), new Map(Object.entries(spendByCat)));
       const candidates = [
         ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
         ...meters.groups.flatMap((m) => m.categories.filter((c) => c.budget !== null).map((c) => ({ key: `category-${c.category.id}`, name: c.category.name, budget: c.budget!, spent: c.spent }))),
       ];
+      // With rollover, what is available can be nothing or less (an
+      // overspent carry): over at once, first among the over.
+      const ratio = ({ spent, budget }: { spent: number; budget: number }) => (budget > 0 ? spent / budget : Infinity);
       const flagged = candidates
-        .filter(({ spent, budget }) => budget > 0 && spent / budget >= 0.9)
-        .sort((a, b) => b.spent / b.budget - a.spent / a.budget)
+        .filter(({ spent, budget }) => (budget > 0 ? spent / budget >= 0.9 : budget < 0 || spent > 0))
+        .sort((a, b) => (ratio(a) === ratio(b) ? 0 : ratio(b) > ratio(a) ? 1 : -1))
         .slice(0, 2);
       for (const { key, name, budget, spent } of flagged) {
         out.push(
-          spent >= budget
+          budget <= 0
+            ? {
+                // Nothing available: said as what was carried over, never "of" a limit of zero or less.
+                key: `budget-${key}`,
+                text:
+                  budget < 0
+                    ? `Over your ${name} budget: overspending carried over left it ${formatMoney(-budget, displayCurrency)} over before this month${spent > 0 ? `, and ${formatMoney(spent, displayCurrency)} is spent` : ''}`
+                    : `Over your ${name} budget: overspending carried over left nothing of it this month, and ${formatMoney(spent, displayCurrency)} is spent`,
+                tone: 'down',
+              }
+            : spent >= budget
             ? {
                 key: `budget-${key}`,
                 text: `Over your ${name} budget: ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
@@ -385,7 +404,7 @@ export default function Insights({
         ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
         : [],
     };
-  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped]);
+  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries]);
 
   if (insights.length === 0) return null;
 

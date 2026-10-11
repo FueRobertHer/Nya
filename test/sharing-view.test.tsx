@@ -1,6 +1,6 @@
 import { describe, expect, test, afterEach, setSystemTime } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { SharingPanelView, SharedWithMeView, PreviewView, SharedAccountItem, shortDate, sharedTxnAmount } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, PreviewView, SharedAccountItem, shortDate, sharedTxnAmount, endedText } from '@/components/Sharing';
 import { formatMoney } from '@/lib/format';
 import {
   endAfterDays,
@@ -312,6 +312,16 @@ describe('what others share with me', () => {
     expect(plain).toContain('$5.00');
     expect(plain).not.toContain('£');
     expect(sharedTxnAmount({ amount: 1200, currency: 'JPY' })).toBe(formatMoney(-1200, 'JPY'));
+  });
+
+  test('an account that ended shows as ended from its day, with no balance (#50)', () => {
+    const toggle = () => {};
+    const savings = { id: 'a', label: 'Ally Savings', level: 'balance' as const, balance: null, currency: null, as_of: null, debt: false };
+    const closed = text(renderToStaticMarkup(<SharedAccountItem a={{ ...savings, ended: { state: 'closed', on: '2026-03-12' } }} open={false} onToggle={toggle} />));
+    expect(closed).toContain('Closed Mar 12, 2026');
+    expect(closed).not.toContain('No balance yet');
+    expect(endedText({ state: 'left', on: '2026-03-12' })).toBe('No longer theirs since Mar 12, 2026');
+    expect(endedText({ state: 'untracked', on: '2026-03-12' })).toBe('Not followed since Mar 12, 2026');
   });
 });
 

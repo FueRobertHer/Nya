@@ -122,7 +122,9 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
       return `${by} reports: ${quoted(d.messages)}. This is between ${by} and ${name}: fix it in ${by} (often by signing in to ${name} there again), then refresh here. ${until}`;
     case 'missing': {
       const n = d.accounts.length;
-      return `${names(d.accounts)} ${plural(n, "isn't", "aren't")} in ${by}'s latest answer. If you removed ${plural(n, 'it', 'them')} at ${by}, stop tracking ${plural(n, 'it', 'them')} here with Choose accounts. ${until}`;
+      // One that closed holds nothing once it is said (lib/connectors/institutions.ts).
+      const it = plural(n, 'it', 'them');
+      return `${names(d.accounts)} ${plural(n, "isn't", "aren't")} in ${by}'s latest answer. If you removed ${it} at ${by}, stop tracking ${it} here with Choose accounts. If ${plural(n, 'it', 'they')} closed, say so with Close… on ${plural(n, 'it', 'each')}, under Manage. ${until}`;
     }
     case 'stale':
       return `Nya hasn't had an answer from ${by} in over a day: its daily update didn't run. Nothing for you to do; Refresh asks now.`;

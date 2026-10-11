@@ -26,7 +26,10 @@
 // THE APP'S OWN RULES. Transactions come from the Activity tab's own assembly
 // (lib/activity.ts): the person's categories and merchant names applied,
 // categories and exclusions carried across a re-link, the rows entered on
-// manual accounts merged in, the last LOOKBACK_DAYS of them. Every total of
+// manual accounts merged in, the last LOOKBACK_DAYS of them (budgets read
+// further back, by the Budgets tab's own read, lib/budget-month.ts: to the
+// month asked about, and the first month a carry or the income pool
+// counts, from what is stored). Every total of
 // spending or income goes through countsInTotals (lib/spending.ts, by way of
 // lib/totals.ts): one currency per total, what the person excluded left out,
 // transfers, cash withdrawals and loan payments left out (a bank's fees count),
@@ -61,6 +64,15 @@
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
 //
+// ACCOUNTS THAT ENDED (closed, left, or no longer followed: lib/lifecycle.ts)
+// are listed with when (`lifecycle`, a field version 1 gained), even once
+// their bank stops returning them, with the newest balance measured before,
+// and count in nothing from that day on, as in the app: net worth now leaves
+// them out, its history subtracts them from their end day, and their
+// transactions from it are left out (lib/activity.ts). An investment one's
+// holdings say so too. Read strictly: one that can't be read is a 409, never
+// an account counted that the person closed.
+//
 // READ ONLY. Nothing here writes: each read that could tidy as it goes is
 // asked not to (readOnly).
 //
@@ -72,13 +84,14 @@ import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
+import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
-import { connectorAccountsStore } from './connectors/store';
+import { connectorAccountsStore, endedAccountsStore } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
@@ -89,7 +102,9 @@ import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
 import { budgetsForReading } from './budget-store';
-import { budgetMeters, placeBudgets } from './budget-set';
+import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
+import { readBudgetMonth, windowStart } from './budget-month';
+import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
@@ -186,7 +201,34 @@ export type ApiAccount = {
   /** Null for a manual account. For one SimpleFIN feeds, its bank's link
    *  through SimpleFIN, as Connection health shows it. */
   connection: ApiConnection | null;
+  /** When it ended, as the person said (or Nya assumed, `assumed`, when
+   *  nobody answered about an account its bank stopped returning), or null
+   *  while it is open. From `date` on it counts in no total. Version 1 may
+   *  add states. */
+  lifecycle: ApiLifecycle | null;
 };
+
+export type ApiLifecycle = {
+  /** closed, left (no longer yours: sold, transferred, divided), or
+   *  untracked (no longer followed). */
+  state: 'closed' | 'left' | 'untracked';
+  /** The day it stopped counting, YYYY-MM-DD. */
+  date: string;
+  /** What the person wrote about it, or null. */
+  note: string | null;
+  /** Nya assumed it closed: nobody answered whether it had, after its bank
+   *  stopped returning it. */
+  assumed: boolean;
+};
+
+/** An account's end, for the API, or null while it is open. */
+function apiLifecycle(view: LifecycleView, id: string): ApiLifecycle | null {
+  const entry = lifecycleOf(view, id);
+  const l = entry?.lifecycle;
+  const date = l ? endOf(l) : null;
+  if (!entry || !l || l.state === 'active' || date === null) return null;
+  return { state: l.state, date, note: (l.state === 'closed' || l.state === 'left') && l.note ? l.note : null, assumed: entry.assumed === true };
+}
 
 /** An account, or a connection's accounts, that an answer couldn't include
  *  (see AccountsRead). */
@@ -213,7 +255,7 @@ export type ApiMissing = {
 /** The accounts, and what couldn't be included, named (`missing`): never a
  *  shorter list passed off as whole (an answer built on it says complete:
  *  false). */
-type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
+type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link>; lifecycle: LifecycleView };
 
 /** The connection facts for each Item, from the records health keeps. Also
  *  what a report says of each connection (lib/report/read.ts), so the two
@@ -243,11 +285,14 @@ export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string)
 }
 
 async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsRead> {
-  const [items, remembered, effective, manual, facts, fed] = await Promise.all([
+  // Strict: a hidden account must never show for a read that failed.
+  const hiddenRead = getEffectiveHidden(ctx, { readOnly: true });
+  // Strict, through the same links: an end that can't be read throws.
+  const lifecycleRead = hiddenRead.then((effective) => getEffectiveLifecycle(ctx, effective.links));
+  const [items, remembered, effective, manual, facts, fed, lifecycle] = await Promise.all([
     getItems(ctx),
     rememberedAccountsReport(ctx),
-    // Strict: a hidden account must never show for a read that failed.
-    getEffectiveHidden(ctx, { readOnly: true }),
+    hiddenRead,
     // LENIENT, for this display only: an account that can't be read is named
     // in `missing`, and the others listed; recording a snapshot reads them all
     // strictly (lib/networth.ts). One sealed under a key this deployment
@@ -257,8 +302,17 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the manual accounts are: an account
-    // entry that can't be read is named in `missing`.
-    connectorBanksReport(ctx),
+    // entry that can't be read is named in `missing`. One that ended holds
+    // no bank (lib/connectors/institutions.ts); the strict read is below.
+    connectorBanksReport(
+      ctx,
+      Date.now(),
+      lifecycleRead.then(
+        (view) => endedNowIds(view),
+        () => new Set<string>()
+      )
+    ),
+    lifecycleRead,
   ]);
   const notes: string[] = [];
   const missing: ApiMissing[] = [];
@@ -284,8 +338,26 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       if (includeHidden || !hidden.has(account.account_id)) linked.push({ item, account });
     }
   }
-  const ids = new Map(linked.map(({ account }) => [account.account_id, sameAccountIds(account.account_id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, [...ids.keys()], remembered.byItem)]);
+  // Accounts that ended and that no live list names any more (a bank stops
+  // returning a closed account): listed from what their end keeps, so the
+  // end, and whether it was assumed, can be seen. A SimpleFIN card names
+  // one while it shows it (one that ended and isn't in SimpleFIN's latest
+  // answer is left off it), and one that can't be read is named below.
+  const listedIds = new Set([
+    ...linked.map(({ account }) => account.account_id),
+    ...manual.accounts.map((a) => a.account_id),
+    ...fed.cards.flatMap((card) => card.accounts.map((a) => a.account_id)),
+    ...fed.unreadable.map((u) => u.account_id),
+  ]);
+  const endedOnly = [...lifecycle.accounts].filter(
+    ([root, { entry }]) =>
+      endOf(entry.lifecycle) !== null &&
+      !sameAccountIds(root, links).some((id) => listedIds.has(id)) &&
+      (includeHidden || !hidden.has(root)) &&
+      !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
+  );
+  const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
+  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -316,6 +388,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       as_of: b?.date ?? null,
       as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
       connection: facts.of(item.item_id),
+      lifecycle: apiLifecycle(lifecycle, account.account_id),
     };
   });
 
@@ -356,8 +429,44 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection: null,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
       });
     }
+  }
+  const stored = new Set(items.map((i) => i.item_id));
+  // One SimpleFIN fed is SimpleFIN's: still tracked, or let go and removed
+  // (lib/connectors/store.ts connector-ended remembers it). LENIENT: one
+  // that can't be read is said as a manual account.
+  const fedIds = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
+    ? await endedAccountsStore.getAllReport(ctx).then(
+        (r) => new Set([...r.entries.keys(), ...r.unreadable, ...r.unrecognised]),
+        () => new Set<string>()
+      )
+    : new Set<string>();
+  for (const id of fed.accounts.keys()) fedIds.add(id);
+  for (const [root, { entry }] of endedOnly) {
+    const b = balances.get(root) ?? null;
+    const type = entry.type ?? 'other';
+    accounts.push({
+      id: root,
+      source: isManualId(root) ? (fedIds.has(root) ? 'simplefin' : 'manual') : 'plaid',
+      name: entry.label.name,
+      official_name: null,
+      institution: entry.label.institution,
+      type,
+      subtype: null,
+      mask: entry.label.mask,
+      balance: b?.value ?? null,
+      // As its end recorded it, where the write knew it.
+      currency: entry.currency ?? null,
+      credit_limit: null,
+      is_debt: isOwedType(type),
+      hidden: hidden.has(root),
+      as_of: b?.date ?? null,
+      as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
+      connection: entry.item_id && stored.has(entry.item_id) ? facts.of(entry.item_id) : null,
+      lifecycle: apiLifecycle(lifecycle, root),
+    });
   }
   // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
   // above). One kept as a manual account on a disconnect that stopped part
@@ -390,6 +499,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
       });
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
@@ -403,7 +513,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
-  return { accounts, missing, notes, hidden, links };
+  return { accounts, missing, notes, hidden, links, lifecycle };
 }
 
 /**
@@ -486,9 +596,14 @@ type NetWorthRead = { read: AccountsRead; history: HistoryPoint[] };
 
 async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthRead> {
   const read = await accountsRead(ctx, includeHidden);
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden);
+  // Accounts that ended are subtracted from their end day either way: they
+  // are no longer the person's to count, hidden or not.
+  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended, shortDays(read.lifecycle, includeHidden ? new Map() : read.hidden));
   return { read, history };
 }
+
+/** Whether an account counts in net worth now: not once it has ended. */
+const countsNow = (a: ApiAccount) => a.lifecycle === null || a.lifecycle.date > lastEndDay();
 
 /** The currency net worth is labelled with, and whether the accounts mix
  *  several (the recorded totals add them unconverted, as the chart does). */
@@ -500,11 +615,12 @@ function netWorthCurrency(accounts: readonly ApiAccount[]): { currency: string |
 }
 
 function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
-  const { currency: main, mixed } = netWorthCurrency(read.accounts);
+  const counted = read.accounts.filter(countsNow);
+  const { currency: main, mixed } = netWorthCurrency(counted);
   const totals = new Map<string | null, { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }>();
   let without = 0;
   const days: string[] = [];
-  for (const a of read.accounts) {
+  for (const a of counted) {
     if (a.balance === null) {
       without++;
       continue;
@@ -597,7 +713,7 @@ function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { acco
 
 /** Net worth's history from a read already made. */
 function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery): ApiHistory {
-  const { currency, mixed } = netWorthCurrency(nw.read.accounts);
+  const { currency, mixed } = netWorthCurrency(nw.read.accounts.filter(countsNow));
   return seriesOf(nw.history, q, { account_id: null, currency, mixed }, []);
 }
 
@@ -914,6 +1030,14 @@ export type ActivityRead = {
   tags: TagSet | null;
 };
 
+/** A linked institution as a source of transactions. */
+const apiSourceOf = (s: BankSource): ApiSource => ({
+  institution: s.institution_name,
+  synced_at: s.synced_at,
+  complete: s.coverage === 'complete',
+  no_transactions: s.no_transactions,
+});
+
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
  *  (lib/no-transactions.ts), the rows before them that recurring detection
@@ -924,8 +1048,8 @@ export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<Ac
   const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
-    // assembly's own notes.
-    connectorBanksReport(ctx),
+    // assembly's own notes. One that ended holds no bank.
+    connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
@@ -934,15 +1058,7 @@ export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<Ac
     notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
     ix: indexTaxonomy(taxonomy),
     tags,
-    sources: [
-      ...bank.sources.map((s: BankSource) => ({
-        institution: s.institution_name,
-        synced_at: s.synced_at,
-        complete: s.coverage === 'complete',
-        no_transactions: s.no_transactions,
-      })),
-      ...fedSources.sources,
-    ],
+    sources: [...bank.sources.map(apiSourceOf), ...fedSources.sources],
     hidden: bank.hidden,
     view: noTransactionsView(bank.payload),
   };
@@ -1198,20 +1314,51 @@ export async function readCategories(
 
 // ---- Budgets ----
 
+/** A budget's rollover in the month asked about (lib/rollover.ts Carry): the
+ *  month its carry counts from and why, the month its rollover began, the
+ *  carry, and the months it counts whose transactions may be incomplete. */
+export type ApiRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] };
+
+/** The income pool when income carryover is on (lib/rollover.ts IncomePool). */
+export type ApiIncomePool = {
+  start: string;
+  from: string;
+  carried_in: number;
+  income: number;
+  spending: number;
+  available: number;
+  uncertain_months: string[];
+  months: { month: string; carried_in: number; income: number; spending: number; carried_out: number; uncertain: boolean }[];
+};
+
 export type ApiBudgets = {
   month: string;
   /** The currency the budgets count, and are in: the one most transactions
    *  are in, as the app's. */
   currency: string | null;
-  /** Each category's budget, with its id and its group's (null for one the
-   *  app hasn't stored yet). */
-  budgets: { category: string; budget: number; spent: number; remaining: number; spent_share: number; category_id: string | null; group_id: string | null; group: string | null }[];
+  /** Each category's budget that month (what it was then), with its id and
+   *  its group's (null for one the app hasn't stored yet), and, beside it
+   *  (#37), what is available with what rolled over. */
+  budgets: {
+    category: string;
+    budget: number;
+    spent: number;
+    remaining: number;
+    spent_share: number;
+    category_id: string | null;
+    group_id: string | null;
+    group: string | null;
+    available: number;
+    available_remaining: number;
+    rollover: ApiRollover | null;
+    assumed: boolean;
+  }[];
   /** Each group with a budget of its own or budgeted categories, in the
    *  app's order: its limit by the reconcile rule (lib/budget-set.ts), its own
    *  amount and its categories' added up, and what counts against the limit
    *  (everything in it under a budget of its own, else its budgeted
    *  categories' spending). `reconcile` says which side binds when the two
-   *  differ. */
+   *  differ. The same over what is available, with carries (#37), beside it. */
   groups: {
     id: string | null;
     name: string;
@@ -1223,10 +1370,15 @@ export type ApiBudgets = {
     remaining: number;
     spent_share: number;
     reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+    available: number;
+    available_remaining: number;
+    available_reconcile: { binds: 'group' | 'categories'; group: number; categories: number } | null;
+    rollover: ApiRollover | null;
+    assumed: boolean;
   }[];
   /** Every limit added up (each group's, so nothing counts twice), and what
-   *  counts against them. */
-  total: { budget: number; spent: number };
+   *  counts against them; `available` the same with what rolled over. */
+  total: { budget: number; spent: number; available: number };
   /** This month's spending left out for being in another currency. */
   left_out: LeftOut;
   left_out_text: string | null;
@@ -1234,63 +1386,154 @@ export type ApiBudgets = {
    *  whether they did couldn't be read (counted). */
   excluded: number;
   exclusion_unknown: number;
+  /** The month budgets began to be kept by month: an amount before it is
+   *  assumed (`assumed`). */
+  recorded_since: string;
+  /** The first month with any transactions: no carry or pool counts before it. */
+  earliest_month: string | null;
+  /** Months read for this answer whose transactions may be incomplete, and why. */
+  incomplete_months: { month: string; reasons: string[] }[];
+  /** The income pool, when income carryover is on; null when it is off. */
+  income: ApiIncomePool | null;
+  /** What the earlier months a carry or the income pool counts left out for
+   *  being in another currency, and the same in words. */
+  rollover_left_out: LeftOut;
+  rollover_left_out_text: string | null;
   sources: ApiSource[];
   notes: string[];
 };
 
 const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
 
-/** Monthly budgets with the month's spending against each, as the Budgets
- *  tab works it out (lib/totals.ts spendingByCategory, lib/budget-set.ts
- *  budgetMeters). */
+/** A carry as the API answers it. */
+const apiRollover = (c: Carry | undefined): ApiRollover | null =>
+  c ? { from: c.from, why: c.why, start: c.start, carry: tidy(c.carry), uncertain_months: c.uncertain } : null;
+
+/** A sentence's first letter in capitals. */
+const capital = (s: string) => (s ? s[0].toUpperCase() + s.slice(1) : s);
+
+/** Months (YYYY-MM, oldest first) for a note: up to three named, else how
+ *  many since the first, never implying they run on. */
+const monthList = (ms: readonly string[]): string =>
+  ms.length <= 3 ? (ms.length <= 1 ? (ms[0] ?? '') : `${ms.slice(0, -1).join(', ')} and ${ms[ms.length - 1]}`) : `${ms.length} months since ${ms[0]}`;
+
+/**
+ * Monthly budgets with the month's spending against each, as the Budgets tab
+ * works it out (lib/budget-month.ts: the same read and the same math,
+ * lib/rollover.ts): each budget's amount that month, what it carries into it
+ * when it rolls over, what is available, and the income pool when income
+ * carryover is on. Spending is read from the stored history, back to the
+ * month asked about, or the first month a carry counts. Writes nothing.
+ */
 export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
-  const activity = await readActivity(ctx, !!opts.includeHidden);
-  const { ix, placed } = await readBudgetSet(ctx, activity.ix);
-  const currency = totalsCurrency(activity.rows);
-  const inMonth = (date: string) => date.slice(0, 7) === opts.month;
-  const spent = spendingByCategory(activity.rows, inMonth, currency);
-  const monthRows = activity.rows.filter((t) => inMonth(t.date));
-  const leftOut = leftOutByCurrency(monthRows.filter((t) => t.amount > 0), currency);
+  const today = new Date().toISOString().slice(0, 7);
+  const read = await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden });
+  const { ix, view, currency, activity } = read;
+  const spent = new Map(Object.entries(read.spent));
   const describe = describer(ix);
+  const placed = placeBudgets(view.budgets, ix);
+  const assumed = { categories: new Set(view.assumed.categories), groups: new Set(view.assumed.groups) };
+  const flat = budgetMeters(ix, placed, spent);
+  const withCarries = availableMeters(ix, view.budgets, view.carries, spent);
+  const availableOf = new Map<string, GroupMeter>(withCarries.groups.map((g) => [g.group.id, g]));
   const rows = [...placed.categories]
     .map(([id, budget]) => {
-      const s = spent[id] ?? 0;
-      return { ...describe(id), budget: tidy(budget), spent: tidy(s), remaining: tidy(budget - s), spent_share: share(s, budget) };
+      const s = spent.get(id) ?? 0;
+      const available = tidy(budget + (view.carries.categories[id]?.carry ?? 0));
+      const { category, category_id, group_id, group } = describe(id);
+      return {
+        category,
+        budget: tidy(budget),
+        spent: tidy(s),
+        remaining: tidy(budget - s),
+        spent_share: share(s, budget),
+        category_id,
+        group_id,
+        group,
+        available,
+        available_remaining: tidy(available - s),
+        rollover: apiRollover(view.carries.categories[id]),
+        assumed: assumed.categories.has(id),
+      };
     })
-    .map(({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }) => ({ category, budget, spent: s, remaining, spent_share, category_id, group_id, group }))
     .sort((a, b) => a.category.localeCompare(b.category));
-  const meters = budgetMeters(ix, placed, new Map(Object.entries(spent)));
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
-  if (placed.orphans.length > 0) {
-    notes.push(`${placed.orphans.length} budget${placed.orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
+  const fed = connectorSources(activity.fed, opts.includeHidden ? new Set() : activity.hidden);
+  const windowRows = activity.rows.filter((t) => t.date >= windowStart()).length;
+  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(activity.view, windowRows, 'totals')];
+  const orphans = placeBudgets(read.budgetsNow, ix).orphans;
+  if (orphans.length > 0) {
+    notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
   }
-  const cutoff = firstDay();
-  if (`${opts.month}-01` < cutoff) notes.push(`Only transactions from ${cutoff} on are read, so this month's spending may be short`);
+  // Nothing is counted past this month (lib/rollover.ts budgetsInMonth).
+  if (opts.month > today) notes.push(`${opts.month} hasn’t begun, so nothing has rolled into it yet, and no income pool is worked out for it`);
+  // The month's own spending, and what the carries and the pool count, when
+  // a month may be incomplete: said here as well as in incomplete_months,
+  // which a client may not read, so no figure looks complete when it isn't.
+  // A connection that brings in no transactions is said by its own note.
+  const day = (d: string) => d.slice(0, 10);
+  const own = (read.gaps.find((g) => g.month === opts.month)?.gaps ?? []).filter((g) => g.kind !== 'without');
+  if (read.earliest !== null && opts.month < read.earliest) {
+    notes.push(`No transactions are stored from before ${read.earliest}, so nothing is counted as spent in ${opts.month}`);
+  } else if (own.length > 0) {
+    notes.push(`${opts.month} may be incomplete, so what is spent may be off: ${own.map((g) => gapText(g, day)).join('; ')}`);
+  }
+  const counted = [...new Set([...Object.values(view.carries.categories), ...Object.values(view.carries.groups)].flatMap((c) => c.uncertain))].sort();
+  const pooled = read.pool?.uncertain ?? [];
+  if (counted.length > 0 || pooled.length > 0) {
+    const what = counted.length > 0 && pooled.length > 0 ? 'What rolled over and the income pool count' : counted.length > 0 ? 'What rolled over counts' : 'The income pool counts';
+    notes.push(`${what} months that may be incomplete (${monthList([...new Set([...counted, ...pooled])].sort())}), so ${counted.length > 0 && pooled.length > 0 ? 'they' : 'it'} may be off: see incomplete_months`);
+  }
+  const reconcileOf = (r: GroupMeter['reconcile']) => r && { binds: r.binds, group: tidy(r.group), categories: tidy(r.categories) };
+  const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), currency);
   return {
     month: opts.month,
     currency,
     budgets: rows,
-    groups: meters.groups
+    groups: flat.groups
       .filter((m) => m.limit !== null)
-      .map((m) => ({
-        id: shownId(m.group.id),
-        name: m.group.name,
-        kind: m.group.kind,
-        budget: tidy(m.limit!),
-        own: m.own === null ? null : tidy(m.own),
-        categories_budget: tidy(m.categories_total),
-        spent: tidy(m.spent),
-        remaining: tidy(m.limit! - m.spent),
-        spent_share: share(m.spent, m.limit!),
-        reconcile: m.reconcile && { binds: m.reconcile.binds, group: tidy(m.reconcile.group), categories: tidy(m.reconcile.categories) },
-      })),
-    total: { budget: tidy(meters.total.budget), spent: tidy(meters.total.spent) },
+      .map((m) => {
+        const a = availableOf.get(m.group.id)!;
+        return {
+          id: shownId(m.group.id),
+          name: m.group.name,
+          kind: m.group.kind,
+          budget: tidy(m.limit!),
+          own: m.own === null ? null : tidy(m.own),
+          categories_budget: tidy(m.categories_total),
+          spent: tidy(m.spent),
+          remaining: tidy(m.limit! - m.spent),
+          spent_share: share(m.spent, m.limit!),
+          reconcile: reconcileOf(m.reconcile),
+          available: tidy(a.limit!),
+          available_remaining: tidy(a.limit! - a.spent),
+          available_reconcile: reconcileOf(a.reconcile),
+          rollover: apiRollover(view.carries.groups[m.group.id]),
+          assumed: assumed.groups.has(m.group.id),
+        };
+      }),
+    total: { budget: tidy(flat.total.budget), spent: tidy(flat.total.spent), available: tidy(withCarries.total.budget) },
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
     // Transactions, not rows: a split one is one (transactionCounter).
-    excluded: countTransactions(monthRows.filter((t) => t.excluded === true)),
-    exclusion_unknown: countTransactions(monthRows.filter((t) => t.excluded === null)),
-    sources: activity.sources,
+    excluded: countTransactions(read.monthRows.filter((t) => t.excluded === true)),
+    exclusion_unknown: countTransactions(read.monthRows.filter((t) => t.excluded === null)),
+    recorded_since: view.recorded_since,
+    earliest_month: read.earliest,
+    // Days as UTC days, as every other date here.
+    incomplete_months: read.gaps.map((g) => ({ month: g.month, reasons: g.gaps.map((x) => capital(gapText(x, (d) => d.slice(0, 10)))) })),
+    income: read.pool && {
+      start: read.pool.start,
+      from: read.pool.from,
+      carried_in: read.pool.carried_in,
+      income: read.pool.income,
+      spending: read.pool.spending,
+      available: read.pool.available,
+      uncertain_months: read.pool.uncertain,
+      months: read.pool.months,
+    },
+    rollover_left_out: read.countedLeftOut,
+    rollover_left_out_text: leftOutText(read.countedLeftOut, currency, { where: 'what rolled over from earlier months', plural: false }),
+    sources: [...activity.bank.sources.map(apiSourceOf), ...fed.sources],
     notes,
   };
 }
@@ -1452,6 +1695,10 @@ export type ApiHoldingsAccount = {
   observed_at: string | null;
   /** The first day anything was recorded for it. */
   recorded_since: string | null;
+  /** When it ended, as on /accounts, or null while it is open: an account
+   *  that ended counts in nothing from its day, and its positions are the
+   *  last recorded before it. Version 1 gained it. */
+  lifecycle: ApiLifecycle | null;
   positions: {
     security_id: string;
     ticker: string | null;
@@ -1520,6 +1767,7 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
         as_of: held ? day!.date : null,
         observed_at: held?.observed_at ?? null,
         recorded_since: span.first,
+        lifecycle: a.lifecycle,
         positions: (held?.positions ?? []).map((p) => ({
           security_id: p.security_id,
           ticker: p.ticker,

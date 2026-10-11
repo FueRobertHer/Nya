@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
-import { loggable } from '@/lib/log-safe';
+import { storeFailure } from '@/lib/store-failure';
 
 // The Activity tab's transactions: every linked institution's, synced with
 // Plaid, and the rows entered on manual accounts, with what the person said
@@ -84,9 +84,8 @@ export async function GET(req: Request) {
       from_cache: fromCache,
     });
   } catch (err: any) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(loggable(err));
-    return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    // Account closures that can't be read (lib/lifecycle.ts) are a 409 with
+    // their ids, never rows of a closed account counted (lib/store-failure.ts).
+    return storeFailure(err, 'Failed to fetch transactions');
   }
 }

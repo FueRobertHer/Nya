@@ -290,7 +290,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   { name: 'rules', summary: 'Your rules, in the order they run, each with what it matches and does, and how many transactions it matches.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
-    summary: 'Monthly budgets, per category and per group, with the month’s spending against each.',
+    summary: 'Monthly budgets, per category and per group, with the month’s spending against each, what rolled over into each, and what is left to allocate when income carryover is on.',
     args: { month: { kind: 'month', description: 'The month, YYYY-MM. Defaults to this month (UTC).' }, include_hidden: INCLUDE_HIDDEN },
   },
   {
@@ -307,6 +307,11 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   {
     name: 'recurring',
     summary: 'Recurring bills detected from transactions, with how often each comes and its estimated next date.',
+    args: { include_hidden: INCLUDE_HIDDEN },
+  },
+  {
+    name: 'goals',
+    summary: 'Savings goals, each with what it counts of its account, what went in over the last three months, and when it will be reached.',
     args: { include_hidden: INCLUDE_HIDDEN },
   },
   {
@@ -371,13 +376,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_accounts',
     'accounts',
     'List accounts',
-    'Every account, linked, kept up to date through SimpleFIN, and manual, with where it comes from (source), its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, and how its bank connection was last found.',
+    'Every account, linked, kept up to date through SimpleFIN, and manual, with where it comes from (source), its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, how its bank connection was last found, and when it ended if it did (lifecycle: closed, left or untracked, counted in nothing from that day; listed even once its bank stops returning it).',
     NARROW_HIDDEN
   ),
   {
     name: 'get_net_worth',
     title: 'Net worth',
-    description: `Net worth now, one total per currency (nothing is converted), from each account’s newest measured balance, and its recorded history (hidden accounts subtracted, as the app’s chart does). ${DATA_NOT_INSTRUCTIONS}`,
+    description: `Net worth now, one total per currency (nothing is converted), from each account’s newest measured balance, and its recorded history (hidden accounts subtracted, and each account that ended from its end day on, as the app’s chart does). ${DATA_NOT_INSTRUCTIONS}`,
     args: {
       include_history: { kind: 'flag', description: 'Also give its recorded history (true by default).' },
       from: { kind: 'day', description: 'History from this day, YYYY-MM-DD (UTC).' },
@@ -423,7 +428,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet.',
     NARROW_HIDDEN
   ),
   fromOperation(
@@ -452,6 +457,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'rules',
     'Rules',
     'The person’s rules, in the order they run: each matches transactions by name, amount, account, institution, category or source (all its conditions), then files them under a category, gives them a name, adds tags or hides them from budgets and reports. Each with a sentence saying it, whether it is on, what keeps it from working, and how many transactions it matches. A choice the person made on one transaction always wins over a rule.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'get_goals',
+    'goals',
+    'Savings goals',
+    'Savings goals: each one’s target, what it counts as saved of the account it tracks (its allocation, or what the allocations leave, never more than the balance), its monthly target and target date, what went into the account over the last three complete months, and when it is projected to be reached: from that average, or from the monthly target when there is none (rate_from says which), and never a date for a goal nothing went into. Archived goals are listed, marked. Every amount is in the goal’s own account currency; nothing is converted.',
     NARROW_HIDDEN
   ),
   fromOperation(

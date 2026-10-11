@@ -1,0 +1,310 @@
+import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import './clerk-mock';
+import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+
+// Goals in the read-only API and the MCP server (#42): GET /api/v1/goals and
+// get_goals, from stored data alone, as the Goals card tells them, with
+// hidden accounts and other people's goals never in them, and Plaid never
+// called.
+
+process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+
+const plaidTouched: string[] = [];
+mock.module('@/lib/plaid', () => ({
+  plaidClient: new Proxy(
+    {},
+    {
+      get(_target, prop) {
+        if (typeof prop === 'string') plaidTouched.push(prop);
+        return async () => {
+          throw new Error('Plaid must not be called by the API');
+        };
+      },
+    }
+  ),
+}));
+
+const fake = new FakeRedis({ deserialize: true });
+mock.module('@/lib/storage', () => storageMock(fake));
+afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
+
+const { ctx, OTHER, seedPerson, seedOther, daysAgo } = await import('./api-fixture');
+const { createToken } = await import('@/lib/api-tokens');
+const { forgetEpochs } = await import('@/lib/sessions');
+const { setGoals } = await import('@/lib/goals');
+const { goalPlansStore } = await import('@/lib/goal-plans');
+const { saveManualAccount } = await import('@/lib/manual');
+const { setAccountHidden } = await import('@/lib/hidden');
+const links = await import('@/lib/links');
+const { markEnded, recordAssumedClosures, reopenAccount } = await import('@/lib/lifecycle');
+const { exportedGoals } = await import('@/lib/goal-export');
+const { getGoals } = await import('@/lib/goals');
+const { dayLabel } = await import('@/lib/goal-text');
+const v1 = await import('@/app/api/v1/goals/route');
+const mcp = await import('@/app/api/mcp/route');
+const app = await import('@/app/api/goals/route');
+
+const ID = (n: number) => `0000000${n}-1d2e-4f5a-8b6c-7d8e9f0a1b2c`;
+const today = () => new Date().toISOString().slice(0, 10);
+
+let token = '';
+const saved = { ...process.env };
+beforeEach(async () => {
+  fake.reset();
+  forgetEpochs();
+  delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+  delete process.env.CLERK_SECRET_KEY;
+  delete process.env.CONTAINER_ID;
+  await registerTestContainer(fake);
+  await seedPerson(fake);
+  token = (await createToken(ctx, 'Tests')).token;
+  // Saved as the app saves them: through its route, which checks each. The
+  // bike is archived in a save of its own, as the app archives a goal.
+  const save = async (bike: Record<string, unknown>) => {
+    const res: Response = await app.PUT(
+      new Request('http://x/api/goals', {
+        method: 'PUT',
+        body: JSON.stringify({
+          goals: [
+            { id: ID(1), name: 'Rainy day', target: 3000, account_id: 'acc_chk', plan: { allocation: 1000, monthly_target: 100, target_date: '2030-01-31' } },
+            { id: ID(2), name: 'House', target: 60_000, account_id: 'acc_save', plan: {} },
+            { id: ID(3), name: 'Someday', target: 800, account_id: null, plan: { monthly_target: 50 } },
+            { id: ID(5), name: 'Bike', target: 900, account_id: 'manual_wallet', plan: bike },
+          ],
+        }),
+      })
+    );
+    expect(res.status).toBe(200);
+  };
+  await save({});
+  await save({ archived: true });
+  plaidTouched.length = 0;
+});
+afterEach(() => {
+  process.env = { ...saved };
+  expect(plaidTouched).toEqual([]);
+});
+
+const ask = async (query = '', tok = token) => {
+  const res: Response = await v1.GET(new Request(`https://nya.test/api/v1/goals${query ? `?${query}` : ''}`, { headers: { authorization: `Bearer ${tok}` } }));
+  return { res, body: (await res.json()) as any };
+};
+const byId = (body: any) => new Map<string, any>(body.goals.map((g: any) => [g.id, g]));
+
+describe('GET /api/v1/goals', () => {
+  test('every goal, as the app counts it, on the balances Nya last measured', async () => {
+    const { res, body } = await ask();
+    expect(res.status).toBe(200);
+    expect(res.headers.get('cache-control')).toBe('no-store');
+    expect(body.goals.map((g: any) => g.id)).toEqual([ID(1), ID(2), ID(3), ID(5)]);
+    const goals = byId(body);
+    // Checking's newest measured balance is 1250: the allocation counts as set.
+    expect(goals.get(ID(1))).toMatchObject({
+      name: 'Rainy day',
+      currency: 'USD',
+      account_id: 'acc_chk',
+      account_name: 'Checking',
+      state: 'tracked',
+      saved: 1000,
+      allocation: 1000,
+      scaled: false,
+      shares_account_with: [],
+      monthly_target: 100,
+      target_date: '2030-01-31',
+      archived: false,
+    });
+    expect(goals.get(ID(1)).pace.source).toBe('transactions');
+    expect(goals.get(ID(1)).pace.months.map((m: any) => m.month)).toEqual(body.months);
+    expect(goals.get(ID(1)).projection.should_have).toBe(1000); // the line starts today, at what it holds
+    expect(body.accounts).toEqual([{ account_id: 'acc_chk', currency: 'USD', balance: 1250, allocated: 1000, unallocated: 250, over_allocated: 0 }]);
+    // Untracked: its plan, and nothing counted.
+    expect(goals.get(ID(3))).toMatchObject({ state: 'untracked', saved: null, monthly_target: 50, pace: null, projection: null, notes: ['No account linked.'] });
+    // Archived: marked, with the day, counting nothing.
+    expect(goals.get(ID(5))).toMatchObject({ archived: true, archived_on: today(), archived_amount: 40, saved: null, projection: null });
+    // A connection hasn't been loaded: said, never passed off as whole.
+    expect(body.complete).toBe(false);
+    expect(body.missing_accounts.map((m: any) => m.institution)).toEqual(['NewBank']);
+  });
+
+  test('a goal on a hidden account counts nothing and names nothing, unless hidden accounts are asked for', async () => {
+    expect(byId((await ask()).body).get(ID(2))).toMatchObject({
+      state: 'hidden',
+      saved: null,
+      account_id: null,
+      account_name: null,
+      currency: null,
+      shares_account_with: [],
+      pace: null,
+      projection: null,
+      notes: ['Tracked account is hidden.'],
+    });
+    expect(byId((await ask('include_hidden=true')).body).get(ID(2))).toMatchObject({ state: 'tracked', saved: 5000, account_id: 'acc_save', account_name: 'Savings', currency: 'USD' });
+  });
+
+  test('nor when it was reconnected: no word of what it follows', async () => {
+    // Tracked by its id before a reconnect, linked to the hidden account's id now.
+    await setGoals(ctx, [{ id: ID(6), name: 'Old house', target: 1000, account_id: 'acc_save_before' }]);
+    await links.linkAccounts(ctx, 'acc_save_before', 'acc_save', {});
+    const { body } = await ask();
+    expect(byId(body).get(ID(6))).toMatchObject({ state: 'hidden', account_id: null, account_name: null, currency: null, notes: ['Tracked account is hidden.'] });
+    for (const said of ['Savings', 'acc_save', 'reconnected']) expect(JSON.stringify(body)).not.toContain(said);
+    // Asked for, it is counted, and says what it follows.
+    expect(byId((await ask('include_hidden=true')).body).get(ID(6))).toMatchObject({ state: 'tracked', account_id: 'acc_save', notes: expect.arrayContaining(['Follows Savings, which was reconnected.']) });
+  });
+
+  test('a hidden account that can’t be read is not missing from what was asked: nothing is incomplete for it', async () => {
+    // Every connection loaded, so only the hidden account could be missing.
+    await fake.hdel(ctxKey('plaid:items'), 'item_new');
+    await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: 'Home', type: 'depository', subtype: null, balance: 10, updated_at: new Date().toISOString() });
+    await setAccountHidden(ctx, 'manual_jar', 'depository', true);
+    await fake.hset(ctxKey('manual:accounts'), { manual_jar: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await setGoals(ctx, [
+      { id: ID(6), name: 'Jar', target: 100, account_id: 'manual_jar' },
+      { id: ID(7), name: 'Gone', target: 100, account_id: 'acc_gone' },
+    ]);
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      const { body } = await ask();
+      expect(body).toMatchObject({ complete: true, missing_accounts: [] });
+      expect(byId(body).get(ID(6))).toMatchObject({ state: 'hidden', account_id: null });
+      expect(byId(body).get(ID(7)).state).toBe('disconnected');
+      // Asked for, it is missing, and a goal whose account isn't listed may be on it.
+      const all = (await ask('include_hidden=true')).body;
+      expect(all.complete).toBe(false);
+      expect(all.missing_accounts).toEqual([{ institution: null, account_id: 'manual_jar', reason: 'unreadable', source: 'manual' }]);
+      expect(byId(all).get(ID(7)).state).toBe('unavailable');
+    } finally {
+      console.error = quiet;
+    }
+  });
+
+  test('a goal on a card, saved by the release before, is owed, not saved: no progress', async () => {
+    await setGoals(ctx, [{ id: ID(4), name: 'Card', target: 500, account_id: 'acc_card' }]);
+    expect(byId((await ask()).body).get(ID(4))).toMatchObject({ state: 'owed', saved: null, projection: null });
+  });
+
+  test('plans that can’t be read are a 409, never goals without them', async () => {
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const error = console.error;
+    console.error = () => {};
+    try {
+      const { res, body } = await ask();
+      expect(res.status).toBe(409);
+      expect(body.error.code).toBe('unreadable');
+    } finally {
+      console.error = error;
+    }
+  });
+
+  test('another person’s token reads only their own goals', async () => {
+    await seedOther(fake);
+    await setGoals(OTHER, [{ id: ID(9), name: 'OTHER-SECRET-GOAL', target: 10, account_id: null }]);
+    await goalPlansStore.set(OTHER, ID(9), { v: 1, core: { name: 'OTHER-SECRET-GOAL', target: 10, account_id: null }, plan: { monthly_target: 3 }, before: null });
+    expect(JSON.stringify((await ask()).body)).not.toContain('OTHER-SECRET');
+    process.env.CONTAINER_ID = OTHER.container;
+    forgetEpochs();
+    const theirs = await ask('', (await createToken(OTHER, 'Theirs')).token);
+    expect(theirs.body.goals.map((g: any) => g.name)).toEqual(['OTHER-SECRET-GOAL']);
+    expect(JSON.stringify(theirs.body)).not.toContain('Rainy day');
+  });
+
+  test('read only: every other method refused, and nothing written', async () => {
+    expect(v1.POST().status).toBe(405);
+    const before = JSON.stringify([...((fake as any).hashes as Map<string, Map<string, string>>).get(ctxKey('goal-plans'))!.entries()]);
+    await ask('include_hidden=true');
+    expect(JSON.stringify([...((fake as any).hashes as Map<string, Map<string, string>>).get(ctxKey('goal-plans'))!.entries()])).toBe(before);
+  });
+});
+
+describe('a goal whose account ended (#50)', () => {
+  const CHECKING = { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' };
+  const rainy = async (query = '') => byId((await ask(query)).body).get(ID(1));
+
+  test('closed, no longer yours, or no longer followed: ended, with when, counting nothing, its plan kept', async () => {
+    const day = daysAgo(1);
+    const cases = [
+      [{ state: 'closed', on: day, note: 'Moved banks' }, `Its account closed on ${dayLabel(day)}, so it counts nothing from then.`],
+      [{ state: 'left', on: day }, `Its account isn’t yours from ${dayLabel(day)}, so it counts nothing from then.`],
+      [{ state: 'untracked', from: day }, `Its account isn’t followed from ${dayLabel(day)}, so it counts nothing from then.`],
+    ] as const;
+    for (const [lifecycle, said] of cases) {
+      await markEnded(ctx, 'acc_chk', lifecycle, CHECKING);
+      const { body } = await ask();
+      const g = byId(body).get(ID(1));
+      expect(g).toMatchObject({
+        state: 'ended',
+        account_id: 'acc_chk',
+        account_name: 'Checking',
+        account_lifecycle: { state: lifecycle.state, date: day, assumed: false },
+        saved: null,
+        saved_as_of: null,
+        pace: null,
+        projection: null,
+        notes: [said],
+        // Its plan, as set.
+        allocation: 1000,
+        monthly_target: 100,
+        target_date: '2030-01-31',
+      });
+      // None of its balance is allocated, or left unallocated: it counts in nothing.
+      expect(body.accounts).toEqual([]);
+    }
+  });
+
+  test('an assumed closure says so, and where to say whether it closed', async () => {
+    await recordAssumedClosures(ctx, [{ account_id: 'acc_chk', on: daysAgo(2), about: CHECKING }]);
+    const g = await rainy();
+    expect(g).toMatchObject({ state: 'ended', account_lifecycle: { state: 'closed', date: daysAgo(2), note: null, assumed: true }, saved: null });
+    expect(g.notes).toEqual([
+      `Its account is assumed closed from ${dayLabel(daysAgo(2))}, as Chase stopped reporting it, so it counts nothing from then. Say whether it closed under Accounts that ended, on the Accounts tab.`,
+    ]);
+  });
+
+  test('reopened, it counts again, allocation and all', async () => {
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(1) }, CHECKING);
+    expect((await rainy()).state).toBe('ended');
+    await reopenAccount(ctx, 'acc_chk', new Map());
+    expect(await rainy()).toMatchObject({ state: 'tracked', account_lifecycle: null, saved: 1000, allocation: 1000 });
+    expect((await ask()).body.accounts).toEqual([{ account_id: 'acc_chk', currency: 'USD', balance: 1250, allocated: 1000, unallocated: 250, over_allocated: 0 }]);
+  });
+
+  test('the download agrees: its plan as set, the account’s end in its own part', async () => {
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(1) }, CHECKING);
+    const api = await rainy();
+    const [exported] = await exportedGoals(ctx, await getGoals(ctx));
+    expect(exported).toMatchObject({ id: ID(1), account_id: 'acc_chk', allocation: api.allocation, monthly_target: api.monthly_target, target_date: api.target_date, archived: false });
+  });
+
+  test('a hidden account that ended says only that it is hidden, unless hidden accounts are asked for', async () => {
+    await markEnded(ctx, 'acc_save', { state: 'closed', on: daysAgo(1) }, { ...CHECKING, label: { name: 'Savings', institution: 'Chase', mask: '3333' } });
+    expect(byId((await ask()).body).get(ID(2))).toMatchObject({ state: 'hidden', account_id: null, account_lifecycle: null, notes: ['Tracked account is hidden.'] });
+    expect(byId((await ask('include_hidden=true')).body).get(ID(2))).toMatchObject({ state: 'ended', account_id: 'acc_save', account_lifecycle: { state: 'closed' } });
+  });
+});
+
+describe('the MCP tool get_goals', () => {
+  const call = async (args?: unknown) => {
+    const res: Response = await mcp.POST(
+      new Request('https://nya.test/api/mcp', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name: 'get_goals', ...(args === undefined ? {} : { arguments: args }) } }),
+      })
+    );
+    return ((await res.json()) as any).result;
+  };
+
+  test('the same answer as the REST endpoint, with a sentence of numbers only', async () => {
+    const result = await call();
+    expect(result.structuredContent).toEqual((await ask()).body);
+    const sentence = result.content[0].text;
+    expect(sentence).toMatch(/^3 goals, and 1 archived: \d+ reached, \d+ on track, \d+ behind, \d+ with no recent contributions\. Incomplete:/);
+    for (const name of ['Rainy day', 'House', 'Someday', 'Bike', 'Checking']) expect(sentence).not.toContain(name);
+  });
+
+  test('its arguments are checked like the endpoint’s', async () => {
+    expect((await call({ include_hidden: 'yes' })).isError).toBe(true);
+    expect((await call({ include_hidden: true })).structuredContent.goals[1].state).toBe('tracked');
+  });
+});

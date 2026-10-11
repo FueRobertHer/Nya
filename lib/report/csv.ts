@@ -10,15 +10,30 @@
 //
 // One table, a row per figure: `section` says what the row is (the report,
 // its status and gaps, the totals, each category's money in or out, each
-// month, the marked categories, each institution and manual account), `name`
-// which one, then the amounts (positive sums, in `currency`), how many
+// month, the marked categories, each institution and manual account, each
+// account that ended), `name` which one, then the amounts (positive sums, in
+// `currency`), how many
 // transactions they count, and a note. Days are written YYYY-MM-DD, on the
 // calendar of the report's time zone; times (when the report was made, when
 // each connection last synced) are ISO 8601 in UTC, as the file says.
 
 import { csvRow, UTF8_BOM, type CsvValue } from '../csv';
-import type { Report } from './build';
-import { caveatLines, gapShort, MANUAL_NOTE, NO_TRANSACTIONS_WORDS, problemLines, reportTitle, STATE_WORDS, statusHeadline, totalsNote } from './words';
+import { endedBefore, type Report } from './build';
+import {
+  caveatLines,
+  endedConnection,
+  endedCounted,
+  endedWords,
+  ENDED_NOTE,
+  gapShort,
+  MANUAL_NOTE,
+  NO_TRANSACTIONS_WORDS,
+  problemLines,
+  reportTitle,
+  STATE_WORDS,
+  statusHeadline,
+  totalsNote,
+} from './words';
 
 export const REPORT_CSV_COLUMNS = ['section', 'name', 'money_in', 'money_out', 'net', 'transactions', 'currency', 'note'] as const;
 
@@ -86,6 +101,7 @@ export function reportCsv(report: Report): string {
           i.synced_at ? `transactions last brought in ${i.synced_at}` : 'when its transactions were last brought in isn’t known',
           i.first_date ? `transactions in Nya from ${i.first_date}` : null,
           ...report.gaps.filter((g) => g.item_id === i.item_id).map((g) => gapShort(g, iso)),
+          i.ended_by && endedBefore(i, period) ? endedConnection(i.ended_by, iso) : null,
         ];
     line('institution', i.institution_name, null, null, null, null, parts.filter(Boolean).join('; '));
   }
@@ -103,6 +119,10 @@ export function reportCsv(report: Report): string {
     );
   }
   if (report.manual.length > 0) line('caveat', MANUAL_NOTE);
+  for (const e of report.ended) {
+    line('ended_account', e.institution ? `${e.institution}: ${e.account}` : e.account, null, null, null, null, `${endedWords(e, iso)}. ${endedCounted(e, iso)}`);
+  }
+  if (report.ended.length > 0) line('caveat', ENDED_NOTE);
   for (const r of report.removed) {
     line(
       'removed_connection',

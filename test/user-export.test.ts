@@ -331,6 +331,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       hidden_at: null,
       // The newest RECORDED balance, with its day (a partial measurement counts).
       latest_balance: { balance: 1700, date: '2026-01-04' },
+      lifecycle: null,
     });
     expect(byId.acc_card).toMatchObject({ type: 'credit', credit_limit: 5000, hidden: true, hidden_at: '2026-03-01T00:00:00.000Z', latest_balance: { balance: 500, date: '2026-01-03' } });
     expect(byId.acc_brk).toMatchObject({ item_id: 'item_b', institution_name: 'Fidelity', connected: true, name: 'Brokerage', mask: '9999', type: 'investment', latest_balance: null });
@@ -343,7 +344,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     // Manual accounts are listed apart, once.
     expect(byId.manual_house).toBeUndefined();
     expect(doc.manual_accounts).toEqual([
-      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null },
+      { account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z', hidden: false, hidden_at: null, lifecycle: null },
     ]);
     expect(doc.hidden_accounts).toEqual([{ account_id: 'acc_card', type: 'credit', hidden_at: '2026-03-01T00:00:00.000Z' }]);
   });
@@ -453,11 +454,87 @@ describe('everything stored, decrypted, and nothing else', () => {
     // budget was saved under that Plaid's categories have ("Travel") is that
     // category, any other its own. Ids are null until the app stores them.
     expect(doc.budgets).toEqual([
-      { category: 'Food', monthly_amount: 400, category_id: null, group: 'Other' },
-      { category: 'travel', monthly_amount: 150, category_id: null, group: 'Travel and entertainment' },
+      { category: 'Food', monthly_amount: 400, category_id: null, group: 'Other', rollover: null },
+      { category: 'travel', monthly_amount: 150, category_id: null, group: 'Travel and entertainment', rollover: null },
     ]);
     expect(doc.group_budgets).toEqual([]);
-    expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
+    // A goal with no plan: its four fields, and nothing set.
+    expect(doc.goals).toEqual([
+      { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk', allocation: null, monthly_target: null, target_date: null, archived: false, archived_on: null, archived_amount: null, plan_start: null },
+    ]);
+    expect(doc['goal-plans']).toEqual([]);
+  });
+
+  test('goals with plans: the goals part gains each plan as the app applies it, and goal-plans holds them as stored', async () => {
+    const { goalPlansStore } = await import('@/lib/goal-plans');
+    await fake.set(
+      ctxKey('goals'),
+      await enc([
+        { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' },
+        { id: 'g2', name: 'Car', target: 9000, account_id: 'acc_chk' },
+        { id: 'g3', name: 'Moved', target: 100, account_id: 'acc_card' },
+      ])
+    );
+    const trip = {
+      v: 1 as const,
+      core: { name: 'Trip', target: 3000, account_id: 'acc_chk' },
+      plan: { allocation: { amount: 500.25, account_id: 'acc_chk' }, monthly_target: 100, target_date: '2027-05-01', plan_start: { date: '2026-09-01', amount: 400 }, archived: { on: '2026-10-01', amount: 3000 } },
+      before: null,
+    };
+    // Its allocation was set on checking; the release before moved the goal.
+    const moved = { v: 1 as const, core: { name: 'Moved', target: 100, account_id: 'acc_chk' }, plan: { allocation: { amount: 50, account_id: 'acc_chk' } }, before: null };
+    await goalPlansStore.set(ctx, 'g1', trip);
+    await goalPlansStore.set(ctx, 'g3', moved);
+    await fake.hset(ctxKey('goal-plans'), { g2: DAMAGED });
+    const doc = await download();
+    expect(doc.goals).toEqual([
+      { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk', allocation: 500.25, monthly_target: 100, target_date: '2027-05-01', archived: true, archived_on: '2026-10-01', archived_amount: 3000, plan_start: { date: '2026-09-01', amount: 400 } },
+      // Its plan couldn't be read: not known, never "nothing set".
+      { id: 'g2', name: 'Car', target: 9000, account_id: 'acc_chk', allocation: null, monthly_target: null, target_date: null, archived: null, archived_on: null, archived_amount: null, plan_start: null },
+      { id: 'g3', name: 'Moved', target: 100, account_id: 'acc_card', allocation: null, monthly_target: null, target_date: null, archived: false, archived_on: null, archived_amount: null, plan_start: null },
+    ]);
+    expect(doc['goal-plans']).toEqual([
+      { id: 'g1', value: trip },
+      { id: 'g3', value: moved },
+    ]);
+    expect(doc.problems).toContainEqual({ section: 'goal-plans', problem: 'unreadable', ids: ['g2'] });
+    // Everything else is still in the file.
+    expect(doc.budgets).toHaveLength(2);
+  });
+
+  test('a budget that rolls over says so, with what rolls into this month, worked out as the app and the API work it out (#37)', async () => {
+    const { loadBudgets } = await import('@/lib/budget-store');
+    const { budgetMonthsStore, incomeCarryoverStore } = await import('@/lib/budget-months-store');
+    const { startMonths, setRollover, addMonths } = await import('@/lib/rollover');
+    const { readBudgets } = await import('@/lib/api-read');
+    const { budgets, taxonomy } = await loadBudgets(ctx);
+    const food = taxonomy.categories.find((c) => c.name === 'Food')!.id;
+    const month = new Date().toISOString().slice(0, 7);
+    const from = addMonths(month, -2);
+    await budgetMonthsStore.set(ctx, setRollover(startMonths(budgets, from), 'categories', food, { on: true, from }, month));
+    await incomeCarryoverStore.set(ctx, { version: 1, enabled: false, start: from });
+    const doc = await download();
+    const entry = (doc.budgets as { category_id: string; rollover: unknown }[]).find((b) => b.category_id === food)!;
+    // No spending since: two months of 400 roll over in full.
+    expect(entry.rollover).toMatchObject({ from, why: 'start', start: from, carry: 800 });
+    expect((doc.budgets as { category: string; rollover: unknown }[]).find((b) => b.category === 'travel')!.rollover).toBeNull();
+    // The same as the read-only API answers.
+    const api = await readBudgets(ctx, { month });
+    expect(api.budgets.find((b) => b.category_id === food)!.rollover as unknown).toEqual(entry.rollover);
+    // The settings themselves, as stored, in parts of their own.
+    expect(doc['budget-months']).toMatchObject({ version: 1, since: from, categories: { [food]: { seen: 400, rollover: [{ from }] } } });
+    expect(doc['income-carryover']).toEqual({ version: 1, enabled: false, start: from });
+  });
+
+  test('a record of budgets by month that can’t be read: its part null and named, every budget still listed, with no rollover', async () => {
+    const { loadBudgets } = await import('@/lib/budget-store');
+    await loadBudgets(ctx);
+    await fake.set(ctxKey('budget-months'), DAMAGED);
+    const doc = await download();
+    expect(doc['budget-months']).toBeNull();
+    expect(doc.problems).toContainEqual({ section: 'budget-months', problem: 'unreadable' });
+    expect((doc.budgets as { rollover: unknown }[]).length).toBe(2);
+    expect((doc.budgets as { rollover: unknown }[]).every((b) => b.rollover === null)).toBe(true);
   });
 
   test('API tokens: each one’s name and dates, never the token, its hash or its id, and one that can’t be read is counted, never named', async () => {
@@ -980,7 +1057,7 @@ describe('what can’t be read is named, and everything else is in the file', ()
       `Your categories could not be read (the stored data is damaged), so this file does not have them. Each transaction’s nya_category is the category it came with, its nya_category_id is empty, and each budget is listed by its category’s id alone. ${unchanged}`,
     ]);
     expect(doc.transactions.find((t) => t.transaction_id === 't_coffee')).toMatchObject({ nya_category: 'Treats', nya_category_id: null, nya_group: 'Other' });
-    expect(doc.budgets).toEqual(ids.map((id) => ({ category: null, monthly_amount: expect.any(Number), category_id: id, group: null })));
+    expect(doc.budgets).toEqual(ids.map((id) => ({ category: null, monthly_amount: expect.any(Number), category_id: id, group: null, rollover: null })));
     expect(doc.group_budgets).toEqual([]);
     // The transactions CSV is filed by them too, and says so in its own words; the balances CSV isn't.
     const csv = exportFile(doc, 'transactions-csv');
@@ -1091,7 +1168,9 @@ describe('stores built on the storage seam', () => {
     // With the app's own exportable stores (lib/stores.ts) among them, in name order.
     // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
+      'account-lifecycle',
       'allocation-settings',
+      'budget-months',
       'carried-annotations',
       'categories',
       'connection-notices',
@@ -1103,14 +1182,17 @@ describe('stores built on the storage seam', () => {
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
+      'goal-plans',
       'holdings:history',
       'import-settings',
       'imports',
+      'income-carryover',
       'manual-transactions',
       'planned-items',
       'report-settings',
       'rules',
       'tags',
+      'timeline-notes',
       'transaction-annotations',
       'transaction-groups',
       'transaction-splits',
@@ -1530,7 +1612,7 @@ describe('writing it out', () => {
     });
     const doc = await download();
     expect(fake.strings.has(ctxKey('categories'))).toBe(false);
-    expect(doc.budgets).toEqual([{ category: 'Kids Stuff', monthly_amount: 80, category_id: null, group: 'Other' }]);
+    expect(doc.budgets).toEqual([{ category: 'Kids Stuff', monthly_amount: 80, category_id: null, group: 'Other', rollover: null }]);
     const [, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
     const row = rows.find((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')] === id)!;
     const cell = (name: (typeof TRANSACTION_COLUMNS)[number]) => row[TRANSACTION_COLUMNS.indexOf(name)];
@@ -1599,7 +1681,7 @@ describe('writing it out', () => {
       ['2026-01-03', '1050', 'recorded'],
     ]);
     const card = rows.find((r) => r[1] === 'account' && r[2] === 'acc_card' && r[0] === '2026-01-01')!;
-    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true']);
+    expect(card).toEqual(['2026-01-01', 'account', 'acc_card', 'Sapphire', 'Chase', 'credit', '500', 'USD', 'recorded', 'true', '', '', '']);
     // Oldest day first, and on each day the total before the accounts.
     const dates = rows.map((r) => r[0]);
     expect(dates).toEqual([...dates].sort());
@@ -1627,7 +1709,7 @@ describe('writing it out', () => {
     const [header, ...rows] = parseCsv([...balances.pieces()].join(''));
     const house = rows.filter((r) => r[2] === 'manual_house').map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
     expect(house).toEqual([
-      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true' },
+      { date: '2026-01-05', record: 'account', account_id: 'manual_house', account_name: '', institution_name: '', account_type: 'other', balance: '400000', currency: '', kind: 'recorded', account_hidden: 'true', account_state: '', account_state_date: '', note: '' },
     ]);
     const suffix = 'The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.';
     const said = `Not all of your manual accounts could be read: 1 account whose stored data is damaged. Their rows in this file are under their account ids, with no account name. ${suffix}`;
