@@ -25,6 +25,7 @@ import './category-store';
 import './connection-records';
 import './connectors/store';
 import './fire-plan';
+import './goal-plans';
 import './holdings-history';
 import './import/store';
 import './lifecycle';

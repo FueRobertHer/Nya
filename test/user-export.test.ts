@@ -458,7 +458,48 @@ describe('everything stored, decrypted, and nothing else', () => {
       { category: 'travel', monthly_amount: 150, category_id: null, group: 'Travel and entertainment' },
     ]);
     expect(doc.group_budgets).toEqual([]);
-    expect(doc.goals).toEqual([{ id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' }]);
+    // A goal with no plan: its four fields, and nothing set.
+    expect(doc.goals).toEqual([
+      { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk', allocation: null, monthly_target: null, target_date: null, archived: false, archived_on: null, archived_amount: null, plan_start: null },
+    ]);
+    expect(doc['goal-plans']).toEqual([]);
+  });
+
+  test('goals with plans: the goals part gains each plan as the app applies it, and goal-plans holds them as stored', async () => {
+    const { goalPlansStore } = await import('@/lib/goal-plans');
+    await fake.set(
+      ctxKey('goals'),
+      await enc([
+        { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk' },
+        { id: 'g2', name: 'Car', target: 9000, account_id: 'acc_chk' },
+        { id: 'g3', name: 'Moved', target: 100, account_id: 'acc_card' },
+      ])
+    );
+    const trip = {
+      v: 1 as const,
+      core: { name: 'Trip', target: 3000, account_id: 'acc_chk' },
+      plan: { allocation: { amount: 500.25, account_id: 'acc_chk' }, monthly_target: 100, target_date: '2027-05-01', plan_start: { date: '2026-09-01', amount: 400 }, archived: { on: '2026-10-01', amount: 3000 } },
+      before: null,
+    };
+    // Its allocation was set on checking; the release before moved the goal.
+    const moved = { v: 1 as const, core: { name: 'Moved', target: 100, account_id: 'acc_chk' }, plan: { allocation: { amount: 50, account_id: 'acc_chk' } }, before: null };
+    await goalPlansStore.set(ctx, 'g1', trip);
+    await goalPlansStore.set(ctx, 'g3', moved);
+    await fake.hset(ctxKey('goal-plans'), { g2: DAMAGED });
+    const doc = await download();
+    expect(doc.goals).toEqual([
+      { id: 'g1', name: 'Trip', target: 3000, account_id: 'acc_chk', allocation: 500.25, monthly_target: 100, target_date: '2027-05-01', archived: true, archived_on: '2026-10-01', archived_amount: 3000, plan_start: { date: '2026-09-01', amount: 400 } },
+      // Its plan couldn't be read: not known, never "nothing set".
+      { id: 'g2', name: 'Car', target: 9000, account_id: 'acc_chk', allocation: null, monthly_target: null, target_date: null, archived: null, archived_on: null, archived_amount: null, plan_start: null },
+      { id: 'g3', name: 'Moved', target: 100, account_id: 'acc_card', allocation: null, monthly_target: null, target_date: null, archived: false, archived_on: null, archived_amount: null, plan_start: null },
+    ]);
+    expect(doc['goal-plans']).toEqual([
+      { id: 'g1', value: trip },
+      { id: 'g3', value: moved },
+    ]);
+    expect(doc.problems).toContainEqual({ section: 'goal-plans', problem: 'unreadable', ids: ['g2'] });
+    // Everything else is still in the file.
+    expect(doc.budgets).toHaveLength(2);
   });
 
   test('API tokens: each one’s name and dates, never the token, its hash or its id, and one that can’t be read is counted, never named', async () => {
@@ -1105,6 +1146,7 @@ describe('stores built on the storage seam', () => {
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
+      'goal-plans',
       'holdings:history',
       'import-settings',
       'imports',

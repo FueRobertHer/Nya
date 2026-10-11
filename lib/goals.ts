@@ -4,6 +4,12 @@
 // linked account's live balance. Stored as one encrypted JSON blob in Redis,
 // same reasoning as budgets (rare, single-user writes). An unreadable blob is
 // reported, never treated as "no goals" (see lib/stored-json.ts).
+//
+// The blob keeps each goal's four fields only, as every release has: the
+// release before plans rewrites it with those four on every save. What a goal
+// plans beyond them (an allocation, a monthly target, a target date,
+// archived) is kept by goal id in the goal-plans store (lib/goal-plans.ts),
+// which also says in what order a save writes the two.
 
 import { kc } from './storage';
 import type { Ctx } from './containers';

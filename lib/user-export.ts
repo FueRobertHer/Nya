@@ -95,6 +95,7 @@ import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried
 import { readRenamesStrict } from './renames';
 import { readHistoryForExport, type StoredPoint } from './history';
 import { getGoalsReport } from './goals';
+import { exportedGoals } from './goal-export';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
 import { apiTokenStore } from './api-token-store';
@@ -393,12 +394,13 @@ export const SECTIONS: readonly ExportSection[] = [
   {
     key: 'goals',
     what: 'goals',
+    // Each goal's four stored fields, then its plan as the app applies it
+    // (lib/goal-export.ts). The plans are also a section of their own,
+    // `goal-plans`, as stored; one that can't be read is named there, and
+    // leaves its goal's plan fields null here, never a plan unset.
     read: async ({ ctx }) => {
       const { goals, problem } = await getGoalsReport(ctx);
-      return {
-        value: goals && goals.map((g) => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id ?? null })),
-        problems: valueProblems('goals', problem),
-      };
+      return { value: goals && (await exportedGoals(ctx, goals)), problems: valueProblems('goals', problem) };
     },
     mentions: (goals) => ((goals as { account_id: string | null }[] | null) ?? []).map((g) => g.account_id),
   },

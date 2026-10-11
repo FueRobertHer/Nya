@@ -189,6 +189,7 @@ describe('tools', () => {
       'list_categories',
       'list_tags',
       'list_rules',
+      'get_goals',
       'get_holdings',
     ]);
     for (const t of tools) {

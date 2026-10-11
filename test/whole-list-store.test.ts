@@ -103,6 +103,8 @@ describe('before a load has succeeded', () => {
       expect(store.get().error).toContain(text);
       expect(await store.save({ Rent: 1000 })).toBe(false);
       expect(server.calls.filter((c) => c.method === 'PUT')).toEqual([]);
+      // Never "still loading": nothing is.
+      expect(store.get().saveError).toBe('Budgets could not be loaded, so they can’t be saved yet; press Refresh to try again.');
     });
   }
 
@@ -269,5 +271,95 @@ describe('loading', () => {
     await server.release();
     await retry;
     expect(store.get()).toMatchObject({ status: 'ready', error: null, value: { Food: 300 } });
+  });
+});
+
+describe('opted in: what the server said about a save (goals)', () => {
+  /** A server that answers a PUT as given, at once. */
+  const answering = (status: number, body: unknown) => {
+    const calls: string[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      calls.push(init?.method ?? 'GET');
+      if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ goals: [{ id: 'a' }] }), { status: 200 });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof globalThis.fetch;
+    return { fetch, calls };
+  };
+  const goals = async (server: ReturnType<typeof answering>, opts: { adoptSaved?: boolean; showRefusal?: boolean }) => {
+    const store = createWholeListStore<{ id: string; worked_out?: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch: server.fetch,
+      ...opts,
+    });
+    await store.load();
+    return store;
+  };
+
+  test('the list the server answered with is kept, with what it worked out', async () => {
+    const store = await goals(answering(200, { goals: [{ id: 'a', worked_out: 'by the server' }] }), { adoptSaved: true });
+    expect(await store.save([{ id: 'a' }])).toBe(true);
+    expect(store.get().value).toEqual([{ id: 'a', worked_out: 'by the server' }]);
+  });
+
+  test('without it, or with an answer that isn’t a list, the list sent is kept', async () => {
+    expect(await (await goals(answering(200, { goals: [{ id: 'x' }] }), {})).save([{ id: 'a' }])).toBe(true);
+    const store = await goals(answering(200, { goals: 'nope' }), { adoptSaved: true });
+    await store.save([{ id: 'a' }]);
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('a refusal says why, and the list goes back to what is saved', async () => {
+    const store = await goals(answering(400, { error: 'Allocations on Savings would come to $10.01, more than its balance of $10.00.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: Allocations on Savings would come to $10.01, more than its balance of $10.00.');
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('a 409 not flagged unreadable is a refusal too: what is stored stops it just now, and why', async () => {
+    const store = await goals(answering(409, { error: 'A saved account link can’t be read.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: A saved account link can’t be read.');
+    // Flagged unreadable, it is the list that can't be read: the plain message.
+    const flagged = await goals(answering(409, { error: 'x', unreadable: true }), { showRefusal: true });
+    await flagged.save([{ id: 'b' }]);
+    expect(flagged.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+
+  test('anything but a refusal keeps the plain message', async () => {
+    const store = await goals(answering(500, { error: 'Failed to save goals' }), { showRefusal: true });
+    await store.save([{ id: 'b' }]);
+    expect(store.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+
+  test('what a save sends beside the list is read as each one is sent, and never takes the list’s place', async () => {
+    const bodies: unknown[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ goals: [] }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let day = '2026-10-11';
+    const store = createWholeListStore<{ id: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch,
+      extra: () => ({ today: day, goals: 'not the list' }),
+    });
+    await store.load();
+    await store.save([{ id: 'a' }]);
+    day = '2026-10-12';
+    await store.save([{ id: 'b' }]);
+    expect(bodies).toEqual([
+      { today: '2026-10-11', goals: [{ id: 'a' }] },
+      { today: '2026-10-12', goals: [{ id: 'b' }] },
+    ]);
   });
 });
