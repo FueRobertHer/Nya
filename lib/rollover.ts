@@ -57,7 +57,8 @@
 //
 // GROUPS. A group's own budget can roll over like a category's: what is left
 // of its own amount after everything spent in the group (its own budget caps
-// all of it). The reconcile rule (lib/budget-set.ts) then works on what is
+// all of it), by the categories in it now, so moving a category to another
+// group moves its past spending, and both groups' carries, with it. The reconcile rule (lib/budget-set.ts) then works on what is
 // available: a category's amount plus its carry, the group's own amount plus
 // its own carry. So a group's meter shows min(its own available, its
 // categories' available added up), its categories binding only when every
