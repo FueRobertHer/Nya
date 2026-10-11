@@ -876,10 +876,11 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
 
 // ---- Words ----
 
-/** "March", or "March 2025" when not in the year of `year`'s month. */
-export function monthName(month: string, inYearOf?: string): string {
+/** "March", or "March 2025" when not in the year of `inYearOf`'s month;
+ *  "Mar" and "Mar 2025" `short`, for a narrow column. */
+export function monthName(month: string, inYearOf?: string, length: 'long' | 'short' = 'long'): string {
   const [y, m] = month.split('-').map(Number);
-  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { month: 'long', timeZone: 'UTC' });
+  const name = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('en-US', { month: length, timeZone: 'UTC' });
   return inYearOf && inYearOf.slice(0, 4) === month.slice(0, 4) ? name : `${name} ${y}`;
 }
 

@@ -4169,12 +4169,18 @@ button.pool-toggle {
   font-size: 13px;
 }
 
-/* The pool month by month: a phone's width holds five narrow columns. */
+/* The pool month by month: four narrow columns fit a phone, and amounts
+   wider still scroll inside the box rather than widening the page. The
+   cells set their own size and padding, since the global th, td set theirs. */
+.pool-scroll {
+  margin: 10px -6px 0;
+  overflow-x: auto;
+}
+
 .pool-table {
   width: 100%;
-  margin-top: 10px;
+  margin-top: 0;
   border-collapse: collapse;
-  font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -4182,19 +4188,29 @@ button.pool-toggle {
 .pool-table td {
   padding: 4px 2px;
   text-align: right;
+  white-space: nowrap;
   border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+
+.pool-table td,
+.pool-table th[scope='row'] {
+  font-size: 12px;
 }
 
 .pool-table thead th {
-  color: var(--muted);
-  font-weight: 500;
   border-top: none;
 }
 
 .pool-table th[scope='row'],
 .pool-table thead th:first-child {
   text-align: left;
+}
+
+.pool-table th[scope='row'] {
+  color: inherit;
   font-weight: 400;
+  text-transform: none;
 }
 
 .pool-uncertain {

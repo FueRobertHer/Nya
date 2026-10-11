@@ -60,32 +60,34 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
       <button className="secondary pool-toggle" onClick={() => setOpen((o) => !o)} aria-expanded={open}>
         {open ? 'Hide how it built up' : 'Show how it built up'}
       </button>
+      {/* What each month carried in is the row below's Left (nothing, for
+          the first), so it isn't a column: four fit a phone. */}
       {open && (
-        <table className="pool-table">
-          <thead>
-            <tr>
-              <th scope="col">Month</th>
-              <th scope="col">Carried in</th>
-              <th scope="col">Income</th>
-              <th scope="col">Spent</th>
-              <th scope="col">Left</th>
-            </tr>
-          </thead>
-          <tbody>
-            {[...pool.months].reverse().map((m) => (
-              <tr key={m.month}>
-                <th scope="row">
-                  {name(m.month)}
-                  {m.uncertain && <span className="pool-uncertain" title="Its transactions may be incomplete"> *</span>}
-                </th>
-                <td>{money(m.carried_in)}</td>
-                <td>{money(m.income)}</td>
-                <td>{money(m.spending)}</td>
-                <td>{money(m.carried_out)}</td>
+        <div className="pool-scroll">
+          <table className="pool-table">
+            <thead>
+              <tr>
+                <th scope="col">Month</th>
+                <th scope="col">Income</th>
+                <th scope="col">Spent</th>
+                <th scope="col">Left</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {[...pool.months].reverse().map((m) => (
+                <tr key={m.month}>
+                  <th scope="row">
+                    {monthName(m.month, today, 'short')}
+                    {m.uncertain && <span className="pool-uncertain" title="Its transactions may be incomplete"> *</span>}
+                  </th>
+                  <td>{money(m.income)}</td>
+                  <td>{money(m.spending)}</td>
+                  <td>{money(m.carried_out)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
       {open && pool.months.some((m) => m.uncertain) && <div className="chart-note">* Its transactions may be incomplete.</div>}
     </div>
