@@ -1,0 +1,190 @@
+// lib/goal-text.ts
+//
+// What a goal says about itself, in words (#42): the Goals card shows these
+// sentences, and the read-only API gives the same ones as each goal's notes,
+// so the two never tell it differently. Pure, safe to import from client
+// code. Amounts are in the goal's account's currency (lib/format.ts), and
+// nothing here converts one currency to another.
+
+import { formatMoney } from './format';
+import { addMonths, type MonthGap } from './goal-projection';
+import type { AccountSplit } from './goal-allocation';
+import type { GoalView } from './goal-view';
+
+/** "March 2027" for 2027-03. */
+export function monthLabel(month: string): string {
+  return new Date(`${month}-01T00:00:00Z`).toLocaleDateString(undefined, { month: 'long', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** "Jun 1, 2027" for 2027-06-01. */
+export function dayLabel(day: string): string {
+  return new Date(`${day}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+}
+
+/** "Sep 12" for an instant, on the viewer's calendar. */
+function instantLabel(iso: string): string {
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? iso.slice(0, 10) : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+}
+
+const lastMonths = (n: number) => (n === 1 ? 'the last month' : `the last ${n} months`);
+
+/** Why a goal shows no progress, for every state but tracked. */
+export function stateText(view: GoalView): string | null {
+  switch (view.state) {
+    case 'untracked':
+      return 'No account linked';
+    case 'hidden':
+      return 'Tracked account is hidden';
+    case 'disconnected':
+      return 'Linked account disconnected';
+    case 'ended':
+      return 'Its account has closed, so nothing more goes into it';
+    case 'owed':
+      return 'Tracks a credit card or loan, whose balance is owed, not saved, so no progress is shown. Choose a savings account for it, or plan a payoff with the debt payoff planner.';
+    case 'no_balance':
+      return 'No balance is known for its account yet';
+    case 'tracked':
+      return null;
+  }
+}
+
+/**
+ * The goal's one-line outlook: reached, when it will be, how far short of its
+ * date it is, or why it can't say. `nameOf` names another goal (for an
+ * account several goals share). Null unless tracked.
+ */
+export function outlookText(view: GoalView, nameOf: (id: string) => string): string | null {
+  const p = view.projection;
+  if (!p) return null;
+  const money = (n: number) => formatMoney(n, view.currency);
+  const date = view.goal.plan?.target_date;
+  const atTarget = p.rateFrom === 'monthly_target' ? ` at your ${money(p.rate!)} monthly target` : '';
+  switch (p.status) {
+    case 'complete':
+      return 'Reached';
+    case 'no_recent_contributions': {
+      const months = lastMonths(view.measured?.months ?? 3);
+      const where = view.account?.name ?? 'its account';
+      if (view.measured?.source === 'balances') return `No recent contributions: ${where}’s recorded balance hasn’t grown over ${months}`;
+      return (p.rate ?? 0) < 0
+        ? `No recent contributions: more went out of ${where} than came in over ${months}`
+        : `No contributions in ${months}`;
+    }
+    case 'no_rate':
+      if (view.sharing.length > 0) {
+        return `${view.account?.name ?? 'Its account'} is shared with ${view.sharing.map(nameOf).join(' and ')}, so this goal’s own pace isn’t known: set a monthly target to see when it will be reached`;
+      }
+      return 'No history to go by yet: set a monthly target to see when it will be reached';
+    case 'on_track':
+    case 'behind': {
+      if (p.beyond) return `Not within 50 years at this pace${date ? `, and its date is ${dayLabel(date)}` : ''}`;
+      const when = monthLabel(p.completion!);
+      if (!date) return `On track for ${when}${atTarget}`;
+      if (p.datePassed) return `Its date, ${dayLabel(date)}, has passed; at this pace, reached in ${when}`;
+      const due = monthLabel(date.slice(0, 7));
+      if (p.status === 'on_track') {
+        return p.completion! < date.slice(0, 7) ? `On track for ${when}${atTarget}, ahead of ${due}` : `On track for ${due}${atTarget}`;
+      }
+      return `${money(p.short!)} a month short of ${due}${p.rateFrom === 'monthly_target' ? ' at your monthly target' : ''}; at this pace, reached in ${when}`;
+    }
+  }
+}
+
+/** What went in, as the rate was measured, and what it can't tell apart.
+ *  Null when nothing was measured. */
+export function paceText(view: GoalView): string | null {
+  const m = view.measured;
+  if (!m || view.state !== 'tracked') return null;
+  const money = (n: number) => formatMoney(n, view.currency);
+  const months = lastMonths(m.months);
+  const target = view.goal.plan?.monthly_target;
+  const versus = target !== undefined ? ` (your target is ${money(target)})` : '';
+  const where = view.account?.name ?? 'Its account';
+  if (m.source === 'balances') {
+    return `${where}’s recorded balance changed by ${money(m.average)} a month on average over ${months}${versus}: that includes interest and market moves, which can’t be told apart from what you put in`;
+  }
+  const growth = m.growth > 0 ? `, plus ${money(m.growth)} of interest and dividends, not counted` : '';
+  return `${money(m.average)} a month went into ${where} on average over ${months}${versus}${growth}`;
+}
+
+/** Why the measured months may be short, or null when nothing says so. */
+export function gapsText(gaps: readonly MonthGap[]): string | null {
+  const said = new Set<string>();
+  for (const g of gaps) {
+    switch (g.kind) {
+      case 'missing':
+        said.add(`${g.institution}’s transactions couldn’t be loaded`);
+        break;
+      case 'importing':
+        said.add(`${g.institution} is still importing older transactions`);
+        break;
+      case 'stopped':
+        said.add(g.since ? `${g.institution} hasn’t synced since ${instantLabel(g.since)}` : `${g.institution} isn’t syncing`);
+        break;
+      case 'begins':
+        said.add(`its transactions in Nya begin on ${dayLabel(g.on)}, so ${monthLabel(g.on.slice(0, 7))} may be short`);
+        break;
+    }
+  }
+  return said.size === 0 ? null : `The pace may be off: ${[...said].join('; ')}.`;
+}
+
+/** Where it should be by now on the way to its target date, in words. */
+export function shouldHaveText(view: GoalView): string | null {
+  const date = view.goal.plan?.target_date;
+  if (view.shouldHave === null || !date) return null;
+  return `To reach it by ${dayLabel(date)}, it would have ${formatMoney(view.shouldHave, view.currency)} by now`;
+}
+
+/** The progress meter in words, for a screen reader: what it shows, and the
+ *  "where you should be" marker when there is one. */
+export function meterLabel(view: GoalView): string {
+  const saved = view.saved ?? 0;
+  const pct = Math.floor((Math.max(saved, 0) / view.goal.target) * 100);
+  const marker = shouldHaveText(view);
+  return `${formatMoney(saved, view.currency)} of ${formatMoney(view.goal.target, view.currency)} saved, ${pct}%.${marker ? ` ${marker}.` : ''}`;
+}
+
+/** What it says about the money it counts: scaled to fit, counted by another
+ *  goal too, or an allocation it no longer applies. */
+export function claimNotes(view: GoalView, nameOf: (id: string) => string, split: AccountSplit | undefined): string[] {
+  const notes: string[] = [];
+  const money = (n: number) => formatMoney(n, view.currency);
+  const where = view.account?.name ?? 'its account';
+  if (view.claim?.scaled && split) {
+    notes.push(`Allocations on ${where} add up to ${money(split.allocated)}, more than its ${money(split.balance)} balance, so each is shown scaled to fit. Lower them to match.`);
+  }
+  if (view.claim && view.claim.kind === 'remainder' && view.claim.sharedWith.length > 0) {
+    notes.push(
+      `Counts the same ${money(view.claim.amount)} as ${view.claim.sharedWith.map(nameOf).join(' and ')}: give ${view.claim.sharedWith.length === 1 ? 'each' : 'them'} an allocation to split it.`
+    );
+  }
+  if (view.goal.earlier_allocation !== undefined) {
+    notes.push(
+      `Its allocation of ${money(view.goal.earlier_allocation)} was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.`
+    );
+  }
+  if (view.goal.relinked) notes.push(`Follows ${where}, which was reconnected.`);
+  return notes;
+}
+
+/** Every sentence a goal says, in order: for the API's notes. */
+export function goalSentences(view: GoalView, nameOf: (id: string) => string, split: AccountSplit | undefined): string[] {
+  const out = [stateText(view), outlookText(view, nameOf), paceText(view), view.measured ? gapsText(view.measured.gaps) : null, shouldHaveText(view)];
+  return [...out.filter((s): s is string => !!s).map((s) => (/[.!?]$/.test(s) ? s : `${s}.`)), ...claimNotes(view, nameOf, split)];
+}
+
+/** One account's line above the goals: what no allocation claims, or how
+ *  far the allocations are over its balance. */
+export function splitText(split: AccountSplit, name: string): string {
+  const money = (n: number) => formatMoney(n, split.currency);
+  if (split.over > 0) return `${name}: allocations are ${money(split.over)} more than its ${money(split.balance)} balance`;
+  return `${name}: ${money(split.unallocated)} unallocated of ${money(split.balance)}`;
+}
+
+/** The month a projection would end in, given a number of months from now:
+ *  for the editor's preview of a monthly target. */
+export function monthsFromNow(today: string, months: number): string {
+  return monthLabel(addMonths(today.slice(0, 7), months));
+}

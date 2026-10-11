@@ -1,0 +1,225 @@
+import { describe, expect, test } from 'bun:test';
+import { goalViews, type GoalAccount } from '@/lib/goal-view';
+import { claimNotes, gapsText, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
+import type { Goal } from '@/lib/goal-model';
+import type { AccountFlow } from '@/lib/goal-projection';
+
+// Each goal as the card and the API show it (#42): whether its account can be
+// counted, what it counts, when it will be reached, and the words for each.
+
+const TODAY = '2026-10-10';
+const ACCOUNTS: GoalAccount[] = [
+  { account_id: 'sav', name: 'Savings', institution: 'Chase', balance: 10_000, currency: 'USD', type: 'depository' },
+  { account_id: 'eur', name: 'Sparkonto', institution: 'N26', balance: 4000, currency: 'EUR', type: 'depository' },
+  { account_id: 'card', name: 'Visa', institution: 'Chase', balance: 1200, currency: 'USD', type: 'credit' },
+  { account_id: 'loan', name: 'Car loan', institution: 'Chase', balance: 9000, currency: 'USD', type: 'loan' },
+  { account_id: 'hid', name: 'Old savings', institution: 'Chase', balance: 500, currency: 'USD', type: 'depository', hidden: true },
+  { account_id: 'nobal', name: 'New account', institution: 'Ally', balance: null, currency: 'USD', type: 'depository' },
+  { account_id: 'closed', name: 'Closed', institution: 'Ally', balance: 0, currency: 'USD', type: 'depository', ended: true },
+  // A manual account: its balance kept in US dollars, typed by hand.
+  { account_id: 'manual_jar', name: 'Jar', institution: 'Home', balance: 340.25, currency: 'USD', type: 'depository' },
+  { account_id: 'ira', name: 'IRA', institution: 'Fidelity', balance: 20_000, currency: 'USD', type: 'investment' },
+];
+const goal = (id: string, account_id: string | null, target: number, plan?: Goal['plan'], over: Partial<Goal> = {}): Goal => ({
+  id,
+  name: id[0].toUpperCase() + id.slice(1),
+  target,
+  account_id,
+  ...(plan ? { plan } : {}),
+  ...over,
+});
+const month = (m: string, amount: number | null, over: Partial<AccountFlow['months'][number]> = {}) => ({ month: m, amount, ...over });
+const FLOWS = new Map<string, AccountFlow>([
+  ['sav', { source: 'transactions', months: [month('2026-07', 375.5, { growth: 1.23 }), month('2026-08', 189.75, { growth: 1.27 }), month('2026-09', 330.1, { growth: 1.31 })] }],
+  ['eur', { source: 'transactions', months: [month('2026-07', 0), month('2026-08', 0), month('2026-09', 0)] }],
+  ['ira', { source: 'balances', months: [month('2026-07', 350.5), month('2026-08', 249.75), month('2026-09', 349.5)] }],
+  ['manual_jar', { source: 'balances', months: [month('2026-07', null), month('2026-08', null), month('2026-09', null)] }],
+]);
+const nameOf = (id: string) => id[0].toUpperCase() + id.slice(1);
+const viewsOf = (goals: Goal[], accounts = ACCOUNTS, flows: Map<string, AccountFlow> | null = FLOWS) => {
+  const { views, splits } = goalViews(goals, accounts, flows, TODAY);
+  return { views: new Map(views.map((v) => [v.goal.id, v])), splits };
+};
+
+describe('whether an account can be counted', () => {
+  test('each case says which it is, and shows no progress', () => {
+    const { views } = viewsOf([
+      goal('untracked', null, 100),
+      goal('gone', 'acc_forgotten', 100),
+      goal('hidden', 'hid', 100),
+      goal('card', 'card', 100),
+      goal('loan', 'loan', 100),
+      goal('nobal', 'nobal', 100),
+      goal('closed', 'closed', 100),
+    ]);
+    expect([...views.values()].map((v) => [v.goal.id, v.state, v.saved, v.projection])).toEqual([
+      ['untracked', 'untracked', null, null],
+      ['gone', 'disconnected', null, null],
+      ['hidden', 'hidden', null, null],
+      ['card', 'owed', null, null],
+      ['loan', 'owed', null, null],
+      ['nobal', 'no_balance', null, null],
+      ['closed', 'ended', null, null],
+    ]);
+    expect(stateText(views.get('untracked')!)).toBe('No account linked');
+    expect(stateText(views.get('gone')!)).toBe('Linked account disconnected');
+    expect(stateText(views.get('hidden')!)).toBe('Tracked account is hidden');
+    expect(stateText(views.get('card')!)).toContain('owed, not saved');
+    expect(stateText(views.get('nobal')!)).toBe('No balance is known for its account yet');
+    expect(stateText(views.get('closed')!)).toContain('closed');
+  });
+
+  test('a debt never reads as savings: a goal on a card shows no amount, and claims none of anything', () => {
+    const { views, splits } = viewsOf([goal('card', 'card', 100)]);
+    expect(views.get('card')!.saved).toBeNull();
+    expect(splits.size).toBe(0);
+  });
+});
+
+describe('a goal without an allocation, as before', () => {
+  test('counts the whole balance, in the account’s currency, and projects from what went in', () => {
+    const { views } = viewsOf([goal('fund', 'sav', 15_000)]);
+    const v = views.get('fund')!;
+    expect(v).toMatchObject({ state: 'tracked', saved: 10_000, currency: 'USD', sharing: [], shouldHave: null });
+    // 5000.00 / 298.45 = 16.75, so seventeen months: March 2028.
+    expect(v.projection).toMatchObject({ status: 'on_track', rate: 298.45, completion: '2028-03' });
+    expect(outlookText(v, nameOf)).toBe('On track for March 2028');
+    expect(paceText(v)).toBe('$298.45 a month went into Savings on average over the last 3 months, plus $3.81 of interest and dividends, not counted');
+    expect(meterLabel(v)).toBe('$10,000.00 of $15,000.00 saved, 66%.');
+  });
+
+  test('met: reached', () => {
+    const v = viewsOf([goal('fund', 'sav', 8000)]).views.get('fund')!;
+    expect(v.projection!.status).toBe('complete');
+    expect(outlookText(v, nameOf)).toBe('Reached');
+  });
+});
+
+describe('two goals on one account', () => {
+  test('allocations split it, the rest is unallocated, and each is projected at its own monthly target', () => {
+    const { views, splits } = viewsOf([goal('trip', 'sav', 3000, { allocation: 1200, monthly_target: 200, target_date: '2027-06-30' }), goal('fund', 'sav', 20_000)]);
+    const trip = views.get('trip')!;
+    const fund = views.get('fund')!;
+    expect(trip.saved).toBe(1200);
+    expect(fund.saved).toBe(8800);
+    expect(trip.sharing).toEqual(['fund']);
+    // 1800.00 / 200.00 = 9 months: July 2027, past June. June needs 1800 / 8 = 225.
+    expect(trip.projection).toMatchObject({ status: 'behind', rate: 200, rateFrom: 'monthly_target', completion: '2027-07', needed: 225, short: 25 });
+    expect(outlookText(trip, nameOf)).toBe('$25.00 a month short of June 2027 at your monthly target; at this pace, reached in July 2027');
+    // The other has no monthly target: what goes into the account is shared, so no pace of its own.
+    expect(fund.projection!.status).toBe('no_rate');
+    expect(outlookText(fund, nameOf)).toBe('Savings is shared with Trip, so this goal’s own pace isn’t known: set a monthly target to see when it will be reached');
+    expect(splitText(splits.get('sav')!, 'Savings')).toBe('Savings: $8,800.00 unallocated of $10,000.00');
+  });
+
+  test('two goals without allocations each count the remainder, and each says so', () => {
+    const { views } = viewsOf([goal('a', 'sav', 20_000), goal('b', 'sav', 20_000)]);
+    expect(views.get('a')!.saved).toBe(10_000);
+    expect(views.get('b')!.saved).toBe(10_000);
+    expect(claimNotes(views.get('a')!, nameOf, undefined)).toEqual(['Counts the same $10,000.00 as B: give each an allocation to split it.']);
+  });
+
+  test('a balance that fell below the allocations: scaled to fit, flagged, and the account line says by how much', () => {
+    const accounts = ACCOUNTS.map((a) => (a.account_id === 'sav' ? { ...a, balance: 6000 } : a));
+    const { views, splits } = viewsOf([goal('a', 'sav', 9000, { allocation: 4000 }), goal('b', 'sav', 9000, { allocation: 3500.5 })], accounts);
+    expect(views.get('a')!.saved).toBe(3199.79);
+    expect(views.get('b')!.saved).toBe(2800.21);
+    expect(claimNotes(views.get('a')!, nameOf, splits.get('sav'))[0]).toBe(
+      'Allocations on Savings add up to $7,500.50, more than its $6,000.00 balance, so each is shown scaled to fit. Lower them to match.'
+    );
+    expect(splitText(splits.get('sav')!, 'Savings')).toBe('Savings: allocations are $1,500.50 more than its $6,000.00 balance');
+  });
+
+  test('archived goals claim nothing and are not viewed', () => {
+    const { views } = viewsOf([goal('old', 'sav', 500, { allocation: 500, archived: true }), goal('fund', 'sav', 20_000)]);
+    expect(views.has('old')).toBe(false);
+    expect(views.get('fund')!.saved).toBe(10_000);
+    expect(views.get('fund')!.sharing).toEqual([]);
+  });
+});
+
+describe('the outlook in words', () => {
+  test('no contributions in three months says so instead of projecting', () => {
+    const v = viewsOf([goal('trip', 'eur', 5000, { monthly_target: 300 })]).views.get('trip')!;
+    expect(v.projection!.status).toBe('no_recent_contributions');
+    expect(outlookText(v, nameOf)).toBe('No contributions in the last 3 months');
+    expect(goalSentences(v, nameOf, undefined).join(' ')).not.toMatch(/On track|reached in/);
+  });
+
+  test('money taken out is no recent contributions too', () => {
+    const flows = new Map(FLOWS);
+    flows.set('sav', { source: 'transactions', months: [month('2026-08', -50), month('2026-09', -10)] });
+    const v = viewsOf([goal('fund', 'sav', 15_000)], ACCOUNTS, flows).views.get('fund')!;
+    expect(outlookText(v, nameOf)).toBe('No recent contributions: more went out of Savings than came in over the last 2 months');
+  });
+
+  test('another currency: every amount in it, nothing converted', () => {
+    const flows = new Map(FLOWS);
+    flows.set('eur', { source: 'transactions', months: [month('2026-07', 150), month('2026-08', 150), month('2026-09', 150)] });
+    const v = viewsOf([goal('trip', 'eur', 5000, { target_date: '2027-12-31' }, { plan_start: { date: '2026-01-01', amount: 1000 } })], ACCOUNTS, flows).views.get('trip')!;
+    expect(v.currency).toBe('EUR');
+    // 1000.00 left at 150.00: seven months, May 2027, ahead of December.
+    expect(outlookText(v, nameOf)).toBe('On track for May 2027, ahead of December 2027');
+    expect(paceText(v)).toBe('€150.00 a month went into Sparkonto on average over the last 3 months');
+    // 282 of 729 days from 1000.00 to 5000.00: 1000 + 4000 × 282 / 729 = 2547.33
+    expect(v.shouldHave).toBe(2547.33);
+    expect(shouldHaveText(v)).toBe('To reach it by Dec 31, 2027, it would have €2,547.33 by now');
+    expect(meterLabel(v)).toBe('€4,000.00 of €5,000.00 saved, 80%. To reach it by Dec 31, 2027, it would have €2,547.33 by now.');
+  });
+
+  test('an account whose rows Nya doesn’t have: a change in balance, labelled as such', () => {
+    const v = viewsOf([goal('retire', 'ira', 50_000)]).views.get('retire')!;
+    expect(v.measured).toMatchObject({ source: 'balances', average: 316.58 });
+    expect(paceText(v)).toBe(
+      'IRA’s recorded balance changed by $316.58 a month on average over the last 3 months: that includes interest and market moves, which can’t be told apart from what you put in'
+    );
+  });
+
+  test('a manual account with no history yet: projected at its monthly target, or asked for one', () => {
+    const withTarget = viewsOf([goal('jar', 'manual_jar', 1000, { monthly_target: 50 })]).views.get('jar')!;
+    expect(withTarget.currency).toBe('USD');
+    // 659.75 / 50 = 13.2, so fourteen months: December 2027.
+    expect(outlookText(withTarget, nameOf)).toBe('On track for December 2027 at your $50.00 monthly target');
+    const without = viewsOf([goal('jar', 'manual_jar', 1000)]).views.get('jar')!;
+    expect(outlookText(without, nameOf)).toBe('No history to go by yet: set a monthly target to see when it will be reached');
+  });
+
+  test('with no monthly figures loaded at all, still a view, at the monthly target', () => {
+    const v = viewsOf([goal('fund', 'sav', 12_000, { monthly_target: 500 })], ACCOUNTS, null).views.get('fund')!;
+    expect(v.projection).toMatchObject({ rateFrom: 'monthly_target', completion: '2027-02' });
+  });
+
+  test('a target date that has passed', () => {
+    const v = viewsOf([goal('fund', 'sav', 12_000, { target_date: '2026-06-01' })]).views.get('fund')!;
+    expect(outlookText(v, nameOf)).toBe('Its date, Jun 1, 2026, has passed; at this pace, reached in May 2027');
+  });
+
+  test('why the pace may be off, from each month’s gaps', () => {
+    expect(
+      gapsText([
+        { kind: 'stopped', institution: 'Chase', since: '2026-09-12T15:00:00.000Z' },
+        { kind: 'importing', institution: 'N26' },
+        { kind: 'missing', institution: 'Ally' },
+        { kind: 'begins', on: '2026-08-14' },
+        { kind: 'stopped', institution: 'Chase', since: '2026-09-12T15:00:00.000Z' },
+      ])
+    ).toBe(
+      'The pace may be off: Chase hasn’t synced since Sep 12; N26 is still importing older transactions; Ally’s transactions couldn’t be loaded; its transactions in Nya begin on Aug 14, 2026, so August 2026 may be short.'
+    );
+    expect(gapsText([{ kind: 'stopped', institution: 'Chase', since: null }])).toBe('The pace may be off: Chase isn’t syncing.');
+    expect(gapsText([])).toBeNull();
+  });
+
+  test('an account reconnected under a new id, and an allocation left on the account it tracked before, each say so', () => {
+    const v = viewsOf([goal('fund', 'sav', 20_000, undefined, { relinked: true, earlier_allocation: 750 })]).views.get('fund')!;
+    expect(claimNotes(v, nameOf, undefined)).toEqual([
+      'Its allocation of $750.00 was set on the account it tracked before, so here it counts what isn’t allocated. The next save drops it.',
+      'Follows Savings, which was reconnected.',
+    ]);
+  });
+
+  test('every sentence ends as one, for the API', () => {
+    const v = viewsOf([goal('fund', 'sav', 15_000)]).views.get('fund')!;
+    for (const s of goalSentences(v, nameOf, undefined)) expect(s).toMatch(/[.!?]$/);
+  });
+});
