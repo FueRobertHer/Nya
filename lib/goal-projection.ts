@@ -13,8 +13,12 @@
 //     in spending, where transfers are left out). Deposits and transfers in,
 //     less what went out. Pending rows are left out until they post, and
 //     interest and dividends (a bank's "interest earned" or "dividends", or a
-//     row entered as interest) are counted apart, as growth: they grow the
-//     balance, but nobody put them in.
+//     row filed as interest, by the person, a rule or as it was entered) are
+//     counted apart, as growth: they grow the balance, but nobody put them in.
+//     A row excluded from budgets and reports, by the person or a rule's
+//     hide, still counts: the money moved all the same. The rows are the
+//     Activity tab's, rules applied (lib/goal-flows.ts), so a rule's name
+//     changes nothing here, and its category is the row's, as one chosen is.
 //   - From BALANCES, for an account whose rows Nya doesn't have (an
 //     investment account, a manual account with no transactions entered, a
 //     connection that brings in balances only): the change in the last

@@ -41,6 +41,9 @@ const { manualTxnStore } = await import('@/lib/manual-txns');
 const { noticesStore, syncsStore } = await import('@/lib/connection-records');
 const links = await import('@/lib/links');
 const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
+const { setExcluded } = await import('@/lib/txn-annotations');
+const { rulesStore } = await import('@/lib/rules');
+const { assembleBankRows, finishActivity } = await import('@/lib/activity');
 const { txn } = await import('./api-fixture');
 const { trailingMonths, addMonths } = await import('@/lib/goal-projection');
 const route = await import('@/app/api/goals/progress/route');
@@ -146,6 +149,40 @@ describe('the months behind each account’s pace', () => {
         { month: M3, amount: 330.1 },
       ],
     });
+  });
+
+  test('what you excluded, or a rule hid, from budgets and reports still went in, as the app lists it; a rule’s name changes nothing (#36)', async () => {
+    const at = new Date().toISOString();
+    await setExcluded(ctx, 't2', true);
+    // Hides every transfer into savings over 200, and names it.
+    await rulesStore.set(ctx, {
+      version: 1,
+      rules: [
+        {
+          id: '7e1d2c3b-4a59-4687-9a0b-1c2d3e4f5a6b',
+          enabled: true,
+          priority: 1,
+          conditions: [{ field: 'amount', op: 'gt', value: 200, direction: 'in' }],
+          actions: { hide: true, set_name: 'Moved to savings' },
+          created_at: at,
+          updated_at: at,
+        },
+      ],
+    });
+    // The app's own reading of the rows: hidden and renamed by the rule,
+    // excluded by you, every one still listed.
+    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, withAccountIds: true });
+    const { transactions } = await finishActivity(ctx, bank.payload, bank.hidden);
+    const rowOf = (id: string) => transactions.find((t) => t.transaction_id === id)!;
+    expect(rowOf('t1')).toMatchObject({ name: 'Moved to savings', excluded: true, excluded_by_rule: true });
+    expect(rowOf('t5')).toMatchObject({ name: 'Moved to savings', excluded: true, excluded_by_rule: true });
+    expect(rowOf('t2')).toMatchObject({ excluded: true });
+    // The money moved all the same: every month as before.
+    expect((await progress()).body.flows.acc_sav.months).toEqual([
+      { month: M1, amount: 375.5, growth: 1.23 },
+      { month: M2, amount: 189.75 },
+      { month: M3, amount: 330.1 },
+    ]);
   });
 
   test('a quiet account at a bank that brings transactions in: nothing went in, which is known', async () => {
