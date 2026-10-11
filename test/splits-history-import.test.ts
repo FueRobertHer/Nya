@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { parseCsv } from './csv-parse';
 
@@ -12,8 +13,11 @@ import { parseCsv } from './csv-parse';
 // transaction counts once, as its parts or in its group, never as both its
 // parts and its twin, edited where it is kept, and back on the imported row
 // when the bank's goes; in the download as the app has them (the
-// transactions CSV's parts and nets, an OFX statement's memo); and a month's
-// note on imported transactions counts transactions, never parts.
+// transactions CSV's parts and nets, an OFX statement's memo); in a report,
+// the read-only API and its MCP server, and a category's usage, as the
+// Activity tab counts them, while what the files cover is the same split or
+// not; and a month's note on imported transactions counts transactions,
+// never parts.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // The real ceiling on a stored value: a file run before this one may have
@@ -51,6 +55,14 @@ const { PART_PREFIX, bankRows } = await import('@/lib/split-rows');
 const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 const { ofxFile } = await import('@/lib/ofx-export');
 const { parseOfx, ofxRecords } = await import('@/lib/import/ofx');
+const { readReport } = await import('@/lib/report/read');
+const { resolvePeriod } = await import('@/lib/report/period');
+const { readMonthActivity } = await import('@/lib/budget-month');
+const { queryTransactions, readSpending } = await import('@/lib/api-read');
+const { categoryUsage } = await import('@/lib/category-usage');
+const { readTaxonomy } = await import('@/lib/category-store');
+const { createToken } = await import('@/lib/api-tokens');
+const mcp = await import('@/app/api/mcp/route');
 const routes = await import('@/app/api/history-import/route');
 
 const ctx = TEST_CTX;
@@ -595,6 +607,109 @@ describe('the download', () => {
     await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
     records = await statement();
     for (const id of ['b_corner', 'b_payback']) expect(records.get(id)!.note).toContain('In the group Lunch with Sam in Nya');
+  });
+});
+
+describe('everywhere else transactions are counted', () => {
+  /** OLD STORE split into a shelf and snacks, and the corner shop grouped
+   *  with Sam's payback under `category` (food and drink by default). */
+  async function splitAndGroup(ids: Record<string, string>, category = catId('food and drink')) {
+    expect(
+      (
+        await splitPut(ids['OLD STORE'], [
+          { amount: 60, category_id: catId('food and drink') },
+          { amount: 40, category_id: catId('home improvement') },
+        ])
+      ).status
+    ).toBe(200);
+    const made = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: category, members: [ids['CORNER SHOP'], 'b_payback'] });
+    expect(made.status).toBe(200);
+    return made.body.id as string;
+  }
+  const spentBy = (categories: { category: string; spent?: number; amount?: number }[]) => Object.fromEntries(categories.map((c) => [c.category, c.spent ?? c.amount]));
+
+  test('a report counts an imported row’s parts and its group’s net as the Activity tab does, and what the files cover is the same either way', async () => {
+    const { ids } = await importStatement();
+    const period = resolvePeriod({ kind: 'range', start: daysAgo(330), end: daysAgo(0) }, 'UTC', Date.now());
+    if ('error' in period) throw new Error(period.error);
+    const before = await readReport(ctx, period);
+    const monthsBefore = await readMonthActivity(ctx, { since: daysAgo(400) });
+    // The file covers the months before the bank's own rows begin, so the
+    // report has no gap, and rollover counts those months whole.
+    expect(before.gaps).toEqual([]);
+    expect(monthsBefore.facts.first).toEqual([{ institution: 'Chase', day: daysAgo(55), files: [{ id: 'acc_chk', name: 'Checking', covers: [{ from: daysAgo(760), to: daysAgo(35) }], end: null }] }]);
+
+    await splitAndGroup(ids);
+    const report = await readReport(ctx, period);
+    const app = summarize(await rowsOf(), (d) => d >= period.start && d <= period.end, report.currency);
+    expect([report.totals.money_in, report.totals.money_out]).toEqual([app.money_in, app.money_out]);
+    expect([report.totals.money_in, report.totals.money_out]).toEqual([500, 100 + 1850 + 40 + 5 + 20]);
+    // The shelf on its own; the snacks, the lunch's net, the tip and the grocer's in food.
+    expect(spentBy(report.money_out)).toMatchObject({ 'home improvement': 40, 'food and drink': 60 + 40 + 5 + 20 });
+    expect(report.totals.transactions).toBe(app.transactions);
+    // Which days the files cover, and so which months are whole, is the
+    // files' and the bank's, never how a row is split or grouped.
+    expect(report.gaps).toEqual(before.gaps);
+    const monthsAfter = await readMonthActivity(ctx, { since: daysAgo(400) });
+    expect([monthsAfter.facts, monthsAfter.earliest]).toEqual([monthsBefore.facts, monthsBefore.earliest]);
+  });
+
+  test('the read-only API and its MCP server list an imported row once, its parts and its group beside it, and spend by its parts', async () => {
+    const saved = { ...process.env };
+    delete process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY;
+    delete process.env.CLERK_SECRET_KEY;
+    delete process.env.CONTAINER_ID;
+    try {
+      const { ids } = await importStatement();
+      const group = await splitAndGroup(ids);
+      const from = daysAgo(330);
+      const to = daysAgo(0);
+      const page = await queryTransactions(ctx, { from, to, limit: 50 });
+      const listed = (list: any[]) => list.filter((t) => [ids['OLD STORE'], ids['CORNER SHOP']].includes(t.id));
+      const check = (list: any[]) => {
+        const [shop, store] = listed(list);
+        expect([shop.id, shop.amount, shop.source, shop.transaction_group?.id, shop.transaction_group?.net, shop.splits]).toEqual([ids['CORNER SHOP'], 60, 'import:ofx', group, 40, null]);
+        expect([store.id, store.amount, store.splits?.map((p: any) => [p.amount, p.category])]).toEqual([
+          ids['OLD STORE'],
+          100,
+          [
+            [60, 'food and drink'],
+            [40, 'home improvement'],
+          ],
+        ]);
+      };
+      check(page.transactions);
+      const spending = await readSpending(ctx, { from, to });
+      expect(spentBy(spending.categories)).toMatchObject({ 'home improvement': 40, 'food and drink': 125 });
+
+      // The MCP server, as an assistant calls it, answers the same.
+      const token = (await createToken(ctx, 'Tests')).token;
+      let id = 1;
+      const tool = async (name: string, args: Record<string, unknown>) => {
+        const res: Response = await mcp.POST(
+          new Request('https://nya.test/api/mcp', {
+            method: 'POST',
+            headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name, arguments: args } }),
+          })
+        );
+        const result = (await res.json()).result;
+        expect(result.isError).not.toBe(true);
+        return result.structuredContent;
+      };
+      check((await tool('search_transactions', { from, to, limit: 50 })).transactions);
+      expect(spentBy((await tool('spending_by_category', { from, to })).categories)).toMatchObject({ 'home improvement': 40, 'food and drink': 125 });
+    } finally {
+      process.env = { ...saved };
+    }
+  });
+
+  test('a category a part of an imported row, or its group, is filed under is in use', async () => {
+    const { ids } = await importStatement();
+    const usage = async (name: string) => (await categoryUsage(ctx, (await readTaxonomy(ctx))!, catId(name))).transactions;
+    expect([await usage('home improvement'), await usage('entertainment')]).toEqual([0, 0]);
+    await splitAndGroup(ids, catId('entertainment'));
+    expect([await usage('home improvement'), await usage('entertainment')]).toEqual([1, 1]);
   });
 });
 
