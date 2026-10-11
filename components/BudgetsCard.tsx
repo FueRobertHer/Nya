@@ -168,7 +168,12 @@ export default function BudgetsCard({
     if (!onRollover || busy) return;
     setBusy(true);
     try {
-      if (await onRollover(t, change)) setResetting(null);
+      // Saved: the editor closes, and the meter shows the change once the
+      // month has been worked out again.
+      if (await onRollover(t, change)) {
+        setResetting(null);
+        setEditing(null);
+      }
     } finally {
       setBusy(false);
     }

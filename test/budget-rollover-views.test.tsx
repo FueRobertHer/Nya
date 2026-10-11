@@ -298,6 +298,24 @@ describe('the Budgets tab, with the month loaded', () => {
     expect(t).toContain('My income is irregular Off');
   });
 
+  test('nothing left in all after an overspent carry: the total still shows, over', () => {
+    const html = renderToStaticMarkup(
+      <BudgetsTab
+        txns={[row(localDate(), 80, 'groceries')]}
+        budgets={budgets}
+        taxonomy={taxonomy}
+        onSave={async () => true}
+        goals={[]}
+        onSaveGoals={async () => true}
+        accounts={[]}
+        loading={false}
+        budgetMonth={state(view({ carries: carries({ [GROCERIES]: { carry: -500 } }) }))}
+      />
+    );
+    expect(text(html)).toContain('$80.00 of -$200.00');
+    expect(html).toContain('meter-fill over" style="width:100%"');
+  });
+
   test('income carryover on: available to allocate above the meters', () => {
     const pool: IncomePool = { start: NOW, from: NOW, clamped: false, carried_in: 0, income: 500, spending: 80, available: 420, uncertain: [], months: [{ month: NOW, carried_in: 0, income: 500, spending: 80, carried_out: 420, uncertain: false }] };
     const t = tab(state(view({ income: { version: 1, enabled: true, start: NOW }, pool })));

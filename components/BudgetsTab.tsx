@@ -296,7 +296,10 @@ export default function BudgetsTab({
 
   const totalBudget = totals.budget;
   const totalSpent = totals.spent;
-  const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
+  // With rollover, what is available in all can be nothing or less (an
+  // overspent carry): there are budgets all the same, over at once.
+  const hasTotal = totalBudget !== 0;
+  const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : totalBudget < 0 || totalSpent > 0 ? 1 : 0;
   // No connection can bring in spending, and none came from anywhere else
   // (rows entered by hand count): say so, rather than "$0 of" every limit.
   // With rows entered by hand, the connections that bring in none are named
@@ -315,7 +318,7 @@ export default function BudgetsTab({
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>
-          {totalBudget > 0 && budgetsStatus === 'ready' && !noSpending && (
+          {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
               {formatMoney(totalSpent, shownCurrency)} of{' '}
               {formatMoney(totalBudget, shownCurrency)}
@@ -347,7 +350,7 @@ export default function BudgetsTab({
           </p>
         )}
         {view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
-        {totalBudget > 0 && !noSpending && (
+        {hasTotal && !noSpending && (
           <div className={`meter-track${meterState(totalRatio)}`}>
             <div
               className={`meter-fill${meterState(totalRatio)}`}
@@ -387,11 +390,11 @@ export default function BudgetsTab({
 
         {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
         {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
-        {totalBudget > 0 && namedWithout && <div className="chart-note">{namedWithout}</div>}
+        {hasTotal && namedWithout && <div className="chart-note">{namedWithout}</div>}
         {carryNotes.length > 0 && <div className="stale-note">Rollover may be off where a month is incomplete: {carryNotes.join('; ')}.</div>}
         {assumedNote && <div className="chart-note">{assumedNote}</div>}
         {/* With no spending to count at all, nothing can be missing from it. */}
-        {totalBudget > 0 &&
+        {hasTotal &&
           !noSpending &&
           (past
             ? shownGaps.map((n) => `${monthName} may be incomplete: ${n}.`)
