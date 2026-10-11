@@ -129,6 +129,8 @@
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
 import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
@@ -746,7 +748,7 @@ export function ofxFile(
     }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
       notes.push(
-        `Exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they apply to aren’t marked as excluded. The JSON download lists them under problems. ${UNCHANGED}`
+        `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they apply to aren’t marked as excluded by them, and their memos don’t have those notes and tags. The JSON download lists them under problems. ${UNCHANGED}`
       );
       incomplete.add(carriedAnnotationStore.name);
     }
@@ -791,13 +793,30 @@ export function ofxFile(
       no_balance: 'Nya doesn’t know when this account’s balance was set.',
     };
   }
+  // What every transaction is shown with, which can't be read: the rules
+  // (none is applied, as the app applies none until they can be read) and
+  // the tags (no memo has them, as the app shows none).
+  if (doc.problems.some((p) => p.section === rulesStore.name)) {
+    notes.push(
+      `Your rules could not be read, so none is applied in this statement, as the app applies none until they can be read: its names, and what is hidden from budgets and reports, are as they are without your rules. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    incomplete.add(rulesStore.name);
+  }
+  if (doc.problems.some((p) => p.section === tagStore.name)) {
+    notes.push(`Your tags could not be read, so no memo has them, as the app shows no tags until they can be read. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(tagStore.name);
+  }
   // What was said about a transaction can't be read (its own record, or
   // that of a row imported from a file it stands for): whether it is
-  // excluded isn't known.
+  // excluded isn't known, and its note and tags may be missing.
   const unmarked = rows.filter((r) => r.unmarked).length;
   if (unmarked > 0) {
     notes.push(
-      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${unmarked === 1 ? 'it isn’t' : 'they aren’t'} marked either way. The JSON download lists them under problems. ${UNCHANGED}`
+      `What you said about ${plural(unmarked, 'of these transactions', 'of these transactions')} could not be read, so ${
+        unmarked === 1
+          ? 'it isn’t marked as excluded from budgets and reports or not, and its memo may be missing your note and tags'
+          : 'they aren’t marked as excluded from budgets and reports or not, and their memos may be missing your notes and tags'
+      }. The JSON download lists them under problems. ${UNCHANGED}`
     );
     incomplete.add(txnAnnotationStore.name);
   }

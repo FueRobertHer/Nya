@@ -372,6 +372,70 @@ describe('the download', () => {
     expect(old.note).toContain('Excluded from budgets and reports in Nya');
     expect(old.note).toContain('Paid by check 102');
   });
+
+  test('what was said about an imported row that can’t be read: the files are called incomplete, and the bank’s row standing for it isn’t marked either way', async () => {
+    const { ids } = await importStatement();
+    await say({ transaction_id: ids['CORNER SHOP'], excluded: true });
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    await fake.hset(ctxKey('transaction-annotations'), { [ids['CORNER SHOP']]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const doc = await download();
+    expect(doc.transactions.find((t) => t.transaction_id === 'b_corner')!.excluded).toBeNull();
+    const csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['transaction-annotations']);
+    expect(csv.notes.some((n) => n.startsWith('Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged.'))).toBe(true);
+    expect(csvOf(doc).get('b_corner')!.excluded).toBe('');
+    const ofx = await statement();
+    expect(ofx.incomplete).toContain('transaction-annotations');
+    expect(ofx.notes).toContain(
+      'What you said about 1 of these transactions could not be read, so it isn’t marked as excluded from budgets and reports or not, and its memo may be missing your note and tags. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+    );
+  });
+});
+
+describe('parts the files are made from that can’t be read', () => {
+  test('rules or tags: transactions.csv and an OFX statement apply none and say so, and are called incomplete', async () => {
+    const { ids } = await importStatement();
+    await addRule({ conditions: [{ field: 'name', op: 'contains', value: 'corner' }], actions: { set_name: 'The Corner Shop', add_tags: [work] } });
+    await fake.set(ctxKey('rules'), 'not-ciphertext-but-long-enough-to-be-tried');
+    let doc = await download();
+    let csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['rules']);
+    expect(csv.notes).toContain(
+      'Your rules could not be read (the stored data is damaged), so none is applied in this file, as the app applies none until they can be read: its names, categories, tags and exclusions are as they are without your rules. Nothing was changed: what could not be read is still stored as it was.'
+    );
+    expect(csvOf(doc).get(ids['CORNER SHOP'])).toMatchObject({ nya_name: 'CORNER SHOP', tags: '' });
+    let ofx = await statement();
+    expect(ofx.incomplete).toContain('rules');
+    expect(ofx.notes.some((n) => n.startsWith('Your rules could not be read, so none is applied in this statement'))).toBe(true);
+
+    await fake.del(ctxKey('rules'));
+    await say({ transaction_id: ids['CORNER SHOP'], add_tags: [work] });
+    await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
+    doc = await download();
+    csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['tags']);
+    expect(csv.notes).toContain(
+      'Your tags could not be read (the stored data is damaged), so the tags column is empty, as the app shows no tags until they can be read. Nothing was changed: what could not be read is still stored as it was.'
+    );
+    expect(csvOf(doc).get(ids['CORNER SHOP'])!.tags).toBe('');
+    ofx = await statement();
+    expect(ofx.incomplete).toContain('tags');
+    expect(ofx.notes.some((n) => n.startsWith('Your tags could not be read, so no memo has them'))).toBe(true);
+  });
+
+  test('an imported row’s book, or what was carried from an earlier account: transactions.csv says what it is missing', async () => {
+    await importStatement();
+    await fake.hset(ctxKey('carried-annotations'), { acc_old: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await fake.hset(ctxKey('imported-transactions'), { acc_chk: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const csv = exportFile(await download(), 'transactions-csv');
+    expect(csv.incomplete).toEqual(['carried-annotations', 'imported-transactions']);
+    expect(csv.notes).toContain(
+      'Not all of your transactions imported into linked accounts could be read, so this file is missing the imported transactions of 1 account whose stored data is damaged, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+    );
+    expect(csv.notes).toContain(
+      'Not all of your notes, tags and exclusions carried from earlier accounts could be read: 1 entry whose stored data is damaged. The transactions of the accounts you linked those to are in this file without them. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+    );
+  });
 });
 
 describe('a report and a category’s usage', () => {

@@ -105,7 +105,9 @@ import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedB
 import { settle, type BankRow } from './history-import/match';
 import { standsFor } from './history-import/read';
 import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Layered } from './export-layers';
-import { txnAnnotationStore } from './txn-annotations';
+import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { ConnectorKind } from './connectors/types';
@@ -1010,11 +1012,51 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the transactions of ${counts}.`,
   },
   // One entry per linked account rows were imported into: its book (#52).
+  // A bank's transaction standing for one of its rows can't be told, so it
+  // shows nothing said about that row either.
   'imported-transactions': {
     noun: 'transactions imported into linked accounts',
     one: 'account',
     many: 'accounts',
-    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}.`,
+    missing: (noun, counts) =>
+      `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}, and a transaction the bank sent that stands for one of them doesn’t show what you said about it.`,
+  },
+  // What the person said about each transaction, and what was carried from
+  // earlier accounts: in a CSV, the columns that show it (excluded, note,
+  // tags), on the transaction itself and on a bank's standing for one
+  // imported from a file (lib/txn-layers.ts).
+  [txnAnnotationStore.name]: {
+    noun: txnAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your notes, tags and exclusions could be read: ${counts}. The transactions they are about, and a bank’s transaction standing for one of them you imported from a file, have an empty excluded column (they count, as the app counts them), and may be missing your notes and tags.`,
+  },
+  [carriedAnnotationStore.name]: {
+    noun: carriedAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your notes, tags and exclusions carried from earlier accounts could be read: ${counts}. The transactions of the accounts you linked those to are in this file without them.`,
+  },
+  // One value each: in a CSV, what the rows show without them, as the app
+  // shows them until they can be read.
+  [rulesStore.name]: {
+    noun: rulesStore.what,
+    one: 'rule',
+    many: 'rules',
+    missing: missingFrom,
+    valueInCsv: (why) =>
+      `Your rules could not be read (${why}), so none is applied in this file, as the app applies none until they can be read: its names, categories, tags and exclusions are as they are without your rules.`,
+  },
+  [tagStore.name]: {
+    noun: tagStore.what,
+    one: 'tag',
+    many: 'tags',
+    missing: missingFrom,
+    valueInCsv: (why) => `Your tags could not be read (${why}), so the tags column is empty, as the app shows no tags until they can be read.`,
   },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
@@ -2072,9 +2114,21 @@ export type ExportFile = {
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
   // The books of the manual accounts, the names of the accounts they are on
   // (and the types a pair of SimpleFIN rows is worked out by), the books of the
-  // rows imported into linked accounts, and the categories every row is filed
-  // by (nya_category).
-  'transactions-csv': ['manual-transactions', 'manual_accounts', 'imported-transactions', connectorAccountsStore.name, taxonomyStore.name],
+  // rows imported into linked accounts, the categories every row is filed
+  // by (nya_category), and what the read layer lays on every row as the app
+  // shows it (lib/txn-layers.ts): what was said about each, what was carried
+  // from earlier accounts, the rules and the tags.
+  'transactions-csv': [
+    'manual-transactions',
+    'manual_accounts',
+    'imported-transactions',
+    connectorAccountsStore.name,
+    taxonomyStore.name,
+    txnAnnotationStore.name,
+    carriedAnnotationStore.name,
+    rulesStore.name,
+    tagStore.name,
+  ],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],
 };
