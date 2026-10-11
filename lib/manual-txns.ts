@@ -130,12 +130,14 @@ export type ManualTxn = TxnFields & {
    *  it made none. Kept so the same add sent again never moves the balance
    *  twice, nor leaves the row and the balance apart. */
   balance_update?: { from: number; to: number; account_id?: string } | null;
-  /** On an imported or SimpleFIN row: the name the person gave it in the app
+  /** On an imported row: the name the person gave it in the app
    *  (an edit), kept while it is the row's name. A rule's name (lib/rules.ts)
    *  never replaces it; it does replace a name that came with the row, as it
    *  replaces a bank's. A row whose name became another since (an import
    *  that replaced it with its file's version) is renamed by rules again.
-   *  Absent on a row entered by hand, whose name is always the person's. */
+   *  Absent on a row entered by hand, whose name is always the person's, and
+   *  on one SimpleFIN brought, whose payee stays the bank's (an edit of it is
+   *  refused): only a rule renames that. */
   named?: string;
   created_at: string;
   /** When it was last changed in the app. An import that replaces it with
@@ -336,8 +338,8 @@ export async function editManualTxn(
     const refused = connectorRowRefusal(row, changes);
     if (refused) throw new InvalidTxnError(refused);
     const next: ManualTxn = { ...row, ...changes, id, account_id: target, updated_at: at };
-    // A name the person gives a row that came with one (imported, or from
-    // SimpleFIN) is theirs: no rule renames it (ManualTxn.named).
+    // A name the person gives a row imported with one is theirs: no rule
+    // renames it (ManualTxn.named). A SimpleFIN row's is refused above.
     if (changes.name !== undefined && changes.name !== row.name && row.source !== 'manual') next.named = changes.name;
     const units = amountUnitsError(next.amount, next.currency);
     if (units) throw new InvalidTxnError(units);

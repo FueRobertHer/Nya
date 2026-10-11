@@ -6,7 +6,7 @@ import MonthBreakdown, { exclusionOffer, nameForRules, type Txn } from '@/compon
 import { colorAfterKey } from '@/components/TagsCard';
 import TxnTagsNote from '@/components/TxnTagsNote';
 import { changedFields, editStart } from '@/components/ManualTxnSheet';
-import { withLayersOf } from '@/components/transaction-edits';
+import { recategorizedRow, withLayersOf } from '@/components/transaction-edits';
 import { buildReport, type ReportInput } from '@/lib/report/build';
 import { resolvePeriod } from '@/lib/report/period';
 import { appendixStatus, totalsNote } from '@/lib/report/words';
@@ -216,6 +216,12 @@ describe('editing a row a rule files or names', () => {
     // Without a rule, the form starts from what the row shows, as before.
     expect(editStart(listedRow('manual-txn:b', { category_id: shopping, category_name: 'Shopping' }))).toEqual({ name: 'manual-txn:b', category_id: shopping, category: 'shopping' });
     expect(nameForRules(ruled)).toBe('POS AMZN 4421');
+  });
+
+  test('a category chosen on the Activity tab is the row’s own at once: the form starts from it', () => {
+    const chosen = { ...ruled, ...recategorizedRow(ruled, { category_id: shopping }, taxonomy) };
+    expect(chosen.category_by_rule).toBeUndefined();
+    expect(editStart(chosen)).toMatchObject({ category_id: shopping, category: 'shopping' });
   });
 
   test('a saved row keeps what the read layer put on it until the list is read again', () => {

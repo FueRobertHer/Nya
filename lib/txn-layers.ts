@@ -29,11 +29,17 @@
 //   - tags: each layer takes off the tags it took off and puts on the tags it
 //     put on, over the one before; only tags that exist are shown, in the
 //     order they were made (lib/tags.ts);
-//   - note: a bank row's own (an empty one is a note cleared), else carried;
-//     a manual or imported row's is its own, written with it;
+//   - note: on a bank's row, and on one SimpleFIN brought (kept as the bank
+//     gave it: lib/manual-txns.ts), the person's own (an empty one is a note
+//     cleared), else carried, else what the row came with; a row entered by
+//     hand or imported has its own, written with it;
 //   - category: a rule's only on a row with none of its own, marked
 //     category_by_rule, so an edit of a manual row never writes it into the
-//     row as the row's own (components/ManualTxnSheet.tsx);
+//     row as the row's own (components/ManualTxnSheet.tsx); never on one side
+//     of a pair worked out between two SimpleFIN accounts (`paired`), whose
+//     category is the pair's, so a total never counts half a transfer: a rule
+//     filing one side would make it spending while the other stays a
+//     transfer (its name, tags and hide still apply);
 //   - name: a rule's on a bank's row whose merchant the person hasn't
 //     renamed, and on an imported or SimpleFIN row whose name they haven't
 //     given it themselves (own_name); never on a row entered by hand, whose
@@ -49,6 +55,11 @@ import type { TxnAnnotation, CarriedRowFacts } from './txn-annotations';
 import { orderTagIds, type TagSet } from './tags';
 import { categoryById, choiceText, ownCategory, resolveCategory, type CategoryIndex } from './categories';
 import { evaluateRules, matchText, sourceKind, type CompiledRules, type RuleOutcome, type RuleSubject } from './rules';
+import { isConnectorKind } from './connectors/types';
+
+/** One side of a pair worked out between two SimpleFIN accounts
+ *  (lib/manual-txns.ts connectorTransfers): its category is the pair's. */
+const isPaired = (t: Txn | OlderTxn): boolean => 'paired' in t && t.paired !== undefined;
 
 /** What the layers read besides the rows. */
 export type LayerInputs = {
@@ -115,7 +126,7 @@ export function subjectOf(t: Row, ix: CategoryIndex | null, account: (id: string
     institution: matchText(t.institution_name),
     category: ix ? resolveCategory(ix, t).category.id : null,
     source: sourceKind(t.source),
-    keeps_category: !!ix && !!ownCategory(ix, t),
+    keeps_category: isPaired(t) || (!!ix && !!ownCategory(ix, t)),
     keeps_name: !renamable(t),
   };
 }
@@ -147,7 +158,7 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     // A rule's category, unless the person chose one for the row (or wrote
     // one on a row they entered or imported): filed by id, and carrying its
     // words, as a category chosen does, for the rules that read words.
-    if (outcome.category && ix && !ownCategory(ix, t)) {
+    if (outcome.category && ix && !isPaired(t) && !ownCategory(ix, t)) {
       const c = categoryById(ix, outcome.category.id);
       if (c) {
         t.rule_category = c.id;
@@ -182,11 +193,14 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
       if (shown.length > 0) t.tags = shown;
       else delete t.tags;
 
-      // A bank row's note: its own (an empty one cleared it), else carried.
-      if (t.source === undefined) {
-        const note = own?.note !== undefined ? own.note : carried?.note;
+      // A note on a bank's row, or on one SimpleFIN brought: the person's
+      // own (an empty one cleared it), else carried, else the row's. None is
+      // absent on a bank's row and null on a book's, as each always was.
+      if (t.source === undefined || isConnectorKind(t.source)) {
+        const note = own?.note !== undefined ? own.note : (carried?.note ?? t.note);
         if (note) t.note = note;
-        else delete t.note;
+        else if (t.source === undefined) delete t.note;
+        else t.note = null;
       }
     }
 

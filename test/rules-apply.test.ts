@@ -391,6 +391,23 @@ describe('editing a row a rule files or names', () => {
   });
 });
 
+describe('a bank’s name with repeated spaces', () => {
+  test('left as it was in the form, it isn’t sent, so it never becomes the person’s and rules still name the row', async () => {
+    const spaced = { ...newManualTxn(MANUAL, { date: daysAgo(4), name: 'POS  AMZN   4421', amount: 30, currency: 'USD', category: null, note: null }), source: 'import:ofx', source_id: 'fit-1' };
+    await addManualTxn(ctx, spaced);
+    await amazonRule({ set_name: 'Amazon' });
+    const shown = await rowOf(spaced.id);
+    expect([shown.name, shown.name_before_rules]).toEqual(['Amazon', 'POS  AMZN   4421']);
+    const start = editStart(shown);
+    const sent = changedFields({ date: shown.date, amount: shown.amount, currency: 'USD', name: start.name.trim(), category_id: null, category: null, note: 'gift' }, start);
+    expect('name' in sent).toBe(false);
+    expect((await route('manual-transactions', 'PATCH', { id: spaced.id, account_id: MANUAL, ...sent })).status).toBe(200);
+    const stored = (await manualTxnStore.get(ctx, MANUAL))!.rows.find((r) => r.id === spaced.id)!;
+    expect([stored.name, stored.named, stored.note]).toEqual(['POS  AMZN   4421', undefined, 'gift']);
+    expect((await rowOf(spaced.id)).name).toBe('Amazon');
+  });
+});
+
 describe('a rule made from a row another rule named', () => {
   test('starts from the name rules match, so it matches the row; the offer names it so', async () => {
     await amazonRule({ set_name: 'Amazon' });

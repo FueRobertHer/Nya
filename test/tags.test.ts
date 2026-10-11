@@ -296,13 +296,26 @@ describe('tags and notes on transactions', () => {
     for (const t of body.transactions) for (const k of ['account_ref', 'renamed_from', 'carried', 'own_name']) expect(k in t).toBe(false);
   });
 
-  test('a row brought in from SimpleFIN is tagged and noted like any other on a manual account', async () => {
+  test('a row brought in from SimpleFIN is tagged and noted like a bank’s: the note beside it, the row as the bank gave it', async () => {
     await seed();
     const pulled = { ...newManualTxn(ACCOUNT, { date: daysAgo(1), name: 'SIMPLEFIN ROW', amount: 3, currency: 'USD', category: null, note: null }), source: 'simplefin', source_id: 'sf-1' };
     await addManualTxn(ctx, pulled);
     const r = await annotate({ transaction_id: pulled.id, account_id: ACCOUNT, new_tag: 'Work', note: 'pulled in' });
     expect(r.status).toBe(200);
+    expect(r.body.note).toBe('pulled in');
     expect(await rowOf(pulled.id)).toMatchObject({ source: 'simplefin', tags: [r.body.created_tag.id], note: 'pulled in' });
+    // Kept beside the row, as a bank row's note is; the row stays the bank's.
+    expect((await ann.txnAnnotationStore.get(ctx, pulled.id))!.note).toBe('pulled in');
+    expect((await manualTxnStore.get(ctx, ACCOUNT))!.rows.find((x) => x.id === pulled.id)!.note).toBeNull();
+    // Cleared, it is gone; and its payee is the bank's, which an edit can't change.
+    expect((await annotate({ transaction_id: pulled.id, account_id: ACCOUNT, note: '' })).status).toBe(200);
+    expect((await rowOf(pulled.id)).note).toBeNull();
+    const renamed = await route('manual-transactions', 'PATCH', { id: pulled.id, account_id: ACCOUNT, name: 'My name for it' });
+    expect(renamed.status).toBe(400);
+    // A row entered by hand keeps its note on the row, as before.
+    expect((await annotate({ transaction_id: manualId, account_id: ACCOUNT, note: 'cash' })).status).toBe(200);
+    expect((await manualTxnStore.get(ctx, ACCOUNT))!.rows.find((x) => x.id === manualId)!.note).toBe('cash');
+    expect((await ann.txnAnnotationStore.get(ctx, manualId))?.note).toBeUndefined();
   });
 
   test('tags persist across a resync and a cache clear', async () => {
@@ -375,26 +388,45 @@ describe('tags and notes on transactions', () => {
     expect((await route('transaction-annotations', 'PATCH', undefined, JSON.stringify({ transaction_id: 't_a', note: 'x'.repeat(9000) }))).status).toBe(413);
   });
 
-  test('a tag taken off that no longer exists changes nothing; one deleted comes off a record as it changes', async () => {
+  test('a tag taken off that no longer exists changes nothing; one being deleted comes off a record, one this change never saw stays', async () => {
     await seed();
     const [work, home] = [await made('Work'), await made('Home')];
     await annotate({ transaction_id: 't_a', add_tags: [work, home] });
     await annotate({ transaction_id: 't_b', remove_tags: [work] });
-    // Left in a record by a deletion that couldn't sweep it (see below).
-    await ann.txnAnnotationStore.set(ctx, 't_a', { tags: [work, home, 'gone-tag'], untagged: ['gone-too'], updated_at: '2026-10-01T00:00:00.000Z' });
+    // A record holding a tag being deleted, and one made a moment ago on
+    // another device that this request's read of the tags doesn't have.
+    await ann.txnAnnotationStore.set(ctx, 't_a', { tags: [work, home, 'gone-tag', 'new-elsewhere'], untagged: ['gone-too'], updated_at: '2026-10-01T00:00:00.000Z' });
+    await tags.changeTagSet(ctx, (s) => ({ ...s, deleting: ['gone-tag', 'gone-too'] }));
     const r = await annotate({ transaction_id: 't_a', remove_tags: ['never-a-tag', home] });
     expect(r.status).toBe(200);
-    expect([r.body.tags, r.body.untagged]).toEqual([[work], [home]]);
+    expect([r.body.tags, r.body.untagged]).toEqual([[work, 'new-elsewhere'], [home]]);
     expect((await annotate({ transaction_id: 't_b', remove_tags: ['never-a-tag'] })).status).toBe(200);
     expect((await ann.txnAnnotationStore.get(ctx, 't_b'))!.untagged).toEqual([work]);
   });
 
+  test('two changes to one transaction’s tags at the same moment both land, a tag made for one among them', async () => {
+    await seed();
+    const [work, home] = [await made('Work'), await made('Home')];
+    // Two devices at once, each a compare-and-set on the record: neither loses the other's.
+    const both = await Promise.all([annotate({ transaction_id: 't_a', add_tags: [work] }), annotate({ transaction_id: 't_a', add_tags: [home] })]);
+    expect(both.map((r) => r.status)).toEqual([200, 200]);
+    expect([...(await ann.txnAnnotationStore.get(ctx, 't_a'))!.tags!].sort()).toEqual([work, home].sort());
+    // One reads the tags; meanwhile the other makes a tag and puts it on; the
+    // first lands after. What it read never takes the new tag back off.
+    const read = await tags.readTagSet(ctx);
+    const made2 = await annotate({ transaction_id: 't_b', new_tag: 'Trip' });
+    const trip = made2.body.created_tag.id;
+    expect(tags.liveTagIds(read).has(trip)).toBe(false);
+    await ann.changeAnnotation(ctx, 't_b', { add: [work], gone: new Set(read?.deleting ?? []) });
+    expect((await ann.txnAnnotationStore.get(ctx, 't_b'))!.tags).toEqual([trip, work]);
+  });
+
   test('a record keeps at most so many tags taken off; a deletion that raced a change is taken back off', async () => {
-    const live = new Set(Array.from({ length: ann.MAX_UNTAGGED + 1 }, (_, i) => `tag-${i}`));
-    const full = { untagged: [...live].slice(0, ann.MAX_UNTAGGED), updated_at: '2026-10-01T00:00:00.000Z' };
-    expect(() => ann.changedRecord(full, { remove: [`tag-${ann.MAX_UNTAGGED}`], live }, new Date())).toThrow(ann.AnnotationError);
-    // Ids of tags that no longer exist make room.
-    expect(ann.changedRecord(full, { remove: ['tag-0'], live: new Set(['tag-0']) }, new Date()).untagged).toEqual(['tag-0']);
+    const ids = Array.from({ length: ann.MAX_UNTAGGED + 1 }, (_, i) => `tag-${i}`);
+    const full = { untagged: ids.slice(0, ann.MAX_UNTAGGED), updated_at: '2026-10-01T00:00:00.000Z' };
+    expect(() => ann.changedRecord(full, { remove: [`tag-${ann.MAX_UNTAGGED}`] }, new Date())).toThrow(ann.AnnotationError);
+    // A tag being deleted makes room.
+    expect(ann.changedRecord(full, { remove: [`tag-${ann.MAX_UNTAGGED}`], gone: new Set(['tag-0']) }, new Date()).untagged).toHaveLength(ann.MAX_UNTAGGED);
     await ann.txnAnnotationStore.set(ctx, 't_x', { tags: ['kept', 'raced'], updated_at: '2026-10-01T00:00:00.000Z' });
     expect((await ann.stripTags(ctx, 't_x', ['raced']))!.tags).toEqual(['kept']);
     await ann.txnAnnotationStore.set(ctx, 't_y', { tags: ['raced'], updated_at: '2026-10-01T00:00:00.000Z' });

@@ -41,7 +41,10 @@ export function recategorizedRow(t: Pick<Txn, 'paired'> | undefined, choice: Cat
     const c = categoryById(ix, choice.category_id);
     if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
   }
-  return t?.paired ? { ...shown, paired: undefined, subcategory: null } : shown;
+  // The person's own now: a rule's category no longer shows (category_by_rule),
+  // so the row's edit form starts from it (components/ManualTxnSheet.tsx).
+  const own = { ...shown, category_by_rule: undefined };
+  return t?.paired ? { ...own, paired: undefined, subcategory: null } : own;
 }
 
 /** Newest first, as /api/transactions orders them; the sort is stable. */

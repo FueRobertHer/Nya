@@ -159,10 +159,12 @@ async function changeRecord(ctx: Ctx, transaction_id: string, fn: (current: TxnA
 
 /** A change to what is said about one transaction: any of an exclusion
  *  (true or false), tags put on or taken off (by id), a bank row's note
- *  (empty clears it). `live`, the tags that exist, when the change touches
- *  tags: an id of one deleted since is dropped from the record as it is
- *  changed. */
-export type AnnotationChange = { excluded?: boolean; add?: readonly string[]; remove?: readonly string[]; note?: string; live?: ReadonlySet<string> };
+ *  (empty clears it). `gone`, the ids of tags being deleted (lib/tags.ts
+ *  `deleting`), when the change touches tags: they are dropped from the
+ *  record as it is changed. Only ids known to be deleted: an id the tags
+ *  read for this change don't have may be a tag made on another device a
+ *  moment ago and put on this transaction, which this change must keep. */
+export type AnnotationChange = { excluded?: boolean; add?: readonly string[]; remove?: readonly string[]; note?: string; gone?: ReadonlySet<string> };
 
 /** Tags taken off one transaction that its record keeps (`untagged`), far
  *  under the stored bound: each is a tag that exists, taken off by hand. */
@@ -179,7 +181,7 @@ export function changedRecord(current: TxnAnnotation | null, change: AnnotationC
   const next: TxnAnnotation = { ...(current ?? {}), updated_at: now.toISOString() };
   if (change.excluded !== undefined) next.excluded = change.excluded;
   if (change.add?.length || change.remove?.length) {
-    const exists = (id: string) => !change.live || change.live.has(id);
+    const exists = (id: string) => !change.gone?.has(id);
     const add = [...new Set(change.add ?? [])];
     const remove = [...new Set(change.remove ?? [])].filter((id) => !add.includes(id));
     const tags = [...(current?.tags ?? []).filter((id) => exists(id) && !remove.includes(id) && !add.includes(id)), ...add];

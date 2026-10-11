@@ -142,12 +142,17 @@ export function editStart(t: Txn): { name: string; category_id: string; category
   };
 }
 
+/** A payee as the server keeps it: its spaces single, none at either end. */
+const payeeKey = (name: string) => name.replace(/\s+/g, ' ').trim();
+
 /** What an edit sends of the form's fields: all of them, but the name and
  *  the category only when the person changed them from where the form
- *  started (editStart). */
+ *  started (editStart). Names are compared as the server keeps them, so a
+ *  name stored with repeated spaces, left as it was, isn't sent as a change
+ *  (which would make it the person's own, ManualTxn.named). */
 export function changedFields(fields: Fields, start: ReturnType<typeof editStart>): Partial<Fields> {
   const out: Record<string, unknown> = { ...fields };
-  if (fields.name === start.name.replace(/\s+/g, ' ').trim()) delete out.name;
+  if (payeeKey(fields.name) === payeeKey(start.name)) delete out.name;
   if ('category_id' in fields) {
     if ((fields.category_id ?? '') === start.category_id) {
       delete out.category_id;

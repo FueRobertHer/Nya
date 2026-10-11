@@ -12,7 +12,7 @@ import {
 } from '@/lib/txn-annotations';
 import { ensureTag, isTagId, liveTagIds, MAX_TAGS_PER_TRANSACTION, readTagSet, TagError, type Tag } from '@/lib/tags';
 import { finishDeleting } from '@/lib/tag-delete';
-import { editManualTxn, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
+import { editManualTxn, findManualTxn, InvalidTxnError, isConnectorRow, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
 import { isManualId } from '@/lib/manual';
 import { storeFailure } from '@/lib/store-failure';
 
@@ -34,21 +34,26 @@ import { storeFailure } from '@/lib/store-failure';
 //   note:        text, empty to clear it
 //   account_id:  a manual row's account, so only that book is read }
 //
-// A NOTE ON A MANUAL OR IMPORTED ROW is the row's own (lib/manual-txns.ts),
-// written with it and shown in its edit form, the download and its CSV: an
-// edit here changes the row, so a row never has two notes. A bank row's is
-// kept beside it, in its record. Either way the Activity tab shows it the
-// same.
+// A NOTE ON A ROW ENTERED BY HAND OR IMPORTED is the row's own
+// (lib/manual-txns.ts), written with it and shown in its edit form, the
+// download and its CSV: an edit here changes the row, so a row never has two
+// notes. A bank row's is kept beside it, in its record, and so is one on a
+// row SimpleFIN brought, which stays as the bank gave it (lib/manual-txns.ts
+// refuses a change to its note, as to its payee). Either way the Activity tab
+// shows it the same.
 //
 // Everything said here about a bank row's record is one compare-and-set, so
 // a change from another device at the same moment is never lost.
 //
 // TAGS THAT EXIST. Tags put on must exist; tags taken off that no longer do
-// are passed over, and an id of one deleted since is dropped from the record
-// as it changes. A tag deleted while this request put it on, whose deletion
-// swept the records before this one landed (lib/tag-delete.ts), is taken
-// back off once the record is saved, so the two end with no record holding
-// it, whichever lands first.
+// are passed over, and the id of a tag being deleted (noted under
+// `deleting`) is dropped from the record as it changes. Only those: a tag the
+// tags read here don't have may have been made on another device a moment
+// ago and put on this transaction there, and the compare-and-set keeps what
+// that change wrote. A tag deleted while this request put it on, whose
+// deletion swept the records before this one landed (lib/tag-delete.ts), is
+// taken back off once the record is saved, so the two end with no record
+// holding it, whichever lands first.
 
 const MAX_BODY_CHARS = 8 * 1024;
 
@@ -92,6 +97,7 @@ export async function PATCH(req: Request) {
     // loaded is refused, never put back); a name typed is found or made.
     let created: Tag | null = null;
     let live: Set<string> | undefined;
+    let gone: Set<string> | undefined;
     if (add.length > 0 || remove.length > 0 || body.new_tag !== undefined) {
       await finishDeleting(ctx);
       if (body.new_tag !== undefined) {
@@ -99,7 +105,9 @@ export async function PATCH(req: Request) {
         if (made.created) created = made.tag;
         if (!add.includes(made.tag.id)) add.push(made.tag.id);
       }
-      live = liveTagIds(await readTagSet(ctx));
+      const tagSet = await readTagSet(ctx);
+      live = liveTagIds(tagSet);
+      gone = new Set(tagSet?.deleting ?? []);
       if (add.some((id) => !live!.has(id))) {
         return NextResponse.json({ error: 'That tag no longer exists. Reload to see your tags as they are.' }, { status: 404 });
       }
@@ -107,20 +115,28 @@ export async function PATCH(req: Request) {
     // Taking off a tag that no longer exists changes nothing.
     const off = live ? remove.filter((id) => live!.has(id)) : remove;
 
-    // A manual row's note is the row's own.
+    // A note on a row entered by hand or imported is the row's own; one on a
+    // row SimpleFIN brought is kept beside it, as a bank row's is.
     let rowNote: string | null | undefined;
+    let noteBeside = !manual;
     if (manual && note !== undefined) {
-      const saved = await editManualTxn(ctx, transaction_id, { note: note || null }, { from: account_id as string | undefined });
-      if (!saved) return NextResponse.json({ error: 'That transaction was deleted or moved since this page loaded. Reload to see it.' }, { status: 404 });
-      rowNote = saved.note;
+      const moved = () => NextResponse.json({ error: 'That transaction was deleted or moved since this page loaded. Reload to see it.' }, { status: 404 });
+      const found = await findManualTxn(ctx, transaction_id, account_id as string | undefined);
+      if (!found) return moved();
+      if (isConnectorRow(found.row)) noteBeside = true;
+      else {
+        const saved = await editManualTxn(ctx, transaction_id, { note: note || null }, { from: found.account_id });
+        if (!saved) return moved();
+        rowNote = saved.note;
+      }
     }
     const change: AnnotationChange = {
       ...(excluded !== undefined ? { excluded } : {}),
       ...(add.length > 0 ? { add } : {}),
       ...(off.length > 0 ? { remove: off } : {}),
-      ...(note !== undefined && !manual ? { note } : {}),
+      ...(note !== undefined && noteBeside ? { note } : {}),
     };
-    let saved: TxnAnnotation | null = Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, { ...change, ...(live ? { live } : {}) }) : null;
+    let saved: TxnAnnotation | null = Object.keys(change).length > 0 ? await changeAnnotation(ctx, transaction_id, { ...change, ...(gone?.size ? { gone } : {}) }) : null;
     // A tag deleted while this was saved: taken back off (see TAGS THAT EXIST).
     if (saved && add.length > 0) {
       const now = liveTagIds(await readTagSet(ctx));
@@ -136,7 +152,7 @@ export async function PATCH(req: Request) {
       ...(created ? { created_tag: created } : {}),
     });
   } catch (err) {
-    if (err instanceof TooManyAnnotationsError || err instanceof AnnotationError) return NextResponse.json({ error: err.message }, { status: 400 });
+    if (err instanceof TooManyAnnotationsError || err instanceof AnnotationError || err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     if (err instanceof TagError) return NextResponse.json({ error: err.message }, { status: err.status });
     return storeFailure(err, 'Failed to save that');
   }
