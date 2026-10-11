@@ -45,7 +45,7 @@ export function entryNotice(t: Txn): string | null {
   if (t.split_parts?.some((p) => p.split_remainder)) return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
   const gone = (t.group_missing ?? 0) + (t.group_removed ?? 0);
   if (t.group_members && gone > 0) {
-    return `${gone} of its transactions ${gone === 1 ? 'isn’t' : 'aren’t'} here (the bank removed ${gone === 1 ? 'it' : 'them'}, or ${gone === 1 ? 'its' : 'their'} account is hidden), so ${gone === 1 ? 'it isn’t' : 'they aren’t'} counted.`;
+    return `${gone} of its transactions ${gone === 1 ? 'isn’t' : 'aren’t'} here (the bank removed ${gone === 1 ? 'it' : 'them'}, ${gone === 1 ? 'its' : 'their'} account is hidden, or ${gone === 1 ? 'it' : 'they'} couldn’t be loaded), so ${gone === 1 ? 'it isn’t' : 'they aren’t'} counted.`;
   }
   return null;
 }
