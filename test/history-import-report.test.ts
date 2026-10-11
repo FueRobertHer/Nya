@@ -301,6 +301,11 @@ describe('a bank Plaid gives no transactions for, or that never synced', () => {
     // Never synced, its history reaching the period: covered, nothing missing.
     expect(built({ coverage: 'missing', never_synced: true, accounts: covered }, p).gaps).toEqual([]);
     expect(built({ coverage: 'missing', never_synced: true, accounts: [] }, p).gaps.map((g) => g.kind)).toEqual(['missing']);
+    // Where the data comes from: each account's files, one after another.
+    const two = [...covered, { name: 'Savings', covers: [{ from: daysAgo(380), to: daysAgo(100) }] }];
+    const html = renderToStaticMarkup(createElement(ReportView, { report: built({ no_transactions: 'refused', accounts: two }, p) }));
+    expect(html).toContain(`Checking from`);
+    expect(html.replace(/<[^>]+>/g, '')).toMatch(/imported from files; Savings from .*, imported from files/);
     // Synced, with no rows stored, and seen too late for its history to
     // reach the period ("can go back only to"): covered by the files, nothing.
     const seen = daysAgo(100);

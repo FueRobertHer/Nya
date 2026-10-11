@@ -171,8 +171,9 @@ export function ReportView({ report }: { report: Report }) {
                         </td>
                         <td>{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
                         <td>
-                          {i.first_date ? reportDay(i.first_date) : ''}
-                          {(i.imported ?? []).map((a) => `${i.first_date ? '; ' : ''}${a.account} from ${reportDay(a.from)}, imported from files`).join('')}
+                          {[i.first_date ? reportDay(i.first_date) : null, ...(i.imported ?? []).map((a) => `${a.account} from ${reportDay(a.from)}, imported from files`)]
+                            .filter(Boolean)
+                            .join('; ')}
                         </td>
                         <td>{gaps.length > 0 ? gaps.join('. ') : i.no_transactions ? '' : 'Nothing known'}</td>
                       </tr>
