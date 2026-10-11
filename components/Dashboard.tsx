@@ -44,6 +44,7 @@ import {
   type EndedAccount,
   type EndedConnection,
   type LifecycleDamage,
+  withEndedAccounts,
 } from './AccountLifecycle';
 import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
 import { totalNotes } from './total-notes';
@@ -835,10 +836,15 @@ export default function Dashboard({
   );
 
   // What a rule can name of the accounts, and a rule as a sentence, for the
-  // Rules screen, the rule drawer and a transaction's detail.
+  // Rules screen, the rule drawer and a transaction's detail: those that
+  // ended too, with their end (#50).
   const ruleAccounts = useMemo(
-    () => institutions.flatMap((i) => i.accounts.map((a) => ({ id: a.account_id, label: `${i.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}` }))),
-    [institutions]
+    () =>
+      withEndedAccounts(
+        institutions.flatMap((i) => i.accounts.map((a) => ({ id: a.account_id, label: `${i.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}` }))),
+        ended
+      ),
+    [institutions, ended]
   );
   const ruleSentenceOf = useCallback(
     (id: string) => {

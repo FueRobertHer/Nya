@@ -112,6 +112,19 @@ export function endText(l: EndedAccount['lifecycle']): string {
   }
 }
 
+/** What a rule can name of the accounts (components/RuleSheet.tsx), as the
+ *  Rules screen labels them: the live ones, then each that ended and that
+ *  the live list no longer holds, labelled with its end. A rule on one still
+ *  applies to its transactions from before its end, which the Activity tab
+ *  still lists: it is never "an account no longer here". */
+export function withEndedAccounts(live: readonly { id: string; label: string }[], ended: readonly EndedAccount[]): { id: string; label: string }[] {
+  const listed = new Set(live.map((a) => a.id));
+  const more = ended
+    .filter((e) => !listed.has(e.account_id))
+    .map((e) => ({ id: e.account_id, label: `${e.label.institution ? `${e.label.institution} ` : ''}${accountName(e.label.name || 'Account', e.label.mask)} · ${endText(e.lifecycle)}` }));
+  return [...live, ...more];
+}
+
 const CHOICES: { value: EndState; label: string; note: string }[] = [
   { value: 'closed', label: 'Closed', note: 'It no longer exists: closed at the bank, a loan paid off, a cash jar emptied.' },
   { value: 'left', label: 'No longer yours', note: 'It still exists, but isn’t yours: sold, transferred, or divided.' },
