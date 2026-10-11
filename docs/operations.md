@@ -11,6 +11,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
+- [Goals: plans and rolling back](#goals-plans-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -271,6 +272,27 @@ The release that gave categories ids and groups ([features.md](features.md#categ
 Categories chosen, carried or typed during a rollback are words, as always: the next load of the Activity tab makes a category for any words that none has yet. A category made with the same name as one of yours is the same category.
 
 **If a read fails.** Budgets or categories that can't be read answer 409 and are never saved over, as before. Transactions are still shown, each under the category it came with, with a note, until the categories can be read.
+
+## Goals: plans and rolling back
+
+The release that gave goals plans (#42, [features.md](features.md#savings-goals)) keeps each goal's plan (its allocation, monthly target, target date and whether it is archived, with what the server works out for them) in a store of its own, `goal-plans` (`lib/goal-plans.ts`), one entry per goal id. The `goals` value keeps each goal's name, target and account, as before. There is nothing to run: a goal without an entry has no plan, and reads exactly as it did.
+
+**What a rollback sees.** The release before reads `goals` as it always did: every goal, archived ones among the rest (it has no archive), each counting its account's whole balance (it has no allocations), with no monthly target, date or projection. It neither reads nor writes `goal-plans`, a store it doesn't know, and its saves rewrite `goals` with the four fields, which is all this release keeps there, so no save of its loses anything set in this one. It refuses to save more than 20 goals, and this release keeps to that limit, archived goals included, so it can always save.
+
+**Rolling forward again.** Each entry holds its goal's four fields as the save that wrote it left them in `goals`, and the goal as it read before that save. On the next read:
+
+- a goal whose four fields are those: its plan, as set;
+- a goal the release before renamed, retargeted or moved to another account: its plan still applies, but an allocation only on the account it was set on (following account links, so a reconnect doesn't count as a move): an allocation is never a claim on another account. The goal then counts what the allocated goals leave, as it did there, says what its allocation was, and the next save drops it;
+- a goal the release before deleted: its entry belongs to no goal and is never read as anyone's (goal ids are random, so no later goal can take it over), and the next save deletes it;
+- a goal the release before added: no entry, no plan.
+
+Nothing set is lost, and no entry outlives the next save.
+
+**The order of a save.** A save writes the entries of the goals it changes, in one write (one `HSET`, all or none); then `goals`; then deletes, in one more (`HDEL`), the entries no goal needs: those of goals it removed, those the release before left, and plans it emptied. Whatever point a save stops at, every goal reads either as it did before the save or as the save left it, never a mix: a changed entry carries the goal as it read before, and reads that way until `goals` holds the new fields (a save that changes only plans needs no `goals` write, and is whole once its entries are); an entry for a goal the save adds belongs to no goal until `goals` lists it; and an entry the save deletes belongs to no goal by then. The page is told the save failed, and shows what is stored. Two devices saving at the same moment: the last save wins, as with `goals` alone.
+
+**A page from before plans.** A page cached on a phone from the release before sends goals without plans; each keeps its stored plan, so it can't clear an allocation it can't see. This release's page always sends each goal's plan, even an empty one.
+
+**If a read fails.** Goals or plans that can't be read answer 409 and are never saved over, as goals always have: the card says so and editing is paused. A plan saved by a later release reads as unrecognised, also 409, and is kept exactly as it is, for that release to read again.
 
 ## Rolling back once the brokerage option is on
 
