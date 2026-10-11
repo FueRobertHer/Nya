@@ -261,12 +261,20 @@ export function monthFromActivity(input: {
   const ix = indexTaxonomy(input.taxonomy);
   const rows = activity.rows;
   const currency = totalsCurrency(rows.filter((t) => t.date >= input.window));
-  const inMonth = (m: string) => (d: string) => monthOf(d) === m;
+  // The rows by month, once, so each month's totals read only its own.
+  const byMonth = new Map<string, Txn[]>();
+  for (const t of rows) {
+    const m = monthOf(t.date);
+    const list = byMonth.get(m);
+    if (list) list.push(t);
+    else byMonth.set(m, [t]);
+  }
+  const all = () => true;
   // Each row by the category it is filed under, against the categories the
   // budgets are placed by (lib/categories.ts filedId), as the Budgets tab
   // files the rows it loaded.
-  const spending = (m: string) => new Map(Object.entries(spendingByCategory(rows, inMonth(m), currency, (t) => filedId(ix, t))));
-  const flows = (m: string) => summarize(rows, inMonth(m), currency);
+  const spending = (m: string) => new Map(Object.entries(spendingByCategory(byMonth.get(m) ?? [], all, currency, (t) => filedId(ix, t))));
+  const flows = (m: string) => summarize(byMonth.get(m) ?? [], all, currency);
 
   // Which months may be incomplete, from the first counted to the month
   // shown; a month still to come counts this one, which isn't over.
@@ -294,7 +302,7 @@ export function monthFromActivity(input: {
     pool: incomePool(input.income, month, flows, carryInput),
     earliest: activity.earliest,
     gaps,
-    monthRows: rows.filter((t) => monthOf(t.date) === month),
+    monthRows: byMonth.get(month) ?? [],
     activity,
   };
 }

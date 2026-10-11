@@ -11,6 +11,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Containers](#containers)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
+- [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -271,6 +272,23 @@ The release that gave categories ids and groups ([features.md](features.md#categ
 Categories chosen, carried or typed during a rollback are words, as always: the next load of the Activity tab makes a category for any words that none has yet. A category made with the same name as one of yours is the same category.
 
 **If a read fails.** Budgets or categories that can't be read answer 409 and are never saved over, as before. Transactions are still shown, each under the category it came with, with a note, until the categories can be read.
+
+## Budget rollover and rolling back
+
+The release with budget rollover and income carryover ([features.md](features.md#budget-rollover-and-income-carryover)) keeps what it adds in two stores of its own, beside the budget set: `budget-months` (each budget's amounts by month and the months it rolled over) and `income-carryover` (the setting). It never changes the `budget-set` store's shape, and writes it exactly as the release before does. There is nothing to run: the record begins the first time the app is opened after this release (`since`), and a budget's amount in a month before then is assumed to be its earliest recorded one.
+
+**What a rollback sees.** The release before reads neither store: it shows every budget flat, from `budget-set`, as it always did, with no carry, no month picker and no income pool. Nothing it saves can reach the new stores, so nothing it saves can corrupt them; its budget saves write `budget-set` and the name-keyed copy as before ([Category ids](#category-ids-the-migration-and-rolling-back)). Backups keep both stores, as they keep every store on the seam.
+
+**Rolling forward again.** The app's next read of the month's budgets (on opening it) notes what the release before changed in the budget set, against what the record last saw:
+
+- **an amount it changed** applies from the month it is first read here; the months before keep the amounts recorded for them. A change made during the rollback in an earlier month is so counted from the month it is first seen: the months between show the amount before it, and a carry across them counts that amount;
+- **a budget it added** had none before the month it is first seen, so a rollover turned on for it counts from then;
+- **a budget it removed** ends its rollover from that month (turned on again, it starts afresh);
+- **a category it merged** is followed: the record of the merged one is read as part of the one it went into, amounts added month by month, and moves there with the next change; **one it deleted** is dropped.
+
+Rollover settings and the income setting themselves are as they were before the rollback.
+
+**If a read fails.** A record or setting that can't be read is never taken for none: the Budgets tab's month answers 409 and says so, showing this month's budgets without any carry; a save of budgets is refused (409) while the record can't be read, since recording the change is what keeps the earlier months' amounts, and so are rollover changes; the read-only API answers 409 `unreadable`; the download names the part it couldn't read. Nothing is saved over either store. A damaged record is a backup to restore, or a bug to fix: a record a later release wrote reads as unrecognised and waits for that release.
 
 ## Rolling back once the brokerage option is on
 
