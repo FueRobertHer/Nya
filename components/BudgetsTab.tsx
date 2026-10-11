@@ -31,7 +31,7 @@ import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, type RolloverChange, type Target } from './BudgetsCard';
 import { changeRollover, useBudgetMonth, type BudgetMonthState } from './budget-month-state';
 import { IncomePoolHeader, IncomeSetting } from './IncomePool';
-import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
+import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
 import { localDate, localMonth, instantDay } from '@/lib/local-date';
 import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
@@ -70,7 +70,7 @@ function gapReasons(gaps: { month: string; gaps: MonthGap[] }[], months: Readonl
     if (!months.has(g.month)) continue;
     for (const x of g.gaps) by.set(reasonText(x), [...(by.get(reasonText(x)) ?? []), g.month]);
   }
-  return [...by].map(([text, ms]) => `${text} (${ms.length > 2 ? `${nameOfMonth(ms[0], today)} to ${nameOfMonth(ms[ms.length - 1], today)}` : ms.map((m) => nameOfMonth(m, today)).join(' and ')})`);
+  return [...by].map(([text, ms]) => `${text} (${monthsText(ms, today)})`);
 }
 
 export type { Budgets };

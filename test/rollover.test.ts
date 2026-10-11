@@ -599,7 +599,10 @@ describe('which months may be incomplete', () => {
   test('months named', () => {
     expect(monthsText(['2026-03'], '2026-05')).toBe('March');
     expect(monthsText(['2025-12', '2026-01'], '2026-05')).toBe('December 2025 and January');
-    expect(monthsText(['2026-01', '2026-02', '2026-04'], '2026-05')).toBe('3 months from January');
+    expect(monthsText(['2026-01', '2026-02', '2026-04'], '2026-05')).toBe('January, February and April');
+    expect(monthsText(['2025-11', '2025-12', '2026-01', '2026-02'], '2026-05')).toBe('4 months from November 2025 to February');
+    // Scattered (rows whose exclusion couldn't be read, say): never a run.
+    expect(monthsText(['2025-10', '2026-02', '2026-06', '2026-10'], '2026-10')).toBe('4 months since October 2025');
   });
 
   test('a start can be chosen back to the first month with transactions, at least a year back, at most ten', () => {

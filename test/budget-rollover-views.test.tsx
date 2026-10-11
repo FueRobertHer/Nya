@@ -343,6 +343,20 @@ describe('the Budgets tab, with the month loaded', () => {
     expect(t).toMatch(/Nya began keeping budgets by month in \w+/);
   });
 
+  test('scattered incomplete months are named as such, never as a run', () => {
+    const scattered = [-12, -8, -4, -1].map((n) => addMonths(NOW, n));
+    const t = tab(
+      state(
+        view({
+          carries: carries({ [GROCERIES]: { carry: 120, from: scattered[0], uncertain: scattered } }),
+          gaps: scattered.map((month) => ({ month, gaps: [{ kind: 'exclusions' as const, count: 1 }] })),
+        })
+      )
+    );
+    expect(t).toContain('Whether you excluded 1 transaction couldn’t be read (4 months since');
+    expect(t).not.toMatch(/\(\w+( \d{4})? to \w+/);
+  });
+
   test('answered without the stored history: this month as it always was, with no months to pick yet', () => {
     const html = renderToStaticMarkup(
       <BudgetsTab

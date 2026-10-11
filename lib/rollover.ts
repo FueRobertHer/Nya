@@ -883,12 +883,14 @@ export function monthName(month: string, inYearOf?: string): string {
   return inYearOf && inYearOf.slice(0, 4) === month.slice(0, 4) ? name : `${name} ${y}`;
 }
 
-/** "March", "March and April", or "3 months from March": months that may be
- *  incomplete, for "may be off: ... incomplete". */
+/** Months, oldest first, in words: "March", "March and April", "March, May
+ *  and June", "5 months from March to July" when in a row, else "6 months
+ *  since March"; never a run that isn't one. For "may be off: ... incomplete". */
 export function monthsText(months: readonly string[], inYearOf?: string): string {
-  if (months.length === 1) return monthName(months[0], inYearOf);
-  if (months.length === 2) return `${monthName(months[0], inYearOf)} and ${monthName(months[1], inYearOf)}`;
-  return `${months.length} months from ${monthName(months[0], inYearOf)}`;
+  const names = months.map((m) => monthName(m, inYearOf));
+  if (names.length <= 3) return names.length <= 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  const inARow = months.every((m, i) => i === 0 || m === addMonths(months[i - 1], 1));
+  return inARow ? `${names.length} months from ${names[0]} to ${names[names.length - 1]}` : `${names.length} months since ${names[0]}`;
 }
 
 /** What a carry says beneath its meter: "+$120 rolled over", "$45 overspent,
