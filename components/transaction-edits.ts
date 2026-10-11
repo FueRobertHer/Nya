@@ -235,10 +235,22 @@ export function useTransactionEdits({
     async (t: Txn, excluded: boolean) => {
       setError(null);
       changes.current++;
-      // The person's choice now decides, over a rule's hide either way.
+      // The person's choice now decides, over a rule's hide either way; on a
+      // split transaction, every part (one left out on its own stays out).
       setTxns((prev) =>
         prev
-          ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined } : x))
+          ? prev.map((x) =>
+              x.transaction_id === t.transaction_id
+                ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined }
+                : x.split_of === t.transaction_id && x.split_parent
+                  ? {
+                      ...x,
+                      excluded: excluded || x.split_excluded ? true : undefined,
+                      excluded_by_rule: undefined,
+                      split_parent: { ...x.split_parent, excluded: excluded ? true : undefined, excluded_by_rule: undefined },
+                    }
+                  : x
+            )
           : prev
       );
       let res: Response | null = null;
@@ -273,7 +285,8 @@ export function useTransactionEdits({
       setTxns((prev) =>
         prev
           ? prev.map((x) => {
-              if (x.transaction_id !== t.transaction_id) return x;
+              // A split transaction's parts carry its tags.
+              if (x.transaction_id !== t.transaction_id && x.split_of !== t.transaction_id) return x;
               const tags = [...(x.tags ?? []).filter((id) => !remove.includes(id)), ...add.filter((id) => !(x.tags ?? []).includes(id))];
               return { ...x, tags: tags.length > 0 ? tags : undefined };
             })
@@ -301,7 +314,7 @@ export function useTransactionEdits({
             setTxns((prev) =>
               prev
                 ? prev.map((x) =>
-                    x.transaction_id === t.transaction_id ? { ...x, tags: [...new Set([...(x.tags ?? []), ...put])] } : x
+                    x.transaction_id === t.transaction_id || x.split_of === t.transaction_id ? { ...x, tags: [...new Set([...(x.tags ?? []), ...put])] } : x
                   )
                 : prev
             );
@@ -322,8 +335,17 @@ export function useTransactionEdits({
     async (t: Txn, note: string) => {
       setError(null);
       changes.current++;
+      // A split transaction's note is its own, kept beside its parts' (split_parent).
       setTxns((prev) =>
-        prev ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, note: note || (x.source ? null : undefined) } : x)) : prev
+        prev
+          ? prev.map((x) =>
+              x.transaction_id === t.transaction_id
+                ? { ...x, note: note || (x.source ? null : undefined) }
+                : x.split_of === t.transaction_id && x.split_parent
+                  ? { ...x, split_parent: { ...x.split_parent, note: note || (x.source ? null : undefined) } }
+                  : x
+            )
+          : prev
       );
       let res: Response | null = null;
       try {
@@ -341,5 +363,5 @@ export function useTransactionEdits({
     [setTxns, undo]
   );
 
-  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error };
+  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error, refresh: refreshQuietly };
 }

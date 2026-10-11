@@ -35,6 +35,7 @@ import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 import { isTransactionId } from './txn-annotations';
+import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS } from './split-rows';
 
 export const GROUPS_VERSION = 1;
 
@@ -58,13 +59,11 @@ export type TxnGroup = {
 
 // ---- Limits ----
 
-/** Transactions in one group, and the fewest. */
-export const MAX_MEMBERS = 50;
-export const MIN_MEMBERS = 2;
+/** Transactions in one group, the fewest, and a group's name's length (kept
+ *  with the read layer's rows, lib/split-rows.ts, for the views). */
+export { MAX_MEMBERS, MIN_MEMBERS, GROUP_NAME_MAX };
 /** Groups a person can have. */
 export const MAX_GROUPS = 2_000;
-/** A group's name: as long as a category's (lib/categories.ts NAME_MAX). */
-export const GROUP_NAME_MAX = 60;
 /** How far apart a group's transactions may be, in days. */
 export const MAX_SPAN_DAYS = 366;
 

@@ -87,6 +87,18 @@ export const PART_PREFIX = 'split:';
 export const REMAINDER_PREFIX = 'split-rest:';
 export const GROUP_PREFIX = 'group:';
 
+// ---- Limits (lib/splits.ts, lib/groups.ts), here so the views can read them ----
+
+/** Parts one transaction can be split into, and the fewest: one part is a
+ *  category, not a split. */
+export const MAX_PARTS = 20;
+export const MIN_PARTS = 2;
+/** Transactions in one group, and the fewest. */
+export const MAX_MEMBERS = 50;
+export const MIN_MEMBERS = 2;
+/** A group's name: as long as a category's (lib/categories.ts NAME_MAX). */
+export const GROUP_NAME_MAX = 60;
+
 /** Whether an id is a part's, a remainder's or a group's row's, not a
  *  transaction's. */
 export const isSplitOrGroupId = (id: string): boolean => id.startsWith(PART_PREFIX) || id.startsWith(REMAINDER_PREFIX) || id.startsWith(GROUP_PREFIX);

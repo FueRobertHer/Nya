@@ -35,6 +35,10 @@ import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchRows } from "./txn-search";
+import { bankRows, type SplitParent } from "@/lib/split-rows";
+import SplitSheet from "./SplitSheet";
+import GroupSheet from "./GroupSheet";
+import { entryLabel, entryNotice, MemberRows, PartRows, SplitActions } from "./SplitRows";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -111,6 +115,23 @@ export type Txn = {
   // As in lib/transactions.ts: one side of a pair Nya worked out between two
   // SimpleFIN accounts.
   paired?: "card" | "loan" | "transfer";
+  // As in lib/transactions.ts (#39, lib/split-rows.ts): a part of a split
+  // transaction, in its place; a transaction whose split couldn't be read or
+  // no longer fits; a group's row, its transactions inside it. And, on a
+  // split transaction put back whole for the list (bankRows), its parts.
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_unread?: true;
+  split_unapplied?: "currency";
+  split_parts?: Txn[];
+  group_id?: string;
+  group_members?: Txn[];
+  group_missing?: number;
+  group_removed?: number;
 };
 
 /** The name rules match a row by: the one it had before any rule named it. */
@@ -303,6 +324,7 @@ export default function MonthBreakdown({
   onSaveNote,
   onCreateRule,
   ruleSentenceOf,
+  onSplitsChanged,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -346,6 +368,10 @@ export default function MonthBreakdown({
   onCreateRule?: (t: Txn, category_id?: string) => void;
   /** A rule, by id, in a sentence, for the rules a transaction matches. */
   ruleSentenceOf?: (id: string) => string | null;
+  /** After a split or a group is saved or undone (components/SplitSheet.tsx,
+   *  components/GroupSheet.tsx): the list read again. Without it, nothing is
+   *  offered to split or group. */
+  onSplitsChanged?: () => void;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -355,6 +381,10 @@ export default function MonthBreakdown({
   // After a transaction is given another category: the offer to do the same
   // for every transaction with its name, as a rule (#36).
   const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
+  // The split being made or changed, and the group (#39).
+  const [splitting, setSplitting] = useState<Txn | null>(null);
+  const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
+  const [splitError, setSplitError] = useState<string | null>(null);
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -500,7 +530,10 @@ export default function MonthBreakdown({
       const c = currencyOf(t) ?? currency;
       g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
-    return groups;
+    // Listed as the bank has them: a split transaction once, with its parts
+    // under it; a group's row with its transactions under it (#39). The day's
+    // figure above counts the parts and the nets, as every total does.
+    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
   }, [visible, currency]);
 
   if (loading) {
@@ -765,6 +798,7 @@ export default function MonthBreakdown({
         <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
 
         {actionError && <div className="error">{actionError}</div>}
+        {splitError && <div className="error">{splitError}</div>}
         {ruleOffer && onCreateRule && (
           <div className="rule-offer">
             <p className="panel-note" style={{ marginTop: 0 }}>
@@ -804,10 +838,10 @@ export default function MonthBreakdown({
                     <td>{fmtTxnDate(g.date)}</td>
                     <td className="num">{fmtDayNet(g.nets, currency)}</td>
                   </tr>
-                  {g.txns.map((t, i) => (
+                  {g.entries.map((t, i) => (
+                    <Fragment key={t.transaction_id}>
                     <tr
-                      key={t.transaction_id}
-                      className={`acct-row${i === g.txns.length - 1 ? " last-in-day" : ""}`}
+                      className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
                       onClick={() => {
                         const opening = recatId !== t.transaction_id;
                         setRecatId(opening ? t.transaction_id : null);
@@ -854,7 +888,8 @@ export default function MonthBreakdown({
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
-                              {categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
+                              {entryLabel(t) ? ` · ${entryLabel(t)}` : ""}
+                              {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
                               {t.source ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
@@ -872,6 +907,7 @@ export default function MonthBreakdown({
                                 Couldn&apos;t read whether you excluded this
                               </div>
                             )}
+                            {entryNotice(t) && <div className="excluded-tag">{entryNotice(t)}</div>}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -879,13 +915,20 @@ export default function MonthBreakdown({
                             className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {taxonomy ? (
+                            {t.split_parts ? null : taxonomy ? (
                               <CategoryPicker
                                 taxonomy={taxonomy}
                                 className="text-input recat-select"
                                 value={t.category_id ?? taxonomy.uncategorized}
                                 onChange={(id) => {
-                                  if (id && id !== t.category_id) {
+                                  if (id && id !== t.category_id && t.group_members) {
+                                    // A group's net is filed under the group's category.
+                                    void fetch("/api/transaction-groups", {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ id: t.group_id, category_id: id }),
+                                    }).then(() => onSplitsChanged?.(), () => setSplitError("Could not reach the server."));
+                                  } else if (id && id !== t.category_id) {
                                     onRecategorize(t.transaction_id, { category_id: id });
                                     setRuleOffer({ t, category_id: id });
                                   }
@@ -893,7 +936,7 @@ export default function MonthBreakdown({
                                 }}
                                 label={`Category for ${t.name}`}
                               />
-                            ) : (
+                            ) : t.group_members ? null : (
                               <select
                                 className="text-input recat-select"
                                 value={t.category ?? "other"}
@@ -910,9 +953,23 @@ export default function MonthBreakdown({
                                 ))}
                               </select>
                             )}
+                            {/* Splitting it, or grouping it with others (#39). */}
+                            {onSplitsChanged && (
+                              <SplitActions
+                                t={t}
+                                onSplit={(x) => {
+                                  setSplitting(x);
+                                  setRecatId(null);
+                                }}
+                                onGroup={(x) => {
+                                  setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null });
+                                  setRecatId(null);
+                                }}
+                              />
+                            )}
                             {/* Not a row SimpleFIN brought: the bank's
                                 record, whose category alone is the person's. */}
-                            {t.source && !isConnectorKind(t.source) && onEditTransaction && (
+                            {t.source && !isConnectorKind(t.source) && onEditTransaction && !t.group_members && (
                               <div className="rename-row">
                                 <button
                                   className="secondary"
@@ -957,14 +1014,14 @@ export default function MonthBreakdown({
                             )}
                             {/* Offered once a pending row has posted
                                 (exclusionOffer), one a rule hides too. */}
-                            {onToggleExcluded && exclusionOffer(t) !== "toggle" && (
+                            {onToggleExcluded && !t.group_members && exclusionOffer(t) !== "toggle" && (
                               <div className="rename-hint">
                                 {exclusionOffer(t) === "wait-rule"
                                   ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
                                   : "Once it posts, it can be excluded from budgets and reports."}
                               </div>
                             )}
-                            {onToggleExcluded && exclusionOffer(t) === "toggle" && (
+                            {onToggleExcluded && !t.group_members && exclusionOffer(t) === "toggle" && (
                               <>
                                 <div className="rename-row">
                                   <button
@@ -986,7 +1043,7 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            {onChangeTags && onSaveNote && (
+                            {onChangeTags && onSaveNote && !t.group_members && (
                               <TxnTagsNote
                                 key={`${t.transaction_id}:${t.note ?? ""}`}
                                 t={t}
@@ -995,7 +1052,7 @@ export default function MonthBreakdown({
                                 onSaveNote={(note) => onSaveNote(t, note)}
                               />
                             )}
-                            {onCreateRule && (
+                            {onCreateRule && !t.group_members && (
                               <div className="rename-row">
                                 <button
                                   className="secondary"
@@ -1019,7 +1076,7 @@ export default function MonthBreakdown({
                                 </ul>
                               </div>
                             )}
-                            <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />
+                            {!t.group_members && <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />}
                           </div>
                         )}
                       </td>
@@ -1027,6 +1084,22 @@ export default function MonthBreakdown({
                         {fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}
                       </td>
                     </tr>
+                    {t.split_parts && (
+                      <PartRows
+                        parent={t}
+                        last={i === g.entries.length - 1}
+                        taxonomy={taxonomy}
+                        open={recatId}
+                        onOpen={setRecatId}
+                        onChanged={() => onSplitsChanged?.()}
+                        onError={setSplitError}
+                        onEditSplit={setSplitting}
+                      />
+                    )}
+                    {t.group_members && (
+                      <MemberRows group={t} last={i === g.entries.length - 1} open={recatId} onOpen={setRecatId} onChanged={() => onSplitsChanged?.()} onError={setSplitError} />
+                    )}
+                    </Fragment>
                   ))}
                 </Fragment>
               ))}
@@ -1040,6 +1113,20 @@ export default function MonthBreakdown({
           </div>
         ))}
       </div>
+
+      {taxonomy && onSplitsChanged && (
+        <>
+          <SplitSheet t={splitting} taxonomy={taxonomy} onClose={() => setSplitting(null)} onSaved={() => { setSplitError(null); onSplitsChanged(); }} />
+          <GroupSheet
+            start={grouping.start}
+            group={grouping.group}
+            txns={txns}
+            taxonomy={taxonomy}
+            onClose={() => setGrouping({ start: null, group: null })}
+            onSaved={() => { setSplitError(null); onSplitsChanged(); }}
+          />
+        </>
+      )}
     </>
   );
 }

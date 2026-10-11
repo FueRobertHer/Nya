@@ -2465,6 +2465,9 @@ export default function Dashboard({
                   )
                 }
                 ruleSentenceOf={ruleSentenceOf}
+                // Splits and groups (#39): applied after the server's cache,
+                // so the list is read again quietly after a change.
+                onSplitsChanged={txnEdits.refresh}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}

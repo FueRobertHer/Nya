@@ -42,7 +42,7 @@ import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
 import { MANUAL_TXN_PREFIX, MAX_NOTE_CHARS } from './manual-txn-input';
 import { isTransactionId } from './txn-annotations';
-import { unitScale, toUnits } from './split-rows';
+import { unitScale, toUnits, MAX_PARTS, MIN_PARTS } from './split-rows';
 
 export const SPLITS_VERSION = 1;
 
@@ -72,10 +72,9 @@ export type SplitRecord = {
 
 // ---- Limits ----
 
-/** Parts one transaction can be split into, and the fewest: one part is a
- *  category, not a split. */
-export const MAX_PARTS = 20;
-export const MIN_PARTS = 2;
+/** Parts one transaction can be split into, and the fewest (kept with the
+ *  read layer's rows, lib/split-rows.ts, for the views). */
+export { MAX_PARTS, MIN_PARTS };
 /** Transactions a person can split: far beyond what anyone splits by hand,
  *  and a bound on the one read every load makes. */
 export const MAX_SPLITS = 5_000;
