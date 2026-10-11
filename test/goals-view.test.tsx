@@ -180,6 +180,14 @@ describe('the editor’s checks are the server’s', () => {
     expect(readDraft({ ...draftOf(mine), allocation: '3500.51' }, opts).errors).toEqual(['Savings has $3,500.50 you can set aside for this goal.']);
   });
 
+  test('an allocation kept as it is saves, even on an account that can’t be counted just now', () => {
+    const mine = goal('b', 'nobal', 900, { allocation: 300 });
+    expect(readDraft(draftOf(mine), { ...base, goals: [mine], goal: mine }).ready).toBe(true);
+    expect(readDraft({ ...draftOf(mine), allocation: '301' }, { ...base, goals: [mine], goal: mine }).errors).toEqual([
+      'Nothing can be set aside from New account: no balance is known for it yet.',
+    ]);
+  });
+
   test('nothing allocated is a choice: 0 is taken', () => {
     expect(readDraft(draft({ allocate: true, allocation: '0' }), base)).toMatchObject({ ready: true, entry: { plan: { allocation: 0 } } });
   });

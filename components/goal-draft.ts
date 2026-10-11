@@ -68,7 +68,10 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
 
   const errors: string[] = [];
   if (d.target.trim() && target === null) errors.push('Enter a target, like 5000.');
-  if (d.allocate) {
+  // What the goal has set aside already, kept as it is: the server takes it
+  // whatever the balance did since (lib/goal-allocation.ts), so this does too.
+  const kept = !!goal && goal.account_id === d.account && goal.plan?.allocation !== undefined && allocation === goal.plan.allocation;
+  if (d.allocate && !kept) {
     if (!account) errors.push('Choose an account to set part of its balance aside from.');
     else if (!trackable) {
       const why = account.type && isOwedType(account.type) ? 'its balance is owed, not saved' : account.hidden ? 'it is hidden' : 'no balance is known for it yet';
