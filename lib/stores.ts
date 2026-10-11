@@ -28,12 +28,14 @@ import './fire-plan';
 import './history-import/store';
 import './holdings-history';
 import './import/store';
+import './lifecycle';
 import './manual-txns';
 import './planned-store';
 import './rate-limit';
 import './report/store';
 import './rules';
 import './tags';
+import './timeline-notes';
 import './txn-annotations';
 
 import { storesDeclaredSoFar, type Store } from './repo';

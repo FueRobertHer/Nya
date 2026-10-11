@@ -1,15 +1,16 @@
 import { backupProblem, type BackupProblem } from '@/lib/backup';
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
-  getHistory,
+  getHistoryWithBreaks,
   withTodayPoint,
   isBackfillDone,
   type HistoryPoint,
 } from '@/lib/history';
+import { signedContribution } from '@/lib/balance';
 import { applyHidden } from '@/lib/hidden';
 import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
@@ -18,6 +19,9 @@ import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from 
 import { loggable } from '@/lib/log-safe';
 import { readDrawState } from '@/lib/history-import/extend';
 import { importedHistoryView, type ImportedHistoryView } from '@/lib/history-import/view';
+import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, shortDays, type LifecycleForClient } from '@/lib/lifecycle';
+import { holdMissingAccounts, askAboutZeroBalances, askAboutReportedEnds } from '@/lib/lifecycle-questions';
+import { storeFailure } from '@/lib/store-failure';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -28,6 +32,10 @@ type NetWorthPayload = {
   // vanish from the Hidden card with no way to unhide them. `hidden_at` is stored
   // but not shipped (nothing renders it).
   hidden: HiddenForClient[];
+  // The accounts that ended (lib/lifecycle.ts): closed, left or untracked,
+  // one per account, for the Accounts tab's own section. Like `hidden`, the
+  // stored set, so one whose institution is gone is still listed.
+  lifecycle: LifecycleForClient[];
   as_of: string;
 };
 
@@ -141,9 +149,25 @@ export async function GET(req: Request) {
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
     const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
-    const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
+    // Which accounts ended (lib/lifecycle.ts), through the same links, read
+    // strictly: an entry that can't be read fails this load (409, below)
+    // rather than count an account the person closed. Awaited below the
+    // snapshot like the hidden set, so it can't cost today's point.
+    const readLifecycle = () => eager(hiddenPromise.then((h) => getEffectiveLifecycle(ctx, h.links)));
+    let lifecyclePromise = readLifecycle();
+    // The days known short of an account that came back after an assumed
+    // closure are left out (lib/lifecycle.ts shortDays).
+    const readHistory = () =>
+      eager(Promise.all([hiddenPromise, lifecyclePromise]).then(([h, l]) => getHistoryWithBreaks(ctx, h.hidden, l.ended, shortDays(l, h.hidden))));
+    let historyPromise = readHistory();
 
-    const { institutions, netWorth } = await computeNetWorth(ctx);
+    const { institutions, netWorth, lifecycleChanged } = await computeNetWorth(ctx);
+    // The fetch recorded or lifted an assumed closure (lib/vanished.ts): what
+    // was read before it is out of date.
+    if (lifecycleChanged) {
+      lifecyclePromise = readLifecycle();
+      historyPromise = readHistory();
+    }
     // When the institutions that answered did: their last good sync.
     const answeredAt = new Date().toISOString();
 
@@ -196,30 +220,52 @@ export async function GET(req: Request) {
       );
     }
 
-    const { hidden, forClient: hiddenList } = await hiddenPromise;
+    const { hidden, forClient: hiddenList, links } = await hiddenPromise;
+    const lifecycle = await lifecyclePromise;
     await directoryWrite;
     await syncWrite;
+
+    // An account missing from a healthy answer is HELD at its last known
+    // balance, with its question, and a zero for weeks is asked about
+    // (lib/lifecycle-questions.ts). Display only, below the gates and after
+    // the accounts were remembered: a held row is never recorded.
+    await holdMissingAccounts(ctx, institutions, lifecycle, links ?? new Map());
+    await askAboutZeroBalances(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // And one that ended but whose bank still returns it moving is asked
+    // about again, from a copy of its row (`ended_reported`).
+    await askAboutReportedEnds(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // And an account that ended leaves the live accounts (and with them every
+    // total) for the Accounts tab's own section, unless it is hidden too: the
+    // Hidden card lists it, and every total leaves it out already.
+    const endedRows = applyLifecycle(institutions, lifecycle, hidden);
     // Plaid's cross-Item account identity is for matching on the server only
     // (lib/links.ts); it has no business in the payload, the cache or the
     // browser's localStorage. Nor has the raw holdings answer recorded above:
     // the payload carries the holdings already, in the shape the client reads.
     for (const inst of institutions) {
       delete inst.holdings_observed;
+      delete inst.missing_ids;
       for (const a of inst.accounts) delete a.persistent_account_id;
     }
     const visibleNetWorth = applyHidden(institutions, hidden);
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
     const stored = await historyPromise;
-    const history = snapshotDate
-      ? withTodayPoint(stored, snapshotDate, visibleNetWorth)
-      : stored;
+    // An end on the person's today can be the UTC day after (lib/lifecycle.ts
+    // lastEndDay): it leaves the live total at once, but today's point is the
+    // UTC day, before that end, where the account still counts, as the day
+    // reads once recorded.
+    const notYet = snapshotDate
+      ? endedRows.filter((r) => r.end > snapshotDate && r.type !== null).reduce((n, r) => n + signedContribution(r.type!, r.balance ?? 0), 0)
+      : 0;
+    const history = snapshotDate ? withTodayPoint(stored.points, snapshotDate, visibleNetWorth + notYet, stored.breaks) : stored.points;
 
     const payload: NetWorthPayload = {
       institutions,
       netWorth: visibleNetWorth,
       history,
       hidden: hiddenList,
+      lifecycle: lifecycleForClient(lifecycle),
       as_of: new Date().toISOString(),
     };
 
@@ -245,9 +291,10 @@ export async function GET(req: Request) {
       from_cache: false,
     });
   } catch (err: any) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(loggable(err));
-    return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });
+    // No container: 503. Account closures that can't be read: 409, flagged,
+    // with the ids (lib/store-failure.ts), never a total that counts an
+    // account the person closed; `repair` tells the Accounts tab it may offer
+    // to remove the damaged ones (app/api/account-lifecycle). Anything else: 500.
+    return storeFailure(err, 'Failed to fetch net worth', isLifecycleUnreadable(err) ? { repair: 'account-lifecycle' } : undefined);
   }
 }

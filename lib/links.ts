@@ -725,6 +725,11 @@ export async function forgetEarlierAccount(
     }
   }
 
+  // An account that ended (#50) is taken out of the totals after its end by
+  // its balances: refused when forgetting them would put it back.
+  const refusal = await (await import('./lifecycle')).endedForgetRefusal(ctx, id, found.hidden);
+  if (refusal) throw new ForgetRefused(refusal);
+
   // What it held, from every month of holdings history. First, as the one
   // step that stops for what is stored (a record this version does not
   // recognise that may hold the account), so a forget it stops has changed
@@ -766,6 +771,8 @@ export async function forgetEarlierAccount(
   // recording of holdings already under way could have too.
   await forgetAccountBalances(ctx, id, { today: true });
   if (mayHoldPositions) await forgetRecentHoldings(ctx, id);
+  // Its closure and the note about it, which name it too (#50).
+  await (await import('./lifecycle')).forgetLifecycle(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
@@ -973,8 +980,9 @@ async function describeGone(ctx: Ctx, list: HiddenForClient[], live: Set<string>
 }
 
 /** Just these ids' directory entries (one read each, not the whole directory);
- *  an unreadable or missing one is left out. */
-async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
+ *  an unreadable or missing one is left out. Also how an account missing from
+ *  its bank's answer is named and signed (lib/lifecycle-questions.ts). */
+export async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
   const blobs = await Promise.all(ids.map((id) => redis().hget<string>(directoryKey(ctx), id)));
   const out: Record<string, DirectoryEntry> = {};
   await Promise.all(

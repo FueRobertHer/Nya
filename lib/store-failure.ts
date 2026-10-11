@@ -17,13 +17,14 @@ import { containerUnavailable } from './data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, UnreadableEntriesError, describeUnreadable } from './repo';
 import { loggable } from './log-safe';
 
-export function storeFailure(err: unknown, fallback: string): NextResponse {
+export function storeFailure(err: unknown, fallback: string, unreadableExtra?: Record<string, unknown>): NextResponse {
   const unavailable = containerUnavailable(err);
   if (unavailable) return unavailable;
   if (err instanceof StoredDataUnreadableError) {
     console.error(`Stored ${err.what} unreadable:`, describeUnreadable(err));
     const ids = err instanceof UnreadableEntriesError ? { unreadable_ids: err.unreadable, unrecognised_ids: err.unrecognised } : {};
-    return NextResponse.json({ error: err.message, unreadable: true, ...ids }, { status: 409 });
+    // What the client may do about it (a repair it can offer), when the route knows.
+    return NextResponse.json({ error: err.message, unreadable: true, ...ids, ...unreadableExtra }, { status: 409 });
   }
   if (err instanceof StoreRefusedError) return NextResponse.json({ error: err.message }, { status: err.status });
   console.error(loggable(err));

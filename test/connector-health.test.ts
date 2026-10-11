@@ -86,12 +86,16 @@ describe('connector health', () => {
     expect(connectorHealthText('My Bank', h)).toBe('“SimpleFIN had a problem of its own (HTTP 503).” Nothing to do: this usually clears on its own, and Nya asks again at its next update.');
   });
 
-  test('missing accounts are named, and the way to stop tracking them is said', () => {
+  test('missing accounts are named, and the ways to stop tracking them or say they closed are said', () => {
     const one = connectorHealth(detail('missing', { accounts: ['Visa'] }), null);
     expect(one).toMatchObject({ state: 'partial', action: 'resolve' });
-    expect(connectorHealthText('My Bank', one)).toContain("Visa isn't in SimpleFIN's latest answer. If you removed it at SimpleFIN, stop tracking it here");
+    expect(connectorHealthText('My Bank', one)).toBe(
+      "Visa isn't in SimpleFIN's latest answer. If you removed it at SimpleFIN, stop tracking it here with Choose accounts. If it closed, say so with Close… on it, under Manage. Until then its balances are shown as last known, and no day's total is saved."
+    );
     const two = connectorHealth(detail('missing', { accounts: ['Visa', 'Savings'] }), null);
-    expect(connectorHealthText('My Bank', two)).toContain("Visa and Savings aren't in SimpleFIN's latest answer");
+    expect(connectorHealthText('My Bank', two)).toContain(
+      "Visa and Savings aren't in SimpleFIN's latest answer. If you removed them at SimpleFIN, stop tracking them here with Choose accounts. If they closed, say so with Close… on each, under Manage."
+    );
   });
 
   test('a working connection says nothing more than that it works', () => {

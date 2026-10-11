@@ -81,6 +81,9 @@ type Fillable = {
   stale_too_old_at?: string;
   stale_missing?: number;
   unshown_accounts?: UnshownAccount[];
+  /** Accounts missing from this healthy answer and held for the person's
+   *  answer (lib/lifecycle-questions.ts): their records are kept. */
+  missing_ids?: string[];
 };
 
 /** A remembered account a broken institution's card can't show. */
@@ -121,6 +124,27 @@ function noteUnshown(inst: Fillable, accounts: RememberedAccount[]): void {
  */
 export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Promise<void> {
   const fields: Record<string, string> = {};
+  // An account missing from a healthy answer and held until the person says
+  // whether it closed (#50, lib/lifecycle-questions.ts) keeps its entry in
+  // its Item's record: as far as anyone knows it is still theirs, and the
+  // record is what draws it at its last known balance (its currency, its
+  // limit). Once answered it is no longer held, and the next record is the
+  // fetch's alone. Read only for an Item holding one.
+  const held = new Map<string, RememberedAccount[]>();
+  await Promise.all(
+    institutions
+      .filter((inst) => !inst.error && !inst.manual && (inst.missing_ids?.length ?? 0) > 0)
+      .map(async (inst) => {
+        try {
+          const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), inst.item_id);
+          const parsed = blob ? (JSON.parse(await decrypt(blob)) as RememberedAccount[]) : [];
+          const ids = new Set(inst.missing_ids);
+          if (Array.isArray(parsed)) held.set(inst.item_id, parsed.filter((a) => ids.has(a?.account_id) && typeof a?.type === 'string'));
+        } catch {
+          // Unreadable: the held account is drawn from the directory instead.
+        }
+      })
+  );
 
   for (const inst of institutions) {
     // Manual institutions have no Plaid Item to fail (their balances live in
@@ -143,6 +167,9 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
         limit: typeof a.limit === 'number' ? a.limit : null,
         currency: a.currency ?? null,
       });
+    }
+    for (const kept of held.get(inst.item_id) ?? []) {
+      if (!accounts.some((a) => a.account_id === kept.account_id)) accounts.push(kept);
     }
     if (accounts.length === 0) continue;
 

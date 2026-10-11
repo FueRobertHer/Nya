@@ -104,7 +104,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `allocation-settings`, `carried-annotations`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imports`, `manual-transactions`, `planned-items`, `report-settings`, `rules`, `tags` and `transaction-annotations`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `carried-annotations`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imports`, `manual-transactions`, `planned-items`, `report-settings`, `rules`, `tags`, `timeline-notes` and `transaction-annotations`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -154,14 +154,15 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 | `first_seen`, `last_seen` | The first and last day Nya knew the account. |
 | `hidden`, `hidden_at` | Whether you hid it, and when. Hiding one id of an account you linked hides every id it has had. |
 | `latest_balance` | `{ balance, date }`: its newest recorded balance (never an estimate) and the UTC day it was recorded, or `null`. A recorded day that can't be read is passed over ([`problems`](#problems)), so the date says which day it is. |
+| `lifecycle` | When it ended ([features.md](features.md#accounts-that-end)), or `null` while it is open: `state` (`closed`, `left` for no longer yours, or `untracked` for no longer followed), `date` (the day it stopped counting, `YYYY-MM-DD`), `note` (what you wrote, or `null`) and `assumed` (`true` when Nya assumed it closed because nobody answered whether it had). An end set on one id of an account you linked applies to every id it has had, as in the app. What is stored, under the id it was set on, is in [`account-lifecycle`](#account-lifecycle). |
 
-An account known only by its id has `null` for everything Nya never learned about it.
+An account known only by its id has `null` for everything Nya never learned about it. One known only from its end is listed too.
 
 One SimpleFIN keeps up to date is described from its entry in [`connector-accounts`](#connector-accounts): `type` is what you said it is, `currency` SimpleFIN's, `connected` whether its connection is still there, `first_seen` the day you started tracking it and `last_seen` the day of the latest balance an answer held for it. SimpleFIN gives no `official_name`, `mask`, `credit_limit` or `persistent_account_id`, so those are `null`. Kept as a manual account when you disconnected, it is in `manual_accounts` instead, under the same id. Removed, and still mentioned by its balance history (or a goal or share naming it), it is described from its record in [`connector-ended`](#connector-ended), until you forget that record: `connected` is `false`, `first_seen` the day you started tracking it and `last_seen` the day you let it go.
 
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), and `hidden`, `hidden_at`. Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code. A manual account that can't be read is named under [`problems`](#problems) instead.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code. A manual account that can't be read is named under [`problems`](#problems) instead.
 
 ### `hidden_accounts[]`
 
@@ -292,6 +293,25 @@ No id is in it. A connection's id is made from the two people's sign-in ids, so 
 
 Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. An entry that is damaged, or saved in a form this version doesn't know, is left out and named under [`problems`](#problems) (a store holding one value is then `null`), and everything else is in the file; storage that can't be reached stops the download, naming the store. They are in the JSON file only, but for `manual-transactions`, whose transactions are in the transactions CSV too.
 
+#### `account-lifecycle`
+
+When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts-that-end)), as stored: one entry per account under the id it was set on (`accounts[].lifecycle` gives each account's end through its links). An account with no entry is open. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `lifecycle` | `{ "state": "closed", "on": "2026-03-12", "note": "Moved to Chase" }` (`note` is optional), the same with `left` (no longer yours), `{ "state": "untracked", "from": "2026-03-12" }`, or `{ "state": "active" }` with `answered` below. The day is the first day it doesn't count. |
+| `type` | Its kind (`depository`, `credit`, `loan`, `investment`, `other`), kept so it can be taken out of the totals after its end even once its bank is gone; `null` when it wasn't known. |
+| `label` | `name`, `institution` and `mask`, as it was when it ended, so it can be named after its institution is gone. |
+| `item_id` | Its connection, or `null` for a manual account. |
+| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; US dollars for a manual account), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
+| `set_at` | When this was saved. |
+| `assumed` | `true` when Nya assumed it closed: its bank stopped returning it and nobody answered within three days. Absent otherwise. |
+| `answered` | `{ "kind": "missing" or "zero", "since": day }`: you said it is still open, answering the question about it going missing or sitting at zero from that day. Absent otherwise. |
+| `seen` | Only with `closed` and `left`: `{ "balance": number or null, "through": day }`, the balance it showed when you set or last confirmed its end, and that UTC day. A bank still returning it with another balance, or a transaction after that day, asks about it again. Its transactions are read for that at most once a day: `checked` is the UTC day they last were, and `txn` the newest found after `through` then (absent when none was). Absent when it wasn't known. |
+| `missed` | `[{ "from": day, "to": day, "note": id }]`: the days it was missing from its bank's answer and assumed closed, before it came back, and the id its note in [`timeline-notes`](#timeline-notes) is kept under (`missed.` and a random id). The totals saved on those days are short of it, so the app leaves them out of the chart (they stay in `net_worth_history` as saved). Any state; absent when there were none. |
+
+An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, which is the account's: that account's `lifecycle` in `accounts` is then `null`, and its rows in the balances CSV have no `account_state`, although it may have ended. The notes say so, in the JSON file and in the balances CSV.
+
 #### `allocation-settings`
 
 What you set under Allocation on the Plan tab ([features.md](features.md#allocation)), or `null` if you never set anything: only your choices, never an allocation Nya worked out.
@@ -373,6 +393,7 @@ The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-ow
 | `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
 | `fetched_at` | When Nya received it. |
 | `ok_at` | When the bank last synced it cleanly: the time of the balance from the latest answer that reported no problem about it. Absent or `null` before one. |
+| `left_out[]` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the days answers that moved its connection's history on left it out of (or reported a problem with it alone in), so its own transactions from them may be missing: `from` and `to`, UTC days, both included, `to` `null` while the latest answers still leave it out. An older window adds the days it reached; a recent answer, the days from the last one the history had reached. An answer that holds it again takes the days it covers off (a recent one, every day from its own start). Absent when there are none. A report says those it counts on (before its end, or every day once it is reopened) may be missing, and so does its OFX statement. |
 | `created_at` | When you started tracking it. |
 
 It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.
@@ -409,7 +430,8 @@ The accounts SimpleFIN kept up to date that you stopped tracking or disconnected
 | `name`, `institution_name`, `type` | Its name, its bank's and what you said it was. |
 | `currency` | Its currency's ISO 4217 code. |
 | `tracked_at` | When you started tracking it. |
-| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. |
+| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. Kept by hand, a report on a period its connection's history has since reached back to says you stopped tracking it before its transactions from the days before this one came in, and so does its OFX statement. |
+| `left_out[]` | Its `left_out` from `connector-accounts` when you let it go, if it had any: read as there, up to the day you let it go. |
 | `ended_at` | When you let it go. |
 | `kept` | `true` when it was kept as a manual account, its transactions with it; `false` when it was removed, with them. |
 
@@ -552,6 +574,9 @@ The categories you marked as mattering for your taxes on the report page ([featu
 | --- | --- |
 | `v` | The shape's version: 1. |
 | `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
+#### `timeline-notes`
+
+The notes on your net-worth timeline (`lib/timeline-notes.ts`, [features.md](features.md#notes-on-the-timeline)): yours under random ids, and the ones Nya writes when an account ends, under `lifecycle.` and the account's id, and when an account it assumed closed came back, under `missed.` and a random id, which its window in [`account-lifecycle`](#account-lifecycle) keeps (`missed[].note`), since a day is never part of an id. Each `value`: `date` (the day it marks), `text` (up to 200 characters), `kind` (`user` for yours, `auto` for Nya's), `account_id` (the account an `auto` note is about; absent on yours), `created_at`, and `updated_at` once it changed. They are also rows of the [balances CSV](#nya-balances-datecsv).
 
 #### `rules`
 
@@ -618,12 +643,16 @@ Oldest day first; on each day the net-worth row comes before the accounts. Colum
 | `currency` | The account's currency, when known. |
 | `kind` | `recorded` or `estimated`. |
 | `account_hidden` | The account is hidden (empty on `net_worth` rows). |
+| `account_state`, `account_state_date` | On `account` rows of an account that ended: `closed`, `left` or `untracked`, and the day it stopped counting (as [`accounts[].lifecycle`](#accounts)). Empty otherwise. |
+| `note` | On `note` rows: the note's text. |
 
-`net_worth` rows include hidden accounts, as [stored](#net_worth_history). Don't add `account` rows to `net_worth` rows: the total already counts them. A manual account that can't be read keeps its `account` rows, under its id, with its name empty; when it is hidden, `account_type` and `account_hidden` are still filled in, from `hidden_accounts`. The response says the file is incomplete ([above](#getting-a-copy)).
+`record` is `note` for a [note on the timeline](#timeline-notes), after the day's balances: its `kind` is `auto` or `user`, and an `auto` note names its account in the account columns.
+
+`net_worth` rows include hidden accounts, as [stored](#net_worth_history), and accounts after their end, as recorded: the app takes an ended account out of each day from its end, so to see what it shows, subtract the `account` rows of an ended account from `account_state_date` on (as a debt, add a credit card's or loan's back). Don't add `account` rows to `net_worth` rows: the total already counts them. A manual account that can't be read keeps its `account` rows, under its id, with its name empty; when it is hidden, `account_type` and `account_hidden` are still filled in, from `hidden_accounts`. The response says the file is incomplete ([above](#getting-a-copy)).
 
 ## One account as OFX
 
-`nya-<institution>-<account>-<date>.ofx`: one bank account's or credit card's transactions as an OFX statement (`lib/ofx-export.ts`), the format most banks let you download, for another money app or to import into Nya again. Choose the account under the format: the card lists your bank accounts and cards, linked, kept up to date through SimpleFIN, and manual, hidden ones too.
+`nya-<institution>-<account>-<date>.ofx`: one bank account's or credit card's transactions as an OFX statement (`lib/ofx-export.ts`), the format most banks let you download, for another money app or to import into Nya again. Choose the account under the format: the card lists your bank accounts and cards, linked, kept up to date through SimpleFIN, and manual, hidden ones too, and ones that [ended](features.md#accounts-that-end), each labelled with its end ("Closed Sep 1"). An ended account's statement is like any other, every transaction Nya stored included, and its first note says when it ended in Nya, how many of its transactions are dated from then (which Nya counts in nothing), and the day of the balance it gives: "This account was closed in Nya on Sep 1, 2026: the statement still lists every transaction Nya stored for it, 2 of them dated from then, which Nya leaves out of every total, and its balance is the newest Nya recorded, from Oct 8, 2026." For a closure Nya noticed by the account's absence, that balance is from before it.
 
 **Which OFX, and why.** OFX 1.0.2 in SGML, written as banks write it: the headers, then one tag a line, values without end tags, lines ending CRLF, in Windows-1252 (`ENCODING:USASCII`, `CHARSET:1252`). It is what most banks' downloads are (Quicken's QFX is the same with a tag of its own), so it is what money apps' importers are built and tested against; an app that reads OFX 2 (XML) reads it too, while some readers read only 1.x.
 

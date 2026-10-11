@@ -20,6 +20,7 @@ import { linkedAs, type LinkKind } from './item-products';
 import type { UnshownAccount } from './last-known';
 import { loggable } from './log-safe';
 import { connectorInstitutions, unreadableConnectorInstitution } from './connectors/institutions';
+import { endedNowIds } from './lifecycle';
 import type { ConnectorKind } from './connectors/types';
 
 /**
@@ -111,6 +112,11 @@ export type InstitutionResult = {
    * keeps them encrypted).
    */
   unconfirmed_missing?: number;
+  /** The ids behind `unconfirmed_missing`, for the dashboard to hold each at
+   *  its last known balance with its question (lib/lifecycle-questions.ts).
+   *  Server-only: /api/net-worth deletes it before the payload is sent or
+   *  cached, where the held rows say the same. */
+  missing_ids?: string[];
   /** Plaid has found accounts at this Item that the user hasn't shared yet
    *  (lib/new-accounts.ts). Set by /api/net-worth only. */
   new_accounts_available?: boolean;
@@ -342,6 +348,10 @@ export async function computeNetWorth(
 ): Promise<{
   institutions: InstitutionResult[];
   netWorth: number;
+  /** An account's lifecycle changed during the fetch: an assumed closure was
+   *  recorded or lifted (lib/vanished.ts). A reader of it started before the
+   *  fetch reads it again. */
+  lifecycleChanged: boolean;
 }> {
   const items = await getItems(ctx);
 
@@ -355,7 +365,10 @@ export async function computeNetWorth(
   // unhandled rejection while Plaid answers.
   const connected = (opts.connectorsReady ?? Promise.resolve())
     .catch(() => {})
-    .then(() => connectorInstitutions(ctx))
+    // An account that ended holds no bank (lib/connectors/institutions.ts);
+    // closures that can't be read end none, which only holds more.
+    .then(() => vanishedReads.then((v) => (v.lifecycle ? endedNowIds(v.lifecycle) : new Set<string>()), () => new Set<string>()))
+    .then((ended) => connectorInstitutions(ctx, Date.now(), ended))
     .then(
       (list) => ({ ok: true as const, list }),
       (err: unknown) => ({ ok: false as const, err })
@@ -370,15 +383,20 @@ export async function computeNetWorth(
   // vanishing.
   const healthy = institutions.filter((i) => !i.error);
   const vanished = await applyVanished(ctx, healthy, await vanishedReads);
+  let lifecycleChanged = false;
   for (const inst of healthy) {
     const res = vanished[inst.item_id];
     if (!res) continue;
-    if (res.unconfirmed.length > 0) inst.unconfirmed_missing = res.unconfirmed.length;
+    if (res.accepted.length > 0 || (res.lifted?.length ?? 0) > 0) lifecycleChanged = true;
+    if (res.unconfirmed.length > 0) {
+      inst.unconfirmed_missing = res.unconfirmed.length;
+      inst.missing_ids = res.unconfirmed;
+    }
     // Counts only: account ids are encrypted at rest everywhere else, and which
     // bank someone uses is at least as identifying. The stale-balance warning in
     // /api/net-worth logs a count and a date for the same reason.
     console.warn(
-      `net-worth: an institution is missing ${res.unconfirmed.length} account(s) pending confirmation, ${res.accepted.length} accepted as closed`
+      `net-worth: an institution is missing ${res.unconfirmed.length} account(s) held for an answer, ${res.accepted.length} now assumed closed`
     );
   }
 
@@ -436,7 +454,7 @@ export async function computeNetWorth(
     });
   });
 
-  return { institutions, netWorth };
+  return { institutions, netWorth, lifecycleChanged };
 }
 
 /**

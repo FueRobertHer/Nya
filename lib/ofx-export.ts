@@ -130,6 +130,21 @@
 // up to date whose older transactions may still be arriving, a few months a
 // night (in a note: nothing stored is short), its balance while held, and
 // the record of its connection when that can't be read (`incomplete` too).
+//
+// AN ACCOUNT THAT ENDED (#50, lib/lifecycle.ts) is a statement like any other:
+// every transaction Nya stored, its later ones too (the money moved, and an
+// app reconciling the account needs them), and the newest balance. A note
+// says when it ended in Nya, how many of its transactions are dated from
+// then (which Nya counts in nothing), and the day the balance is from, which
+// for a closure Nya noticed by the account's absence is from before it. One
+// SimpleFIN keeps up to date gives the balance SimpleFIN last gave for it,
+// even once SimpleFIN stops returning it: an account that ended holds no
+// bank's balances (lib/connectors/institutions.ts). Its connection's history
+// then moves on without it, so the days SimpleFIN left it out of, until an
+// answer held it again, may be missing its transactions; and those of one
+// let go and kept by hand that its connection's history reached back to
+// after it was let go. Its statement says so, as a report does
+// (lib/report/read.ts connectorMissed).
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
@@ -139,7 +154,7 @@ import { tagStore } from './tags';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
-import { minorDigits } from './manual-txn-input';
+import { addDays, minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
 import {
   bookAccountTypes,
@@ -149,13 +164,15 @@ import {
   missingIds,
   manualTransactionsIn,
   type ExportFile,
+  type ExportLifecycle,
   type UserData,
   type UserExport,
 } from './user-export';
 import { importedTxnStore } from './history-import/store';
-import { connectionsStore, connectorAccountsStore } from './connectors/store';
+import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
+import { lastEndDay } from './lifecycle';
 import { formatMoney } from './format';
 
 // ---- Text ----
@@ -526,6 +543,68 @@ function* gathered(pieces: readonly string[]): Generator<string> {
   if (buffer) yield buffer;
 }
 
+/** "Sep 1, 2026": a calendar day as a note says it, never moved by a time
+ *  zone. */
+const noteDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`));
+
+/**
+ * What the statement of an account that ended says (see AN ACCOUNT THAT
+ * ENDED): when it ended in Nya, that the statement still lists every
+ * transaction Nya stored for it, with how many are dated from then, and the
+ * day of the balance it gives, when it gives one (`ledger`), with where that
+ * comes from: set by hand, the newest Nya recorded, or the latest SimpleFIN
+ * gave. Pure.
+ */
+export function endedNote(
+  lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>,
+  rows: readonly Pick<OfxRow, 'date'>[],
+  ledger: { as_of: string; from: 'set' | 'recorded' | 'simplefin' } | null
+): string {
+  const when = noteDay(lifecycle.date);
+  const what =
+    lifecycle.state === 'closed'
+      ? lifecycle.assumed
+        ? `Nya assumed this account closed on ${when}, when its bank stopped returning it`
+        : `This account was closed in Nya on ${when}`
+      : lifecycle.state === 'left'
+        ? `This account is no longer yours in Nya from ${when}`
+        : `This account isn’t followed in Nya from ${when}`;
+  const after = rows.filter((r) => r.date >= lifecycle.date).length;
+  const listed =
+    after > 0
+      ? `the statement still lists every transaction Nya stored for it, ${after.toLocaleString('en-US')} of them dated from then, which Nya leaves out of every total`
+      : 'the statement lists every transaction Nya stored for it, none dated from then';
+  const from = ledger?.from === 'set' ? 'the one last set, on' : ledger?.from === 'simplefin' ? 'the latest SimpleFIN gave, from' : 'the newest Nya recorded, from';
+  const balance = ledger ? `, and its balance is ${from} ${noteDay(ledger.as_of)}` : '';
+  return `${what}: ${listed}${balance}.`;
+}
+
+/**
+ * What a SimpleFIN account's statement may be missing although its
+ * connection's history covers it (see AN ACCOUNT THAT ENDED): the days
+ * answers left it out of (`windows`, lib/connectors/store.ts LeftOut), one
+ * still open running to `until` when it was let go, else said as since its
+ * first day; and, for one let go and kept by hand, the days its connection's
+ * history reached back to after (`letGo`). Pure.
+ */
+export function leftOutNotes(windows: readonly LeftOut[] | undefined, until: string | null, letGo: { from: string; to: string } | null): string[] {
+  const days = (from: string, to: string) => (from === to ? shownDay(from) : `${shownDay(from)} to ${shownDay(to)}`);
+  const out: string[] = [];
+  for (const w of windows ?? []) {
+    const to = w.to === null || (until !== null && w.to > until) ? until : w.to;
+    if (to === null) {
+      out.push(`SimpleFIN has left this account out of its answers since ${shownDay(w.from)}, so the statement may be missing its transactions from then.`);
+    } else if (w.from <= to) {
+      out.push(`SimpleFIN left this account out of its answers about ${days(w.from, to)}, so the statement may be missing its transactions from ${w.from === to ? 'that day' : 'those days'}.`);
+    }
+  }
+  if (letGo && letGo.from <= letGo.to) {
+    const span = letGo.from === letGo.to ? `on ${shownDay(letGo.from)}` : `from ${shownDay(letGo.from)} to ${shownDay(letGo.to)}`;
+    out.push(`You stopped tracking this account through SimpleFIN before its transactions ${span} came in, so the statement may be missing them.`);
+  }
+  return out;
+}
+
 /** Where the person is, and what the route read for the balance's day. */
 export type OfxOptions = {
   /** The time zone the person's device sent (lib/access-log.ts timeZoneOf),
@@ -668,13 +747,19 @@ export function ofxFile(
         `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
       );
     }
+    // The days answers left it out of once it had ended (see AN ACCOUNT THAT
+    // ENDED).
+    notes.push(...leftOutNotes(entry.left_out, null, null));
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
     // date for it, where the person is: none while Nya holds it, as the
-    // Accounts tab does (lib/connectors/institutions.ts).
+    // Accounts tab does (lib/connectors/institutions.ts), for which an
+    // account that ended holds nothing.
+    const endedIds = new Set(doc.accounts.flatMap((a) => (a.lifecycle && a.lifecycle.date <= lastEndDay(now.getTime()) ? [a.account_id] : [])));
     const bank = buildConnectorInstitutions(
       data.connections,
       [...data.connected.values()].filter((a) => a.connection_id === entry.connection_id && a.institution_ref === entry.institution_ref),
-      now.getTime()
+      now.getTime(),
+      endedIds
     )[0];
     const waiting = needsSign(entry);
     const amount = nyaBalance(entry);
@@ -802,6 +887,14 @@ export function ofxFile(
   } else {
     const m = manual!;
     rows = bookRows();
+    // Let go from SimpleFIN and kept by hand: what it may be missing from
+    // then (see AN ACCOUNT THAT ENDED).
+    const letGo = data.ended.get(account_id);
+    if (letGo?.kept) {
+      const history = data.connections.get(letGo.connection_id)?.history;
+      const before = letGo.history_from && history && history.from < letGo.history_from ? { from: history.from, to: addDays(letGo.history_from, -1) } : null;
+      notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before));
+    }
     // Kept in US dollars (lib/manual.ts), unless SimpleFIN fed it in
     // another currency before it was kept as a manual account.
     const currency = m.currency ?? MANUAL_CURRENCY;
@@ -887,6 +980,13 @@ export function ofxFile(
     notes.push(
       `${plural(pending, 'pending transaction is', 'pending transactions are')} left out: the bank gives a transaction a new id when it posts, so an app that imported ${pending === 1 ? 'it' : 'them'} now would count ${pending === 1 ? 'it' : 'them'} twice. Download again once ${pending === 1 ? 'it has' : 'they have'} posted.`
     );
+  }
+
+  // An account that ended: said first, as what the rest is read by.
+  const ended = linked ? linked.lifecycle : manual!.lifecycle;
+  if (ended) {
+    const ledger = statementsOf({ ...account, rows }).statements.find((s) => s.ledger !== null)?.ledger ?? null;
+    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, from: manual ? 'set' : fed ? 'simplefin' : 'recorded' } : null));
   }
 
   const written = ofxDocument({ ...account, rows }, now);

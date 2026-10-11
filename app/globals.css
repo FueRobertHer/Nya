@@ -4326,6 +4326,275 @@ button.tag-suggestion.chosen {
   padding-left: 18px;
 }
 
+/* --- accounts that end, and notes on the timeline (#50) ---
+   components/AccountLifecycle.tsx, components/TimelineNotes.tsx and the
+   chart's markers (components/NetWorthChart.tsx). */
+
+/* Read by a screen reader, not shown: the chart's announcement of a note. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+/* A note's marker on the chart: drawn over the line, never in the way of a
+   finger on it. */
+.chart-note-mark {
+  pointer-events: none;
+}
+
+/* The notes in the chart's range, under it: each a button that selects its
+   day. Small, so the chart stays the thing. */
+.chart-notes {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.chart-note-btn {
+  width: auto;
+  max-width: 100%;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  border-radius: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+
+.chart-note-btn[aria-pressed="true"] {
+  color: var(--text);
+}
+
+.chart-note-day {
+  color: var(--warn);
+  font-weight: 600;
+}
+
+/* A note in the readout, while its day is scrubbed: on the date's own line,
+   cut to fit it with an ellipsis, so the readout never grows under the finger.
+   The whole note is in the list under the chart. */
+.chart-readout-noted {
+  display: flex;
+  min-width: 0;
+  white-space: nowrap;
+}
+
+.chart-readout-day {
+  flex-shrink: 0;
+}
+
+.chart-readout-note {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* The sheet's three choices: a radio and a sentence each. */
+.lifecycle-choices {
+  border: none;
+  margin: 12px 0 0;
+  padding: 0;
+  min-width: 0;
+}
+
+.lifecycle-choice {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 8px 0;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.lifecycle-choice input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+.lifecycle-choice-name {
+  display: block;
+  font-weight: 600;
+}
+
+.lifecycle-choice-note {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.lifecycle-prefilled {
+  margin: -6px 0 12px;
+}
+
+.lifecycle-reopen {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lifecycle-reopen button {
+  margin-top: 8px;
+}
+
+/* A question about an account, on its institution's card and in connection
+   health: amber, like the other notes about what a total holds. */
+.lifecycle-questions {
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.lifecycle-question + .lifecycle-question {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.lifecycle-ask {
+  margin: 0;
+  color: var(--warn);
+  font-size: 14px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.lifecycle-question .card-actions {
+  margin-top: 10px;
+}
+
+/* The Accounts that ended card: an archive, like Hidden. */
+.lifecycle-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.lifecycle-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.lifecycle-row > div:first-child {
+  min-width: 0;
+}
+
+.lifecycle-note {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 2px;
+}
+
+.lifecycle-assumed {
+  margin-top: 6px;
+}
+
+.lifecycle-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+/* On a phone the actions go under the text, so a name and the assumed note
+   keep the card's width instead of a column beside two buttons. */
+@media (max-width: 480px) {
+  .lifecycle-row {
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .lifecycle-actions {
+    justify-content: flex-start;
+  }
+}
+
+/* What an end does to net worth, and the tick a debt still owed asks for. */
+.lifecycle-effect {
+  margin-top: 8px;
+}
+
+.lifecycle-confirm {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.4;
+  cursor: pointer;
+}
+
+.lifecycle-confirm input {
+  flex-shrink: 0;
+  margin-top: 3px;
+  accent-color: var(--accent);
+}
+
+/* Closures that can't be read, and their repair. */
+.lifecycle-repair p {
+  margin: 0 0 8px;
+  line-height: 1.45;
+}
+
+.lifecycle-repair > button {
+  width: auto;
+  padding: 8px 14px;
+  font-size: 13px;
+}
+
+/* The notes card under the chart. */
+.timeline-note-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+}
+
+.timeline-note-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.timeline-note-row > div:first-child {
+  min-width: 0;
+}
+
+.timeline-note-row .manual-row-actions {
+  flex-shrink: 0;
+  margin-top: 0;
+}
+
+.timeline-note-day {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
 /* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
    the link under the account's chart, the period a file covers, and the note
    under the net-worth chart saying which stretch comes from imported files. */

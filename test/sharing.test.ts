@@ -472,6 +472,31 @@ describe('sharing accounts on a connection', () => {
     expect(after.accounts.map((a: any) => [a.id, a.level]).sort()).toEqual([['acct_joint', 'transactions'], ['acct_mine', 'balance']]);
   });
 
+  test('an account that ends shows as ended from its day: no balance, the rows from before it, and so once nothing lists it', async () => {
+    const { markEnded } = await import('@/lib/lifecycle');
+    await share({ acct_joint: 'transactions', acct_mine: 'balance' });
+    // t_recent is 3 days old: before an end 2 days ago.
+    await markEnded(TEST_CTX, 'acct_joint', { state: 'left', on: daysAgo(2), note: 'Divided' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_a' });
+    let [from] = await sharedWithPartner();
+    const joint = from.accounts.find((a: any) => a.id === 'acct_joint');
+    expect(joint).toMatchObject({ level: 'transactions', balance: null, currency: null, as_of: null, ended: { state: 'left', on: daysAgo(2) } });
+    expect(joint.transactions.map((t: any) => t.amount)).toEqual([12]);
+    // An end on the day of the row leaves it out.
+    await markEnded(TEST_CTX, 'acct_joint', { state: 'closed', on: daysAgo(3) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_a' });
+    [from] = await sharedWithPartner();
+    expect(from.accounts.find((a: any) => a.id === 'acct_joint').transactions).toEqual([]);
+    // The other account is untouched.
+    const mine = from.accounts.find((a: any) => a.id === 'acct_mine');
+    expect(mine).toMatchObject({ balance: 70 });
+    expect('ended' in mine).toBe(false);
+    // The bank stops returning it: still shown, as closed, named as it was.
+    await rememberAccounts(TEST_CTX, [{ item_id: 'item_a', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_mine', '2222'), balance: 70, currency: 'USD' }] } as any]);
+    [from] = await sharedWithPartner();
+    expect(from.accounts.find((a: any) => a.id === 'acct_joint')).toMatchObject({ label: 'Chase Checking ••1111', ended: { state: 'closed', on: daysAgo(3) } });
+    // And the owner's preview says the same.
+    expect((await previewOf('user_owner')).body.view.accounts).toEqual(from.accounts);
+  });
+
   /** A SimpleFIN card shared with the partner (at `level`, beside the joint
    *  account), then reported positive with no answer about its sign: held. */
   async function heldCard(level = 'balance') {

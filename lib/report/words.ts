@@ -5,15 +5,16 @@
 // page (components/ReportView.tsx) and the CSV (lib/report/csv.ts) say the
 // same thing, in the words the app uses for the same facts: "hasn't synced
 // since", "still importing older transactions", "Plaid doesn't provide their
-// transactions" (lib/month-coverage.ts, lib/no-transactions.ts). Pure and
-// client-safe. Each takes `day`, how a calendar day is written: the page's
-// local date, the CSV's YYYY-MM-DD.
+// transactions" (lib/month-coverage.ts, lib/no-transactions.ts), "no longer
+// yours" (components/AccountLifecycle.tsx). Pure and client-safe. Each takes
+// `day`, how a calendar day is written: the page's local date, the CSV's
+// YYYY-MM-DD.
 
 import { joinNames } from '../month-coverage';
 import { sourceLabel } from '../manual-txn-input';
 import type { HealthState } from '../connection-state';
 import type { NoTransactionsReason } from '../item-products';
-import type { Gap, Report } from './build';
+import type { Gap, Report, ReportEnded } from './build';
 
 /** How a calendar day (YYYY-MM-DD) is written. */
 export type DayFormat = (day: string) => string;
@@ -25,6 +26,10 @@ export function reportTitle(report: Pick<Report, 'period'>, day: DayFormat): str
 }
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+/** " at Chase", or nothing for an account whose institution isn't known. */
+const at = (institution: string) => (institution ? ` at ${institution}` : '');
+/** The days of a window, "on Mar 3" or "from Mar 3 to Mar 9". */
+const span = (from: string, to: string, day: DayFormat) => (from === to ? `on ${day(from)}` : `from ${day(from)} to ${day(to)}`);
 
 /** The gaps not tied to an institution, in fixed words. */
 const LOOSE: Readonly<Record<'removed_unknown' | 'own_categories' | 'own_exclusions', string>> = {
@@ -103,6 +108,25 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
       case 'unreadable':
         out.push(`${g.note.replace(/[.\s]+$/, '')}.`);
         break;
+      case 'assumed_closed':
+        out.push(
+          `${g.account}${at(g.institution)} stopped appearing, and as nobody said whether it closed, Nya took it as closed on ${day(g.on)}: if it is still open, its transactions from then aren’t here.`
+        );
+        break;
+      case 'missed':
+        out.push(
+          g.let_go
+            ? `You stopped tracking ${g.account}${at(g.institution)} before its transactions ${span(g.from, g.to, day)} came in, so this report may be missing them.`
+            : `${g.account} was missing${at(g.institution)} ${span(g.from, g.to, day)}, so this report may be missing its transactions from ${g.from === g.to ? 'that day' : 'those days'}.`
+        );
+        break;
+      case 'untracked':
+        out.push(
+          `You stopped following ${g.account}${at(g.institution)} from ${day(g.from)}: it is still yours, but its transactions from then aren’t in this report${
+            g.not_counted > 0 ? `, ${plural(g.not_counted, 'transaction')} in Nya among them` : ''
+          }.`
+        );
+        break;
     }
   }
   return out;
@@ -145,6 +169,12 @@ export function gapShort(g: Gap, day: DayFormat): string {
       return LOOSE[g.kind];
     case 'unreadable':
       return g.note;
+    case 'assumed_closed':
+      return `${g.account} assumed closed on ${day(g.on)}`;
+    case 'missed':
+      return g.let_go ? `${g.account} let go before its transactions ${span(g.from, g.to, day)} came in` : `${g.account} missing ${span(g.from, g.to, day)}`;
+    case 'untracked':
+      return `${g.account} not followed from ${day(g.from)}`;
   }
 }
 
@@ -161,11 +191,16 @@ export function statusHeadline(report: Pick<Report, 'empty' | 'gaps'>): string {
   return 'Nothing is known to be missing from this period.';
 }
 
-/** What may be missing: each gap, the remedy where a sync can help, and why
- *  no connection brings in spending, when none can. */
+/** What settles an assumed closure: said once, after the gaps, when any is. */
+export const ASSUMED_REMEDY =
+  'Accounts that ended, on the Accounts tab, lists each account Nya assumed closed, to confirm or correct. Then make this report again.';
+
+/** What may be missing: each gap, the remedy where a sync or an answer can
+ *  help, and why no connection brings in spending, when none can. */
 export function problemLines(report: Pick<Report, 'gaps' | 'no_spending'>, day: DayFormat): string[] {
   const lines = gapSentences(report.gaps, day);
   if (report.gaps.some((g) => g.kind === 'stale' || g.kind === 'missing' || g.kind === 'importing')) lines.push(SYNC_REMEDY);
+  if (report.gaps.some((g) => g.kind === 'assumed_closed')) lines.push(ASSUMED_REMEDY);
   if (report.no_spending) lines.push(`${report.no_spending.lead}, so no bank or card transactions come in. To see spending, ${report.no_spending.remedy}.`);
   return lines;
 }
@@ -222,9 +257,11 @@ export function caveatLines(report: Report, day: DayFormat): string[] {
 
 /** What the totals leave out, as the Activity tab says it under a month: the
  *  transfers, what the person excluded and what a rule hides, what couldn't
- *  be read, and other currencies. */
-export function totalsNote(report: Pick<Report, 'totals'>): string {
+ *  be read, and other currencies; and the transactions dated from the day
+ *  their account ended (see lib/report/build.ts ENDED ACCOUNTS). */
+export function totalsNote(report: Pick<Report, 'totals'> & { ended?: readonly Pick<ReportEnded, 'not_counted'>[] }): string {
   const t = report.totals;
+  const afterEnd = (report.ended ?? []).reduce((n, e) => n + e.not_counted, 0);
   const byRule = t.hidden_by_rule;
   const byYou = t.excluded - byRule;
   const left = [
@@ -242,8 +279,44 @@ export function totalsNote(report: Pick<Report, 'totals'>): string {
     );
   }
   if (t.left_out_text) parts.push(t.left_out_text);
+  if (afterEnd > 0) {
+    parts.push(
+      `${plural(afterEnd, 'transaction')} on an account that had ended by ${afterEnd === 1 ? 'its' : 'their'} date ${afterEnd === 1 ? 'is' : 'are'} left out, as everywhere in Nya.`
+    );
+  }
   return parts.join(' ');
 }
+
+/** How an account ended, with its day: the Accounts tab's words
+ *  (components/AccountLifecycle.tsx endText) for a day on paper. */
+export function endedWords(e: Pick<ReportEnded, 'state' | 'assumed' | 'end'>, day: DayFormat): string {
+  switch (e.state) {
+    case 'closed':
+      return e.assumed ? `Assumed closed on ${day(e.end)}` : `Closed on ${day(e.end)}`;
+    case 'left':
+      return `No longer yours from ${day(e.end)}`;
+    case 'untracked':
+      return `Not followed from ${day(e.end)}`;
+  }
+}
+
+/** What of an account that ended is in the report: the days it counts on,
+ *  and its later transactions in Nya, left out. */
+export function endedCounted(e: Pick<ReportEnded, 'counted_through' | 'not_counted'>, day: DayFormat): string {
+  const parts = [e.counted_through ? `Counted through ${day(e.counted_through)}` : 'Not counted on any day of this period'];
+  if (e.not_counted > 0) parts.push(`${plural(e.not_counted, 'transaction')} dated from then ${e.not_counted === 1 ? 'is' : 'are'} in Nya and left out`);
+  return parts.join('; ');
+}
+
+/** A connection whose every account had ended by the period's first day
+ *  (lib/report/build.ts endedBefore), in its row. */
+export function endedConnection(endedBy: string, day: DayFormat): string {
+  return `Its accounts had all ended by ${day(endedBy)}: nothing of it is in this period`;
+}
+
+/** What the list of accounts that ended means. */
+export const ENDED_NOTE =
+  'Each of these counts on every day before the one it ended, and on none after, as everywhere in Nya. Closed: it no longer exists. No longer yours: it still exists, but isn’t yours. Not followed: it is still yours, but you stopped following it, so its later transactions aren’t here.';
 
 /** Where an appendix row came from: a bank's, or a manual row's source as
  *  the Activity tab names it. */
