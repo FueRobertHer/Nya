@@ -29,7 +29,7 @@ import { leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import type { Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, type RolloverChange, type Target } from './BudgetsCard';
-import { changeRollover, useBudgetMonth, UNREADABLE_MONTHS, type BudgetMonthState } from './budget-month-state';
+import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
 import { IncomePoolHeader, IncomeSetting } from './IncomePool';
 import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
@@ -81,7 +81,7 @@ export function PastMonthPending({ state, name }: { state: BudgetMonthState; nam
   if (state.status !== 'error') return <p className="empty-note">Loading {name}…</p>;
   return (
     <>
-      <p className="stale-note">{state.error === UNREADABLE_MONTHS ? state.error : `${name} couldn’t be loaded.`}</p>
+      <p className="stale-note">{state.error && state.error !== NOT_LOADED_TEXT ? state.error : `${name} couldn’t be loaded.`}</p>
       <button className="secondary" style={{ marginTop: 8 }} onClick={state.reload}>
         Try again
       </button>

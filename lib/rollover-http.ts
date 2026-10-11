@@ -14,15 +14,17 @@ import { addMonths, currentMonths, isMonth, MAX_MONTHS_BACK, RolloverError } fro
 
 /** What a failure answers: the container (503); stored data that can't be
  *  read (409, flagged, so the page never shows "none" and saves over it,
- *  with the ids of a map store's entries); the seam refusing a write, or a
- *  change refused (their status); anything else a plain 500. */
+ *  with what it is, as its store names it, and the ids of a map store's
+ *  entries: the month is read from more than budgets, the accounts that
+ *  ended, say); the seam refusing a write, or a change refused (their
+ *  status); anything else a plain 500. */
 export function rolloverFailure(err: unknown, what: string): NextResponse {
   const unavailable = containerUnavailable(err);
   if (unavailable) return unavailable;
   if (err instanceof StoredDataUnreadableError) {
-    console.error('Stored budgets unreadable:', describeUnreadable(err));
+    console.error('Stored data for budgets unreadable:', describeUnreadable(err));
     const ids = err instanceof UnreadableEntriesError ? { unreadable_ids: err.unreadable, unrecognised_ids: err.unrecognised } : {};
-    return NextResponse.json({ error: err.message, unreadable: true, ...ids }, { status: 409 });
+    return NextResponse.json({ error: err.message, unreadable: true, what: err.what, ...ids }, { status: 409 });
   }
   if (err instanceof StoreRefusedError || err instanceof BudgetError || err instanceof RolloverError) {
     return NextResponse.json({ error: err.message }, { status: err.status });

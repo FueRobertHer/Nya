@@ -66,6 +66,7 @@ const { filedId, indexTaxonomy } = await import('@/lib/categories');
 const { readSpending } = await import('@/lib/api-read');
 const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
 const { rememberAccounts } = await import('@/lib/last-known');
+const { unreadableText, UNREADABLE_MONTHS } = await import('@/components/budget-month-state');
 type Taxonomy = import('@/lib/categories').Taxonomy;
 type RuleCondition = import('@/lib/rules').RuleCondition;
 type RuleActions = import('@/lib/rules').RuleActions;
@@ -589,6 +590,19 @@ describe('what can’t be read', () => {
     expect((await month()).status).toBe(200);
     expect((await budgetMonthsStore.get(ctx))!.categories[food]).toEqual({ seen: amount, amounts: [{ until: NOW, amount: 100 }] });
     expect((await month(M(-1))).body.budgets.categories[food]).toEqual({ amount: 100 });
+  });
+
+  test('an account’s end that can’t be read: 409 naming what it is, never a month counted without it', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('lunch', on(-1, 1), 40)]);
+    await rollover(t, 'food and drink', M(-1));
+    await fake.hset(ctxKey('account-lifecycle'), { acc_chk: 'damaged-bytes-damaged-bytes-damaged' });
+    const res = await month();
+    expect(res.status).toBe(409);
+    expect(res.body).toMatchObject({ unreadable: true, what: 'account closures', unreadable_ids: ['acc_chk'] });
+    // The page says what it is, not that budgets by month couldn't be read.
+    expect(unreadableText(res.body)).toBe('Your saved account closures could not be read, so they were left untouched. Rollover and past months can’t be shown until they can.');
+    expect(unreadableText({ what: 'budgets by month' })).toBe(UNREADABLE_MONTHS);
   });
 
   test('an income setting that can’t be read: 409, and never saved over', async () => {

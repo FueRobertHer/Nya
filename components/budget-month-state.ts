@@ -86,7 +86,16 @@ export type BudgetMonthState = {
 /** What the page says when the month can't be worked out. */
 export const UNREADABLE_MONTHS =
   'Your budgets by month couldn’t be read, so they were left untouched. Rollover and past months can’t be shown or changed until they can; your budgets still save.';
-const NOT_LOADED = 'Rollover couldn’t be worked out just now, so each budget shows its amount without it.';
+export const NOT_LOADED = 'Rollover couldn’t be worked out just now, so each budget shows its amount without it.';
+
+/** What the page says of a 409 `unreadable`: the record of budgets by month
+ *  or the income setting, else what couldn't be read in the store's own
+ *  words (the accounts that ended, say), which rollover waits for too. */
+export function unreadableText(data: { what?: unknown; error?: unknown }): string {
+  if (data.what === undefined || data.what === 'budgets by month' || data.what === 'income carryover settings') return UNREADABLE_MONTHS;
+  const said = typeof data.error === 'string' ? `${data.error} ` : '';
+  return `${said}Rollover and past months can’t be shown until they can.`;
+}
 
 /** The month view's address, for this month as the page has it (`today`),
  *  asking for the stored history when `history`. */
@@ -137,7 +146,7 @@ export function useBudgetMonth(month: string | null, deps: readonly unknown[], o
         const data = await res.json().catch(() => null);
         if (mine !== seq.current) return;
         if (res.ok && isBudgetMonthView(data)) setState({ status: 'ready', view: data, error: null, asked });
-        else setState({ status: 'error', view: null, error: data?.unreadable ? UNREADABLE_MONTHS : NOT_LOADED, asked });
+        else setState({ status: 'error', view: null, error: data?.unreadable ? unreadableText(data) : NOT_LOADED, asked });
       } catch {
         if (mine === seq.current) setState({ status: 'error', view: null, error: NOT_LOADED, asked });
       }
@@ -160,7 +169,7 @@ export async function changeRollover(body: Record<string, unknown>): Promise<str
     });
     if (res.ok) return null;
     const data = await res.json().catch(() => null);
-    if (data?.unreadable) return UNREADABLE_MONTHS;
+    if (data?.unreadable) return unreadableText(data);
     return typeof data?.error === 'string' ? data.error : 'That change couldn’t be saved. Try again.';
   } catch {
     return 'That change couldn’t be saved. Check your connection and try again.';
