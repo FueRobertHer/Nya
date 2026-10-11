@@ -71,6 +71,9 @@ function BeganOver({ limit, money }: { limit: number; money: (n: number) => stri
   return limit < 0 ? <div className="budget-carry negative">Began the month {money(-limit)} over.</div> : null;
 }
 
+/** In the reset's confirmation: when a reset is what a carry needs. */
+export const REFUND_NOTE = 'A refund counts as money in, never off a budget’s spending, so a purchase you returned stays in the carry until you reset it.';
+
 /** What is being edited: a category's budget or a group's own. */
 export type Target = { kind: 'category' | 'group'; id: string };
 
@@ -488,6 +491,7 @@ export default function BudgetsCard({
                 {carryOf(resetting.target) ? `, and what is carried now (${carryText(carryOf(resetting.target)!, money, shownMonth)}) is set aside` : ''}. Earlier
                 months keep theirs.
               </p>
+              <p className="panel-note">{REFUND_NOTE}</p>
               <div className="action-row">
                 <button onClick={() => roll(resetting.target, { reset: true })} disabled={busy}>
                   Reset carryover

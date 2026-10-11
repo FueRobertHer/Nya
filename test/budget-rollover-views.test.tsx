@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import BudgetsCard from '@/components/BudgetsCard';
+import BudgetsCard, { REFUND_NOTE } from '@/components/BudgetsCard';
 import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
@@ -208,6 +208,15 @@ describe('the rollover editor', () => {
 
   test('without the month’s rollover loaded, it offers none', () => {
     expect(card({ edit: { kind: 'category', id: GROCERIES } })).not.toContain('rollover');
+  });
+});
+
+describe('a reset', () => {
+  test('its confirmation says a returned purchase stays in the carry until reset', () => {
+    expect(REFUND_NOTE).toBe('A refund counts as money in, never off a budget’s spending, so a purchase you returned stays in the carry until you reset it.');
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'BudgetsCard.tsx'), 'utf8');
+    const sheet = source.slice(source.indexOf('<Sheet open={resetting !== null}'), source.indexOf('</Sheet>'));
+    expect(sheet).toContain('{REFUND_NOTE}');
   });
 });
 

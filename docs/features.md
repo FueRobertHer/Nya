@@ -461,6 +461,7 @@ Open a budget on the Budgets tab and choose **Turn on rollover**, counting from 
 
 - **The month it starts** carries nothing yet: what is left of that month rolls into the next.
 - **Reset carryover** sets the carry to zero from this month, once you confirm: this month starts from its budget alone. Earlier months keep theirs.
+- **A refund** counts as money in, never off a budget's spending, as in the month's totals. So a purchase you returned stays in the carry, as overspending, in every month after it: a monthly budget only ever showed it for the one month. Reset the carry to clear it; the reset's confirmation says so.
 - **Turn off rollover** drops its carry to zero at once, from this month; earlier months keep theirs. Turning it on again starts afresh from the month you choose (this month by default), so an earlier carry never comes back on its own. Choosing the month it first started brings that carry back exactly, worked out again from the transactions.
 - **Removing a budget** ends its rollover; adding it again starts without one.
 - **Changing a budget's amount** changes it from this month on. The months before keep the amount they had, so their carry doesn't change. Nya keeps each budget's amount by month from the first time the app is opened after this release; for a month before that it uses the earliest amount it has, and says so ("Nya began keeping budgets by month in June 2026, so before then each budget counts its amount in June 2026").
