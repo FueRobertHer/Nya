@@ -27,6 +27,7 @@ import {
   type PageKey,
 } from './api-read';
 import { readGoals } from './api-goals';
+import { readCashFlow } from './api-cash-flow';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
 import { readTags } from './api-tags';
 import { readRules } from './api-rules';
@@ -98,6 +99,16 @@ function range(a: Args, days: number): { from: string; to: string } {
   const from = str(a, 'from') ?? daysBefore(to, days);
   if (from > to) throw new BadRequest('from is after to.');
   return { from, to };
+}
+
+/** A month (this one, by UTC, unless given), or from and to: one or the
+ *  other, never both. */
+function monthOrRange(a: Args): { from: string; to: string } {
+  const month = str(a, 'month');
+  if (month && (str(a, 'from') || str(a, 'to'))) throw new BadRequest('Give a month, or from and to, not both.');
+  if (str(a, 'from') || str(a, 'to')) return range(a, 30);
+  const m = month ?? today().slice(0, 7);
+  return { from: `${m}-01`, to: lastOfMonth(m) };
 }
 
 const RUNS: Record<string, Operation['run']> = {
@@ -188,18 +199,9 @@ const RUNS: Record<string, Operation['run']> = {
 
   budgets: async (auth, a) => readBudgets(auth.ctx, { month: str(a, 'month') ?? today().slice(0, 7), includeHidden: flag(a, 'include_hidden') }),
 
-  spending: async (auth, a) => {
-    const month = str(a, 'month');
-    if (month && (str(a, 'from') || str(a, 'to'))) throw new BadRequest('Give a month, or from and to, not both.');
-    let from: string;
-    let to: string;
-    if (str(a, 'from') || str(a, 'to')) ({ from, to } = range(a, 30));
-    else {
-      const m = month ?? today().slice(0, 7);
-      [from, to] = [`${m}-01`, lastOfMonth(m)];
-    }
-    return readSpending(auth.ctx, { from, to, currency: str(a, 'currency'), includeHidden: flag(a, 'include_hidden') });
-  },
+  spending: async (auth, a) => readSpending(auth.ctx, { ...monthOrRange(a), currency: str(a, 'currency'), includeHidden: flag(a, 'include_hidden') }),
+
+  'cash-flow': async (auth, a) => readCashFlow(auth.ctx, { ...monthOrRange(a), currency: str(a, 'currency'), includeHidden: flag(a, 'include_hidden') }),
 
   recurring: async (auth, a) => readRecurring(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 

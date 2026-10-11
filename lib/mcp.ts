@@ -160,6 +160,10 @@ const SUMMARIES: Record<string, Tool['summary']> = {
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
+  get_cash_flow: (r) =>
+    `From ${r.from} to ${r.to}: money in ${money(r.money_in, r.currency)} from ${plural(r.payers.length, 'payer')}, money out ${money(r.money_out, r.currency)} in ${plural(r.groups.length, 'group')}, ${
+      r.from_savings_or_debt > 0 ? `${money(r.from_savings_or_debt, r.currency)} from savings or debt` : `${money(r.left_over, r.currency)} left over`
+    }.${withoutTransactions(r)}`,
   get_budgets: (r) =>
     `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available === r.total.budget ? '' : r.total.available > 0 ? `, ${money(r.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${r.total.available < 0 ? `: it began the month ${money(-r.total.available, r.currency)} over` : ''}`}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`,
   list_recurring_bills: (r) => {
