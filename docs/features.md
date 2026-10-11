@@ -488,6 +488,28 @@ Groups can be **added**, with their kind, **renamed**, moved **up** or **down** 
 
 Choosing a category, for a transaction or for one you enter by hand, offers your categories by group, without the archived ones (but for the one it has).
 
+### Starter sets
+
+A starter set is a ready-made set of categories and groups to start from. **Start from a starter set**, on the Categories screen, offers three:
+
+- **Simple**: about a dozen broad categories with plain names (Food, Shopping, Transport, Home and utilities, Health, Fees, Travel and others) in six groups: Income, Everyday, Home and bills, Fun, Other and Transfers. Personal care, home improvement and government and non profit are archived while nothing uses them.
+- **Detailed**: the set Nya starts everyone with, one category for each of Plaid's, in ten groups, named as they were at the start. On a set still as Nya made it, it changes nothing; after another set, it brings the start back, archived ones shown again.
+- **Freelancer**: Nya's categories for your personal spending, and two groups of your own: Business income (Client payments, Other business income) and Business expenses (Software and subscriptions, Equipment, Office and supplies, Business travel, Business meals, Advertising, Professional services, Business fees, Taxes). Your income category is called Personal income. Plaid can't tell a business purchase from a personal one, so file them yourself, or with a [rule](#rules).
+
+What a set can change, and nothing else:
+
+- **Add** groups, and categories of its own. One you already have by that name (in any case) is used instead, moved into the set's group.
+- **Rename** the categories Nya made at the start, and **move** them into the set's groups. Each is found by the key it was made with (Plaid's category, or the uncategorized one), so one you renamed is found too, and one you merged into another is placed once, as that one.
+- **Archive** one of those it has no place for, only while nothing uses it: no transaction of any date, no budget and no rule. One in use stays shown, and the preview says what uses it.
+- **Show again** one it places that is archived.
+- **Remove** a group it left empty that has no budget of its own, and put the groups in its order, its own first.
+
+It never deletes or merges a category, never moves one into a group of another kind (one you moved into a spending group stays there, so nothing counts differently and no total moves), and never changes what a group with a budget of its own holds, so that budget covers what it did. A name another category has is left as it is. Your own categories and groups stay where they are.
+
+**See what it changes** shows, before anything changes, what the set would do to your categories as they are, worked out with your budgets and what uses each category: the groups it adds and removes, each category it adds, renames, moves, archives or shows again, what it leaves as it is and why, and how your transactions and budgets file afterwards. Every transaction stays in its category (under its new name, counting in its new group), and every budget stays with its category, by id, wherever it moves. **Apply** is a second tap; if your categories changed since the preview (on another device, say), nothing changes and it asks you to look again. **Undo** is offered right after, until you leave the screen: names, groups and archiving go back, the groups it removed come back, and the categories and groups it added go while nothing uses them; what it can't put back (a name another category has taken since, a category used since) is kept, and said. Applying a set twice changes nothing the second time.
+
+While your categories are still the ones Nya made (nothing renamed, regrouped, archived or merged), the Budgets tab offers the starter sets once, in a card above the budgets. **See starter sets** or **Keep mine** ends the offer on that device; the sets stay on the Categories screen. The read-only API and the download see your categories as they are after a set, as after any change; neither applies one.
+
 ### Totals by group
 
 The Activity tab's **Top spending** is by group: each group's total, which a tap opens to its categories'. The Budgets tab lists budgets by group the same way.

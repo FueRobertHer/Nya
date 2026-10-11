@@ -2750,6 +2750,11 @@ export default function Dashboard({
                 plannedSaveError={plannedState.saveError}
                 onSavePlanned={plannedItemsStore.save}
                 budgetMonth={budgetMonth}
+                onCategories={(t) => {
+                  categories.accept(t);
+                  loadTransactions();
+                  budgetsStore.load();
+                }}
               />
             )}
 

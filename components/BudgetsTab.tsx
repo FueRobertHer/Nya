@@ -46,6 +46,7 @@ import CalendarView from './CalendarView';
 import RecurringCard from './RecurringCard';
 import PlannedCard from './PlannedCard';
 import { Masked } from './HideAmounts';
+import TemplateOffer from './TemplateOffer';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
@@ -126,6 +127,7 @@ export default function BudgetsTab({
   plannedSaveError = null,
   onSavePlanned,
   budgetMonth = NOT_LOADED,
+  onCategories,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
@@ -184,6 +186,9 @@ export default function BudgetsTab({
   /** This month's budgets as the server works them out, with rollover
    *  (components/budget-month-state.ts), loaded once for the dashboard. */
   budgetMonth?: BudgetMonthState;
+  /** Takes the set a starter template made (components/TemplateOffer.tsx),
+   *  offered here once while your categories are still the ones Nya made. */
+  onCategories?: (t: unknown) => void;
 }) {
   const thisMonth = localMonth();
   // The month shown: this month, or one picked to look back on.
@@ -330,6 +335,7 @@ export default function BudgetsTab({
 
   return (
     <>
+      {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>

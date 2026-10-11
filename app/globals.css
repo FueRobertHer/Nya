@@ -4851,3 +4851,36 @@ button.pool-toggle {
     text-shadow: 0 0 8px var(--text);
   }
 }
+
+/* --- starter category templates (components/CategoryTemplates.tsx,
+   components/TemplateOffer.tsx) ---
+   Each set with what it is beside the button that previews it, stacked on a
+   phone; what a set changes, a line each. */
+.template-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.template-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.template-option-text .panel-note {
+  margin: 0;
+}
+
+.template-changes {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.template-changes li + li {
+  margin-top: 4px;
+}
