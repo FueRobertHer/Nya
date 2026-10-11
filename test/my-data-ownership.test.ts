@@ -353,7 +353,7 @@ describe('one account as an OFX statement', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('x-nya-export-incomplete')).toBe('transaction-annotations');
     expect(notesOf(res.headers)[0]).toStartWith(
-      'What you said about 1 of these transactions could not be read, so it isn’t marked as excluded from budgets and reports or not, and its memo may be missing your note and tags.'
+      'Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and the tags you put on it aren’t in its memo, nor is your note on it.'
     );
     expect(res.said).toEqual(['Data download: ofx, incomplete: transaction-annotations']);
     // Another account's transactions are whole: nothing of theirs is unknown.
@@ -444,7 +444,7 @@ describe('one account as an OFX statement', () => {
     expect(res.status).toBe(200);
     expect(res.headers.get('x-nya-export-incomplete')).toBe('carried-annotations');
     expect(notesOf(res.headers)).toContain(
-      'Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they apply to aren’t marked as excluded by them, and their memos don’t have those notes and tags. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+      'Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
     );
     expect(res.said).toEqual(['Data download: ofx, incomplete: carried-annotations']);
     // The card was never linked to it: nothing of its is missing.

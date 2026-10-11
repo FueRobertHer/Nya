@@ -172,6 +172,13 @@ const statement = async () => {
   return { notes: made.file.notes, incomplete: made.file.incomplete, records: new Map(parsed.statements.flatMap((st) => ofxRecords(st).records).map((r) => [r.source_id ?? '', r])) };
 };
 
+const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
+const UNCHANGED = 'Nothing was changed: what could not be read is still stored as it was.';
+/** What transactions.csv says of a record of what was said that can't be
+ *  read, for every kind of row (lib/user-export.ts). */
+const ANNOTATIONS_IN_CSV =
+  'Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.';
+
 let categories: any;
 const catId = (name: string) => categories.categories.find((c: any) => c.name === name).id;
 let work = '';
@@ -264,7 +271,7 @@ describe('what was said about an imported row the bank later sends', () => {
     await say({ transaction_id: ids['CORNER SHOP'], excluded: true });
     await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
     expect((await rowOf('b_corner'))!.excluded).toBe(true);
-    await fake.hset(ctxKey('transaction-annotations'), { [ids['CORNER SHOP']]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await fake.hset(ctxKey('transaction-annotations'), { [ids['CORNER SHOP']]: DAMAGED });
     expect((await rowOf('b_corner'))!.excluded).toBeNull();
   });
 });
@@ -373,21 +380,49 @@ describe('the download', () => {
     expect(old.note).toContain('Paid by check 102');
   });
 
-  test('what was said about an imported row that can’t be read: the files are called incomplete, and the bank’s row standing for it isn’t marked either way', async () => {
+  test('an imported row whose record of what was said can’t be read: without your tags and note, its file’s own note there instead, and whether it is excluded empty', async () => {
     const { ids } = await importStatement();
-    await say({ transaction_id: ids['CORNER SHOP'], excluded: true });
-    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
-    await fake.hset(ctxKey('transaction-annotations'), { [ids['CORNER SHOP']]: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await say({ transaction_id: ids['OLD STORE'], excluded: true, add_tags: [work], note: 'Birthday present for Sam' });
+    await fake.hset(ctxKey('transaction-annotations'), { [ids['OLD STORE']]: DAMAGED });
     const doc = await download();
-    expect(doc.transactions.find((t) => t.transaction_id === 'b_corner')!.excluded).toBeNull();
     const csv = exportFile(doc, 'transactions-csv');
     expect(csv.incomplete).toEqual(['transaction-annotations']);
-    expect(csv.notes.some((n) => n.startsWith('Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged.'))).toBe(true);
-    expect(csvOf(doc).get('b_corner')!.excluded).toBe('');
+    expect(csv.notes).toContain(`${ANNOTATIONS_IN_CSV} The JSON download lists them under problems. ${UNCHANGED}`);
+    expect(csvOf(doc).get(ids['OLD STORE'])).toMatchObject({ note: 'Paid by check 102', tags: '', excluded: '' });
     const ofx = await statement();
     expect(ofx.incomplete).toContain('transaction-annotations');
     expect(ofx.notes).toContain(
-      'What you said about 1 of these transactions could not be read, so it isn’t marked as excluded from budgets and reports or not, and its memo may be missing your note and tags. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and the tags you put on it aren’t in its memo, nor is your note on it (its file’s own note, if it had one, is there instead). The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    const memo = ofx.records.get(ids['OLD STORE'])!.note!;
+    expect(memo).toContain('Paid by check 102');
+    for (const gone of ['Birthday present for Sam', 'Tags: Work', 'Excluded']) expect(memo).not.toContain(gone);
+  });
+
+  test('the bank’s row standing for an imported one whose record can’t be read: without the tags and note put on that one, and whether it is excluded empty, unless said on the bank’s row', async () => {
+    const { ids } = await importStatement();
+    await say({ transaction_id: ids['CORNER SHOP'], excluded: true, add_tags: [work], note: 'Milk for the office' });
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    await fake.hset(ctxKey('transaction-annotations'), { [ids['CORNER SHOP']]: DAMAGED });
+    const doc = await download();
+    expect(doc.transactions.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ excluded: null, tags: [], your_note: null });
+    const csv = exportFile(doc, 'transactions-csv');
+    expect(csv.incomplete).toEqual(['transaction-annotations']);
+    expect(csv.notes).toContain(`${ANNOTATIONS_IN_CSV} The JSON download lists them under problems. ${UNCHANGED}`);
+    expect(csvOf(doc).get('b_corner')).toMatchObject({ excluded: '', tags: '', note: '' });
+    let ofx = await statement();
+    expect(ofx.incomplete).toContain('transaction-annotations');
+    expect(ofx.notes).toContain(
+      `1 of the bank’s transactions stands for one you imported from a file whose record of what you said could not be read, so the tags and note you put on that one aren’t in its memo, and whether it is excluded from budgets and reports isn’t marked either way. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    // Excluded on the bank's row itself: marked so, while the tags and note
+    // put on the imported one are still missing, and said.
+    await say({ transaction_id: 'b_corner', excluded: true });
+    ofx = await statement();
+    expect(ofx.records.get('b_corner')!.note).toBe('Excluded from budgets and reports in Nya');
+    expect(ofx.incomplete).toContain('transaction-annotations');
+    expect(ofx.notes).toContain(
+      `1 of the bank’s transactions stands for one you imported from a file whose record of what you said could not be read, so the tags and note you put on that one aren’t in its memo. The JSON download lists them under problems. ${UNCHANGED}`
     );
   });
 });
@@ -396,44 +431,53 @@ describe('parts the files are made from that can’t be read', () => {
   test('rules or tags: transactions.csv and an OFX statement apply none and say so, and are called incomplete', async () => {
     const { ids } = await importStatement();
     await addRule({ conditions: [{ field: 'name', op: 'contains', value: 'corner' }], actions: { set_name: 'The Corner Shop', add_tags: [work] } });
-    await fake.set(ctxKey('rules'), 'not-ciphertext-but-long-enough-to-be-tried');
+    await fake.set(ctxKey('rules'), DAMAGED);
     let doc = await download();
     let csv = exportFile(doc, 'transactions-csv');
     expect(csv.incomplete).toEqual(['rules']);
     expect(csv.notes).toContain(
-      'Your rules could not be read (the stored data is damaged), so none is applied in this file, as the app applies none until they can be read: its names, categories, tags and exclusions are as they are without your rules. Nothing was changed: what could not be read is still stored as it was.'
+      `Your rules could not be read (the stored data is damaged), so no rule is applied to the transactions in this file: their names, categories, tags and whether they count are as the bank and you have them, as the app shows them until they can be read. ${UNCHANGED}`
     );
     expect(csvOf(doc).get(ids['CORNER SHOP'])).toMatchObject({ nya_name: 'CORNER SHOP', tags: '' });
     let ofx = await statement();
     expect(ofx.incomplete).toContain('rules');
-    expect(ofx.notes.some((n) => n.startsWith('Your rules could not be read, so none is applied in this statement'))).toBe(true);
+    expect(ofx.notes).toContain(
+      `Your rules could not be read, so none is applied to this statement: its names, and which transactions are marked as left out, are as the bank and you have them, as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+    );
 
     await fake.del(ctxKey('rules'));
     await say({ transaction_id: ids['CORNER SHOP'], add_tags: [work] });
-    await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
+    await fake.set(ctxKey('tags'), DAMAGED);
     doc = await download();
     csv = exportFile(doc, 'transactions-csv');
     expect(csv.incomplete).toEqual(['tags']);
-    expect(csv.notes).toContain(
-      'Your tags could not be read (the stored data is damaged), so the tags column is empty, as the app shows no tags until they can be read. Nothing was changed: what could not be read is still stored as it was.'
-    );
+    expect(csv.notes).toContain(`Your tags could not be read (the stored data is damaged), so no transaction in this file has tags, as the app shows none until they can be read. ${UNCHANGED}`);
     expect(csvOf(doc).get(ids['CORNER SHOP'])!.tags).toBe('');
     ofx = await statement();
     expect(ofx.incomplete).toContain('tags');
-    expect(ofx.notes.some((n) => n.startsWith('Your tags could not be read, so no memo has them'))).toBe(true);
+    expect(ofx.notes).toContain(`Your tags could not be read, so no transaction’s memo has its tags, as the app shows none until they can be read. The JSON download lists them under problems. ${UNCHANGED}`);
   });
 
-  test('an imported row’s book, or what was carried from an earlier account: transactions.csv says what it is missing', async () => {
+  test('an imported row’s book, or what was carried from an earlier account: transactions.csv and an OFX statement say what they are missing', async () => {
     await importStatement();
-    await fake.hset(ctxKey('carried-annotations'), { acc_old: 'not-ciphertext-but-long-enough-to-be-tried' });
-    await fake.hset(ctxKey('imported-transactions'), { acc_chk: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
+    await fake.hset(ctxKey('carried-annotations'), { acc_old: DAMAGED });
+    await fake.hset(ctxKey('imported-transactions'), { acc_chk: DAMAGED });
     const csv = exportFile(await download(), 'transactions-csv');
     expect(csv.incomplete).toEqual(['carried-annotations', 'imported-transactions']);
     expect(csv.notes).toContain(
-      'Not all of your transactions imported into linked accounts could be read, so this file is missing the imported transactions of 1 account whose stored data is damaged, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+      `Not all of your transactions imported into linked accounts could be read, so this file is missing the imported transactions of 1 account whose stored data is damaged, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
     );
     expect(csv.notes).toContain(
-      'Not all of your notes, tags and exclusions carried from earlier accounts could be read: 1 entry whose stored data is damaged. The transactions of the accounts you linked those to are in this file without them. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+      `Not all of your notes, tags and exclusions carried from earlier accounts could be read: 1 entry whose stored data is damaged. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    const ofx = await statement();
+    expect(ofx.incomplete).toEqual(expect.arrayContaining(['carried-annotations', 'imported-transactions']));
+    expect(ofx.notes).toContain(
+      `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    expect(ofx.notes).toContain(
+      `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
     );
   });
 });
