@@ -36,7 +36,13 @@
 //     under its connection. Letting an account go from SimpleFIN is
 //     something else (`letGo` here, connector-ended): it says where its
 //     transactions come from after, never that it stopped counting; one that
-//     had ended by the day it was let go has nothing after to come.
+//     had ended by the day it was let go has nothing after to come. One that
+//     ended holds nothing at its bank, so its bank's history can move on
+//     without it: the days before its end it may be missing transactions
+//     from, though its bank's history covers them, are said as days it was
+//     missing from its bank's answer (connectorMissed), and so are those of
+//     an account let go and kept by hand that its connection's history has
+//     since reached back past.
 //
 // READ ONLY, and for display: nothing here writes, deletes or records anything
 // on what it reads (readOnly). Every read that can't be made is said on the
@@ -274,6 +280,7 @@ export async function readReport(
 
   sources.push(...connectorSources(fed, hidden, period, endedBy));
   const gone = connectorEnded(letGo.entries, fed, hidden, period, own, endDay);
+  const fedMissed = connectorMissed(letGo.entries, fed, hidden, period, own, endDay);
 
   const manualFacts: ManualFacts[] = toInstitutions(manual.accounts).flatMap((inst) =>
     inst.accounts
@@ -319,7 +326,7 @@ export async function readReport(
     healthUnread: facts.note !== null,
     appendixLimit: opts.appendixLimit,
     ended: lifecycle.ended,
-    missed: lifecycle.missed,
+    missed: [...lifecycle.missed, ...fedMissed],
   });
 }
 
@@ -378,6 +385,56 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
         }).map((a) => a.name),
       },
     });
+  }
+  return out;
+}
+
+/**
+ * The days an account a SimpleFIN connection fed may be missing transactions
+ * from although its bank's history covers them (see the header), as windows
+ * it was missing from its bank's answer, unless it is hidden:
+ *   - one tracked that ended, which answers moving its connection's history
+ *     on left out (lib/connectors/sync.ts): the days before the first its own
+ *     transactions are known from, and after the last they are known to, on
+ *     the days it still counted (before its end), under its bank;
+ *   - one let go and kept by hand (`own`), not tracked again: the days its
+ *     connection's history has reached back to since, before the first day
+ *     it had then, and, for one that had ended, the days between the last its
+ *     own are known to and the day it was let go (from which they are the
+ *     ones entered or imported, said as `disconnected`), before its end.
+ * One removed went with its transactions, which `removed` says.
+ */
+function connectorMissed(
+  letGo: ReadonlyMap<string, EndedAccount>,
+  fed: ConnectorBanksReport,
+  hidden: ReadonlySet<string>,
+  period: Period,
+  own: ReadonlySet<string>,
+  endDay: ReadonlyMap<string, string>
+): MissedFacts[] {
+  const label = connectorOf('simplefin').label;
+  const out: MissedFacts[] = [];
+  const say = (id: string, facts: Omit<MissedFacts, 'from' | 'to'>, from: string, to: string) => {
+    const end = endDay.get(id);
+    const last = end !== undefined && to >= end ? addDays(end, -1) : to;
+    if (from <= last) out.push({ ...facts, from, to: last });
+  };
+  for (const a of fed.accounts.values()) {
+    if (own.has(a.account_id) || hidden.has(a.account_id) || !endDay.has(a.account_id)) continue;
+    const history = fed.connections.get(a.connection_id)?.history;
+    if (!history) continue;
+    const facts = { account: a.name, institution: throughName(a.institution_name, label), item_id: connectorCardId(a), type: a.type };
+    if (a.history_from && history.from < a.history_from) say(a.account_id, facts, history.from, addDays(a.history_from, -1));
+    if (a.history_to && a.history_to < history.to) say(a.account_id, facts, addDays(a.history_to, 1), history.to);
+  }
+  const tracked = new Set([...fed.accounts.values()].map((a) => `${fed.connections.get(a.connection_id)?.host ?? ''}\n${a.remote_id}`));
+  for (const [id, e] of letGo) {
+    if (!e.kept || !own.has(id) || hidden.has(id) || (e.host !== null && tracked.has(`${e.host}\n${e.remote_id}`))) continue;
+    const facts = { account: e.name, institution: throughName(e.institution_name, label), item_id: null, type: e.type };
+    const history = fed.connections.get(e.connection_id)?.history;
+    if (e.history_from && history && history.from < e.history_from) say(id, facts, history.from, addDays(e.history_from, -1));
+    const letGoDay = dayIn(e.ended_at, period.time_zone) ?? e.ended_at.slice(0, 10);
+    if (e.history_to && endDay.has(id)) say(id, facts, addDays(e.history_to, 1), addDays(letGoDay, -1));
   }
   return out;
 }

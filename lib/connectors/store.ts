@@ -31,7 +31,11 @@
 //                          card...) and, for a card or a loan, how to read the
 //                          sign of its balance, its currency, and the balance
 //                          as the connector reported it, with the day the
-//                          institution gave it. In the download.
+//                          institution gave it; and, for one that ended
+//                          (lib/lifecycle.ts) and was left out of answers that
+//                          moved its connection's history on, the days its
+//                          own transactions are known from and to
+//                          (lib/connectors/sync.ts). In the download.
 //   connector-ended        one entry per account the person let go (stopped
 //                          tracking, or disconnected), under its id: what it
 //                          was, the connection it came through, when it was
@@ -178,6 +182,14 @@ export type ConnectorAccount = {
    *  the answer) from the latest answer that held the account with no problem
    *  reported about it. Absent or null before one. */
   ok_at?: string | null;
+  /** For an account that ended (lib/lifecycle.ts), which holds nothing at its
+   *  bank: the first day its own transactions are known from, when an older
+   *  window its connection's history moved back through left it out, or
+   *  named a problem for it alone; and the last day they are known to, when
+   *  a recent answer that moved the history on did. Its connection's history
+   *  says the rest. Absent while its own reach is its connection's. */
+  history_from?: string | null;
+  history_to?: string | null;
   created_at: string;
 };
 
@@ -282,6 +294,8 @@ export function isConnectorAccount(v: unknown): v is ConnectorAccount {
     isTimeOrNull(v.balance_at) &&
     isTimeOrNull(v.fetched_at) &&
     (v.ok_at === undefined || isTimeOrNull(v.ok_at)) &&
+    (v.history_from === undefined || v.history_from === null || isCalendarDay(v.history_from)) &&
+    (v.history_to === undefined || v.history_to === null || isCalendarDay(v.history_to)) &&
     isTime(v.created_at)
   );
 }
@@ -304,8 +318,12 @@ export type EndedAccount = {
   /** When it was first tracked. */
   tracked_at: string;
   /** The first day of transactions its connection had fetched, or null
-   *  before any. */
+   *  before any; or its own, when that was later (ConnectorAccount). */
   history_from: string | null;
+  /** The last day its own transactions are known to, when an answer that
+   *  moved its connection's history on left it out (ConnectorAccount).
+   *  Absent otherwise. */
+  history_to?: string | null;
   /** When it was let go. */
   ended_at: string;
   /** Kept as a manual account, with its transactions; or removed, with them. */
@@ -327,6 +345,7 @@ function isEndedAccount(v: unknown): v is EndedAccount {
     /^[A-Z]{3}$/.test(v.currency) &&
     isTime(v.tracked_at) &&
     (v.history_from === null || isCalendarDay(v.history_from)) &&
+    (v.history_to === undefined || v.history_to === null || isCalendarDay(v.history_to)) &&
     isTime(v.ended_at) &&
     typeof v.kept === 'boolean'
   );

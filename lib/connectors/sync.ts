@@ -20,7 +20,13 @@
 // out of the day's total is always asked again. An account that ended
 // (lib/lifecycle.ts) holds nothing there, nor in judging an answer whole for
 // the history below: a card closed at the bank that SimpleFIN stops
-// returning never stalls the history of the accounts beside it.
+// returning never stalls the history of the accounts beside it. What such an
+// answer left out of it is kept on it instead: the history moved on without
+// its transactions, so the first day its own are known from (an older
+// window) or the last day they are known to (a recent answer) is recorded on
+// its entry (ConnectorAccount history_from, history_to), and a report says
+// what may be missing from the days before its end outside them
+// (lib/report/read.ts).
 //
 // WINDOWS. A request asks for the transactions posted in a window of at most
 // the connector's windowDays (90 for SimpleFIN). The recent window has no end
@@ -355,6 +361,25 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
   }
 }
 
+/**
+ * Records, on each account that ended and that an answer moving the history
+ * on left out or named a problem for alone (see the header), how far its own
+ * transactions are known: from the day the history had reached going back
+ * (`from`, an older window), or to the day it had reached going forward
+ * (`to`, the recent one). Only ever narrowed, and only written when it
+ * changes: an account SimpleFIN no longer returns costs one write.
+ */
+async function narrowKnownDays(ctx: Ctx, accounts: readonly ConnectorAccount[], bound: { from: string } | { to: string }): Promise<void> {
+  for (const a of accounts) {
+    const narrower = (c: Pick<ConnectorAccount, 'history_from' | 'history_to'>) =>
+      'from' in bound ? !c.history_from || bound.from > c.history_from : !c.history_to || bound.to < c.history_to;
+    if (!narrower(a)) continue;
+    await connectorAccountsStore.update(ctx, a.account_id, (c) =>
+      c && narrower(c) ? { ...c, ...('from' in bound ? { history_from: bound.from } : { history_to: bound.to }) } : c
+    );
+  }
+}
+
 /** Whether an answer, as recorded, was whole for the accounts tracked: none
  *  missing, and no problem reported that concerns them or names no bank;
  *  those that ended (`ended`) aside, which hold nothing (see the header). */
@@ -482,6 +507,12 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
       break;
     }
     const from = conn.history!.from;
+    // Whole without an account that ended: its own rows are known only from
+    // where the history was (see the header).
+    const short = tracked.filter(
+      (a) => ended.has(a.account_id) && (!byRemote.has(a.remote_id) || answer.problems.some((p) => p.accounts?.includes(a.remote_id)))
+    );
+    if (short.length > 0) await narrowKnownDays(ctx, short, { from });
     // Anything older than what was there: the connector has more.
     const older = answer.accounts.some((a) => remotes.has(a.remote_id) && a.transactions.some((t) => t.date < from));
     await connectionsStore.update(ctx, connection_id, (c) => {
@@ -550,6 +581,14 @@ export async function syncConnection(
     }
     result.record = await applyAnswer(ctx, tracked, result.answer, now);
     await saveFetch(ctx, connection_id, result.record, { answer: result.answer, start: request.balancesOnly ? null : request.start, today }, ended);
+    // It moved the history on without an account that ended: that account's
+    // rows are known only to where the history was (see the header).
+    const record = result.record;
+    if (!request.balancesOnly && conn.history && conn.history.to < today && wholeRecord(record, ended)) {
+      const left = new Set([...record.missing, ...record.problems.flatMap((p) => p.accounts ?? [])]);
+      const short = tracked.filter((a) => ended.has(a.account_id) && left.has(a.account_id));
+      if (short.length > 0) await narrowKnownDays(ctx, short, { to: conn.history.to });
+    }
     changed = tracked.length > 0;
   }
 

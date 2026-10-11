@@ -398,7 +398,9 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
             type: a.type,
             currency: a.currency,
             tracked_at: a.created_at,
-            history_from: conn?.history?.from ?? null,
+            // Its own reach, where an answer left it out (lib/connectors/sync.ts).
+            history_from: a.history_from && (!conn?.history || a.history_from > conn.history.from) ? a.history_from : (conn?.history?.from ?? null),
+            ...(a.history_to ? { history_to: a.history_to } : {}),
             ended_at: at,
             kept: keep && nyaBalance(a) !== null,
           },

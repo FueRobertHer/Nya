@@ -666,6 +666,16 @@ export function ofxFile(
         `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
       );
     }
+    // Once it had ended, answers moving its connection's history on left it
+    // out (lib/connectors/sync.ts): its own transactions are known over less.
+    if (!unreadConnection && conn?.history) {
+      if (entry.history_from && conn.history.from < entry.history_from) {
+        notes.push(`SimpleFIN left this account out of its answers about the days before ${shownDay(entry.history_from)}, so the statement may be missing its transactions from then.`);
+      }
+      if (entry.history_to && entry.history_to < conn.history.to) {
+        notes.push(`SimpleFIN left this account out of its answers about the days after ${shownDay(entry.history_to)}, so the statement may be missing its transactions from then.`);
+      }
+    }
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
     // date for it, where the person is: none while Nya holds it, as the
     // Accounts tab does (lib/connectors/institutions.ts), for which an
