@@ -57,7 +57,16 @@ const monthRoute = await import('@/app/api/budgets/month/route');
 const rolloverRoute = await import('@/app/api/budgets/rollover/route');
 const categoriesRoute = await import('@/app/api/categories/route');
 const recategorize = await import('@/app/api/recategorize/route');
+const { rulesStore, emptyRuleSet } = await import('@/lib/rules');
+const { tagStore } = await import('@/lib/tags');
+const { assembleBankRows, finishActivity } = await import('@/lib/activity');
+const { spendingByCategory } = await import('@/lib/totals');
+const { totalsCurrency } = await import('@/lib/spending');
+const { filedId, indexTaxonomy } = await import('@/lib/categories');
+const { readSpending } = await import('@/lib/api-read');
 type Taxonomy = import('@/lib/categories').Taxonomy;
+type RuleCondition = import('@/lib/rules').RuleCondition;
+type RuleActions = import('@/lib/rules').RuleActions;
 
 /** This month, as the page sends it (the UTC month is always one some time
  *  zone is in), and the months around it. */
@@ -699,3 +708,100 @@ describe('what the routes take', () => {
     expect((await post({ action: 'income', enabled: false, month: NOW })).status).toBe(503);
   });
 });
+
+describe('rules (#36): applied on read, so every carry and the pool follow them at once', () => {
+  /** A rule as the rules route saves one. */
+  const rule = (priority: number, conditions: RuleCondition[], actions: RuleActions, enabled = true) => ({
+    id: `rule-${priority}`,
+    enabled,
+    priority,
+    conditions,
+    actions,
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  const rules = (...list: ReturnType<typeof rule>[]) => rulesStore.set(ctx, { version: 1, rules: list });
+  const named_ = (text: string): RuleCondition => ({ field: 'name', op: 'contains', value: text });
+
+  test('a rule that hides counts as an exclusion does: neither spending nor money in, in the carry and the pool', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([
+      row('pay', on(-2, 1), -2000, 'income'),
+      row('payback', on(-2, 2), -300, 'income'),
+      row('lunch', on(-2, 3), 40),
+      row('gym', on(-1, 4), 50),
+      row('dinner', on(-1, 5), 30),
+    ]);
+    await rollover(t, 'food and drink', M(-2));
+    await post({ action: 'income', enabled: true, start: M(-2), month: NOW });
+    const food = named(t, 'food and drink').id;
+    const before = (await month()).body;
+    // 60 left in the first month, 20 in the second; 2300 in, 120 out.
+    expect(before.carries.categories[food].carry).toBe(80);
+    expect(before.pool.available).toBe(2180);
+    await rules(rule(1, [named_('GYM')], { hide: true }), rule(2, [named_('PAYBACK')], { hide: true }));
+    const hidden = (await month()).body;
+    expect(hidden.carries.categories[food].carry).toBe(130);
+    expect(hidden.pool.available).toBe(2180 - 300 + 50);
+    // Exactly as excluding them by hand.
+    await rulesStore.set(ctx, emptyRuleSet());
+    expect((await month()).body.carries.categories[food].carry).toBe(80);
+    await setExcluded(ctx, 'gym', true);
+    await setExcluded(ctx, 'payback', true);
+    const excluded = (await month()).body;
+    expect({ carries: excluded.carries, pool: excluded.pool }).toEqual({ carries: hidden.carries, pool: hidden.pool });
+  });
+
+  test('a rule that files past rows under a budget changes its carry at once, and turned off puts it back', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('grocer', on(-2, 3), 40, 'general merchandise'), row('lunch', on(-1, 3), 30)]);
+    await rollover(t, 'food and drink', M(-2));
+    const food = named(t, 'food and drink').id;
+    const carry = async () => (await month()).body.carries.categories[food].carry;
+    expect(await carry()).toBe(170);
+    await rules(rule(1, [named_('GROCER')], { set_category: food }));
+    expect(await carry()).toBe(130);
+    // Last month, looked back on, counts it there too.
+    expect((await month(M(-2))).body.spent[food]).toBe(40);
+    await rules(rule(1, [named_('GROCER')], { set_category: food }, false));
+    expect(await carry()).toBe(170);
+  });
+
+  test('the month view, the API’s budgets, its spending by category and the Activity tab’s rows agree under rules; a tag changes nothing', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([
+      row('grocer-a', on(-1, 3), 45, 'general merchandise'),
+      row('gym-a', on(-1, 4), 25),
+      row('lunch-a', on(-1, 5), 15),
+      row('grocer-b', on(0, 1), 35, 'general merchandise'),
+      row('gym-b', on(0, 1), 20),
+      row('lunch-b', on(0, 1), 10),
+    ]);
+    await rollover(t, 'food and drink', M(-1));
+    const food = named(t, 'food and drink').id;
+    await tagStore.set(ctx, { version: 1, tags: [{ id: 'tag-1', name: 'Work', color: 'blue', created_at: new Date().toISOString() }] });
+    const tagged = (await month()).body.carries;
+    await rules(rule(1, [named_('LUNCH')], { add_tags: ['tag-1'] }));
+    expect((await month()).body.carries).toEqual(tagged);
+    await rules(rule(1, [named_('GROCER')], { set_category: food }), rule(2, [named_('GYM')], { hide: true }), rule(3, [named_('LUNCH')], { add_tags: ['tag-1'] }));
+    // The Activity tab's rows, as the transactions route finishes them, and
+    // its rule for a month's spending by category (lib/totals.ts).
+    const bank = await assembleBankRows(ctx, { sync: false, readOnly: true });
+    const activity = await finishActivity(ctx, bank.payload, bank.hidden);
+    const ix = indexTaxonomy(activity.taxonomy);
+    const currency = totalsCurrency(activity.transactions);
+    const tab = (m: string) => spendingByCategory(activity.transactions, (d) => d.slice(0, 7) === m, currency, (r) => filedId(ix, r))[food];
+    const last = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
+    for (const m of [M(-1), NOW]) {
+      const view = (await month(m, NOW, m === NOW ? '&history=1' : '')).body;
+      const api = (await readBudgets(ctx, { month: m })).budgets.find((b) => b.category_id === food)!;
+      const spending = (await readSpending(ctx, { from: `${m}-01`, to: last(m) })).categories.find((c) => c.category_id === food)!;
+      // The grocer's, filed under food by the rule, and the lunch; never the gym's, hidden.
+      const expected = m === NOW ? 45 : 60;
+      expect([m, view.spent[food], api.spent, spending.spent, tab(m)]).toEqual([m, expected, expected, expected, expected]);
+    }
+    // And the carry counts last month as they all do: 100 less 60.
+    expect((await month()).body.carries.categories[food].carry).toBe(40);
+  });
+});
+
