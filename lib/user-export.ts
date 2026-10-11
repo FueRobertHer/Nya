@@ -102,7 +102,9 @@ import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
-import { txnAnnotationStore } from './txn-annotations';
+import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { ConnectorKind } from './connectors/types';
@@ -1073,6 +1075,41 @@ const PART_WORDS: Record<string, PartWords> = {
     inCsv: (counts) => `Not all of your account closures could be read: ${counts}. An account one of them is about has no account_state in this file, although it may have ended.`,
   },
   'timeline-notes': { noun: 'timeline notes', one: 'note', many: 'notes', missing: missingFrom },
+  // What the read layer puts on each transaction (lib/txn-layers.ts): in a
+  // CSV, what each row's nya_name, tags, note and excluded lack.
+  [rulesStore.name]: {
+    noun: 'rules',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No rule is applied to the transactions in this file, as the app applies none until they can be read.',
+    valueInCsv: (why) =>
+      `Your rules could not be read (${why}), so no rule is applied to the transactions in this file: their names, categories, tags and whether they count are as the bank and you have them, as the app shows them until they can be read.`,
+  },
+  [tagStore.name]: {
+    noun: 'tags',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No transaction in this file has tags, as the app shows none until they can be read.',
+    valueInCsv: (why) => `Your tags could not be read (${why}), so no transaction in this file has tags, as the app shows none until they can be read.`,
+  },
+  [txnAnnotationStore.name]: {
+    noun: txnAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row.`,
+  },
+  [carriedAnnotationStore.name]: {
+    noun: carriedAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
@@ -1902,9 +1939,20 @@ export type ExportFile = {
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
   // The books of the manual accounts, the names of the accounts they are on
-  // (and the types a pair of SimpleFIN rows is worked out by), and the
-  // categories every row is filed by (nya_category).
-  'transactions-csv': ['manual-transactions', 'manual_accounts', connectorAccountsStore.name, taxonomyStore.name],
+  // (and the types a pair of SimpleFIN rows is worked out by), the categories
+  // every row is filed by (nya_category), and what the read layer puts on
+  // each row (lib/txn-layers.ts): the rules, the tags, what was said about it
+  // and what was carried to it (nya_name, tags, note, excluded).
+  'transactions-csv': [
+    'manual-transactions',
+    'manual_accounts',
+    connectorAccountsStore.name,
+    taxonomyStore.name,
+    rulesStore.name,
+    tagStore.name,
+    txnAnnotationStore.name,
+    carriedAnnotationStore.name,
+  ],
   // The days, the names of the manual accounts the rows are for, the
   // accounts' ends and the notes.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts', 'account-lifecycle', 'timeline-notes'],
