@@ -33,7 +33,11 @@
 // that can't (supersede can't be told without it), keeps that account's
 // imported rows out and says so in a note, as an institution that failed to
 // sync gets one, never a quiet "none"; and so does a connection whose
-// accounts can't be read, while books no live account claims could be its.
+// accounts can't be read, while books no live account claims could be its,
+// and an end that can't be read, while a book no live account claims is
+// filed under one of that account's ids: it may be an account that ended,
+// live through that end. Either leaves the read `unresolved`, which the walk
+// waits on rather than draw the chart without those rows.
 
 import type { Ctx } from '../containers';
 import { getItems, type StoredItem } from '../storage';
@@ -63,12 +67,17 @@ export type LinkedAccount = {
  * couldn't be read. With them, each account that ended (lib/lifecycle.ts) on
  * a connection still stored that the loads no longer remember, a bank having
  * stopped returning it once it closed: named and kinded as its end recorded
- * it, since its rows before its end still count (WHOSE ROWS). A display
- * read: an unreadable record leaves its accounts out, named (an end that
- * can't be read adds none here: whatever counts reads the ends strictly),
- * and storage failing throws.
+ * it, since its rows before its end still count (WHOSE ROWS). A record
+ * that can't be read leaves its accounts out and is named, so a reader never
+ * takes their rows for no live account's (NEVER SHORT WITHOUT SAYING SO): an
+ * Item's (`unreadable`), and an end that can't be read or that a later
+ * release wrote (`endsUnread`, by the id it is stored under), whose account
+ * may be one that ended this would list. Storage failing throws.
  */
-export async function liveLinkedAccounts(ctx: Ctx, items?: StoredItem[]): Promise<{ accounts: Map<string, LinkedAccount>; unreadable: string[] }> {
+export async function liveLinkedAccounts(
+  ctx: Ctx,
+  items?: StoredItem[]
+): Promise<{ accounts: Map<string, LinkedAccount>; unreadable: string[]; endsUnread: { unreadable: string[]; unrecognised: string[] } }> {
   const [stored, remembered, ends] = await Promise.all([items ? Promise.resolve(items) : getItems(ctx), rememberedAccountsReport(ctx), lifecycleStore.getAllReport(ctx)]);
   const accounts = new Map<string, LinkedAccount>();
   for (const item of stored) {
@@ -99,7 +108,7 @@ export async function liveLinkedAccounts(ctx: Ctx, items?: StoredItem[]): Promis
     });
   }
   const live = new Set(stored.map((i) => i.item_id));
-  return { accounts, unreadable: remembered.unreadable.filter((id) => live.has(id)) };
+  return { accounts, unreadable: remembered.unreadable.filter((id) => live.has(id)), endsUnread: { unreadable: ends.unreadable, unrecognised: ends.unrecognised } };
 }
 
 /** The bank's rows as matching reads them: each with the id its account is
@@ -177,7 +186,8 @@ export type ImportedRead = {
   /** The current ids of those accounts. */
   flawed: Set<string>;
   /** Imported rows may be missing for want of something that can't be read
-   *  without saying whose: the links, or a connection's accounts. */
+   *  without saying whose: the links, a connection's accounts, or an
+   *  account's end (see NEVER SHORT WITHOUT SAYING SO). */
   unresolved: boolean;
   /** Imports whose summary can't be read: their order and period aren't known. */
   summariesUnreadable: string[];
@@ -209,7 +219,8 @@ export async function readImported(
   if (books.entries.size === 0 && books.unreadable.length === 0 && books.unrecognised.length === 0) return empty;
   const items = opts.items ?? (await getItems(ctx));
   const links = opts.links ?? new Map<string, Link>();
-  const [{ accounts: live, unreadable: unknownItems }, summaries] = await Promise.all([liveLinkedAccounts(ctx, items), historyImportSummaryStore.getAllReport(ctx)]);
+  const [{ accounts: live, unreadable: unknownItems, endsUnread }, summaries] = await Promise.all([liveLinkedAccounts(ctx, items), historyImportSummaryStore.getAllReport(ctx)]);
+  const unreadEnds = new Set([...endsUnread.unreadable, ...endsUnread.unrecognised]);
   const leftOut = opts.leftOut ?? new Set<string>();
   const summariesUnreadable = [...summaries.unreadable, ...summaries.unrecognised];
   const wanted = (bookId: string): LinkedAccount | null => {
@@ -220,27 +231,42 @@ export async function readImported(
     return account;
   };
 
+  let unlinked = false;
+  let unowned = false;
+  let unended = false;
+  // A book no live account claims, which may still be one's, as far as can
+  // be told: with the links unread, filed under its earlier id; with a
+  // connection's accounts unread, one of those; with an end unread under one
+  // of the ids its account has had, an account that ended its bank no longer
+  // returns, live through that end (liveLinkedAccounts), unless it is one not
+  // read here either way (hidden, or not among `only`).
+  const unclaimed = (bookId: string) => {
+    const current = resolveId(bookId, links);
+    if (live.has(current)) return;
+    if (!opts.links) unlinked = true;
+    if (unknownItems.length > 0) unowned = true;
+    const readHere = !leftOut.has(current) && !leftOut.has(bookId) && (!opts.only || opts.only.has(current));
+    if (readHere && sameAccountIds(current, links).some((id) => unreadEnds.has(id))) unended = true;
+  };
+
   const notes: string[] = [];
   const flawed = new Set<string>();
   for (const id of [...books.unreadable, ...books.unrecognised]) {
     const account = wanted(id);
-    if (!account || flawed.has(account.account_id)) continue;
+    if (!account) {
+      // Whether it holds rows can't be told: it may.
+      unclaimed(id);
+      continue;
+    }
+    if (flawed.has(account.account_id)) continue;
     flawed.add(account.account_id);
     notes.push(`${account.institution_name}: transactions imported for ${account.name} couldn't be read`);
   }
   const byAccount = new Map<string, ImportedTxn[]>();
-  let unlinked = false;
-  let unowned = false;
   for (const [bookId, book] of books.entries) {
     const account = wanted(bookId);
     if (!account) {
-      // Not a live account's, as far as can be told: with the links unread,
-      // it may be one's earlier id; with a connection's accounts unread, it
-      // may be one of those.
-      if (book.rows.length > 0 && !live.has(resolveId(bookId, links))) {
-        if (!opts.links) unlinked = true;
-        if (unknownItems.length > 0) unowned = true;
-      }
+      if (book.rows.length > 0) unclaimed(bookId);
       continue;
     }
     if (flawed.has(account.account_id)) continue;
@@ -253,7 +279,8 @@ export async function readImported(
     const names = items.filter((i) => unknownItems.includes(i.item_id)).map((i) => i.institution_name);
     notes.push(`${[...new Set(names)].join(', ')}: transactions imported for its accounts aren't shown while its accounts can't be read`);
   }
-  const unresolved = unlinked || unowned;
+  if (unended) notes.push("Transactions imported for an account whose closure can't be read aren't shown until it can be");
+  const unresolved = unlinked || unowned || unended;
   if (byAccount.size === 0) return { ...empty, notes, flawed, unresolved, summariesUnreadable };
 
   // The bank's rows of the connections holding these accounts, read once each

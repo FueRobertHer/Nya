@@ -34,7 +34,7 @@ const { linkAccounts } = await import('@/lib/links');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { getHistory, getAccountHistory, isBackfillDone, markBackfillDone } = await import('@/lib/history');
 const { writeCache, CacheKey } = await import('@/lib/cache');
-const { readDrawState, drawImportedHistory, markDrawStale, linksChanged, DrawUnreadableError } = await import('@/lib/history-import/extend');
+const { readDrawState, drawImportedHistory, drawIsStale, markDrawStale, linksChanged, DrawUnreadableError } = await import('@/lib/history-import/extend');
 const { importedHistoryView, importedHistoryLines } = await import('@/lib/history-import/view');
 const backfill = await import('@/app/api/backfill/route');
 const routes = await import('@/app/api/history-import/route');
@@ -484,6 +484,73 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     state = (await readDrawState(ctx))!;
     expect(state.problem).toBeNull();
     expect(state.built).toBe(state.generation);
+  });
+
+  test('an account that ended, its bank no longer returning it, whose end can’t be read: the drawing waits and keeps what it drew; once the end reads, it draws again', async () => {
+    await runBackfill();
+    await importReviewed(
+      'acc_chk',
+      ofx(
+        [
+          { fitid: 'A', days: 100, amount: -30, name: 'OLD SHOP' },
+          { fitid: 'B', days: 200, amount: 400, name: 'OLD PAY' },
+        ],
+        { start: 400, end: 55 }
+      )
+    );
+    // It closes five days ago, and the bank stops returning it: it is live
+    // for its imported rows only through its end.
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(5) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', currency: 'USD' });
+    plaid.accounts = [account('acc_card', 'credit', 300), account('acc_loan', 'loan', 9000)];
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_chase: await encrypt(
+        JSON.stringify([
+          { account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
+          { account_id: 'acc_loan', name: 'Car loan', official_name: null, mask: '3333', type: 'loan', subtype: 'auto', limit: null, currency: 'USD' },
+        ])
+      ),
+    });
+    await markDrawStale(ctx);
+    await drawImportedHistory(ctx);
+    const history = await getHistory(ctx);
+    const drawn = (await readDrawState(ctx))!;
+    expect(drawn.accounts.find((a) => a.account_id === 'acc_chk')?.reach).toBe(daysAgo(401));
+    expect(valueOn(history, 201)).toBe(440 - 250 - 9000);
+    const saved = (await fake.hget(ctxKey('account-lifecycle'), 'acc_chk')) as string;
+    // Damaged bytes, and the shape a later release writes, read after a rollback.
+    const later = await encrypt(
+      JSON.stringify({ lifecycle: { state: 'merged', on: daysAgo(5), into: 'acc_x' }, type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', set_at: new Date().toISOString(), v: 9 })
+    );
+    for (const unread of ['not ciphertext', later]) {
+      const estimated = estimatedLayer();
+      await fake.hset(ctxKey('account-lifecycle'), { acc_chk: unread });
+      await markDrawStale(ctx);
+      await expect(quietly(() => drawImportedHistory(ctx))).rejects.toBeInstanceOf(DrawUnreadableError);
+      // Nothing it drew is cleared, and it says why it didn't draw.
+      expect(estimatedLayer()).toBe(estimated);
+      const state = (await readDrawState(ctx))!;
+      expect(state.accounts).toEqual(drawn.accounts);
+      expect(state.problem).toEqual({ kind: 'unreadable', accounts: [] });
+      expect(state.built).not.toBe(state.generation);
+      expect(importedHistoryLines(importedHistoryView(state)!, () => 'Checking', (d) => d)).toContain(
+        'The estimate from imported transactions couldn’t be drawn again: what it needs can’t be read just now. What it showed before is kept.'
+      );
+      // The sheet is told its end can't be read, never that it isn't linked.
+      const res = await quietly(() => routes.GET(new Request('http://localhost/api/history-import?account_id=acc_chk')));
+      expect(res.status).toBe(409);
+      const body = await res.json();
+      expect(body.unreadable).toBe(true);
+      expect([...body.unreadable_ids, ...body.unrecognised_ids]).toEqual(['acc_chk']);
+      // The end reads again: still marked, so the next load's backfill run
+      // draws it, as it was, and says nothing of a problem.
+      await fake.hset(ctxKey('account-lifecycle'), { acc_chk: saved });
+      expect(await drawIsStale(ctx)).toBe(true);
+      expect((await runBackfill()).from_imports).toBeGreaterThan(0);
+      expect(await getHistory(ctx)).toEqual(history);
+      const again = (await readDrawState(ctx))!;
+      expect(again.problem).toBeNull();
+      expect(again.built).toBe(again.generation);
+    }
   });
 
   test('an import with lines that couldn’t be read isn’t walked, and the chart says so, unless the person said those lines aren’t transactions', async () => {

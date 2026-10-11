@@ -7,7 +7,7 @@ import { isBackfillDone } from '@/lib/history';
 import { readLinks, effectiveLinks, sameAccountIds, type Link } from '@/lib/link-core';
 import { liveAccountIds } from '@/lib/links';
 import { StateUnreadableError } from '@/lib/transactions';
-import { StoredValueTooLargeError } from '@/lib/repo';
+import { StoredValueTooLargeError, UnreadableEntriesError } from '@/lib/repo';
 import { storeFailure } from '@/lib/store-failure';
 import { loggable } from '@/lib/log-safe';
 import { DEFAULT_CURRENCY, addDays } from '@/lib/manual-txn-input';
@@ -147,9 +147,18 @@ async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: 
     return bad('Choose one of your linked accounts');
   }
   if (isManualId(account_id)) return bad(await notLinked(ctx, account_id));
-  const { accounts } = await liveLinkedAccounts(ctx);
+  const { accounts, endsUnread } = await liveLinkedAccounts(ctx);
   const account = accounts.get(account_id);
-  if (!account) return NextResponse.json({ error: 'That account isn’t linked now. Reload to see your accounts.' }, { status: 404 });
+  if (!account) {
+    // An account that ended, which its bank no longer returns, is linked
+    // through its end (lib/history-import/read.ts liveLinkedAccounts): one
+    // that can't be read is said, as the Activity tab says it, never taken
+    // for an account that isn't linked.
+    if (endsUnread.unreadable.includes(account_id) || endsUnread.unrecognised.includes(account_id)) {
+      return storeFailure(new UnreadableEntriesError(lifecycleStore.what, endsUnread.unreadable, endsUnread.unrecognised), 'Failed to read the account');
+    }
+    return NextResponse.json({ error: 'That account isn’t linked now. Reload to see your accounts.' }, { status: 404 });
+  }
   const [{ links, unreadable }, live] = await Promise.all([readLinks(ctx), liveAccountIds(ctx, { strict: true })]);
   if (unreadable.size > 0) {
     return NextResponse.json({ error: 'A saved account link can’t be read, so this account’s earlier imports can’t be found. Remove it on the Accounts tab first.' }, { status: 409 });
