@@ -319,8 +319,8 @@ export default function RuleSheet({
               )}
               {preview.keep_category > 0 && (
                 <p className="panel-note">
-                  {preview.keep_category} keep{preview.keep_category === 1 ? 's' : ''} the category you chose for {preview.keep_category === 1 ? 'it' : 'them'}: a choice made on one
-                  transaction always wins.
+                  {preview.keep_category} keep{preview.keep_category === 1 ? 's' : ''} {preview.keep_category === 1 ? 'its' : 'their'} own category: one you chose (a choice made on
+                  one transaction always wins), or a payment between your SimpleFIN accounts, which a rule never splits.
                 </p>
               )}
               {preview.keep_name > 0 && (

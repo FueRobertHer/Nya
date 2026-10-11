@@ -131,13 +131,28 @@ async function activity(): Promise<any[]> {
 }
 const named = (rows: any[], name: string) => rows.find((t) => t.name === name || t.name_before_rules === name);
 
-/** The read-only API's transactions. */
-async function apiRows(): Promise<any[]> {
+/** The read-only API's answer at an endpoint. */
+async function api(name: string, query = ''): Promise<any> {
   const token = (await createToken(ctx, 'Tests')).token;
-  const route = await import('@/app/api/v1/transactions/route');
-  const res: Response = await route.GET(new Request('https://nya.test/api/v1/transactions?from=2000-01-01', { headers: { authorization: `Bearer ${token}` } }));
+  const route = await import(`@/app/api/v1/${name}/route`);
+  const res: Response = await route.GET(new Request(`https://nya.test/api/v1/${name}${query ? `?${query}` : ''}`, { headers: { authorization: `Bearer ${token}` } }));
   expect(res.status).toBe(200);
-  return (await res.json()).transactions;
+  return res.json();
+}
+const apiRows = async (): Promise<any[]> => (await api('transactions', 'from=2000-01-01')).transactions;
+
+/** An MCP tool's structured answer. */
+async function tool(name: string, args: unknown): Promise<any> {
+  const token = (await createToken(ctx, 'Tests')).token;
+  const mcp = await import('@/app/api/mcp/route');
+  const res: Response = await mcp.POST(
+    new Request('https://nya.test/api/mcp', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    })
+  );
+  return (await res.json()).result.structuredContent;
 }
 
 /** The download: its document, its transactions CSV by id, and an account's OFX statement's text. */
@@ -176,10 +191,15 @@ describe('rules on the rows SimpleFIN brings', () => {
     // The bank's own rows are unchanged: the name is the person's to see, never written.
     expect((await manualTxnStore.get(ctx, await idOf('Checking')))!.rows.find((r) => r.source_id === 'coffee')!.name).toBe('COFFEE');
 
-    const api = await apiRows();
-    const coffee = api.find((t) => t.name === 'Coffee shop');
+    const viaApi = await apiRows();
+    const coffee = viaApi.find((t) => t.name === 'Coffee shop');
     expect(coffee).toMatchObject({ source: 'simplefin', tags: [{ id: work, name: 'Work' }], excluded: true, excluded_by_rule: true, rule_ids: [expect.any(String)] });
-    expect(api.find((t) => t.name === 'Diner at my bank')).toBeDefined();
+    expect(viaApi.find((t) => t.name === 'Diner at my bank')).toBeDefined();
+    // The rules endpoint says the source in words; the MCP server finds them by tag.
+    const rules = (await api('rules')).rules;
+    expect(rules.map((r: any) => r.sentence)).toContain('If from SimpleFIN and name contains “coffee”: name it “Coffee shop”, tag Work, hide it from budgets and reports.');
+    const found = await tool('search_transactions', { from: '2000-01-01', tag: 'work' });
+    expect(found.transactions.map((t: any) => [t.name, t.source])).toEqual([['Coffee shop', 'simplefin']]);
 
     const { csv } = await download();
     const coffeeCsv = csv(await rowId('Checking', 'COFFEE'));
