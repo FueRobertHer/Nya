@@ -400,6 +400,48 @@ describe('sharing accounts on a connection', () => {
     expect(again.accounts.find((a: any) => a.id === 'acct_joint')).toMatchObject({ transactions_unreadable: true });
   });
 
+  test('with transactions: an imported row as its file gave it, never a tag, a note or what a rule does to it (#40, #36)', async () => {
+    const { importedTxnStore } = await import('@/lib/history-import/store');
+    const { txnAnnotationStore } = await import('@/lib/txn-annotations');
+    const { tagStore } = await import('@/lib/tags');
+    const { rulesStore } = await import('@/lib/rules');
+    const at = new Date().toISOString();
+    const id = 'imported-txn:a10000-0000';
+    await importedTxnStore.set(TEST_CTX, 'acct_joint', {
+      version: 1,
+      rows: [
+        {
+          id,
+          account_id: 'acct_joint',
+          date: daysAgo(5),
+          amount: 30,
+          currency: 'USD',
+          name: 'OLD SHOP',
+          category: null,
+          note: 'From the statement',
+          source: 'import:csv',
+          source_id: 'a1',
+          import_id: 'history-import:a1b2c3d4',
+          created_at: at,
+        },
+      ],
+    });
+    await tagStore.set(TEST_CTX, { version: 1, tags: [{ id: 'tag-private', name: 'Secret gift', color: 'red', created_at: at }] });
+    await txnAnnotationStore.set(TEST_CTX, id, { tags: ['tag-private'], note: 'Ring for the anniversary', updated_at: at });
+    await rulesStore.set(TEST_CTX, {
+      version: 1,
+      rules: [{ id: 'rule-1', enabled: true, priority: 1, conditions: [{ field: 'name', op: 'contains', value: 'old shop' }], actions: { set_name: 'Jeweller', hide: true }, created_at: at, updated_at: at }],
+    });
+    // The owner sees all of it.
+    const mine = (await as('user_owner', () => route('transactions', 'GET'))).body.transactions.find((t: any) => t.transaction_id === id);
+    expect(mine).toMatchObject({ name: 'Jeweller', note: 'Ring for the anniversary', tags: ['tag-private'], excluded: true, excluded_by_rule: true });
+    await share({ acct_joint: 'transactions' });
+    const [from] = await sharedWithPartner();
+    const joint = from.accounts.find((a: any) => a.id === 'acct_joint');
+    expect(joint.transactions.find((t: any) => t.amount === 30)).toEqual({ date: daysAgo(5), name: 'OLD SHOP', amount: 30, pending: false, currency: 'USD' });
+    for (const secret of ['Secret gift', 'Ring for the anniversary', 'From the statement', 'Jeweller', 'tag-private']) expect(JSON.stringify(from)).not.toContain(secret);
+  });
+
   test('each connection gets its own choice', async () => {
     const other = await connect('user_owner', 'user_third');
     await share({ acct_joint: 'balance' });

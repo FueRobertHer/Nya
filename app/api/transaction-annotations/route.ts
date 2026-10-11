@@ -18,8 +18,9 @@ import { storeFailure } from '@/lib/store-failure';
 
 // What the person says about one transaction (lib/txn-annotations.ts), one
 // transaction per request: whether it is left out of budgets and reports, the
-// tags they put on it or take off it, and its note. Any transaction, Plaid's
-// or a manual one, by its transaction_id, and recorded either way (an
+// tags they put on it or take off it, and its note. Any transaction, Plaid's,
+// a manual one, or one imported into a linked account from its bank's files
+// (#52), by its transaction_id, and recorded either way (an
 // include too, so it beats an exclusion carried across a re-link and a
 // rule's hide; a tag taken off, so a rule doesn't put it back). The
 // transactions route reads these on every request, after its cache, so
@@ -39,8 +40,10 @@ import { storeFailure } from '@/lib/store-failure';
 // download and its CSV: an edit here changes the row, so a row never has two
 // notes. A bank row's is kept beside it, in its record, and so is one on a
 // row SimpleFIN brought, which stays as the bank gave it (lib/manual-txns.ts
-// refuses a change to its note, as to its payee). Either way the Activity tab
-// shows it the same.
+// refuses a change to its note, as to its payee), and one on a row imported
+// into a linked account, which stays as its file gave it (its file's memo
+// shows until a note is written: lib/txn-layers.ts). Either way the Activity
+// tab shows it the same.
 //
 // Everything said here about a bank row's record is one compare-and-set, so
 // a change from another device at the same moment is never lost.
@@ -115,8 +118,9 @@ export async function PATCH(req: Request) {
     // Taking off a tag that no longer exists changes nothing.
     const off = live ? remove.filter((id) => live!.has(id)) : remove;
 
-    // A note on a row entered by hand or imported is the row's own; one on a
-    // row SimpleFIN brought is kept beside it, as a bank row's is.
+    // A note on a row entered by hand or imported into a manual account is
+    // the row's own; one on a row SimpleFIN brought is kept beside it, as a
+    // bank row's is, and so is one on a row imported into a linked account.
     let rowNote: string | null | undefined;
     let noteBeside = !manual;
     if (manual && note !== undefined) {

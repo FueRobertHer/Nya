@@ -39,7 +39,7 @@ const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem, getItems } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
-const { setExcluded, txnAnnotationStore } = await import('@/lib/txn-annotations');
+const { setExcluded, changeAnnotation, txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { getOverrides } = await import('@/lib/overrides');
 const { setBudgets } = await import('@/lib/budgets');
 const { readTaxonomy } = await import('@/lib/category-store');
@@ -385,7 +385,7 @@ describe('disconnecting and forgetting', () => {
   test('a disconnect keeps the imported rows and what was said about them, for a re-link; forgetting the account takes them all', async () => {
     const import_id = await importStatement();
     const shop = await importedRow('CORNER SHOP');
-    await setExcluded(ctx, shop.transaction_id, true);
+    await changeAnnotation(ctx, shop.transaction_id, { excluded: true, add: ['tag-work'], note: 'Milk for the office' });
     await recategorize.POST(new Request('http://localhost/api/recategorize', { method: 'POST', body: JSON.stringify({ transaction_id: shop.transaction_id, category: 'groceries' }) }));
     await recordDirectory(ctx, [
       { item_id: 'item_chase', institution_name: 'Chase', error: null, accounts: [{ account_id: 'acc_chk', type: 'depository', subtype: 'checking', name: 'Checking', mask: '1111' }] },
@@ -395,7 +395,7 @@ describe('disconnecting and forgetting', () => {
     await disconnectItem(ctx, 'item_chase', item);
     expect((await importedTxnStore.get(ctx, 'acc_chk'))?.rows.length).toBe(6);
     expect(await historyImportStore.get(ctx, import_id)).not.toBeNull();
-    expect((await txnAnnotationStore.get(ctx, shop.transaction_id))?.excluded).toBe(true);
+    expect(await txnAnnotationStore.get(ctx, shop.transaction_id)).toMatchObject({ excluded: true, tags: ['tag-work'], note: 'Milk for the office' });
     expect((await getOverrides(ctx))[shop.transaction_id]).toBe('groceries');
     // Shown nowhere while the account isn't live.
     expect((await activity()).transactions.some((t) => t.source === 'import:ofx')).toBe(false);

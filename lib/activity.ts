@@ -13,8 +13,11 @@
 //     what is stored, and never calls Plaid. With them, the rows imported into
 //     linked accounts from files (#52, lib/history-import/read.ts), counted
 //     only where no bank row stands for them, matched against the rows each
-//     sync has just written; and what the person said about an imported row
-//     (its category, an exclusion) carried to the bank row that stands for it.
+//     sync has just written; and a category the person chose for an imported
+//     row carried to the bank row that stands for it, which also names the
+//     rows it stands for (`stands_for`, never sent), so what else they said
+//     about them (an exclusion, tags, a note) carries to it as it is read on
+//     each request (lib/txn-layers.ts).
 //   - the rest (finishActivity): the rows entered on manual accounts, and what
 //     the person said about each row (lib/txn-annotations.ts), read on every
 //     request and merged after the banks' part. So entering, editing or
@@ -54,7 +57,7 @@ import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
 import { getEffectiveHidden, liveAccountIds, type Link } from './links';
 import { readManualTxnsForDisplay } from './manual-txns';
-import { readAnnotations, readExclusions, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
+import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
 import { importedForActivity } from './history-import/read';
 import type { StoredTxn } from './transactions';
 import { filingSet, fileRows } from './category-store';
@@ -195,26 +198,19 @@ async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boo
 }
 
 /**
- * What the person said about imported rows a bank row now stands for
- * (lib/history-import/read.ts importedForActivity's `represents`), by the
- * bank row: a category set on any of them (the earliest import's first), and
- * whether one was excluded (true), or whether that couldn't be read (null).
+ * The category the person chose for an imported row a bank row now stands
+ * for (lib/history-import/read.ts importedForActivity's `represents`, earlier
+ * imports first), by the bank row: the earliest import's first. What else
+ * was said about those rows (an exclusion, tags, a note) is read with every
+ * record on each request, and laid on by lib/txn-layers.ts.
  */
-async function carriedFromImports(
-  ctx: Ctx,
-  represents: ReadonlyMap<string, readonly string[]>,
-  overrides: Readonly<Record<string, string>>
-): Promise<{ categories: Map<string, string>; excluded: Map<string, true | null> }> {
+function categoriesFromImports(represents: ReadonlyMap<string, readonly string[]>, overrides: Readonly<Record<string, string>>): Map<string, string> {
   const categories = new Map<string, string>();
-  const excluded = new Map<string, true | null>();
-  const exclusions = await readExclusions(ctx);
   for (const [bankId, rows] of represents) {
     const category = rows.map((id) => overrides[id]).find((c) => !!c);
     if (category) categories.set(bankId, category);
-    if (rows.some((id) => exclusions.records.get(id) === true)) excluded.set(bankId, true);
-    else if (rows.some((id) => exclusions.unknown.has(id))) excluded.set(bankId, null);
   }
-  return { categories, excluded };
+  return categories;
 }
 
 /** Newest first. Within a day the posting `date` is equal, so fall back to the
@@ -316,12 +312,15 @@ export async function assembleBankRows(
   // rule's name never replaces the person's (lib/txn-layers.ts).
   const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
   const older = [...results.flatMap((r) => r.older), ...imported.older];
-  // A bank row standing for imported rows the person said something about
-  // takes that, unless they said otherwise on it: its own category wins, and
-  // its own exclusion (finishActivity).
-  const said = imported.represents.size > 0 ? await carriedFromImports(ctx, imported.represents, overrides.overrides) : null;
+  // A bank row standing for imported rows the person chose a category for
+  // takes it, unless they chose one for the bank row itself. A posted one
+  // names those rows (`stands_for`), so what else was said about them (an
+  // exclusion or an include, tags, a note) carries to it in finishActivity,
+  // read with every record on each request: under what is said on the bank
+  // row itself (lib/txn-layers.ts).
+  const fromImports = categoriesFromImports(imported.represents, overrides.overrides);
   for (const t of [...transactions, ...older]) {
-    const manual = overrides.overrides[t.transaction_id] ?? said?.categories.get(t.transaction_id);
+    const manual = overrides.overrides[t.transaction_id] ?? fromImports.get(t.transaction_id);
     if (manual) {
       t.category = manual;
       t.category_set = true;
@@ -331,8 +330,8 @@ export async function assembleBankRows(
       t.renamed_from = t.name;
       t.name = renamed;
     }
-    const excluded = said?.excluded.get(t.transaction_id);
-    if (excluded !== undefined && !('pending' in t && t.pending) && t.excluded !== true) t.excluded = excluded;
+    const stands = imported.represents.get(t.transaction_id);
+    if (stands && !('pending' in t && t.pending)) t.stands_for = stands;
   }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.

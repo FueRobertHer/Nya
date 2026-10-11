@@ -152,10 +152,15 @@ export type Txn = {
   // earlier account's row besides an exclusion; and on an imported or
   // SimpleFIN row, that its name is one the person gave it in the app
   // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
+  // And on a posted bank row standing for rows imported into its account
+  // (#52, lib/history-import/read.ts importedForActivity's `represents`),
+  // those rows' ids, earlier imports first: what was said about them carries
+  // to it.
   account_ref?: string;
   renamed_from?: string;
   carried?: CarriedRowFacts;
   own_name?: true;
+  stands_for?: string[];
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -194,6 +199,7 @@ export type OlderTxn = Pick<
   | 'renamed_from'
   | 'carried'
   | 'own_name'
+  | 'stands_for'
 > &
   // The merchant behind a payment processor, where it differs from the name
   // (a rule's name condition reads it); absent when it doesn't.

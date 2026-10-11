@@ -338,7 +338,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
       ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
-      ['transactions[].note', 'Your note on it, or null: the one written with a transaction you entered or imported, or one you put on a bank’s. Yours alone: sharing never shows notes.'],
+      [
+        'transactions[].note',
+        'Your note on it, or null: the one written with a transaction you entered or imported into a manual account, or one you put on a bank’s, on one your SimpleFIN connection brought in, or on one imported into a linked account (whose file’s own note it has until you write one), or on a transaction you imported that it now stands for. Yours alone: sharing never shows notes.',
+      ],
       ['transactions[].counterparty', 'The merchant behind a payment processor, when it differs from the name, or null.'],
       ['transactions[].payment_channel', 'online, in store or other, or null.'],
       ['transactions[].city', 'Where, when the bank says, or null.'],
@@ -346,7 +349,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].website', 'The merchant’s website, or null.'],
       [
         'transactions[].tags',
-        'The tags it carries, in the order you made them: put on by you, added by one of your rules, or carried from an earlier account when you linked it to this one. Empty for none. Yours alone: sharing never shows tags.',
+        'The tags it carries, in the order you made them: put on by you (on it, or on a transaction you imported that it now stands for), added by one of your rules, or carried from an earlier account when you linked it to this one. Empty for none. Yours alone: sharing never shows tags.',
       ],
       ['transactions[].tags[].id', 'The tag’s id, which stays the same when you rename it (see tags).'],
       ['transactions[].tags[].name', 'Its name.'],

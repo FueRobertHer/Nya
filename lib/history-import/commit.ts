@@ -507,9 +507,10 @@ export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import
       .update(ctx, id, (current) => (current ? { ...current, taken_over: (current.taken_over ?? 0) + count } : null))
       .catch((err) => console.warn('history import: rows kept for a later import could not be noted on it', loggable(err)));
   }
-  // What was said about the rows goes with them. Best effort: a record left
-  // behind names a row that no longer exists, which is never shown.
-  await forgetAnnotations(ctx, result.ids).catch((err) => console.warn('history import: exclusions of undone rows were left behind', loggable(err)));
+  // What was said about the rows (an exclusion, tags, a note, a category)
+  // goes with them. Best effort: a record left behind names a row that no
+  // longer exists, which is never shown.
+  await forgetAnnotations(ctx, result.ids).catch((err) => console.warn('history import: exclusions, tags and notes of undone rows were left behind', loggable(err)));
   await forgetOverrides(ctx, result.ids).catch((err) => console.warn('history import: categories of undone rows were left behind', loggable(err)));
   await historyImportStore.remove(ctx, import_id);
   await historyImportSummaryStore.remove(ctx, import_id);

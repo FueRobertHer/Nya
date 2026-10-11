@@ -14,8 +14,8 @@
 // rows as stored (lib/transactions.ts), never by a write, so nothing a sync,
 // an undo or a re-link does can leave it stale: a duplicate whose bank row a
 // re-link no longer brings counts again. What the person said about a row
-// (its category, an exclusion) carries to the bank's row that stands for it
-// (importedForActivity's `represents`).
+// (its category, an exclusion or an include, tags, a note) carries to the
+// bank's row that stands for it (importedForActivity's `represents`).
 //
 // WHOSE ROWS. A book is filed under the account id its rows were imported
 // into, and an account's rows are those of every id it has had, by the links
@@ -278,7 +278,9 @@ const daysAgo = (n: number) => new Date(Date.now() - n * DAY_MS).toISOString().s
 /** One counted row as the Activity tab shows a transaction: on its account as
  *  it is known now, with the bank's display fields empty, its source said, and
  *  a vendor key as a bank row of its institution would have, so renaming the
- *  merchant covers it too. */
+ *  merchant covers it too. Its account rides along, never sent, for a rule's
+ *  account condition (`account_ref`, lib/txn-layers.ts), as a bank row's
+ *  does. */
 export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountId: boolean): Txn {
   return {
     transaction_id: row.id,
@@ -311,6 +313,7 @@ export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountI
     source: row.source,
     note: row.note,
     ...(withAccountId ? { account_id: account.account_id } : {}),
+    account_ref: account.account_id,
   };
 }
 
@@ -372,9 +375,16 @@ export async function importedForActivity(
           vendor_key: t.vendor_key,
           logo_url: null,
           source: t.source,
+          account_ref: a.account.account_id,
         });
     }
   }
+  // Each bank row's, earlier imports first: what was said about the earliest
+  // decides what carries where two say different things (lib/activity.ts).
+  const rank = new Map(read.order.map((id, i) => [id, i]));
+  const importOf = new Map(read.accounts.flatMap((a) => a.held.map((r) => [r.id, r.import_id] as const)));
+  const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
+  for (const list of represents.values()) list.sort((x, y) => at(x) - at(y));
   return { txns, older, notes: read.notes, represents };
 }
 

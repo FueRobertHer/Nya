@@ -9,9 +9,10 @@
 // field at once.
 //
 // A map store on the storage seam (lib/repo.ts), keyed by transaction_id:
-// Plaid's own id, or a manual row's "manual-txn:<uuid>", both opaque as the
-// seam requires of field names (Plaid's are in plaintext in the category
-// overrides already). The values are encrypted.
+// Plaid's own id, a manual row's "manual-txn:<uuid>", or a row's imported
+// into a linked account, "imported-txn:<uuid>" (lib/history-import/), all
+// opaque as the seam requires of field names (Plaid's are in plaintext in the
+// category overrides already). The values are encrypted.
 //
 // Applied on read, in /api/transactions, like a category override: nothing in
 // the transaction stores changes, so clearing the flag puts the transaction
@@ -28,9 +29,14 @@
 // cleared on a bank row is kept as an empty note, so a note carried across a
 // re-link doesn't come back.
 //
-// NOTES. A bank row's note is kept here. A manual or imported row has a note
-// of its own, written with it (lib/manual-txns.ts): an edit of that note
-// changes the row (app/api/transaction-annotations), so a row never has two.
+// NOTES. A bank row's note is kept here, and so is one on a row that stays as
+// its source gave it: one SimpleFIN brought, or one imported into a linked
+// account (whose file's memo shows until the person writes one, and an empty
+// note clears). A row entered by hand or imported into a manual account has
+// a note of its own, written with it (lib/manual-txns.ts): an edit of that
+// note changes the row (app/api/transaction-annotations), so a row never has
+// two. What is said about a row imported into a linked account carries to
+// the bank row that later stands for it (lib/txn-layers.ts).
 //
 // GONE WITH ITS TRANSACTION. A bank transaction's record goes once no stored
 // Item holds the transaction (pruneOrphanAnnotations, by the rules of the
@@ -86,8 +92,10 @@ export type TxnAnnotation = {
   /** Tags the person took off it, by id: a rule that would add one, or a tag
    *  carried across a re-link, doesn't put it back. */
   untagged?: string[];
-  /** A bank row's note. Empty: the person cleared it (which beats a note
-   *  carried across a re-link). A manual row's note is the row's own. */
+  /** The note on a row that stays as its source gave it: a bank's, one
+   *  SimpleFIN brought, one imported into a linked account. Empty: the person
+   *  cleared it (which beats a note carried across a re-link, or an imported
+   *  file's own). A manual row's note is the row's own. */
   note?: string;
   /** When it last changed. */
   updated_at: string;
