@@ -329,6 +329,10 @@ function noted(t: TargetMonths, now: number | null, month: string): TargetMonths
   return tidied({ seen: now, amounts: next, rollover });
 }
 
+/** Two amounts (or none) the same to the cent, as budgets are kept. */
+const sameAmount = (a: number | null, b: number | null): boolean =>
+  a === null || b === null ? a === b : Math.round(a * 100) === Math.round(b * 100);
+
 /**
  * The record after reading the budget set in `month`: each budget whose
  * amount differs from what the record last saw has the amount it had kept
@@ -358,7 +362,7 @@ export function noteBudgets(cur: BudgetMonths, budgets: Budgets, month: string, 
         changed = true;
         continue;
       }
-      if (t.seen === now) continue;
+      if (sameAmount(t.seen, now)) continue;
       next[kind][id] = noted(t, now, month);
       changed = true;
     }

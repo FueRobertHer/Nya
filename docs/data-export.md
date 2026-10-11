@@ -313,7 +313,9 @@ Your budgets by month and their rollover ([features.md](features.md#budget-rollo
 
 Each holds `seen`, the budget's amount when Nya last read your budgets (`null` for none); `amounts`, its amounts in past months, oldest first, each an `amount` (`null` for no budget) for the months before `until` (`YYYY-MM`), back to the entry before; and `rollover`, the months it rolled over, oldest first, each `from` the month it was turned on (or `reset`, `true`, when that month began with its carry set to zero) to the month before `to`, the month it was turned off (absent while it is on). A budget's amount in a month is the first entry whose `until` is later than the month, else its amount now. A category merged into another has its entry moved there, its amounts added month by month; a category or group deleted has its entry removed.
 
- ([features.md](features.md#categories-and-groups), `lib/categories.ts`), or `null` until the app has first stored them. Every transaction is filed under one of these, by the rule in [architecture.md](architecture.md#categories). Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and the rest of the file is still in it: each transaction's `nya_category` is then the category it came with, its `nya_category_id` is `null`, and each budget is listed by its category's id alone. The transactions CSV, filed by them too, then says it is incomplete.
+#### `categories`
+
+Your categories and their groups ([features.md](features.md#categories-and-groups), `lib/categories.ts`), or `null` until the app has first stored them. Every transaction is filed under one of these, by the rule in [architecture.md](architecture.md#categories). Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and the rest of the file is still in it: each transaction's `nya_category` is then the category it came with, its `nya_category_id` is `null`, and each budget is listed by its category's id alone. The transactions CSV, filed by them too, then says it is incomplete.
 
 | Field | Meaning |
 | --- | --- |

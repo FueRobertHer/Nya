@@ -312,6 +312,10 @@ function section<T>(s: {
   };
 }
 
+/** A budget's rollover into the month the file is made in (UTC), as the
+ *  read-only API answers it: worked out from the transactions, never stored. */
+type ExportedRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] } | null;
+
 /** The budgets by name, as the app has them now (lib/budget-store.ts): each
  *  category's with its id and group, each group's with its id. A budget on a
  *  category or group since deleted is kept, by its id alone, and so is every
@@ -320,10 +324,6 @@ function section<T>(s: {
  *  be used are `problem`, for both parts, as getBudgetsReport's rules have
  *  it: damaged or unrecognised data is named, never a reason to stop, and a
  *  deployment problem throws. */
-/** A budget's rollover into the month the file is made in (UTC), as the
- *  read-only API answers it: worked out from the transactions, never stored. */
-type ExportedRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] } | null;
-
 type ExportedBudgets =
   | { problem: 'unreadable' | 'unrecognised' }
   | {

@@ -35,7 +35,7 @@ import {
 } from '@/lib/rollover';
 import { indexTaxonomy, mergeCategories, deleteCategory, type Taxonomy } from '@/lib/categories';
 import { summarize, spendingByCategory, type TotalsRow } from '@/lib/totals';
-import type { Budgets } from '@/lib/budget-set';
+import { budgetsAfterMerge, type Budgets } from '@/lib/budget-set';
 import { categoriesFor } from './category-fixture';
 
 // Budget rollover and income carryover (#37), the pure part (lib/rollover.ts):
@@ -385,6 +385,18 @@ describe('merged and deleted categories', () => {
     expect(unmoved.carries.categories[GROCERIES].carry).toBe(110);
     expect(after.carries.categories[GROCERIES]).toEqual(unmoved.carries.categories[GROCERIES]);
     expect(after.budgets).toEqual(unmoved.budgets);
+  });
+
+  test('a merge adds amounts to the cent, so reading the merged set notes no change', () => {
+    const before = budgetsOf({ [GROCERIES]: 20.2, [COFFEE]: 10.1 });
+    const merged = indexTaxonomy(mergeCategories(taxonomy, COFFEE, GROCERIES));
+    const after = budgetsAfterMerge(before, merged);
+    expect(after.categories).toEqual({ [GROCERIES]: { amount: 30.3 } });
+    const moved = monthsAfterMerge(startMonths(before, '2026-01'), merged);
+    expect(moved.categories[GROCERIES].seen).toBe(30.3);
+    expect(noteBudgets(moved, after, '2026-03', merged)).toBe(moved);
+    // And an amount a cent's float noise away from the one seen is the same amount.
+    expect(noteBudgets(moved, budgetsOf({ [GROCERIES]: 10.1 + 20.2 }), '2026-03', merged)).toBe(moved);
   });
 
   test('the one merged into keeps its own rollover', () => {
