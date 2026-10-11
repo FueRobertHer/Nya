@@ -104,7 +104,7 @@ import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
 import { settle, type BankRow } from './history-import/match';
 import { standsFor } from './history-import/read';
-import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
+import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Layered } from './export-layers';
 import { txnAnnotationStore } from './txn-annotations';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
@@ -1349,14 +1349,27 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     if (Object.hasOwn(doc, key)) throw new Error(`Two parts of the download are both called ${key}`);
     doc[key] = value;
   }
-  // A bank row standing for rows imported into its account that the person
-  // chose a category for takes that category, unless they chose one for it
-  // (lib/activity.ts): filed by it here as the app files it, which the
-  // transactions CSV shows as yours (transactionsCsv).
-  const fromImports = importedTransactionsIn(doc).carried;
+  // A bank row standing for rows imported into its account takes what the
+  // person said about them, unless they said otherwise on it, as the app
+  // does (lib/activity.ts, lib/txn-layers.ts): a category chosen for one
+  // (filed by it here, and shown as yours in the transactions CSV), an
+  // exclusion or an include, tags and a note. Laid on again once the file
+  // knows which rows those are.
+  const fromImports = importedTransactionsIn(doc);
   for (const t of doc.transactions) {
-    const words = data.overrides.has(t.transaction_id) ? undefined : fromImports.get(t.transaction_id);
-    if (words) Object.assign(t, filedAs(filing, { ...factsOf(t), category: words, category_set: true }));
+    const rows = fromImports.represents.get(t.transaction_id);
+    if (!rows) continue;
+    const words = data.overrides.has(t.transaction_id) ? undefined : fromImports.carried.get(t.transaction_id);
+    const facts = { ...factsOf(t), ...(words ? { category: words, category_set: true } : {}) };
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null, rows);
+    Object.assign(t, filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), {
+      tags: l.tags,
+      your_note: l.note,
+      nya_name: l.name,
+      excluded: l.excluded,
+      excluded_by_rule: l.excluded_by_rule,
+      rule_ids: l.rule_ids,
+    });
   }
   docFilings.set(doc, filing);
   return doc;
@@ -1683,12 +1696,6 @@ function docIndex(doc: UserExport, facts: readonly CategoryFacts[]): CategoryInd
   return indexTaxonomy(growTaxonomy(base, observedKeys(facts), newId, { limit: Infinity }).taxonomy);
 }
 
-/** How a row listed beside the bank's is filed (see docIndex). */
-function docFiling(doc: UserExport, facts: readonly CategoryFacts[]): (facts: CategoryFacts) => NyaCategory {
-  const ix = docIndex(doc, facts);
-  return (f) => filedAs(ix, f);
-}
-
 /**
  * The manual rows' categories, by their own words and the category a rule
  * gives one (see docIndex), with the categories they are filed by (`ix`),
@@ -1726,17 +1733,18 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
  * in the file now stands for, which are in the JSON file only, so no
  * transaction is in transactions.csv twice. Each with the id its account is
  * known by now, following the file's links. And, by the bank row's id, the
- * category you set on an imported row a bank row now stands for (`carried`),
- * which that row shows as yours, as the app does; and each imported row a
- * bank row stands for, with that bank row's id (`stands`). `pending` false
- * counts a row whose only look-alike at the bank is pending, as a statement
- * of posted rows does (lib/ofx-export.ts); by default it stands in for it, as
- * the app shows them.
+ * imported rows it stands for, earlier imports first (`represents`), which
+ * take what was said about them to it, and the category you set on one
+ * (`carried`, the earliest import's first), which that row shows as yours, as
+ * the app does; and each imported row a bank row stands for, with that bank
+ * row's id (`stands`). `pending` false counts a row whose only look-alike at
+ * the bank is pending, as a statement of posted rows does
+ * (lib/ofx-export.ts); by default it stands in for it, as the app shows them.
  */
 export function importedTransactionsIn(
   doc: UserExport,
   opts: { pending?: boolean } = {}
-): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string>; stands: Map<string, string> } {
+): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string>; stands: Map<string, string>; represents: Map<string, string[]> } {
   const entries = doc[importedTxnStore.name] ?? [];
   if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
   const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
@@ -1751,7 +1759,8 @@ export function importedTransactionsIn(
   }
   const carried = new Map<string, string>();
   const stands = new Map<string, string>();
-  if (held.size === 0) return { rows: [], carried, stands };
+  const represents = new Map<string, string[]>();
+  if (held.size === 0) return { rows: [], carried, stands, represents };
   // The bank's rows of those accounts, and where each connection's begin.
   const banks = new Map<string, BankRow[]>();
   const firstPosted = new Map<string, string>();
@@ -1782,32 +1791,53 @@ export function importedTransactionsIn(
   const covers = new Map(imports.map((e) => [e.id, { from: e.value.covers.from, to: e.value.covers.to }]));
   const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
   const out: { row: ImportedTxn; account_id: string }[] = [];
+  const importOf = new Map<string, string>();
   for (const [account_id, rows] of held) {
     const item = itemOf.get(account_id) ?? null;
     const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: opts.pending ?? true });
     for (const row of settled.counted) out.push({ row, account_id });
+    for (const row of rows) importOf.set(row.id, row.import_id);
     for (const [rowId, bankId] of standsFor(settled)) {
       stands.set(rowId, bankId);
-      const category = yours.get(rowId);
-      if (category && !carried.has(bankId)) carried.set(bankId, category);
+      represents.set(bankId, [...(represents.get(bankId) ?? []), rowId]);
     }
   }
-  return { rows: out, carried, stands };
+  // Earlier imports first, as the app takes them (lib/history-import/read.ts).
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
+  for (const [bankId, list] of represents) {
+    list.sort((x, y) => at(x) - at(y));
+    const category = list.map((id) => yours.get(id)).find((c) => !!c);
+    if (category) carried.set(bankId, category);
+  }
+  return { rows: out, carried, stands, represents };
 }
 
 /**
  * A transaction imported into a linked account, in the same columns as a
- * bank's: its own payee, category (and yours over it, as for a bank's row),
- * amount and currency, its account as `accounts` names it now, where it came
- * from (`source`) and its note. What only a bank sends is empty.
+ * bank's: its own payee (and your name for its merchant, as for a bank's
+ * row), category (and yours over it), amount and currency, its account as
+ * `accounts` names it now, where it came from (`source`), and what the read
+ * layer puts on it, as the app shows it (layeredImportedRows): your note,
+ * else the file's, its tags, the name shown and whether it is excluded. What
+ * only a bank sends is empty.
  */
-function importedTransactionRow(row: ImportedTxn, account_id: string, account: ExportAccount | undefined, yours: string | null, hidden: boolean, nya: NyaCategory): CsvValue[] {
+function importedTransactionRow(
+  row: ImportedTxn,
+  account_id: string,
+  account: ExportAccount | undefined,
+  yours: string | null,
+  hidden: boolean,
+  shown: { l: Layered; filed: NyaCategory; renamed: string | null }
+): CsvValue[] {
+  const { l, filed: nya, renamed } = shown;
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
     account_name: account?.name ?? null,
     institution_name: account?.institution_name ?? null,
     name: row.name,
+    your_merchant_name: renamed,
     amount: row.amount,
     iso_currency_code: row.currency,
     category: row.category,
@@ -1820,12 +1850,44 @@ function importedTransactionRow(row: ImportedTxn, account_id: string, account: E
     account_id,
     item_id: account?.item_id ?? null,
     source: row.source,
-    note: row.note,
+    note: l.note,
     nya_category: nya.nya_category,
     nya_category_id: nya.nya_category_id,
     nya_group: nya.nya_group,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
+}
+
+/**
+ * The rows imported into linked accounts that count (importedTransactionsIn's
+ * `rows`) as the app shows them, for the transactions CSV and an OFX
+ * statement alike: for each, what the read layer puts on it (its rules, tags,
+ * note and exclusion: lib/export-layers.ts layerImportedRow, on its account as
+ * known now, at that account's institution), the category it is filed under
+ * (yours, else its own words, else a rule's) and your name for its merchant,
+ * where you renamed it.
+ */
+export function layeredImportedRows(
+  doc: UserExport,
+  rows: readonly { row: ImportedTxn; account_id: string }[]
+): (r: { row: ImportedTxn; account_id: string }) => { l: Layered; filed: NyaCategory; renamed: string | null } {
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const factsOf = (row: ImportedTxn) => importedFacts(row, yours.get(row.id) ?? null);
+  const ix = docIndex(doc, rows.map(({ row }) => factsOf(row)));
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const layers = exportLayers((key) => doc[key], { links, ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institution = new Map(doc.accounts.map((a) => [a.account_id, a.institution_name ?? '']));
+  const renames = new Map(doc.merchant_renames.map((r) => [r.vendor_key, r.name]));
+  return ({ row, account_id }) => {
+    const at = institution.get(account_id) ?? '';
+    const renamed = renames.get(vendorKey({ merchant_entity_id: null, merchant_name: null, name: row.name, institution_name: at })) ?? null;
+    const facts = factsOf(row);
+    const l = layerImportedRow(row, layers, { facts, renamed, account_id, institution: at });
+    return { l, filed: filedAs(ix, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), renamed };
+  };
 }
 
 /** The accounts the books' rows are on (the manual accounts' own, and those
@@ -1901,8 +1963,9 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // the app does; and every row with the read layer's facts on it, as the
   // app shows them (layeredBookRows).
   const book = layeredBookRows(doc);
-  // The rows imported into linked accounts, filed as the bank's are.
-  const fileImported = docFiling(doc, imported.rows.map(({ row }) => importedFacts(row, yours.get(row.id) ?? null)));
+  // The rows imported into linked accounts, filed as the bank's are, and as
+  // the app shows them.
+  const importedShown = layeredImportedRows(doc, imported.rows);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => {
       // A category set on an imported row this bank row now stands for is
@@ -1919,14 +1982,12 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
         return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
       },
     })),
-    ...imported.rows.map(({ row, account_id }) => ({
-      date: row.date,
+    ...imported.rows.map((r) => ({
+      date: r.row.date,
       time: '',
-      id: row.id,
-      cells: () => {
-        const mine = yours.get(row.id) ?? null;
-        return importedTransactionRow(row, account_id, linked.get(account_id), mine, hidden.has(account_id) || hidden.has(row.account_id), fileImported(importedFacts(row, mine)));
-      },
+      id: r.row.id,
+      cells: () =>
+        importedTransactionRow(r.row, r.account_id, linked.get(r.account_id), yours.get(r.row.id) ?? null, hidden.has(r.account_id) || hidden.has(r.row.account_id), importedShown(r)),
     })),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));

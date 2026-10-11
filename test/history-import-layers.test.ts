@@ -322,6 +322,58 @@ describe('rules', () => {
   });
 });
 
+describe('the download', () => {
+  test('transactions.csv has each imported row as the app shows it: your note over the file’s, its tags, the name a rule or your rename gives it, a rule’s hide and category', async () => {
+    const { ids } = await importStatement();
+    const travel = catId('travel');
+    await addRule({ conditions: [{ field: 'source', op: 'equals', value: 'import' }], actions: { set_category: travel } });
+    await addRule({ conditions: [{ field: 'name', op: 'contains', value: 'corner' }], actions: { set_name: 'Corner Shop', hide: true, add_tags: [work] } });
+    await say({ transaction_id: ids['OLD STORE'], note: 'Birthday present for Sam' });
+    const deposit = (await rowOf(ids['OLD DEPOSIT']))!;
+    await route('rename', 'POST', { vendor_key: deposit.vendor_key, name: 'Mum' });
+
+    const csv = csvOf(await download());
+    expect(csv.get(ids['CORNER SHOP'])).toMatchObject({ name: 'CORNER SHOP', nya_name: 'Corner Shop', excluded: 'true', tags: 'Work', nya_category: 'travel' });
+    expect(csv.get(ids['OLD STORE'])).toMatchObject({ note: 'Birthday present for Sam', excluded: 'false', nya_category: 'travel' });
+    expect(csv.get(ids['OLD DEPOSIT'])).toMatchObject({ name: 'OLD DEPOSIT', your_merchant_name: 'Mum', nya_name: 'Mum' });
+    // Before the loaded year too, as the app files them.
+    const renewals = [...csv.values()].filter((r) => r.source === 'import:ofx' && r.name === 'DOMAIN RENEWAL');
+    expect(renewals.map((r) => r.nya_category)).toEqual(['travel', 'travel']);
+    // Every one the app lists reads the same in the file.
+    for (const t of (await activity()).transactions.filter((x) => x.transaction_id.startsWith('imported-txn:'))) {
+      const r = csv.get(t.transaction_id)!;
+      expect([r.nya_name, r.excluded, r.note, r.tags, r.nya_category]).toEqual([t.name, String(t.excluded === true), t.note ?? '', t.tags ? 'Work' : '', t.category_name ?? '']);
+    }
+  });
+
+  test('the bank’s row standing for an imported one has what was said about it, in the JSON, transactions.csv and an OFX statement', async () => {
+    const { ids } = await importStatement();
+    await say({ transaction_id: ids['CORNER SHOP'], excluded: true, add_tags: [work], note: 'Milk for the office' });
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    const doc = await download();
+    expect(doc.transactions.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ tags: ['Work'], your_note: 'Milk for the office', excluded: true, excluded_by_rule: false });
+    expect(csvOf(doc).get('b_corner')).toMatchObject({ tags: 'Work', note: 'Milk for the office', excluded: 'true' });
+    const ofx = await statement();
+    const memo = ofx.records.get('b_corner')!.note!;
+    for (const said of ['Excluded from budgets and reports in Nya', 'Milk for the office', 'Tags: Work']) expect(memo).toContain(said);
+  });
+
+  test('an OFX statement writes an imported row as the app shows it: a rule’s name and hide, the file’s name beside it, your note and its tags', async () => {
+    const { ids } = await importStatement();
+    await addRule({ conditions: [{ field: 'name', op: 'contains', value: 'corner' }], actions: { set_name: 'The Corner Shop', hide: true, add_tags: [work] } });
+    await say({ transaction_id: ids['CORNER SHOP'], note: 'Milk for the office' });
+    await say({ transaction_id: ids['OLD STORE'], excluded: true });
+    const ofx = await statement();
+    const shop = ofx.records.get(ids['CORNER SHOP'])!;
+    expect(shop.description).toBe('The Corner Shop');
+    for (const said of ['Hidden from budgets and reports by a rule in Nya', 'CORNER SHOP', 'Milk for the office', 'Tags: Work']) expect(shop.note).toContain(said);
+    // The file's own memo, where nothing was said; excluded by the person.
+    const old = ofx.records.get(ids['OLD STORE'])!;
+    expect(old.note).toContain('Excluded from budgets and reports in Nya');
+    expect(old.note).toContain('Paid by check 102');
+  });
+});
+
 describe('a report and a category’s usage', () => {
   test('a report counts an imported row a rule hides as hidden by a rule', async () => {
     const { ids } = await importStatement();
