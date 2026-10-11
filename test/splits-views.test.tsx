@@ -7,6 +7,7 @@ import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/co
 import { entryLabel, entryNotice, SplitActions } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { pastPayeeRows } from '@/components/ManualTxnSheet';
+import { splitChangedText } from '@/components/SplitChangedNote';
 import { searchEntries, searchRows } from '@/components/txn-search';
 import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
@@ -269,6 +270,25 @@ describe('what else the dashboard counts from the same rows', () => {
       ix,
     }).rows;
     expect(trailingFlows([...refund, rent] as any, today)!.largestRefund).toEqual({ amount: 40, date: today, name: 'Return' });
+  });
+});
+
+describe('the Budgets tab', () => {
+  test('says when a split transaction’s amount changed since it was split, as its parts count as split until it is edited', () => {
+    const changed = expandSplitsAndGroups([txn('Costco', { amount: 120 })] as any, {
+      splits: new Map([['Costco', record(150, [['groceries', 100], ['household', 50]])]]),
+      splitsUnknown: new Set(),
+      groups: new Map(),
+      groupsUnknown: 0,
+      ix,
+    }).rows as unknown as Txn[];
+    expect(splitChangedText(changed, today.slice(0, 7))).toBe(
+      'A split transaction’s amount changed since it was split. Its parts count as you split them, and the difference on its own, until you edit the split on the Activity tab.'
+    );
+    expect(splitChangedText(changed, '2020-01')).toBeNull();
+    expect(splitChangedText(served(), today.slice(0, 7))).toBeNull();
+    const budgets = readFileSync(new URL('../components/BudgetsTab.tsx', import.meta.url), 'utf8');
+    expect(budgets).toContain('<SplitChangedNote txns={txns} month={thisMonth} />');
   });
 });
 

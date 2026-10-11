@@ -16,6 +16,7 @@ import { useMemo } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
 import { leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
+import SplitChangedNote from './SplitChangedNote';
 import type { Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals } from './BudgetsCard';
@@ -254,6 +255,8 @@ export default function BudgetsTab({
         )}
 
         {leftOut && <div className="chart-note">{leftOut}</div>}
+        {/* A split whose amount changed since counts as split until edited (#39). */}
+        {totalBudget > 0 && <SplitChangedNote txns={txns} month={thisMonth} />}
         {totalBudget > 0 && namedWithout && <div className="chart-note">{namedWithout}</div>}
         {/* With no spending to count at all, nothing can be missing from it. */}
         {totalBudget > 0 &&
