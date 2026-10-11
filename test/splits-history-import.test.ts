@@ -62,6 +62,7 @@ const { queryTransactions, readSpending } = await import('@/lib/api-read');
 const { categoryUsage } = await import('@/lib/category-usage');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { createToken } = await import('@/lib/api-tokens');
+const { markEnded } = await import('@/lib/lifecycle');
 const mcp = await import('@/app/api/mcp/route');
 const routes = await import('@/app/api/history-import/route');
 
@@ -702,6 +703,32 @@ describe('everywhere else transactions are counted', () => {
     } finally {
       process.env = { ...saved };
     }
+  });
+
+  test('on an account that ended, an imported row dated from its end is left out, parts and all, and out of its group’s net; a report counts it once', async () => {
+    const { ids } = await importStatement();
+    const food = catId('food and drink');
+    // OLD STORE, dated before the end, grouped with the tip, dated after it;
+    // the corner shop, after it too, split.
+    const old = await route('transaction-groups', 'POST', { name: 'Old errand', category_id: food, members: [ids['OLD STORE'], 'b_tip'] });
+    expect(old.status).toBe(200);
+    await splitPut(ids['CORNER SHOP'], [
+      { amount: 45, category_id: food },
+      { amount: 15, category_id: catId('home improvement') },
+    ]);
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(280) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
+
+    const rows = await rowsOf();
+    expect(rows.some((t) => t.transaction_id === ids['CORNER SHOP'] || t.split_of === ids['CORNER SHOP'])).toBe(false);
+    const errand = rows.find((t) => t.group_id === old.body.id && t.group_members)!;
+    expect([errand.amount, errand.group_missing, errand.group_members!.map((m) => m.transaction_id)]).toEqual([100, 1, [ids['OLD STORE']]]);
+
+    const period = resolvePeriod({ kind: 'range', start: daysAgo(60), end: daysAgo(40) }, 'UTC', Date.now());
+    if ('error' in period) throw new Error(period.error);
+    const report = await readReport(ctx, period);
+    // The rent, the corner shop (split, still one), the tip and the payback.
+    expect(report.ended.find((e) => e.account.includes('Checking'))).toMatchObject({ not_counted: 4 });
+    expect([report.totals.money_in, report.totals.money_out]).toEqual([0, 0]);
   });
 
   test('a category a part of an imported row, or its group, is filed under is in use', async () => {
