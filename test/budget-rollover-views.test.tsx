@@ -3,10 +3,10 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import BudgetsCard from '@/components/BudgetsCard';
-import BudgetsTab from '@/components/BudgetsTab';
+import BudgetsTab, { PastMonthPending } from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
-import { lacksHistory, monthUrl, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
+import { lacksHistory, monthUrl, UNREADABLE_MONTHS, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { Carries, Carry, IncomePool } from '@/lib/rollover';
 import { addMonths } from '@/lib/rollover';
@@ -217,6 +217,15 @@ describe('a past month, as it was', () => {
     expect(t).toContain('Groceries $80.00 of $310.00');
     expect(t).not.toContain('Add Budget');
     expect(card({ past: true, month: '2026-03', budgets: { categories: {}, groups: {} }, spent: {} })).toContain('No budgets in March 2026.');
+  });
+
+  test('one that couldn’t be loaded says so, with a way to try again', () => {
+    const failed = (error: string) => <PastMonthPending state={{ status: 'error', view: null, error, reload: () => {} }} name="March" />;
+    const html = renderToStaticMarkup(failed('Rollover couldn’t be worked out just now, so each budget shows its amount without it.'));
+    expect(text(html)).toBe('March couldn’t be loaded. Try again');
+    expect(html).toContain('<button class="secondary"');
+    expect(text(renderToStaticMarkup(failed(UNREADABLE_MONTHS)))).toBe(`${UNREADABLE_MONTHS} Try again`);
+    expect(text(renderToStaticMarkup(<PastMonthPending state={{ status: 'loading', view: null, error: null, reload: () => {} }} name="March" />))).toBe('Loading March…');
   });
 });
 

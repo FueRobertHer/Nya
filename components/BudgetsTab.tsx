@@ -29,7 +29,7 @@ import { leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
 import type { Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import BudgetsCard, { budgetTotals, type RolloverChange, type Target } from './BudgetsCard';
-import { changeRollover, useBudgetMonth, type BudgetMonthState } from './budget-month-state';
+import { changeRollover, useBudgetMonth, UNREADABLE_MONTHS, type BudgetMonthState } from './budget-month-state';
 import { IncomePoolHeader, IncomeSetting } from './IncomePool';
 import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
 import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
@@ -74,6 +74,20 @@ function gapReasons(gaps: { month: string; gaps: MonthGap[] }[], months: Readonl
 }
 
 export type { Budgets };
+
+/** A month gone by that isn't shown yet: loading, or why it couldn't be
+ *  loaded, with a way to try again (choosing it again loads nothing new). */
+export function PastMonthPending({ state, name }: { state: BudgetMonthState; name: string }) {
+  if (state.status !== 'error') return <p className="empty-note">Loading {name}…</p>;
+  return (
+    <>
+      <p className="stale-note">{state.error === UNREADABLE_MONTHS ? state.error : `${name} couldn’t be loaded.`}</p>
+      <button className="secondary" style={{ marginTop: 8 }} onClick={state.reload}>
+        Try again
+      </button>
+    </>
+  );
+}
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -344,7 +358,7 @@ export default function BudgetsTab({
           <>
         {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
         {rolloverError && <p className="stale-note">{rolloverError}</p>}
-        {month.status === 'error' && month.error && <p className="stale-note">{month.error}</p>}
+        {!past && month.status === 'error' && month.error && <p className="stale-note">{month.error}</p>}
         {noSpending && (
           <p className="empty-note">
             {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
@@ -365,7 +379,7 @@ export default function BudgetsTab({
             {categoriesError ? `${categoriesError} Budgets are shown once they are.` : 'Loading your categories…'}
           </p>
         ) : past && !view ? (
-          month.status !== 'error' && <p className="empty-note">Loading {monthName}…</p>
+          <PastMonthPending state={month} name={monthName} />
         ) : (
           <BudgetsCard
             key={shownMonth}
