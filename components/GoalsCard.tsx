@@ -34,7 +34,7 @@ export type { GoalAccount } from '@/lib/goal-view';
 /** A goal as a save sends it: its four fields and its plan, always, `{}` for
  *  none (a goal sent without one keeps what is stored: lib/goal-model.ts).
  *  What the server works out is left out; it sends that back. */
-export const forSave = (g: Goal): Goal => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id, plan: g.plan ?? {} });
+const forSave = (g: Goal): Goal => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id, plan: g.plan ?? {} });
 
 export default function GoalsCard({
   goals,

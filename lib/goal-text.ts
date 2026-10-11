@@ -7,7 +7,7 @@
 // nothing here converts one currency to another.
 
 import { formatMoney } from './format';
-import { addMonths, type MonthGap } from './goal-projection';
+import type { MonthGap } from './goal-projection';
 import type { AccountSplit } from './goal-allocation';
 import type { GoalView } from './goal-view';
 import type { Goal } from './goal-model';
@@ -182,12 +182,6 @@ export function splitText(split: AccountSplit, name: string): string {
   const money = (n: number) => formatMoney(n, split.currency);
   if (split.over > 0) return `${name}: allocations are ${money(split.over)} more than its ${money(split.balance)} balance`;
   return `${name}: ${money(split.unallocated)} unallocated of ${money(split.balance)}`;
-}
-
-/** The month a projection would end in, given a number of months from now:
- *  for the editor's preview of a monthly target. */
-export function monthsFromNow(today: string, months: number): string {
-  return monthLabel(addMonths(today.slice(0, 7), months));
 }
 
 /** Where the pace comes from, when it isn't the account's transactions: a

@@ -37,7 +37,7 @@ export const LATEST_TARGET_DATE = '2100-12-31';
 /** A goal id that can key a plan: the storage seam's id characters (goal ids
  *  are random UUIDs, so every goal the app made has one). */
 const PLAN_ID = /^[A-Za-z0-9_.:-]{1,40}$/;
-export const canHavePlan = (id: string) => PLAN_ID.test(id);
+const canHavePlan = (id: string) => PLAN_ID.test(id);
 
 /** What the person sets beyond the four fields every release stores. */
 export type GoalPlan = {
@@ -162,6 +162,3 @@ export function parseGoals(raw: unknown): { goals: GoalInput[] } | { error: stri
   }
   return { goals };
 }
-
-/** Whether a plan sets nothing. */
-export const emptyPlan = (p: GoalPlan | null | undefined) => !p || Object.keys(p).length === 0;

@@ -73,7 +73,7 @@ export type AccountSplit = {
 
 const digitsOf = (currency: string | null) => minorDigits(currency || 'USD');
 /** An amount in minor units, as an integer. */
-export const toUnits = (amount: number, digits: number) => Math.round(amount * 10 ** digits);
+const toUnits = (amount: number, digits: number) => Math.round(amount * 10 ** digits);
 const fromUnits = (units: number, digits: number) => units / 10 ** digits;
 
 /**

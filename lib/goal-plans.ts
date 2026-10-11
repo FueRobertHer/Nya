@@ -13,7 +13,8 @@
 // witness), and what the goal read as before that save (`before`), so that a
 // read can tell which of these it is looking at:
 //   - the blob's goal is the witness: the entry's plan is the goal's plan. The
-//     save finished, or it changed only the plan, which needs no blob write.
+//     save finished, or it changed only the plan, which leaves the blob's four
+//     fields as they were, so it is whole once its entry is written.
 //   - the blob's goal is `before`'s witness: the save stopped between its two
 //     writes (see THE WRITE ORDER). The goal reads as it did before it, plan
 //     and all.
@@ -143,9 +144,9 @@ export function coreOf(g: StoredGoal): GoalCore {
 }
 
 export const witnessOf = (g: Witness): Witness => ({ name: g.name, target: g.target, account_id: g.account_id });
-export const sameWitness = (a: Witness, b: Witness) => a.name === b.name && a.target === b.target && a.account_id === b.account_id;
-export const emptyStoredPlan = (p: StoredPlan) => Object.keys(p).length === 0;
-export const samePlan = (a: StoredPlan, b: StoredPlan) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+const sameWitness = (a: Witness, b: Witness) => a.name === b.name && a.target === b.target && a.account_id === b.account_id;
+const emptyStoredPlan = (p: StoredPlan) => Object.keys(p).length === 0;
+const samePlan = (a: StoredPlan, b: StoredPlan) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
 /** A plan with its fields in one order, for comparing. */
 function canonical(p: StoredPlan): StoredPlan {
   return {
@@ -177,7 +178,7 @@ export function chosenPlan(core: Witness, entry: GoalPlanEntry | undefined): Sto
 }
 
 /** Two account ids are the same account once links are followed. */
-export const sameAccount = (a: string | null, b: string | null, links: ReadonlyMap<string, Link>) =>
+const sameAccount = (a: string | null, b: string | null, links: ReadonlyMap<string, Link>) =>
   a !== null && b !== null && resolveId(a, links as Map<string, Link>) === resolveId(b, links as Map<string, Link>);
 
 /** The goal as read, from its blob entry and its plan entry. */
