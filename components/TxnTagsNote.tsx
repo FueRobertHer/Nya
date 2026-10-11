@@ -4,9 +4,10 @@
 // the tags it carries, each with a button to take it off; a field to put one
 // on, which offers the tags whose names hold what is typed and makes a new
 // tag when none has that name ("create a tag as you type"); and its note. A
-// manual or imported row's note is the row's own (the one its edit form
-// shows); a bank row's is kept beside it (lib/txn-annotations.ts). Both show
-// the same here.
+// row entered by hand or imported into a manual account has its note as its
+// own (the one its edit form shows); a bank's, one SimpleFIN brought, and one
+// imported into a linked account keep it beside them (lib/txn-annotations.ts).
+// All show the same here.
 //
 // A pending row gets a new id when it posts, and what is said about it is
 // kept by id, so tags and a note are offered once it has posted, as an

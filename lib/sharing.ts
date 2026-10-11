@@ -108,6 +108,7 @@ import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } fr
 import { readLifecycleView, lifecycleOf, endedNow, endOf, accountWords } from './lifecycle';
 import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
+import { importedForShare } from './history-import/read';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
@@ -1005,11 +1006,13 @@ export type SharedAccount = {
   /** Money owed (a card, a loan) rather than held. */
   debt: boolean;
   /** At the transactions level: the last SHARED_TXN_DAYS days of them, newest
-   *  first, a bank's or a manual account's (entered by hand or imported). */
+   *  first, a bank's or a manual account's (entered by hand or imported), and
+   *  those imported into a linked account that no bank row supersedes. */
   transactions?: SharedTxn[];
   /** At the transactions level, instead of `transactions`: a manual
    *  account's can't be read (its book is damaged, or saved by a version this
-   *  one doesn't know), so none are shown, never an empty list in their place. */
+   *  one doesn't know), or those imported into a linked account can't, so
+   *  none are shown, never a short list in their place. */
   transactions_unreadable?: true;
   /** It ended (lib/lifecycle.ts): closed, left (no longer theirs) or no
    *  longer followed, from `on`. No balance is shown then, and only the
@@ -1143,6 +1146,17 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
           txns.set(t.account_id, list);
         }
       }
+      // And the rows imported into those accounts from files (#52), where no
+      // bank row supersedes them, as the Activity tab counts them. An account
+      // whose imported rows can't be read says its transactions can't be,
+      // never shows them short.
+      const imported = await importedForShare(theirs, new Set([...withTxns].filter((id) => !manual.has(id))), since);
+      for (const [id, rows] of imported.rows) {
+        const list = txns.get(id) ?? [];
+        for (const r of rows) list.push({ date: r.date, name: r.name, amount: r.amount, pending: false, currency: r.currency });
+        txns.set(id, list);
+      }
+      for (const id of imported.unreadable) unreadableBooks.add(id);
     }
     // A manual account's rows, entered by hand or imported, from its own book
     // (lib/manual-txns.ts), in the same window. Read strictly: a book that

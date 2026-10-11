@@ -95,8 +95,10 @@ function counterpartyOf(t: StoredTxn, shown: string): string | null {
 
 /** A bank's stored row, as the app would show it: `facts` is what files it
  *  (the person's category, else the carried one, else Plaid's), `renamed`
- *  the person's name for its merchant, if any. */
-export function layerBankRow(t: StoredTxn, inputs: ExportLayers, facts: CategoryFacts, renamed: string | null): Layered {
+ *  the person's name for its merchant, if any, and `standsFor` the rows
+ *  imported into its account it stands for (#52, earlier imports first), what
+ *  was said about which carries to it once it has posted. */
+export function layerBankRow(t: StoredTxn, inputs: ExportLayers, facts: CategoryFacts, renamed: string | null, standsFor?: readonly string[]): Layered {
   const carried = t.pending ? undefined : inputs.carried.get(contentKey(t.account_id, t));
   const extras = carriedExtras(carried);
   const shown = t.merchant_name || t.name;
@@ -115,12 +117,14 @@ export function layerBankRow(t: StoredTxn, inputs: ExportLayers, facts: Category
     iso_currency_code: t.iso_currency_code,
     ...(carried?.excluded === true ? { excluded: true } : {}),
     ...(extras ? { carried: extras } : {}),
+    ...(standsFor?.length ? { stands_for: [...standsFor] } : {}),
   } as unknown as Txn;
   return layered(row, inputs);
 }
 
-/** A manual or imported row: its note and category (when it has one) are its
- *  own, and so is its name when it was entered by hand or the person named it
+/** A manual account's row, entered by hand or imported, or one SimpleFIN
+ *  brought: its note and category (when it has one) are its own, and so is
+ *  its name when it was entered by hand or the person named it
  *  (ManualTxn.named); a rule names an imported or SimpleFIN row otherwise.
  *  `institution` is the one the Activity tab shows it under. */
 export function layerManualRow(
@@ -142,6 +146,37 @@ export function layerManualRow(
     note: r.note,
     iso_currency_code: r.currency,
     ...(r.named !== undefined && r.named === r.name ? { own_name: true } : {}),
+  } as unknown as Txn;
+  return layered(row, inputs);
+}
+
+/** A row imported into a linked account from its bank's files (#52), as the
+ *  app shows it: filed by `facts` (the category chosen for it, else the
+ *  file's own words, so a rule's files it only when it has neither); named
+ *  by the person's name for its merchant (`renamed`, which no rule replaces),
+ *  else a rule's, else the file's; with their note, kept beside it as on a
+ *  bank's row, else the file's. On its account as known now (`account_id`),
+ *  at that account's institution, which a rule's institution condition
+ *  reads. */
+export function layerImportedRow(
+  r: { id: string; date: string; name: string; amount: number; currency: string; note: string | null; source: string },
+  inputs: ExportLayers,
+  opts: { facts: CategoryFacts; renamed: string | null; account_id: string; institution: string }
+): Layered {
+  const row = {
+    transaction_id: r.id,
+    date: r.date,
+    pending: false,
+    amount: r.amount,
+    name: opts.renamed ?? r.name,
+    ...(opts.renamed ? { renamed_from: r.name } : {}),
+    account_name: '',
+    institution_name: opts.institution,
+    account_ref: opts.account_id,
+    ...opts.facts,
+    source: r.source,
+    note: r.note,
+    iso_currency_code: r.currency,
   } as unknown as Txn;
   return layered(row, inputs);
 }

@@ -19,8 +19,19 @@
 //   - FITID is the transaction's own id: Plaid's transaction id, or a manual
 //     row's "manual-txn:..." id (a row SimpleFIN brought is one too: an
 //     account SimpleFIN keeps up to date has its rows in a book, as a manual
-//     account has). It never changes, so importing the same file twice, into
-//     Nya's import or any app that honours FITIDs, adds nothing.
+//     account has), or an "imported-txn:..." id. It never changes, so
+//     importing the same file twice, into Nya's import or any app that
+//     honours FITIDs, adds nothing.
+//   - A linked account's statement holds the transactions imported into it
+//     from its bank's files (#52) that count as its own, as the CSV and JSON
+//     files have them: not one standing for a transaction already there, nor
+//     one the bank's own now stands for, so none is in it twice; counted as
+//     posted rows are, so one whose only look-alike at the bank is pending is
+//     in it (the pending one isn't). A bank row standing for imported ones
+//     takes what you said about them (an exclusion or an include, a note,
+//     tags), as the app reads it. Where the bank later sends the same
+//     transaction, a later statement lists the bank's in its place, with the
+//     bank's id, which a note says.
 //   - Pending transactions are left out, and a note says how many: the bank
 //     gives a transaction a new id when it posts, so an app holding the
 //     pending one would count it twice.
@@ -49,7 +60,8 @@
 //   - Each transaction is as the app shows it, by the same read layer
 //     (lib/txn-layers.ts, through the document: the bank's rows as
 //     buildUserExport made them, the books' by lib/user-export.ts
-//     layeredBookRows): your rules, tags, notes and exclusions on it.
+//     layeredBookRows, and those imported into a linked account by
+//     layeredImportedRows): your rules, tags, notes and exclusions on it.
 //   - NAME is the payee as the app shows it (your name for the merchant, else
 //     a rule's, else Plaid's, else the bank's words), within OFX's 32
 //     characters; a longer one is cut, and given whole in the memo. MEMO (255
@@ -58,7 +70,8 @@
 //     reports by a rule in Nya" for one a rule hides (either is still
 //     listed: the money moved, and the statement must add up to the
 //     balance), the whole name if it was cut, the bank's own words where
-//     they aren't the name, your note (on a bank's or a SimpleFIN row too,
+//     they aren't the name (an imported row's file's, where the app shows
+//     another), your note (on a bank's, a SimpleFIN or an imported row too,
 //     kept beside it), and its tags ("Tags: Work, Trip"). A memo longer than
 //     that is cut, and a note says how many were, since the end of one (a
 //     note, its tags) is then missing. Categories have no field in OFX; they
@@ -106,12 +119,14 @@
 //
 // NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1). Built from the
 // document the route already read, so whatever couldn't be read is known: a
-// manual account's transactions, whether a transaction was excluded (with
-// the tags you put on it, and your note on a bank's or a SimpleFIN one: a
-// note written with a transaction entered or imported is its own), and the
-// rules and tags, that couldn't be read
-// are said in a note and in the parts the file is short of (`incomplete`),
-// never left out quietly. So are an account SimpleFIN keeps
+// manual account's transactions, a linked account's imported ones, whether a
+// transaction was excluded (with the tags you put on it, and your note on a
+// bank's, a SimpleFIN one or one imported into a linked account: a note
+// written with a transaction entered or imported into a manual account is
+// its own), what a bank's row takes from a row imported from a file it
+// stands for, what was carried from an earlier account, and the rules and
+// tags, are said in a note and in the parts the file is short of
+// (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
 // up to date whose older transactions may still be arriving, a few months a
 // night (in a note: nothing stored is short), its balance while held, and
 // the record of its connection when that can't be read (`incomplete` too).
@@ -141,7 +156,19 @@ import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { addDays, minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { bookAccountTypes, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type ExportLifecycle, type UserData, type UserExport } from './user-export';
+import {
+  bookAccountTypes,
+  importedTransactionsIn,
+  layeredBookRows,
+  layeredImportedRows,
+  missingIds,
+  manualTransactionsIn,
+  type ExportFile,
+  type ExportLifecycle,
+  type UserData,
+  type UserExport,
+} from './user-export';
+import { importedTxnStore } from './history-import/store';
 import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
@@ -298,6 +325,9 @@ export type OfxRow = {
    *  rule's hide is why (lib/rules.ts). */
   excluded: boolean;
   hidden_by_rule?: boolean;
+  /** Whether it is excluded couldn't be read (what was said about it, or
+   *  about a row imported from a file it stands for): marked neither way. */
+  unmarked?: boolean;
   /** Its tags' names, as the app shows them. */
   tags?: string[];
   /** One side of a pair Nya worked out between two SimpleFIN accounts
@@ -634,14 +664,23 @@ export function ofxFile(
   const dayOf = (iso: string) => (opts.timeZone && iso.length > 10 ? dayIn(iso, opts.timeZone) : iso.slice(0, 10));
   // What was said about each transaction, what was carried to it and what
   // the rules do, as the app applies them (lib/txn-layers.ts): on the bank's
-  // rows, as the document has them; on a book's, by layeredBookRows. A record
-  // that couldn't be read leaves its transaction unmarked, and said.
-  const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
+  // rows, as the document has them; on a book's, by layeredBookRows; on one
+  // imported into a linked account, by layeredImportedRows. A record that
+  // couldn't be read leaves its transaction unmarked, and said.
   const links = effectiveLinks(data.links, data.live);
   // The rows whose note is their own, written with them (entered by hand or
-  // imported): an unreadable record leaves it in the memo. A bank's, or one
-  // SimpleFIN brought, has the person's note in its record.
+  // imported into a manual account): an unreadable record leaves it in the
+  // memo. A bank's, or one SimpleFIN brought, has the person's note in its
+  // record, and so has one imported into a linked account (`fileNote`), whose
+  // file's own note shows in the memo while that record can't be read.
   const ownNote = new Set<string>();
+  const fileNote = new Set<string>();
+  // The transactions whose own record of what was said can't be read, and
+  // the bank's rows standing for a row imported from a file whose record
+  // can't be read (`standsForUnread`), which miss what was said about that
+  // one.
+  const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
+  const standsForUnread = new Set<string>();
 
   // The rows a book holds for the account (a manual account's own, or those
   // SimpleFIN brought), as the app shows them, each side of a pair the app
@@ -674,6 +713,7 @@ export function ofxFile(
           transaction_code: r.transaction_code ?? null,
           excluded: l.excluded === true,
           hidden_by_rule: l.excluded_by_rule,
+          unmarked: l.excluded === null,
           tags: l.tags,
           ...(paired ? { paired } : {}),
         };
@@ -743,6 +783,11 @@ export function ofxFile(
     };
   } else if (linked) {
     rows = [];
+    // The transactions imported into it from its bank's files that count as
+    // its own, as posted rows count (see the header). A bank's row standing
+    // for imported ones has what was said about them in the document's
+    // layered fields already (lib/user-export.ts buildUserExport).
+    const imported = importedTransactionsIn(doc, { pending: false });
     for (const t of doc.transactions) {
       if (t.account_id !== account_id) continue;
       if (t.pending) {
@@ -751,8 +796,10 @@ export function ofxFile(
       }
       // As the app shows it (the document's layered fields): the name, your
       // note, its tags, and left out by you, by an exclusion carried from an
-      // earlier account, or by a rule's hide.
+      // earlier account or from the imported rows it stands for, or by a
+      // rule's hide.
       const shown = t.nya_name || t.your_merchant_name || t.merchant_name || t.name || '';
+      if (imported.represents.get(t.transaction_id)?.some((id) => unknown.has(id))) standsForUnread.add(t.transaction_id);
       rows.push({
         id: t.transaction_id,
         date: t.date,
@@ -766,12 +813,50 @@ export function ofxFile(
         transaction_code: t.transaction_code ?? null,
         excluded: t.excluded === true,
         hidden_by_rule: t.excluded_by_rule === true,
+        unmarked: t.excluded === null,
         tags: t.tags ?? [],
       });
     }
+    // Each as the app shows it: its name (yours for its merchant, else a
+    // rule's, else the file's, which is then the description), your note,
+    // else the file's, its tags, and left out by you or by a rule's hide.
+    const fromFiles = imported.rows.filter((r) => r.account_id === account_id);
+    const shownImported = layeredImportedRows(doc, imported.rows);
+    for (const r of fromFiles) {
+      const { row } = r;
+      const { l } = shownImported(r);
+      fileNote.add(row.id);
+      rows.push({
+        id: row.id,
+        date: row.date,
+        user_date: null,
+        amount: row.amount,
+        currency: row.currency,
+        name: l.name,
+        description: l.name !== row.name ? row.name : null,
+        note: l.note,
+        check_number: null,
+        transaction_code: row.transaction_code ?? null,
+        excluded: l.excluded === true,
+        hidden_by_rule: l.excluded_by_rule,
+        unmarked: l.excluded === null,
+        tags: l.tags,
+      });
+    }
+    if (fromFiles.length > 0) {
+      notes.push(
+        `${plural(fromFiles.length, 'transaction you imported from your bank’s files is', 'transactions you imported from your bank’s files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
+      );
+    }
+    if (missingIds(doc.problems, importedTxnStore.name).some((id) => resolveId(id, links) === account_id)) {
+      notes.push(
+        `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+      );
+      incomplete.add(importedTxnStore.name);
+    }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
       notes.push(
-        `Exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they apply to aren’t marked as excluded. The JSON download lists them under problems. ${UNCHANGED}`
+        `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
       );
       incomplete.add(carriedAnnotationStore.name);
     }
@@ -824,28 +909,58 @@ export function ofxFile(
       no_balance: 'Nya doesn’t know when this account’s balance was set.',
     };
   }
-  const unmarkedRows = rows.filter((r) => unknown.has(r.id));
-  const unmarked = unmarkedRows.length;
-  if (unmarked > 0) {
-    // The tags put on them are in the record (a rule's and a carried
-    // record's still show); so is your note on a bank's or a SimpleFIN
-    // transaction, while one written with a transaction entered or imported
-    // is its own, and still in its memo.
-    const one = unmarked === 1;
-    const own = unmarkedRows.filter((r) => ownNote.has(r.id)).length;
-    const note =
-      own === 0
-        ? one
-          ? ', nor is your note on it'
-          : ', nor are your notes on them'
-        : own === unmarked
-          ? one
-            ? ' (its note, written with it, is)'
-            : ' (their notes, written with them, are)'
-          : ', nor are your notes on those the bank or SimpleFIN brought (a note written with one you entered or imported is there)';
-    notes.push(
-      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}. The JSON download lists them under problems. ${UNCHANGED}`
-    );
+  // What was said about a transaction can't be read. Its own record: whether
+  // it is excluded isn't known, so it is marked neither way, the tags put on
+  // it are missing (a rule's and carried ones still show), and so is a note
+  // kept in the record (on a bank's or a SimpleFIN row, or one imported into
+  // a linked account, which shows its file's own note instead), while one
+  // written with a row entered by hand or imported into a manual account is
+  // its own, and still in its memo. Or, on a bank's row standing for a row
+  // imported from a file, that one's record: the tags and note put on it are
+  // missing, and so is whether it is excluded, unless the bank's row's own
+  // record says.
+  const theirs = rows.filter((r) => unknown.has(r.id));
+  const standing = rows.filter((r) => !unknown.has(r.id) && standsForUnread.has(r.id));
+  if (theirs.length + standing.length > 0) {
+    const said: string[] = [];
+    if (theirs.length > 0) {
+      const one = theirs.length === 1;
+      const own = theirs.filter((r) => ownNote.has(r.id)).length;
+      const files = theirs.filter((r) => fileNote.has(r.id)).length;
+      const instead =
+        files === 0
+          ? ''
+          : files === theirs.length
+            ? one
+              ? ' (its file’s own note, if it had one, is there instead)'
+              : ' (their files’ own notes, where they had one, are there instead)'
+            : ' (one you imported from a file has its file’s own note there instead, where it had one)';
+      const note =
+        own === 0
+          ? `${one ? ', nor is your note on it' : ', nor are your notes on them'}${instead}`
+          : own === theirs.length
+            ? one
+              ? ' (its note, written with it, is)'
+              : ' (their notes, written with them, are)'
+            : ', nor are your notes on those the bank or SimpleFIN brought (a note written with one you entered, or imported into this account, is there)';
+      said.push(
+        `Whether ${plural(theirs.length, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}.`
+      );
+    }
+    if (standing.length > 0) {
+      const one = standing.length === 1;
+      const unsure = standing.filter((r) => r.unmarked).length;
+      const marked =
+        unsure === 0
+          ? ''
+          : unsure === standing.length
+            ? `, and whether ${one ? 'it is' : 'they are'} excluded from budgets and reports isn’t marked either way`
+            : `, and whether ${plural(unsure, 'of them is', 'of them are')} excluded from budgets and reports isn’t marked either way`;
+      said.push(
+        `${plural(standing.length, 'of the bank’s transactions stands', 'of the bank’s transactions stand')} for one you imported from a file whose record of what you said could not be read, so the tags and note you put on ${one ? 'that one aren’t in its memo' : 'those aren’t in their memos'}${marked}.`
+      );
+    }
+    notes.push(`${said.join(' ')} The JSON download lists them under problems. ${UNCHANGED}`);
     incomplete.add(txnAnnotationStore.name);
   }
   // Rules and tags that couldn't be read: none applied, none shown, as the

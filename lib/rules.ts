@@ -38,7 +38,8 @@
 //     person's choice, else the bank's), by id, following a merge to where it
 //     went (lib/categories.ts categoryById);
 //   - source: where it came from: "plaid" (a bank), "manual" (entered by
-//     hand), "import" (from a file, of any format) or "simplefin".
+//     hand), "import" (from a file, of any format, into a manual account or
+//     a linked one: the account tells them apart) or "simplefin".
 //
 // PRIORITY. Rules run in priority order, 1 first. When two rules that match
 // one transaction both set its category, or its name, the one that runs

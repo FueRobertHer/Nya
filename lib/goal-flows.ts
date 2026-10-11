@@ -30,6 +30,23 @@
 // month an account's transactions in Nya begin in. An account whose
 // transactions couldn't be read is paced by its recorded balance, and says
 // whose couldn't be read (AccountFlow.fallback).
+//
+// IMPORTED HISTORY (#52). Rows imported into a linked account from its
+// bank's files come through the same assembly, so they count as money in
+// like the bank's, and stop at an account's end as the bank's do (an
+// account that ended isn't paced at all). Where its transactions in Nya
+// begin is the bank's oldest stored row, or earlier, as far back as the
+// files imported into it reach in one run of covered days to it
+// (lib/history-import/coverage.ts), as a report counts them: a month before
+// is unknown, never zero. A linked account whose bank holds no rows to say
+// which days it covers (a connection whose transactions Plaid doesn't
+// provide or the person didn't allow, one not synced yet, one that stored
+// none) has only its files to say: its rows count only when a run of the
+// days they cover reaches the end of the last month averaged, and begin
+// where that run does; otherwise it is paced by its recorded balance, as
+// before anything was imported, never by months its files don't reach read
+// as nothing in. A connection that stopped after it synced is said to have
+// stopped whatever files cover, as on a report.
 
 import { ContainerError, type Ctx } from './containers';
 import { readAccounts, type ApiAccount } from './api-read';
@@ -39,6 +56,8 @@ import { rememberedAccountsReport } from './last-known';
 import { readMeasuredBalances } from './history';
 import { sameAccountIds, type Link } from './links';
 import { stoppedConnections } from './month-coverage';
+import { importedCoverage } from './history-import/read';
+import { runStart } from './history-import/coverage';
 import { localDate } from './local-date';
 import { addDays } from './manual-txn-input';
 import { addMonths, flowsFromBalances, flowsFromRows, lastDay, trailingMonths, MONTH_END_DAYS, type AccountFlow, type FlowRow, type MonthGap } from './goal-projection';
@@ -142,11 +161,19 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
   // says so. A rule's category is marked on the row after (category_by_rule).
   // Either wins over Plaid's label, as everywhere (FlowRow.chosen).
   const chosen = new Set(bank.payload.transactions.filter((t) => t.category_set).map((t) => t.transaction_id));
-  const [activity, remembered] = await Promise.all([
+  const [activity, remembered, covered] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // Only which Item each account is at, for when its rows begin: without
     // it, an account's own first row says.
     rememberedAccountsReport(ctx).catch(() => null),
+    // LENIENT, for this display only, as a report reads them: what the files
+    // imported into each linked account cover (lib/history-import/read.ts
+    // importedCoverage). One whose summary can't be read covers nothing
+    // here, so no month is taken as known for it.
+    importedCoverage(ctx, links).catch((err: unknown) => {
+      console.error('Goals: what imported files cover could not be read', loggable(err));
+      return new Map<string, { from: string; to: string }[]>();
+    }),
   ]);
   const itemOf = new Map<string, string>();
   for (const [item, list] of Object.entries(remembered?.byItem ?? {})) for (const a of list) itemOf.set(a.account_id, item);
@@ -190,10 +217,30 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
       byBalances.push({ account: a });
       continue;
     }
-    const start = item?.first_date ?? firstRow;
+    // Where its rows in Nya begin (see IMPORTED HISTORY): its bank's oldest
+    // stored row, or as far back as its files reach in one run to it. With
+    // no bank rows at its connection, where the run of days its files cover
+    // that reaches the end of the last month averaged begins; without one,
+    // it is paced by its recorded balance. An account whose connection isn't
+    // known: its own first row.
+    const covers = { covers: covered.get(a.id) ?? [] };
+    const bankFirst = item?.first_date ?? null;
+    let start: string | null;
+    if (bankFirst) start = runStart(covers, bankFirst, bankFirst) ?? bankFirst;
+    else if (item) {
+      start = runStart(covers, null, lastDay(months[months.length - 1]));
+      if (start === null) {
+        byBalances.push({ account: a });
+        continue;
+      }
+    } else start = firstRow;
     const flow: AccountFlow = { source: 'transactions', months: flowsFromRows(rows, new Set(ids), months, { start, currency: a.currency }) };
-    const importing = a.source === 'plaid' ? item?.coverage === 'importing' : fedImporting.has(a.institution);
-    const stoppedAt = stoppedSince(a);
+    // Paced by its files alone, every month it knows is one they cover whole
+    // from its start: how its connection is doing takes nothing from them,
+    // as a report says nothing of such a connection where files cover it.
+    const filesOnly = !!item && !bankFirst;
+    const importing = !filesOnly && (a.source === 'plaid' ? item?.coverage === 'importing' : fedImporting.has(a.institution));
+    const stoppedAt = filesOnly ? undefined : stoppedSince(a);
     for (const m of flow.months) {
       const gaps: MonthGap[] = [];
       if (stoppedAt !== undefined) {
