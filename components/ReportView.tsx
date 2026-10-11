@@ -324,9 +324,9 @@ export function ReportView({ report }: { report: Report }) {
           <p className="report-note">
             Oldest first, in each one’s own currency. Money out is shown as a minus. A transaction the totals don’t count says why.
           </p>
-          {report.appendix.total > report.appendix.rows.length && (
+          {report.appendix.total > report.appendix.shown && (
             <p className="report-flag">
-              Showing the first {report.appendix.rows.length} of {report.appendix.total} transactions. The totals above count all of them; a shorter period lists
+              Showing the first {report.appendix.shown} of {report.appendix.total} transactions. The totals above count all of them; a shorter period lists
               them all.
             </p>
           )}

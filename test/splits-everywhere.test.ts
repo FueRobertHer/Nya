@@ -161,6 +161,27 @@ describe('the read-only API', () => {
     expect(after.find((b: any) => b.name === 'Netflix')).toMatchObject({ amount: 15.99 });
   });
 
+  test('the counts beside the totals count transactions as they did before any split: a split one is one, a group as many as it holds', async () => {
+    await setExcluded(ctx, 't_card', true);
+    const month = daysAgo(8).slice(0, 7);
+    const counts = (s: any) => ({ transactions: s.transactions, counted: s.counted, excluded: s.excluded, transfers: s.transfers, exclusion_unknown: s.exclusion_unknown });
+    const before = { spending: await call('spending', FROM), budgets: await call('budgets', `month=${month}`), categories: await call('categories') };
+    await splitAndGroup();
+    const after = { spending: await call('spending', FROM), budgets: await call('budgets', `month=${month}`), categories: await call('categories') };
+    expect(counts(after.spending)).toEqual(counts(before.spending));
+    expect(after.budgets.excluded).toBe(before.budgets.excluded);
+    expect(after.budgets.excluded).toBeGreaterThan(0);
+    // Each Netflix month, split in two, is one transaction in each of its categories.
+    const inCategory = (r: any, name: string) => r.categories.categories.find((c: any) => c.name === name)?.transactions;
+    expect(inCategory(after, 'entertainment')).toBe(inCategory(before, 'entertainment'));
+    expect(after.spending.categories.find((c: any) => c.category === 'entertainment').transactions).toBe(
+      before.spending.categories.find((c: any) => c.category === 'entertainment').transactions
+    );
+    const groupOf = (r: any, name: string) => r.spending.groups.find((g: any) => g.name === name)?.transactions;
+    expect(groupOf(after, 'Travel and entertainment')).toBe(groupOf(before, 'Travel and entertainment'));
+    expect([inCategory(after, 'entertainment'), groupOf(after, 'Travel and entertainment')]).toEqual([3, 3]);
+  });
+
   test('a part left out on its own, or the whole transaction excluded, as the app counts it', async () => {
     await splitAndGroup();
     await setExcluded(ctx, 't_card', true);
@@ -293,5 +314,12 @@ describe('reports', () => {
     const rows = report.appendix!.rows;
     expect(rows.find((r) => r.category === 'home improvement')).toMatchObject({ name: 'T_CARD', account: 'Card', amount: 30, split: { part: 2, parts: 2, whole: 80, remainder: false } });
     expect(rows.find((r) => r.group)).toMatchObject({ name: 'SECRET-GROUP-NAME brunch', amount: 30.5, group: { transactions: 2, missing: 0 } });
+    // Its counts are of transactions: the card's two parts, both marked, are one; the brunch is two.
+    const lines = rows.length;
+    const card = rows.filter((r) => r.name === 'T_CARD').length;
+    expect(card).toBe(2);
+    expect(report.appendix!.total).toBe(lines - card + 1 + 1);
+    expect(report.appendix!.shown).toBe(report.appendix!.total);
+    expect(report.totals.transactions).toBe(app.transactions);
   });
 });

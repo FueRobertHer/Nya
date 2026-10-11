@@ -93,7 +93,7 @@ import { budgetMeters, placeBudgets } from './budget-set';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
-import { countsInTotals, currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, type LeftOut } from './spending';
+import { countsInTotals, countTransactions, currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from './spending';
 import { spendingByCategory, summarize, tidy, bucketOf, recurringMonthly, type Described, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
@@ -1125,15 +1125,17 @@ export async function readCategories(
     () => ({ ok: false as const })
   );
   const ix = budgets.ok ? budgets.ix : activity.ix;
-  const seen = new Map<string, { transactions: number; last_date: string | null }>();
+  // Transactions, not rows: a split one's parts in one category are one
+  // there (lib/spending.ts transactionCounter).
+  const seen = new Map<string, { counter: ReturnType<typeof transactionCounter>; last_date: string | null }>();
   for (const t of activity.rows) {
-    const c = seen.get(bucketOf(t)) ?? { transactions: 0, last_date: null };
-    c.transactions++;
+    const c = seen.get(bucketOf(t)) ?? { counter: transactionCounter(), last_date: null };
+    c.counter.add(t);
     if (!c.last_date || t.date > c.last_date) c.last_date = t.date;
     seen.set(bucketOf(t), c);
   }
   const budgeted = new Set(budgets.ok ? budgets.placed.categories.keys() : []);
-  for (const id of budgeted) if (!seen.has(id)) seen.set(id, { transactions: 0, last_date: null });
+  for (const id of budgeted) if (!seen.has(id)) seen.set(id, { counter: transactionCounter(), last_date: null });
   const notes = [
     ...activity.notes,
     ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
@@ -1146,7 +1148,8 @@ export async function readCategories(
     const d = describe(bucket);
     return {
       name: d.category,
-      ...c,
+      transactions: c.counter.n,
+      last_date: c.last_date,
       budgeted: budgeted.has(bucket),
       transfer: kind === 'transfer',
       id: d.category_id,
@@ -1261,8 +1264,9 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
     total: { budget: tidy(meters.total.budget), spent: tidy(meters.total.spent) },
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
-    excluded: monthRows.filter((t) => t.excluded === true).length,
-    exclusion_unknown: monthRows.filter((t) => t.excluded === null).length,
+    // Transactions, not rows: a split one is one (transactionCounter).
+    excluded: countTransactions(monthRows.filter((t) => t.excluded === true)),
+    exclusion_unknown: countTransactions(monthRows.filter((t) => t.excluded === null)),
     sources: activity.sources,
     notes,
   };
@@ -1294,15 +1298,15 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
   // Groups add up what the categories do: money out that counts.
-  const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: number }>();
+  const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: ReturnType<typeof transactionCounter> }>();
   for (const t of activity.rows) {
     if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
     const c = categoryById(activity.ix, bucketOf(t));
     if (!c) continue;
     const g = groupOf(activity.ix, c);
-    const e = groups.get(g.id) ?? { group: g, spent: 0, transactions: 0 };
+    const e = groups.get(g.id) ?? { group: g, spent: 0, transactions: transactionCounter() };
     e.spent += t.amount;
-    e.transactions++;
+    e.transactions.add(t);
     groups.set(g.id, e);
   }
   return {
@@ -1311,7 +1315,7 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
     ...summarize(activity.rows, inRange, currency, describer(activity.ix)),
     groups: [...groups.values()]
       .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
-      .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
+      .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions.n })),
     tags: spendingByTag(activity.rows, inRange, currency).flatMap((s) => {
       const name = namesOf(activity.tags).get(s.tag);
       return name === undefined ? [] : [{ id: s.tag, name, spent: s.spent, transactions: s.transactions }];

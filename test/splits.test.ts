@@ -3,8 +3,8 @@ import { checkParts, isSplitRecord, SplitError, MAX_PARTS, type SplitRecord } fr
 import { checkMembers, isTxnGroup, GroupError, type TxnGroup } from '@/lib/groups';
 import { bankRows, expandSplitsAndGroups, parentOf, unitScale, PART_PREFIX, REMAINDER_PREFIX, GROUP_PREFIX, type SplitInputs } from '@/lib/split-rows';
 import { indexTaxonomy, mergeCategories, seedTaxonomy, textKeys, type Taxonomy } from '@/lib/categories';
-import { summarize, spendingByCategory } from '@/lib/totals';
-import { leftOutByCurrency, leftOutText, countsInTotals } from '@/lib/spending';
+import { summarize, spendingByCategory, categoryTotals } from '@/lib/totals';
+import { leftOutByCurrency, leftOutText, countsInTotals, countTransactions } from '@/lib/spending';
 import { detectRecurring } from '@/lib/recurring';
 import { spendingByTag } from '@/lib/tag-totals';
 import type { Txn } from '@/lib/transactions';
@@ -273,9 +273,31 @@ describe('a split transaction is its parts, in its place', () => {
     expect(leftOutText(leftOutByCurrency(rows, 'USD'), 'USD')).toBe("1 transaction in EUR isn't in these totals, which are in USD.");
   });
 
-  test('spending by tag counts each part once, the whole transaction in all', () => {
+  test('spending by tag counts each part once, the whole transaction in all, as one transaction', () => {
     const tagged = spendingByTag(out.rows, october, 'USD');
-    expect(tagged.find((t) => t.tag === 'tag-trip')).toEqual({ tag: 'tag-trip', spent: 150, transactions: 3 });
+    expect(tagged.find((t) => t.tag === 'tag-trip')).toEqual({ tag: 'tag-trip', spent: 150, transactions: 1 });
+  });
+
+  test('every count counts transactions, never rows: a split one is one, in all and in each of its categories', () => {
+    const s = summarize(out.rows, october, 'USD');
+    expect([s.transactions, s.counted, s.excluded]).toEqual([2, 2, 0]);
+    expect(s.categories.map((c) => [c.category, c.transactions])).toEqual([
+      ['groceries', 1],
+      ['household', 1],
+      ['auto', 1],
+      ['food and drink', 1],
+    ]);
+    expect(countTransactions(out.rows)).toBe(2);
+    // Two parts under one category are one transaction there.
+    const twice = expandSplitsAndGroups(
+      [costco],
+      inputs({ splits: new Map([['t_costco', split(150, [{ id: 'a', amount: 100, category: 'groceries' }, { id: 'b', amount: 50, category: 'groceries' }])]]) })
+    ).rows;
+    expect(summarize(twice, october, 'USD').categories).toEqual([{ category: 'groceries', spent: 150, transactions: 1 }]);
+    expect(categoryTotals(twice, october, 'USD').out).toEqual([{ category: 'groceries', amount: 150, transactions: 1 }]);
+    // Excluded whole: one transaction left out, never three.
+    const excluded = expandSplitsAndGroups([coffee, { ...costco, excluded: true }], inputs({ splits: new Map([['t_costco', record]]) })).rows;
+    expect(summarize(excluded, october, 'USD')).toMatchObject({ transactions: 2, counted: 1, excluded: 1 });
   });
 
   test('put back whole (bankRows), the transaction is exactly as it was, with its parts beside it', () => {
@@ -493,6 +515,9 @@ describe('groups net their transactions', () => {
     ]);
     const s = summarize(out.rows, october, 'USD');
     expect([s.money_out, s.money_in]).toEqual([65, 0]);
+    // Counted as the transactions it holds: three in all, two of them restaurants'.
+    expect([s.transactions, s.counted]).toEqual([3, 3]);
+    expect(s.categories.find((c) => c.category === 'restaurants')?.transactions).toBe(2);
     expect(spendingByCategory(out.rows, october, 'USD')).toEqual({ [cat('food and drink')]: 5, [cat('restaurants')]: 60 });
     // Each transaction once again, for what reads them whole.
     expect(bankRows(out.rows).map((t) => t.transaction_id)).toEqual(['t_coffee', 't_dinner', 't_venmo']);

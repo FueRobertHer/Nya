@@ -212,6 +212,35 @@ describe('what else the dashboard counts from the same rows', () => {
     const grouped = trailingFlows([...served(), rent] as any, today)!;
     expect(grouped.spending / whole.spending).toBeCloseTo((1000 + 150 + 60 + 4.5) / (1000 + 150 + 120 + 4.5), 10);
     expect([whole.income, grouped.income]).toEqual([0, 0]);
+    // Counted as transactions: Costco is one, split or not; the payback counts through its group.
+    expect(whole.count).toBe(4);
+    expect(trailingFlows([...served({ grouped: false }), rent] as any, today)!.count).toBe(4);
+    expect(grouped.count).toBe(5);
+    const excluded = served({ grouped: false }).map((t) => (t.split_of ? { ...t, excluded: true as const } : t));
+    expect(trailingFlows([...excluded, rent] as any, today)!.excludedCount).toBe(1);
+    // A refund split in two is one refund, named whole.
+    const refund = expandSplitsAndGroups([txn('Return', { amount: -40 })] as any, {
+      splits: new Map([
+        [
+          'Return',
+          {
+            version: 1 as const,
+            amount: -40,
+            currency: 'USD',
+            parts: [
+              { id: 'r1', amount: -25, category_id: cat('general merchandise') },
+              { id: 'r2', amount: -15, category_id: cat('food and drink') },
+            ],
+            updated_at: '2026-10-01T00:00:00.000Z',
+          },
+        ],
+      ]),
+      splitsUnknown: new Set(),
+      groups: new Map(),
+      groupsUnknown: 0,
+      ix,
+    }).rows;
+    expect(trailingFlows([...refund, rent] as any, today)!.largestRefund).toEqual({ amount: 40, date: today, name: 'Return' });
   });
 });
 

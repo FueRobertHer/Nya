@@ -72,7 +72,7 @@
 // what is stale or missing named.
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
@@ -233,7 +233,9 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     return d >= start && d <= end; // also skips a malformed date
   });
   const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && counts(planFlow(t))));
-  const leftOutBy = new Map<string, number>();
+  // Transactions, not rows: a split one's parts are one, a group as many as
+  // it holds (lib/spending.ts transactionCounter).
+  const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
   let cashEntered = 0;
   let unclearElsewhere = 0;
   const cashEnteredOn = new Set<string>();
@@ -247,25 +249,28 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     'unclear-loan': 0,
     transfer: 0,
   };
-  let count = 0;
-  let excludedCount = 0;
-  let hiddenCount = 0;
+  const counted = transactionCounter();
+  const excludedCount = transactionCounter();
+  const hiddenCount = transactionCounter();
   let uncategorized = 0;
   let earliest = end;
-  let largestRefund: TrailingFlows['largestRefund'] = null;
+  // Each refund whole: a split one's refunded parts added up (#39).
+  const refunds = new Map<string, { amount: number; date: string; name: string }>();
   for (const t of inWindow) {
     const d = dayNumber(t.date);
     if (d < earliest) earliest = d;
     if (isExcluded(t)) {
-      excludedCount++;
-      if (t.excluded_by_rule) hiddenCount++;
+      excludedCount.add(t);
+      if (t.excluded_by_rule) hiddenCount.add(t);
       continue;
     }
     const flow = planFlow(t);
     if (!inCurrency(t, currency)) {
       if (flow !== 'transfer' && flow !== 'card-payment') {
         const c = currencyOf(t)!;
-        leftOutBy.set(c, (leftOutBy.get(c) ?? 0) + 1);
+        const counter = leftOutBy.get(c) ?? transactionCounter();
+        counter.add(t);
+        leftOutBy.set(c, counter);
       }
       continue;
     }
@@ -278,11 +283,17 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       cashEntered += t.amount;
       cashEnteredOn.add(t.account_id);
     }
-    if (flow === 'refund' && (largestRefund === null || -t.amount > largestRefund.amount)) {
-      largestRefund = { amount: -t.amount, date: t.date, name: t.name };
+    if (flow === 'refund') {
+      const key = t.split_of ?? t.transaction_id;
+      const r = refunds.get(key) ?? { amount: 0, date: t.date, name: t.name };
+      r.amount += -t.amount;
+      refunds.set(key, r);
     }
-    if (counts(flow)) count++;
+    if (counts(flow)) counted.add(t);
   }
+  let largestRefund: TrailingFlows['largestRefund'] = null;
+  for (const r of refunds.values()) if (largestRefund === null || r.amount > largestRefund.amount) largestRefund = r;
+  const count = counted.n;
   const days = end - earliest + 1;
   if (count === 0 || days < MIN_DAYS) return null;
   const scale = days < TRAILING_DAYS ? TRAILING_DAYS / days : 1;
@@ -310,10 +321,10 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     days,
     scaled: scale !== 1,
     count,
-    excludedCount,
-    hiddenCount,
+    excludedCount: excludedCount.n,
+    hiddenCount: hiddenCount.n,
     currency,
-    leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
     uncategorized,
   };
 }
