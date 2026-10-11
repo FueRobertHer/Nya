@@ -14,7 +14,7 @@ import DownloadMyData from './DownloadMyData';
 import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
-import { instantDay, localDate } from '@/lib/local-date';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
@@ -53,6 +53,7 @@ import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab from './BudgetsTab';
 import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { useCategories, useCategoriesForBudgets } from './categories-state';
+import { useBudgetMonth } from './budget-month-state';
 import CategoriesCard from './CategoriesCard';
 import { useTagList } from './tags-state';
 import TagsCard from './TagsCard';
@@ -533,6 +534,9 @@ export default function Dashboard({
         // By category and group id (lib/budget-set.ts).
         field: 'budget_set',
         noun: 'budgets',
+        // The month a change is made in, as this page has it: the months
+        // before it keep their amounts (#37, app/api/budgets).
+        extra: () => ({ month: localMonth() }),
         empty: EMPTY_BUDGETS,
         isValid: (v): v is Budgets => {
           const b = v as Budgets | null;
@@ -577,6 +581,17 @@ export default function Dashboard({
   );
   const budgets = budgetsState.value;
   useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
+  // This month's budgets as the server works them out, with rollover (#37):
+  // for the Budgets tab, and Home's budget alerts. Once the transactions have
+  // loaded (a load syncs what the server reads), again whenever the budgets,
+  // the transactions or the categories change, never while a save is under
+  // way; with the stored history on the Budgets tab (its month picker).
+  const thisMonth = localMonth();
+  const budgetMonth = useBudgetMonth(
+    budgetsState.status === 'ready' && (txns !== null || txnsFailed) ? thisMonth : null,
+    [budgets, txns, categories.taxonomy],
+    { paused: budgetsState.saving, history: tab === 'budgets' }
+  );
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
@@ -1827,6 +1842,7 @@ export default function Dashboard({
                   txns={txns}
                   budgets={budgets}
                   taxonomy={categories.taxonomy}
+                  budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}
                   idleCash={idleCashAccounts}
                   reconnectSoon={reconnectSoon}
                   withoutTransactions={txnWithout}
@@ -2723,6 +2739,7 @@ export default function Dashboard({
                 plannedError={plannedState.error}
                 plannedSaveError={plannedState.saveError}
                 onSavePlanned={plannedItemsStore.save}
+                budgetMonth={budgetMonth}
               />
             )}
 

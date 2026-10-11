@@ -4672,3 +4672,146 @@ button.tag-suggestion.chosen {
   gap: 12px;
   flex-shrink: 0;
 }
+
+/* --- budget rollover and income carryover (#37: components/BudgetsCard.tsx,
+   components/IncomePool.tsx, components/BudgetsTab.tsx) --- */
+
+/* What rolled into a budget, beneath its meter: muted for leftover, amber for
+   overspending carried, the hole the next months climb out of. */
+.budget-carry {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.budget-carry.negative {
+  color: var(--warn);
+}
+
+/* Rolling a budget over, below its amount in the editor. */
+.budget-rollover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.budget-rollover .card-actions {
+  margin-top: 0;
+}
+
+/* The month shown, under the card's heading. */
+.month-picker {
+  margin: 4px 0 8px;
+}
+
+/* Available to allocate, above the meters while income carryover is on. */
+.pool-header {
+  margin: 8px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.pool-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pool-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pool-amount {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pool-amount.negative {
+  color: var(--down);
+}
+
+.pool-breakdown {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+button.pool-toggle {
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* The pool month by month: four narrow columns fit a phone, and amounts
+   wider still scroll inside the box rather than widening the page. The
+   cells set their own size and padding, since the global th, td set theirs. */
+.pool-scroll {
+  margin: 10px -6px 0;
+  overflow-x: auto;
+}
+
+.pool-table {
+  width: 100%;
+  margin-top: 0;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.pool-table th,
+.pool-table td {
+  padding: 4px 2px;
+  text-align: right;
+  white-space: nowrap;
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+
+.pool-table td,
+.pool-table th[scope='row'] {
+  font-size: 12px;
+}
+
+.pool-table thead th {
+  border-top: none;
+}
+
+.pool-table th[scope='row'],
+.pool-table thead th:first-child {
+  text-align: left;
+}
+
+.pool-table th[scope='row'] {
+  color: inherit;
+  font-weight: 400;
+  text-transform: none;
+}
+
+.pool-uncertain {
+  color: var(--warn);
+}
+
+/* The setting, at the foot of the budgets. */
+.income-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.income-setting .panel-note {
+  margin: 0;
+}
+
+.income-setting .card-actions {
+  margin-top: 0;
+}

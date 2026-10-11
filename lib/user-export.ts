@@ -112,6 +112,10 @@ import type { ConnectorKind } from './connectors/types';
 import { taxonomyReport, taxonomyStore } from './category-store';
 import { budgetSetStore, budgetsReport } from './budget-store';
 import { placeBudgets } from './budget-set';
+import { budgetMonthsStore } from './budget-months-store';
+import { readBudgetMonth } from './budget-month';
+import type { Carries, Carry, CarryFrom } from './rollover';
+import { StoredDataUnreadableError } from './repo';
 import {
   groupOf,
   growTaxonomy,
@@ -315,6 +319,10 @@ function section<T>(s: {
   };
 }
 
+/** A budget's rollover into the month the file is made in (UTC), as the
+ *  read-only API answers it: worked out from the transactions, never stored. */
+type ExportedRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] } | null;
+
 /** The budgets by name, as the app has them now (lib/budget-store.ts): each
  *  category's with its id and group, each group's with its id. A budget on a
  *  category or group since deleted is kept, by its id alone, and so is every
@@ -327,9 +335,34 @@ type ExportedBudgets =
   | { problem: 'unreadable' | 'unrecognised' }
   | {
       problem: null;
-      categories: { category: string | null; monthly_amount: number; category_id: string | null; group: string | null }[];
-      groups: { group: string | null; monthly_amount: number; group_id: string | null }[];
+      categories: { category: string | null; monthly_amount: number; category_id: string | null; group: string | null; rollover: ExportedRollover }[];
+      groups: { group: string | null; monthly_amount: number; group_id: string | null; rollover: ExportedRollover }[];
     };
+
+/**
+ * What rolls into this month (UTC) for each budget that rolls over, worked
+ * out as the Budgets tab and the API work it out (lib/budget-month.ts), from
+ * the stored transactions; read only when some budget rolls over at all.
+ * Null when the record of budgets by month (or what it is worked out from)
+ * can't be used: the `budget-months` part of the file names that, and every
+ * budget's rollover is then null. What says nothing about the data throws.
+ */
+async function exportedCarries(ctx: Ctx): Promise<Carries | null> {
+  const record = await budgetMonthsStore.getReport(ctx);
+  if (record.unreadable || record.unrecognised) return null;
+  const targets = record.value ? [...Object.values(record.value.categories), ...Object.values(record.value.groups)] : [];
+  if (!targets.some((t) => t.rollover && t.rollover.length > 0)) return { categories: {}, groups: {} };
+  const month = new Date().toISOString().slice(0, 7);
+  try {
+    return (await readBudgetMonth(ctx, { month, today: month, pool: false })).view.carries;
+  } catch (err) {
+    if (err instanceof StoredDataUnreadableError) return null;
+    throw err;
+  }
+}
+
+const exportedRollover = (c: Carry | undefined): ExportedRollover =>
+  c ? { from: c.from, why: c.why, start: c.start, carry: c.carry, uncertain_months: c.uncertain } : null;
 
 async function exportBudgets(ctx: Ctx): Promise<ExportedBudgets> {
   const read = await budgetsReport(ctx, (await taxonomyReport(ctx)).taxonomy);
@@ -337,6 +370,7 @@ async function exportBudgets(ctx: Ctx): Promise<ExportedBudgets> {
   const { budgets, taxonomy } = read;
   const ix = indexTaxonomy(taxonomy);
   const placed = placeBudgets(budgets, ix);
+  const carries = await exportedCarries(ctx);
   const shown = (id: string) => (isProvisionalId(id) ? null : id);
   const gone = (kind: 'category' | 'group') => placed.orphans.filter((o) => o.kind === kind);
   return {
@@ -344,13 +378,13 @@ async function exportBudgets(ctx: Ctx): Promise<ExportedBudgets> {
     categories: [
       ...[...placed.categories].map(([id, monthly_amount]) => {
         const c = ix.byId.get(id)!;
-        return { category: c.name as string | null, monthly_amount, category_id: shown(id), group: groupOf(ix, c).name as string | null };
+        return { category: c.name as string | null, monthly_amount, category_id: shown(id), group: groupOf(ix, c).name as string | null, rollover: exportedRollover(carries?.categories[id]) };
       }),
-      ...gone('category').map((o) => ({ category: null, monthly_amount: o.amount, category_id: o.id, group: null })),
+      ...gone('category').map((o) => ({ category: null, monthly_amount: o.amount, category_id: o.id, group: null, rollover: null })),
     ].sort((a, b) => byText(a.category, b.category) || byText(a.category_id, b.category_id)),
     groups: [
-      ...[...placed.groups].map(([id, monthly_amount]) => ({ group: ix.groupById.get(id)!.name as string | null, monthly_amount, group_id: shown(id) })),
-      ...gone('group').map((o) => ({ group: null, monthly_amount: o.amount, group_id: o.id })),
+      ...[...placed.groups].map(([id, monthly_amount]) => ({ group: ix.groupById.get(id)!.name as string | null, monthly_amount, group_id: shown(id), rollover: exportedRollover(carries?.groups[id]) })),
+      ...gone('group').map((o) => ({ group: null, monthly_amount: o.amount, group_id: o.id, rollover: null })),
     ].sort((a, b) => byText(a.group, b.group) || byText(a.group_id, b.group_id)),
   };
 }

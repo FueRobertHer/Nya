@@ -5,6 +5,8 @@ import { loadBudgets, saveBudgets } from '@/lib/budget-store';
 import { BudgetError, budgetsFromNames, legacyCopy, readBudgets, MAX_CATEGORY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { indexTaxonomy, textKeys, type Taxonomy } from '@/lib/categories';
 import { ensureTaxonomy } from '@/lib/category-store';
+import { noteMonths } from '@/lib/budget-months-store';
+import { isMonth, thisMonth } from '@/lib/rollover';
 
 // Monthly budgets, per category and per group, by id (lib/budget-set.ts),
 // kept by lib/budget-store.ts, which moves the budgets saved under names
@@ -20,6 +22,18 @@ import { ensureTaxonomy } from '@/lib/category-store';
 // (`budget_set`). A page from the release before sends `budgets`, by name:
 // those become the category budgets, each on the category its words file
 // into, and the groups' budgets, which that page never saw, are kept.
+//
+// BY MONTH (#37). A save changes this month's amounts, never an earlier
+// month's: the record of budgets by month (lib/budget-months-store.ts) keeps
+// what each changed budget had, for the months before this one. `month` is
+// this month as the page has it (lib/rollover.ts thisMonth; the UTC month
+// without one, as from a page of the release before). The record is noted
+// before the budgets are written and after. A record that can't be noted (it
+// can't be read, say) never stops a save: the save writes only the budget
+// set, never the record, and the record notes the change on the first read
+// that can read it, as of the month it is read in, as it notes a change made
+// by the release before. Rollover changes, which do need it, are refused
+// meanwhile (app/api/budgets/rollover).
 
 /** The answer for both: the budgets, their categories, and the copy by name. */
 function answer(budgets: Budgets, taxonomy: Taxonomy) {
@@ -51,6 +65,13 @@ export async function GET() {
   }
 }
 
+/** A record of budgets by month that couldn't be noted: logged, never a
+ *  reason to stop a save (see BY MONTH). Storage out of reach stops the save
+ *  itself, which answers for it. */
+function logUnnoted(when: string, err: unknown): void {
+  console.error(`${when}; the change is recorded by month on the next read that can:`, err instanceof StoredDataUnreadableError ? describeUnreadable(err) : err instanceof Error ? err.name : typeof err);
+}
+
 /** Budgets by name, as a page from the release before this one sends them:
  *  checked as that release checked them. */
 function readNamed(v: unknown): Record<string, number> {
@@ -72,8 +93,13 @@ export async function PUT(req: Request) {
     const ctx = await dataCtx();
     const body = await req.json().catch(() => null);
     if (typeof body !== 'object' || body === null || Array.isArray(body)) return NextResponse.json({ error: 'Invalid budgets' }, { status: 400 });
+    if (body.month !== undefined && !isMonth(body.month)) return NextResponse.json({ error: 'Invalid month' }, { status: 400 });
+    const month = thisMonth(body.month);
     // Migrated first, so what is replaced is what this page was shown.
     const current = await loadBudgets(ctx);
+    // What the months before this one had, noted before it changes; a record
+    // that can't be noted is left as it is (see BY MONTH).
+    await noteMonths(ctx, current.budgets, current.taxonomy, month).catch((err) => logUnnoted('Budgets not yet saved', err));
     let next: Budgets;
     let taxonomy = current.taxonomy;
     if (body.budget_set !== undefined) {
@@ -84,6 +110,7 @@ export async function PUT(req: Request) {
       next = { categories: budgetsFromNames(named, indexTaxonomy(taxonomy)).categories, groups: current.budgets.groups };
     }
     const saved = await saveBudgets(ctx, next, taxonomy);
+    await noteMonths(ctx, saved, taxonomy, month, current.budgets).catch((err) => logUnnoted('Budgets saved', err));
     return NextResponse.json(answer(saved, taxonomy));
   } catch (err) {
     return failure(err, 'Failed to save budgets');

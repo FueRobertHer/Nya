@@ -69,7 +69,8 @@ export function createWholeListStore<T>(opts: {
    *  just now, and the server says what and what still works). */
   showRefusal?: boolean;
   /** More for the server beside the list on a save, read when it is sent
-   *  (goals: the person's own day, which the server dates an archive by). */
+   *  (goals: the person's own day, which the server dates an archive by;
+   *  budgets: the month they are changed in, as the page has it). */
   extra?: () => Record<string, unknown>;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));

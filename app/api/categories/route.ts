@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import type { Ctx } from '@/lib/containers';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { loggable } from '@/lib/log-safe';
 import {
@@ -21,6 +22,7 @@ import { changeTaxonomy, ensureTaxonomy, newCategoryId, readTaxonomy } from '@/l
 import { categoryUsage } from '@/lib/category-usage';
 import { loadBudgets, moveMergedBudgets } from '@/lib/budget-store';
 import { BudgetError } from '@/lib/budget-set';
+import { dropMonths, moveMergedMonths } from '@/lib/budget-months-store';
 
 // Your categories and their groups (lib/categories.ts), for the Categories
 // screen under Manage (components/CategoryManager.tsx) and the lists to choose
@@ -42,8 +44,11 @@ import { BudgetError } from '@/lib/budget-set';
 //   set-icon        { id, icon }            (empty clears it)
 //   move-category   { id, group }           (a group of another kind changes how it counts)
 //   archive         { id, archived }
-//   merge           { id, into }            (budgets on it move to `into`, added up)
-//   delete-category { id }                  (only when nothing uses it)
+//   merge           { id, into }            (budgets on it move to `into`, added up,
+//                                            with what they had by month and their
+//                                            rollover, lib/budget-months-store.ts)
+//   delete-category { id }                  (only when nothing uses it; its record
+//                                            of budgets by month goes with it)
 //   add-group       { name, kind }
 //   rename-group    { id, name }
 //   order-groups    { ids }                 (every group's id, in the order wanted)
@@ -73,6 +78,18 @@ export async function GET() {
     return NextResponse.json({ categories: await ensureTaxonomy(ctx) });
   } catch (err) {
     return failure(err, 'Failed to load your categories');
+  }
+}
+
+/** A deleted category's or group's record of budgets by month dropped (it
+ *  had no budget, or it couldn't have been deleted). Best effort: one left
+ *  behind is read as gone, and dropped by the next note of the budget set
+ *  (lib/rollover.ts noteBudgets). */
+async function dropDeleted(ctx: Ctx, kind: 'categories' | 'groups', id: string): Promise<void> {
+  try {
+    await dropMonths(ctx, kind, id);
+  } catch (err) {
+    console.error('Deleted a category or group; its budgets by month go on the next change:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
   }
 }
 
@@ -137,6 +154,14 @@ export async function POST(req: Request) {
         } catch (err) {
           console.error('Merged categories; their budgets move on the next save:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
         }
+        // And what they had by month, and their rollover: read as merged
+        // meanwhile too (lib/rollover.ts placeMonths), so a failure here loses
+        // nothing either.
+        try {
+          await moveMergedMonths(ctx, taxonomy);
+        } catch (err) {
+          console.error('Merged categories; their budgets by month move on the next change:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : loggable(err));
+        }
         break;
       }
       case 'delete-category': {
@@ -149,6 +174,7 @@ export async function POST(req: Request) {
         // category again.
         const usage = await categoryUsage(ctx, (await readTaxonomy(ctx)) ?? (await ensureTaxonomy(ctx)), target);
         taxonomy = await changeTaxonomy(ctx, (t) => deleteCategory(t, target, usage));
+        await dropDeleted(ctx, 'categories', target);
         break;
       }
       case 'add-group':
@@ -166,6 +192,7 @@ export async function POST(req: Request) {
         const target = id(body);
         const { budgets } = await loadBudgets(ctx);
         taxonomy = await changeTaxonomy(ctx, (t) => deleteGroup(t, target, budgets.groups[target] !== undefined));
+        await dropDeleted(ctx, 'groups', target);
         break;
       }
       default:

@@ -22,6 +22,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Tags and notes](#tags-and-notes)
 - [Rules](#rules)
 - [Savings goals](#savings-goals)
+- [Budget rollover and income carryover](#budget-rollover-and-income-carryover)
 - [Recurring bills and the cash forecast](#recurring-bills-and-the-cash-forecast)
 - [Reports](#reports)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
@@ -570,6 +571,45 @@ A goal's name, target and account stay in the `goals` value, as they always have
 ### In the API and the download
 
 The read-only API's `goals` endpoint and the MCP tool `get_goals` give each goal as the card shows it, on the balances Nya last measured: what it counts, its allocation, monthly target and target date, the months behind its pace, its projection and the card's own sentences about it, with each account's unallocated remainder. A goal on an account that ended is `ended`, with the account's end (`account_lifecycle`). A goal on a hidden account says only that its account is hidden, with nothing of the account, unless hidden accounts are asked for, as everywhere in the API. The [download](data-export.md#budgets-and-goals) has each goal with its plan (`goals`) and the plans as stored (`goal-plans`). Goals are never shared.
+
+## Budget rollover and income carryover
+
+A budget can roll over: what is left of it at the end of a month is added to the next month's, and what is overspent is taken off it, so a quiet month for groceries leaves more for the next, and an expensive one is made up over the months after. Separately, someone whose income doesn't arrive every month can turn on income carryover, which keeps a running total of what is left to allocate. Both are worked out from your transactions each time and never stored, so recategorizing a transaction in a past month, excluding one, merging two categories or renaming one changes every carry it touches at once, and so do your [rules](#rules) and an [account's end](#accounts-that-end): a transaction a rule hides counts as an excluded one does, in neither spending nor income; one a rule files under another category counts there, in past months too; and an account that ended counts in no month from its day, until it is reopened, when everything comes back exactly.
+
+### Rollover
+
+Open a budget on the Budgets tab and choose **Turn on rollover**, counting from this month or an earlier one: any of the last 12 months, or further back as far as the first month with transactions, ten years at most, and never before the budget began. A start before the first month with transactions counts from that month, and says so. From then on its meter shows what you spent against what is **available**: its amount plus what rolled over into the month. The carry is said beneath the meter: "+$120.00 rolled over", or "$45.00 overspent, carried over". An overspent carry is kept, not forgiven: what is available can be less than the budget, or nothing at all, and the meter is then full and over until the months after climb out of it. Nothing available is said in words, never as a limit of zero or below: "$37.50 spent, nothing left", with how far over the month began ("Began the month $162.37 over"), and the same in the month's total, in a group's limit line and in Home's alert ("Over your Restaurants budget: overspending carried over left it $162.37 over before this month"). It is tagged over once something is spent, or when the month began over.
+
+- **The month it starts** carries nothing yet: what is left of that month rolls into the next.
+- **Reset carryover** sets the carry to zero from this month, once you confirm: this month starts from its budget alone. Earlier months keep theirs.
+- **A refund** counts as money in, never off a budget's spending, as in the month's totals. So a purchase you returned stays in the carry, as overspending, in every month after it: a monthly budget only ever showed it for the one month. Reset the carry to clear it; the reset's confirmation says so.
+- **Turn off rollover** drops its carry to zero at once, from this month; earlier months keep theirs. Turning it on again starts afresh from the month you choose (this month by default), so an earlier carry never comes back on its own. Choosing the month it ran from brings that carry back exactly, worked out again from the transactions, and for the rest of the month the editor says which month that is ("Turn it on again from March to bring its carry back").
+- **Removing a budget** ends its rollover; adding it again starts without one.
+- **Changing a budget's amount** changes it from this month on. The months before keep the amount they had, so their carry doesn't change. Nya keeps each budget's amount by month from the first time the app is opened after this release; for a month before that it uses the earliest amount it has, and says so ("Nya began keeping budgets by month in June 2026, so before then each budget counts its amount in June 2026").
+- **A month without the budget** (before it was added, or while it was removed) ends the carry: it starts again from zero in the next month with the budget, and the editor says from when ("Rolling over since May, the first month with this budget since rollover began").
+- **The first month with transactions** is the earliest a carry counts from: before it nothing is known, and a budget would otherwise roll over in full. A start before it counts from it, and says so ("Rolling over since March 2025, the first month with transactions").
+
+A group's own budget can roll over too: what is left of the group's amount after everything spent in the group, by the categories in it now, so moving a category to another group moves its past spending, and both groups' carries, with it. The rule a group's limit follows ([Budgets on categories and groups](#budgets-on-categories-and-groups)) then works on what is available: the group's own amount plus its carry, against its categories' amounts plus theirs, added up. A group without an amount of its own rolls up what its categories have available. The month's total counts each group once, at its limit, so no carry is counted twice.
+
+Merging a category moves its rollover with its budget, and adds its past amounts to the other's month by month, since their spending is now counted together. Deleting a category or group drops what was kept of it. An archived category's budget rolls over as any other.
+
+### When a month may be incomplete
+
+A carry is only as good as the months it counts. When one of them may be missing transactions, the carry says it may be off and which months ("+$120.00 rolled over (may be off: March is incomplete)"), and a note under the budgets says why, and for which months: a connection that stopped syncing before the month ended, a bank whose transactions couldn't be loaded or whose older ones are still importing, a bank whose stored history begins after the month began, a bank account or card whose transactions Plaid doesn't provide or you didn't allow, a manual account whose transactions couldn't be read, or transactions whose exclusion couldn't be read. An account's end is never one of them: you said nothing of it counts from that day. And a connection whose every account has ended leaves no month short from the month that day begins, however it is doing (a connection to a closed card that stopped syncing, say). As in a month's own totals, a transaction in another currency than the budgets' is left out of what rolls over, and named under the budgets ("1 transaction in EUR isn't in what rolled over from earlier months, which is in USD").
+
+### Looking back at a month
+
+The month under the budgets' heading picks a past month, back to the first with transactions, ten years at most: its budgets as they were then, its spending, what rolled into each, and its own notes. Past months are read from everything Nya has stored, not only the year the dashboard loads. They are shown as they were, never edited. A month that can't be loaded says so, with **Try again**.
+
+### Income carryover
+
+For income that doesn't arrive every month (a freelancer's, a contractor's), **My income is irregular**, at the foot of the budgets, keeps a running pool: what is left of each month's income carries into the next. It is off by default, and off it changes nothing at all. Turned on, counting from this month or an earlier one, the Budgets tab shows **Available to allocate** above the meters: last month's leftover, plus this month's income so far, less this month's spending, with how it built up month by month (**Show how it built up**). Budgets work exactly as before: the pool answers whether you can afford something at all, the meters what each budget has left. It is not envelope budgeting: no money has to be assigned. Turning it off keeps the month it counted from, which is offered again.
+
+Income is money in and spending money out, as the Activity tab totals a month: in the one currency the totals are in, without what you excluded, and with transfers between your own accounts, cash withdrawals and loan payments counted as neither, so moving money between your accounts never inflates the pool. A refund or a return is money in, as the Activity tab counts it, never taken off spending, just as a budget's meter doesn't go down when one arrives. The pool at the start of a month is exactly the months' net flows (money in less money out) added up, to the cent. It counts from the first month with transactions at the earliest, and says when a month it counts may be incomplete.
+
+### Where it shows
+
+`/api/v1/budgets` and the MCP tool `get_budgets` answer each budget's amount in the month asked about, what rolled over into it, what is available, the months it counts that may be incomplete, and the income pool when it is on, from the same read and the same rules as the Budgets tab, so the two agree ([The API and the MCP server](#the-api-and-the-mcp-server)). Their notes, and the MCP tool's sentence, say when the month asked about may be incomplete, and why, or comes before any transaction stored, so nothing is counted as spent in it, and when a carry or the pool counts a month that may be incomplete. A month still to come has its budgets and nothing rolled into it yet: nothing is counted past this month. Home's budget alerts weigh what is available, as the meters do. The [download](data-export.md) has each budget's rollover into the month it is made, and the settings themselves (`budget-months`, `income-carryover`). Budgets aren't part of sharing, which shares accounts ([sharing](authentication.md#sharing-between-people)), so none of this is shared.
 
 ## Recurring bills and the cash forecast
 
