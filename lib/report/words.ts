@@ -264,10 +264,15 @@ export function appendixStatus(row: {
  *  a part of a split one, what the bank changed a split one by, or a group's
  *  net (lib/split-rows.ts). `money` writes an amount in the row's currency. */
 export function appendixSplitWords(
-  row: { split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
+  row: { source?: string; split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
   money: (n: number) => string
 ): string | null {
-  if (row.split?.remainder) return `What the bank changed this ${money(row.split.whole)} transaction by since it was split`;
+  // The bank changes its own rows' amounts (through Plaid or SimpleFIN); one
+  // entered by hand or imported changes when it is edited or imported again.
+  if (row.split?.remainder) {
+    const bank = row.source === undefined || row.source === 'plaid' || row.source === 'simplefin';
+    return bank ? `What the bank changed this ${money(row.split.whole)} transaction by since it was split` : `What this ${money(row.split.whole)} transaction changed by since it was split`;
+  }
   if (row.split) return `Part ${row.split.part} of ${row.split.parts} of a ${money(row.split.whole)} transaction`;
   if (row.group) {
     const n = row.group.transactions;

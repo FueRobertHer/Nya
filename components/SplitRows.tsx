@@ -16,6 +16,7 @@ import { signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
 import { PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
+import { isConnectorKind } from '@/lib/connectors/types';
 
 /** What a row of the list says in place of its category: a split
  *  transaction's parts, a group's size; null for any other. */
@@ -28,11 +29,16 @@ export function entryLabel(t: Pick<Txn, 'split_parts' | 'split_count' | 'group_m
   return null;
 }
 
+/** Whether the bank (through Plaid or SimpleFIN) keeps a row's amount: a
+ *  row entered by hand or imported changes only when it is edited or
+ *  imported again. */
+export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConnectorKind(t.source);
+
 /** A row's notice under its name about its split or group, if any. */
 export function entryNotice(t: Txn): string | null {
   if (t.split_unread) return 'How you split this couldn’t be read, so it shows whole.';
   if (t.split_unapplied) return 'Its split no longer fits (its currency changed), so it shows whole: split it again.';
-  if (t.split_parts?.some((p) => p.split_remainder)) return 'The bank changed this amount since you split it.';
+  if (t.split_parts?.some((p) => p.split_remainder)) return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
   const gone = (t.group_missing ?? 0) + (t.group_removed ?? 0);
   if (t.group_members && gone > 0) {
     return `${gone} of its transactions ${gone === 1 ? 'isn’t' : 'aren’t'} here (the bank removed ${gone === 1 ? 'it' : 'them'}, or ${gone === 1 ? 'its' : 'their'} account is hidden), so ${gone === 1 ? 'it isn’t' : 'they aren’t'} counted.`;
@@ -69,7 +75,9 @@ export function SplitActions({ t, onSplit, onGroup }: { t: Txn; onSplit: (t: Txn
   );
 }
 
-async function send(url: string, method: string, body: unknown): Promise<string | null> {
+/** Sends a change to a split or a group: null when it was made, else what
+ *  went wrong, in the server's words when it gave some. */
+export async function sendChange(url: string, method: string, body: unknown): Promise<string | null> {
   try {
     const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     if (res.ok) return null;
@@ -103,13 +111,13 @@ export function PartRows({
   open: string | null;
   onOpen: (id: string | null) => void;
   onChanged: () => void;
-  onError: (message: string) => void;
+  /** What went wrong with a change, or null once one is made. */
+  onError: (message: string | null) => void;
   onEditSplit: (t: Txn) => void;
 }) {
   const currency = currencyOf(parent);
   const patch = async (part: Txn, change: Record<string, unknown>) => {
-    const failed = await send('/api/transaction-splits', 'PATCH', { transaction_id: parent.transaction_id, part_id: part.transaction_id.slice(PART_PREFIX.length), ...change });
-    if (failed) onError(failed);
+    onError(await sendChange('/api/transaction-splits', 'PATCH', { transaction_id: parent.transaction_id, part_id: part.transaction_id.slice(PART_PREFIX.length), ...change }));
     onChanged();
   };
   return (
@@ -129,7 +137,11 @@ export function PartRows({
                   {label ? displayName(label) : 'No category'}
                   {p.note && <span className="note-tag"> · {p.note}</span>}
                 </div>
-                {p.split_remainder && <div className="excluded-tag">What the bank changed the amount by since you split it: edit the split to place it.</div>}
+                {p.split_remainder && (
+                  <div className="excluded-tag">
+                    {bankKept(parent) ? 'What the bank changed the amount by' : 'What the amount changed by'} since you split it: edit the split to place it.
+                  </div>
+                )}
                 {p.split_excluded && <div className="excluded-tag">Left out of budgets and reports on its own</div>}
               </div>
               {opened && (
@@ -199,7 +211,8 @@ export function MemberRows({
   open: string | null;
   onOpen: (id: string | null) => void;
   onChanged: () => void;
-  onError: (message: string) => void;
+  /** What went wrong with a change, or null once one is made. */
+  onError: (message: string | null) => void;
 }) {
   const members = group.group_members ?? [];
   const currency = currencyOf(group);
@@ -228,8 +241,7 @@ export function MemberRows({
                         className="secondary"
                         onClick={async () => {
                           onOpen(null);
-                          const failed = await send('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [m.transaction_id] });
-                          if (failed) onError(failed);
+                          onError(await sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [m.transaction_id] }));
                           onChanged();
                         }}
                       >

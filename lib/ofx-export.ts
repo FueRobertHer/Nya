@@ -589,7 +589,7 @@ export function ofxFile(
   // (lib/export-splits.ts): each transaction listed whole, how it is split or
   // its group in its memo.
   const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc));
-  const splitWords = (r: { id: string; amount: number; currency: string | null; pending?: boolean }) => {
+  const splitWords = (r: { id: string; amount: number; currency: string | null; pending?: boolean; bank?: boolean }) => {
     const words = splitMemoOf(r, splitInputs);
     return words ? { split: words } : {};
   };
@@ -627,7 +627,7 @@ export function ofxFile(
           hidden_by_rule: l.excluded_by_rule,
           tags: l.tags,
           ...(paired ? { paired } : {}),
-          ...splitWords({ id: r.id, amount: r.amount, currency: r.currency }),
+          ...splitWords({ id: r.id, amount: r.amount, currency: r.currency, bank: isConnectorKind(r.source) }),
         };
       });
   };

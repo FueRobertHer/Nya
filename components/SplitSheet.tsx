@@ -21,6 +21,7 @@ import { parseAmountInput, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
+import { bankKept } from './SplitRows';
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
@@ -162,8 +163,8 @@ export default function SplitSheet({
       </p>
       {changed && changed.split_remainder && (
         <div className="stale-note">
-          The bank changed this amount from {formatMoney(Math.abs(changed.split_remainder.was), currency)} to {formatMoney(Math.abs(t.amount), currency)} since you
-          split it. Place the difference below.
+          {bankKept(t) ? 'The bank changed this amount' : 'This amount changed'} from {formatMoney(Math.abs(changed.split_remainder.was), currency)} to{' '}
+          {formatMoney(Math.abs(t.amount), currency)} since you split it. Place the difference below.
         </div>
       )}
       <div className="sheet-form">

@@ -9,6 +9,7 @@ import { detectRecurring } from '@/lib/recurring';
 import { spendingByTag } from '@/lib/tag-totals';
 import type { Txn } from '@/lib/transactions';
 import { splitMemoOf } from '@/lib/export-splits';
+import { appendixSplitWords } from '@/lib/report/words';
 
 // Splits and groups (#39), the pure part: what a split may hold
 // (lib/splits.ts checkParts and its closed shape), what a group may hold
@@ -385,9 +386,32 @@ describe('the bank changes a split transaction’s amount', () => {
     expect(splitMemoOf({ id: 't1', amount: -60, currency: 'USD' }, inputs({ splits: new Map([['t1', refund]]) }))).toBe(
       'Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since'
     );
+    // One entered by hand or imported changes when it is edited, not by the bank.
+    expect(splitMemoOf({ id: 't1', amount: 60, currency: 'USD', bank: false }, inputs({ splits: new Map([['t1', record]]) }))).toBe(
+      'Split in Nya: Restaurants 40.00; Household 10.00; 10.00 added since'
+    );
+    expect(splitMemoOf({ id: 't1', amount: 45.5, currency: 'USD', bank: false }, inputs({ splits: new Map([['t1', record]]) }))).toBe(
+      'Split in Nya: Restaurants 40.00; Household 10.00; 4.50 taken off since'
+    );
     // Pending, or in another currency now: whole, so nothing to say.
     expect(splitMemoOf({ id: 't1', amount: 50, currency: 'USD', pending: true }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
     expect(splitMemoOf({ id: 't1', amount: 50, currency: 'EUR' }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
+  });
+});
+
+describe('what a report’s appendix says of a part or a group', () => {
+  const money = (n: number) => `$${Math.abs(n).toFixed(2)}`;
+  test('a part, what changed since, and a group’s net', () => {
+    expect(appendixSplitWords({ split: { part: 1, parts: 3, whole: 150, remainder: false } }, money)).toBe('Part 1 of 3 of a $150.00 transaction');
+    expect(appendixSplitWords({ source: 'plaid', split: { part: 3, parts: 3, whole: 160, remainder: true } }, money)).toBe(
+      'What the bank changed this $160.00 transaction by since it was split'
+    );
+    expect(appendixSplitWords({ source: 'simplefin', split: { part: 3, parts: 3, whole: 160, remainder: true } }, money)).toContain('What the bank changed');
+    expect(appendixSplitWords({ source: 'manual', split: { part: 3, parts: 3, whole: 160, remainder: true } }, money)).toBe(
+      'What this $160.00 transaction changed by since it was split'
+    );
+    expect(appendixSplitWords({ group: { transactions: 2, missing: 1 } }, money)).toBe('The net of a group of 2 transactions; 1 more isn’t here');
+    expect(appendixSplitWords({}, money)).toBeNull();
   });
 });
 

@@ -141,6 +141,15 @@ describe('the Activity tab’s list', () => {
       ix,
     }).rows as unknown as Txn[];
     expect(entryNotice(bankRows(changed)[0] as Txn)).toBe('The bank changed this amount since you split it.');
+    // One entered by hand changes when it is edited, not by the bank.
+    const edited = expandSplitsAndGroups([txn('Costco', { amount: 160, source: 'manual' })] as any, {
+      splits: new Map([['Costco', record(150, [['groceries', 100], ['household', 50]])]]),
+      splitsUnknown: new Set(),
+      groups: new Map(),
+      groupsUnknown: 0,
+      ix,
+    }).rows as unknown as Txn[];
+    expect(entryNotice(bankRows(edited)[0] as Txn)).toBe('This amount changed since you split it.');
     expect(entryNotice(txn('x', { split_unread: true }))).toBe('How you split this couldn’t be read, so it shows whole.');
     expect(entryNotice(txn('x', { group_members: [txn('a')], group_removed: 1 }))).toContain('1 of its transactions isn’t here');
   });

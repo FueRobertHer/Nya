@@ -238,12 +238,16 @@ function amountText(amount: number, currency: string | null): string {
  * What an OFX statement's memo says of a transaction's split or group, or
  * null: its parts as the app files them ("Split in Nya: Food and drink
  * 100.00; Home improvement 50.00", and "the bank added 10.00 since" or "the
- * bank took 10.00 off since" when it changed the amount), or the group it is
- * in ("In the group Dinner with Sam in Nya").
+ * bank took 10.00 off since" when it changed the amount, "10.00 added since"
+ * on a row entered by hand or imported), or the group it is in ("In the
+ * group Dinner with Sam in Nya").
  * Only a split the app applies: a transaction pending, or in another
  * currency now than when it was split, shows whole there.
  */
-export function splitMemoOf(row: { id: string; amount: number; currency: string | null; pending?: boolean }, inputs: SplitInputs): string | null {
+export function splitMemoOf(
+  row: { id: string; amount: number; currency: string | null; pending?: boolean; /** The bank keeps its amount (false: entered by hand or imported). */ bank?: boolean },
+  inputs: SplitInputs
+): string | null {
   const group = [...inputs.groups].find(([, g]) => g.members.includes(row.id));
   const ix = inputs.ix;
   if (group) return `In the group ${group[1].name} in Nya`;
@@ -255,8 +259,11 @@ export function splitMemoOf(row: { id: string; amount: number; currency: string 
     return `${c ? displayName(c.name) : 'Uncategorized'} ${amountText(p.amount, row.currency)}`;
   });
   const left = toUnits(row.amount, scale) - record.parts.reduce((n, p) => n + toUnits(p.amount, scale), 0);
-  // In minor units: what the bank added to the transaction, or took off it.
+  // In minor units: what was added to the transaction since, or taken off
+  // it, by the bank (a row entered by hand or imported changes when it is
+  // edited or imported again).
   const added = Math.sign(left) === Math.sign(row.amount);
-  if (left !== 0) parts.push(`the bank ${added ? 'added' : 'took'} ${amountText(left / scale, row.currency)}${added ? '' : ' off'} since`);
+  const by = amountText(left / scale, row.currency);
+  if (left !== 0) parts.push(row.bank === false ? `${by} ${added ? 'added' : 'taken off'} since` : `the bank ${added ? `added ${by}` : `took ${by} off`} since`);
   return `Split in Nya: ${parts.join('; ')}`;
 }

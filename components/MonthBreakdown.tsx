@@ -38,7 +38,7 @@ import { searchRows } from "./txn-search";
 import { bankRows, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
-import { entryLabel, entryNotice, MemberRows, PartRows, SplitActions } from "./SplitRows";
+import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions } from "./SplitRows";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -925,11 +925,10 @@ export default function MonthBreakdown({
                                 onChange={(id) => {
                                   if (id && id !== t.category_id && t.group_members) {
                                     // A group's net is filed under the group's category.
-                                    void fetch("/api/transaction-groups", {
-                                      method: "PATCH",
-                                      headers: { "Content-Type": "application/json" },
-                                      body: JSON.stringify({ id: t.group_id, category_id: id }),
-                                    }).then(() => onSplitsChanged?.(), () => setSplitError("Could not reach the server."));
+                                    void sendChange("/api/transaction-groups", "PATCH", { id: t.group_id, category_id: id }).then((failed) => {
+                                      setSplitError(failed);
+                                      onSplitsChanged?.();
+                                    });
                                   } else if (id && id !== t.category_id) {
                                     onRecategorize(t.transaction_id, { category_id: id });
                                     setRuleOffer({ t, category_id: id });

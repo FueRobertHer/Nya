@@ -96,6 +96,8 @@ export default function GroupSheet({
   }, [first, group, start, members0, taxonomy.uncategorized]);
 
   const currency = first ? currencyOf(group?.group_members?.[0] ?? first) : null;
+  // Every row a group can be made of, by id: its transactions, and the year's.
+  const pool = useMemo(() => new Map([...txns, ...members0].map((t) => [t.transaction_id, t] as const)), [txns, members0]);
   const offered = useMemo(
     () => (first ? groupCandidates(txns, { currency, near: first.date, exclude: new Set(members0.map((m) => m.transaction_id)), query }).slice(0, OFFERED) : []),
     [txns, first, currency, members0, query]
@@ -103,10 +105,14 @@ export default function GroupSheet({
 
   if (!first) return <Sheet open={false} title="Group" onClose={onClose}>{null}</Sheet>;
 
-  // Every row the sheet lists, to add up what is chosen.
-  const listed = [...members0, ...offered];
+  // One ticked to add stays listed when the search no longer finds it: first.
+  const inGroup = new Set(members0.map((m) => m.transaction_id));
+  const shown = new Set(offered.map((t) => t.transaction_id));
+  const hidden = [...chosen].filter((id) => !inGroup.has(id) && !shown.has(id)).flatMap((id) => pool.get(id) ?? []);
+  const toAdd = [...hidden, ...offered];
+  // What the ticked ones come to.
   const scale = unitScale(currency);
-  const net = listed.filter((t) => chosen.has(t.transaction_id)).reduce((n, t) => n + toUnits(t.amount, scale), 0) / scale;
+  const net = [...chosen].flatMap((id) => pool.get(id) ?? []).reduce((n, t) => n + toUnits(t.amount, scale), 0) / scale;
   const missing = (group?.group_missing ?? 0) + (group?.group_removed ?? 0);
   const category = categoryById(ix, categoryId);
   const ready = name.trim().length > 0 && chosen.size >= MIN_MEMBERS && chosen.size <= MAX_MEMBERS && !!categoryId;
@@ -199,7 +205,7 @@ export default function GroupSheet({
           disabled={saving}
         />
         <div className="group-list" role="group" aria-label="Transactions to add">
-          {offered.length === 0 ? <p className="empty-note">{query ? 'No transaction matches.' : 'No other transactions in this currency.'}</p> : offered.map(row)}
+          {toAdd.length === 0 ? <p className="empty-note">{query ? 'No transaction matches.' : 'No other transactions in this currency.'}</p> : toAdd.map(row)}
         </div>
       </div>
       <p className="split-left" role="status">
