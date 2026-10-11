@@ -4,7 +4,7 @@ import { getItems } from '@/lib/storage';
 import { fetchInstitution } from '@/lib/networth';
 import { rememberAccounts, rememberedIdsForItem } from '@/lib/last-known';
 import { recordDirectory } from '@/lib/links';
-import { vanishedSince, forgetVanishedIds } from '@/lib/vanished';
+import { vanishedSince, vanishedBefore, forgetVanishedIds } from '@/lib/vanished';
 import { clearNewAccounts } from '@/lib/new-accounts';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
@@ -58,17 +58,22 @@ export async function POST(req: Request) {
 
     // Both sources: a load that ran between the picker closing and this call has
     // already moved a removed id out of the remembered list and into the
-    // vanished record.
-    const [remembered, vanishing] = await Promise.all([
+    // vanished record. An account that was missing before the picker opened
+    // is held for the person's answer (lib/lifecycle-questions.ts), its
+    // remembered entry kept meanwhile: not this picker's doing, so not removed.
+    const [remembered, vanishing, before] = await Promise.all([
       rememberedIdsForItem(ctx, item_id),
       vanishedSince(ctx, item_id, opened_at),
+      vanishedBefore(ctx, item_id, opened_at),
     ]);
     const known = new Set([...remembered, ...vanishing]);
     const fresh = new Set(inst.accounts.map((a) => a.account_id as string));
-    const removed = [...known].filter((id) => !fresh.has(id));
+    const held = before.filter((id) => !fresh.has(id) && !vanishing.includes(id));
+    const removed = [...known].filter((id) => !fresh.has(id) && !held.includes(id));
     const added = [...fresh].filter((id) => !known.has(id)).length;
 
-    await rememberAccounts(ctx, [inst]);
+    // The held ones keep their remembered entries, as a load keeps them.
+    await rememberAccounts(ctx, [{ ...inst, ...(held.length > 0 ? { missing_ids: held } : {}) }]);
     await recordDirectory(ctx, [inst]);
     await forgetVanishedIds(ctx, item_id, removed);
     // The prompt led here, and the picker has now been through.

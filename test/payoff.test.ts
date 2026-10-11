@@ -924,6 +924,22 @@ describe('what the plan cannot see', () => {
   test('a healthy institution has nothing to say', () => {
     expect(blindSpots([{ institution_name: 'Chase', error: null, accounts: [owed] }])).toEqual([]);
   });
+
+  test('a card held at its last known balance is planned from it, and said so; one held without a balance is not planned (#50)', () => {
+    const held = { ...owed, account_id: 'card', name: 'Freedom', mask: '9902', balance: 2000, held: { as_of: '2026-03-12' } };
+    const chase = { institution_name: 'Chase', error: null, unconfirmed_missing: 1, accounts: [owed, held] };
+    expect(debtAccounts([chase]).map((d) => [d.id, d.balanceCents])).toEqual([
+      ['x', 1000],
+      ['card', 200000],
+    ]);
+    expect(blindSpots([chase])).toEqual([{ kind: 'held', institution: 'Chase', accounts: ['Freedom ••9902'], date: '2026-03-12' }]);
+    // Too old to count: not in the plan, and said so.
+    const old = { ...held, balance: null, held: { as_of: null } };
+    expect(debtAccounts([{ ...chase, accounts: [owed, old] }]).map((d) => d.id)).toEqual(['x']);
+    expect(blindSpots([{ ...chase, accounts: [owed, old] }])).toEqual([{ kind: 'vanished', institution: 'Chase', count: 1 }]);
+    // A held checking account isn't a debt: nothing for the plan to say.
+    expect(blindSpots([{ ...chase, accounts: [owed, { ...held, type: 'depository' }] }])).toEqual([]);
+  });
 });
 
 describe('from accounts to debts', () => {

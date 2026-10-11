@@ -18,7 +18,18 @@ import {
   type Period,
   type ReportRequest,
 } from '@/lib/report/period';
-import { buildReport, POST_DAYS, APPENDIX_LIMIT, type ReportInput, type SourceFacts, type Gap, type RemovedFacts, type LiveAccountFacts } from '@/lib/report/build';
+import {
+  buildReport,
+  POST_DAYS,
+  APPENDIX_LIMIT,
+  type ReportInput,
+  type SourceFacts,
+  type Gap,
+  type RemovedFacts,
+  type LiveAccountFacts,
+  type EndedFacts,
+  type MissedFacts,
+} from '@/lib/report/build';
 import {
   gapSentences,
   statusHeadline,
@@ -34,6 +45,12 @@ import {
   scopeLine,
   NO_TRANSACTIONS_WORDS,
   gapShort,
+  endedWords,
+  endedCounted,
+  ENDED_NOTE,
+  ASSUMED_REMEDY,
+  problemLines,
+  endedConnection,
 } from '@/lib/report/words';
 import { reportCsv, reportFilename, REPORT_CSV_COLUMNS } from '@/lib/report/csv';
 import { parseReportSettings, isReportSettings, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
@@ -907,6 +924,240 @@ describe('the CSV', () => {
     // Amounts stay numbers: a negative net is a number, not text.
     const net = parsed.find((x) => x[0] === 'total')![4];
     expect(net).toBe('-5');
+  });
+});
+
+describe('accounts that ended (#50): counted as the Activity tab counts them, and said', () => {
+  // A card closed in May, savings no longer followed from September, a joint
+  // account no longer the person's from March (one of its rows under the id
+  // it had before a re-link), a card Nya assumed closed in October, a cash
+  // wallet closed in November, an account untracked since 2024 that is still
+  // the person's, one closed in 2019 and one closing in 2026.
+  const ENDED: EndedFacts[] = [
+    { ids: ['acc_card'], account: 'Card ••2222', institution: 'Chase', item_id: 'item_chase', type: 'credit', state: 'closed', assumed: false, end: '2025-05-01' },
+    { ids: ['acc_sav'], account: 'Savings ••3333', institution: 'Chase', item_id: 'item_chase', type: 'depository', state: 'untracked', assumed: false, end: '2025-09-01' },
+    { ids: ['acc_joint', 'acc_joint_old'], account: 'Joint ••4444', institution: 'Ally', item_id: null, type: 'depository', state: 'left', assumed: false, end: '2025-03-15' },
+    { ids: ['acc_gone'], account: 'Double Cash ••5555', institution: 'Citi', item_id: 'item_citi', type: 'credit', state: 'closed', assumed: true, end: '2025-10-20' },
+    { ids: ['manual_wallet'], account: 'Wallet', institution: 'Cash', item_id: null, type: 'depository', state: 'closed', assumed: false, end: '2025-11-01' },
+    { ids: ['acc_away'], account: 'Brokerage cash', institution: 'Schwab', item_id: null, type: null, state: 'untracked', assumed: false, end: '2024-01-01' },
+    { ids: ['acc_2019'], account: 'Old ••0001', institution: 'Chase', item_id: 'item_chase', type: 'depository', state: 'closed', assumed: false, end: '2019-01-01' },
+    { ids: ['acc_next'], account: 'Next ••0002', institution: 'Chase', item_id: 'item_chase', type: 'depository', state: 'closed', assumed: false, end: '2026-02-01' },
+  ];
+  const on = (id: string, date: string, amount: number, account_id: string, over: Partial<Txn> = {}) => row(id, date, amount, { account_id, ...over });
+  const wallet = { source: 'manual', account_name: 'Wallet', institution_name: 'Cash' };
+  const ROWS: Txn[] = [
+    on('chk-feb', '2025-02-10', 100, 'acc_chk', { category: 'medical' }),
+    on('chk-pay', '2025-02-11', -900, 'acc_chk', { category: 'income' }),
+    on('chk-jun', '2025-06-15', 50, 'acc_chk'),
+    on('card-apr30', '2025-04-30', 20, 'acc_card', { category: 'medical' }),
+    // On the card's end day, and after it: left out.
+    on('card-may1', '2025-05-01', 30, 'acc_card', { category: 'medical' }),
+    on('card-jul', '2025-07-04', 40, 'acc_card'),
+    on('sav-aug31', '2025-08-31', 5, 'acc_sav'),
+    on('sav-sep2', '2025-09-02', 7, 'acc_sav'),
+    on('joint-mar14', '2025-03-14', 3, 'acc_joint'),
+    // Under the joint account's earlier id, after its end: left out too.
+    on('joint-apr', '2025-04-01', 9, 'acc_joint_old', { category: 'medical' }),
+    on('wallet-oct31', '2025-10-31', 12, 'manual_wallet', wallet),
+    on('wallet-nov5', '2025-11-05', 6, 'manual_wallet', wallet),
+    on('away-mar', '2025-03-03', 70, 'acc_away', { category: 'income', amount: -70 }),
+    // A row with no account: a bank row as the Activity tab has it.
+    row('no-account', '2025-12-01', 1),
+  ];
+  const LEFT_OUT = ['card-may1', 'card-jul', 'sav-sep2', 'joint-apr', 'wallet-nov5', 'away-mar'];
+  /** The rows the Activity tab has: the assembly leaves the rest out. */
+  const KEPT = ROWS.filter((t) => !LEFT_OUT.includes(t.transaction_id));
+  const MANUAL = [
+    { account_id: 'manual_wallet', name: 'Wallet', institution: 'Cash', type: 'depository', updated_at: null },
+    { account_id: 'manual_jar', name: 'Jar', institution: 'Home', type: 'depository', updated_at: null },
+  ];
+  const JAR: EndedFacts = { ids: ['manual_jar'], account: 'Jar', institution: 'Home', item_id: null, type: 'depository', state: 'closed', assumed: false, end: '2024-12-31' };
+  const report = (over: Partial<ReportInput> = {}) =>
+    buildReport(input({ rows: ROWS, ended: ENDED, sources: [chase(), chase({ item_id: 'item_citi', institution_name: 'Citi' })], ...over }));
+
+  test('its rows from its end day on are left out, under every id it has had: totals, categories, months and the marked group are the Activity tab’s', () => {
+    const r = report({ marked: ['medical'] });
+    const tab = buildReport(input({ rows: KEPT, sources: [chase(), chase({ item_id: 'item_citi', institution_name: 'Citi' })], marked: ['medical'] }));
+    expect(r.totals).toEqual(tab.totals);
+    expect(r.totals).toMatchObject({ money_in: 900, money_out: 100 + 50 + 20 + 3 + 5 + 12 + 1, transactions: KEPT.length });
+    expect([r.money_in, r.money_out, r.marked]).toEqual([tab.money_in, tab.money_out, tab.marked]);
+    const figures = (x: typeof r) => x.months.map((m) => [m.month, m.money_in, m.money_out, m.net, m.transactions]);
+    expect(figures(r)).toEqual(figures(tab));
+    expect(r.appendix!.rows.map((x) => x.name)).toEqual(['chk-feb', 'card-apr30']);
+    expect(r.categories).toEqual(tab.categories);
+    // A month as the Activity tab shows it, from the rows it has.
+    const april = period({ kind: 'range', start: '2025-04-01', end: '2025-04-30' });
+    const shown = activityTab(KEPT.filter((t) => t.date.startsWith('2025-04')));
+    expect(shown.out).toBe(formatMoney(report({ period: april }).totals.money_out, 'USD'));
+    expect(shown.out).toBe(formatMoney(20, 'USD'));
+  });
+
+  test('the sources list each account whose end the period has something to say of, as closed, no longer yours or not followed from its day', () => {
+    const r = report();
+    expect(r.ended).toEqual([
+      { account: 'Brokerage cash', institution: 'Schwab', state: 'untracked', assumed: false, end: '2024-01-01', counted_through: null, not_counted: 1 },
+      { account: 'Joint ••4444', institution: 'Ally', state: 'left', assumed: false, end: '2025-03-15', counted_through: '2025-03-14', not_counted: 1 },
+      { account: 'Card ••2222', institution: 'Chase', state: 'closed', assumed: false, end: '2025-05-01', counted_through: '2025-04-30', not_counted: 2 },
+      { account: 'Savings ••3333', institution: 'Chase', state: 'untracked', assumed: false, end: '2025-09-01', counted_through: '2025-08-31', not_counted: 1 },
+      { account: 'Double Cash ••5555', institution: 'Citi', state: 'closed', assumed: true, end: '2025-10-20', counted_through: '2025-10-19', not_counted: 0 },
+      { account: 'Wallet', institution: 'Cash', state: 'closed', assumed: false, end: '2025-11-01', counted_through: '2025-10-31', not_counted: 1 },
+    ]);
+    expect(r.ended.map((e) => [endedWords(e, iso), endedCounted(e, iso)])).toEqual([
+      ['Not followed from 2024-01-01', 'Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
+      ['No longer yours from 2025-03-15', 'Counted through 2025-03-14; 1 transaction dated from then is in Nya and left out'],
+      ['Closed on 2025-05-01', 'Counted through 2025-04-30; 2 transactions dated from then are in Nya and left out'],
+      ['Not followed from 2025-09-01', 'Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
+      ['Assumed closed on 2025-10-20', 'Counted through 2025-10-19'],
+      ['Closed on 2025-11-01', 'Counted through 2025-10-31; 1 transaction dated from then is in Nya and left out'],
+    ]);
+    // Closed in 2019 with nothing in 2025, and closing in 2026: nothing to say
+    // of 2025. In 2026, what is still the person's, or only assumed closed,
+    // still is, and the one closing then.
+    expect(r.ended.map((e) => e.account)).not.toContain('Old ••0001');
+    expect(report({ period: period({ kind: 'year', year: 2026 }) }).ended.map((e) => e.account)).toEqual([
+      'Brokerage cash',
+      'Savings ••3333',
+      'Double Cash ••5555',
+      'Next ••0002',
+    ]);
+    // What the totals leave out says it too.
+    expect(totalsNote(r)).toEndWith('6 transactions on an account that had ended by their date are left out, as everywhere in Nya.');
+    expect(totalsNote(buildReport(input({ rows: KEPT })))).not.toContain('ended');
+  });
+
+  test('closed and no longer yours are never gaps; an assumed closure and an account still yours but not followed are, from their day', () => {
+    const r = report();
+    expect(r.gaps).toEqual([
+      { kind: 'assumed_closed', item_id: 'item_citi', institution: 'Citi', account: 'Double Cash ••5555', on: '2025-10-20' },
+      { kind: 'untracked', item_id: 'item_chase', institution: 'Chase', account: 'Savings ••3333', from: '2025-09-01', not_counted: 1 },
+      { kind: 'untracked', item_id: null, institution: 'Schwab', account: 'Brokerage cash', from: '2024-01-01', not_counted: 1 },
+    ]);
+    expect(statusHeadline(r)).toBe('This report may be incomplete:');
+    expect(problemLines(r, iso)).toEqual([
+      'Double Cash ••5555 at Citi stopped appearing, and as nobody said whether it closed, Nya took it as closed on 2025-10-20: if it is still open, its transactions from then aren’t here.',
+      'You stopped following Savings ••3333 at Chase from 2025-09-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
+      'You stopped following Brokerage cash at Schwab from 2024-01-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
+      ASSUMED_REMEDY,
+    ]);
+    // Said in its connection's row too, in a few words.
+    expect(r.gaps.filter((g) => g.item_id === 'item_citi').map((g) => gapShort(g, iso))).toEqual(['Double Cash ••5555 assumed closed on 2025-10-20']);
+    expect(r.gaps.filter((g) => g.item_id === 'item_chase').map((g) => gapShort(g, iso))).toEqual(['Savings ••3333 not followed from 2025-09-01']);
+    // Each month from its day says it.
+    const gapsIn = (m: string) => r.months.find((x) => x.month === m)!.gaps;
+    expect(gapsIn('2025-01')).toEqual(['Schwab']);
+    expect(gapsIn('2025-08')).toEqual(['Schwab']);
+    expect(gapsIn('2025-09')).toEqual(['Chase', 'Schwab']);
+    expect(gapsIn('2025-10')).toEqual(['Chase', 'Citi', 'Schwab']);
+    // A closure confirmed, and an account no longer the person's: nothing
+    // of theirs is missing, and the report says nothing is known to be.
+    const settled = report({ ended: ENDED.filter((e) => !e.assumed && e.state !== 'untracked') });
+    expect(settled.gaps).toEqual([]);
+    expect(statusHeadline(settled)).toBe('Nothing is known to be missing from this period.');
+    expect(settled.ended.map((e) => e.account)).toEqual(['Joint ••4444', 'Card ••2222', 'Wallet']);
+    // An investment account's or a loan's own activity is never in a report
+    // (the scope caveat says so): listed, and no gap.
+    const scoped = report({
+      ended: [
+        { ids: ['acc_ira'], account: 'IRA ••4444', institution: 'Vanguard', item_id: null, type: 'investment', state: 'closed', assumed: true, end: '2025-06-01' },
+        { ids: ['acc_loan'], account: 'Car loan', institution: 'Ally', item_id: null, type: 'loan', state: 'untracked', assumed: false, end: '2025-02-01' },
+      ],
+      missed: [{ account: 'IRA ••4444', institution: 'Vanguard', item_id: null, type: 'investment', from: '2025-03-01', to: '2025-03-09' }],
+    });
+    expect(scoped.gaps).toEqual([]);
+    expect(scoped.ended.map((e) => [e.account, endedWords(e, iso)])).toEqual([
+      ['Car loan', 'Not followed from 2025-02-01'],
+      ['IRA ••4444', 'Assumed closed on 2025-06-01'],
+    ]);
+  });
+
+  test('a window an account was missing is a gap on its days, and only theirs', () => {
+    const missed: MissedFacts[] = [
+      { account: 'Checking ••1111', institution: 'Chase', item_id: 'item_chase', type: 'depository', from: '2025-03-13', to: '2025-03-18' },
+      { account: 'Checking ••1111', institution: 'Chase', item_id: 'item_chase', type: 'depository', from: '2024-06-01', to: '2024-06-01' },
+    ];
+    const r = buildReport(input({ rows: MARCH, missed }));
+    expect(r.gaps).toEqual([{ kind: 'missed', item_id: 'item_chase', institution: 'Chase', account: 'Checking ••1111', from: '2025-03-13', to: '2025-03-18' }]);
+    expect(sentencesOf(r.gaps)).toEqual(['Checking ••1111 was missing at Chase from 2025-03-13 to 2025-03-18, so this report may be missing its transactions from those days.']);
+    expect(gapShort(r.gaps[0], iso)).toBe('Checking ••1111 missing from 2025-03-13 to 2025-03-18');
+    expect(r.months.filter((m) => m.uncertain).map((m) => m.month)).toEqual(['2025-03']);
+    const one = buildReport(input({ period: period({ kind: 'year', year: 2024 }), missed }));
+    expect(sentencesOf(one.gaps)).toEqual(['Checking ••1111 was missing at Chase on 2024-06-01, so this report may be missing its transactions from that day.']);
+    expect(buildReport(input({ period: period({ kind: 'year', year: 2023 }), missed })).gaps.filter((g) => g.kind === 'missed')).toEqual([]);
+  });
+
+  test('a connection whose every account had ended by the period’s first day has nothing in it to be missing: listed, no gap, and not what the data is as of', () => {
+    // Citi stopped syncing in 2024, after its only card closed.
+    const citi = chase({ item_id: 'item_citi', institution_name: 'Citi', synced_at: '2024-03-02T15:00:00.000Z', first_date: '2020-01-01', ended_by: '2024-02-01' });
+    const r = buildReport(input({ sources: [chase(), citi] }));
+    expect(r.gaps).toEqual([]);
+    expect(r.data_as_of).toBe(chase().synced_at);
+    expect(r.institutions.find((i) => i.item_id === 'item_citi')).toMatchObject({ ended_by: '2024-02-01', synced_at: '2024-03-02T15:00:00.000Z' });
+    expect(endedConnection('2024-02-01', iso)).toBe('Its accounts had all ended by 2024-02-01: nothing of it is in this period');
+    const csv = parseCsv(reportCsv(r).slice(1));
+    expect(csv.find((x) => x[0] === 'institution' && x[1] === 'Citi')![7]).toBe(
+      'transactions last brought in 2024-03-02T15:00:00.000Z; transactions in Nya from 2020-01-01; Its accounts had all ended by 2024-02-01: nothing of it is in this period'
+    );
+    // In a period it counted in, its gaps are said as ever.
+    const earlier = buildReport(input({ period: period({ kind: 'year', year: 2024 }), sources: [chase(), citi] }));
+    expect(earlier.gaps.map((g) => [g.kind, g.institution])).toEqual([['stale', 'Citi']]);
+    expect(earlier.data_as_of).toBe('2024-03-02T15:00:00.000Z');
+  });
+
+  test('a removed connection’s account that ended by the period’s first day had nothing in it to go with the connection: no gap, though it isn’t back', () => {
+    const wells: RemovedFacts = {
+      institution_name: 'Wells Fargo',
+      institution_id: null,
+      first_seen: '2023-01-10',
+      last_seen: '2025-06-30',
+      accounts: [
+        { account_id: 'acc_wf_chk', name: 'Checking', mask: '1', type: 'depository' },
+        { account_id: 'acc_wf_card', name: 'Card', mask: '2', type: 'credit' },
+      ],
+    };
+    const closed = (id: string, end: string): EndedFacts => ({ ids: [id], account: id, institution: 'Wells Fargo', item_id: null, type: 'depository', state: 'closed', assumed: false, end });
+    // The checking account closed in 2024: only the card's transactions can be missing.
+    const r = buildReport(input({ removed: [wells], ended: [closed('acc_wf_chk', '2024-11-01')] }));
+    expect(r.gaps).toEqual([{ kind: 'removed', item_id: null, institution: 'Wells Fargo', last_seen: '2025-06-30', accounts: ['Card ••2'], partly_back: false }]);
+    expect(r.removed[0]).toMatchObject({ connected_again: false, not_back: ['Checking ••1', 'Card ••2'] });
+    // Both closed before 2025: nothing of theirs is missing from it.
+    const both = buildReport(input({ removed: [wells], ended: [closed('acc_wf_chk', '2024-11-01'), closed('acc_wf_card', '2025-01-01')] }));
+    expect(both.gaps).toEqual([]);
+    expect(both.removed).toHaveLength(1);
+    // One that closed during the period may have had transactions before it: still a gap.
+    const during = buildReport(input({ removed: [wells], ended: [closed('acc_wf_chk', '2025-03-01'), closed('acc_wf_card', '2025-01-01')] }));
+    expect(during.gaps.map((g) => g.kind === 'removed' && g.accounts)).toEqual([['Checking ••1']]);
+  });
+
+  test('a manual account that ended by the period’s first day isn’t a source of it; one that ended in it is, with what it counts', () => {
+    const r = report({ manual: MANUAL, ended: [...ENDED, JAR] });
+    expect(r.manual.map((m) => [m.name, m.transactions])).toEqual([['Wallet', 1]]);
+    expect(r.ended.map((e) => e.account)).not.toContain('Jar');
+    // Its rows in the period, had it any, would list it with them.
+    const withRow = report({ manual: MANUAL, ended: [...ENDED, JAR], rows: [...ROWS, on('jar-jan', '2025-01-09', 4, 'manual_jar', { source: 'manual' })] });
+    expect(withRow.ended.find((e) => e.account === 'Jar')).toMatchObject({ counted_through: null, not_counted: 1 });
+    expect(withRow.totals).toEqual(r.totals);
+  });
+
+  test('the CSV says the same: each account that ended, what it means, and what the totals leave out', () => {
+    const r = report();
+    const rows = parseCsv(reportCsv(r).slice(1));
+    const of = (section: string) => rows.filter((x) => x[0] === section);
+    expect(of('ended_account').map((x) => [x[1], x[7]])).toEqual([
+      ['Schwab: Brokerage cash', 'Not followed from 2024-01-01. Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
+      ['Ally: Joint ••4444', 'No longer yours from 2025-03-15. Counted through 2025-03-14; 1 transaction dated from then is in Nya and left out'],
+      ['Chase: Card ••2222', 'Closed on 2025-05-01. Counted through 2025-04-30; 2 transactions dated from then are in Nya and left out'],
+      ['Chase: Savings ••3333', 'Not followed from 2025-09-01. Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
+      ['Citi: Double Cash ••5555', 'Assumed closed on 2025-10-20. Counted through 2025-10-19'],
+      ['Cash: Wallet', 'Closed on 2025-11-01. Counted through 2025-10-31; 1 transaction dated from then is in Nya and left out'],
+    ]);
+    expect(of('caveat').map((x) => x[1])).toContain(ENDED_NOTE);
+    expect(of('gap').map((x) => x[1])).toEqual(problemLines(r, iso));
+    expect(of('total')[0][7]).toContain('6 transactions on an account that had ended by their date are left out');
+    expect(of('institution').find((x) => x[1] === 'Citi')![7]).toContain('Double Cash ••5555 assumed closed on 2025-10-20');
+    // None ended: no such rows, and no such note.
+    const none = parseCsv(reportCsv(buildReport(input({ rows: KEPT }))).slice(1));
+    expect(none.filter((x) => x[0] === 'ended_account')).toEqual([]);
+    expect(none.map((x) => x[1])).not.toContain(ENDED_NOTE);
   });
 });
 

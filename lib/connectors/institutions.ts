@@ -41,6 +41,22 @@
 // Its last balances are still shown, with their own date, as last known;
 // never written as measured, and never recovered from the history layer.
 //
+// AN ACCOUNT THAT ENDED (lib/lifecycle.ts: closed, no longer the person's, or
+// no longer followed, from a day that has come) holds nothing: it counts in
+// nothing from its end, so its going missing from an answer, a problem
+// SimpleFIN names for it alone, its waiting for a balance or an answer about
+// its sign, or its bank's old balance for it says nothing about the rest of
+// its bank, as a Plaid account's absence holds nothing once it has an end
+// (lib/vanished.ts). It stays on its card only while the latest answer was
+// whole and current for it (its balance is a measurement, recorded with the
+// day's total, which the history subtracts from its end on); else it is left
+// off: its last balance is no measurement of today, and a total recorded
+// with it would count it with nothing to subtract. The rest of the bank is
+// held, and recorded, as ever; a bank where every account ended, by nothing,
+// a failed request included. `ended` is those accounts' ids, from the
+// caller's read of the lifecycle: none when that couldn't be read, which only
+// holds more.
+//
 // SIGNS. A balance is kept as SimpleFIN reported it and turned into Nya's
 // sign here. The protocol's convention, which SimpleFIN Bridge follows, is the
 // holder's side: money held positive, money owed negative. So an account the
@@ -158,23 +174,32 @@ export function balanceTooOld(a: Pick<ConnectorAccount, 'balance_at'>, now: numb
  * asks again within REFETCH_HOURS unless it was (lib/connectors/sync.ts), so a
  * held bank is never left held for a day by a fetch it skipped.
  */
-export function answeredWhole(conn: ConnectorConnection, tracked: readonly ConnectorAccount[], now: number): boolean {
+export function answeredWhole(conn: ConnectorConnection, tracked: readonly ConnectorAccount[], now: number, ended: ReadonlySet<string> = new Set()): boolean {
   const f = conn.last_fetch;
   if (!f || f.failure) return false;
-  const ids = new Set(tracked.map((a) => a.account_id));
+  // An account that ended holds nothing (see the header).
+  const live = tracked.filter((a) => !ended.has(a.account_id));
+  const ids = new Set(live.map((a) => a.account_id));
   if (f.problems.some((p) => p.accounts === null || p.accounts.some((id) => ids.has(id)))) return false;
   if (f.missing.some((id) => ids.has(id))) return false;
-  return tracked.every((a) => a.reported_balance !== null && !balanceTooOld(a, now));
+  return live.every((a) => a.reported_balance !== null && !balanceTooOld(a, now));
 }
+
+const NONE: ReadonlySet<string> = new Set();
 
 /** What is wrong with one card's accounts, its words, and whose side a
  *  failed request said it was on. */
 function issueOf(
   conn: ConnectorConnection | undefined,
-  group: ConnectorAccount[],
-  now: number
+  all: ConnectorAccount[],
+  now: number,
+  ended: ReadonlySet<string>
 ): { issue: ConnectorIssue; messages: string[]; accounts: string[]; side?: Side } {
   if (!conn) return { issue: 'gone', messages: [], accounts: [] };
+  // An account that ended holds nothing (see the header): a bank where every
+  // one has, nothing at all.
+  const group = all.filter((a) => !ended.has(a.account_id));
+  if (group.length === 0 && all.length > 0) return { issue: 'ok', messages: [], accounts: [] };
   const ids = new Set(group.map((a) => a.account_id));
   const fetch = conn.last_fetch;
   if (fetch?.failure) return { issue: fetch.failure.kind, messages: [fetch.failure.message], accounts: [], side: fetch.failure.side };
@@ -228,11 +253,20 @@ function errorLine(issue: ConnectorIssue, label: string, messages: string[]): st
   }
 }
 
+/** The id of the card an account is on: "connector:<connection>:<ref>". */
+export const connectorCardId = (a: Pick<ConnectorAccount, 'connection_id' | 'institution_ref'>): string => `connector:${a.connection_id}:${a.institution_ref}`;
+
 /**
  * The cards, from what is stored. Pure. Each connection's accounts are
- * grouped by bank, in name order; the card's id is "connector:<connection>:<ref>".
+ * grouped by bank, in name order; the card's id is connectorCardId's.
+ * `ended`: the accounts whose end has come, which hold nothing (see the header).
  */
-export function buildConnectorInstitutions(connections: ReadonlyMap<string, ConnectorConnection>, accounts: Iterable<ConnectorAccount>, now: number): InstitutionResult[] {
+export function buildConnectorInstitutions(
+  connections: ReadonlyMap<string, ConnectorConnection>,
+  accounts: Iterable<ConnectorAccount>,
+  now: number,
+  ended: ReadonlySet<string> = new Set()
+): InstitutionResult[] {
   const groups = new Map<string, ConnectorAccount[]>();
   for (const a of accounts) {
     const key = `${a.connection_id}\n${a.institution_ref}`;
@@ -247,9 +281,11 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
     const conn = connections.get(first.connection_id);
     const kind: ConnectorKind = conn?.connector ?? first.connector;
     const label = connectorOf(kind).label;
-    const found = issueOf(conn, group, now);
+    const found = issueOf(conn, group, now, ended);
     const error = errorLine(found.issue, label, found.messages);
-    const shown = group.map((a) => {
+    // One that ended, only while the latest answer measured it (see the header).
+    const kept = group.filter((a) => !ended.has(a.account_id) || issueOf(conn, [a], now, NONE).issue === 'ok');
+    const shown = kept.map((a) => {
       const balance = nyaBalance(a);
       const at = asOfOf(a);
       return {
@@ -272,15 +308,16 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
     });
     // The oldest of the balances shown, for "balances as of".
     const asOf = error
-      ? group
+      ? kept
           .filter((a) => a.reported_balance !== null && asOfOf(a))
           .map((a) => asOfOf(a)!)
           .sort()[0]
       : undefined;
     // When the bank last synced cleanly: the oldest of its accounts' (an
-    // answer that reported a problem with it doesn't count).
-    const synced = group.map((a) => a.ok_at ?? null);
-    const lastOk = synced.every((t) => t !== null) ? (synced as string[]).sort()[0] : null;
+    // answer that reported a problem with it doesn't count), but those that
+    // ended, which no longer need to.
+    const synced = group.filter((a) => !ended.has(a.account_id)).map((a) => a.ok_at ?? null);
+    const lastOk = synced.length > 0 && synced.every((t) => t !== null) ? (synced as string[]).sort()[0] : null;
     const detail: ConnectorDetail = {
       connector: kind,
       label,
@@ -292,7 +329,7 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
     };
     out.push({
       institution_name: first.institution_name,
-      item_id: `connector:${first.connection_id}:${first.institution_ref}`,
+      item_id: connectorCardId(first),
       accounts: shown,
       holdings: [],
       error,
@@ -311,14 +348,15 @@ export function buildConnectorInstitutions(connections: ReadonlyMap<string, Conn
 }
 
 /** The cards, read from the stores: strict, so a connection or an account
- *  that can't be read throws, and the caller holds the gate. */
-export async function connectorInstitutions(ctx: Ctx, now: number = Date.now()): Promise<InstitutionResult[]> {
+ *  that can't be read throws, and the caller holds the gate. `ended` as for
+ *  buildConnectorInstitutions. */
+export async function connectorInstitutions(ctx: Ctx, now: number = Date.now(), ended: ReadonlySet<string> = new Set()): Promise<InstitutionResult[]> {
   // The accounts first: with none tracked, a connection entry that can't be
   // read holds nothing up.
   const accounts = await connectorAccountsStore.getAll(ctx);
   if (accounts.size === 0) return [];
   const connections = await connectionsStore.getAll(ctx);
-  return buildConnectorInstitutions(connections, accounts.values(), now);
+  return buildConnectorInstitutions(connections, accounts.values(), now, ended);
 }
 
 /** What a read-only display needs of the connector's banks (the API,
@@ -350,16 +388,21 @@ export type ConnectorBanksReport = {
  * Recording a snapshot reads both stores strictly (connectorInstitutions).
  * Storage out of reach still throws.
  */
-export async function connectorBanksReport(ctx: Ctx, now: number = Date.now()): Promise<ConnectorBanksReport> {
+export async function connectorBanksReport(
+  ctx: Ctx,
+  now: number = Date.now(),
+  /** As for buildConnectorInstitutions, or a read of them still under way. */
+  endedRead: ReadonlySet<string> | Promise<ReadonlySet<string>> = new Set()
+): Promise<ConnectorBanksReport> {
   const accounts = await connectorAccountsStore.getAllReport(ctx);
   const unreadable = [
     ...accounts.unreadable.map((account_id) => ({ account_id, reason: 'unreadable' as const })),
     ...accounts.unrecognised.map((account_id) => ({ account_id, reason: 'unrecognised' as const })),
   ];
   if (accounts.entries.size === 0) return { cards: [], accounts: accounts.entries, connections: new Map(), unreadableConnections: new Set(), unreadable, askedAt: new Map() };
-  const connections = await connectionsStore.getAllReport(ctx);
+  const [connections, ended] = await Promise.all([connectionsStore.getAllReport(ctx), endedRead]);
   const damaged = new Set([...connections.unreadable, ...connections.unrecognised]);
-  const cards = buildConnectorInstitutions(connections.entries, accounts.entries.values(), now).map((card) => {
+  const cards = buildConnectorInstitutions(connections.entries, accounts.entries.values(), now, ended).map((card) => {
     const id = card.connection_id ?? null;
     if (!id || !damaged.has(id) || !card.health?.detail) return card;
     const detail: ConnectorDetail = { ...card.health.detail, issue: 'unreadable', messages: [], accounts: [] };

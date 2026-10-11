@@ -366,6 +366,13 @@ describe('the payoff planner', () => {
     expect(html.indexOf("Citi couldn't be loaded")).toBeLessThan(html.indexOf('Paid off'));
   });
 
+  test('a card held at its last known balance is said to start from it, not to be missing (#50)', () => {
+    const held = { ...sapphire, held: { as_of: '2026-03-12' } };
+    const html = panel([chase([held], { unconfirmed_missing: 1 })]);
+    expect(html).toContain("isn't in its latest answer, so it starts from its last known balance, from Mar 12.");
+    expect(html).not.toContain("so it isn't in this plan");
+  });
+
   test("a recovered balance shows the day it's from, and why its terms are missing", () => {
     const html = panel([chase([{ ...sapphire, liability: undefined }], { stale_as_of: '2026-08-07', liabilities: 'unavailable', error: 'Could not fetch balances' })]);
     expect(html).toContain('balance from Aug 7');
