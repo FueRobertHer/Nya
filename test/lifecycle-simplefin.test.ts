@@ -402,6 +402,10 @@ describe('what an answer that moved the history on left out of an account that e
     ]);
     // A period inside its reach is short of nothing.
     expect((await report(dayOf(NOW - 30 * DAY))).gaps).toEqual([]);
+    // Reopened, it counts on those days too, and what didn't come then never will.
+    expect((await post({ account_id: card, state: 'active' })).body).toMatchObject({ reopened: true });
+    expect((await report(dayOf(NOW - 150 * DAY))).gaps).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', from: history.from, to: before }]);
+    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 2 * DAY), balance: 432.1 });
     expect(await statement(card)).toContain(`SimpleFIN left this account out of its answers about the days before ${shown(reach)}, so the statement may be missing its transactions from then.`);
   });
 

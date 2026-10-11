@@ -393,7 +393,7 @@ The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-ow
 | `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
 | `fetched_at` | When Nya received it. |
 | `ok_at` | When the bank last synced it cleanly: the time of the balance from the latest answer that reported no problem about it. Absent or `null` before one. |
-| `history_from`, `history_to` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the first day its own transactions are known from, once an older window of its connection's history left it out (or reported a problem with it alone), and the last day they are known to, once a recent answer that moved the history on did. Absent while its own transactions reach as far as its connection's history. A report says the days before its end outside them may be missing. |
+| `history_from`, `history_to` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the first day its own transactions are known from, once an older window of its connection's history left it out (or reported a problem with it alone), and the last day they are known to, once a recent answer that moved the history on did. Absent while its own transactions reach as far as its connection's history. A report says the days it counts on outside them (before its end, or every day once it is reopened) that its connection's history covers may be missing. |
 | `created_at` | When you started tracking it. |
 
 It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.

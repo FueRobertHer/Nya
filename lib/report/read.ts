@@ -396,7 +396,8 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
  *   - one tracked that ended, which answers moving its connection's history
  *     on left out (lib/connectors/sync.ts): the days before the first its own
  *     transactions are known from, and after the last they are known to, on
- *     the days it still counted (before its end), under its bank;
+ *     the days it counts (before its end, or every day once it is reopened,
+ *     since what didn't come then never will), under its bank;
  *   - one let go and kept by hand (`own`), not tracked again: the days its
  *     connection's history has reached back to since, before the first day
  *     it had then, and, for one that had ended, the days between the last its
@@ -420,7 +421,7 @@ function connectorMissed(
     if (from <= last) out.push({ ...facts, from, to: last });
   };
   for (const a of fed.accounts.values()) {
-    if (own.has(a.account_id) || hidden.has(a.account_id) || !endDay.has(a.account_id)) continue;
+    if (own.has(a.account_id) || hidden.has(a.account_id)) continue;
     const history = fed.connections.get(a.connection_id)?.history;
     if (!history) continue;
     const facts = { account: a.name, institution: throughName(a.institution_name, label), item_id: connectorCardId(a), type: a.type };
@@ -434,7 +435,7 @@ function connectorMissed(
     const history = fed.connections.get(e.connection_id)?.history;
     if (e.history_from && history && history.from < e.history_from) say(id, facts, history.from, addDays(e.history_from, -1));
     const letGoDay = dayIn(e.ended_at, period.time_zone) ?? e.ended_at.slice(0, 10);
-    if (e.history_to && endDay.has(id)) say(id, facts, addDays(e.history_to, 1), addDays(letGoDay, -1));
+    if (e.history_to) say(id, facts, addDays(e.history_to, 1), addDays(letGoDay, -1));
   }
   return out;
 }
