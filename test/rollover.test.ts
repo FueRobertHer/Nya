@@ -601,6 +601,23 @@ describe('which months may be incomplete', () => {
     expect(monthGapsOf('2026-03', NO_COVERAGE_GAPS)).toEqual([]);
   });
 
+  test('a connection whose every account ended leaves no month short from the month that day begins', () => {
+    const ended = {
+      ...NO_COVERAGE_GAPS,
+      stopped: [{ institution_name: 'Chase', last_ok_at: '2026-01-20T12:00:00Z', until: '2026-03-01' }],
+      without: [{ institution: 'Ally', reason: 'refused' as const, until: '2026-03-15' }],
+      unread: [{ what: 'How Chase is doing', until: '2026-03-01' }, { what: 'Transactions on your manual accounts' }],
+    };
+    expect(monthGapsOf('2026-02', ended).map((g) => g.kind)).toEqual(['stopped', 'without', 'unread', 'unread']);
+    // Chase's accounts all ended on March 1: nothing of it counts in March.
+    // Ally's ended on the 15th, so March still counts half a month of it.
+    expect(monthGapsOf('2026-03', ended)).toEqual([
+      { kind: 'without', institution: 'Ally', reason: 'refused' },
+      { kind: 'unread', what: 'Transactions on your manual accounts' },
+    ]);
+    expect(monthGapsOf('2026-04', ended)).toEqual([{ kind: 'unread', what: 'Transactions on your manual accounts' }]);
+  });
+
   test('in words', () => {
     const day = (s: string) => s.slice(0, 10);
     expect(monthGapsOf('2026-01', facts).map((g) => gapText(g, day))).toEqual([

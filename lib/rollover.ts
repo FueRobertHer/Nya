@@ -831,18 +831,24 @@ export type MonthGap =
   /** Transactions that month whose exclusion couldn't be read: counted. */
   | { kind: 'exclusions'; count: number };
 
+/** A fact about one connection: `until`, the day by which every account it
+ *  holds (not hidden) had ended (lib/lifecycle.ts), from which nothing of it
+ *  counts. From the month that day begins, it leaves no month short. */
+export type OfConnection = { until?: string | null };
+
 /** What says whether a month's transactions may be incomplete, gathered by
- *  lib/budget-month.ts from the read. */
+ *  lib/budget-month.ts from the read. An account's end is never one: it is
+ *  the person's word that nothing of it counts from that day. */
 export type CoverageFacts = {
   /** Institutions whose transactions aren't all in the read (lib/month-coverage.ts). */
   incomplete: Incomplete[];
   /** Connections whose transactions stopped arriving, and when each last synced. */
-  stopped: Stopped[];
+  stopped: (Stopped & OfConnection)[];
   /** Each linked institution's first stored day. */
   first: { institution: string; day: string }[];
-  without: { institution: string; reason: 'refused' | 'no_consent' }[];
+  without: ({ institution: string; reason: 'refused' | 'no_consent' } & OfConnection)[];
   /** What couldn't be read, in words: every month may be short of it. */
-  unread: string[];
+  unread: ({ what: string } & OfConnection)[];
   /** Transactions whose exclusion couldn't be read, by month. */
   exclusionUnknown: ReadonlyMap<string, number>;
 };
@@ -851,13 +857,16 @@ export const NO_COVERAGE_GAPS: CoverageFacts = { incomplete: [], stopped: [], fi
 
 /** Why a month's transactions may be incomplete: none when nothing says so. */
 export function monthGapsOf(month: string, facts: CoverageFacts): MonthGap[] {
-  const g = monthGaps(month, facts.incomplete, facts.stopped);
+  // A connection whose every account had ended by the month's first day has
+  // nothing in that month to be missing, however it is doing.
+  const counts = <T extends OfConnection>(xs: readonly T[]): T[] => xs.filter((x) => !x.until || x.until > `${month}-01`);
+  const g = monthGaps(month, facts.incomplete, counts(facts.stopped));
   const out: MonthGap[] = [
     ...g.missing.map((institution): MonthGap => ({ kind: 'missing', institution })),
     ...g.importing.map((institution): MonthGap => ({ kind: 'importing', institution })),
     ...g.stopped.map((s): MonthGap => ({ kind: 'stopped', institution: s.institution_name, since: s.last_ok_at })),
-    ...facts.without.map((w): MonthGap => ({ kind: 'without', institution: w.institution, reason: w.reason })),
-    ...facts.unread.map((what): MonthGap => ({ kind: 'unread', what })),
+    ...counts(facts.without).map((w): MonthGap => ({ kind: 'without', institution: w.institution, reason: w.reason })),
+    ...counts(facts.unread).map((u): MonthGap => ({ kind: 'unread', what: u.what })),
   ];
   // An institution missing or still importing is said so already.
   const said = new Set([...g.missing, ...g.importing]);

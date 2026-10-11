@@ -64,6 +64,8 @@ const { spendingByCategory } = await import('@/lib/totals');
 const { totalsCurrency } = await import('@/lib/spending');
 const { filedId, indexTaxonomy } = await import('@/lib/categories');
 const { readSpending } = await import('@/lib/api-read');
+const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
+const { rememberAccounts } = await import('@/lib/last-known');
 type Taxonomy = import('@/lib/categories').Taxonomy;
 type RuleCondition = import('@/lib/rules').RuleCondition;
 type RuleActions = import('@/lib/rules').RuleActions;
@@ -802,6 +804,88 @@ describe('rules (#36): applied on read, so every carry and the pool follow them 
     }
     // And the carry counts last month as they all do: 100 less 60.
     expect((await month()).body.carries.categories[food].carry).toBe(40);
+  });
+});
+
+describe('accounts that end (#50): their rows leave every month from their day, and the end is never a gap', () => {
+  const CARD = { type: 'credit', label: { name: 'Card', institution: 'Card Co', mask: '2222' }, item_id: 'item_card' };
+
+  /** A card at a connection of its own, as a sync leaves it, recorded as the
+   *  dashboard records its accounts. */
+  async function seedCard(rows: ReturnType<typeof txn>[]) {
+    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt('access-sandbox-y') });
+    const accounts = { acc_card: { name: 'Card', official_name: null, type: 'credit', subtype: 'credit card', mask: '2222', balances: null } };
+    await fake.set(
+      ctxKey('txns:item_card'),
+      await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    );
+    await syncsStore.set(ctx, 'item_card', { at: new Date().toISOString() });
+    await rememberAccounts(ctx, [{ item_id: 'item_card', accounts: [{ account_id: 'acc_card', name: 'Card', mask: '2222', type: 'credit' }], error: null }]);
+  }
+  const card = (id: string, date: string, amount: number) => txn(id, 'acc_card', 1, amount, { date, category: 'food and drink', institution_name: 'Card Co', account_name: 'Card' });
+
+  test('closed last month: its rows from then leave the carry and the pool, with no month made uncertain; reopened, all comes back', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    // Each history begins on the first of a month: no month is short of one.
+    await seedBank([row('pay', on(-2, 1), -1000, 'income'), row('lunch', on(-2, 3), 40)]);
+    await seedCard([card('card-a', on(-2, 1), 30), card('card-b', on(-1, 10), 20), card('card-c', on(0, 1), 5)]);
+    await rollover(t, 'food and drink', M(-2));
+    await post({ action: 'income', enabled: true, start: M(-2), month: NOW });
+    const food = named(t, 'food and drink').id;
+    const open = (await month()).body;
+    // 100 less 70, then 100 less 20; 1000 in, 95 out.
+    expect(open.carries.categories[food].carry).toBe(110);
+    expect(open.pool.available).toBe(905);
+    expect(open.spent[food]).toBe(5);
+
+    await markEnded(ctx, 'acc_card', { state: 'closed', on: `${M(-1)}-01` }, CARD);
+    const closed = (await month()).body;
+    expect(closed.carries.categories[food]).toMatchObject({ carry: 130, uncertain: [] });
+    expect(closed.pool).toMatchObject({ available: 930, uncertain: [] });
+    expect(closed.spent[food] ?? 0).toBe(0);
+    expect(closed.gaps).toEqual([]);
+    // The month before its end keeps its row; the read-only API agrees.
+    expect((await month(M(-2))).body.spent[food]).toBe(70);
+    expect((await readBudgets(ctx, { month: M(-1) })).budgets.find((b) => b.category_id === food)!.spent).toBe(0);
+
+    await reopenAccount(ctx, 'acc_card', new Map());
+    const reopened = (await month()).body;
+    expect({ carries: reopened.carries, pool: reopened.pool, spent: reopened.spent }).toEqual({ carries: open.carries, pool: open.pool, spent: open.spent });
+  });
+
+  test('a connection that broke after its only account closed leaves no month short from the month of the end', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('lunch', on(-2, 1), 40)]);
+    await seedCard([card('card-a', on(-2, 1), 30)]);
+    // The card's connection broke, and last synced in the middle of two months ago.
+    const lastOk = `${on(-2, 15)}T12:00:00.000Z`;
+    await syncsStore.set(ctx, 'item_card', { at: lastOk });
+    await noticesStore.set(ctx, 'item_card', { episode: 'e1', since: lastOk, state: 'needs_reauth', notified_at: null, reminded_at: null });
+    await rollover(t, 'food and drink', M(-2));
+    const food = named(t, 'food and drink').id;
+    expect((await month()).body.carries.categories[food].uncertain).toEqual([M(-2), M(-1)]);
+    // Closed from last month: nothing of it counts from then, so nothing of it
+    // can be missing; the month it last synced in still may be.
+    await markEnded(ctx, 'acc_card', { state: 'closed', on: `${M(-1)}-01` }, CARD);
+    const body = (await month()).body;
+    expect(body.carries.categories[food].uncertain).toEqual([M(-2)]);
+    expect(body.gaps.map((g: { month: string }) => g.month)).toEqual([M(-2)]);
+    expect((await readBudgets(ctx, { month: NOW })).incomplete_months).toEqual([{ month: M(-2), reasons: [`Card Co hasn’t synced since ${on(-2, 15)}`] }]);
+    // Reopened, it counts again, and so does its silence.
+    await reopenAccount(ctx, 'acc_card', new Map());
+    expect((await month()).body.carries.categories[food].uncertain).toEqual([M(-2), M(-1)]);
+  });
+
+  test('untracked from a day counts as an end does: the person said so', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('lunch', on(-2, 1), 40)]);
+    await seedCard([card('card-a', on(-2, 1), 30), card('card-b', on(-1, 10), 20)]);
+    await rollover(t, 'food and drink', M(-2));
+    const food = named(t, 'food and drink').id;
+    await markEnded(ctx, 'acc_card', { state: 'untracked', from: `${M(-1)}-01` }, CARD);
+    const body = (await month()).body;
+    expect(body.carries.categories[food]).toMatchObject({ carry: 130, uncertain: [] });
+    expect(body.gaps).toEqual([]);
   });
 });
 

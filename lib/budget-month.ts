@@ -29,6 +29,15 @@
 // counting such a month says it may be off. The first month with any
 // transactions is where carries and pools begin (the clamp), and is named.
 //
+// ENDED ACCOUNTS (lib/lifecycle.ts). An account that ended (closed, no
+// longer the person's, or no longer followed) has its rows from its end day
+// left out by the assembly itself, in every month, so carries and the pool
+// follow it, and reopening it brings them back exactly. Its end is never a
+// gap: the person said so. And a connection whose every account (not hidden)
+// has ended counts nothing from the last of their ends, so from that month on
+// it leaves no month short, however it is doing (a broken connection to a
+// closed card, say), as a report counts it (lib/report/build.ts).
+//
 // TWO READERS. The app's (readAppBudgets, then `app`) migrates budgets and
 // notes the budget set in the record (lib/budget-months-store.ts noteMonths),
 // so a change made elsewhere is pinned to the month it was first seen. The
@@ -49,6 +58,8 @@ import { readHealthForDisplay } from './connection-health';
 import { noticesStore } from './connection-records';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { manualTxnStore } from './manual-txns';
+import { endDays } from './lifecycle';
+import { rememberedAccountsReport } from './last-known';
 import { loadBudgets, budgetsForReading } from './budget-store';
 import { budgetMonthsStore, incomeCarryoverStore, noteMonths } from './budget-months-store';
 import { filedId, indexTaxonomy, type CategoryIndex, type Taxonomy } from './categories';
@@ -125,7 +136,9 @@ async function firstManualDay(ctx: Ctx, leftOut: ReadonlySet<string>): Promise<s
 export async function readMonthActivity(ctx: Ctx, opts: { since: string; includeHidden?: boolean; grow?: boolean }): Promise<MonthActivity> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: opts.includeHidden, withAccountIds: true, since: opts.since });
   const leftOut = opts.includeHidden ? new Set<string>() : bank.hidden;
-  const [finished, fed, health, notices, manualFirst] = await Promise.all([
+  // When each account ended, through the links the hidden set was read by.
+  const endDay = endDays(bank.lifecycle);
+  const [finished, fed, health, notices, manualFirst, remembered] = await Promise.all([
     finishActivity(ctx, bank.payload, leftOut, { since: opts.since, grow: !!opts.grow }),
     // LENIENT, for this display only, as the read-only API reads them: what
     // can't be read is said by the assembly's own notes.
@@ -136,33 +149,56 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     readHealthForDisplay(ctx),
     noticesStore.getAllReport(ctx).catch(() => null),
     firstManualDay(ctx, leftOut),
+    // LENIENT, for this display only: each connection's accounts, as last
+    // recorded (lib/last-known.ts), read only when some account has ended.
+    // What can't be read leaves its connection's gaps as they are.
+    endDay.size > 0 ? rememberedAccountsReport(ctx).catch(() => null) : null,
   ]);
   const rows = finished.transactions;
   const view = noTransactionsView(bank.payload);
+
+  // The day by which every account of a connection (not hidden) had ended,
+  // or null while one counts (see ENDED ACCOUNTS). A linked connection's are
+  // the accounts last recorded for it and each that ended there; unknown, it
+  // is null.
+  const endedBy = (ids: Iterable<string>): string | null => {
+    const shown = [...new Set(ids)].filter((id) => !leftOut.has(id));
+    if (shown.length === 0 || !shown.every((id) => endDay.has(id))) return null;
+    return shown.map((id) => endDay.get(id)!).sort()[shown.length - 1];
+  };
+  const itemEndedBy = (item_id: string): string | null => {
+    if (!remembered || remembered.unreadable.includes(item_id)) return null;
+    const endedThere = [...bank.lifecycle.accounts].flatMap(([id, { entry }]) => (entry.item_id === item_id ? [id] : []));
+    return endedBy([...(remembered.byItem[item_id] ?? []).map((a) => a.account_id), ...endedThere]);
+  };
 
   // Connections whose transactions stopped arriving: each linked one in a
   // broken state (its notice's), with when it last synced, and each bank a
   // SimpleFIN connection reaches whose card says so; never one that holds no
   // bank account or card (lib/month-coverage.ts stoppedConnections).
+  const quiet = quietItemIds(view);
   const linked = bank.sources.map((s) => {
     const state = notices?.entries.get(s.item_id)?.state;
     const last = health?.syncs.get(s.item_id)?.at ?? null;
     return { item_id: s.item_id, institution_name: s.institution_name, ...(state ? { health: { state, last_ok_at: last } } : {}) };
   });
   const cards = fed.cards.filter((c) => !c.accounts.every((a: { account_id: string }) => leftOut.has(a.account_id)));
-  const stopped = stoppedConnections([...linked, ...cards], quietItemIds(view));
+  const stopped = [
+    ...linked.flatMap((l) => stoppedConnections([l], quiet).map((s) => ({ ...s, until: itemEndedBy(l.item_id) }))),
+    ...cards.flatMap((c) => stoppedConnections([c], quiet).map((s) => ({ ...s, until: endedBy(c.accounts.map((a: { account_id: string }) => a.account_id)) }))),
+  ];
 
-  const unread: string[] = [];
-  if (finished.manual_unread === 'all') unread.push('Transactions on your manual accounts');
-  else if (finished.manual_unread.length > 0) unread.push(`Transactions on ${finished.manual_unread.length} manual account${finished.manual_unread.length === 1 ? '' : 's'}`);
-  if (!bank.own_read.categories) unread.push('The categories you chose for some transactions');
-  if (!bank.own_read.exclusions) unread.push('The exclusions you carried across a reconnect');
+  const unread: CoverageFacts['unread'] = [];
+  if (finished.manual_unread === 'all') unread.push({ what: 'Transactions on your manual accounts' });
+  else if (finished.manual_unread.length > 0) unread.push({ what: `Transactions on ${finished.manual_unread.length} manual account${finished.manual_unread.length === 1 ? '' : 's'}` });
+  if (!bank.own_read.categories) unread.push({ what: 'The categories you chose for some transactions' });
+  if (!bank.own_read.exclusions) unread.push({ what: 'The exclusions you carried across a reconnect' });
   // How a connection is doing that can't be read: whether it stopped isn't
   // known, so neither is whether a month has all of its transactions.
-  if (health === null || notices === null) unread.push('How each bank connection is doing');
+  if (health === null || notices === null) unread.push({ what: 'How each bank connection is doing' });
   else {
     const damaged = new Set([...health.unread, ...notices.unreadable, ...notices.unrecognised]);
-    for (const s of bank.sources) if (damaged.has(s.item_id) && !s.no_transactions) unread.push(`How ${s.institution_name} is doing`);
+    for (const s of bank.sources) if (damaged.has(s.item_id) && !s.no_transactions) unread.push({ what: `How ${s.institution_name} is doing`, until: itemEndedBy(s.item_id) });
   }
 
   const exclusionUnknown = new Map<string, number>();
@@ -186,7 +222,9 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
       incomplete: finished.incomplete,
       stopped,
       first: bank.sources.flatMap((s) => (s.first_date && !s.no_transactions && s.coverage !== 'missing' ? [{ institution: s.institution_name, day: s.first_date }] : [])),
-      without: bank.sources.flatMap((s) => (s.no_transactions === 'refused' || s.no_transactions === 'no_consent' ? [{ institution: s.institution_name, reason: s.no_transactions }] : [])),
+      without: bank.sources.flatMap((s) =>
+        s.no_transactions === 'refused' || s.no_transactions === 'no_consent' ? [{ institution: s.institution_name, reason: s.no_transactions, until: itemEndedBy(s.item_id) }] : []
+      ),
       unread,
       exclusionUnknown,
     },
