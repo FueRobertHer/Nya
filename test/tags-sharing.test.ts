@@ -4,9 +4,9 @@ import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKe
 
 // Tags and notes are private (#40), and so are rules (#36): what someone is
 // shown of an account shared with them at the transactions level is the
-// bank's or the manual row's date, name, amount and currency, never a tag, a
-// note, or anything a rule says about the row (its name, its category, that
-// it is hidden), whatever the owner has put on it.
+// bank's, the manual row's or SimpleFIN's date, name, amount and currency,
+// never a tag, a note, or anything a rule says about the row (its name, its
+// category, that it is hidden), whatever the owner has put on it.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // The real ceiling on a stored value: a file run before this one may have
@@ -42,7 +42,36 @@ const { rememberAccounts } = await import('@/lib/last-known');
 const links = await import('@/lib/links');
 const { saveManualAccount } = await import('@/lib/manual');
 const { recordSnapshot } = await import('@/lib/history');
-const { newManualTxn, addManualTxn } = await import('@/lib/manual-txns');
+const { newManualTxn, addManualTxn, manualTxnStore } = await import('@/lib/manual-txns');
+const { connectorAccountsStore } = await import('@/lib/connectors/store');
+
+/** An account SimpleFIN keeps up to date, with one row of the bank's in its book. */
+const FED = 'manual_00000000-0000-4000-8000-00000000f00d';
+async function simplefinAccount(): Promise<string> {
+  const at = new Date().toISOString();
+  await connectorAccountsStore.set(TEST_CTX, FED, {
+    version: 1,
+    account_id: FED,
+    connection_id: 'conn_00000000-0000-4000-8000-00000000c0aa',
+    connector: 'simplefin',
+    remote_id: 'CHK',
+    name: 'Fed checking',
+    institution_name: 'My Bank',
+    institution_key: 'name:my bank',
+    institution_ref: '0123456789abcdef',
+    type: 'depository',
+    subtype: null,
+    currency: 'USD',
+    reported_balance: 250,
+    reported_available: null,
+    balance_at: at,
+    fetched_at: at,
+    created_at: at,
+  } as any);
+  const row = { ...newManualTxn(FED, { date: daysAgo(2), name: 'SF COFFEE', amount: 6, currency: 'USD', category: null, note: null }), source: 'simplefin', source_id: 'sf-1' };
+  await manualTxnStore.set(TEST_CTX, FED, { version: 1, rows: [row] });
+  return row.id;
+}
 
 const account = (id: string) => ({
   account_id: id,
@@ -98,11 +127,13 @@ afterEach(() => {
 });
 
 describe('what a share shows of a transaction', () => {
-  test('never its tags, its note or what a rule does, on a bank’s row or a manual one', async () => {
+  test('never its tags, its note or what a rule does, on a bank’s row, a manual one or one SimpleFIN brought', async () => {
     const { row } = await addManualTxn(ownerCtx, newManualTxn('manual_house', { date: daysAgo(2), amount: 40, currency: 'USD', name: 'Hardware store', category: null, note: null }));
+    const fed = await simplefinAccount();
     for (const [transaction_id, extra] of [
       ['t_recent', {}],
       [row.id, { account_id: 'manual_house' }],
+      [fed, { account_id: FED }],
     ] as const) {
       const r = await as('user_owner', () => route('transaction-annotations', 'PATCH', { transaction_id, ...extra, new_tag: 'SECRET-TAG', note: 'SECRET-NOTE' }));
       expect(r.status).toBe(200);
@@ -118,7 +149,8 @@ describe('what a share shows of a transaction', () => {
     const mine = (await as('user_owner', () => route('transactions', 'GET'))).body;
     expect(mine.transactions.find((t: any) => t.transaction_id === 't_recent')).toMatchObject({ note: 'SECRET-NOTE', tags: [expect.any(String)], name: 'SECRET-RULE-NAME', excluded: true });
 
-    await as('user_owner', () => route('connections', 'PUT', { id: pair, accounts: { acct_joint: 'transactions', manual_house: 'transactions' } }));
+    expect(mine.transactions.find((t: any) => t.transaction_id === fed)).toMatchObject({ note: 'SECRET-NOTE', name: 'SECRET-RULE-NAME', excluded: true });
+    await as('user_owner', () => route('connections', 'PUT', { id: pair, accounts: { acct_joint: 'transactions', manual_house: 'transactions', [FED]: 'transactions' } }));
     const shown = (await as('user_partner', () => route('shared', 'GET'))).body.shared;
     const preview = (await as('user_owner', async () => {
       const { GET } = await import('@/app/api/connections/preview/route');
@@ -127,7 +159,7 @@ describe('what a share shows of a transaction', () => {
     })) as any;
     for (const view of [shown[0], preview.view]) {
       const txns = view.accounts.flatMap((a: any) => a.transactions ?? []);
-      expect(txns.map((t: any) => t.name).sort()).toEqual(['Blue Bottle', 'Hardware store']);
+      expect(txns.map((t: any) => t.name).sort()).toEqual(['Blue Bottle', 'Hardware store', 'SF COFFEE']);
       for (const t of txns) expect(Object.keys(t).sort()).toEqual(['amount', 'currency', 'date', 'name', 'pending']);
       expect(JSON.stringify(view)).not.toMatch(/SECRET|tags|note|rule|excluded|travel/i);
     }

@@ -127,6 +127,19 @@ const { ensureTaxonomy } = await import('@/lib/category-store');
 const { indexTaxonomy } = await import('@/lib/categories');
 const { addRule, changeRules, newRuleId } = await import('@/lib/rules');
 const { readTagSet } = await import('@/lib/tags');
+const { ofxFile } = await import('@/lib/ofx-export');
+
+/** An account's OFX statement, as the download writes it: each transaction's
+ *  lines by its FITID, and the notes. */
+async function statement(account_id: string) {
+  const data = await collectUserData({ ctx, userId: 'user_me' });
+  const made = ofxFile(data, buildUserExport(data, NOW), account_id, NOW);
+  if ('refused' in made) throw new Error(made.refused);
+  const text = [...made.file.pieces()].join('');
+  const entry = (id: string) => text.split('<STMTTRN>').find((x) => x.includes(`<FITID>${id}\r\n`)) ?? '';
+  const field = (id: string, tag: string) => entry(id).match(new RegExp(`<${tag}>([^\r\n]*)`))?.[1] ?? null;
+  return { field, notes: made.file.notes };
+}
 
 describe('rules in the download', () => {
 
@@ -191,5 +204,36 @@ describe('rules in the download', () => {
     const shown = (id: string) => app.find((x) => x.transaction_id === id)!;
     expect([shown(plain).name, shown(plain).excluded, shown(named).name, shown(named).excluded]).toEqual(['Jar spend', true, 'Pocket money', true]);
     expect([col(csv(plain), 'nya_name'), col(csv(plain), 'excluded'), col(csv(named), 'nya_name'), col(csv(named), 'excluded')]).toEqual(['Jar spend', 'true', 'Pocket money', 'true']);
+  });
+});
+
+describe('an OFX statement', () => {
+  const rule = async (input: unknown) => {
+    const ix = indexTaxonomy(await ensureTaxonomy(ctx));
+    const tags = await readTagSet(ctx);
+    await changeRules(ctx, (s) => addRule(s, input, { ix, tags }, newRuleId).set);
+  };
+
+  test('says each transaction as the app shows it: a rule’s name and hide, your note on a bank’s, and its tags', async () => {
+    await rule({ conditions: [{ field: 'name', op: 'equals', value: 'T_TAXI' }], actions: { set_name: 'Taxi', add_tags: [work], hide: true } });
+    const bank = await statement('acc_new');
+    expect([bank.field('t_taxi', 'NAME'), bank.field('t_taxi', 'MEMO')]).toEqual(['Taxi', 'Hidden from budgets and reports by a rule in Nya; T_TAXI; Tags: Work']);
+    // Your note on a bank's transaction, and its tags in the order you made them.
+    expect([bank.field('t_hotel', 'NAME'), bank.field('t_hotel', 'MEMO')]).toEqual(['T_HOTEL', 'Paid back in October; Tags: Work, Vacation 2026']);
+    // A note and a tag carried from an earlier account.
+    expect(bank.field('t_carried', 'MEMO')).toBe('carried note; Tags: Work');
+    // A manual account's: its own note, its tags.
+    const wallet = await statement('manual_wallet');
+    expect([wallet.field(MANUAL_ID, 'NAME'), wallet.field(MANUAL_ID, 'MEMO')]).toEqual(['Farmers market', 'apples; Tags: Vacation 2026']);
+    // Excluded by you: said as yours.
+    await changeAnnotation(ctx, 't_hotel', { excluded: true });
+    expect((await statement('acc_new')).field('t_hotel', 'MEMO')).toBe('Excluded from budgets and reports in Nya; Paid back in October; Tags: Work, Vacation 2026');
+  });
+
+  test('a memo longer than OFX allows is cut, and the notes say its end may be missing', async () => {
+    await changeAnnotation(ctx, 't_taxi', { note: 'n'.repeat(400) });
+    const { field, notes } = await statement('acc_new');
+    expect(field('t_taxi', 'MEMO')!.length).toBe(255);
+    expect(notes).toContain('1 transaction’s memo is longer than OFX’s 255 characters, so each is cut there, and its end (your note, its tags) may be missing. The CSV and JSON downloads have them whole.');
   });
 });

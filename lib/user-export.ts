@@ -1586,7 +1586,9 @@ function manualTransactionRow(row: ManualTxn, account: { name: string | null; in
     transaction_id: row.id,
     account_id: row.account_id,
     source: row.source,
-    note: row.note,
+    // The person's note: the row's own, or, on one SimpleFIN brought, the one
+    // kept beside it (lib/txn-layers.ts).
+    note: l.note,
     ...filed,
     tags: l.tags.join('; '),
     nya_name: l.name,
@@ -1680,6 +1682,39 @@ export function bookAccountTypes(doc: UserExport): Map<string, string> {
   return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
 }
 
+/** Each book account's institution as the Activity tab shows it
+ *  (lib/manual-txns.ts, lib/manual.ts toInstitutions), which a rule's
+ *  institution condition reads: a manual account's, `Manual` when it has
+ *  none, and an account SimpleFIN feeds, its bank's as SimpleFIN names it. */
+export function bookInstitutions(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].map(([id, a]) => [id, normalizeInstitutionName(a.institution_name ?? '') || 'Manual']));
+}
+
+/**
+ * The books' rows (a manual account's own, and those SimpleFIN brought) as
+ * the app shows them: each side of a pair between two SimpleFIN accounts in
+ * the pair's words (lib/manual-txns.ts withPairWords), and for each, what the
+ * read layer puts on it (its rules, tags, note and exclusion:
+ * lib/export-layers.ts layerManualRow, by its account's institution as the
+ * app shows it) and the category it is filed under. For the transactions CSV
+ * and an OFX statement alike, so the two and the app never disagree.
+ */
+export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r: ManualTxn) => { l: Layered; filed: NyaCategory } } {
+  const rows = withPairWords(manualTransactionsIn(doc), bookAccountTypes(doc));
+  const filing = manualFiling(doc, rows);
+  // A book's rows carry nothing from an earlier account, and its account is
+  // never linked: no links needed.
+  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institutionOf = bookInstitutions(doc);
+  return {
+    rows,
+    shown: (r) => {
+      const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
+      return { l, filed: filing.filed(r, l.rule_category) };
+    },
+  };
+}
+
 /**
  * transactions.csv: one row per transaction, newest first: every one stored
  * from the banks, and every one on a manual account (manualTransactionRow).
@@ -1692,30 +1727,23 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
   const accounts = bookAccountsIn(doc);
-  const typeOf = bookAccountTypes(doc);
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   // A pair of SimpleFIN rows between two of the person's accounts (a card's
   // payment, a loan's, a move between them) is worked out each time the rows
   // are read, never stored: listed as the app shows it, each side in the
   // pair's words and filed by them, so the file leaves out of a total what
-  // the app does (lib/manual-txns.ts withPairWords).
-  const manual = withPairWords(manualTransactionsIn(doc), typeOf);
-  const filing = manualFiling(doc, manual);
-  // A manual row carries nothing from an earlier account, and its account is
-  // never linked: no links needed.
-  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
-  // Each account's institution as the Activity tab shows it (lib/manual.ts
-  // toInstitutions), which a rule's institution condition reads.
-  const institutionOf = new Map(doc.manual_accounts.map((m) => [m.account_id, normalizeInstitutionName(m.institution_name) || 'Manual']));
+  // the app does; and every row with the read layer's facts on it, as the
+  // app shows them (layeredBookRows).
+  const book = layeredBookRows(doc);
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
-    ...manual.map((r) => ({
+    ...book.rows.map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
       cells: () => {
-        const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
-        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filing.filed(r, l.rule_category), l);
+        const { l, filed } = book.shown(r);
+        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
       },
     })),
   ];

@@ -46,14 +46,23 @@
 //     would such an app move it a day; one that reads the date as written
 //     shows it everywhere. DTUSER is when it happened, where Plaid says and
 //     that differs from when it posted.
+//   - Each transaction is as the app shows it, by the same read layer
+//     (lib/txn-layers.ts, through the document: the bank's rows as
+//     buildUserExport made them, the books' by lib/user-export.ts
+//     layeredBookRows): your rules, tags, notes and exclusions on it.
 //   - NAME is the payee as the app shows it (your name for the merchant, else
-//     Plaid's, else the bank's words), within OFX's 32 characters; a longer
-//     one is cut, and given whole in the memo. MEMO (255 characters) holds,
-//     in order: "Excluded from budgets and reports in Nya" for a transaction
-//     you left out (it is still listed: the money moved, and the statement
-//     must add up to the balance), the whole name if it was cut, the bank's
-//     own words where they aren't the name, and your note. Categories have no
-//     field in OFX; they are in the CSV and JSON files.
+//     a rule's, else Plaid's, else the bank's words), within OFX's 32
+//     characters; a longer one is cut, and given whole in the memo. MEMO (255
+//     characters) holds, in order: "Excluded from budgets and reports in
+//     Nya" for a transaction you left out, or "Hidden from budgets and
+//     reports by a rule in Nya" for one a rule hides (either is still
+//     listed: the money moved, and the statement must add up to the
+//     balance), the whole name if it was cut, the bank's own words where
+//     they aren't the name, your note (on a bank's or a SimpleFIN row too,
+//     kept beside it), and its tags ("Tags: Work, Trip"). A memo longer than
+//     that is cut, and a note says how many were, since the end of one (a
+//     note, its tags) is then missing. Categories have no field in OFX; they
+//     are in the CSV and JSON files.
 //   - A transaction in another currency than the account's is in a statement
 //     of its own, for the same account, in that currency: OFX has one
 //     currency per statement, and a rate to convert at isn't Nya's to invent.
@@ -106,14 +115,13 @@
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
-import { contentKey } from './transactions';
-import { carriedExclusions, isCarriedAnnotations, txnAnnotationStore, carriedAnnotationStore, type CarriedAnnotations } from './txn-annotations';
+import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { bookAccountTypes, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { bookAccountTypes, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
 import { connectionsStore, connectorAccountsStore } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
@@ -265,8 +273,12 @@ export type OfxRow = {
   check_number: string | null;
   /** Plaid's code for what the bank said it was ("atm"). */
   transaction_code: string | null;
-  /** Left out of budgets and reports, as the app reads it. */
+  /** Left out of budgets and reports, as the app reads it, and whether a
+   *  rule's hide is why (lib/rules.ts). */
   excluded: boolean;
+  hidden_by_rule?: boolean;
+  /** Its tags' names, as the app shows them. */
+  tags?: string[];
   /** One side of a pair Nya worked out between two SimpleFIN accounts
    *  (lib/manual-txns.ts), and what it is. */
   paired?: PairKind;
@@ -377,6 +389,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   const acctId = ofxAccountId(account.first_id ?? account.account_id, account.mask);
   let lossy = 0;
   let shortened = 0;
+  let memosCut = 0;
   const line = (tag: string, value: string) => `<${tag}>${escape(value)}\r\n`;
   const status = '<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n';
   const pieces: string[] = [
@@ -397,12 +410,12 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
         const shownName = cut(name.text, NAME_MAX);
         const memo: string[] = [];
         let touched = name.lossy;
-        if (r.excluded) memo.push('Excluded from budgets and reports in Nya');
+        if (r.excluded) memo.push(r.hidden_by_rule ? 'Hidden from budgets and reports by a rule in Nya' : 'Excluded from budgets and reports in Nya');
         if (shownName !== name.text) {
           memo.push(name.text);
           shortened++;
         }
-        for (const extra of [r.description, r.note]) {
+        for (const extra of [r.description, r.note, r.tags?.length ? `Tags: ${r.tags.join(', ')}` : null]) {
           if (!extra) continue;
           const t = to1252(extra);
           if (!t.text || t.text.toLowerCase() === name.text.toLowerCase()) continue;
@@ -411,6 +424,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
         }
         if (touched) lossy++;
         const memoText = memo.join('; ');
+        if (memoText.length > MEMO_MAX) memosCut++;
         const check = r.check_number ? to1252(r.check_number).text.slice(0, CHECKNUM_MAX) : '';
         const type =
           (r.paired && PAIR_TYPES[r.paired]) ||
@@ -440,6 +454,11 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   if (shortened > 0) {
     notes.push(`${plural(shortened, 'payee’s name is', 'payees’ names are')} longer than OFX’s ${NAME_MAX} characters, so each is cut there and given whole in its memo.`);
   }
+  if (memosCut > 0) {
+    notes.push(
+      `${plural(memosCut, 'transaction’s memo is', 'transactions’ memos are')} longer than OFX’s ${MEMO_MAX} characters, so each is cut there, and its end (your note, its tags) may be missing. The CSV and JSON downloads have them whole.`
+    );
+  }
   if (lossy > 0) {
     notes.push(
       `${plural(lossy, 'transaction has', 'transactions have')} characters OFX’s character set (Windows-1252) doesn’t have, such as letters of non-Latin scripts, written as ?. The JSON and CSV downloads have them as they are.`
@@ -452,14 +471,6 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
 
 /** Why an account can't be written as OFX, and the route's status for it. */
 export type OfxRefused = { refused: string; status: 400 | 404 | 409 };
-
-/** A store on the seam's entries in the document ({ id, value }), whatever
- *  else is there. */
-function entriesOf(doc: UserExport, key: string): { id: string; value: unknown }[] {
-  const section = doc[key];
-  if (!Array.isArray(section)) return [];
-  return section.filter((e): e is { id: string; value: unknown } => !!e && typeof e === 'object' && typeof (e as { id?: unknown }).id === 'string');
-}
 
 const UNCHANGED = 'Nothing was changed: what could not be read is still stored as it was.';
 
@@ -538,34 +549,28 @@ export function ofxFile(
   // A moment as the day it was where the person is (see the header); a
   // stored day, or any moment without a time zone sent, as it is.
   const dayOf = (iso: string) => (opts.timeZone && iso.length > 10 ? dayIn(iso, opts.timeZone) : iso.slice(0, 10));
-  // What was said about each transaction (lib/txn-annotations.ts): its own
-  // record, and on a linked account's posted rows, an exclusion carried from
-  // an earlier account linked to this one, as the app applies them.
-  const own = new Map<string, boolean>();
-  for (const { id, value } of entriesOf(doc, txnAnnotationStore.name)) {
-    const excluded = (value as { excluded?: unknown } | null)?.excluded;
-    if (typeof excluded === 'boolean') own.set(id, excluded);
-  }
+  // What was said about each transaction, what was carried to it and what
+  // the rules do, as the app applies them (lib/txn-layers.ts): on the bank's
+  // rows, as the document has them; on a book's, by layeredBookRows. A record
+  // that couldn't be read leaves its transaction unmarked, and said.
   const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
   const links = effectiveLinks(data.links, data.live);
-  const records = new Map<string, CarriedAnnotations>();
-  for (const { id, value } of entriesOf(doc, carriedAnnotationStore.name)) if (isCarriedAnnotations(value)) records.set(id, value);
-  const carried = carriedExclusions(records, links);
 
   // The rows a book holds for the account (a manual account's own, or those
-  // SimpleFIN brought), each side of a pair the app works out between two
-  // SimpleFIN accounts typed as a bank's file types it, and what couldn't be
-  // read said.
+  // SimpleFIN brought), as the app shows them, each side of a pair the app
+  // works out between two SimpleFIN accounts typed as a bank's file types
+  // it, and what couldn't be read said.
   const bookRows = (): OfxRow[] => {
-    const stored = manualTransactionsIn(doc);
-    const pairs = knownPairs(stored, bookAccountTypes(doc));
+    const pairs = knownPairs(manualTransactionsIn(doc), bookAccountTypes(doc));
+    const book = layeredBookRows(doc);
     if (missingIds(doc.problems, manualTxnStore.name).includes(account_id)) {
       notes.push(`This account’s transactions could not be read, so the statement has none of them. The JSON download lists them under problems. ${UNCHANGED}`);
       incomplete.add(manualTxnStore.name);
     }
-    return stored
+    return book.rows
       .filter((r) => r.account_id === account_id)
       .map((r): OfxRow => {
+        const { l } = book.shown(r);
         const paired = pairs.get(r.id);
         return {
           id: r.id,
@@ -573,12 +578,15 @@ export function ofxFile(
           user_date: null,
           amount: r.amount,
           currency: r.currency,
-          name: r.name,
-          description: null,
-          note: r.note,
+          name: l.name,
+          // The name it came with, where a rule shows another.
+          description: l.name !== r.name ? r.name : null,
+          note: l.note,
           check_number: null,
           transaction_code: r.transaction_code ?? null,
-          excluded: own.get(r.id) ?? false,
+          excluded: l.excluded === true,
+          hidden_by_rule: l.excluded_by_rule,
+          tags: l.tags,
           ...(paired ? { paired } : {}),
         };
       });
@@ -647,7 +655,10 @@ export function ofxFile(
         pending++;
         continue;
       }
-      const shown = t.your_merchant_name || t.merchant_name || t.name || '';
+      // As the app shows it (the document's layered fields): the name, your
+      // note, its tags, and left out by you, by an exclusion carried from an
+      // earlier account, or by a rule's hide.
+      const shown = t.nya_name || t.your_merchant_name || t.merchant_name || t.name || '';
       rows.push({
         id: t.transaction_id,
         date: t.date,
@@ -656,10 +667,12 @@ export function ofxFile(
         currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
         name: shown,
         description: t.name && t.name !== shown ? t.name : null,
-        note: null,
+        note: t.your_note ?? null,
         check_number: t.check_number ?? null,
         transaction_code: t.transaction_code ?? null,
-        excluded: own.get(t.transaction_id) ?? carried.has(contentKey(t.account_id, t)),
+        excluded: t.excluded === true,
+        hidden_by_rule: t.excluded_by_rule === true,
+        tags: t.tags ?? [],
       });
     }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
