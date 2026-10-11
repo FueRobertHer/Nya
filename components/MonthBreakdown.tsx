@@ -29,6 +29,12 @@ import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy }
 import CategoryRollup from "./CategoryRollup";
 import CategoryPicker from "./CategoryPicker";
 import type { CategoryChoice } from "./transaction-edits";
+import type { Tag } from "@/lib/tags";
+import TagChips from "./TagChips";
+import TagFilter from "./TagFilter";
+import SpendByTag from "./SpendByTag";
+import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
+import { searchRows } from "./txn-search";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -52,6 +58,7 @@ export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "catego
 // a new identity each time.
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
+const NO_TAGS: Tag[] = [];
 
 export type Txn = {
   transaction_id: string;
@@ -93,10 +100,34 @@ export type Txn = {
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
+  // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts),
+  // the rules that match it (lib/rules.ts), whether a rule hid it, whether
+  // its category is a rule's, and the name it had before a rule named it.
+  tags?: string[];
+  rule_ids?: string[];
+  excluded_by_rule?: true;
+  category_by_rule?: true;
+  name_before_rules?: string;
   // As in lib/transactions.ts: one side of a pair Nya worked out between two
   // SimpleFIN accounts.
   paired?: "card" | "loan" | "transfer";
 };
+
+/** The name rules match a row by: the one it had before any rule named it. */
+export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
+
+/**
+ * What a transaction's detail offers about leaving it out of budgets and
+ * reports: the button to exclude it or put it back ("toggle"), or why not yet
+ * ("wait"; "wait-rule" for one a rule hides). A pending row gets a new id
+ * when it posts, and an exclusion or an include is kept by id: offered once
+ * it has posted, so it can't quietly lapse.
+ */
+export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_by_rule">): "toggle" | "wait" | "wait-rule" {
+  if (!t.pending) return "toggle";
+  if (t.excluded_by_rule) return "wait-rule";
+  return t.excluded === true ? "toggle" : "wait";
+}
 
 // Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
@@ -204,7 +235,7 @@ export function categoryOptions(txns: Txn[] | null): string[] {
 // the Plaid fields that answer the question — the real merchant behind a
 // processor, channel, place, time, website, reference/check numbers, and (for
 // joint accounts) the owner — skipping any the row doesn't carry.
-function TxnDetail({ t }: { t: Txn }) {
+function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
   const rows: { label: string; value: React.ReactNode }[] = [];
   const time = fmtTime(t.datetime);
 
@@ -236,7 +267,7 @@ function TxnDetail({ t }: { t: Txn }) {
     rows.push({ label: "Reference", value: t.payment_reference });
   if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
   if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
-  if (t.note) rows.push({ label: "Note", value: t.note });
+  if (t.note && !noteEditor) rows.push({ label: "Note", value: t.note });
 
   if (rows.length === 0) return null;
 
@@ -267,6 +298,11 @@ export default function MonthBreakdown({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  tags = NO_TAGS,
+  onChangeTags,
+  onSaveNote,
+  onCreateRule,
+  ruleSentenceOf,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -298,11 +334,27 @@ export default function MonthBreakdown({
    *  (their health): the month's totals say so (lib/month-coverage.ts). */
   incomplete?: Incomplete[];
   stopped?: Stopped[];
+  /** Your tags (components/tags-state.ts): names and colors for each row's
+   *  tag ids, the filter, and spending by tag. */
+  tags?: Tag[];
+  /** Puts tags on a transaction or takes them off, or makes one as typed. */
+  onChangeTags?: (t: Txn, change: TagChange) => void;
+  /** Saves a transaction's note (empty clears it). */
+  onSaveNote?: (t: Txn, note: string) => void;
+  /** Opens the rule drawer on a rule made from a transaction, filing it
+   *  under `category_id` (the one just chosen) or the one it is under now. */
+  onCreateRule?: (t: Txn, category_id?: string) => void;
+  /** A rule, by id, in a sentence, for the rules a transaction matches. */
+  ruleSentenceOf?: (id: string) => string | null;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
+  const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
+  // After a transaction is given another category: the offer to do the same
+  // for every transaction with its name, as a rule (#36).
+  const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -331,14 +383,16 @@ export default function MonthBreakdown({
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
-  const { excludedCount, unknownCount } = useMemo(() => {
+  const { excludedCount, hiddenCount, unknownCount } = useMemo(() => {
     let excludedCount = 0;
+    let hiddenCount = 0;
     let unknownCount = 0;
     for (const t of monthTxns) {
-      if (t.excluded === true) excludedCount++;
+      if (t.excluded === true && t.excluded_by_rule) hiddenCount++;
+      else if (t.excluded === true) excludedCount++;
       else if (t.excluded === null) unknownCount++;
     }
-    return { excludedCount, unknownCount };
+    return { excludedCount, hiddenCount, unknownCount };
   }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
@@ -424,17 +478,10 @@ export default function MonthBreakdown({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trend.length]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return monthTxns;
-    return monthTxns.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (categoryLabel(t) ?? "").toLowerCase().includes(q) ||
-        t.account_name.toLowerCase().includes(q) ||
-        t.institution_name.toLowerCase().includes(q),
-    );
-  }, [monthTxns, query]);
+  // The search reads a row's tags and note too (#40), and the tag filter
+  // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
+  const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
+  const visible = useMemo(() => searchRows(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -598,6 +645,7 @@ export default function MonthBreakdown({
           Transfers and loan payments excluded
           {excludedCount > 0 &&
             `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+          {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
           .
           {unknownCount > 0 &&
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
@@ -642,6 +690,8 @@ export default function MonthBreakdown({
           </div>
         </div>
       )}
+
+      <SpendByTag txns={monthTxns} tags={tags} currency={currency} />
 
       {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
         <div className="card">
@@ -701,7 +751,7 @@ export default function MonthBreakdown({
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
             {visible.length}
-            {query ? ` of ${monthTxns.length}` : ""}
+            {query || filterTag ? ` of ${monthTxns.length}` : ""}
           </div>
         </div>
 
@@ -712,12 +762,36 @@ export default function MonthBreakdown({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
 
         {actionError && <div className="error">{actionError}</div>}
+        {ruleOffer && onCreateRule && (
+          <div className="rule-offer">
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              Do the same for every transaction named “{nameForRules(ruleOffer.t)}”
+              {ruleOffer.t.name_before_rules !== undefined && ` (shown as “${ruleOffer.t.name}”)`}, past and future? A rule does it, and you can change or turn it off
+              later.
+            </p>
+            <div className="button-pair" style={{ marginTop: 0 }}>
+              <button
+                className="secondary"
+                onClick={() => {
+                  onCreateRule(ruleOffer.t, ruleOffer.category_id);
+                  setRuleOffer(null);
+                }}
+              >
+                Make a rule
+              </button>
+              <button className="secondary" onClick={() => setRuleOffer(null)}>
+                No thanks
+              </button>
+            </div>
+          </div>
+        )}
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {query
+            {query || filterTag
               ? "No transactions match your search."
               : "No transactions this month."}
           </p>
@@ -773,6 +847,10 @@ export default function MonthBreakdown({
                                   · check category
                                 </span>
                               )}
+                              {t.note && (
+                                <span className="note-tag" title={t.note}> · note</span>
+                              )}
+                              <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
@@ -782,7 +860,7 @@ export default function MonthBreakdown({
                             </div>
                             {t.excluded === true && (
                               <div className="excluded-tag">
-                                Excluded from budgets and reports
+                                {t.excluded_by_rule ? "Hidden by a rule: out of budgets and reports" : "Excluded from budgets and reports"}
                               </div>
                             )}
                             {/* A pair Nya worked out between two SimpleFIN
@@ -807,7 +885,10 @@ export default function MonthBreakdown({
                                 className="text-input recat-select"
                                 value={t.category_id ?? taxonomy.uncategorized}
                                 onChange={(id) => {
-                                  if (id && id !== t.category_id) onRecategorize(t.transaction_id, { category_id: id });
+                                  if (id && id !== t.category_id) {
+                                    onRecategorize(t.transaction_id, { category_id: id });
+                                    setRuleOffer({ t, category_id: id });
+                                  }
                                   setRecatId(null);
                                 }}
                                 label={`Category for ${t.name}`}
@@ -874,15 +955,16 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            {/* A pending row gets a new id when it posts,
-                                and an exclusion is kept by id: offered once
-                                it has posted, so it can't quietly lapse. */}
-                            {onToggleExcluded && t.pending && t.excluded !== true && (
+                            {/* Offered once a pending row has posted
+                                (exclusionOffer), one a rule hides too. */}
+                            {onToggleExcluded && exclusionOffer(t) !== "toggle" && (
                               <div className="rename-hint">
-                                Once it posts, it can be excluded from budgets and reports.
+                                {exclusionOffer(t) === "wait-rule"
+                                  ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
+                                  : "Once it posts, it can be excluded from budgets and reports."}
                               </div>
                             )}
-                            {onToggleExcluded && (!t.pending || t.excluded === true) && (
+                            {onToggleExcluded && exclusionOffer(t) === "toggle" && (
                               <>
                                 <div className="rename-row">
                                   <button
@@ -904,7 +986,40 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            <TxnDetail t={t} />
+                            {onChangeTags && onSaveNote && (
+                              <TxnTagsNote
+                                key={`${t.transaction_id}:${t.note ?? ""}`}
+                                t={t}
+                                tags={tags}
+                                onChangeTags={(change) => onChangeTags(t, change)}
+                                onSaveNote={(note) => onSaveNote(t, note)}
+                              />
+                            )}
+                            {onCreateRule && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onCreateRule(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Create a rule from this
+                                </button>
+                              </div>
+                            )}
+                            {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
+                              <div className="rename-hint">
+                                {t.rule_ids!.length === 1 ? "A rule matches it" : "Rules match it"}, in the order they run (what you set here wins):
+                                <ul className="rule-matched">
+                                  {t.rule_ids!.map((id) => {
+                                    const sentence = ruleSentenceOf(id);
+                                    return sentence ? <li key={id}>{sentence}</li> : null;
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                            <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />
                           </div>
                         )}
                       </td>

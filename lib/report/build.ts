@@ -46,7 +46,9 @@
 //     same institution by its last four digits and type. Then the new
 //     connection's own gaps say how far back it reaches. Decided per account,
 //     so a second login at the same bank, or the same login added back with
-//     fewer accounts, never passes for the one removed;
+//     fewer accounts, never passes for the one removed. An account that ended
+//     by the period's first day (see ENDED ACCOUNTS) had nothing in it to go
+//     with the connection, so it is no gap, though it isn't back;
 //   - disconnected: an account a SimpleFIN connection kept up to date was
 //     let go during the period and kept as a manual account, so from that
 //     day its transactions are only the ones entered or imported (one let go
@@ -56,11 +58,40 @@
 //     exclusions they carried across a re-link, couldn't be read, so the
 //     totals use the bank's categories, or may count what they excluded;
 //   - unreadable: anything else the read couldn't read (a manual account's
-//     transactions, say), in the read's own words.
+//     transactions, say), in the read's own words;
+//   - assumed_closed: an account Nya took as closed because it stopped
+//     appearing at its bank and nobody said otherwise (lib/lifecycle.ts): if
+//     it is still open, its transactions from then aren't here;
+//   - missed: a window an account was missing from its bank's answer before
+//     it came back (lib/lifecycle.ts `missed`, the days the chart leaves out
+//     as short of it), or that SimpleFIN left an account that ended out of
+//     (lib/report/read.ts connectorMissed): its transactions from those days
+//     may be missing; or (`let_go`) days a SimpleFIN account was let go
+//     before its connection's history reached them;
+//   - untracked: an account the person stopped following, still theirs: its
+//     transactions from then exist, and aren't counted (see ENDED ACCOUNTS).
 // A connection that holds only investment accounts, or no bank account or
 // card, brings in no transactions by design: it is listed, never a gap, and
-// the report says what it doesn't cover. A period with no transactions says
+// the report says what it doesn't cover. So is one whose every account had
+// ended by the period's first day (`ended_by`, see ENDED ACCOUNTS): nothing
+// of it is in the period to be missing. A period with no transactions says
 // so rather than showing zeros.
+//
+// ENDED ACCOUNTS (lib/lifecycle.ts) count as the Activity tab counts them:
+// every day before the end, none from it. The read keeps their later rows
+// (lib/activity.ts keepEnded) so that the report leaves them out by that rule
+// itself and says what it left out, never passing them off as nothing: each
+// account whose end the period has something to say of is listed with the
+// sources, as closed, no longer the person's, or not followed, from its day,
+// with how many of its rows in the period are in Nya and not counted. Listed
+// when its end falls in the period, or before it when the account is only
+// assumed closed, still the person's (untracked), or holds rows in it. Closed
+// and left are never gaps: nothing of the person's is missing. An assumed
+// closure and an untracked account are, from their day; so is a missing
+// window, on its days; each only for an account whose own transactions a
+// report can hold (never an investment account's or a loan's, see the scope
+// caveat). A manual account that ended by the period's first day holds
+// nothing in it, and isn't listed as a source of it.
 //
 // SIMPLEFIN. Each bank a SimpleFIN connection reaches is an institution here
 // too, with the connection it comes through and its state in its card's own
@@ -136,6 +167,9 @@ export type SourceFacts = {
   /** Whether it holds investment or loan accounts, as last loaded: their
    *  activity is never in a report. */
   holds: { investment: boolean; loans: boolean };
+  /** The day the last of its accounts (those not hidden) ended, when every
+   *  one has (lib/lifecycle.ts); null or absent while one counts. */
+  ended_by?: string | null;
   /** Set for a bank a SimpleFIN connection reaches. */
   connector?: ConnectorSourceFacts;
 };
@@ -165,6 +199,31 @@ export type RemovedFacts = {
 /** An account of a connection stored now: what a removed account is matched
  *  against. */
 export type LiveAccountFacts = { account_id: string; institution_id: string | null; institution_name: string; mask: string | null; type: string | null };
+
+/** An account that ended and isn't hidden (lib/lifecycle.ts), as the read
+ *  found it: every id it has had (its rows carry one), how its entry names
+ *  it, the connection it is at now (null for a manual account, or one no
+ *  longer connected), how it ended, and the day it stopped counting. */
+export type EndedFacts = {
+  ids: readonly string[];
+  /** "Checking ••1111". */
+  account: string;
+  institution: string;
+  item_id: string | null;
+  /** Its kind (depository, credit, investment...), or null when not known. */
+  type: string | null;
+  state: 'closed' | 'left' | 'untracked';
+  /** Closed by Nya's assumption: it stopped appearing at its bank and nobody
+   *  answered (lib/lifecycle-questions.ts), so it may still be open. */
+  assumed: boolean;
+  end: string;
+};
+
+/** A window an account was missing from its bank's answer before it came
+ *  back, on the days it counts (lib/lifecycle.ts `missed`), or that SimpleFIN
+ *  left it out of; `let_go` when it was let go from SimpleFIN before its
+ *  connection's history reached those days. */
+export type MissedFacts = { account: string; institution: string; item_id: string | null; type: string | null; from: string; to: string; let_go?: true };
 
 export type ReportInput = {
   period: Period;
@@ -211,6 +270,12 @@ export type ReportInput = {
   /** How each connection is doing couldn't be read. */
   healthUnread: boolean;
   appendixLimit?: number;
+  /** Every account that ended and isn't hidden (see ENDED ACCOUNTS), with
+   *  `rows` keeping theirs: left out here from each one's end day. Absent,
+   *  none did. */
+  ended?: readonly EndedFacts[];
+  /** The windows an account was missing from its bank's answer. */
+  missed?: readonly MissedFacts[];
 };
 
 /** One way the period may be short (see the header). Days are on the
@@ -233,7 +298,13 @@ export type Gap =
   | { kind: 'removed_unknown'; item_id: null; institution: null }
   | { kind: 'own_categories'; item_id: null; institution: null }
   | { kind: 'own_exclusions'; item_id: null; institution: null }
-  | { kind: 'unreadable'; item_id: null; institution: null; note: string };
+  | { kind: 'unreadable'; item_id: null; institution: null; note: string }
+  /** Placed under the connection the account is at now, if any. */
+  | { kind: 'assumed_closed'; item_id: string | null; institution: string; account: string; on: string }
+  | { kind: 'missed'; item_id: string | null; institution: string; account: string; from: string; to: string; let_go?: true }
+  /** `not_counted`: its transactions in the period from then that are in
+   *  Nya, left out. */
+  | { kind: 'untracked'; item_id: string | null; institution: string; account: string; from: string; not_counted: number };
 
 export type GapKind = Gap['kind'];
 
@@ -242,12 +313,14 @@ export type ReportTotals = {
   money_out: number;
   net: number;
   /** Rows in the period, and of them: counted; left out as transfers, cash
-   *  withdrawals or loan payments; left out because the person excluded them;
-   *  counted although whether they did couldn't be read. */
+   *  withdrawals or loan payments; left out because the person excluded them
+   *  or a rule hides them (lib/rules.ts), and of those, how many a rule
+   *  hides; counted although whether they did couldn't be read. */
   transactions: number;
   counted: number;
   transfers: number;
   excluded: number;
+  hidden_by_rule: number;
   exclusion_unknown: number;
   /** Left out for another currency, by currency, and as a sentence. */
   left_out: LeftOut;
@@ -299,9 +372,9 @@ export type AppendixRow = {
    *  'import:ofx', ...: lib/manual-txn-input.ts sourceLabel). */
   source: string;
   pending: boolean;
-  /** Why it isn't in the totals (the person excluded it; a transfer or loan
-   *  payment; another currency), or null when it is. */
-  not_counted: 'excluded' | 'transfer' | 'currency' | null;
+  /** Why it isn't in the totals (the person excluded it; a rule hides it; a
+   *  transfer or loan payment; another currency), or null when it is. */
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
@@ -312,7 +385,8 @@ export type ReportAppendix = {
   /** Rows in the marked categories, before the limit. */
   total: number;
   limit: number;
-  /** Rows among them the person excluded: listed, not counted. */
+  /** Rows among them the person excluded or a rule hides: listed, not
+   *  counted. */
   excluded: number;
 };
 
@@ -335,6 +409,22 @@ export type ReportRemoved = {
   connected_again: boolean;
   /** Its accounts that aren't, as "Name ••1234". */
   not_back: string[];
+};
+
+/** An account that ended, as the report lists it (see ENDED ACCOUNTS). */
+export type ReportEnded = {
+  account: string;
+  institution: string;
+  state: 'closed' | 'left' | 'untracked';
+  assumed: boolean;
+  /** The day it stopped counting. */
+  end: string;
+  /** The last day of the period it counts on, or null when it counts on
+   *  none (it ended on or before the first). */
+  counted_through: string | null;
+  /** Its transactions in Nya dated in the period from its end on: left out,
+   *  as the Activity tab leaves them out. */
+  not_counted: number;
 };
 
 export type Report = {
@@ -363,6 +453,8 @@ export type Report = {
   institutions: ReportInstitution[];
   manual: ReportManualAccount[];
   removed: ReportRemoved[];
+  /** Oldest end first. */
+  ended: ReportEnded[];
   gaps: Gap[];
   caveats: {
     /** A year still running: covered through today. */
@@ -395,6 +487,9 @@ const GAP_ORDER: GapKind[] = [
   'no_consent',
   'stale',
   'partial',
+  'assumed_closed',
+  'missed',
+  'untracked',
   'importing',
   'begins_late',
   'own_categories',
@@ -408,6 +503,10 @@ const GAP_ORDER: GapKind[] = [
 type Mark = { id: string; key: string; name: string };
 
 const minDay = (a: string, b: string) => (a < b ? a : b);
+/** Whether an account's own transactions can be in a report: never an
+ *  investment account's or a loan's (the scope caveat says so); one of a
+ *  kind not known may. */
+const holdsTransactions = (type: string | null) => type === null || (!isInvestmentType(type) && type !== 'loan');
 /** A name compared as the app groups one (lib/manual.ts normalizeInstitutionName). */
 const nameKey = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
 
@@ -419,6 +518,8 @@ const reachOf = (firstSeen: string | null) => (firstSeen ? addDays(firstSeen, -T
 /** The gaps one linked institution leaves in the period. */
 function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   const at = { item_id: s.item_id, institution: s.institution_name };
+  // Every account of it had ended before the period: nothing to bring in.
+  if (endedBefore(s, period)) return [];
   if (s.no_transactions === 'refused' || s.no_transactions === 'no_consent') return [{ kind: s.no_transactions, ...at }];
   // Investment accounts only, or no bank account or card: nothing to bring in.
   if (s.no_transactions) return [];
@@ -452,6 +553,12 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   return gaps;
 }
 
+/** Whether every account of a connection had ended by the period's first
+ *  day, so nothing of it is in the period. */
+export function endedBefore(s: Pick<SourceFacts, 'ended_by'>, period: Pick<Period, 'start'>): boolean {
+  return !!s.ended_by && s.ended_by <= period.start;
+}
+
 /** Whether a removed connection's transactions may have been in the period:
  *  it was still connected on its first day or later, and the history a link
  *  brings could reach the period. */
@@ -481,6 +588,12 @@ function gapTouches(g: Gap, start: string, end: string): boolean {
       return g.before === undefined || start < g.before;
     case 'missing':
       return g.reach === null || end >= g.reach;
+    case 'assumed_closed':
+      return end >= g.on;
+    case 'untracked':
+      return end >= g.from;
+    case 'missed':
+      return start <= g.to && end >= g.from;
     default:
       return true;
   }
@@ -489,7 +602,34 @@ function gapTouches(g: Gap, start: string, end: string): boolean {
 export function buildReport(input: ReportInput): Report {
   const { period } = input;
   const inPeriod = (d: string) => d >= period.start && d <= period.through;
-  const rows = input.rows.filter((t) => inPeriod(t.date));
+  // The period's rows, as the Activity tab has them: an ended account's from
+  // its end day on left out, and counted (see ENDED ACCOUNTS).
+  const endedFacts = input.ended ?? [];
+  const endedOf = new Map<string, number>();
+  endedFacts.forEach((e, i) => {
+    for (const id of e.ids) endedOf.set(id, i);
+  });
+  const notCounted = endedFacts.map(() => 0);
+  const rows = input.rows.filter((t) => {
+    if (!inPeriod(t.date)) return false;
+    const i = t.account_id === undefined ? undefined : endedOf.get(t.account_id);
+    if (i === undefined || t.date < endedFacts[i].end) return true;
+    notCounted[i]++;
+    return false;
+  });
+  // The ended accounts the period has something to say of: their end is in
+  // it, or before it and they are only assumed closed, still the person's,
+  // or hold rows in it.
+  const endedHere = endedFacts
+    .map((e, i) => ({ e, not_counted: notCounted[i] }))
+    .filter(({ e, not_counted }) => e.end <= period.through && (e.end >= period.start || e.assumed || e.state === 'untracked' || not_counted > 0))
+    .sort((a, b) => a.e.end.localeCompare(b.e.end) || a.e.institution.localeCompare(b.e.institution) || a.e.account.localeCompare(b.e.account));
+  // A manual account counts on no day of the period once it ended by its
+  // first: not a source of it (its rows in it, if any, are said above).
+  const manualHere = input.manual.filter((m) => {
+    const i = endedOf.get(m.account_id);
+    return i === undefined || endedFacts[i].end > period.start;
+  });
 
   // One currency: the one asked for, if the period has any of it, else the
   // one most of its transactions are in (lib/spending.ts totalsCurrency).
@@ -540,9 +680,17 @@ export function buildReport(input: ReportInput): Report {
     l.institution_id && r.institution_id ? l.institution_id === r.institution_id : nameKey(l.institution_name) === nameKey(r.institution_name);
   const matchedBack = (a: RemovedAccountFacts, r: RemovedFacts) =>
     !!a.mask && !!a.type && input.liveAccounts.some((l) => sameInstitution(l, r) && l.mask === a.mask && l.type === a.type);
+  // Ended by the period's first day: nothing of it in the period to go.
+  const endedBy = (id: string) => {
+    const i = endedOf.get(id);
+    return i !== undefined && endedFacts[i].end <= period.start;
+  };
   const removedHere = (input.removed ?? [])
     .filter((r) => r.accounts.length > 0 && removedInPeriod(r, period))
-    .map((r) => ({ r, notBack: r.accounts.filter((a) => !linkedBack(a.account_id) && !matchedBack(a, r)) }));
+    .map((r) => {
+      const notBack = r.accounts.filter((a) => !linkedBack(a.account_id) && !matchedBack(a, r));
+      return { r, notBack, missing: notBack.filter((a) => !endedBy(a.account_id)) };
+    });
   const removed: ReportRemoved[] = removedHere.map(({ r, notBack }) => ({
     institution: r.institution_name,
     first_seen: r.first_seen,
@@ -555,13 +703,13 @@ export function buildReport(input: ReportInput): Report {
   const gaps: Gap[] = [
     ...input.sources.flatMap((s) => sourceGaps(s, period)),
     ...removedHere
-      .filter(({ notBack }) => notBack.length > 0)
-      .map(({ r, notBack }): Gap => ({
+      .filter(({ missing }) => missing.length > 0)
+      .map(({ r, notBack, missing }): Gap => ({
         kind: 'removed',
         item_id: null,
         institution: r.institution_name,
         last_seen: r.last_seen,
-        accounts: notBack.map(accountLabel),
+        accounts: missing.map(accountLabel),
         partly_back: notBack.length < r.accounts.length,
       })),
     // Let go during the period and kept by hand since: later days may be short.
@@ -572,6 +720,18 @@ export function buildReport(input: ReportInput): Report {
     ...(input.ownRead.categories ? [] : [loose('own_categories')]),
     ...(input.ownRead.exclusions ? [] : [loose('own_exclusions')]),
     ...unexplained.map((note): Gap => ({ kind: 'unreadable', item_id: null, institution: null, note })),
+    ...endedHere.flatMap(({ e, not_counted }): Gap[] =>
+      !holdsTransactions(e.type)
+        ? []
+        : e.assumed
+          ? [{ kind: 'assumed_closed', item_id: e.item_id, institution: e.institution, account: e.account, on: e.end }]
+          : e.state === 'untracked'
+            ? [{ kind: 'untracked', item_id: e.item_id, institution: e.institution, account: e.account, from: e.end, not_counted }]
+            : []
+    ),
+    ...(input.missed ?? [])
+      .filter((m) => holdsTransactions(m.type) && m.from <= period.through && m.to >= period.start)
+      .map((m): Gap => ({ kind: 'missed', item_id: m.item_id, institution: m.institution, account: m.account, from: m.from, to: m.to, ...(m.let_go ? { let_go: true as const } : {}) })),
   ].sort((a, b) => GAP_ORDER.indexOf(a.kind) - GAP_ORDER.indexOf(b.kind) || String(a.institution).localeCompare(String(b.institution)));
 
   const months: ReportMonth[] = periodMonths(period).map((m) => {
@@ -657,7 +817,7 @@ export function buildReport(input: ReportInput): Report {
         institution: t.institution_name,
         source: t.source ?? 'plaid',
         pending: t.pending,
-        not_counted: isExcluded(t) ? 'excluded' : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
+        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
         exclusion_unknown: t.excluded === null,
         note: t.note ?? null,
       })),
@@ -671,7 +831,7 @@ export function buildReport(input: ReportInput): Report {
   // transactions into the period; not known when one of them couldn't be
   // loaded or doesn't say. With none, the rows were read as the report was made.
   const bringing = input.sources.filter((s) => {
-    if (s.no_transactions !== null) return false;
+    if (s.no_transactions !== null || endedBefore(s, period)) return false;
     const reach = reachOf(s.first_seen);
     return !(s.coverage === 'missing' && s.never_synced && reach !== null && reach > period.through);
   });
@@ -706,6 +866,7 @@ export function buildReport(input: ReportInput): Report {
       counted: summary.counted,
       transfers: summary.transfers,
       excluded: summary.excluded,
+      hidden_by_rule: rows.filter((t) => isExcluded(t) && t.excluded_by_rule === true).length,
       exclusion_unknown: summary.exclusion_unknown,
       left_out: summary.left_out,
       left_out_text: summary.left_out_text,
@@ -716,12 +877,21 @@ export function buildReport(input: ReportInput): Report {
     marked,
     appendix,
     institutions: input.sources
-      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, ...s }) => ({ ...s, note: noteOf.get(s.item_id) ?? null }))
+      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, ...s }) => ({ ...s, ended_by: s.ended_by ?? null, note: noteOf.get(s.item_id) ?? null }))
       .sort((a, b) => a.institution_name.localeCompare(b.institution_name)),
-    manual: input.manual
+    manual: manualHere
       .map((m) => ({ ...m, transactions: manualRead(m.account_id) ? (manualCounts.get(m.account_id) ?? 0) : null }))
       .sort((a, b) => a.institution.localeCompare(b.institution) || a.name.localeCompare(b.name)),
     removed,
+    ended: endedHere.map(({ e, not_counted }) => ({
+      account: e.account,
+      institution: e.institution,
+      state: e.state,
+      assumed: e.assumed,
+      end: e.end,
+      counted_through: e.end > period.start ? addDays(e.end, -1) : null,
+      not_counted,
+    })),
     gaps,
     caveats: {
       not_over: period.through < period.end,
@@ -731,8 +901,8 @@ export function buildReport(input: ReportInput): Report {
       marked: input.markedUnreadable ? 'unreadable' : marks.size > 0 ? 'set' : 'none',
       scope: {
         investment:
-          input.sources.some((s) => s.holds.investment || s.no_transactions === 'investment_accounts') || input.manual.some((m) => isInvestmentType(m.type)),
-        loans: input.sources.some((s) => s.holds.loans) || input.manual.some((m) => m.type === 'loan'),
+          input.sources.some((s) => s.holds.investment || s.no_transactions === 'investment_accounts') || manualHere.some((m) => isInvestmentType(m.type)),
+        loans: input.sources.some((s) => s.holds.loans) || manualHere.some((m) => m.type === 'loan'),
       },
       names_unread: !input.ownRead.names,
     },

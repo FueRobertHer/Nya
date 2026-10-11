@@ -162,6 +162,8 @@ const SUMMARIES: Record<string, Tool['summary']> = {
       `${count('no_recent_contributions')} with no recent contributions.${missingAccounts(r.missing_accounts)}`
     );
   },
+  list_tags: (r) => `${plural(r.tags.length, 'tag')}.${withoutTransactions(r)}`,
+  list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
 };
 

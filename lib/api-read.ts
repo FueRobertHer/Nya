@@ -61,6 +61,15 @@
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
 //
+// ACCOUNTS THAT ENDED (closed, left, or no longer followed: lib/lifecycle.ts)
+// are listed with when (`lifecycle`, a field version 1 gained), even once
+// their bank stops returning them, with the newest balance measured before,
+// and count in nothing from that day on, as in the app: net worth now leaves
+// them out, its history subtracts them from their end day, and their
+// transactions from it are left out (lib/activity.ts). An investment one's
+// holdings say so too. Read strictly: one that can't be read is a 409, never
+// an account counted that the person closed.
+//
 // READ ONLY. Nothing here writes: each read that could tidy as it goes is
 // asked not to (readOnly).
 //
@@ -71,14 +80,15 @@
 import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
-import { getEffectiveHidden, sameAccountIds, type Link } from './links';
+import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
+import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
-import { connectorAccountsStore } from './connectors/store';
+import { connectorAccountsStore, endedAccountsStore } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
@@ -100,6 +110,8 @@ import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { readTagSet, tagNameKey, type TagSet } from './tags';
+import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 
@@ -183,7 +195,34 @@ export type ApiAccount = {
   /** Null for a manual account. For one SimpleFIN feeds, its bank's link
    *  through SimpleFIN, as Connection health shows it. */
   connection: ApiConnection | null;
+  /** When it ended, as the person said (or Nya assumed, `assumed`, when
+   *  nobody answered about an account its bank stopped returning), or null
+   *  while it is open. From `date` on it counts in no total. Version 1 may
+   *  add states. */
+  lifecycle: ApiLifecycle | null;
 };
+
+export type ApiLifecycle = {
+  /** closed, left (no longer yours: sold, transferred, divided), or
+   *  untracked (no longer followed). */
+  state: 'closed' | 'left' | 'untracked';
+  /** The day it stopped counting, YYYY-MM-DD. */
+  date: string;
+  /** What the person wrote about it, or null. */
+  note: string | null;
+  /** Nya assumed it closed: nobody answered whether it had, after its bank
+   *  stopped returning it. */
+  assumed: boolean;
+};
+
+/** An account's end, for the API, or null while it is open. */
+function apiLifecycle(view: LifecycleView, id: string): ApiLifecycle | null {
+  const entry = lifecycleOf(view, id);
+  const l = entry?.lifecycle;
+  const date = l ? endOf(l) : null;
+  if (!entry || !l || l.state === 'active' || date === null) return null;
+  return { state: l.state, date, note: (l.state === 'closed' || l.state === 'left') && l.note ? l.note : null, assumed: entry.assumed === true };
+}
 
 /** An account, or a connection's accounts, that an answer couldn't include
  *  (see AccountsRead). */
@@ -210,7 +249,7 @@ export type ApiMissing = {
 /** The accounts, and what couldn't be included, named (`missing`): never a
  *  shorter list passed off as whole (an answer built on it says complete:
  *  false). */
-type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link> };
+type AccountsRead = { accounts: ApiAccount[]; missing: ApiMissing[]; notes: string[]; hidden: HiddenMap; links: Map<string, Link>; lifecycle: LifecycleView };
 
 /** The connection facts for each Item, from the records health keeps. Also
  *  what a report says of each connection (lib/report/read.ts), so the two
@@ -240,11 +279,14 @@ export async function connectionFacts(ctx: Ctx): Promise<{ of: (item_id: string)
 }
 
 async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsRead> {
-  const [items, remembered, effective, manual, facts, fed] = await Promise.all([
+  // Strict: a hidden account must never show for a read that failed.
+  const hiddenRead = getEffectiveHidden(ctx, { readOnly: true });
+  // Strict, through the same links: an end that can't be read throws.
+  const lifecycleRead = hiddenRead.then((effective) => getEffectiveLifecycle(ctx, effective.links));
+  const [items, remembered, effective, manual, facts, fed, lifecycle] = await Promise.all([
     getItems(ctx),
     rememberedAccountsReport(ctx),
-    // Strict: a hidden account must never show for a read that failed.
-    getEffectiveHidden(ctx, { readOnly: true }),
+    hiddenRead,
     // LENIENT, for this display only: an account that can't be read is named
     // in `missing`, and the others listed; recording a snapshot reads them all
     // strictly (lib/networth.ts). One sealed under a key this deployment
@@ -254,8 +296,17 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     getManualAccountsReport(ctx),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the manual accounts are: an account
-    // entry that can't be read is named in `missing`.
-    connectorBanksReport(ctx),
+    // entry that can't be read is named in `missing`. One that ended holds
+    // no bank (lib/connectors/institutions.ts); the strict read is below.
+    connectorBanksReport(
+      ctx,
+      Date.now(),
+      lifecycleRead.then(
+        (view) => endedNowIds(view),
+        () => new Set<string>()
+      )
+    ),
+    lifecycleRead,
   ]);
   const notes: string[] = [];
   const missing: ApiMissing[] = [];
@@ -281,8 +332,26 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       if (includeHidden || !hidden.has(account.account_id)) linked.push({ item, account });
     }
   }
-  const ids = new Map(linked.map(({ account }) => [account.account_id, sameAccountIds(account.account_id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, [...ids.keys()], remembered.byItem)]);
+  // Accounts that ended and that no live list names any more (a bank stops
+  // returning a closed account): listed from what their end keeps, so the
+  // end, and whether it was assumed, can be seen. A SimpleFIN card names
+  // one while it shows it (one that ended and isn't in SimpleFIN's latest
+  // answer is left off it), and one that can't be read is named below.
+  const listedIds = new Set([
+    ...linked.map(({ account }) => account.account_id),
+    ...manual.accounts.map((a) => a.account_id),
+    ...fed.cards.flatMap((card) => card.accounts.map((a) => a.account_id)),
+    ...fed.unreadable.map((u) => u.account_id),
+  ]);
+  const endedOnly = [...lifecycle.accounts].filter(
+    ([root, { entry }]) =>
+      endOf(entry.lifecycle) !== null &&
+      !sameAccountIds(root, links).some((id) => listedIds.has(id)) &&
+      (includeHidden || !hidden.has(root)) &&
+      !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
+  );
+  const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
+  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -313,6 +382,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       as_of: b?.date ?? null,
       as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
       connection: facts.of(item.item_id),
+      lifecycle: apiLifecycle(lifecycle, account.account_id),
     };
   });
 
@@ -353,8 +423,44 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection: null,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
       });
     }
+  }
+  const stored = new Set(items.map((i) => i.item_id));
+  // One SimpleFIN fed is SimpleFIN's: still tracked, or let go and removed
+  // (lib/connectors/store.ts connector-ended remembers it). LENIENT: one
+  // that can't be read is said as a manual account.
+  const fedIds = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
+    ? await endedAccountsStore.getAllReport(ctx).then(
+        (r) => new Set([...r.entries.keys(), ...r.unreadable, ...r.unrecognised]),
+        () => new Set<string>()
+      )
+    : new Set<string>();
+  for (const id of fed.accounts.keys()) fedIds.add(id);
+  for (const [root, { entry }] of endedOnly) {
+    const b = balances.get(root) ?? null;
+    const type = entry.type ?? 'other';
+    accounts.push({
+      id: root,
+      source: isManualId(root) ? (fedIds.has(root) ? 'simplefin' : 'manual') : 'plaid',
+      name: entry.label.name,
+      official_name: null,
+      institution: entry.label.institution,
+      type,
+      subtype: null,
+      mask: entry.label.mask,
+      balance: b?.value ?? null,
+      // As its end recorded it, where the write knew it.
+      currency: entry.currency ?? null,
+      credit_limit: null,
+      is_debt: isOwedType(type),
+      hidden: hidden.has(root),
+      as_of: b?.date ?? null,
+      as_of_time: b?.layer === 'recorded' ? (takenAt.get(b.date) ?? null) : null,
+      connection: entry.item_id && stored.has(entry.item_id) ? facts.of(entry.item_id) : null,
+      lifecycle: apiLifecycle(lifecycle, root),
+    });
   }
   // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
   // above). One kept as a manual account on a disconnect that stopped part
@@ -387,6 +493,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection,
+        lifecycle: apiLifecycle(lifecycle, a.account_id),
       });
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
@@ -400,7 +507,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
   accounts.sort((a, b) => byText(a.institution, b.institution) || byText(a.name, b.name) || byText(a.id, b.id));
-  return { accounts, missing, notes, hidden, links };
+  return { accounts, missing, notes, hidden, links, lifecycle };
 }
 
 /**
@@ -429,6 +536,18 @@ export type ApiAccounts = {
   missing_accounts: ApiMissing[];
   notes: string[];
 };
+
+/**
+ * Each account's name as the app labels it where a rule names one
+ * (components/Dashboard.tsx: the institution, the account and its mask), by
+ * id, hidden ones too, following links from an earlier account to the one
+ * it became; null for one no longer here. For saying a rule in words.
+ */
+export async function accountLabels(ctx: Ctx): Promise<(id: string) => string | null> {
+  const { accounts, links } = await accountsRead(ctx, true);
+  const byId = new Map(accounts.map((a) => [a.id, `${a.institution} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`]));
+  return (id) => byId.get(id) ?? byId.get(resolveId(id, links)) ?? null;
+}
 
 /** Every account: linked and manual, with its newest measured balance and as
  *  of when. Hidden ones only with `includeHidden`. */
@@ -471,9 +590,14 @@ type NetWorthRead = { read: AccountsRead; history: HistoryPoint[] };
 
 async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthRead> {
   const read = await accountsRead(ctx, includeHidden);
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden);
+  // Accounts that ended are subtracted from their end day either way: they
+  // are no longer the person's to count, hidden or not.
+  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended, shortDays(read.lifecycle, includeHidden ? new Map() : read.hidden));
   return { read, history };
 }
+
+/** Whether an account counts in net worth now: not once it has ended. */
+const countsNow = (a: ApiAccount) => a.lifecycle === null || a.lifecycle.date > lastEndDay();
 
 /** The currency net worth is labelled with, and whether the accounts mix
  *  several (the recorded totals add them unconverted, as the chart does). */
@@ -485,11 +609,12 @@ function netWorthCurrency(accounts: readonly ApiAccount[]): { currency: string |
 }
 
 function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
-  const { currency: main, mixed } = netWorthCurrency(read.accounts);
+  const counted = read.accounts.filter(countsNow);
+  const { currency: main, mixed } = netWorthCurrency(counted);
   const totals = new Map<string | null, { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }>();
   let without = 0;
   const days: string[] = [];
-  for (const a of read.accounts) {
+  for (const a of counted) {
     if (a.balance === null) {
       without++;
       continue;
@@ -582,7 +707,7 @@ function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { acco
 
 /** Net worth's history from a read already made. */
 function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery): ApiHistory {
-  const { currency, mixed } = netWorthCurrency(nw.read.accounts);
+  const { currency, mixed } = netWorthCurrency(nw.read.accounts.filter(countsNow));
   return seriesOf(nw.history, q, { account_id: null, currency, mixed }, []);
 }
 
@@ -691,12 +816,21 @@ export type ApiTransaction = {
    *  add values. */
   source: string;
   hidden: boolean;
+  /** The person's note on it: one written with a row they entered or
+   *  imported, or put on a bank's row. */
   note: string | null;
   counterparty: string | null;
   payment_channel: string | null;
   city: string | null;
   region: string | null;
   website: string | null;
+  /** The tags it carries (lib/tags.ts), in the order they were made: put
+   *  on by the person, carried from an earlier account, or added by a rule. */
+  tags: { id: string; name: string }[];
+  /** The person's rules that match it (lib/rules.ts), in the order they run. */
+  rule_ids: string[];
+  /** It is excluded because a rule hides it, not by the person's own hand. */
+  excluded_by_rule: boolean;
 };
 
 /** An id as the API shows it: null for a provisional one (see CATEGORIES). */
@@ -713,7 +847,7 @@ function describer(ix: CategoryIndex): (bucket: string) => Described {
   };
 }
 
-function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTransaction {
+function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNames: ReadonlyMap<string, string>): ApiTransaction {
   const account = t.account_id ?? '';
   const filed = t.category_id ? categoryById(ix, t.category_id) : null;
   const group = filed ? groupOf(ix, filed) : null;
@@ -743,34 +877,51 @@ function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTr
     city: t.city,
     region: t.region,
     website: t.website,
+    tags: (t.tags ?? []).filter((id) => tagNames.has(id)).map((id) => ({ id, name: tagNames.get(id)! })),
+    rule_ids: t.rule_ids ?? [],
+    excluded_by_rule: t.excluded_by_rule === true,
   };
 }
+
+/** Each tag's name, by id: the tags that exist. */
+const namesOf = (set: TagSet | null): Map<string, string> => new Map((set?.tags ?? []).map((t) => [t.id, t.name]));
 
 /** Where an institution's transactions come from, and as of when; or why it
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
+export type ActivityRead = {
+  rows: Txn[];
+  history: OlderTxn[];
+  notes: string[];
+  sources: ApiSource[];
+  hidden: Set<string>;
+  view: NoTransactionsView;
+  ix: CategoryIndex;
+  /** The tags that exist (lib/tags.ts), or null: none saved, or unreadable (said in notes). */
+  tags: TagSet | null;
+};
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
  *  (lib/no-transactions.ts), the rows before them that recurring detection
  *  needs (`history`), and the categories they were filed by (`ix`), grown in
  *  memory where the app hasn't yet (see CATEGORIES). */
-async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
+export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const [{ transactions, notes, history, taxonomy }, fed] = await Promise.all([
+  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
-    // assembly's own notes.
-    connectorBanksReport(ctx),
+    // assembly's own notes. One that ended holds no bank.
+    connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
-    notes: [...notes, ...fedSources.notes],
+    notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
     ix: indexTaxonomy(taxonomy),
+    tags,
     sources: [
       ...bank.sources.map((s: BankSource) => ({
         institution: s.institution_name,
@@ -820,7 +971,7 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
  * transactions don't come in (Plaid doesn't provide them, or the person
  * didn't allow them), as missing from a `list` or not counted in `totals`.
  */
-function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
+export function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
   const none = noSpending(view, rows);
   if (none) return [`${none.lead}, so no bank or card transactions come in. To see spending, ${none.remedy}.`];
   const named = withoutNote(view, rows);
@@ -847,7 +998,7 @@ export type TransactionQuery = {
   accountIds?: ReadonlySet<string>;
   includeHidden?: boolean;
   /** Matched, in any case, against the name, the merchant behind it, the
-   *  category and the note. */
+   *  category, the note and the names of its tags. */
   text?: string;
   /** A category's name as listed (categories), in any case: "other" for
    *  none, while the uncategorized category is named so. */
@@ -855,6 +1006,11 @@ export type TransactionQuery = {
   /** A category's id (categories): rows filed under it, or under one merged
    *  into it. An id no category has is a 404 (NotFound). */
   categoryId?: string;
+  /** A tag's name as listed (tags), in any case: rows carrying it. */
+  tag?: string;
+  /** A tag's id (tags): rows carrying it. An id no tag has is a 404
+   *  (NotFound). */
+  tagId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -875,20 +1031,29 @@ export type ApiTransactionPage = {
 
 /** One page of transactions, newest first, matching the query. */
 export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<ApiTransactionPage> {
-  const activity = await readActivity(ctx, !!q.includeHidden);
+  // Asked by tag: tags that can't be read are a 409 (unreadable), never "no
+  // tag has that id" or no transactions.
+  const [activity] = await Promise.all([readActivity(ctx, !!q.includeHidden), q.tagId !== undefined || q.tag !== undefined ? readTagSet(ctx) : null]);
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
   const describe = describer(activity.ix);
   const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
   if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
+  const tagNames = namesOf(activity.tags);
+  if (q.tagId !== undefined && !tagNames.has(q.tagId)) throw new NotFound('No tag has that id: list them with tags.');
+  // A name no tag has matches nothing, as a category's does.
+  const byName = q.tag === undefined ? undefined : (activity.tags?.tags.find((t) => tagNameKey(t.name) === tagNameKey(q.tag!))?.id ?? null);
+  const tagged = (t: Txn) => (q.tagId === undefined || !!t.tags?.includes(q.tagId)) && (byName === undefined || (byName !== null && !!t.tags?.includes(byName)));
+  const tagText = (t: Txn) => (t.tags ?? []).map((id) => tagNames.get(id));
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
     .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
     .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
-    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden, activity.ix))
+    .filter(tagged)
+    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note, ...tagText(t)].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix, tagNames))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
@@ -1110,6 +1275,10 @@ export type ApiSpending = Summary & {
   /** Money out by group, most first, with how many rows each sums: the
    *  categories' rolled up (ids null for one the app hasn't stored yet). */
   groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
+  /** Money out by tag, most first (lib/tag-totals.ts): each counted outflow
+   *  under every tag its row carries, so a tag is exactly what its rows add
+   *  to the categories, and a row with two tags is in both. */
+  tags: { id: string; name: string; spent: number; transactions: number }[];
   sources: ApiSource[];
   notes: string[];
 };
@@ -1142,6 +1311,10 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
     groups: [...groups.values()]
       .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
       .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
+    tags: spendingByTag(activity.rows, inRange, currency).flatMap((s) => {
+      const name = namesOf(activity.tags).get(s.tag);
+      return name === undefined ? [] : [{ id: s.tag, name, spent: s.spent, transactions: s.transactions }];
+    }),
     sources: activity.sources,
     notes,
   };
@@ -1251,6 +1424,10 @@ export type ApiHoldingsAccount = {
   observed_at: string | null;
   /** The first day anything was recorded for it. */
   recorded_since: string | null;
+  /** When it ended, as on /accounts, or null while it is open: an account
+   *  that ended counts in nothing from its day, and its positions are the
+   *  last recorded before it. Version 1 gained it. */
+  lifecycle: ApiLifecycle | null;
   positions: {
     security_id: string;
     ticker: string | null;
@@ -1319,6 +1496,7 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
         as_of: held ? day!.date : null,
         observed_at: held?.observed_at ?? null,
         recorded_since: span.first,
+        lifecycle: a.lifecycle,
         positions: (held?.positions ?? []).map((p) => ({
           security_id: p.security_id,
           ticker: p.ticker,

@@ -187,6 +187,8 @@ describe('tools', () => {
       'get_budgets',
       'list_recurring_bills',
       'list_categories',
+      'list_tags',
+      'list_rules',
       'get_goals',
       'get_holdings',
     ]);

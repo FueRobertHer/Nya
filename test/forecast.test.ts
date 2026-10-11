@@ -455,6 +455,11 @@ describe('what it says it may be missing', () => {
     expect(notes([inst({ error: 'x', stale_as_of: '2026-10-03', stale_missing: 2 })])[1]).toBe("2 accounts at Chase couldn't be shown, so any cash in them isn't in this forecast.");
     // Missing from an otherwise good fetch.
     expect(notes([inst({ unconfirmed_missing: 1 })])).toEqual(["1 account at Chase stopped reporting, so any cash in it isn't in this forecast."]);
+    // Held at its last known balance until answered (#50): in the forecast from it.
+    const held = { ...acct(), account_id: 'sav', name: 'Savings', balance: 900, stale: true, held: { as_of: '2026-10-05' } };
+    expect(notes([inst({ unconfirmed_missing: 1, accounts: [acct(), held] })])).toEqual(['Savings at Chase stopped reporting, so this starts from its last known balance.']);
+    // A held card isn't cash: nothing to say here.
+    expect(notes([inst({ unconfirmed_missing: 1, accounts: [acct(), { ...held, type: 'credit' }] })])).toEqual([]);
   });
 
   test("a card's payment due that the forecast doesn't hold is named, with its statement balance", () => {

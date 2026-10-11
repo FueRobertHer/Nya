@@ -112,7 +112,7 @@ export default function DevelopersPage() {
           <li>
             <strong>Totals count as the app counts.</strong> Transfers between your accounts, cash taken out at an ATM and
             loan payments are never spending or income; a bank’s fees are spending; a transaction you excluded from budgets
-            and reports is left out.
+            and reports, or one a rule of yours hides, is left out (<code>excluded_by_rule</code> says which).
           </li>
           <li>
             <strong>As of.</strong> A balance is the newest measured one, with the day (UTC) it was measured: the nightly

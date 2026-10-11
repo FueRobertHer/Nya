@@ -656,6 +656,7 @@ describe('recurring bills and holdings', () => {
         as_of: daysAgo(0),
         observed_at: expect.any(String),
         recorded_since: daysAgo(0),
+        lifecycle: null,
         positions: [
           { security_id: 'sec_vti', ticker: 'VTI', name: 'Vanguard Total Stock Market ETF', type: 'etf', cash_equivalent: false, quantity: 80, price: 250, price_as_of: daysAgo(1), value: 20000, cost_basis: 15000, currency: 'USD' },
         ],

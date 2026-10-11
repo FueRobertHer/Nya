@@ -17,7 +17,19 @@
 // under REFETCH_HOURS old and was whole for every tracked account (no
 // failure, no problem that concerns them, none missing, every balance there
 // and current: lib/connectors/institutions.ts answeredWhole), so a bank held
-// out of the day's total is always asked again.
+// out of the day's total is always asked again. An account that ended
+// (lib/lifecycle.ts) holds nothing there, nor in judging an answer whole for
+// the history below: a card closed at the bank that SimpleFIN stops
+// returning never stalls the history of the accounts beside it. What such an
+// answer left out of it is kept on it instead (ConnectorAccount `left_out`),
+// since the history moved on without its transactions: an older window, the
+// days it newly reached; a recent answer, the days from the last one the
+// history had reached (rows post late into days fetched already), open until
+// an answer holds it again. An answer that holds it, with no problem about
+// it, takes the days it covers off, so what came is never said to be
+// missing: a recent one, everything from its own start on. A report says
+// what may still be missing (lib/report/read.ts), and so does its OFX
+// statement.
 //
 // WINDOWS. A request asks for the transactions posted in a window of at most
 // the connector's windowDays (90 for SimpleFIN). The recent window has no end
@@ -55,7 +67,19 @@
 // Never logs a credential: the connector's errors carry no URL
 // (lib/connectors/http.ts), and anything else goes through loggable().
 
-import { connectionsStore, connectorAccountsStore, secretsStore, requestsCount, type AvailableAccount, type ConnectorAccount, type ConnectorConnection, type FetchRecord, type StoredProblem } from './store';
+import {
+  connectionsStore,
+  connectorAccountsStore,
+  secretsStore,
+  requestsCount,
+  MAX_LEFT_OUT,
+  type AvailableAccount,
+  type ConnectorAccount,
+  type ConnectorConnection,
+  type FetchRecord,
+  type LeftOut,
+  type StoredProblem,
+} from './store';
 import { answeredWhole } from './institutions';
 import { connectorOf } from './registry';
 import { ConnectorFailure, type ConnectorDef, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
@@ -64,6 +88,7 @@ import { normalizeRecords, type ImportRow } from '../import/normalize';
 import { MANY_AT_ONCE, StoreRefusedError, StoredDataUnreadableError } from '../repo';
 import { addDays } from '../manual-txn-input';
 import { clearCaches } from '../cache';
+import { endedIdsUnlinked } from '../lifecycle';
 import { loggable } from '../log-safe';
 import type { Ctx } from '../containers';
 import type { RawRecord } from '../import/record';
@@ -351,22 +376,110 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
   }
 }
 
+/** The end of an open window, while it is worked on: after every day. */
+const OPEN = '9999-12-31';
+
+/** Windows as spans with an end, in day order, those that touch made one. */
+function spans(list: readonly LeftOut[]): { from: string; to: string }[] {
+  const sorted = list.map((w) => ({ from: w.from, to: w.to ?? OPEN })).filter((w) => w.from <= w.to).sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0));
+  const out: { from: string; to: string }[] = [];
+  for (const w of sorted) {
+    const last = out.at(-1);
+    if (last && (last.to === OPEN || w.from <= addDays(last.to, 1))) last.to = w.to > last.to ? w.to : last.to;
+    else out.push({ ...w });
+  }
+  return out;
+}
+
+const windows = (list: readonly { from: string; to: string }[]): LeftOut[] => {
+  const out = list.map((w) => ({ from: w.from, to: w.to === OPEN ? null : w.to }));
+  // Too many: kept as one, which says more may be missing, never less.
+  return out.length > MAX_LEFT_OUT ? [{ from: out[0].from, to: out.at(-1)!.to }] : out;
+};
+
+/** The days an account was left out of, with `from` to `to` added (`to`
+ *  null: open, see LeftOut). Pure. */
+export function withLeftOut(list: readonly LeftOut[] | undefined, from: string, to: string | null): LeftOut[] {
+  return windows(spans([...(list ?? []), { from, to }]));
+}
+
+/** The days an account was left out of, without `from` to `to` (`to` null:
+ *  everything from `from` on), which an answer holding it covered. Pure. */
+export function withoutLeftOut(list: readonly LeftOut[] | undefined, from: string, to: string | null): LeftOut[] {
+  const end = to ?? OPEN;
+  const out: { from: string; to: string }[] = [];
+  for (const w of spans(list ?? [])) {
+    if (w.to < from || w.from > end) {
+      out.push(w);
+      continue;
+    }
+    if (w.from < from) out.push({ from: w.from, to: addDays(from, -1) });
+    if (end !== OPEN && w.to > end) out.push({ from: addDays(end, 1), to: w.to });
+  }
+  return windows(spans(out));
+}
+
+const sameWindows = (a: readonly LeftOut[], b: readonly LeftOut[]) => a.length === b.length && a.every((w, i) => w.from === b[i].from && w.to === b[i].to);
+
+/**
+ * What one answer says of each tracked account's own days (see the header):
+ * one it holds with no problem about it (`left` false) has the days it
+ * `covered` taken off; one that ended and that a whole answer left out or
+ * named a problem for alone has the days that answer moved the history over
+ * (`leftOut`) added. Written only when they change: an account SimpleFIN no
+ * longer returns costs a write when its window opens, and one when an answer
+ * holds it again.
+ */
+async function noteLeftOut(
+  ctx: Ctx,
+  tracked: readonly ConnectorAccount[],
+  ended: ReadonlySet<string>,
+  left: (a: ConnectorAccount) => boolean,
+  covered: { from: string; to: string | null },
+  leftOut: { from: string; to: string | null } | null
+): Promise<void> {
+  for (const a of tracked) {
+    const out = left(a);
+    const next = (list: readonly LeftOut[] | undefined): LeftOut[] | null => {
+      if (!out) return list?.length ? withoutLeftOut(list, covered.from, covered.to) : null;
+      return leftOut && ended.has(a.account_id) ? withLeftOut(list, leftOut.from, leftOut.to) : null;
+    };
+    const was = a.left_out ?? [];
+    const now = next(was);
+    if (!now || sameWindows(now, was)) continue;
+    await connectorAccountsStore.update(ctx, a.account_id, (c) => {
+      if (!c) return c;
+      const changed = next(c.left_out);
+      if (!changed || sameWindows(changed, c.left_out ?? [])) return c;
+      const { left_out: _was, ...rest } = c;
+      return changed.length > 0 ? { ...rest, left_out: changed } : rest;
+    });
+  }
+}
+
 /** Whether an answer, as recorded, was whole for the accounts tracked: none
- *  missing, and no problem reported that concerns them or names no bank. */
-function wholeRecord(record: FetchRecord): boolean {
-  return record.failure === null && record.missing.length === 0 && record.problems.every((p) => p.accounts !== null && p.accounts.length === 0);
+ *  missing, and no problem reported that concerns them or names no bank;
+ *  those that ended (`ended`) aside, which hold nothing (see the header). */
+function wholeRecord(record: FetchRecord, ended: ReadonlySet<string>): boolean {
+  return record.failure === null && record.missing.every((id) => ended.has(id)) && record.problems.every((p) => p.accounts !== null && p.accounts.every((id) => ended.has(id)));
 }
 
 /** Stores what a request for balances came to, on the connection entry. Only
  *  a whole answer moves the history on: after one that wasn't, the next
  *  recent window starts where the last whole one ended, so a stretch an
  *  account was missing from is fetched again. */
-async function saveFetch(ctx: Ctx, connection_id: string, record: FetchRecord, answered: { answer: RemoteAnswer; start: string | null; today: string } | null): Promise<void> {
+async function saveFetch(
+  ctx: Ctx,
+  connection_id: string,
+  record: FetchRecord,
+  answered: { answer: RemoteAnswer; start: string | null; today: string } | null,
+  ended: ReadonlySet<string> = new Set()
+): Promise<void> {
   await connectionsStore.update(ctx, connection_id, (current) => {
     if (!current) return null;
     if (!answered) return { ...current, last_fetch: record };
     const tracked = new Set(current.tracked.map((t) => t.remote_id));
-    const moves = answered.start !== null && wholeRecord(record);
+    const moves = answered.start !== null && wholeRecord(record, ended);
     return {
       ...current,
       last_fetch: record,
@@ -429,6 +542,8 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
   const done = { windows: 0, added: 0 };
   const today = utcDay(now);
   const limit = addDays(today, -HISTORY_DAYS);
+  // Accounts that ended hold nothing in judging a window whole (see the header).
+  const ended = await endedIdsUnlinked(ctx, now);
   while (done.windows < BACKFILL_WINDOWS_PER_RUN) {
     const conn = await connectionsStore.get(ctx, connection_id);
     const window = backfillWindow(conn?.history ?? null, def);
@@ -446,6 +561,8 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
       break;
     }
     const remotes = new Set(tracked.map((a) => a.remote_id));
+    const live = tracked.filter((a) => !ended.has(a.account_id));
+    const liveRemotes = new Set(live.map((a) => a.remote_id));
     const byRemote = new Map(answer.accounts.map((a) => [a.remote_id, a]));
     const merged = await mergeRecords(
       ctx,
@@ -461,7 +578,17 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
     // tracked account, or with a problem that concerns one (or names no
     // bank), is noted as failed, and the window is asked again next night.
     const whole =
-      tracked.every((a) => byRemote.has(a.remote_id)) && !answer.problems.some((p) => p.accounts === null || p.accounts.some((id) => remotes.has(id)));
+      live.every((a) => byRemote.has(a.remote_id)) && !answer.problems.some((p) => p.accounts === null || p.accounts.some((id) => liveRemotes.has(id)));
+    // What it says of each account's own days (see the header): whole, it
+    // moves the history back over the days before where it was.
+    await noteLeftOut(
+      ctx,
+      tracked,
+      ended,
+      (a) => !byRemote.has(a.remote_id) || answer.problems.some((p) => p.accounts === null || p.accounts.includes(a.remote_id)),
+      { from: window.start, to: addDays(window.end, -1) },
+      whole ? { from: window.start, to: addDays(conn.history!.from, -1) } : null
+    );
     if (!whole) {
       await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, failed: new Date(now).toISOString() } } : c));
       break;
@@ -501,10 +628,12 @@ export async function syncConnection(
   const def = connectorOf(conn.connector);
   const tracked = await trackedOf(ctx, connection_id);
   const today = utcDay(now);
+  // Accounts that ended hold nothing (see the header).
+  const ended = tracked.length > 0 ? await endedIdsUnlinked(ctx, now) : new Set<string>();
 
   const lastAnswer = conn.last_answer_at ? Date.parse(conn.last_answer_at) : null;
   // Recent and whole for every tracked account: anything less is asked again.
-  const fresh = opts.purpose === 'daily' && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR && answeredWhole(conn, tracked, now);
+  const fresh = opts.purpose === 'daily' && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR && answeredWhole(conn, tracked, now, ended);
   let secret: string | null = null;
   let changed = false;
 
@@ -532,7 +661,15 @@ export async function syncConnection(
       return result;
     }
     result.record = await applyAnswer(ctx, tracked, result.answer, now);
-    await saveFetch(ctx, connection_id, result.record, { answer: result.answer, start: request.balancesOnly ? null : request.start, today });
+    await saveFetch(ctx, connection_id, result.record, { answer: result.answer, start: request.balancesOnly ? null : request.start, today }, ended);
+    // What it says of each account's own days (see the header): whole, it
+    // moves the history on from the last day it had reached.
+    const record = result.record;
+    if (!request.balancesOnly) {
+      const left = new Set([...record.missing, ...record.problems.flatMap((p) => p.accounts ?? tracked.map((a) => a.account_id))]);
+      const moved = conn.history && conn.history.to < today && wholeRecord(record, ended) ? conn.history.to : null;
+      await noteLeftOut(ctx, tracked, ended, (a) => left.has(a.account_id), { from: request.start, to: null }, moved ? { from: moved, to: null } : null);
+    }
     changed = tracked.length > 0;
   }
 

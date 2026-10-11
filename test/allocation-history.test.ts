@@ -182,6 +182,73 @@ describe('allocation over time', () => {
     expect(body.accounts.map((a: any) => a.account_id)).toEqual(['a']);
   });
 
+  test('an account that ended counts before its end and not from it on, and is never missing after it, even when a list from before asks for it', async () => {
+    await threeDays();
+    const { markEnded } = await import('@/lib/lifecycle');
+    await markEnded(ctx, 'b', { state: 'left', on: '2026-10-01' }, { type: 'investment', label: { name: 'B', institution: 'Broker', mask: null }, item_id: 'item_b' });
+    const { body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB });
+    expect(body.days.map((d: any) => [d.date, d.total, d.missing])).toEqual([
+      ['2026-09-30', 1000, []],
+      ['2026-10-01', 610, []],
+      ['2026-10-03', 620, []],
+    ]);
+    expect(body.accounts.find((a: any) => a.account_id === 'b')).toMatchObject({ state: 'gone', last: '2026-09-30' });
+  });
+
+  test('ending an account changes no day before its end: its cash beside its positions still counts, listed by the Plan or not', async () => {
+    await record('2026-09-30T13:00:00Z', ['a', 'b'], [hold('a', 'vti', 600), hold('b', 'bnd', 400)]);
+    // b holds 100 of cash beside its fund.
+    await measured('2026-09-30', { a: 600, b: 500 });
+    await record('2026-10-03T13:00:00Z', ['a', 'b'], [hold('a', 'vti', 620), hold('b', 'bnd', 380)]);
+    await measured('2026-10-03', { a: 620, b: 480 });
+    const before = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB })).body;
+    expect(before.days.map((d: any) => [d.date, d.total])).toEqual([
+      ['2026-09-30', 1100],
+      ['2026-10-03', 1100],
+    ]);
+    const { markEnded } = await import('@/lib/lifecycle');
+    await markEnded(ctx, 'b', { state: 'left', on: '2026-10-01' }, { type: 'investment', label: { name: 'B', institution: 'Broker', mask: null }, item_id: 'item_b' });
+    // As a list from before asks, and as the Plan asks once b has left it.
+    for (const accounts of [AB, [acct('a')]]) {
+      const { body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts });
+      expect(body.days.map((d: any) => [d.date, d.total, d.unlisted, d.missing])).toEqual([
+        ['2026-09-30', 1100, 100, []],
+        ['2026-10-03', 620, 0, []],
+      ]);
+      expect(body.accounts.find((a: any) => a.account_id === 'b')).toMatchObject({ state: 'gone' });
+    }
+  });
+
+  test('an account in another currency that ended keeps its currency on the days before, its cash beside its positions too: as its end recorded it, or as its institution reported it', async () => {
+    const cad = { iso_currency_code: 'CAD' };
+    await record('2026-09-30T13:00:00Z', ['a', 'c'], [hold('a', 'vti', 600), hold('c', 'xeqt', 400, cad)]);
+    // c holds 100 of cash beside its fund, in Canadian dollars.
+    await measured('2026-09-30', { a: 600, c: 500 });
+    const before = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a'), acct('c', 'CAD')] })).body;
+    expect(before.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+    const { markEnded, lifecycleStore } = await import('@/lib/lifecycle');
+    const C = { type: 'investment', label: { name: 'C', institution: 'Broker', mask: null }, item_id: 'item_b' };
+    // As the route records it, with its currency; then the Plan lists it no more.
+    await markEnded(ctx, 'c', { state: 'closed', on: '2026-10-01' }, { ...C, currency: 'CAD' });
+    expect((await lifecycleStore.get(ctx, 'c'))?.currency).toBe('CAD');
+    const after = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a')] })).body;
+    expect(after.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+    // An end that recorded none: as its institution last reported it.
+    await lifecycleStore.update(ctx, 'c', (e) => (e ? { ...e, currency: undefined } : e));
+    expect((await lifecycleStore.get(ctx, 'c'))?.currency).toBeUndefined();
+    await rememberAccounts(ctx, [{ item_id: 'item_b', error: null, accounts: [{ account_id: 'c', name: 'C', type: 'investment', subtype: 'tfsa', currency: 'CAD' }] }]);
+    const reported = (await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: [acct('a')] })).body;
+    expect(reported.days[0]).toMatchObject({ total: 600, otherCurrencies: { CAD: 500 } });
+  });
+
+  test('an end that can’t be read is a 409, never a series counting it', async () => {
+    await threeDays();
+    await fake.hset(ctxKey('account-lifecycle'), { b: 'damaged-bytes-damaged-bytes-damaged' });
+    const { status, body } = await quiet(() => ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB }));
+    expect(status).toBe(409);
+    expect(body).toMatchObject({ unreadable: true, unreadable_ids: ['b'] });
+  });
+
   test('nothing recorded is an empty series, with no first day', async () => {
     const { status, body } = await ask({ from: '2026-09-01', to: '2026-10-09', currency: 'USD', accounts: AB });
     expect(status).toBe(200);

@@ -487,6 +487,10 @@ export type DebtAccountInput = {
   hidden?: boolean;
   /** Manual accounts: when the balance was last typed or pushed. */
   updated_at?: string;
+  /** Missing from its bank's answer, held at its last known balance (the day
+   *  it is from) until the person says whether it closed, or without one when
+   *  that is too old to count (lib/lifecycle-questions.ts). */
+  held?: { as_of: string | null };
   /** Plaid's terms (lib/liabilities.ts), where it serves them. */
   liability?: {
     kind: 'credit' | 'student' | 'mortgage';
@@ -815,7 +819,9 @@ const SHARED_MINIMUM_SERVICERS = new Set(['ins_116861', 'ins_116295', 'ins_11695
 export function debtAccounts(institutions: DebtInstitutionInput[]): DebtAccount[] {
   const out: DebtAccount[] = [];
   for (const inst of institutions) {
-    const here = inst.accounts.filter((a) => !a.hidden && isOwedType(a.type)).map((a) => toDebtAccount(inst, a));
+    // A held card or loan with no balance it can count isn't planned: the
+    // plan names it instead (blindSpots).
+    const here = inst.accounts.filter((a) => !a.hidden && isOwedType(a.type) && !(a.held && a.balance === null)).map((a) => toDebtAccount(inst, a));
     splitSharedMinimums(here, inst.institution_id);
     out.push(...here);
   }
@@ -852,6 +858,10 @@ export type BlindSpot =
   | { kind: 'missing'; institution: string; count: number }
   /** It answered without accounts it used to report. */
   | { kind: 'vanished'; institution: string; count: number }
+  /** It answered without these, held at their last known balances until the
+   *  person answers: in the plan from those, from this day when they share
+   *  one. */
+  | { kind: 'held'; institution: string; accounts: string[]; date: string | null }
   /** Its balances in the plan are recovered ones, from this day. */
   | { kind: 'dated'; institution: string; date: string; at: string | null };
 
@@ -880,7 +890,19 @@ export function blindSpots(institutions: DebtInstitutionInput[]): BlindSpot[] {
     }
     if (inst.stale_missing) out.push({ kind: 'missing', institution, count: inst.stale_missing });
     if (inst.unconfirmed_missing && !inst.error) {
-      out.push({ kind: 'vanished', institution, count: inst.unconfirmed_missing });
+      // Held at their last known balances (lib/lifecycle-questions.ts): the
+      // cards and loans among them are planned from those, and one held
+      // without a balance isn't planned. A payload from before holds says
+      // only how many are missing.
+      const held = inst.accounts.filter((a) => a.held && !a.hidden);
+      const owed = held.filter((a) => isOwedType(a.type));
+      const planned = owed.filter((a) => a.balance !== null);
+      if (planned.length > 0) {
+        const days = new Set(planned.map((a) => a.held?.as_of ?? null));
+        out.push({ kind: 'held', institution, accounts: planned.map((a) => (a.mask ? `${a.name} ••${a.mask}` : a.name)), date: days.size === 1 ? [...days][0] : null });
+      }
+      const unplanned = held.length === 0 ? inst.unconfirmed_missing : owed.length - planned.length;
+      if (unplanned > 0) out.push({ kind: 'vanished', institution, count: unplanned });
     }
   }
   return out;

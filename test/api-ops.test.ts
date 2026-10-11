@@ -93,7 +93,7 @@ describe('from JSON', () => {
 describe('the operations', () => {
   test('each has a path, a summary and arguments, and the paths are unique', () => {
     const names = OPERATIONS.map((o) => o.name);
-    expect(names).toEqual(['me', 'accounts', 'net-worth', 'balance-history', 'transactions', 'categories', 'budgets', 'spending', 'recurring', 'goals', 'holdings']);
+    expect(names).toEqual(['me', 'accounts', 'net-worth', 'balance-history', 'transactions', 'categories', 'tags', 'rules', 'budgets', 'spending', 'recurring', 'goals', 'holdings']);
     expect(new Set(names).size).toBe(names.length);
     for (const o of OPERATIONS) expect(o.summary.length).toBeGreaterThan(10);
     expect(() => operation('nope')).toThrow();

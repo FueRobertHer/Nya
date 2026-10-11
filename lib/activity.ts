@@ -48,11 +48,40 @@ import { syncItemTransactions, storedItemTransactions, LOOKBACK_DAYS, type Older
 import { olderRowsForDetection, RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { NoTransactionsReason } from './item-products';
 import type { WithoutTransactions } from './no-transactions';
-import { getEffectiveHidden, type Link } from './links';
+import { getEffectiveHidden, liveAccountIds, type Link } from './links';
+import { getEffectiveLifecycle, endDays, type LifecycleView } from './lifecycle';
 import { readManualTxnsForDisplay } from './manual-txns';
-import { readExclusions, getCarriedAnnotations, carriedExclusions } from './txn-annotations';
-import { fileTransactions } from './category-store';
-import type { Taxonomy } from './categories';
+import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
+import { filingSet, fileRows } from './category-store';
+import { indexTaxonomy, type Taxonomy } from './categories';
+import { liveTagIds, tagsForDisplay, type TagSet } from './tags';
+import { applyLayers } from './txn-layers';
+import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
+import { effectiveLinks, getLinks, resolveId } from './link-core';
+
+/**
+ * How a rule's account condition knows an account now (lib/rules.ts): through
+ * the links that apply, as every reader follows them (lib/link-core.ts
+ * effectiveLinks: a link whose old id is live again is passed over, or two
+ * live accounts would be folded into one). Read only when a rule reads an
+ * account (`needed`). When the links or the live accounts can't be read, a
+ * rule matches only the account it names, and a note says so.
+ */
+async function ruleAccounts(ctx: Ctx, needed: boolean): Promise<{ account?: (id: string) => string; note: string | null }> {
+  if (!needed) return { note: null };
+  try {
+    const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+    const applied = effectiveLinks(links, live);
+    return applied.size ? { account: (id: string) => resolveId(id, applied), note: null } : { note: null };
+  } catch (err) {
+    console.error('activity: account links could not be read for rules', err instanceof Error ? err.name : 'error');
+    return { note: "Your account links couldn't be read, so a rule on an account applies only to that account's own transactions until they can be, not to an earlier account's linked to it." };
+  }
+}
+
+/** Whether any rule that is on is one `what` picks out (one that names an
+ *  account, say). */
+const rulesRead = (set: RuleSet | null, what: (r: RuleSet['rules'][number]) => boolean) => !!set?.rules.some((r) => r.enabled && what(r));
 
 /** What the banks' part keeps of the rows before the year: wider than
  *  finishActivity uses (lib/recurring.ts olderRowsForDetection), since the
@@ -63,12 +92,15 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  tells it from the payload cached before, which held the manual rows too
  *  and must not be merged with them again, `account_types` from one cached
  *  before rows carried their account's type (account_type, which the cash
- *  forecast reads), and `category_facts` from one cached before rows carried
- *  what files them into the person's categories: any is a miss. */
+ *  forecast reads), `category_facts` from one cached before rows carried
+ *  what files them into the person's categories, and `layer_facts` from one
+ *  cached before rows carried what rules and what was carried across a
+ *  re-link are applied by (lib/txn-layers.ts): any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
   category_facts: true;
+  layer_facts: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -97,6 +129,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.plaid_only === true &&
     p.account_types === true &&
     p.category_facts === true &&
+    p.layer_facts === true &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -135,7 +168,7 @@ export type BankSource = {
  * the app goes on without them.
  */
 async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boolean) {
-  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), ok: true };
+  const nothing = { categories: new Map<string, string>(), excluded: new Set<string>(), annotations: new Map<string, CarriedAnnotation>(), ok: true };
   // No links, read as none: nothing could be carried, so nothing is missing,
   // whatever the live accounts' read said (a damaged record of a connection
   // long gone must not put a gap on every report).
@@ -143,9 +176,14 @@ async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boo
   if (!links || !liveOk) return { ...nothing, read: { categories: false, exclusions: false } };
   const earlier = [...links.keys()];
   const [categories, annotations] = await Promise.all([getCarriedReport(ctx, earlier), getCarriedAnnotations(ctx, earlier)]);
+  // What carries, by row: the exclusions are marked on the cached rows, and
+  // the rest (an include, tags, a note) rides beside them for
+  // lib/txn-layers.ts.
+  const carried = carriedAnnotations(annotations.carried, links);
   return {
     categories: carriedCategories(categories.carried, links),
-    excluded: carriedExclusions(annotations.carried, links),
+    excluded: new Set([...carried].filter(([, a]) => a.excluded === true).map(([k]) => k)),
+    annotations: carried,
     ok: annotations.ok,
     read: { categories: categories.ok, exclusions: annotations.ok },
   };
@@ -173,7 +211,11 @@ export function newestFirst(a: Txn, b: Txn): number {
  * puts each bank row's account_id on it (lib/transactions.ts displayRows).
  * `since` reads the rows from that day on instead of the last LOOKBACK_DAYS:
  * a report on an earlier period (lib/report/read.ts), the same rows by the
- * same rules, further back.
+ * same rules, further back. `keepEnded` keeps the rows of accounts that ended
+ * (lib/lifecycle.ts) from their end day on, which are otherwise left out: for
+ * a reader that leaves them out by the same rule itself and must say what it
+ * didn't count (a report, with `lifecycle`, the ends as read here), or that
+ * counts what is stored (a category's uses).
  *
  * `own_read` says whether the person's own changes were all read: their
  * categories (set on a transaction, or carried across a re-link), their names
@@ -184,20 +226,28 @@ export function newestFirst(a: Txn, b: Txn): number {
  * The hidden set is read first and strictly: rows from hidden accounts are
  * filtered out inside each Item's read (the only place account_id still
  * exists), so they're never shipped, and a read failure throws rather than
- * surfacing transactions the person hid.
+ * surfacing transactions the person hid. So is when each account ended
+ * (lib/lifecycle.ts), through the same links: an ended account's rows from
+ * its end day on are left out the same way, from the list, budgets and
+ * spending, and one that can't be read throws rather than count them.
  */
 export async function assembleBankRows(
   ctx: Ctx,
-  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean; since?: string }
+  opts: { sync: boolean; readOnly?: boolean; includeHidden?: boolean; withAccountIds?: boolean; since?: string; keepEnded?: boolean }
 ): Promise<{
   payload: PlaidPayload;
   hidden: Set<string>;
   cacheable: boolean;
   sources: BankSource[];
   own_read: { categories: boolean; names: boolean; exclusions: boolean };
+  /** When each account ended, through the links the hidden set was read by:
+   *  what the rows were filtered by, or with keepEnded would have been. */
+  lifecycle: LifecycleView;
 }> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
+  const lifecycle = await getEffectiveLifecycle(ctx, links);
+  const endedFrom = opts.keepEnded ? undefined : endDays(lifecycle);
   const hiddenIds = new Set(hidden.keys());
   const leftOut = opts.includeHidden ? new Set<string>() : hiddenIds;
   // Read alongside the Items: each one waits for it only once it has its rows.
@@ -206,7 +256,9 @@ export async function assembleBankRows(
     hiddenAccountIds: leftOut,
     carriedIn: carried.then((c) => c.categories),
     carriedExclusionsIn: carried.then((c) => c.excluded),
+    carriedAnnotationsIn: carried.then((c) => c.annotations),
     withAccountIds: opts.withAccountIds,
+    endedFrom,
     since: opts.since,
   };
   const at = new Date().toISOString();
@@ -226,7 +278,9 @@ export async function assembleBankRows(
   // The person's own changes win over Plaid's data: recategorization by
   // transaction (a category's words, filed by finishActivity, which marks
   // them as the person's), vendor rename by vendor key (so it covers every row
-  // from that merchant).
+  // from that merchant). A renamed row keeps the bank's name beside it
+  // (renamed_from, never sent): a rule's name condition reads it too, and a
+  // rule's name never replaces the person's (lib/txn-layers.ts).
   const transactions = results.flatMap((r) => r.txns);
   const older = results.flatMap((r) => r.older);
   for (const t of [...transactions, ...older]) {
@@ -236,7 +290,10 @@ export async function assembleBankRows(
       t.category_set = true;
     }
     const renamed = renames.renames[t.vendor_key];
-    if (renamed) t.name = renamed;
+    if (renamed) {
+      t.renamed_from = t.name;
+      t.name = renamed;
+    }
   }
   const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
   // Every one of these comes with a note, so a payload holding any is never cached.
@@ -254,6 +311,7 @@ export async function assembleBankRows(
       plaid_only: true,
       account_types: true,
       category_facts: true,
+      layer_facts: true,
       transactions,
       notes,
       incomplete,
@@ -277,6 +335,7 @@ export async function assembleBankRows(
       never_synced: results[i].never_synced === true,
     })),
     own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
+    lifecycle,
   };
 }
 
@@ -288,11 +347,14 @@ export async function assembleBankRows(
  * payee are the manual row's own, changed by editing it, so no override or
  * rename applies to one.
  *
- * Left out of budgets and reports (lib/spending.ts), still listed: what the
- * person said on the row itself, else an exclusion carried across a re-link
- * (already on the row). A row whose record couldn't be read is marked as not
- * known (`excluded: null`): it counts, and the Activity tab says a total may
- * include one the person excluded.
+ * What the person said about each row (lib/txn-annotations.ts: an
+ * exclusion, tags, a bank row's note), what was carried across a re-link,
+ * and the rules are applied in one place, lib/txn-layers.ts, the person's own
+ * on top. Left out of budgets and reports (lib/spending.ts), still listed:
+ * what the person said on the row itself, else what was carried (an
+ * exclusion already on the row, or an include). A row whose record couldn't
+ * be read is marked as not known (`excluded: null`): it counts, and the
+ * Activity tab says a total may include one the person excluded.
  *
  * `since` is the first day of rows to read, as assembleBankRows's: by default
  * the same trailing window as the banks' rows. The manual rows are read back
@@ -304,31 +366,56 @@ export async function assembleBankRows(
  * (see BEFORE THE YEAR): the banks', as kept, and the manual accounts',
  * chosen once the exclusions are on them.
  *
+ * A manual account that ended (lib/lifecycle.ts) has its rows from its end
+ * day on left out, as the banks' part leaves out a linked one's. Read
+ * strictly here, on every request: a manual account is never linked, so no
+ * links are needed, and the cached banks' part says nothing of it.
+ *
  * Every row, the history's too, is filed into the person's categories (see
  * CATEGORIES), and `taxonomy` is the set it was filed by. `grow` is the app:
  * it seeds and grows the stored set; without it nothing is written.
+ * `keepEnded` keeps an ended manual account's rows from its end day on, as
+ * assembleBankRows's does a bank's.
  */
 export async function finishActivity(
   ctx: Ctx,
   plaid: PlaidPayload,
   hidden: Set<string>,
-  opts: { since?: string; grow?: boolean } = {}
+  /** `subjects`, with `followLinks` for a rule being made that reads an
+   *  account: for a rule's preview (app/api/rules/preview). */
+  opts: { since?: string; grow?: boolean; keepEnded?: boolean; subjects?: Map<string, RuleSubject>; followLinks?: boolean } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
+  /** When the tags couldn't be read, the note that says so: for a reader that
+   *  shows tags (the app, the read-only API), not one that doesn't (reports). */
+  tags_note: string | null;
+  /** How an account is known now, as the rules followed it (ruleAccounts). */
+  accountOf?: (id: string) => string;
   incomplete: NonNullable<PlaidPayload['incomplete']>;
   history: OlderTxn[];
   /** The manual accounts whose rows couldn't be read (lib/manual-txns.ts
    *  readManualTxnsForDisplay), or 'all'. */
   manual_unread: string[] | 'all';
   taxonomy: Taxonomy;
+  /** The tags that exist (lib/tags.ts), each row's among them; null when
+   *  none were ever saved or they couldn't be read (a note says which). */
+  tags: TagSet | null;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [manual, exclusions] = await Promise.all([readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }), readExclusions(ctx)]);
+  const [read, annotations, tagRead, ruleRead, lifecycle] = await Promise.all([
+    readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
+    readAnnotations(ctx),
+    tagsForDisplay(ctx),
+    rulesForDisplay(ctx),
+    opts.keepEnded ? null : getEffectiveLifecycle(ctx, new Map()),
+  ]);
+  const ended = lifecycle ? endDays(lifecycle) : new Map<string, string>();
+  const manual = { ...read, txns: read.txns.filter((t) => !(t.account_id && ended.has(t.account_id) && t.date >= ended.get(t.account_id)!)) };
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
   const transactions = [...plaid.transactions, ...manual.txns.filter((t) => t.date >= cutoff)].sort(newestFirst);
@@ -354,26 +441,45 @@ export async function finishActivity(
         vendor_key: t.vendor_key,
         logo_url: t.logo_url,
         source: t.source,
+        account_ref: t.account_id,
+        ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
-  for (const t of [...transactions, ...candidates]) {
-    const own = exclusions.records.get(t.transaction_id);
-    if (own === true) t.excluded = true;
-    else if (own === false) delete t.excluded;
-    else if (exclusions.unknown.has(t.transaction_id)) t.excluded = null;
-  }
-  const filed = await fileTransactions(ctx, [...transactions, ...candidates], { grow: !!opts.grow });
+  // The categories first, which the rules read; then the rules, what was
+  // carried across a re-link and what the person said about each row, over
+  // the bank's data (lib/txn-layers.ts); then every row filed.
+  const rows = [...transactions, ...candidates];
+  const filed = await filingSet(ctx, rows, { grow: !!opts.grow });
+  const ix = indexTaxonomy(filed.taxonomy);
+  const onAccount = rulesRead(ruleRead.set, (r) => r.conditions.some((c) => c.field === 'account'));
+  const links = await ruleAccounts(ctx, onAccount || !!opts.followLinks);
+  const account = links.account;
+  const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
+  applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
+  fileRows(ix, rows);
+  // What keeps rules from applying as they say, beside the rules' own note:
+  // links that couldn't be read for a rule on an account, and categories that
+  // couldn't be read for a rule naming one (left out whole until they can be).
+  const ruleNotes = [
+    ...(onAccount && links.note ? [links.note] : []),
+    ...(filed.unreadable && rulesRead(ruleRead.set, (r) => ruleCategories(r).length > 0)
+      ? ["Rules that name a category aren't applied until your categories can be read."]
+      : []),
+  ];
   // The institutions whose rows aren't all here: Plaid's, and the banks of a
   // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
     transactions,
-    notes: [...plaid.notes, ...manual.notes, ...filed.notes],
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes],
+    tags_note: tagRead.note,
+    ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
     // counts toward a merchant's limit nor is used.
     history: olderRowsForDetection(transactions, candidates),
     taxonomy: filed.taxonomy,
+    tags: tagRead.set,
     manual_unread: manual.unread,
   };
 }

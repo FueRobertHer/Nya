@@ -6,6 +6,10 @@ import { pendingVanishedIds } from '@/lib/vanished';
 import { placeRecorded, readHoldingsHistory } from '@/lib/holdings-history';
 import { readMeasuredBalances } from '@/lib/history';
 import { allocationSettingsStore } from '@/lib/allocation-settings';
+import { getEffectiveLifecycle, endDays, endOf } from '@/lib/lifecycle';
+import { isInvestmentType } from '@/lib/balance';
+import { isManualId, MANUAL_CURRENCY } from '@/lib/manual';
+import { bankCurrencies } from '@/lib/sharing';
 import { commonCurrency, KNOWN_ALWAYS, seriesBuilder, type SeriesAccount } from '@/lib/allocation/series';
 import { loggable } from '@/lib/log-safe';
 
@@ -57,6 +61,15 @@ import { loggable } from '@/lib/log-safe';
 //
 // The months are read in turn, and each reduced to its days' figures before
 // the next is read, so no more than a month of positions is held at once.
+//
+// An account that ENDED (lib/lifecycle.ts: closed, left, no longer followed)
+// counts on the days before its end and not from it on, as in net worth: on
+// the days before, as a listed account counts (its balance beside its
+// positions, and its splits), whether or not the Plan still lists it (it no
+// longer has a row there, so an investment account that ended is listed
+// here, its currency taken as the series' own); from its end its positions
+// and balance are left out, and it is gone, never missing after it. Read
+// strictly: an end that can't be read is a 409, never an account counted.
 //
 // What can't be read is a 409 naming it, never an empty series. A day whose
 // balances are damaged for good is left out and named (`unreadable_days`),
@@ -186,19 +199,37 @@ export async function POST(req: Request) {
     const effective = await getEffectiveHidden(ctx);
     const opts = { links: effective.links ?? undefined, hidden: effective.hidden };
     const place = placeRecorded(opts);
-    const [settings, head, directory, pending] = await Promise.all([
+    const [settings, head, directory, pending, lifecycle] = await Promise.all([
       allocationSettingsStore.get(ctx),
       readHoldingsHistory(ctx, null, opts),
       readKnownAccounts(ctx),
       pendingVanishedIds(ctx),
+      getEffectiveLifecycle(ctx, effective.links),
     ]);
-    // The accounts still linked, under the ids they are known by now.
+    // When each account that ended stops counting, by every id it has had.
+    const ends = endDays(lifecycle);
+    const endedOn = (id: string, date: string) => {
+      const end = ends.get(id);
+      return end !== undefined && date >= end;
+    };
+    // The accounts still linked, under the ids they are known by now. One
+    // that ended is gone, whatever still lists it.
     const stillLinked = new Set<string>();
     for (const id of [...effective.live, ...pending]) {
       const placed = place(id);
       if (placed) stillLinked.add(placed.account);
     }
-    const linked = (id: string) => !effective.liveOk || stillLinked.has(id);
+    const linked = (id: string) => !ends.has(id) && (!effective.liveOk || stillLinked.has(id));
+    // And recorded only up to the day before its end: expected no further.
+    const recorded = new Map<string, { first: string; last: string }>();
+    for (const [id, span] of head.accounts) {
+      const end = ends.get(id);
+      if (end === undefined) recorded.set(id, span);
+      else if (span.first < end) {
+        const before = dayOf(Date.parse(`${end}T00:00:00Z`) - DAY_MS);
+        recorded.set(id, { ...span, last: span.last < before ? span.last : before });
+      }
+    }
 
     // The accounts listed, under the ids they are known by now, hidden ones
     // left out: a list from before an account was hidden or re-linked is
@@ -206,7 +237,30 @@ export async function POST(req: Request) {
     const listed = new Map<string, SeriesAccount>();
     for (const a of q.accounts) {
       const placed = place(a.account_id);
-      if (placed && !listed.has(placed.account)) listed.set(placed.account, { ...a, account_id: placed.account });
+      if (!placed || listed.has(placed.account)) continue;
+      const end = ends.get(placed.account);
+      listed.set(placed.account, { ...a, account_id: placed.account, ...(end !== undefined ? { ended: end } : {}) });
+    }
+    // An investment account that ended, which the Plan no longer lists, up
+    // to its end (see the header), in its own currency, so its cash is priced
+    // as it was while it was listed: as its end recorded it, else as its
+    // institution last reported it (lib/sharing.ts bankCurrencies, a display
+    // convenience, so one that can't be read is none), a manual account's in
+    // US dollars as it is kept (lib/manual.ts).
+    const added: { account: string; end: string; currency: string | null; ids: string[] }[] = [];
+    for (const [root, { entry }] of lifecycle.accounts) {
+      const end = endOf(entry.lifecycle);
+      if (end === null || !(isInvestmentType(entry.type ?? '') || (entry.type === null && head.accounts.has(root)))) continue;
+      const placed = place(root);
+      if (!placed || listed.has(placed.account) || added.some((a) => a.account === placed.account)) continue;
+      const manual = isManualId(placed.account);
+      added.push({ account: placed.account, end, currency: entry.currency ?? (manual ? MANUAL_CURRENCY : null), ids: [...new Set([root, placed.account])] });
+    }
+    const unpriced = added.filter((a) => a.currency === null).flatMap((a) => a.ids);
+    const reported = unpriced.length > 0 ? await bankCurrencies(ctx, unpriced).catch(() => new Map<string, string>()) : new Map<string, string>();
+    for (const a of added) {
+      const currency = a.currency ?? a.ids.map((id) => reported.get(id)).find((c) => c !== undefined) ?? null;
+      listed.set(a.account, { account_id: a.account, currency, manual: isManualId(a.account), shown: false, ended: a.end });
     }
     // When the directory first knew each account, the earliest of its ids.
     // One whose entry can't be read is taken to have been there all along:
@@ -229,7 +283,7 @@ export async function POST(req: Request) {
     }
 
     const currency = q.currency ?? commonCurrency([...listed.values()]);
-    const series = seriesBuilder({ accounts: [...listed.values()], knownFrom, recorded: head.accounts, linked, settings, currency });
+    const series = seriesBuilder({ accounts: [...listed.values()], knownFrom, recorded, linked, settings, currency });
     const unreadableDays: string[] = [];
     // Nothing is read before the first recorded day, and the months are read
     // in turn, each reduced to its days' figures before the next.
@@ -247,11 +301,12 @@ export async function POST(req: Request) {
         const best = new Map<string, { rank: number; balance: number }>();
         for (const [recordedAs, balance] of Object.entries(measured.balances.get(day.date) ?? {})) {
           const placed = place(recordedAs);
-          if (!placed) continue;
+          if (!placed || endedOn(placed.account, day.date)) continue;
           const prev = best.get(placed.account);
           if (!prev || placed.rank < prev.rank) best.set(placed.account, { rank: placed.rank, balance });
         }
-        series.add(day, new Map([...best].map(([id, b]) => [id, b.balance])));
+        const counted = day.accounts.some((a) => endedOn(a.account_id, day.date)) ? { ...day, accounts: day.accounts.filter((a) => !endedOn(a.account_id, day.date)) } : day;
+        series.add(counted, new Map([...best].map(([id, b]) => [id, b.balance])));
       }
     }
     return NextResponse.json({

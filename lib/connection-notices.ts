@@ -36,8 +36,11 @@
 // read, Plaid refusing its settings or its access token, which is what a
 // PLAID_ENV or PLAID_SECRET for the wrong environment looks like). The person
 // can do nothing about it, so the log tells whoever runs Nya instead. An
-// account missing from a good answer settles itself within days
-// (lib/vanished.ts), and is not emailed.
+// account missing from a good answer settles itself within days, and is not
+// emailed: unanswered, it is assumed closed after three (lib/vanished.ts),
+// and a "Still open" holds it two weeks at most before it is asked about
+// again, with three more days to answer (lib/lifecycle.ts
+// STILL_OPEN_HOLD_DAYS), so it never pauses history unasked for longer.
 //
 // A SHARED FAULT. A deployment mistake, or a fault at Plaid, gives many
 // containers the same Plaid code at once. So when notices about a cause on

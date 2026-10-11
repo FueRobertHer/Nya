@@ -184,7 +184,7 @@ describe('the stores on the storage seam, measured', () => {
         },
         {
           store: 'transaction-annotations',
-          what: 'transaction exclusions',
+          what: 'notes, tags and exclusions',
           entries: 2,
           chars: storedChars('transaction-annotations'),
           largest_id: 't1',
@@ -242,7 +242,7 @@ describe('/api/storage-usage', () => {
     // With the stores on the seam beside them.
     await txnAnnotationStore.set(ctx, 't1', { excluded: true, updated_at: '2026-09-30T10:00:00.000Z' });
     const body = await (await route.GET()).json();
-    expect(body.stores).toEqual([{ store: 'transaction-annotations', what: 'transaction exclusions', entries: 1, chars: expect.any(Number), largest_id: 't1', largest_chars: expect.any(Number) }]);
+    expect(body.stores).toEqual([{ store: 'transaction-annotations', what: 'notes, tags and exclusions', entries: 1, chars: expect.any(Number), largest_id: 't1', largest_chars: expect.any(Number) }]);
     expect(body.stores_chars).toBe(body.stores[0].chars);
   });
 
