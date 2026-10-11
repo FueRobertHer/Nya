@@ -419,7 +419,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet.',
     NARROW_HIDDEN
   ),
   fromOperation(

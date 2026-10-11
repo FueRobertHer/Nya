@@ -347,6 +347,27 @@ describe('the read-only API and the Budgets tab agree', () => {
     expect({ months: await fake.get<string>(ctxKey('budget-months')), set: await fake.get<string>(ctxKey('budget-set')) }).toEqual(stored);
   });
 
+  test('a month still to come, as far ahead as one can be asked: amounts, no carry, no pool, quickly', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
+    await seedBank([row('m1', on(-1), 40), row('pay', on(-1, 2), -3000, 'income')]);
+    await rollover(t, 'food and drink', M(-2));
+    await post({ action: 'income', enabled: true, start: M(-2), month: NOW });
+    const { token } = await createToken(ctx, 'Tests');
+    for (const asked of ['9999-12', addMonths(NOW, 36)]) {
+      const started = performance.now();
+      const res = await v1Budgets.GET(new Request(`https://nya.test/api/v1/budgets?month=${asked}`, { headers: { authorization: `Bearer ${token}` } }));
+      const text = await res.text();
+      expect(res.status).toBe(200);
+      expect(performance.now() - started).toBeLessThan(2000);
+      expect(text.length).toBeLessThan(20_000);
+      const body = JSON.parse(text);
+      expect(body.budgets).toEqual([expect.objectContaining({ budget: 100, available: 100, rollover: null, spent: 0 })]);
+      expect(body.income).toBeNull();
+      expect(body.incomplete_months).toEqual([]);
+      expect(body.notes).toContain(`${asked} hasn’t begun, so nothing has rolled into it yet, and no income pool is worked out for it`);
+    }
+  });
+
   test('a record that can’t be read is a 409 there too, never an answer without it', async () => {
     await budgetBefore({ 'food and drink': 100 });
     await seedBank([]);

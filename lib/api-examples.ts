@@ -529,7 +529,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['budgets[].group', 'Its group’s name.'],
       ['budgets[].available', 'What is available that month: budget plus what rolled over into it (rollover.carry, negative after overspending). The same as budget when it doesn’t roll over.'],
       ['budgets[].available_remaining', 'available less spent (negative when over).'],
-      ['budgets[].rollover', 'Null when it doesn’t roll over that month. Otherwise what rolls into it, worked out from your transactions each time and never stored, so a recategorization or an exclusion changes it at once.'],
+      ['budgets[].rollover', 'Null when it doesn’t roll over that month, or the month hasn’t begun (nothing is counted past this month; notes says so). Otherwise what rolls into it, worked out from your transactions each time and never stored, so a recategorization or an exclusion changes it at once.'],
       ['budgets[].rollover.from', 'The month its carry counts from.'],
       [
         'budgets[].rollover.why',
@@ -586,7 +586,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['incomplete_months[].reasons', 'Why, in words: a connection that stopped syncing, one whose transactions couldn’t be loaded or whose stored history begins later, and so on. Days are UTC days.'],
       [
         'income',
-        'Null unless income carryover is on (“My income is irregular” on the Budgets tab). Then a running pool of what is left to allocate: each month’s money in less its money out (refunds count as money in; transfers between your own accounts, cash and loan payments as neither), carried into the next.',
+        'Null unless income carryover is on (“My income is irregular” on the Budgets tab), and for a month that hasn’t begun. Otherwise a running pool of what is left to allocate: each month’s money in less its money out (refunds count as money in; transfers between your own accounts, cash and loan payments as neither), carried into the next.',
       ],
       ['income.start', 'The month it was set to count from.'],
       ['income.from', 'The month it counts from: start, or the first month with any transactions when that is later.'],

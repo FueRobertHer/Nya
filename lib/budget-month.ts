@@ -231,13 +231,17 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
   let income: IncomeCarryover | null;
   let activity: MonthActivity;
   const window = windowStart();
+  // The first month whose rows are read: the earliest any carry or the pool
+  // counts, for a month gone by or this one. A month still to come counts
+  // nothing (lib/rollover.ts budgetsInMonth), so only the year is read.
+  const firstFor = (m: BudgetMonths | null, i: IncomeCarryover | null) => (month > today ? month : neededFrom(m, i, month));
   const sinceFor = (from: string) => (`${from}-01` < window ? `${from}-01` : window);
   if (opts.app) {
     const loaded = await loadBudgets(ctx);
     budgetsNow = loaded.budgets;
     months = await noteMonths(ctx, budgetsNow, loaded.taxonomy, today);
     income = await incomeCarryoverStore.get(ctx);
-    activity = await readMonthActivity(ctx, { since: sinceFor(neededFrom(months, income, month)), includeHidden: opts.includeHidden, grow: true });
+    activity = await readMonthActivity(ctx, { since: sinceFor(firstFor(months, income)), includeHidden: opts.includeHidden, grow: true });
     // The set the rows were filed by: the stored one, grown by them, so it
     // holds every category the budgets are on, unless the filing fell back
     // to a set made in memory (lib/category-store.ts fileTransactions).
@@ -249,7 +253,7 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
     // budgets' carries out.
     const [stored, setting] = await Promise.all([budgetMonthsStore.get(ctx), opts.pool === false ? null : incomeCarryoverStore.get(ctx)]);
     income = setting;
-    activity = await readMonthActivity(ctx, { since: sinceFor(neededFrom(stored, setting, month)), includeHidden: opts.includeHidden });
+    activity = await readMonthActivity(ctx, { since: sinceFor(firstFor(stored, setting)), includeHidden: opts.includeHidden });
     ({ budgets: budgetsNow, taxonomy } = await budgetsForReading(ctx, activity.taxonomy));
     // Noted in memory, as the app would note it today: nothing is written.
     months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
@@ -288,18 +292,20 @@ export function monthFromActivity(input: {
   const flows = (m: string) => summarize(byMonth.get(m) ?? [], all, currency);
 
   // Which months may be incomplete, from the first counted to the month
-  // shown; a month still to come counts this one, which isn't over.
-  const from = neededFrom(input.months, input.income, month);
+  // shown. Nothing is counted past this month: a month still to come has no
+  // carry or pool (lib/rollover.ts budgetsInMonth), and no gaps of its own.
+  const future = month > today;
+  const from = future ? month : neededFrom(input.months, input.income, month);
   const gaps: { month: string; gaps: MonthGap[] }[] = [];
-  for (const m of monthsFrom(from < month ? from : month, month)) {
-    const g: MonthGap[] = [...monthGapsOf(m, activity.facts), ...(m >= today && m < month ? [{ kind: 'running' as const }] : [])];
+  for (const m of future ? [] : monthsFrom(from, month)) {
+    const g = monthGapsOf(m, activity.facts);
     if (g.length > 0) gaps.push({ month: m, gaps: g });
   }
   const uncertainMonths = new Set(gaps.map((g) => g.month));
   const carryInput = { earliest: activity.earliest, uncertain: (m: string) => uncertainMonths.has(m) };
 
   const view = budgetsInMonth({ ix, budgets: input.budgetsNow, months: input.months, month, today, spending, ...carryInput });
-  const pool = incomePool(input.income, month, flows, carryInput);
+  const pool = future ? null : incomePool(input.income, month, flows, carryInput);
   // What the earlier months counted left out for another currency.
   const counting = Object.keys(view.carries.categories).length + Object.keys(view.carries.groups).length > 0 || pool !== null;
   const counted = counting ? monthsFrom(from, addMonths(month, -1)).flatMap((m) => byMonth.get(m) ?? []) : [];

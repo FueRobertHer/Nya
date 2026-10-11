@@ -84,6 +84,12 @@ describe('months', () => {
     expect(monthsFrom('2026-02', '2026-01')).toEqual([]);
   });
 
+  test('ranges end where they say, past the year 9999 too', () => {
+    expect(monthsFrom('9999-10', '9999-12')).toEqual(['9999-10', '9999-11', '9999-12']);
+    expect(addMonths('9999-12', 1)).toBe('10000-01');
+    expect(monthsFrom('9999-12', '10000-02')).toEqual(['9999-12', '10000-01', '10000-02']);
+  });
+
   test('“this month” is one some time zone is in now, else the UTC month', () => {
     const lateOct31 = Date.parse('2026-10-31T23:30:00Z');
     expect(currentMonths(lateOct31)).toEqual(['2026-10', '2026-11']);
@@ -328,6 +334,15 @@ describe('the carry into a month', () => {
     // May is the month shown, not counted in the carry into it.
     expect(view.carries.categories[GROCERIES].uncertain).toEqual(['2026-03']);
     expect(carryText(view.carries.categories[GROCERIES], (n) => `$${n}`, '2026-05')).toBe('+$400 rolled over (may be off: March is incomplete)');
+  });
+
+  test('nothing is counted past this month: a month still to come has its amounts and no carry', () => {
+    const { budgets, months } = rollingGroceries(100, '2026-01', '2026-01');
+    const later = budgetsInMonth(input(budgets, months, '9999-12', {}, { today: '2026-05' }));
+    expect(later.budgets.categories[GROCERIES]).toEqual({ amount: 100 });
+    expect(later.carries).toEqual({ categories: {}, groups: {} });
+    // And a carry into the last possible month ends where it should.
+    expect(carryInto([{ from: '9999-10' }], '9999-12', () => 10, () => 0, always('2020-01'))!.carry).toBe(20);
   });
 
   test('amounts from before the record began are assumed, and said to be', () => {

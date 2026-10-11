@@ -99,17 +99,25 @@ import { tidy } from './totals';
 const MONTH = /^[1-9]\d{3}-(0[1-9]|1[0-2])$/;
 export const isMonth = (v: unknown): v is string => typeof v === 'string' && MONTH.test(v);
 
+/** A month as a number of months, for arithmetic and for ranges: months
+ *  compare as text only while their years have four digits, which a month
+ *  after 9999-12 doesn't. */
+const monthIndex = (month: string): number => {
+  const [y, m] = month.split('-').map(Number);
+  return y * 12 + (m - 1);
+};
+const monthAt = (index: number): string => `${String(Math.floor(index / 12)).padStart(4, '0')}-${String((index % 12) + 1).padStart(2, '0')}`;
+
 /** The month `n` months after `month` (before, for negative `n`). */
 export function addMonths(month: string, n: number): string {
-  const [y, m] = month.split('-').map(Number);
-  const total = y * 12 + (m - 1) + n;
-  return `${String(Math.floor(total / 12)).padStart(4, '0')}-${String((total % 12) + 1).padStart(2, '0')}`;
+  return monthAt(monthIndex(month) + n);
 }
 
-/** Every month from `from` to `to`, both in, in order: none when `from` is later. */
+/** Every month from `from` to `to`, both in, in order: none when `from` is
+ *  later. Counted as numbers, so the range ends where it says. */
 export function monthsFrom(from: string, to: string): string[] {
   const out: string[] = [];
-  for (let m = from; m <= to; m = addMonths(m, 1)) out.push(m);
+  for (let i = monthIndex(from), end = monthIndex(to); i <= end; i++) out.push(monthAt(i));
   return out;
 }
 
@@ -591,7 +599,7 @@ export function carryInto(
     why = 'data';
   }
   let carry = 0;
-  for (let m = from; m < month; m = addMonths(m, 1)) {
+  for (const m of monthsFrom(from, addMonths(month, -1))) {
     const a = amount(m);
     if (a === null) {
       // No budget that month: the carry starts again after it.
@@ -632,7 +640,10 @@ export type MonthBudgets = {
   carries: Carries;
 };
 
-/** Every budget in a month, and its carry into it (see the header). */
+/** Every budget in a month, and its carry into it (see the header). A month
+ *  after this one has its budgets' amounts and no carry: what rolls into it
+ *  isn't known until the months before it end, so nothing is counted past
+ *  this month. */
 export function budgetsInMonth(input: MonthInput): MonthBudgets {
   const { ix, month } = input;
   const placed = placeMonths(input.budgets, input.months, ix);
@@ -656,6 +667,7 @@ export function budgetsInMonth(input: MonthInput): MonthBudgets {
       if (amount === null) continue;
       out.budgets[kind][id] = { amount };
       if (month < since) out.assumed[kind].push(id);
+      if (month > input.today) continue;
       const spent = kind === 'categories' ? (m: string) => spending(m).get(id) ?? 0 : groupSpent(id);
       const carry = carryInto(p.rollover, month, (m) => placedAmount(p, m), spent, input);
       if (carry) out.carries[kind][id] = carry;
@@ -789,9 +801,7 @@ export type MonthGap =
   /** Something the read couldn't read, in words ("your own categories"). */
   | { kind: 'unread'; what: string }
   /** Transactions that month whose exclusion couldn't be read: counted. */
-  | { kind: 'exclusions'; count: number }
-  /** The month isn't over yet: counted only by a month still to come. */
-  | { kind: 'running' };
+  | { kind: 'exclusions'; count: number };
 
 /** What says whether a month's transactions may be incomplete, gathered by
  *  lib/budget-month.ts from the read. */
@@ -849,8 +859,6 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
       return `${g.what} couldn’t be read`;
     case 'exclusions':
       return `whether you excluded ${g.count} transaction${g.count === 1 ? '' : 's'} couldn’t be read`;
-    case 'running':
-      return 'it isn’t over yet';
   }
 }
 

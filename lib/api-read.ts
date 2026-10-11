@@ -1156,6 +1156,8 @@ export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden
   if (orphans.length > 0) {
     notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
   }
+  // Nothing is counted past this month (lib/rollover.ts budgetsInMonth).
+  if (opts.month > today) notes.push(`${opts.month} hasn’t begun, so nothing has rolled into it yet, and no income pool is worked out for it`);
   const reconcileOf = (r: GroupMeter['reconcile']) => r && { binds: r.binds, group: tidy(r.group), categories: tidy(r.categories) };
   const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), currency);
   return {
