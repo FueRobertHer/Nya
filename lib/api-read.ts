@@ -26,7 +26,10 @@
 // THE APP'S OWN RULES. Transactions come from the Activity tab's own assembly
 // (lib/activity.ts): the person's categories and merchant names applied,
 // categories and exclusions carried across a re-link, the rows entered on
-// manual accounts merged in, the last LOOKBACK_DAYS of them. Every total of
+// manual accounts merged in, the last LOOKBACK_DAYS of them (budgets read
+// further back, by the Budgets tab's own read, lib/budget-month.ts: to the
+// month asked about, and the first month a carry or the income pool
+// counts, from what is stored). Every total of
 // spending or income goes through countsInTotals (lib/spending.ts, by way of
 // lib/totals.ts): one currency per total, what the person excluded left out,
 // transfers, cash withdrawals and loan payments left out (a bank's fees count),
