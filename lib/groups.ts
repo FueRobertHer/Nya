@@ -26,14 +26,13 @@
 // year of the rest.
 //
 // GONE WITH ITS TRANSACTIONS. A transaction the bank removed, or one the
-// person deleted, leaves its group (pruneOrphanGroupMembers, forgetGroupMembers:
+// person deleted, leaves its group (forgetGroupMembers, from lib/split-gone.ts:
 // by the rules lib/txn-annotations.ts prunes by), counted in `removed` so the
 // group says so; a group left with none goes. Groups are not carried across a
 // re-link (docs/features.md says why).
 
 import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
-import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 import { isTransactionId } from './txn-annotations';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS } from './split-rows';
 
@@ -263,23 +262,3 @@ export async function forgetGroupMembers(ctx: Ctx, transaction_ids: readonly str
   return changed;
 }
 
-/**
- * Takes bank transactions no stored Item holds any more out of their groups,
- * by the rules of lib/txn-annotations.ts pruneOrphanAnnotations: `readKnown`
- * reads every transaction id the stored Items hold, or null when a store
- * couldn't be read or is behind, and then nothing changes; a manual row
- * leaves its group with the row, never here. `among` keeps it to those
- * transactions. Returns how many it took out.
- */
-export async function pruneOrphanGroupMembers(ctx: Ctx, readKnown: () => Promise<Set<string> | null>, opts: { among?: ReadonlySet<string> } = {}): Promise<number> {
-  const { entries } = await groupStore.getAllReport(ctx);
-  const candidates = [...new Set([...entries.values()].flatMap((g) => g.members))].filter(
-    (id) => !id.startsWith(MANUAL_TXN_PREFIX) && (!opts.among || opts.among.has(id))
-  );
-  if (candidates.length === 0) return 0;
-  const known = await readKnown();
-  if (!known) return 0;
-  const orphans = candidates.filter((id) => !known.has(id));
-  if (orphans.length > 0) await forgetGroupMembers(ctx, orphans);
-  return orphans.length;
-}

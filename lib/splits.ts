@@ -28,10 +28,10 @@
 //
 // GONE WITH ITS TRANSACTION, as what was said about a transaction is
 // (lib/txn-annotations.ts): a bank transaction's split goes once no stored
-// Item holds it (pruneOrphanSplits, after a sync saves the bank's removal, a
-// disconnect or a forget, by the same rules: nothing while a store can't be
-// read or is behind, never a record this release doesn't recognise), and a
-// manual row's with the row (forgetSplits). Splits are not carried across a
+// Item holds it (lib/split-gone.ts pruneSplitsAndGroups, after a sync saves
+// the bank's removal, a disconnect or a forget, by the same rules: nothing
+// while a store can't be read or is behind, never a record this release
+// doesn't recognise), and a manual row's with the row (forgetSplits). Splits are not carried across a
 // re-link (docs/features.md says why).
 //
 // SIZE. The read layer reads every record on each request (one HGETALL), as
@@ -40,7 +40,7 @@
 
 import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
-import { MANUAL_TXN_PREFIX, MAX_NOTE_CHARS } from './manual-txn-input';
+import { MAX_NOTE_CHARS } from './manual-txn-input';
 import { isTransactionId } from './txn-annotations';
 import { unitScale, toUnits, MAX_PARTS, MIN_PARTS } from './split-rows';
 
@@ -330,24 +330,3 @@ export async function forgetSplits(ctx: Ctx, transaction_ids: readonly string[])
   for (let i = 0; i < ids.length; i += 1000) await splitStore.remove(ctx, ...ids.slice(i, i + 1000));
 }
 
-/**
- * Forgets the splits of bank transactions no stored Item holds any more (an
- * Item disconnected, rows the bank removed), by the rules of
- * lib/txn-annotations.ts pruneOrphanAnnotations: `readKnown` reads every
- * transaction id the stored Items hold, or null when a store couldn't be read
- * or is behind, and then nothing goes; the records are read first and the
- * stores after; a manual row's split goes with its row, never here; one this
- * release doesn't recognise is left for the release that wrote it. `among`
- * keeps it to those transactions (the ones a sync just saw the bank remove).
- * Returns how many it forgot.
- */
-export async function pruneOrphanSplits(ctx: Ctx, readKnown: () => Promise<Set<string> | null>, opts: { among?: ReadonlySet<string> } = {}): Promise<number> {
-  const { entries, unreadable } = await splitStore.getAllReport(ctx);
-  const ids = [...entries.keys(), ...unreadable].filter((id) => !id.startsWith(MANUAL_TXN_PREFIX) && (!opts.among || opts.among.has(id)));
-  if (ids.length === 0) return 0;
-  const known = await readKnown();
-  if (!known) return 0;
-  const orphans = ids.filter((id) => !known.has(id));
-  await forgetSplits(ctx, orphans);
-  return orphans.length;
-}

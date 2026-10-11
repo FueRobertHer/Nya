@@ -397,6 +397,31 @@ describe('what can’t be read is never taken for nothing', () => {
   });
 });
 
+describe('pruning what went with its transaction', () => {
+  test('the splits and groups are read before the stores, so one set on a row stored meanwhile is never taken for an orphan', async () => {
+    const { pruneSplitsAndGroups } = await import('@/lib/split-gone');
+    const { groupStore } = await import('@/lib/groups');
+    const at = new Date().toISOString();
+    const record = (amount: number) => ({ version: 1 as const, amount, currency: 'USD', parts: [{ id: 'a', amount: amount / 2, category_id: catId('food and drink') }, { id: 'b', amount: amount / 2, category_id: catId('travel') }], updated_at: at });
+    const group = (members: string[]) => ({ version: 1 as const, name: 'G', category_id: catId('food and drink'), members, date: daysAgo(3), currency: 'USD', created_at: at, updated_at: at });
+    await splitStore.set(ctx, 't_gone', record(10));
+    await groupStore.set(ctx, 'g_old', group(['t_gone', 't_kept']));
+    await pruneSplitsAndGroups(ctx, async () => {
+      // While the stores are read, a row is stored and split and grouped.
+      await splitStore.set(ctx, 't_new', record(20));
+      await groupStore.set(ctx, 'g_new', group(['t_new', 't_new2']));
+      return new Set(['t_kept']);
+    });
+    expect(await splitStore.get(ctx, 't_gone')).toBeNull();
+    expect((await groupStore.get(ctx, 'g_old'))!.members).toEqual(['t_kept']);
+    expect(await splitStore.get(ctx, 't_new')).not.toBeNull();
+    expect((await groupStore.get(ctx, 'g_new'))!.members).toEqual(['t_new', 't_new2']);
+    // A store that can't be read, or is behind: nothing goes.
+    await pruneSplitsAndGroups(ctx, async () => null);
+    expect(await splitStore.get(ctx, 't_new')).not.toBeNull();
+  });
+});
+
 describe('what a disconnect would take', () => {
   test('how many of a connection’s transactions are split and grouped, for its confirmation to say first', async () => {
     const { groupStore } = await import('@/lib/groups');
