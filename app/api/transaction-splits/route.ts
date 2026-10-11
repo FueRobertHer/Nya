@@ -30,6 +30,10 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //   still be changed a part at a time; placing what changed is a PUT.
 // DELETE { transaction_id, updated_at? }
 //   unsplits it: it shows and counts whole again, exactly as before.
+// A row imported into a linked account from its bank's files is named by its
+// own id; a bank row standing for one shows that row's split
+// (lib/split-rows.ts split_carried_from), and an edit of it names the
+// imported row, where it is kept.
 // GET ?item_id=
 //   how many of a connection's transactions are split, and how many are in a
 //   group: what disconnecting it takes, which the confirmation says first.

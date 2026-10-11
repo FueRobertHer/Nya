@@ -25,6 +25,9 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //   removal takes it out (lib/split-gone.ts).
 // DELETE { id }
 //   ungroups: its transactions count on their own again, exactly as before.
+// A bank row standing for a row imported from a file counts in that row's
+// place in its group (lib/split-rows.ts group_carried_from), and is taken
+// out by that row's id, which the group holds.
 //
 // What can't be read is never taken for nothing: a group, a split, the
 // categories or a store of transactions that can't be read answers 409 and
