@@ -227,8 +227,9 @@ function amountText(amount: number, currency: string | null): string {
 /**
  * What an OFX statement's memo says of a transaction's split or group, or
  * null: its parts as the app files them ("Split in Nya: Food and drink
- * 100.00; Home improvement 50.00", what the bank changed since among them),
- * or the group it is in ("In the group Dinner with Sam in Nya, net 60.00").
+ * 100.00; Home improvement 50.00", and "the bank added 10.00 since" or "the
+ * bank took 10.00 off since" when it changed the amount), or the group it is
+ * in ("In the group Dinner with Sam in Nya").
  * Only a split the app applies: a transaction pending, or in another
  * currency now than when it was split, shows whole there.
  */
@@ -244,6 +245,8 @@ export function splitMemoOf(row: { id: string; amount: number; currency: string 
     return `${c ? displayName(c.name) : 'Uncategorized'} ${amountText(p.amount, row.currency)}`;
   });
   const left = toUnits(row.amount, scale) - record.parts.reduce((n, p) => n + toUnits(p.amount, scale), 0);
-  if (left !== 0) parts.push(`changed by the bank since ${amountText(left, row.currency)}`);
+  // In minor units: what the bank added to the transaction, or took off it.
+  const added = Math.sign(left) === Math.sign(row.amount);
+  if (left !== 0) parts.push(`the bank ${added ? 'added' : 'took'} ${amountText(left / scale, row.currency)}${added ? '' : ' off'} since`);
   return `Split in Nya: ${parts.join('; ')}`;
 }

@@ -8,6 +8,7 @@ import { leftOutByCurrency, leftOutText, countsInTotals } from '@/lib/spending';
 import { detectRecurring } from '@/lib/recurring';
 import { spendingByTag } from '@/lib/tag-totals';
 import type { Txn } from '@/lib/transactions';
+import { splitMemoOf } from '@/lib/export-splits';
 
 // Splits and groups (#39), the pure part: what a split may hold
 // (lib/splits.ts checkParts and its closed shape), what a group may hold
@@ -369,6 +370,24 @@ describe('the bank changes a split transaction’s amount', () => {
     const ruled = row('t1', { amount: 60, category_id: cat('auto'), category: 'auto', category_name: 'auto', category_by_rule: true });
     const rest = expandSplitsAndGroups([ruled], inputs({ splits: new Map([['t1', record]]) })).rows[2];
     expect(rest).toMatchObject({ category_id: cat('auto'), category_by_rule: true });
+  });
+
+  test('an OFX statement’s memo says which way the bank changed it', () => {
+    const memo = (amount: number) => splitMemoOf({ id: 't1', amount, currency: 'USD' }, inputs({ splits: new Map([['t1', record]]) }));
+    expect(memo(50)).toBe('Split in Nya: Restaurants 40.00; Household 10.00');
+    expect(memo(60)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since');
+    expect(memo(45.5)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; the bank took 4.50 off since');
+    // Money in grows the same way: a refund of 50 that is now 60.
+    const refund = split(-50, [
+      { id: 'p1', amount: -40, category: 'restaurants' },
+      { id: 'p2', amount: -10, category: 'household' },
+    ]);
+    expect(splitMemoOf({ id: 't1', amount: -60, currency: 'USD' }, inputs({ splits: new Map([['t1', refund]]) }))).toBe(
+      'Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since'
+    );
+    // Pending, or in another currency now: whole, so nothing to say.
+    expect(splitMemoOf({ id: 't1', amount: 50, currency: 'USD', pending: true }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
+    expect(splitMemoOf({ id: 't1', amount: 50, currency: 'EUR' }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
   });
 });
 
