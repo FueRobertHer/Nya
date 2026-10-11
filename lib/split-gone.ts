@@ -3,8 +3,10 @@
 // When transactions go, their splits go with them and they leave their
 // groups (lib/splits.ts, lib/groups.ts), as what was said about them goes
 // (lib/txn-annotations.ts), and at the same moments: a manual row deleted, a
-// manual account deleted, an import undone, a SimpleFIN account let go and
-// removed (forgetSplitsAndGroups); a sync that saved the bank's removal of a
+// manual account deleted, an import undone (into a manual account, or into a
+// linked one: lib/history-import/commit.ts), the rows imported into an
+// earlier account forgotten with it, a SimpleFIN account let go and removed
+// (forgetSplitsAndGroups); a sync that saved the bank's removal of a
 // transaction, a disconnect, an earlier account forgotten (pruneSplitsAndGroups,
 // by the rules every such prune keeps: nothing while a store of transactions
 // can't be read or is behind, never a record this release doesn't
@@ -12,6 +14,7 @@
 
 import type { Ctx } from './containers';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
+import { IMPORTED_TXN_PREFIX } from './history-import/view';
 import { forgetSplits, splitStore } from './splits';
 import { forgetGroupMembers, groupStore } from './groups';
 
@@ -29,8 +32,9 @@ export async function forgetSplitsAndGroups(ctx: Ctx, transaction_ids: readonly 
  * pruneOrphanAnnotations: `readKnown` reads every transaction id the stored
  * Items hold, or null when a store couldn't be read or is behind, and then
  * nothing goes; a manual row's split and group places go with the row, never
- * here; `among` keeps it to those transactions (the ones a sync just saw the
- * bank remove). The records first, the splits' and the groups', and the
+ * here, and so do a row's imported into a linked account from a file, which
+ * no Item holds and which is kept past a disconnect; `among` keeps it to
+ * those transactions (the ones a sync just saw the bank remove). The records first, the splits' and the groups', and the
  * stores after, once, so a split or a group set meanwhile on a newly stored
  * row is checked against a read that has the row. A split record that can't
  * be read goes with its transaction too; a group that can't be read is passed
@@ -38,7 +42,7 @@ export async function forgetSplitsAndGroups(ctx: Ctx, transaction_ids: readonly 
  * failing leaves the other done (and throws after).
  */
 export async function pruneSplitsAndGroups(ctx: Ctx, readKnown: () => Promise<Set<string> | null>, opts: { among?: ReadonlySet<string> } = {}): Promise<void> {
-  const bank = (id: string) => !id.startsWith(MANUAL_TXN_PREFIX) && (!opts.among || opts.among.has(id));
+  const bank = (id: string) => !id.startsWith(MANUAL_TXN_PREFIX) && !id.startsWith(IMPORTED_TXN_PREFIX) && (!opts.among || opts.among.has(id));
   const splits = await splitStore.getAllReport(ctx);
   const groups = await groupStore.getAllReport(ctx);
   const splitIds = [...splits.entries.keys(), ...splits.unreadable].filter(bank);

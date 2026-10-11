@@ -4,16 +4,21 @@
 // counts (splits, app/api/transaction-splits; groups,
 // app/api/transaction-groups): what each one is as stored (its amount,
 // currency, day, account and whether it is still pending), read from the
-// banks' stores (lib/transactions.ts) and the books of the manual and
-// SimpleFIN accounts (lib/manual-txns.ts), never syncing. Strict: an id not
-// found while a store that could hold it couldn't be read is never answered
-// as "not stored".
+// banks' stores (lib/transactions.ts), the books of the manual and SimpleFIN
+// accounts (lib/manual-txns.ts), and the rows imported into linked accounts
+// from their banks' files (#52, lib/history-import/store.ts), never syncing.
+// An imported row is found whether or not it counts now: one a bank row
+// stands for keeps its split and its place in a group, which that bank row
+// shows (lib/split-rows.ts), and an edit of them is made on it. Strict: an id
+// not found while a store that could hold it couldn't be read is never
+// answered as "not stored".
 
 import type { Ctx } from './containers';
 import { getItems } from './storage';
 import { readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
+import { importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 
@@ -32,14 +37,19 @@ export type FoundTxn = {
   name: string;
 };
 
+/** Where a row imported into a linked account is looked for, as a refusal
+ *  names it. */
+const IMPORTED_BOOKS = 'transactions imported from your bank’s files';
+
 /** Some of the stores that could hold what was asked for couldn't be read,
  *  so whether it is stored isn't known: nothing was changed. 409. */
 export class LookupUnreadableError extends Error {
   readonly status = 409;
   constructor(readonly where: string[]) {
-    super(
-      `Some of your stored transactions couldn’t be read just now (${where.join(', ')}), so nothing was changed. Try again later; if it lasts, reconnecting the bank, or reading the manual account again, brings them back.`
-    );
+    // Reconnecting a bank, or reading a manual account again, brings back
+    // what it holds; nothing does that for an imported row.
+    const lasting = where.some((w) => w !== IMPORTED_BOOKS) ? '; if it lasts, reconnecting the bank, or reading the manual account again, brings them back' : '';
+    super(`Some of your stored transactions couldn’t be read just now (${where.join(', ')}), so nothing was changed. Try again later${lasting}.`);
     this.name = 'LookupUnreadableError';
   }
 }
@@ -49,15 +59,19 @@ export class LookupUnreadableError extends Error {
  * holds is left out of the answer, unless a store that could hold it couldn't
  * be read: then LookupUnreadableError, never "not stored". A bank's id is
  * looked for in every linked institution's store (they are read one at a
- * time, until every bank id is found), a manual row's in every book.
+ * time, until every bank id is found), a manual row's in every book, and a
+ * row imported into a linked account in every account's imported rows, on
+ * the account it was imported into.
  */
 export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promise<Map<string, FoundTxn>> {
   const found = new Map<string, FoundTxn>();
   // What couldn't be read, among the banks' stores and among the books.
   const unreadBanks: string[] = [];
   let unreadBooks = false;
-  const bank = new Set(ids.filter((id) => !id.startsWith(MANUAL_TXN_PREFIX)));
+  let unreadImported = false;
   const manual = new Set(ids.filter((id) => id.startsWith(MANUAL_TXN_PREFIX)));
+  const imported = new Set(ids.filter((id) => id.startsWith(IMPORTED_TXN_PREFIX)));
+  const bank = new Set(ids.filter((id) => !manual.has(id) && !imported.has(id)));
   if (bank.size > 0) {
     for (const item of await getItems(ctx)) {
       if ([...bank].every((id) => found.has(id))) break;
@@ -93,8 +107,22 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
     }
     unreadBooks = unreadable.length + unrecognised.length > 0;
   }
+  if (imported.size > 0) {
+    const { entries, unreadable, unrecognised } = await importedTxnStore.getAllReport(ctx);
+    for (const book of entries.values()) {
+      for (const r of book.rows) {
+        if (!imported.has(r.id)) continue;
+        found.set(r.id, { transaction_id: r.id, account_id: r.account_id, date: r.date, amount: r.amount, currency: r.currency, pending: false, name: r.name });
+      }
+    }
+    unreadImported = unreadable.length + unrecognised.length > 0;
+  }
   const missing = (among: Set<string>) => [...among].some((id) => !found.has(id));
-  const where = [...(unreadBanks.length > 0 && missing(bank) ? unreadBanks : []), ...(unreadBooks && missing(manual) ? ['a manual account'] : [])];
+  const where = [
+    ...(unreadBanks.length > 0 && missing(bank) ? unreadBanks : []),
+    ...(unreadBooks && missing(manual) ? ['a manual account'] : []),
+    ...(unreadImported && missing(imported) ? [IMPORTED_BOOKS] : []),
+  ];
   if (where.length > 0) throw new LookupUnreadableError(where);
   return found;
 }
@@ -105,9 +133,12 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
  * How many of a connection's stored transactions are split, and how many are
  * in a group: what disconnecting it takes with it (lib/disconnect-item.ts,
  * lib/split-gone.ts), which adding it back doesn't bring back, for the
- * confirmation to say before it happens. Strict: a store of its transactions
- * that can't be read is LookupUnreadableError, and splits or groups that
- * can't be read throw as the seam does, never a count of none.
+ * confirmation to say before it happens. The rows imported into its accounts
+ * from files aren't among them: they are kept past a disconnect, for a
+ * re-link, and so are their splits and their places in groups. Strict: a
+ * store of its transactions that can't be read is LookupUnreadableError, and
+ * splits or groups that can't be read throw as the seam does, never a count
+ * of none.
  */
 export async function splitsAndGroupsOn(ctx: Ctx, item_id: string): Promise<{ split: number; grouped: number }> {
   let ids: Set<string>;

@@ -8,8 +8,9 @@
 //
 // THE STORE. A map store on the storage seam (lib/repo.ts), `transaction-
 // splits`, one encrypted record per split transaction, under its id: Plaid's
-// own, or a manual, imported or SimpleFIN row's "manual-txn:<uuid>", opaque as
-// the seam requires of field names. A record holds the parts (each a random
+// own, a manual, imported or SimpleFIN row's "manual-txn:<uuid>", or that of
+// a row imported into a linked account from its bank's files,
+// "imported-txn:<uuid>" (#52), opaque as the seam requires of field names. A record holds the parts (each a random
 // id, an amount in Plaid's sign, a category by id, and optionally a note and a
 // flag that leaves it out of budgets and reports on its own) and the amount
 // and currency the transaction had when it was split, which is how a change
@@ -31,8 +32,11 @@
 // Item holds it (lib/split-gone.ts pruneSplitsAndGroups, after a sync saves
 // the bank's removal, a disconnect or a forget, by the same rules: nothing
 // while a store can't be read or is behind, never a record this release
-// doesn't recognise), and a manual row's with the row (forgetSplits). Splits are not carried across a
-// re-link (docs/features.md says why).
+// doesn't recognise), and a manual row's with the row (forgetSplits), as does
+// one imported into a linked account, with its import's undo or its earlier
+// account's forget (lib/history-import/commit.ts): kept past a disconnect, as
+// the row is. Splits are not carried across a re-link (docs/features.md says
+// why).
 //
 // SIZE. The read layer reads every record on each request (one HGETALL), as
 // it reads what was said about each transaction: cheap for what people split

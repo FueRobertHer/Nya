@@ -11,8 +11,9 @@
 //
 // THE STORE. A map store on the storage seam (lib/repo.ts),
 // `transaction-groups`, one encrypted record per group under a random id: its
-// name, its category (by id), its transactions (by id: a bank's, or a manual,
-// imported or SimpleFIN row's), the day it is dated (its earliest
+// name, its category (by id), its transactions (by id: a bank's, a manual,
+// imported or SimpleFIN row's, or one imported into a linked account from its
+// bank's files, #52), the day it is dated (its earliest
 // transaction's, when it was saved: the day its net counts on), the currency
 // they are all in, and how many of its transactions went since (removed).
 // The shape is closed, as a split's is (lib/splits.ts): a field this release
@@ -25,10 +26,11 @@
 // currency as the rest (a net of two currencies is no amount), and within a
 // year of the rest.
 //
-// GONE WITH ITS TRANSACTIONS. A transaction the bank removed, or one the
-// person deleted, leaves its group (forgetGroupMembers, from lib/split-gone.ts:
-// by the rules lib/txn-annotations.ts prunes by), counted in `removed` so the
-// group says so; a group left with none goes. Groups are not carried across a
+// GONE WITH ITS TRANSACTIONS. A transaction the bank removed, one the person
+// deleted, or one imported into a linked account whose import was undone,
+// leaves its group (forgetGroupMembers, from lib/split-gone.ts: by the rules
+// lib/txn-annotations.ts prunes by), counted in `removed` so the group says
+// so; a group left with none goes. Groups are not carried across a
 // re-link (docs/features.md says why).
 
 import { defineMapStore } from './repo';
