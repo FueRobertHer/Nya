@@ -35,13 +35,15 @@ export function rolloverFailure(err: unknown, what: string): NextResponse {
  *  "this month". */
 export const isThisMonth = (v: unknown, now: number = Date.now()): v is string => isMonth(v) && currentMonths(now).includes(v);
 
-const PARAMS = new Set(['month', 'today']);
+const PARAMS = new Set(['month', 'today', 'history']);
 
 /** A month view's query, checked: `today`, this month as the page has it
  *  (the UTC month without one), and `month`, the one shown (today by
- *  default), no later than today and at most MAX_MONTHS_BACK months back.
- *  Nothing else is taken, and nothing twice. */
-export function readMonthParams(params: URLSearchParams, now: number = Date.now()): { month: string; today: string } | { error: string } {
+ *  default), no later than today and at most MAX_MONTHS_BACK months back;
+ *  `history=1` to read the stored history even when nothing in the month
+ *  counts it (lib/budget-month.ts ONLY WHAT IS COUNTED IS READ). Nothing else
+ *  is taken, and nothing twice. */
+export function readMonthParams(params: URLSearchParams, now: number = Date.now()): { month: string; today: string; history: boolean } | { error: string } {
   for (const key of new Set(params.keys())) {
     if (!PARAMS.has(key)) return { error: 'Unknown parameter' };
     if (params.getAll(key).length > 1) return { error: `${key} is given more than once` };
@@ -53,5 +55,7 @@ export function readMonthParams(params: URLSearchParams, now: number = Date.now(
   if (!isMonth(month)) return { error: 'month must be a month, YYYY-MM' };
   if (month > today) return { error: 'month can’t be after this month' };
   if (month < addMonths(today, -MAX_MONTHS_BACK)) return { error: `month can be at most ${MAX_MONTHS_BACK / 12} years back` };
-  return { month, today };
+  const history = params.get('history');
+  if (history !== null && history !== '1') return { error: 'history can only be 1' };
+  return { month, today, history: history === '1' };
 }

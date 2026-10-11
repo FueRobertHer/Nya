@@ -540,10 +540,16 @@ export default function Dashboard({
   const budgets = budgetsState.value;
   useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
   // This month's budgets as the server works them out, with rollover (#37):
-  // for the Budgets tab, and Home's budget alerts, again whenever the budgets,
-  // the transactions or the categories change.
+  // for the Budgets tab, and Home's budget alerts. Once the transactions have
+  // loaded (a load syncs what the server reads), again whenever the budgets,
+  // the transactions or the categories change, never while a save is under
+  // way; with the stored history on the Budgets tab (its month picker).
   const thisMonth = localMonth();
-  const budgetMonth = useBudgetMonth(budgetsState.status === 'ready' ? thisMonth : null, [budgets, budgetsState.saving, txns, categories.taxonomy]);
+  const budgetMonth = useBudgetMonth(
+    budgetsState.status === 'ready' && (txns !== null || txnsFailed) ? thisMonth : null,
+    [budgets, txns, categories.taxonomy],
+    { paused: budgetsState.saving, history: tab === 'budgets' }
+  );
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the

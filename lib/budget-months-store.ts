@@ -21,18 +21,21 @@
 // merged or deleted here is.
 //
 // WRITES. The app's reads of a month (app/api/budgets/month) begin the record
-// the first time (its `since`), then note the budget set against it; a save of
-// budgets notes it before and after writing the budget set (app/api/budgets);
+// the first time there are budgets to keep (its `since`), then note the budget
+// set against it; a save of budgets notes it before and after writing the
+// budget set (app/api/budgets);
 // the rollover and income settings change through app/api/budgets/rollover. A
 // merge moves a merged category's record onto the one it went into, and a
 // delete drops one (app/api/categories). Every write is a compare-and-set
 // (ValueStore.update) over what was just read, since a save, a merge and a
 // setting can land together from two devices.
 //
-// READS ARE STRICT. A record that can't be read is never taken for none: the
-// month's budgets answer 409 rather than showing every carry as zero, and a
-// save of budgets is refused rather than rewriting the months before it with
-// the new amount (app/api/budgets). The read-only API and the download read
+// READS ARE STRICT. A record that can't be read is never taken for none, nor
+// written over: the month's budgets answer 409 rather than showing every carry
+// as zero, and a rollover change is refused. A save of budgets still goes
+// through (app/api/budgets): it changes only the budget set, and the record,
+// once it can be read again, notes the change as of the month it is read in,
+// as it notes one a rollback made. The read-only API and the download read
 // without writing: a change not noticed yet is noted in memory there.
 
 import { defineValueStore } from './repo';
@@ -64,16 +67,20 @@ export const incomeCarryoverStore = defineValueStore<IncomeCarryover>('income-ca
   exportable: true, // a setting the person chose
 });
 
+const noBudgets = (b: Budgets) => Object.keys(b.categories).length === 0 && Object.keys(b.groups).length === 0;
+
 /**
  * The record, noted against the budget set as it is now, in `month` (this
  * month, as the page has it): begun when there is none, from `before` (what
  * the budget set held before a save being recorded, else `budgets`), so a
- * first save records what it replaced. Writes only when something differs.
- * Strict.
+ * first save records what it replaced. Not begun while there are no budgets
+ * at all, before or now (null): there is nothing to keep, and a budget set
+ * later had none before, which a record begun then says as well. Writes only
+ * when something differs. Strict.
  */
-export async function noteMonths(ctx: Ctx, budgets: Budgets, taxonomy: Taxonomy, month: string, before: Budgets = budgets): Promise<BudgetMonths> {
+export async function noteMonths(ctx: Ctx, budgets: Budgets, taxonomy: Taxonomy, month: string, before: Budgets = budgets): Promise<BudgetMonths | null> {
   const ix = indexTaxonomy(taxonomy);
-  return (await budgetMonthsStore.update(ctx, (cur) => noteBudgets(cur ?? startMonths(before, month), budgets, month, ix)))!;
+  return budgetMonthsStore.update(ctx, (cur) => (cur === null && noBudgets(before) && noBudgets(budgets) ? null : noteBudgets(cur ?? startMonths(before, month), budgets, month, ix)));
 }
 
 /**

@@ -5,8 +5,16 @@
 // it, the month's spending, the income pool when income carryover is on, and
 // which months may be incomplete. The Budgets tab shows it, and Home's budget
 // alerts weigh what is available with it, so both agree with the read-only
-// API. Loaded again whenever what it is worked out from changes on the page:
-// the budgets saved, the transactions loaded, the categories.
+// API. Loaded again whenever what it is worked out from changes on the page
+// (the budgets saved, the transactions loaded, the categories), once each
+// change has settled: never while budgets are being saved.
+//
+// THE STORED HISTORY. This month, when nothing in it counts spending from
+// earlier months (no budget rolls over, income carryover off), is answered
+// without reading the stored transactions (`history` false): Home needs only
+// the carries, and there are none. The Budgets tab asks for the history
+// (`history`), for the months to look back on and the months a rollover can
+// start from; asked once the answer in hand lacks it.
 //
 // Until it has loaded, or when it can't be, the page shows the budgets as it
 // always has, from what it holds (each budget's amount, this month's spending),
@@ -19,6 +27,9 @@ import type { Carries, IncomeCarryover, IncomePool, MonthGap } from '@/lib/rollo
 
 /** The month view's answer (app/api/budgets/month). */
 export type BudgetMonthView = {
+  /** Whether the stored history was read: without it, `earliest` is null
+   *  and the month's spending, gaps and currency are left to the page. */
+  history: boolean;
   month: string;
   today: string;
   currency: string | null;
@@ -45,6 +56,7 @@ const isPair = (v: unknown) => isObject(v) && isObject(v.categories) && isObject
 export function isBudgetMonthView(v: unknown): v is BudgetMonthView {
   return (
     isObject(v) &&
+    typeof v.history === 'boolean' &&
     typeof v.month === 'string' &&
     typeof v.today === 'string' &&
     isPair(v.budgets) &&
@@ -71,43 +83,68 @@ export type BudgetMonthState = {
 
 /** What the page says when the month can't be worked out. */
 export const UNREADABLE_MONTHS =
-  'Your budgets by month couldn’t be read, so they were left untouched. Rollover and past months can’t be shown, and budgets can’t be changed, until they can.';
+  'Your budgets by month couldn’t be read, so they were left untouched. Rollover and past months can’t be shown or changed until they can; your budgets still save.';
 const NOT_LOADED = 'Rollover couldn’t be worked out just now, so each budget shows its amount without it.';
+
+/** The month view's address, for this month as the page has it (`today`),
+ *  asking for the stored history when `history`. */
+export const monthUrl = (month: string, today: string, history: boolean): string =>
+  `/api/budgets/month?month=${encodeURIComponent(month)}&today=${encodeURIComponent(today)}${history ? '&history=1' : ''}`;
+
+/** Whether the stored history is wanted and the answer in hand lacks it,
+ *  having been loaded without asking (one that was asked is never asked
+ *  again: the server reads it whenever asked). */
+export const lacksHistory = (wanted: boolean, s: { status: BudgetMonthState['status']; view: BudgetMonthView | null; asked: boolean }): boolean =>
+  wanted && s.status === 'ready' && s.view !== null && !s.view.history && !s.asked;
 
 /**
  * The month's budgets, loaded for `month` (none while it is null), and again
- * whenever one of `deps` changes. A load that a newer one overtook is
- * dropped. `deps` is a fixed list of the values it is worked out from.
+ * whenever one of `deps` changes, unless `paused` (a save under way): then
+ * once it is not. A load that a newer one overtook is dropped. `deps` is a
+ * fixed list of the values it is worked out from. With `history`, the stored
+ * history is read even when nothing in the month counts it (see THE STORED
+ * HISTORY), and an answer in hand without it is loaded again.
  */
-export function useBudgetMonth(month: string | null, deps: readonly unknown[]): BudgetMonthState {
-  const [state, setState] = useState<Omit<BudgetMonthState, 'reload'>>({ status: month ? 'loading' : 'idle', view: null, error: null });
+export function useBudgetMonth(month: string | null, deps: readonly unknown[], opts: { paused?: boolean; history?: boolean } = {}): BudgetMonthState {
+  const [state, setState] = useState<Omit<BudgetMonthState, 'reload'> & { asked: boolean }>({ status: month ? 'loading' : 'idle', view: null, error: null, asked: false });
   const [tick, setTick] = useState(0);
   const seq = useRef(0);
   const reload = useCallback(() => setTick((n) => n + 1), []);
+  const paused = !!opts.paused;
+  // Read when a load starts, so asking for the history alone never reloads.
+  const history = useRef(false);
+  history.current = !!opts.history;
+
+  const lacking = lacksHistory(!!opts.history, state);
+  useEffect(() => {
+    if (lacking) reload();
+  }, [lacking, reload]);
 
   useEffect(() => {
     if (!month) {
-      setState({ status: 'idle', view: null, error: null });
+      setState({ status: 'idle', view: null, error: null, asked: false });
       return;
     }
+    if (paused) return;
     const mine = ++seq.current;
-    setState((s) => ({ status: 'loading', view: s.view?.month === month ? s.view : null, error: null }));
+    const asked = history.current;
+    setState((s) => ({ status: 'loading', view: s.view?.month === month ? s.view : null, error: null, asked }));
     (async () => {
       try {
-        const res = await fetch(`/api/budgets/month?month=${encodeURIComponent(month)}&today=${encodeURIComponent(localMonth())}`);
+        const res = await fetch(monthUrl(month, localMonth(), asked));
         const data = await res.json().catch(() => null);
         if (mine !== seq.current) return;
-        if (res.ok && isBudgetMonthView(data)) setState({ status: 'ready', view: data, error: null });
-        else setState({ status: 'error', view: null, error: data?.unreadable ? UNREADABLE_MONTHS : NOT_LOADED });
+        if (res.ok && isBudgetMonthView(data)) setState({ status: 'ready', view: data, error: null, asked });
+        else setState({ status: 'error', view: null, error: data?.unreadable ? UNREADABLE_MONTHS : NOT_LOADED, asked });
       } catch {
-        if (mine === seq.current) setState({ status: 'error', view: null, error: NOT_LOADED });
+        if (mine === seq.current) setState({ status: 'error', view: null, error: NOT_LOADED, asked });
       }
     })();
     // The deps are the page's values the month is worked out from.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [month, tick, ...deps]);
+  }, [month, tick, paused, ...deps]);
 
-  return { ...state, reload };
+  return { status: state.status, view: state.view, error: state.error, reload };
 }
 
 /** A change to rollover or income carryover (app/api/budgets/rollover), in

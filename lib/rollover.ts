@@ -547,6 +547,14 @@ export function neededFrom(months: BudgetMonths | null, income: IncomeCarryover 
   return from;
 }
 
+/** Whether a month's carries or its pool count any spending at all: some
+ *  budget rolls over in it, or income carryover is on. Without, the month's
+ *  budgets are worked out from the record alone, with no transactions read. */
+export function countsSpending(months: BudgetMonths | null, income: IncomeCarryover | null, month: string): boolean {
+  if (income?.enabled) return true;
+  return KINDS.some((kind) => Object.values(months?.[kind] ?? {}).some((t) => periodIn(t.rollover, month) !== null));
+}
+
 /** Why the carry counts from the month it does: the month rollover was turned
  *  on from (`start`), a reset (`reset`), the first month with transactions
  *  (`data`: the clamp), the first month with this budget after one without
@@ -914,10 +922,11 @@ export function sinceText(c: Carry, month: string): string {
 }
 
 /** Months to choose a start from, newest first: this month back to the first
- *  month with transactions (or MAX_MONTHS_BACK, if sooner), at least a year. */
+ *  month with transactions (or MAX_MONTHS_BACK, if sooner), at least a year;
+ *  a year when that month isn't known (none yet, or not read). */
 export function startChoices(today: string, earliest: string | null): string[] {
   const floor = earliestStart(today);
-  const first = earliest && earliest > floor ? earliest : floor;
-  const from = first < addMonths(today, -11) ? first : addMonths(today, -11);
-  return monthsFrom(from, today).reverse();
+  const year = addMonths(today, -11);
+  const first = earliest === null ? year : earliest > floor ? earliest : floor;
+  return monthsFrom(first < year ? first : year, today).reverse();
 }

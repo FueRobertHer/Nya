@@ -607,6 +607,8 @@ describe('which months may be incomplete', () => {
     expect(startChoices('2026-10', '2026-08').at(-1)).toBe('2025-11');
     expect(startChoices('2026-10', '2020-02').at(-1)).toBe('2020-02');
     expect(startChoices('2026-10', '2001-01').at(-1)).toBe('2016-10');
+    // Not known: a year.
+    expect(startChoices('2026-10', null)).toHaveLength(12);
   });
 });
 

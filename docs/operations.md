@@ -275,7 +275,7 @@ Categories chosen, carried or typed during a rollback are words, as always: the 
 
 ## Budget rollover and rolling back
 
-The release with budget rollover and income carryover ([features.md](features.md#budget-rollover-and-income-carryover)) keeps what it adds in two stores of its own, beside the budget set: `budget-months` (each budget's amounts by month and the months it rolled over) and `income-carryover` (the setting). It never changes the `budget-set` store's shape, and writes it exactly as the release before does. There is nothing to run: the record begins the first time the app is opened after this release (`since`), and a budget's amount in a month before then is assumed to be its earliest recorded one.
+The release with budget rollover and income carryover ([features.md](features.md#budget-rollover-and-income-carryover)) keeps what it adds in two stores of its own, beside the budget set: `budget-months` (each budget's amounts by month and the months it rolled over) and `income-carryover` (the setting). It never changes the `budget-set` store's shape, and writes it exactly as the release before does. There is nothing to run: the record begins the first time the app is opened after this release with budgets set (`since`), and a budget's amount in a month before then is assumed to be its earliest recorded one.
 
 **What a rollback sees.** The release before reads neither store: it shows every budget flat, from `budget-set`, as it always did, with no carry, no month picker and no income pool. Nothing it saves can reach the new stores, so nothing it saves can corrupt them; its budget saves write `budget-set` and the name-keyed copy as before ([Category ids](#category-ids-the-migration-and-rolling-back)). Backups keep both stores, as they keep every store on the seam.
 
@@ -288,7 +288,7 @@ The release with budget rollover and income carryover ([features.md](features.md
 
 Rollover settings and the income setting themselves are as they were before the rollback.
 
-**If a read fails.** A record or setting that can't be read is never taken for none: the Budgets tab's month answers 409 and says so, showing this month's budgets without any carry; a save of budgets is refused (409) while the record can't be read, since recording the change is what keeps the earlier months' amounts, and so are rollover changes; the read-only API answers 409 `unreadable`; the download names the part it couldn't read. Nothing is saved over either store. A damaged record is a backup to restore, or a bug to fix: a record a later release wrote reads as unrecognised and waits for that release.
+**If a read fails.** A record or setting that can't be read is never taken for none: the Budgets tab's month answers 409 and says so, showing this month's budgets without any carry; rollover changes are refused (409); the read-only API answers 409 `unreadable`; the download names the part it couldn't read. Budgets still save: a save writes only the budget set, and the record, once it can be read again, notes the change as of the month it is read in, as it does after a rollback. Nothing is saved over either store. A damaged record is a backup to restore, or a bug to fix: a record a later release wrote reads as unrecognised and waits for that release.
 
 ## Rolling back once the brokerage option is on
 

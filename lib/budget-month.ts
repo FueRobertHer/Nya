@@ -29,10 +29,19 @@
 // counting such a month says it may be off. The first month with any
 // transactions is where carries and pools begin (the clamp), and is named.
 //
-// TWO READERS. The app's (`app`) migrates budgets and notes the budget set in
-// the record (lib/budget-months-store.ts noteMonths), so a change made
-// elsewhere is pinned to the month it was first seen. The read-only API and
-// the download write nothing: they note it in memory, as of `today`.
+// TWO READERS. The app's (readAppBudgets, then `app`) migrates budgets and
+// notes the budget set in the record (lib/budget-months-store.ts noteMonths),
+// so a change made elsewhere is pinned to the month it was first seen. The
+// read-only API and the download write nothing: they note it in memory, as of
+// `today`.
+//
+// ONLY WHAT IS COUNTED IS READ. Reading the stored history is most of the
+// cost (every Item's stored rows decoded), so the app's view of this month
+// skips it when nothing in the month counts spending from it: no budget rolls
+// over in it and income carryover is off (budgetsWithoutHistory). Its budgets
+// are then the budget set's, with no carry, as before rollover; the page has
+// the month's own spending already. Asked for `history`, it reads it anyway,
+// for the first month with transactions (the month picker, the start months).
 
 import type { Ctx } from './containers';
 import { assembleBankRows, finishActivity, type BankSource, type PlaidPayload } from './activity';
@@ -52,6 +61,7 @@ import { noTransactionsView, quietItemIds, type NoTransactionsView } from './no-
 import {
   addMonths,
   budgetsInMonth,
+  countsSpending,
   incomePool,
   monthGapsOf,
   monthOf,
@@ -214,16 +224,38 @@ export type BudgetMonthRead = {
   activity: MonthActivity;
 };
 
+/** The budgets as the app reads them (see TWO READERS): migrated, and noted
+ *  in their record in `today`; with the income setting. */
+export type AppBudgets = { budgetsNow: Budgets; taxonomy: Taxonomy; months: BudgetMonths | null; income: IncomeCarryover | null };
+
+/** The budgets as the app reads them, writing what lib/budget-months-store.ts
+ *  writes on a read. Strict, as readBudgetMonth is. */
+export async function readAppBudgets(ctx: Ctx, today: string): Promise<AppBudgets> {
+  const loaded = await loadBudgets(ctx);
+  const months = await noteMonths(ctx, loaded.budgets, loaded.taxonomy, today);
+  const income = await incomeCarryoverStore.get(ctx);
+  return { budgetsNow: loaded.budgets, taxonomy: loaded.taxonomy, months, income };
+}
+
+/** This month's budgets when nothing in it counts spending (see ONLY WHAT IS
+ *  COUNTED IS READ): each budget's amount, no carry, no transactions read.
+ *  Null for any other month, or when something does. */
+export function budgetsWithoutHistory(app: AppBudgets, month: string, today: string): MonthBudgets | null {
+  if (month !== today || countsSpending(app.months, app.income, month)) return null;
+  const ix = indexTaxonomy(app.taxonomy);
+  return budgetsInMonth({ ix, budgets: app.budgetsNow, months: app.months, month, today, spending: () => new Map(), earliest: null, uncertain: () => false });
+}
+
 /**
  * The month's budgets (see the header). `today` is this month, as the page
- * has it (lib/rollover.ts thisMonth), or the UTC month for the API. `app`
- * reads as the app does, writing what lib/budget-months-store.ts writes on a
- * read; without it nothing is written. `pool: false` leaves the income pool
- * out, unread. Strict: budgets, their record or the income setting that
- * can't be read throw (StoredDataUnreadableError), and so does storage out
- * of reach.
+ * has it (lib/rollover.ts thisMonth), or the UTC month for the API. `app` is
+ * the budgets as the app read them (readAppBudgets), which reads the rows as
+ * the app does; without it nothing is written. `pool: false` leaves the
+ * income pool out, unread. Strict: budgets, their record or the income
+ * setting that can't be read throw (StoredDataUnreadableError), and so does
+ * storage out of reach.
  */
-export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: boolean; pool?: false }): Promise<BudgetMonthRead> {
+export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: AppBudgets; pool?: false }): Promise<BudgetMonthRead> {
   const { month, today } = opts;
   let budgetsNow: Budgets;
   let taxonomy: Taxonomy;
@@ -237,16 +269,13 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
   const firstFor = (m: BudgetMonths | null, i: IncomeCarryover | null) => (month > today ? month : neededFrom(m, i, month));
   const sinceFor = (from: string) => (`${from}-01` < window ? `${from}-01` : window);
   if (opts.app) {
-    const loaded = await loadBudgets(ctx);
-    budgetsNow = loaded.budgets;
-    months = await noteMonths(ctx, budgetsNow, loaded.taxonomy, today);
-    income = await incomeCarryoverStore.get(ctx);
+    ({ budgetsNow, months, income } = opts.app);
     activity = await readMonthActivity(ctx, { since: sinceFor(firstFor(months, income)), includeHidden: opts.includeHidden, grow: true });
     // The set the rows were filed by: the stored one, grown by them, so it
     // holds every category the budgets are on, unless the filing fell back
     // to a set made in memory (lib/category-store.ts fileTransactions).
     const filed = new Set(activity.taxonomy.categories.map((c) => c.id));
-    taxonomy = loaded.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : loaded.taxonomy;
+    taxonomy = opts.app.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : opts.app.taxonomy;
   } else {
     // `pool: false` (the download, which has the setting in a section of its
     // own) reads no income setting, so one that can't be read never keeps the

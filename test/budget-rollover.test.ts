@@ -98,7 +98,7 @@ const call = async (res: Response | Promise<Response>) => {
 };
 const getBudgets_ = () => call(budgetsRoute.GET());
 const put = (body: unknown) => call(budgetsRoute.PUT(new Request('http://x/api/budgets', { method: 'PUT', body: JSON.stringify(body) })));
-const month = (m = NOW, today = NOW) => call(monthRoute.GET(new Request(`http://x/api/budgets/month?month=${m}&today=${today}`)));
+const month = (m = NOW, today = NOW, extra = '') => call(monthRoute.GET(new Request(`http://x/api/budgets/month?month=${m}&today=${today}${extra}`)));
 const post = (body: unknown) => call(rolloverRoute.POST(new Request('http://x/api/budgets/rollover', { method: 'POST', body: JSON.stringify(body) })));
 const named = (t: Taxonomy, name: string) => t.categories.find((c) => c.name === name)!;
 const group = (t: Taxonomy, name: string) => t.groups.find((g) => g.name === name)!;
@@ -146,14 +146,43 @@ describe('a month of budgets, from the stored history', () => {
     const { status, body } = await month();
     expect(status).toBe(200);
     const t: Taxonomy = (await getBudgets_()).body.categories;
-    expect(body.budgets.categories).toEqual({ [named(t, 'food and drink').id]: { amount: 400 }, [named(t, 'travel').id]: { amount: 200 } });
+    const budgets = { [named(t, 'food and drink').id]: { amount: 400 }, [named(t, 'travel').id]: { amount: 200 } };
+    // Nothing rolls over and income carryover is off: answered from the
+    // budgets alone, no transactions read (the page counts the month itself).
+    expect(body).toMatchObject({ history: false, budgets: { categories: budgets, groups: {} }, spent: {}, earliest: null, gaps: [], notes: [] });
     expect(body.carries).toEqual({ categories: {}, groups: {} });
     expect(body.rollover).toEqual({ categories: {}, groups: {} });
-    expect(body.spent).toEqual({ [named(t, 'food and drink').id]: 120, [named(t, 'travel').id]: 30 });
     expect(body.income).toBeNull();
     expect(body.pool).toBeNull();
+    // Asked for the history, it reads it all the same.
+    const read = (await month(NOW, NOW, '&history=1')).body;
+    expect(read).toMatchObject({ history: true, budgets: { categories: budgets, groups: {} }, earliest: M(-1) });
+    expect(read.spent).toEqual({ [named(t, 'food and drink').id]: 120, [named(t, 'travel').id]: 30 });
+    expect(read.carries).toEqual(body.carries);
     // Nothing read changed the budgets, or the copy the release before reads.
     expect(await getBudgets(ctx)).toEqual({ 'food and drink': 400, travel: 200 });
+  });
+
+  test('without budgets, a read keeps no record; the first budget begins it, with none before', async () => {
+    await seedBank([row('a', on(-1), 50)]);
+    expect((await month()).status).toBe(200);
+    expect((await month(NOW, NOW, '&history=1')).status).toBe(200);
+    expect(await fake.get(ctxKey('budget-months'))).toBeNull();
+    const t = await budget({ 'food and drink': 100 });
+    const food = named(t, 'food and drink').id;
+    expect((await budgetMonthsStore.get(ctx))!.categories[food]).toEqual({ seen: 100, amounts: [{ until: NOW, amount: null }] });
+    expect((await month(M(-1))).body.budgets.categories).toEqual({});
+  });
+
+  test('a stored history that can’t be read keeps no plain month from loading', async () => {
+    await setBudgets(ctx, { 'food and drink': 400 });
+    await seedBank([row('a', on(0, 2), 120)]);
+    await fake.set(ctxKey('txns:item_bank'), 'not a blob');
+    const plain = await month();
+    expect(plain.status).toBe(200);
+    expect(plain.body).toMatchObject({ history: false, notes: [] });
+    // Read, it says so.
+    expect((await month(NOW, NOW, '&history=1')).body.notes.join(' ')).toContain('could not be read');
   });
 
   test('leftover and overspending carry, read back past the year the page loads', async () => {
@@ -492,24 +521,32 @@ describe('what a rollback to the release before sees', () => {
 });
 
 describe('what can’t be read', () => {
-  test('a record of budgets by month that can’t be read: 409, never read as none, and never saved over', async () => {
-    const t = await budget({ 'food and drink': 100 });
+  test('a record of budgets by month that can’t be read: 409, never read as none, never saved over, and budgets still save', async () => {
+    const t = await budgetBefore({ 'food and drink': 100 });
     await seedBank([]);
     const food = named(t, 'food and drink').id;
+    expect((await month()).status).toBe(200);
+    const good = (await fake.get<string>(ctxKey('budget-months')))!;
+    let amount = 100;
     for (const bad of ['not-ciphertext-at-all-but-long-enough', await encrypt(JSON.stringify({ version: 1, since: NOW, categories: {}, groups: {}, targets: [] }))]) {
       await fake.set(ctxKey('budget-months'), bad);
-      const before = await fake.get<string>(ctxKey('budget-set'));
       const read = await month();
       expect(read.status).toBe(409);
       expect(read.body.unreadable).toBe(true);
-      const saved = await put({ budget_set: { categories: { [food]: { amount: 500 } }, groups: {} }, month: NOW });
-      expect(saved.status).toBe(409);
-      expect(saved.body.unreadable).toBe(true);
       expect((await post({ action: 'rollover', kind: 'category', id: food, on: true, from: NOW, month: NOW })).status).toBe(409);
-      // Nothing written over either.
+      // A save goes through: it writes the budgets, never the record.
+      amount += 100;
+      const saved = await put({ budget_set: { categories: { [food]: { amount } }, groups: {} }, month: NOW });
+      expect(saved.status).toBe(200);
+      expect(saved.body.budget_set.categories[food]).toEqual({ amount });
       expect(await fake.get<string>(ctxKey('budget-months'))).toBe(bad);
-      expect(await fake.get<string>(ctxKey('budget-set'))).toBe(before);
     }
+    // Readable again (a release that knows it, or the damage undone): the
+    // change is noted as of the month it is read in, the months before kept.
+    await fake.set(ctxKey('budget-months'), good);
+    expect((await month()).status).toBe(200);
+    expect((await budgetMonthsStore.get(ctx))!.categories[food]).toEqual({ seen: amount, amounts: [{ until: NOW, amount: 100 }] });
+    expect((await month(M(-1))).body.budgets.categories[food]).toEqual({ amount: 100 });
   });
 
   test('an income setting that can’t be read: 409, and never saved over', async () => {
@@ -563,8 +600,10 @@ describe('what the routes take', () => {
   test('the month view’s query: one this month, a month no later and not too far back, nothing else', () => {
     const now = Date.parse('2026-10-15T12:00:00Z');
     const q = (s: string) => readMonthParams(new URLSearchParams(s), now);
-    expect(q('')).toEqual({ month: '2026-10', today: '2026-10' });
-    expect(q('month=2026-08&today=2026-10')).toEqual({ month: '2026-08', today: '2026-10' });
+    expect(q('')).toEqual({ month: '2026-10', today: '2026-10', history: false });
+    expect(q('month=2026-08&today=2026-10')).toEqual({ month: '2026-08', today: '2026-10', history: false });
+    expect(q('today=2026-10&history=1')).toEqual({ month: '2026-10', today: '2026-10', history: true });
+    expect(q('history=true')).toEqual({ error: 'history can only be 1' });
     expect(q('month=2026-11&today=2026-10')).toEqual({ error: 'month can’t be after this month' });
     expect(q('today=2026-09')).toEqual({ error: 'today must be this month, YYYY-MM' });
     expect(q('month=2016-09')).toEqual({ error: 'month can be at most 10 years back' });

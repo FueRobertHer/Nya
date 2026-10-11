@@ -6,7 +6,7 @@ import BudgetsCard from '@/components/BudgetsCard';
 import BudgetsTab from '@/components/BudgetsTab';
 import Insights from '@/components/Insights';
 import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
-import type { BudgetMonthState, BudgetMonthView } from '@/components/budget-month-state';
+import { lacksHistory, monthUrl, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { Carries, Carry, IncomePool } from '@/lib/rollover';
 import { addMonths } from '@/lib/rollover';
@@ -252,6 +252,7 @@ describe('the Budgets tab, with the month loaded', () => {
   });
   const budgets = { categories: { [GROCERIES]: { amount: 300 } }, groups: {} };
   const view = (over: Partial<BudgetMonthView> = {}): BudgetMonthView => ({
+    history: true,
     month: NOW,
     today: NOW,
     currency: 'USD',
@@ -340,6 +341,47 @@ describe('the Budgets tab, with the month loaded', () => {
   test('amounts from before budgets were kept by month are said to be assumed', () => {
     const t = tab(state(view({ recorded_since: NOW })));
     expect(t).toMatch(/Nya began keeping budgets by month in \w+/);
+  });
+
+  test('answered without the stored history: this month as it always was, with no months to pick yet', () => {
+    const html = renderToStaticMarkup(
+      <BudgetsTab
+        txns={[row(localDate(), 80, 'groceries')]}
+        budgets={budgets}
+        taxonomy={taxonomy}
+        onSave={async () => true}
+        goals={[]}
+        onSaveGoals={async () => true}
+        accounts={[]}
+        loading={false}
+        budgetMonth={state(view({ history: false, carries: carries({}), gaps: [], earliest: null, spent: {}, currency: null }))}
+      />
+    );
+    expect(text(html)).toContain('$80.00 of $300.00');
+    expect(html).not.toContain('Month to show');
+    expect(text(html)).toContain('My income is irregular Off');
+    // A start from the last year, until the first month with transactions is known.
+    expect(text(html)).toContain(`Count from ${new Date().toLocaleDateString('en-US', { month: 'long' })} (this month)`);
+    expect(text(html)).not.toContain(String(Number(NOW.slice(0, 4)) - 2));
+  });
+});
+
+describe('loading the month', () => {
+  test('the history is asked for only when wanted', () => {
+    expect(monthUrl('2026-10', '2026-10', false)).toBe('/api/budgets/month?month=2026-10&today=2026-10');
+    expect(monthUrl('2026-08', '2026-10', true)).toBe('/api/budgets/month?month=2026-08&today=2026-10&history=1');
+  });
+
+  test('an answer without the history is loaded again once it is wanted, and never twice', () => {
+    const plain = { history: false } as BudgetMonthView;
+    const read = { history: true } as BudgetMonthView;
+    expect(lacksHistory(true, { status: 'ready', view: plain, asked: false })).toBe(true);
+    // Not wanted (Home), already read, already asked, or still loading.
+    expect(lacksHistory(false, { status: 'ready', view: plain, asked: false })).toBe(false);
+    expect(lacksHistory(true, { status: 'ready', view: read, asked: false })).toBe(false);
+    expect(lacksHistory(true, { status: 'ready', view: plain, asked: true })).toBe(false);
+    expect(lacksHistory(true, { status: 'loading', view: plain, asked: false })).toBe(false);
+    expect(lacksHistory(true, { status: 'error', view: null, asked: false })).toBe(false);
   });
 });
 

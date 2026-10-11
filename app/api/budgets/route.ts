@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { ContainerError } from '@/lib/containers';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { loadBudgets, saveBudgets } from '@/lib/budget-store';
 import { BudgetError, budgetsFromNames, legacyCopy, readBudgets, MAX_CATEGORY_BUDGETS, type Budgets } from '@/lib/budget-set';
@@ -28,11 +29,12 @@ import { isMonth, thisMonth } from '@/lib/rollover';
 // what each changed budget had, for the months before this one. `month` is
 // this month as the page has it (lib/rollover.ts thisMonth; the UTC month
 // without one, as from a page of the release before). The record is noted
-// before anything is written, so a save it can't record (it can't be read) is
-// refused, with 409 and `unreadable`, rather than rewriting the months before
-// it with the new amount. A failure to record after the budgets are saved
-// leaves them saved: the next read of the month notes the change, as of the
-// month it is read in.
+// before the budgets are written and after. A record that can't be noted (it
+// can't be read, say) never stops a save: the save writes only the budget
+// set, never the record, and the record notes the change on the first read
+// that can read it, as of the month it is read in, as it notes a change made
+// by the release before. Rollover changes, which do need it, are refused
+// meanwhile (app/api/budgets/rollover).
 
 /** The answer for both: the budgets, their categories, and the copy by name. */
 function answer(budgets: Budgets, taxonomy: Taxonomy) {
@@ -64,6 +66,13 @@ export async function GET() {
   }
 }
 
+/** A record of budgets by month that couldn't be noted: logged, never a
+ *  reason to stop a save (see BY MONTH). A deployment problem still throws. */
+function logUnnoted(when: string, err: unknown): void {
+  if (err instanceof ContainerError) throw err;
+  console.error(`${when}; the change is recorded by month on the next read that can:`, err instanceof StoredDataUnreadableError ? describeUnreadable(err) : err instanceof Error ? err.name : typeof err);
+}
+
 /** Budgets by name, as a page from the release before this one sends them:
  *  checked as that release checked them. */
 function readNamed(v: unknown): Record<string, number> {
@@ -89,9 +98,9 @@ export async function PUT(req: Request) {
     const month = thisMonth(body.month);
     // Migrated first, so what is replaced is what this page was shown.
     const current = await loadBudgets(ctx);
-    // Strict: a record that can't be read refuses the save before anything is
-    // written (see BY MONTH).
-    await noteMonths(ctx, current.budgets, current.taxonomy, month);
+    // What the months before this one had, noted before it changes; a record
+    // that can't be noted is left as it is (see BY MONTH).
+    await noteMonths(ctx, current.budgets, current.taxonomy, month).catch((err) => logUnnoted('Budgets not yet saved', err));
     let next: Budgets;
     let taxonomy = current.taxonomy;
     if (body.budget_set !== undefined) {
@@ -102,11 +111,7 @@ export async function PUT(req: Request) {
       next = { categories: budgetsFromNames(named, indexTaxonomy(taxonomy)).categories, groups: current.budgets.groups };
     }
     const saved = await saveBudgets(ctx, next, taxonomy);
-    try {
-      await noteMonths(ctx, saved, taxonomy, month, current.budgets);
-    } catch (err) {
-      console.error('Budgets saved; the change is recorded by month on the next read:', err instanceof StoredDataUnreadableError ? describeUnreadable(err) : err instanceof Error ? err.name : typeof err);
-    }
+    await noteMonths(ctx, saved, taxonomy, month, current.budgets).catch((err) => logUnnoted('Budgets saved', err));
     return NextResponse.json(answer(saved, taxonomy));
   } catch (err) {
     return failure(err, 'Failed to save budgets');
