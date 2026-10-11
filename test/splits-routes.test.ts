@@ -374,6 +374,32 @@ describe('what can’t be read is never taken for nothing', () => {
   });
 });
 
+describe('a currency without an ISO code', () => {
+  test('a transaction in BTC splits to the eighth place, as the sheet reads what is typed, and is saved as typed', async () => {
+    const { leftToSplit } = await import('@/components/SplitSheet');
+    first.push(plaidRow('t_btc', { amount: 233.5, iso_currency_code: null, unofficial_currency_code: 'BTC', name: 'COINBASE', merchant_name: 'Coinbase' }));
+    await listed();
+    const typed = leftToSplit(233.5, [{ amount: '77.83333333' }, { amount: '155.66666667' }], 'BTC');
+    expect(typed.left).toBe(0);
+    const res = await splitPut('t_btc', [
+      { amount: typed.parsed[0], category_id: catId('food and drink') },
+      { amount: typed.parsed[1], category_id: catId('travel') },
+    ]);
+    expect(res.status).toBe(200);
+    const parts = (await listed()).transactions.filter((t) => t.split_of === 't_btc');
+    expect(parts.map((t) => [t.amount, t.unofficial_currency_code])).toEqual([
+      [77.83333333, 'BTC'],
+      [155.66666667, 'BTC'],
+    ]);
+    // A ninth place is refused, saying the unit.
+    const finer = await splitPut('t_btc', [
+      { amount: 77.833333331, category_id: catId('food and drink') },
+      { amount: 155.666666669, category_id: catId('travel') },
+    ]);
+    expect([finer.status, finer.body.error]).toEqual([400, 'A part’s amount can’t be finer than 0.00000001.']);
+  });
+});
+
 describe('containers', () => {
   test('a split is kept in its own container, and another container’s never shows', async () => {
     await listed();

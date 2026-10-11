@@ -185,7 +185,13 @@ export function checkParts(raw: unknown, parent: SplitParentRow, newId: () => st
     const input = p as PartInput;
     if (typeof input.amount !== 'number' || !Number.isFinite(input.amount)) throw new SplitError('Each part needs an amount.');
     const units = input.amount * scale;
-    if (Math.abs(units - Math.round(units)) > 1e-6) throw new SplitError(`A part’s amount can’t be finer than ${shown(1, scale)}.`);
+    // In whole units, but for the float error of a decimal sent as a number,
+    // which grows with the amount: a few units in the last place, never half
+    // a unit (eight places at 1e8 lose a whole one only past millions).
+    if (!Number.isSafeInteger(Math.round(units))) throw new SplitError('That amount is too large to split.');
+    if (Math.abs(units - Math.round(units)) > Math.max(1e-6, Math.abs(units) * 4 * Number.EPSILON)) {
+      throw new SplitError(`A part’s amount can’t be finer than ${shown(1, scale)}.`);
+    }
     if (Math.round(units) === 0) throw new SplitError('A part can’t be nothing: take it out instead.');
     if (Math.sign(input.amount) !== sign) {
       throw new SplitError(sign > 0 ? 'Each part of money out is money out too.' : 'Each part of money in is money in too.');

@@ -126,6 +126,33 @@ describe('what a split may hold (checkParts)', () => {
     expect(checkParts([{ amount: 1000, category_id: cat('groceries') }, { amount: 2000, category_id: cat('household') }], yen, id)).toHaveLength(2);
   });
 
+  test('eight places for a currency without an ISO code: every valid split taken, at any size, a ninth place refused', () => {
+    let refused = 0;
+    let tried = 0;
+    for (let whole = 1; whole < 200_000; whole = Math.ceil(whole * 1.37) + 1) {
+      for (const frac of [0.12345678, 0.00000001, 0.5, 0.99999999, 0.31415926]) {
+        const amount = Number((whole + frac).toFixed(8));
+        const a = Number((amount / 3).toFixed(8));
+        const b = Number((amount - a).toFixed(8));
+        tried++;
+        try {
+          checkParts([{ amount: a, category_id: cat('groceries') }, { amount: b, category_id: cat('household') }], { amount, currency: 'BTC', pending: false }, id);
+        } catch {
+          refused++;
+        }
+      }
+    }
+    expect(tried).toBeGreaterThan(100);
+    expect(refused).toBe(0);
+    const btc = { amount: 233.5, currency: 'BTC', pending: false };
+    expect(checkParts([{ amount: 77.83333333, category_id: cat('groceries') }, { amount: 155.66666667, category_id: cat('household') }], btc, id).map((p) => p.amount)).toEqual([
+      77.83333333, 155.66666667,
+    ]);
+    expect(() =>
+      checkParts([{ amount: 77.833333331, category_id: cat('groceries') }, { amount: 155.666666669, category_id: cat('household') }], btc, id)
+    ).toThrow('can’t be finer than 0.00000001');
+  });
+
   test('each part has the transaction’s own sign: money in splits into money in', () => {
     expect(() => checkParts([{ amount: 200, category_id: cat('groceries') }, { amount: -50, category_id: cat('household') }], costco, id)).toThrow(
       'Each part of money out is money out too.'

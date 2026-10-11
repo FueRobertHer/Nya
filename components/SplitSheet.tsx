@@ -17,7 +17,7 @@ import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney } from '@/lib/format';
-import { parseAmountInput, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
+import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
@@ -62,13 +62,30 @@ export function startingParts(t: Txn, uncategorized: string): Draft[] {
   ];
 }
 
+/**
+ * A part's amount as typed, in whole units of the transaction's currency (as
+ * the read layer counts it, lib/split-rows.ts unitScale: cents, yen, eight
+ * places for a currency without an ISO code), read from the text itself, so
+ * no place is lost to rounding; null when it isn't an amount, is nothing, or
+ * is finer than the currency's unit. Typed as any amount is ("49,99").
+ */
+export function partUnits(text: string, currency: string | null): number | null {
+  const normal = normalizedAmountText(text);
+  if (normal === null) return null;
+  const [whole, fraction = ''] = normal.split('.');
+  const places = Math.round(Math.log10(unitScale(currency)));
+  if (/[1-9]/.test(fraction.slice(places))) return null;
+  const units = Number(whole || '0') * 10 ** places + Number(fraction.slice(0, places).padEnd(places, '0') || '0');
+  return Number.isSafeInteger(units) && units > 0 ? units : null;
+}
+
 /** What is left to split, in the currency's smallest units: the whole less
  *  the parts typed (null for a part that isn't an amount yet). */
 export function leftToSplit(whole: number, drafts: readonly Pick<Draft, 'amount'>[], currency: string | null): { left: number; parsed: (number | null)[] } {
   const scale = unitScale(currency);
-  const parsed = drafts.map((d) => (d.amount.trim() ? parseAmountInput(d.amount, currency ?? undefined) : null));
-  const sum = parsed.reduce<number>((n, a) => n + (a === null ? 0 : toUnits(a, scale)), 0);
-  return { left: toUnits(Math.abs(whole), scale) - sum, parsed };
+  const units = drafts.map((d) => (d.amount.trim() ? partUnits(d.amount, currency) : null));
+  const sum = units.reduce<number>((n, u) => n + (u ?? 0), 0);
+  return { left: toUnits(Math.abs(whole), scale) - sum, parsed: units.map((u) => (u === null ? null : u / scale)) };
 }
 
 export default function SplitSheet({

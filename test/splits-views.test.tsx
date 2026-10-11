@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
-import SplitSheet, { leftToSplit, startingParts } from '@/components/SplitSheet';
+import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
 import { entryLabel, entryNotice } from '@/components/SplitRows';
 import { searchEntries, searchRows } from '@/components/txn-search';
@@ -236,6 +236,26 @@ describe('the split sheet', () => {
     expect(page).toContain('The bank changed this amount from $150.00 to $160.00 since you split it.');
     expect(page).toContain('$10.00 left to split');
     expect(page).toContain('Unsplit');
+  });
+
+  test('a part is read in the currency’s own units: eight places for one without an ISO code, whole yen, cents', () => {
+    expect(partUnits('0.00000001', 'BTC')).toBe(1);
+    expect(partUnits('0.000000001', 'BTC')).toBeNull();
+    expect(partUnits('0.020123450', 'BTC')).toBe(2012345);
+    expect(partUnits('1000', 'JPY')).toBe(1000);
+    expect(partUnits('1000.00', 'JPY')).toBe(1000);
+    expect(partUnits('1000.5', 'JPY')).toBeNull();
+    expect(partUnits('49,99', 'USD')).toBe(4999);
+    expect(partUnits('1,234.56', 'USD')).toBe(123456);
+    expect(partUnits('1.234', 'USD')).toBeNull();
+    expect(partUnits('0', 'USD')).toBeNull();
+    expect(partUnits('ten', 'USD')).toBeNull();
+    // A 0.05012345 BTC transaction splits to the last place, and Put the rest here places it.
+    expect(leftToSplit(0.05012345, [{ amount: '0.03' }, { amount: '' }], 'BTC').left).toBe(2012345);
+    const done = leftToSplit(0.05012345, [{ amount: '0.03' }, { amount: '0.02012345' }], 'BTC');
+    expect(done.left).toBe(0);
+    expect(done.parsed).toEqual([0.03, 0.02012345]);
+    expect(leftToSplit(0.0042, [{ amount: '0.0021' }, { amount: '0.0021' }], 'ETH').left).toBe(0);
   });
 
   test('a new split starts with two empty parts under the transaction’s category, and nothing saves until they add up', () => {
