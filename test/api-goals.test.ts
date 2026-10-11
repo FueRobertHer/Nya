@@ -33,6 +33,9 @@ const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { setGoals } = await import('@/lib/goals');
 const { goalPlansStore } = await import('@/lib/goal-plans');
+const { saveManualAccount } = await import('@/lib/manual');
+const { setAccountHidden } = await import('@/lib/hidden');
+const links = await import('@/lib/links');
 const v1 = await import('@/app/api/v1/goals/route');
 const mcp = await import('@/app/api/mcp/route');
 const app = await import('@/app/api/goals/route');
@@ -120,8 +123,56 @@ describe('GET /api/v1/goals', () => {
   });
 
   test('a goal on a hidden account counts nothing and names nothing, unless hidden accounts are asked for', async () => {
-    expect(byId((await ask()).body).get(ID(2))).toMatchObject({ state: 'hidden', saved: null, account_name: null, projection: null });
-    expect(byId((await ask('include_hidden=true')).body).get(ID(2))).toMatchObject({ state: 'tracked', saved: 5000, account_name: 'Savings' });
+    expect(byId((await ask()).body).get(ID(2))).toMatchObject({
+      state: 'hidden',
+      saved: null,
+      account_id: null,
+      account_name: null,
+      currency: null,
+      shares_account_with: [],
+      pace: null,
+      projection: null,
+      notes: ['Tracked account is hidden.'],
+    });
+    expect(byId((await ask('include_hidden=true')).body).get(ID(2))).toMatchObject({ state: 'tracked', saved: 5000, account_id: 'acc_save', account_name: 'Savings', currency: 'USD' });
+  });
+
+  test('nor when it was reconnected: no word of what it follows', async () => {
+    // Tracked by its id before a reconnect, linked to the hidden account's id now.
+    await setGoals(ctx, [{ id: ID(6), name: 'Old house', target: 1000, account_id: 'acc_save_before' }]);
+    await links.linkAccounts(ctx, 'acc_save_before', 'acc_save', {});
+    const { body } = await ask();
+    expect(byId(body).get(ID(6))).toMatchObject({ state: 'hidden', account_id: null, account_name: null, currency: null, notes: ['Tracked account is hidden.'] });
+    for (const said of ['Savings', 'acc_save', 'reconnected']) expect(JSON.stringify(body)).not.toContain(said);
+    // Asked for, it is counted, and says what it follows.
+    expect(byId((await ask('include_hidden=true')).body).get(ID(6))).toMatchObject({ state: 'tracked', account_id: 'acc_save', notes: expect.arrayContaining(['Follows Savings, which was reconnected.']) });
+  });
+
+  test('a hidden account that can’t be read is not missing from what was asked: nothing is incomplete for it', async () => {
+    // Every connection loaded, so only the hidden account could be missing.
+    await fake.hdel(ctxKey('plaid:items'), 'item_new');
+    await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: 'Home', type: 'depository', subtype: null, balance: 10, updated_at: new Date().toISOString() });
+    await setAccountHidden(ctx, 'manual_jar', 'depository', true);
+    await fake.hset(ctxKey('manual:accounts'), { manual_jar: 'not-ciphertext-but-long-enough-to-be-tried' });
+    await setGoals(ctx, [
+      { id: ID(6), name: 'Jar', target: 100, account_id: 'manual_jar' },
+      { id: ID(7), name: 'Gone', target: 100, account_id: 'acc_gone' },
+    ]);
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      const { body } = await ask();
+      expect(body).toMatchObject({ complete: true, missing_accounts: [] });
+      expect(byId(body).get(ID(6))).toMatchObject({ state: 'hidden', account_id: null });
+      expect(byId(body).get(ID(7)).state).toBe('disconnected');
+      // Asked for, it is missing, and a goal whose account isn't listed may be on it.
+      const all = (await ask('include_hidden=true')).body;
+      expect(all.complete).toBe(false);
+      expect(all.missing_accounts).toEqual([{ institution: null, account_id: 'manual_jar', reason: 'unreadable', source: 'manual' }]);
+      expect(byId(all).get(ID(7)).state).toBe('unavailable');
+    } finally {
+      console.error = quiet;
+    }
   });
 
   test('a goal on a card, saved by the release before, is owed, not saved: no progress', async () => {

@@ -492,7 +492,7 @@ A goal's name, target and account stay in the `goals` value, as they always have
 
 ### In the API and the download
 
-The read-only API's `goals` endpoint and the MCP tool `get_goals` give each goal as the card shows it, on the balances Nya last measured: what it counts, its allocation, monthly target and target date, the months behind its pace, its projection and the card's own sentences about it, with each account's unallocated remainder. The [download](data-export.md#budgets-and-goals) has each goal with its plan (`goals`) and the plans as stored (`goal-plans`). Goals are never shared.
+The read-only API's `goals` endpoint and the MCP tool `get_goals` give each goal as the card shows it, on the balances Nya last measured: what it counts, its allocation, monthly target and target date, the months behind its pace, its projection and the card's own sentences about it, with each account's unallocated remainder. A goal on a hidden account says only that its account is hidden, with nothing of the account, unless hidden accounts are asked for, as everywhere in the API. The [download](data-export.md#budgets-and-goals) has each goal with its plan (`goals`) and the plans as stored (`goal-plans`). Goals are never shared.
 
 ## Recurring bills and the cash forecast
 

@@ -14,18 +14,24 @@
 // Derived on every read, never stored. Read only: Plaid is never asked, and
 // nothing is written (links and accounts are read with readOnly).
 //
-// A goal on a hidden account counts nothing unless hidden accounts are asked
-// for (include_hidden), as everywhere in the API. Archived goals are listed,
-// marked, with the day they were archived and what they held then, and count
-// nothing. A goal whose account isn't listed is `disconnected`, or
-// `unavailable` while some accounts couldn't be read (complete: false).
+// Hidden accounts only when they are asked for (include_hidden), as
+// everywhere in the API: otherwise one is neither listed, nor counted, nor
+// missing (missing_accounts, complete and notes are of the accounts asked
+// for), and a goal on one is `hidden` and says nothing of it: no account id,
+// currency or name, and of its notes only that its account is hidden.
+// Archived goals are listed, marked, with the day they were archived and what
+// they held then, and count nothing. A goal whose account isn't listed is
+// `disconnected`, or `unavailable` while some accounts couldn't be read
+// (complete: false).
 
 import type { Ctx } from './containers';
 import { readAccounts, type ApiMissing } from './api-read';
+import { getEffectiveHidden } from './links';
 import { readGoalRecords, wireGoal } from './goal-plans';
 import { knownAccount, readGoalFlows } from './goal-flows';
 import { goalViews, accountState } from './goal-view';
-import { goalSentences } from './goal-text';
+import type { KnownAccount } from './goal-save';
+import { goalSentences, stateText } from './goal-text';
 import type { ProjectionStatus } from './goal-projection';
 
 export type ApiGoalMonth = {
@@ -46,8 +52,11 @@ export type ApiGoal = {
   name: string;
   target: number;
   /** The tracked account's currency, which the target and every amount are
-   *  in; null when it tracks none, or the currency isn't known. */
+   *  in; null when it tracks none, the currency isn't known, or its account
+   *  is hidden and hidden accounts weren't asked for. */
   currency: string | null;
+  /** Null when it tracks none, or its account is hidden and hidden accounts
+   *  weren't asked for (state 'hidden'). */
   account_id: string | null;
   account_name: string | null;
   /** 'tracked', 'untracked' (no account), 'hidden', 'disconnected',
@@ -135,8 +144,17 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
   const today = opts.today ?? utcDay();
   const { records, links } = await readGoalRecords(ctx, { readOnly: true });
   const goals = records.map((r) => wireGoal(r, links));
-  const listed = await readAccounts(ctx, { includeHidden: true });
-  const accounts = listed.accounts.map((a) => ({ ...knownAccount(a), hidden: a.hidden && !opts.includeHidden }));
+  // Hidden accounts only when asked for (see the header): the ids of those
+  // that aren't, following links, only to say a goal's account is hidden.
+  const [listed, hidden] = await Promise.all([
+    readAccounts(ctx, { includeHidden: !!opts.includeHidden }),
+    opts.includeHidden ? null : getEffectiveHidden(ctx, { readOnly: true }).then((h) => h.hidden),
+  ]);
+  const onHidden = (g: { account_id: string | null }) => !!g.account_id && !!hidden?.has(g.account_id);
+  const accounts: KnownAccount[] = listed.accounts.map((a) => ({ ...knownAccount(a), hidden: false }));
+  for (const id of new Set(goals.filter(onHidden).map((g) => g.account_id!))) {
+    accounts.push({ account_id: id, name: '', balance: null, currency: null, hidden: true, as_of: null });
+  }
   const byId = new Map(accounts.map((a) => [a.account_id, a]));
   const counted = new Set(goals.filter((g) => !g.plan?.archived && g.account_id && accountState(g, byId.get(g.account_id)) === 'tracked').map((g) => g.account_id!));
   const flows = await readGoalFlows(ctx, { month: today.slice(0, 7), accounts: listed.accounts.filter((a) => counted.has(a.id)), links });
@@ -152,19 +170,28 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
     if (state === 'disconnected' && unread) state = 'unavailable';
     const p = v?.projection ?? null;
     const flow = v && g.account_id ? flows.flows.get(g.account_id) : undefined;
+    const isHidden = onHidden(g);
+    const notes = (): string[] => {
+      if (g.plan?.archived) return ['Archived.'];
+      if (!v) return [];
+      // Nothing of a hidden account: not its name, as a reconnected one's
+      // note would give, nor anything it holds.
+      if (isHidden) return [`${stateText(v)}.`];
+      return goalSentences(v, nameOf, g.account_id ? splits.get(g.account_id) : undefined);
+    };
     return {
       id: g.id,
       name: g.name,
       target: g.target,
-      currency: account?.currency ?? null,
-      account_id: g.account_id,
+      currency: isHidden ? null : (account?.currency ?? null),
+      account_id: isHidden ? null : g.account_id,
       account_name: account && !account.hidden ? account.name : null,
       state,
       saved: v?.saved ?? null,
       saved_as_of: v?.saved !== null && v?.saved !== undefined ? (account?.as_of ?? null) : null,
       allocation: g.plan?.allocation ?? null,
       scaled: v?.claim?.scaled ?? false,
-      shares_account_with: v?.sharing ?? [],
+      shares_account_with: isHidden ? [] : (v?.sharing ?? []),
       monthly_target: g.plan?.monthly_target ?? null,
       target_date: g.plan?.target_date ?? null,
       archived: !!g.plan?.archived,
@@ -191,7 +218,7 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
             uncertain: !!v!.measured?.uncertain && p.rateFrom === 'contributions',
           }
         : null,
-      notes: v ? goalSentences(v, nameOf, g.account_id ? splits.get(g.account_id) : undefined) : g.plan?.archived ? ['Archived.'] : [],
+      notes: notes(),
     };
   });
 
