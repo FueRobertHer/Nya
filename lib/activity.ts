@@ -268,6 +268,10 @@ export async function assembleBankRows(
   /** When each account ended, through the links the hidden set was read by:
    *  what the rows were filtered by, or with keepEnded would have been. */
   lifecycle: LifecycleView;
+  /** The day of the earliest row imported into a linked account from its
+   *  bank's files that counts (#52), of any date, or null with none: where
+   *  its transactions in Nya begin, beside each bank's `first_date`. */
+  imported_first: string | null;
 }> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
@@ -388,6 +392,7 @@ export async function assembleBankRows(
     })),
     own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
     lifecycle,
+    imported_first: imported.first,
   };
 }
 

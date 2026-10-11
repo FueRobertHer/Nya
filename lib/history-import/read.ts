@@ -385,6 +385,9 @@ export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountI
  * imported rows (one that superseded them, or that they are duplicates of),
  * those rows, earlier imports first: what the person said about them carries
  * to it. `bankStates` are the connections' rows as the caller read them.
+ * `first` is the day of the earliest of these rows, of any date (before
+ * `since` too): where the transactions in Nya begin for budget rollover
+ * (lib/budget-month.ts), as the bank's own oldest stored row is.
  */
 export async function importedForActivity(
   ctx: Ctx,
@@ -397,8 +400,9 @@ export async function importedForActivity(
     since?: string;
     endedFrom?: ReadonlyMap<string, string>;
   }
-): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]> }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]>; first: string | null }> {
   const read = await readImported(ctx, { items: opts.items, links: opts.links, leftOut: opts.leftOut, bankStates: opts.bankStates });
+  let first: string | null = null;
   const cutoff = opts.since ?? daysAgo(LOOKBACK_DAYS);
   const since = opts.since ?? daysAgo(RECURRING_LOOKBACK_DAYS);
   const txns: Txn[] = [];
@@ -413,7 +417,9 @@ export async function importedForActivity(
     }
     const end = opts.endedFrom?.get(a.account.account_id);
     for (const row of settled.counted) {
-      if (row.date < since || (end !== undefined && row.date >= end)) continue;
+      if (end !== undefined && row.date >= end) continue;
+      if (first === null || row.date < first) first = row.date;
+      if (row.date < since) continue;
       const t = toDisplay(row, a.account, !!opts.withAccountIds);
       if (row.date >= cutoff) txns.push(t);
       else
@@ -443,7 +449,7 @@ export async function importedForActivity(
   const importOf = new Map(read.accounts.flatMap((a) => a.held.map((r) => [r.id, r.import_id] as const)));
   const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
   for (const list of represents.values()) list.sort((x, y) => at(x) - at(y));
-  return { txns, older, notes: read.notes, represents };
+  return { txns, older, notes: read.notes, represents, first };
 }
 
 /**
