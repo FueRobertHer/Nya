@@ -174,6 +174,22 @@ describe('the chart', () => {
     expect(html).toContain('<tspan class="sankey-amount">');
   });
 
+  test('a tall node whose name one line would cut puts it on a line of its own, above its amount; a thin one keeps one line', () => {
+    const html = sankey();
+    expect(html).toMatch(/<tspan class="sankey-name" x="[\d.]+" dy="-0.25em">Rent and utilities<\/tspan><tspan class="sankey-amount" x="[\d.]+" dy="1.2em">\$2\.1K<\/tspan>/);
+    expect(html).toContain('<tspan class="sankey-name">Restaurants </tspan><tspan class="sankey-amount">$96</tspan>');
+  });
+
+  test('Other income says so whole where it fits, else as Other, and its tooltip names whom it holds', () => {
+    const payers = [row(day(1), 'Big Employer', -100_000, 'income'), ...['Ann', 'Bo', 'Cy'].map((name) => row(day(2), name, -500, 'income'))];
+    // Four columns, so the payers' labels have a third of the width.
+    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')] });
+    expect(html).toContain('<tspan class="sankey-name">Other </tspan><tspan class="sankey-amount">$1.5K</tspan>');
+    expect(html).toContain('<title>Other income: $1,500.00, 3 transactions (Ann, Bo, Cy)</title>');
+    const small = sankey({ txns: [row(day(1), 'Big Employer', -3000, 'income'), ...['Ann', 'Bo'].map((name) => row(day(2), name, -20, 'income'))] });
+    expect(small).toContain('<tspan class="sankey-name">Other income </tspan><tspan class="sankey-amount">$40</tspan>');
+  });
+
   test('without onPick nothing can be tapped, and nothing says it can', () => {
     const html = renderToStaticMarkup(<CashFlowSankey txns={ROWS} taxonomy={taxonomy} currency="USD" />);
     expect(html).not.toContain('tappable');

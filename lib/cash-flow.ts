@@ -214,6 +214,8 @@ export type FlowNode = {
   side: LabelSide;
   kind: FlowNodeKind;
   label: string;
+  /** A shorter label, for where the whole one won't fit beside its amount. */
+  short?: string;
   value: number;
   transactions: number;
   ids: readonly string[] | null;
@@ -273,6 +275,7 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
       side: 'right',
       kind: 'other-income',
       label: 'Other income',
+      short: 'Other',
       value,
       transactions: payers.folded.reduce((a, p) => a + p.transactions, 0),
       ids: payers.folded.flatMap((p) => p.ids),

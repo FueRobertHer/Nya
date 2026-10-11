@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test';
-import { fitLabel, layoutSankey, ribbonPath, spreadLabels, textWidth, SANKEY_DEFAULTS, type SankeyLayout, type SankeyLinkInput, type SankeyNodeInput } from '@/lib/sankey';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { fitLabel, fitText, layoutSankey, ribbonPath, spreadLabels, textWidth, SANKEY_DEFAULTS, type SankeyLayout, type SankeyLinkInput, type SankeyNodeInput } from '@/lib/sankey';
 
 // The cash flow chart's geometry (lib/sankey.ts, #41): a pure layered Sankey
 // layout, held here to its rules: nodes as tall as their amounts on one scale,
@@ -241,9 +243,28 @@ describe('a label that fits', () => {
     expect(fitLabel('Big Shop', '$5', textWidth('Big …') + textWidth(' $5') + 1)!.name).toBe('Big…');
   });
 
+  test('text alone cut to a width: whole, with an ellipsis, or nothing', () => {
+    expect(fitText('Food', 100)).toBe('Food');
+    const cut = fitText('Travel and entertainment', 60);
+    expect(cut.endsWith('…')).toBe(true);
+    expect(textWidth(cut)).toBeLessThanOrEqual(60);
+    expect(fitText('Travel', 5)).toBe('');
+  });
+
   test('wide letters and full-width characters are counted wider than narrow ones', () => {
     expect(textWidth('MMMM')).toBeGreaterThan(textWidth('iiii'));
     expect(textWidth('食費')).toBeGreaterThan(textWidth('ab'));
     expect(textWidth('')).toBe(0);
+  });
+});
+
+describe('no chart library', () => {
+  test('the layout imports nothing, and the chart only React and Nya’s own modules', () => {
+    const layout = readFileSync(join(import.meta.dir, '..', 'lib', 'sankey.ts'), 'utf8');
+    expect(layout).not.toMatch(/^import /m);
+    const chart = readFileSync(join(import.meta.dir, '..', 'components', 'CashFlowSankey.tsx'), 'utf8');
+    const from = [...chart.matchAll(/^import [^;]* from '([^']+)';/gm)].map((m) => m[1]);
+    expect(from.length).toBeGreaterThan(3);
+    expect(from.filter((f) => f !== 'react' && !f.startsWith('@/lib/'))).toEqual([]);
   });
 });

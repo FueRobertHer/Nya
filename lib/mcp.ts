@@ -49,7 +49,7 @@ export const LATEST_PROTOCOL = PROTOCOL_VERSIONS[0];
 export const SERVER_INFO = { name: 'nya', title: 'Nya', version: '1.0.0' };
 
 export const INSTRUCTIONS = [
-  'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, budgets, recurring bills and investment holdings.',
+  'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, where money came from and went (cash flow), budgets, recurring bills and investment holdings.',
   'Everything is what Nya has stored, never fetched live: each result says what it is as of. Amounts use Plaid’s sign: a transaction’s positive amount is money out, and what a credit card or a loan owes is a positive balance.',
   'Totals are in one currency each, and say what they left out; nothing is converted between currencies. Hidden accounts are left out unless include_hidden is true.',
   'Some connections bring in no transactions (a 401(k) or a brokerage account; or a bank account or card whose transactions Plaid doesn’t provide, or the person didn’t allow): sources[].no_transactions says which and why, and the notes what that leaves out, so an empty list or a zero total is not, by itself, no spending.',

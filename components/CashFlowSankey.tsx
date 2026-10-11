@@ -117,12 +117,17 @@ type Label = { name: string; amount: string; lines: 1 | 2; width: number };
 
 /** A node's label as it is drawn: its name and amount on one line, cut to
  *  fit; or, on a node tall enough whose label sits at its middle, the name on
- *  a line of its own above the amount, when one line would cut it. */
-function labelOf(b: SankeyNodeBox, name: string, amount: string): Label | null {
+ *  a line of its own above the amount, when one line would cut it. A node
+ *  with a short name (a fold's "Other") takes it rather than be cut. */
+function labelOf(b: SankeyNodeBox, name: string, amount: string, short?: string): Label | null {
   if (!b.label) return null;
-  const one = fitLabel(name, amount, b.label.maxWidth, LABEL_SIZE);
+  let one = fitLabel(name, amount, b.label.maxWidth, LABEL_SIZE);
+  if (short && one?.name !== name) {
+    const brief = fitLabel(short, amount, b.label.maxWidth, LABEL_SIZE);
+    if (brief?.name === short) one = brief;
+  }
   const centred = Math.abs(b.label.y - (b.y + b.height / 2)) < 0.5;
-  if (centred && b.height >= TWO_LINES && one?.name !== name) {
+  if (centred && b.height >= TWO_LINES && one?.name !== name && one?.name !== short) {
     const top = fitText(name, b.label.maxWidth, LABEL_SIZE);
     if (top) return { name: top, amount, lines: 2, width: Math.max(textWidth(top, LABEL_SIZE), textWidth(amount, LABEL_SIZE)) };
   }
@@ -261,7 +266,7 @@ export default function CashFlowSankey({
             })}
             {layout.nodes.map((b) => {
               const n = byId.get(b.id)!;
-              const label = labelOf(b, n.label, labelMoney(n.value, c));
+              const label = labelOf(b, n.label, labelMoney(n.value, c), n.short);
               const tappable = !!onPick && n.ids !== null;
               return (
                 <g
