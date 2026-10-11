@@ -820,7 +820,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['tags[].name', 'Its name.'],
       ['tags[].spent', 'What its transactions spent.'],
       ['tags[].transactions', 'How many transactions that sums.'],
-      ['transactions', 'Transactions in the range, counted or not.'],
+      ['transactions', 'Transactions in the range, counted or not: each part of a split transaction is one here, and so is a group’s net, as each counts on its own.'],
       ['counted', 'Those in these totals.'],
       ['transfers', 'Those left out for moving money: transfers between your accounts, cash taken out, loan payments.'],
       ['excluded', 'Those left out of budgets and reports, by you or by a rule of yours that hides them.'],

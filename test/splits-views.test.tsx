@@ -106,6 +106,11 @@ describe('the Activity tab’s list', () => {
     expect(page).toContain('-$214.50');
   });
 
+  test('a split transaction left out of budgets is one transaction left out, however many parts it has', () => {
+    const rows = served().map((t) => (t.split_of ? { ...t, excluded: true as const } : t));
+    expect(list(rows)).toContain('and 1 transaction you left out');
+  });
+
   test('the search finds a part by its transaction’s note, and a group by one of its transactions', () => {
     const rows = served();
     expect(searchRows(rows, { query: 'monthly run', tag: '' }, []).map((t) => t.split_of)).toEqual(['Costco', 'Costco', 'Costco']);

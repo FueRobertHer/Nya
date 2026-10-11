@@ -413,16 +413,18 @@ export default function MonthBreakdown({
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
+  // A split transaction is one, however many of its parts are (#39).
   const { excludedCount, hiddenCount, unknownCount } = useMemo(() => {
-    let excludedCount = 0;
-    let hiddenCount = 0;
-    let unknownCount = 0;
+    const excluded = new Set<string>();
+    const hidden = new Set<string>();
+    const unknown = new Set<string>();
     for (const t of monthTxns) {
-      if (t.excluded === true && t.excluded_by_rule) hiddenCount++;
-      else if (t.excluded === true) excludedCount++;
-      else if (t.excluded === null) unknownCount++;
+      const id = t.split_of ?? t.transaction_id;
+      if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
+      else if (t.excluded === true) excluded.add(id);
+      else if (t.excluded === null) unknown.add(id);
     }
-    return { excludedCount, hiddenCount, unknownCount };
+    return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size };
   }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
