@@ -45,6 +45,7 @@ import { isOwedType } from '../balance';
 import { addDays, DEFAULT_CURRENCY } from '../manual-txn-input';
 import { MAX_BALANCE } from '../manual';
 import { forgetAnnotations } from '../txn-annotations';
+import { forgetSplitsAndGroups } from '../split-gone';
 import { loggable } from '../log-safe';
 import type { FileFormat, Problem } from './record';
 import type { NormalizedRecord } from './normalize';
@@ -763,6 +764,7 @@ export async function undoImport(ctx: Ctx, account_id: string, import_id: string
   // What was said about the rows goes with them. Best effort: a record left
   // behind names a row that no longer exists, which is never shown.
   await forgetAnnotations(ctx, result.ids).catch((err) => console.warn('import: exclusions of undone rows were left behind', loggable(err)));
+  await forgetSplitsAndGroups(ctx, result.ids).catch((err) => console.warn('import: splits or groups of undone rows were left behind', loggable(err)));
   await importStore.remove(ctx, import_id);
   await importSummaryStore.remove(ctx, import_id);
   return result;

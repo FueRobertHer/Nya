@@ -48,6 +48,7 @@ import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 import type { SplitParent } from './split-rows';
+import { pruneSplitsAndGroups } from './split-gone';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -717,13 +718,19 @@ export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null
  * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
  * transactions' records, and the stores are read only when one has one.
  * Never fails the sync: a record left is pruned by the next disconnect or
- * forget, and is never shown meanwhile, its transaction being gone.
+ * forget, and is never shown meanwhile, its transaction being gone. A split
+ * of one goes the same way, and one in a group leaves it (lib/split-gone.ts).
  */
 async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
   try {
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the splits and groups of transactions the bank removed', err instanceof Error ? err.name : err);
   }
 }
 

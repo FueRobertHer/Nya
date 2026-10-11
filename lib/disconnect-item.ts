@@ -12,6 +12,7 @@ import { clearItemTransactions, contentKey, readStoredTxns, storedTransactionIds
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
 import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
+import { pruneSplitsAndGroups } from './split-gone';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
@@ -83,6 +84,13 @@ export async function disconnectItem(
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx));
   } catch (err) {
     console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
+  }
+  // And their splits and their places in groups, which are not carried
+  // across a re-link (lib/split-gone.ts; best effort too).
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx));
+  } catch (err) {
+    console.error('disconnect: could not prune old splits and groups', err instanceof Error ? err.message : err);
   }
   // Hidden accounts STAY hidden (#46). Their history is kept, so dropping the
   // entry would put the account back into every past total the moment it

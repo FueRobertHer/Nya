@@ -104,6 +104,7 @@ import { readTagSet, tagNameKey, type TagSet } from './tags';
 import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
+import { bankRows, PART_PREFIX, type WithParts } from './split-rows';
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -720,6 +721,59 @@ export type ApiTransaction = {
   rule_ids: string[];
   /** It is excluded because a rule hides it, not by the person's own hand. */
   excluded_by_rule: boolean;
+  /** Split into parts (#39, lib/split-rows.ts): each part, in order, and
+   *  null when it isn't split. The transaction is listed once, whole, as the
+   *  bank has it (its own category stays, as it was before splits existed);
+   *  its parts are what spending, budgets and categories count. */
+  splits: ApiSplitPart[] | null;
+  /** In a group of transactions that count as one net amount (a dinner and
+   *  what a friend paid back): the group, and null when it isn't in one. Each
+   *  of a group's transactions is listed on its own; the group's net is what
+   *  spending, budgets and categories count. */
+  transaction_group: ApiTransactionGroup | null;
+};
+
+/** One part of a split transaction. */
+export type ApiSplitPart = {
+  /** The part's id, which stays while the part does; null for the part that
+   *  holds what the bank changed since the split (`remainder`). */
+  id: string | null;
+  /** Plaid's sign, as the transaction's. */
+  amount: number;
+  /** Its category's name, id, and group's id and name, as a transaction's. */
+  category: string | null;
+  category_id: string | null;
+  group_id: string | null;
+  group: string | null;
+  note: string | null;
+  /** Left out of budgets and reports: the whole transaction excluded, or
+   *  this part on its own; null when that couldn't be read (it counts). */
+  excluded: boolean | null;
+  /** The part that holds what the bank changed the amount by since the
+   *  split, filed as the whole transaction is, until the split is edited. */
+  remainder: boolean;
+};
+
+/** A group of transactions that count as one net amount. */
+export type ApiTransactionGroup = {
+  id: string;
+  name: string;
+  /** The day its net counts on: its earliest transaction's when it was saved. */
+  date: string;
+  /** Its transactions here, added up (Plaid's sign): what is counted. */
+  net: number;
+  currency: string | null;
+  /** The category its net is filed under: name, id, and its group's id and
+   *  name (a category group, as transactions[].group is). */
+  category: string | null;
+  category_id: string | null;
+  category_group_id: string | null;
+  category_group: string | null;
+  /** How many of its transactions are here, and how many aren't (removed by
+   *  the bank, on a hidden account, or not read this time): the net is of
+   *  those here. */
+  transactions: number;
+  missing: number;
 };
 
 /** An id as the API shows it: null for a provisional one (see CATEGORIES). */
@@ -736,7 +790,51 @@ function describer(ix: CategoryIndex): (bucket: string) => Described {
   };
 }
 
-function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNames: ReadonlyMap<string, string>): ApiTransaction {
+/** A category's name, id and group, as an answer shows them, from a filed
+ *  row. */
+function filedAs(t: Pick<Txn, 'category' | 'category_id' | 'category_name'>, ix: CategoryIndex): { category: string | null; category_id: string | null; group_id: string | null; group: string | null } {
+  const filed = t.category_id ? categoryById(ix, t.category_id) : null;
+  const group = filed ? groupOf(ix, filed) : null;
+  return { category: t.category_name !== undefined ? t.category_name : t.category, category_id: shownId(t.category_id), group_id: shownId(group?.id), group: group?.name ?? null };
+}
+
+/** A split transaction's parts as the API shows them. */
+function splitsOf(parts: readonly Txn[], ix: CategoryIndex): ApiSplitPart[] {
+  return parts.map((p) => ({
+    id: p.transaction_id.startsWith(PART_PREFIX) ? p.transaction_id.slice(PART_PREFIX.length) : null,
+    amount: p.amount,
+    ...filedAs(p, ix),
+    note: p.note ?? null,
+    excluded: p.excluded === true ? true : p.excluded === null ? null : false,
+    remainder: p.split_remainder !== undefined,
+  }));
+}
+
+/** A group's row as the API shows the group (lib/split-rows.ts). */
+function groupOfRow(row: Txn, ix: CategoryIndex): ApiTransactionGroup {
+  const filed = filedAs(row, ix);
+  return {
+    id: row.group_id!,
+    name: row.name,
+    date: row.date,
+    net: row.amount,
+    currency: currencyOf(row),
+    category: filed.category,
+    category_id: filed.category_id,
+    category_group_id: filed.group_id,
+    category_group: filed.group,
+    transactions: row.group_members?.length ?? 0,
+    missing: (row.group_missing ?? 0) + (row.group_removed ?? 0),
+  };
+}
+
+function toApiTransaction(
+  t: WithParts<Txn>,
+  hidden: Set<string>,
+  ix: CategoryIndex,
+  tagNames: ReadonlyMap<string, string>,
+  groups: ReadonlyMap<string, ApiTransactionGroup> = new Map()
+): ApiTransaction {
   const account = t.account_id ?? '';
   const filed = t.category_id ? categoryById(ix, t.category_id) : null;
   const group = filed ? groupOf(ix, filed) : null;
@@ -769,6 +867,8 @@ function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNam
     tags: (t.tags ?? []).filter((id) => tagNames.has(id)).map((id) => ({ id, name: tagNames.get(id)! })),
     rule_ids: t.rule_ids ?? [],
     excluded_by_rule: t.excluded_by_rule === true,
+    splits: t.split_parts ? splitsOf(t.split_parts, ix) : null,
+    transaction_group: (t.group_id !== undefined && groups.get(t.group_id)) || null,
   };
 }
 
@@ -934,15 +1034,27 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const byName = q.tag === undefined ? undefined : (activity.tags?.tags.find((t) => tagNameKey(t.name) === tagNameKey(q.tag!))?.id ?? null);
   const tagged = (t: Txn) => (q.tagId === undefined || !!t.tags?.includes(q.tagId)) && (byName === undefined || (byName !== null && !!t.tags?.includes(byName)));
   const tagText = (t: Txn) => (t.tags ?? []).map((id) => tagNames.get(id));
-  const matching = activity.rows
+  // Each transaction once, as the bank has it (lib/split-rows.ts): a split
+  // one whole with its parts, a group's each on its own beside its group.
+  // A category, or text, finds one by its parts and its group too.
+  const groups = new Map(activity.rows.filter((t) => t.group_members).map((t) => [t.group_id!, t] as const));
+  const shownGroups = new Map([...groups].map(([id, row]) => [id, groupOfRow(row, activity.ix)] as const));
+  const filedUnder = (t: WithParts<Txn>): Txn[] => [t, ...(t.split_parts ?? []), ...(t.group_id !== undefined && groups.has(t.group_id) ? [groups.get(t.group_id)!] : [])];
+  const matching = bankRows(activity.rows)
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
-    .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
-    .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
+    .filter((t) => category === undefined || filedUnder(t).some((f) => describe(bucketOf(f)).category.toLowerCase() === category))
+    .filter((t) => wanted === undefined || filedUnder(t).some((f) => categoryById(activity.ix, bucketOf(f))?.id === wanted.id))
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
     .filter(tagged)
-    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note, ...tagText(t)].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden, activity.ix, tagNames))
+    .filter(
+      (t) =>
+        !text ||
+        [t.name, t.counterparty, t.category_name, t.subcategory, t.note, ...tagText(t), ...filedUnder(t).slice(1).flatMap((f) => [f.category_name, f.note, f.group_members ? f.name : null])].some(
+          (f) => typeof f === 'string' && f.toLowerCase().includes(text)
+        )
+    )
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix, tagNames, shownGroups))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
