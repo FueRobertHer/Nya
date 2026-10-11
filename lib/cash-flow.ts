@@ -16,6 +16,19 @@
 // lib/categories.ts filedId), to the cent. What is left out is counted, and
 // said, as the totals say it (cashFlowNotes).
 //
+// ROWS IMPORTED INTO LINKED ACCOUNTS (#52) come in through the same assembly
+// (lib/activity.ts, lib/history-import/read.ts), each only where no bank row
+// stands for it: one the bank has sent since counts once, as the bank's row,
+// which takes the category, exclusion and tags said of the imported one. So
+// they flow as any row does: a deposit to the payer of its name as the list
+// shows it, a purchase to the category it is filed under. The notes say how
+// many of the period's transactions were imported, as the month's totals say
+// it of a month (lib/history-import/view.ts importedRowsNote). What may be
+// missing is said of each month as the Activity tab says it
+// (lib/month-coverage.ts), which reads nothing of what the files cover: a
+// report's gaps and a budget's rollover months do, on the server
+// (lib/history-import/coverage.ts).
+//
 // MONEY IN, BY WHO PAID IT. Each counted inflow (a negative amount, Plaid's
 // sign) goes to its payer: the name on the row (the merchant's, or the
 // person's own name for it, as the list shows it), the same whatever its
@@ -60,6 +73,7 @@ import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type Cate
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
 import { joinNames, monthGaps, type Incomplete, type Stopped } from './month-coverage';
 import { refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from './no-transactions';
+import { importedRowsNote } from './history-import/view';
 import type { LabelSide, SankeyLinkInput } from './sankey';
 
 /** What the flows read of a transaction: what the totals read, and its id
@@ -479,10 +493,12 @@ export const dayText = (day: string): string =>
 /**
  * What to say when a period reaches before the transactions held: before the
  * Activity tab's window (`now`), whose first days aren't loaded; or before the
- * earliest transaction there is (`rows`, every row loaded, counted or not),
- * when that is well into the window too (more than QUIET_DAYS after its first
- * day), so the history itself begins late and the period's first months may
- * be missing what came before it. Null when neither.
+ * earliest transaction there is (`rows`, every row loaded, counted or not,
+ * those imported from the bank's files among them, so months only the files
+ * reach don't begin late), when that is well into the window too (more than
+ * QUIET_DAYS after its first day), so the history itself begins late and the
+ * period's first months may be missing what came before it. Null when
+ * neither.
  */
 export function historyNote(p: Pick<Period, 'from'>, rows: readonly { date: string }[], now: number = Date.now()): string | null {
   const start = windowStart(now);
@@ -514,8 +530,10 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * (historyNote); and SimpleFIN rows that count without a category. Counted:
  * the transfers, exclusions and rule hides left out, exclusions that
  * couldn't be read, what is in another currency, that a refund is money in,
- * and the connections that hold no bank account or card when only rows
- * entered by hand are here. `day` names an instant's local day ("Sep 12").
+ * the connections that hold no bank account or card when only rows entered
+ * by hand are here, and how many of the period's transactions were imported
+ * from the bank's files, counted or not, as the month's totals say it
+ * (importedRowsNote). `day` names an instant's local day ("Sep 12").
  */
 export function cashFlowNotes(input: {
   flow: CashFlow;
@@ -568,7 +586,8 @@ export function cashFlowNotes(input: {
   const history = historyNote(period, input.rows, input.now);
   if (history) gaps.push(history);
   const inRange = inPeriod(period);
-  const uncategorized = uncategorizedNote(uncategorizedFromConnector(input.rows.filter((t) => inRange(t.date))));
+  const inRows = input.rows.filter((t) => inRange(t.date));
+  const uncategorized = uncategorizedNote(uncategorizedFromConnector(inRows));
   if (uncategorized) gaps.push(uncategorized);
 
   const counted: string[] = [];
@@ -590,5 +609,9 @@ export function cashFlowNotes(input: {
   if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
   const named = withoutNote(view, input.rows.length);
   if (named) counted.push(named);
+  // Last, as under the month's totals: the period's rows that came from the
+  // bank's files, imported into linked accounts, rather than from the bank.
+  const imported = importedRowsNote(inRows, whole);
+  if (imported) counted.push(imported);
   return { gaps, counted };
 }

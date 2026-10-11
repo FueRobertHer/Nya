@@ -11,6 +11,7 @@ import { filedId, indexTaxonomy } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { localDate, localMonth } from '@/lib/local-date';
 import { addMonths } from '@/lib/rollover';
+import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 import { categoriesFor } from './category-fixture';
 
 // The Activity tab's cash flow (components/CashFlowSankey.tsx, #41), rendered:
@@ -348,5 +349,38 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
   test('the flows the views draw are the module’s own', () => {
     const flow = cashFlow(ROWS, inPeriod(periodOf('this-month', today)), 'USD', ix);
     expect(text(sankey())).toContain(`${formatMoney(flow.net, 'USD')}`);
+  });
+});
+
+describe('rows imported into a linked account from its bank’s files (#52)', () => {
+  // As the Activity tab gets them: beside the bank's, ids of their own.
+  const FILES: Txn[] = [
+    row(day(7), 'CORNER SHOP', 60, 'groceries', { transaction_id: `${IMPORTED_TXN_PREFIX}acc_chk:1`, source: 'import:ofx' }),
+    row(day(8), 'OLD DEPOSIT', -500, null, { transaction_id: `${IMPORTED_TXN_PREFIX}acc_chk:2`, source: 'import:ofx' }),
+  ];
+  const rows = [...ROWS, ...FILES];
+
+  test('counted as the month counts them, and said as the month’s summary says them, of the chart’s period', () => {
+    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    const s = summarize(rows, (d) => d.startsWith(month), 'USD');
+    expect(s.money_in).toBe(3638.5);
+    expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);
+    expect(html.split(`<div class="summary-value">${formatMoney(s.money_out, 'USD')}</div>`).length - 1).toBe(2);
+    const t = text(html);
+    expect(t).toContain('2 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from your bank’s files, not sent by the bank.`);
+    // Over a longer period, of the period.
+    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    // Without them, nothing.
+    expect(text(sankey())).not.toContain('imported from your bank');
+  });
+
+  test('a tap on their payer or their category lists them in the Activity list, beside the bank’s', () => {
+    const groceries = taxonomy.categories.find((c) => c.name === 'groceries')!.id;
+    const listed = (node: string) => pickedRows(rows, { period: 'this-month', node, label: '' }, { ix, currency: 'USD', today }).map((t) => t.name);
+    expect(listed(`category:${groceries}`)).toEqual(['Whole Foods', 'Trader Joes', 'CORNER SHOP']);
+    expect(listed('payer:old deposit')).toEqual(['OLD DEPOSIT']);
+    // The table lists the deposit under the name the list shows, never a refund.
+    expect(text(sankey({ txns: rows }))).toContain('OLD DEPOSIT : list its transactions $500.00 1');
   });
 });

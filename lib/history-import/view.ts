@@ -16,11 +16,13 @@ import type { ExcludedImport, WalkState, WalkWhy } from './store';
 export const IMPORTED_TXN_PREFIX = 'imported-txn:';
 
 /** Under a month's totals on the Activity tab: how many of its rows came from
- *  files imported into linked accounts rather than from the bank, or null. */
-export function importedRowsNote(rows: readonly { transaction_id: string }[]): string | null {
+ *  files imported into linked accounts rather than from the bank, or null.
+ *  `period` names the days the rows are of, for totals over others (the cash
+ *  flow's, lib/cash-flow.ts: "October", "this period"). */
+export function importedRowsNote(rows: readonly { transaction_id: string }[], period = 'this month'): string | null {
   const n = rows.filter((t) => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX)).length;
   if (n === 0) return null;
-  return `${n.toLocaleString('en-US')} of this month’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
 }
 
 export type ImportedHistoryView = {

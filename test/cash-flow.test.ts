@@ -12,6 +12,7 @@ import {
   payerKey,
   periodCaption,
   periodOf,
+  pickedRows,
   rowIdsOf,
   windowStart,
   PERIODS,
@@ -25,6 +26,7 @@ import { countsInTotals } from '@/lib/spending';
 import { spendingByGroup } from '@/lib/budget-set';
 import { addCategory, addGroup, categoryById, filedId, groupOf, indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
+import { IMPORTED_TXN_PREFIX, importedRowsNote } from '@/lib/history-import/view';
 import { categoriesFor } from './category-fixture';
 
 // Where money came from and where it went (lib/cash-flow.ts, #41): the flows
@@ -513,5 +515,100 @@ describe('what is said beside the chart', () => {
   test('nothing to say of gaps when nothing is missing', () => {
     const clean = [row('2026-09-02', 'Pay', -10, { category: 'income' }), row('2026-08-02', 'Older', 5)];
     expect(notes({ rows: clean, flow: cashFlow(clean, inSep, 'USD', ix) }).gaps).toEqual([]);
+  });
+});
+
+describe('rows imported into a linked account from its bank’s files (#52)', () => {
+  // As the assembly gives them (lib/history-import/read.ts toDisplay): ids of
+  // their own, the file's names, and its words or none, beside the bank's.
+  // A row the bank sends later stands for its imported twin, which the
+  // assembly then leaves out (test/cash-flow-imports.test.ts), so no row
+  // here is another's twin.
+  let k = 0;
+  const imported = (date: string, name: string, amount: number, over: Partial<FlowRow> = {}): FlowRow =>
+    row(date, name, amount, { transaction_id: `${IMPORTED_TXN_PREFIX}acc_chk:${++k}`, category: null, source: 'import:ofx', ...over });
+  const FILES: FlowRow[] = [
+    imported('2026-09-02', 'ACME CORP', -3000, { category: 'income' }), // the bank's payer, by its name
+    imported('2026-09-04', 'OLD DEPOSIT', -500), // says nothing of itself
+    imported('2026-09-05', 'CORNER SHOP', 60, { category: 'groceries' }), // filed by the file's words
+    imported('2026-09-06', 'STORE', 40), // and by none: uncategorized
+    imported('2026-09-07', 'CARD PAYMENT', 200, { category: 'transfer out', transaction_code: 'transfer' }), // left out, as a bank's
+    imported('2026-08-30', 'EARLIER', 15), // August
+  ];
+  const rows = [...SEPTEMBER, ...FILES];
+  const both = cashFlow(rows, inSep, 'USD', ix);
+  const day = (iso: string) => iso.slice(5, 10);
+  const notesOf = (period: typeof sep, over: Partial<Parameters<typeof cashFlowNotes>[0]> = {}) =>
+    cashFlowNotes({ flow: cashFlow(rows, inPeriod(period), 'USD', ix), period, rows, today: '2026-10-11', now: Date.parse('2026-10-11T12:00:00Z'), day, ...over });
+
+  test('money in, out and spending by category are still summarize’s and spendingByCategory’s, to the cent', () => {
+    const s = summarize(rows, inSep, 'USD');
+    expect([both.money_in, both.money_out, both.net, both.counted, both.transfers]).toEqual([s.money_in, s.money_out, s.net, s.counted, s.transfers]);
+    expect([both.money_in, both.money_out]).toEqual([tidy(flow.money_in + 3500), tidy(flow.money_out + 100)]);
+    const budgets = spendingByCategory(rows, inSep, 'USD', bucket);
+    expect(Object.fromEntries(both.groups.flatMap((g) => g.categories.map((c) => [c.id, c.amount])))).toEqual(
+      Object.fromEntries(Object.entries(budgets).map(([id, v]) => [id, tidy(v)]))
+    );
+    expect(both.groups.map((g) => [g.id, g.amount])).toEqual(spendingByGroup(ix, new Map(Object.entries(budgets))).map((r) => [r.group.id, tidy(r.total)]));
+  });
+
+  test('a deposit goes to the payer its name names, the bank’s own of that name among them, and a purchase to the category it is filed under', () => {
+    const acme = both.payers.find((p) => p.key === 'acme corp')!;
+    expect([acme.name, acme.amount, acme.transactions]).toEqual(['ACME CORP', 9000, 3]);
+    expect(acme.ids).toEqual(['t1', 't2', FILES[0].transaction_id]);
+    expect(both.payers.find((p) => p.key === 'old deposit')).toMatchObject({ name: 'OLD DEPOSIT', amount: 500, transactions: 1, refund: false });
+    const category = (id: string) => both.groups.flatMap((g) => g.categories).find((c) => c.id === id)!;
+    expect(category(named('groceries'))).toMatchObject({ amount: tidy(120.4 + 60), ids: [SEPTEMBER[5].transaction_id, FILES[2].transaction_id] });
+    expect(category(taxonomy.uncategorized).ids).toContain(FILES[3].transaction_id);
+    // The transfer is left out, as the bank's is; August's is August's.
+    const all = [...both.payers.flatMap((p) => p.ids), ...both.groups.flatMap((g) => g.ids)];
+    expect(all).not.toContain(FILES[4].transaction_id);
+    expect(all).not.toContain(FILES[5].transaction_id);
+  });
+
+  test('a tap lists them in the Activity list, beside the bank’s', () => {
+    const pick = (node: string, period = 'last-month' as const) => pickedRows(rows, { period, node, label: '' }, { ix, currency: 'USD', today: '2026-10-11' }).map((t) => t.transaction_id);
+    expect(pick('payer:acme corp')).toEqual(['t1', 't2', FILES[0].transaction_id]);
+    expect(pick('payer:old deposit')).toEqual([FILES[1].transaction_id]);
+    expect(pick(`category:${named('groceries')}`)).toEqual([SEPTEMBER[5].transaction_id, FILES[2].transaction_id]);
+  });
+
+  test('the notes say how many of the period’s transactions were imported, counted or not, as the month’s totals do', () => {
+    const said = notesOf(sep).counted;
+    expect(said[said.length - 1]).toBe('5 of September’s transactions were imported from your bank’s files, not sent by the bank.');
+    // The month's summary says it of the same rows: the same count.
+    expect(importedRowsNote(rows.filter((t) => inSep(t.date)))).toBe('5 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
+    // Over several months, of the period; one is one.
+    expect(notesOf(periodOf('last-3-months', '2026-10-11')).counted).toContain('6 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    const aug = periodOf('last-month', '2026-09-15');
+    expect(notesOf(aug).counted).toContain('1 of August’s transactions was imported from your bank’s files, not sent by the bank.');
+    // None imported, nothing said: a file imported into a manual account is
+    // that account's own (SEPTEMBER's hardware store), as under the month.
+    expect(cashFlowNotes({ flow, period: sep, rows: SEPTEMBER, today: '2026-10-11', now: Date.parse('2026-10-11T12:00:00Z'), day }).counted.join(' ')).not.toContain('imported');
+  });
+
+  test('months only the files reach don’t begin late, and what may be missing of each month is the Activity tab’s, whatever the files hold', () => {
+    const now = Date.parse('2026-10-11T12:00:00Z');
+    const ytd = periodOf('year-to-date', '2026-10-11');
+    const bank = [row('2026-08-03', 'Shop', 5)];
+    expect(historyNote(ytd, bank, now)).toBe('The earliest transaction here is from Aug 3, 2026, so this period may be missing what came before it.');
+    expect(historyNote(ytd, [...bank, imported('2025-12-30', 'OLD STORE', 10)], now)).toBeNull();
+    // Reaching some of the way, they move where the history begins.
+    expect(historyNote(ytd, [...bank, imported('2026-03-02', 'OLD STORE', 10)], now)).toBe('The earliest transaction here is from Mar 2, 2026, so this period may be missing what came before it.');
+    // A connection's gaps are lib/month-coverage.ts's of each month, which
+    // read no rows: the same with the files' rows as without them, where only
+    // the history's first day moves, to the file's August 30.
+    const q = periodOf('last-3-months', '2026-10-11');
+    const over = { stopped: [{ institution_name: 'Chase', last_ok_at: '2026-09-12T15:00:00.000Z' }], incomplete: [{ institution_name: 'Amex', coverage: 'importing' as const }] };
+    const withFiles = notesOf(q, over).gaps;
+    const without = cashFlowNotes({ ...over, flow: cashFlow(SEPTEMBER, inPeriod(q), 'USD', ix), period: q, rows: SEPTEMBER, today: '2026-10-11', now, day }).gaps;
+    const begins = (gaps: string[]) => gaps.filter((g) => g.startsWith('The earliest transaction here'));
+    const others = (gaps: string[]) => gaps.filter((g) => !g.startsWith('The earliest transaction here'));
+    expect(others(withFiles)).toEqual(others(without));
+    expect(others(withFiles)).toContain("Chase hasn't synced since 09-12, so September and October may be missing some of its transactions.");
+    expect([begins(without), begins(withFiles)]).toEqual([
+      ['The earliest transaction here is from Aug 31, 2026, so this period may be missing what came before it.'],
+      ['The earliest transaction here is from Aug 30, 2026, so this period may be missing what came before it.'],
+    ]);
   });
 });
