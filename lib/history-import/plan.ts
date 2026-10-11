@@ -314,10 +314,17 @@ export function planHistoryImport(input: {
   );
   // A file dated by posting never pairs across an edge with a row dated so too.
   const postedHere = rows.length > 0 && POSTED_DATED(rows[0].row.source);
-  const found = pairUp(matching, known, (row, twin) => {
-    if (!postedHere || (twin.kind === 'imported' && !POSTED_DATED(twin.source))) return false;
-    return edgeOf(row, twin, input.bankFrom, covers) !== null;
-  });
+  // Of the fullest pairings, the one with the most pairs inside both sides'
+  // days (lib/history-import/match.ts pairUp).
+  const found = pairUp(
+    matching,
+    known,
+    (row, twin) => {
+      if (!postedHere || (twin.kind === 'imported' && !POSTED_DATED(twin.source))) return false;
+      return edgeOf(row, twin, input.bankFrom, covers) !== null;
+    },
+    (row, twin) => edgeOf(row, twin, input.bankFrom, covers) !== null
+  );
   const pairs = new Map<number, PlanPair>();
   for (const [i, pair] of found) {
     const edge = edgeOf(rows[i].row, pair.twin, input.bankFrom, covers);

@@ -339,6 +339,30 @@ describe('what earlier imports and the edges of each side’s days change', () =
     expect(p.proposals.length).toBe(13);
     expect(p.proposals.every((x) => x.days === 2)).toBe(true);
     expect(p.counts.new + p.counts.unanswered + p.counts.duplicates).toBe(21);
+    // With the period the file covers, as the route passes it: pairing the
+    // fares that fall on one day first would pair two fewer, leaving the two
+    // at each edge counted twice, so the lag's pairing stands, its four
+    // across an edge low, for the person to answer.
+    const { rows: normalized, problems } = rows(Array.from({ length: 21 }, (_, i) => fare(i, day(i))));
+    const covered = planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: day(10), covers: { from: day(0), to: day(20) } });
+    expect(covered.proposals.length).toBe(13);
+    expect(covered.proposals.filter((x) => x.edge !== null).map((x) => x.file.date)).toEqual([day(8), day(9), day(19), day(20)]);
+  });
+
+  test('a CSV dated as the bank posts, exported up to its first day: its last day’s fare is proposed as the bank’s own, never pushed out by lagged pairs across the edge', () => {
+    const banks = [30, 31, 32, 33, 34].map(bankFare);
+    const { rows: normalized, problems } = rows([25, 26, 27, 28, 29, 30].map((d, i) => fare(i, day(d))));
+    const input = { rows: normalized, problems, held: [], banks, order: [], bankFrom: day(30), covers: { from: day(25), to: day(30) } };
+    const p = planHistoryImport(input);
+    expect(p.proposals.find((x) => x.file.date === day(30))).toMatchObject({ twin: { id: 'b30' }, days: 0, confidence: 'high', choice: 'same', edge: null });
+    // Pairs across the bank's first day only among what is left: low, asked.
+    const across = p.proposals.filter((x) => x.file.date < day(30));
+    expect(across.length).toBe(4);
+    for (const x of across) expect(x).toMatchObject({ confidence: 'low', choice: null, edge: { kind: 'before-bank' } });
+    // Answered as their own: every fare once, the bank's standing for the
+    // file's last.
+    const each = Object.fromEntries(across.map((x) => [String(x.index), 'new' as const]));
+    expect(planHistoryImport({ ...input, choices: { proposals: { each } } }).counts).toMatchObject({ new: 5, duplicates: 1, unanswered: 0 });
   });
 
   test('the review’s key holds what each row says and the period: another file of as many rows is another review', () => {

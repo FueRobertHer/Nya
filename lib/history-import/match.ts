@@ -22,7 +22,12 @@
 // wins, and of those the one whose pairs are fewest days apart in all, then
 // the most alike: with a daily fare dated by purchase in the file and by
 // posting at the bank, every fare finds its own, never its neighbour's, and
-// none at the edge of a window is left over to be counted twice (pairUp). A
+// none at the edge of a window is left over to be counted twice (pairUp).
+// Where a review knows the edges of each side's days (see ACROSS AN EDGE),
+// of the pairings with the most pairs, the one with the most pairs inside
+// both sides' days wins: a file exported up to the bank's first day, dated as
+// the bank posts, has its last day's fare proposed as the bank's first, not
+// pushed out by a lag of days across the edge that pairs no more rows. A
 // pending row is never a match: its amount can still change, and it is
 // replaced by the posted row, which is.
 //
@@ -299,10 +304,55 @@ function pairGreedy<T extends Matchable>(rows: FileRow[], twins: T[], ok: (row: 
 /**
  * The twin each row looks like, one to one (see the header): of the pairs
  * that couldBe, as many as can be, the closest. `forbidden` leaves out a pair
- * the person said is not one. Rows and twins not in a pair are left out of
- * the answer.
+ * the person said is not one. `edge` marks a pair across the edge of either
+ * side's days (crossesEdge), one only a posting lag would make: of the
+ * pairings with as many pairs as can be, the one with the most pairs inside
+ * both sides' days wins, so a match inside them is never pushed out by lagged
+ * pairs across an edge that pair no more rows. Rows and twins not in a pair
+ * are left out of the answer.
  */
-export function pairUp<T extends Matchable>(rows: readonly FileRow[], twins: readonly T[], forbidden?: (row: FileRow, twin: T) => boolean): Map<number, Pair<T>> {
+export function pairUp<T extends Matchable>(
+  rows: readonly FileRow[],
+  twins: readonly T[],
+  forbidden?: (row: FileRow, twin: T) => boolean,
+  edge?: (row: FileRow, twin: T) => boolean
+): Map<number, Pair<T>> {
+  const ok = (row: FileRow, twin: T) => couldBe(row, twin) && !forbidden?.(row, twin);
+  const fullest = pairAll(rows, twins, ok);
+  if (!edge) return fullest;
+  // The pairs inside both sides' days first, as many as can be, then those
+  // across an edge among the rows and twins left over. Kept unless it pairs
+  // fewer: under a uniform posting lag (a file dated by purchase), the lag
+  // explains more pairs than the matches inside the days that happen to fall
+  // on one day, so the fuller pairing stands, its pairs across an edge for
+  // the person to answer.
+  const inside = pairAll(rows, twins, (row, twin) => ok(row, twin) && !edge(row, twin));
+  const taken = new Set<T>([...inside.values()].map((p) => p.twin));
+  const rest = pairAll(
+    rows.filter((r) => !inside.has(r.index)),
+    twins.filter((t) => !taken.has(t)),
+    ok
+  );
+  const firstInside = new Map([...inside, ...rest]);
+  const rowsOf = new Map(rows.map((r) => [r.index, r]));
+  const score = (pairs: Map<number, Pair<T>>) => {
+    let within = 0;
+    let days = 0;
+    for (const [index, p] of pairs) {
+      if (!edge(rowsOf.get(index)!, p.twin)) within++;
+      days += p.days;
+    }
+    return { count: pairs.size, within, days };
+  };
+  const a = score(firstInside);
+  const b = score(fullest);
+  const keep = a.count !== b.count ? a.count > b.count : a.within !== b.within ? a.within > b.within : a.days <= b.days;
+  return keep ? firstInside : fullest;
+}
+
+/** As many pairs as can be, the closest (see pairUp): run by run, of one
+ *  amount, pairs only where `ok` says. */
+function pairAll<T extends Matchable>(rows: readonly FileRow[], twins: readonly T[], ok: (row: FileRow, twin: T) => boolean): Map<number, Pair<T>> {
   const out = new Map<number, Pair<T>>();
   // By amount in thousandths: only rows of one amount can pair.
   const groups = new Map<number, { rows: FileRow[]; twins: { t: T; at: number }[] }>();
@@ -314,7 +364,6 @@ export function pairUp<T extends Matchable>(rows: readonly FileRow[], twins: rea
     g.twins.push({ t, at });
   });
   for (const r of rows) groups.get(Math.round(r.amount * 1000))?.rows.push(r);
-  const ok = (row: FileRow, twin: T) => couldBe(row, twin) && !forbidden?.(row, twin);
   for (const g of groups.values()) {
     if (g.rows.length === 0 || g.twins.length === 0) continue;
     const rs = [...g.rows].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.index - b.index));
