@@ -638,7 +638,9 @@ describe('everywhere else transactions are counted', () => {
     // The file covers the months before the bank's own rows begin, so the
     // report has no gap, and rollover counts those months whole.
     expect(before.gaps).toEqual([]);
-    expect(monthsBefore.facts.first).toEqual([{ institution: 'Chase', day: daysAgo(55), files: [{ id: 'acc_chk', name: 'Checking', covers: [{ from: daysAgo(760), to: daysAgo(35) }], end: null }] }]);
+    // Each account as coveredAccountsOf names it, beside what covers it.
+    const first: unknown = monthsBefore.facts.first;
+    expect(first).toEqual([{ institution: 'Chase', day: daysAgo(55), files: [{ id: 'acc_chk', name: 'Checking', covers: [{ from: daysAgo(760), to: daysAgo(35) }], end: null }] }]);
 
     await splitAndGroup(ids);
     const report = await readReport(ctx, period);
