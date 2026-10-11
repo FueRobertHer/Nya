@@ -295,7 +295,7 @@ Nothing else set is lost, and no entry outlives the next save. A save the page w
 
 **A page from before plans.** A page cached on a phone from the release before sends goals without plans; each keeps its stored plan, so it can't clear an allocation it can't see. This release's page always sends each goal's plan, even an empty one.
 
-**If a read fails.** Goals or plans that can't be read answer 409 and are never saved over, as goals always have: the card says so and editing is paused. A plan saved by a later release reads as unrecognised, also 409, and is kept exactly as it is, for that release to read again. Account links that can't be read stop a save (500, nothing written), since a save decides on them whether a goal moved; the card still shows the goals, each on its account id as stored, and the Accounts tab lists the unreadable links to remove.
+**If a read fails.** Goals or plans that can't be read answer 409 and are never saved over, as goals always have: the card says so and editing is paused. A plan saved by a later release reads as unrecognised, also 409, and is kept exactly as it is, for that release to read again. The app doesn't yet offer to remove a damaged plan: one that can't be recovered from a backup (the 409 names its goal under `unreadable_ids`; never one under `unrecognised_ids`) can be deleted by hand in the Upstash console, `HDEL <prefix>:c:<id>:goal-plans <goal id>`, and its goal then reads with no plan. Account links that can't be read stop a save (500, nothing written), since a save decides on them whether a goal moved; the card still shows the goals, each on its account id as stored, and the Accounts tab lists the unreadable links to remove.
 
 ## Rolling back once the brokerage option is on
 

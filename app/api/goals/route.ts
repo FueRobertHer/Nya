@@ -18,7 +18,8 @@ import { addDays, isCalendarDay } from '@/lib/manual-txn-input';
 // (lib/links.ts) follows it, so its progress keeps working after a reconnect,
 // and says so (`relinked`). The stored goal isn't touched here; the next save
 // from the client writes the current id, which is harmless and survives an
-// unlink. Links that can't be read leave the ids as stored.
+// unlink. Links that can't be read leave the ids as stored when the goals are
+// shown, and stop a save, which decides on them whether a goal moved.
 //
 // Errors are the storage seam's (lib/store-failure.ts): goals or plans that
 // can't be read are a flagged 409, never "none", so the client never shows an

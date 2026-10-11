@@ -51,9 +51,9 @@
 // TWO SAVES AT ONCE (two devices). The blob is the last save's list, as it
 // always was. Every goal in it has the plan one of the two saves wrote for
 // it, since each save writes the entry of every goal it lists: a goal the
-// last save still lists comes back with the plan that save gave it, never
-// without one. A save never deletes an entry another save has written since
-// it read.
+// other save deleted, which the last save still lists, comes back with the
+// plan the last save gave it, never without one. A save never deletes or
+// rewrites an entry another save has written since it read.
 //
 // READS ARE STRICT. An entry that can't be read stops the read
 // (UnreadableEntriesError, which the routes answer with 409), never "no
