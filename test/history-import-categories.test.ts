@@ -41,6 +41,9 @@ const transactionsRoute = await import('@/app/api/transactions/route');
 const recategorizeRoute = await import('@/app/api/recategorize/route');
 const categoriesRoute = await import('@/app/api/categories/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
+const { loadBudgets } = await import('@/lib/budget-store');
+const { budgetMonthsStore } = await import('@/lib/budget-months-store');
+const { startMonths } = await import('@/lib/rollover');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -182,7 +185,13 @@ describe('in budgets, the Plan and the API', () => {
       })
     );
     expect(put.status).toBe(200);
+    // Each month has the budgets it had then (#37, lib/rollover.ts), and the
+    // save noted these as made this month, with none before. The record by
+    // month says instead that they were kept since the month the imported
+    // rows fall in, as for someone who budgeted then, so that month's
+    // budgets are these, and what the rows spent counts against them.
     const month = daysAgo(40).slice(0, 7);
+    await budgetMonthsStore.set(ctx, startMonths((await loadBudgets(ctx)).budgets, month));
     const budgets = await readBudgets(ctx, { month });
     expect(budgets.budgets.find((b) => b.category_id === office.id)).toMatchObject({ budget: 50, spent: 35.5 });
     expect(budgets.groups.find((g) => g.id === group.id)).toMatchObject({ own: 100, spent: 35.5 });
