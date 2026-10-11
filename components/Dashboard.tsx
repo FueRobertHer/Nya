@@ -2603,6 +2603,16 @@ export default function Dashboard({
                   onOpen={lifecycle.open}
                   onReopen={lifecycle.reopen}
                   onStillOpen={lifecycle.stillOpen}
+                  onImportHistory={(e) =>
+                    setHistoryTarget({
+                      account_id: e.account_id,
+                      name: e.label.name || 'Account',
+                      institution_name: e.label.institution,
+                      type: e.type ?? 'other',
+                      currency: null,
+                    })
+                  }
+                  importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
                 />
 
                 {/* Download my data, with the rest of the account upkeep

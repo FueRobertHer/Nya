@@ -22,8 +22,12 @@
 // that apply now (lib/link-core.ts): an import survives a re-link once the
 // person links the two. Only an account that is live (on a connection still
 // stored) shows its imported rows; one whose institution was disconnected
-// keeps them, for a re-link, until it is forgotten. Hidden accounts' rows are
-// left out where their bank rows are.
+// keeps them, for a re-link, until it is forgotten. An account that ended
+// (#50, lib/lifecycle.ts) is live while its connection is stored, though its
+// bank no longer returns it, as its bank's rows are still read; its imported
+// rows dated from its end on are left out where its bank's are
+// (importedForActivity's `endedFrom`). Hidden accounts' rows are left out
+// where their bank rows are.
 //
 // NEVER SHORT WITHOUT SAYING SO. A book that can't be read, or a bank store
 // that can't (supersede can't be told without it), keeps that account's
@@ -38,6 +42,7 @@ import { effectiveLinks, getLinks, resolveId, sameAccountIds, type Link } from '
 import { liveAccountIds } from '../links';
 import { readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
+import { endOf, lifecycleStore } from '../lifecycle';
 import { settle, type BankRow, type Settled } from './match';
 import { historyImportSummaryStore, importedTxnStore, type HistoryImportSummary, type ImportedTxn } from './store';
 
@@ -55,11 +60,16 @@ export type LinkedAccount = {
 /**
  * Every live linked account (on a connection still stored), by id, as the
  * loads last remembered it (lib/last-known.ts), and the Items whose record
- * couldn't be read. A display read: an unreadable record leaves its accounts
- * out, named, and storage failing throws.
+ * couldn't be read. With them, each account that ended (lib/lifecycle.ts) on
+ * a connection still stored that the loads no longer remember, a bank having
+ * stopped returning it once it closed: named and kinded as its end recorded
+ * it, since its rows before its end still count (WHOSE ROWS). A display
+ * read: an unreadable record leaves its accounts out, named (an end that
+ * can't be read adds none here: whatever counts reads the ends strictly),
+ * and storage failing throws.
  */
 export async function liveLinkedAccounts(ctx: Ctx, items?: StoredItem[]): Promise<{ accounts: Map<string, LinkedAccount>; unreadable: string[] }> {
-  const [stored, remembered] = await Promise.all([items ? Promise.resolve(items) : getItems(ctx), rememberedAccountsReport(ctx)]);
+  const [stored, remembered, ends] = await Promise.all([items ? Promise.resolve(items) : getItems(ctx), rememberedAccountsReport(ctx), lifecycleStore.getAllReport(ctx)]);
   const accounts = new Map<string, LinkedAccount>();
   for (const item of stored) {
     for (const a of remembered.byItem[item.item_id] ?? []) {
@@ -73,6 +83,20 @@ export async function liveLinkedAccounts(ctx: Ctx, items?: StoredItem[]): Promis
         currency: a.currency,
       });
     }
+  }
+  const byItem = new Map(stored.map((i) => [i.item_id, i]));
+  for (const [id, entry] of ends.entries) {
+    const item = entry.item_id === null ? undefined : byItem.get(entry.item_id);
+    if (!item || accounts.has(id) || endOf(entry.lifecycle) === null) continue;
+    accounts.set(id, {
+      account_id: id,
+      item_id: item.item_id,
+      institution_name: item.institution_name,
+      name: entry.label.name,
+      mask: entry.label.mask,
+      type: entry.type ?? 'other',
+      currency: entry.currency ?? null,
+    });
   }
   const live = new Set(stored.map((i) => i.item_id));
   return { accounts, unreadable: remembered.unreadable.filter((id) => live.has(id)) };
@@ -325,7 +349,11 @@ export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountI
  * rows can't be shown. `since` reads every one from that day on as `txns`
  * instead, and none before, as the bank's part reads its rows for a report
  * on an earlier period (lib/transactions.ts DisplayInputs). `withAccountIds` puts each row's account on it, as the
- * read-only API wants. `represents` names, for each bank row standing for
+ * read-only API wants. `endedFrom`, each id of each account that ended
+ * (lib/lifecycle.ts endDays) to the day it stops counting, leaves out its
+ * rows dated on or after it, as the bank's own are (lib/transactions.ts
+ * displayRows): absent, for a reader that keeps them (lib/activity.ts
+ * keepEnded), every row is given. `represents` names, for each bank row standing for
  * imported rows (one that superseded them, or that they are duplicates of),
  * those rows, earlier imports first: what the person said about them carries
  * to it. `bankStates` are the connections' rows as the caller read them.
@@ -339,6 +367,7 @@ export async function importedForActivity(
     withAccountIds?: boolean;
     bankStates?: ReadonlyMap<string, Record<string, StoredTxn> | null>;
     since?: string;
+    endedFrom?: ReadonlyMap<string, string>;
   }
 ): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]> }> {
   const read = await readImported(ctx, { items: opts.items, links: opts.links, leftOut: opts.leftOut, bankStates: opts.bankStates });
@@ -354,8 +383,9 @@ export async function importedForActivity(
       list.push(rowId);
       represents.set(stand, list);
     }
+    const end = opts.endedFrom?.get(a.account.account_id);
     for (const row of settled.counted) {
-      if (row.date < since) continue;
+      if (row.date < since || (end !== undefined && row.date >= end)) continue;
       const t = toDisplay(row, a.account, !!opts.withAccountIds);
       if (row.date >= cutoff) txns.push(t);
       else

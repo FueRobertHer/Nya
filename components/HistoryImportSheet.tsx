@@ -129,6 +129,8 @@ type Past = {
   bank_from: string | null;
   history_pending: boolean;
   walked: boolean;
+  /** The account's currency at the bank, when known. */
+  currency?: string | null;
   reach: Reach | null;
 };
 type Settings = {
@@ -392,9 +394,11 @@ export default function HistoryImportSheet({
       setCovers(null);
       setWhole(false);
       // What this account's last file of the same kind taught; else the
-      // account's own currency for a file that doesn't say one.
+      // account's own currency for a file that doesn't say one (from the
+      // server, for an account opened from the Accounts that ended card).
       const s = past?.settings ?? null;
-      const own = account.currency && isCurrencyCode(account.currency) ? { currency: account.currency } : {};
+      const currency = account.currency ?? past?.currency ?? null;
+      const own = currency && isCurrencyCode(currency) ? { currency } : {};
       let next: ImportOptions = picked.format === 'ofx' ? {} : own;
       let remembered = false;
       if (picked.format === 'ofx' && s?.ofx) next = { ...(s.ofx.flip ? { flip: true } : {}), ...(s.ofx.currency ? { currency: s.ofx.currency } : {}) };

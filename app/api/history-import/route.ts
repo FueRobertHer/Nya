@@ -42,6 +42,7 @@ import { countedRows, liveLinkedAccounts, readAccountContext, type AccountContex
 import { drawImportedHistory, importedRowsChanged, readDrawState } from '@/lib/history-import/extend';
 import { importedTxnStore, isHistoryImportId, type Covers } from '@/lib/history-import/store';
 import { connectorAccountsStore } from '@/lib/connectors/store';
+import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore, type EndedLifecycle } from '@/lib/lifecycle';
 import { readHistoryMeta, type HistoryMeta } from '@/lib/history-import/request';
 
 // Importing years of history into a LINKED account (#52; lib/history-import/,
@@ -187,6 +188,28 @@ async function contextOf(ctx: Ctx, account: LinkedAccount, links: Map<string, Li
   }
 }
 
+/** A day (YYYY-MM-DD) in words: "Mar 12, 2026". */
+const shownDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/** The account's end (#50, lib/lifecycle.ts), through the links that apply,
+ *  or null while it counts. LENIENT, for the review's words only: an end
+ *  that can't be read says nothing here (whatever counts the rows reads the
+ *  ends strictly, and leaves out those from its day on). */
+async function endOfAccount(ctx: Ctx, account_id: string, links: Map<string, Link>): Promise<EndedLifecycle | null> {
+  const { entries } = await lifecycleStore.getAllReport(ctx);
+  const l = lifecycleOf(effectiveLifecycle(entries, links), account_id)?.lifecycle;
+  return l && l.state !== 'active' ? l : null;
+}
+
+/** What importing rows dated from an account's end on does, in words: kept,
+ *  counted in nothing while it has ended, as its bank's own from then. */
+function endedWords(name: string, l: EndedLifecycle, rows: number): string {
+  const day = shownDay(endOf(l)!);
+  const when = l.state === 'closed' ? `${name} closed on ${day}` : l.state === 'left' ? `${name} has not been yours since ${day}` : `You stopped following ${name} from ${day}`;
+  const one = rows === 1;
+  return `${when}: ${one ? 'one of the transactions' : `${rows.toLocaleString('en-US')} of the transactions`} this file adds ${one ? 'is' : 'are'} dated from then, and ${one ? 'counts' : 'count'} in nothing, as its bank’s own from then don’t. ${one ? 'It is' : 'They are'} kept, and ${one ? 'counts' : 'count'} again if you reopen it.`;
+}
+
 /** How the account's last file was read. LENIENT: a convenience that only
  *  fills in the sheet; nothing is written on this answer. */
 async function readSettings(ctx: Ctx, account_id: string): Promise<ImportSettings | null> {
@@ -245,6 +268,9 @@ export async function GET(req: Request) {
       bank_from: context.bank_from,
       history_pending: context.history_pending,
       walked: ['depository', 'credit'].includes(account.type),
+      // Its currency at the bank, for a file that doesn't say one: the sheet
+      // opened from the Accounts that ended card doesn't know it.
+      currency: account.currency,
       reach,
       limits: { max_bytes: MAX_FILE_BYTES, max_rows: MAX_IMPORT_ROWS },
     });
@@ -466,6 +492,13 @@ export async function POST(req: Request) {
     }
     if (fromFile && account.currency && fromFile !== account.currency) {
       warnings.push(`This statement is in ${fromFile}, but ${account.name} is in ${account.currency} at the bank. Check it is this account’s file.`);
+    }
+    // An account that ended (#50) takes a file as any does: what it adds from
+    // its end on counts in nothing, as its bank's own from then, and is said.
+    const ended = await endOfAccount(ctx, account.account_id, links);
+    if (ended) {
+      const after = plan.rows.filter((r, i) => plan.actions[i] === 'add' && r.row.date >= endOf(ended)!).length;
+      if (after > 0) warnings.push(endedWords(account.name, ended, after));
     }
 
     if (meta.action === 'preview') {
