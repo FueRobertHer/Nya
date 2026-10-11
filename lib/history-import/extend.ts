@@ -18,7 +18,10 @@
 //
 // THE BACKFILL FIRST, FOR ROWS AFTER THE ANCHOR. The backfill walks the
 // imported rows that count dated in its own window (importedFlowsForBackfill),
-// so the anchor's balances hold them. A change to which of them count (an
+// so the anchor's balances hold them: only through the run of covered days
+// that reaches today (the bank's window, and the imports' periods the drawing
+// uses: lib/history-import/walk.ts), never across a day nothing covers, so a
+// row before such a day is walked nowhere, and the chart says so. A change to which of them count (an
 // import or an undo with a row dated after the earliest point, a link or an
 // unlink, a forget) asks for it to run again first (importedRowsChanged):
 // until it has, the drawing waits, so it is never joined to a balance made
@@ -45,8 +48,8 @@ import { readEarliestPoint, replaceEstimatedBefore, isBackfillDone, clearBackfil
 import { clearNetWorthCache } from '../cache';
 import { loggable } from '../log-safe';
 import { countedRows, readImported, type ImportedAccountRead, type ImportedRead } from './read';
-import { extendHistory, type CoveredRange, type WalkAccount } from './walk';
-import { historyWalkStore, WALK_ID, type ExcludedImport, type WalkAccountState, type WalkState } from './store';
+import { extendHistory, runThrough, type CoveredRange, type WalkAccount } from './walk';
+import { historyWalkStore, WALK_ID, type ExcludedImport, type ImportedTxn, type WalkAccountState, type WalkState } from './store';
 import { StoredDataUnreadableError } from '../repo';
 
 const EMPTY: WalkState = { version: 1, generation: 0, built: null, built_at: null, anchor: null, from: null, drawn: null, accounts: [], rows: 0, problem: null };
@@ -152,8 +155,11 @@ export async function importedFlowsForBackfill(
   for (const a of read.accounts) {
     const currency = opts.walked.get(a.account.account_id) ?? a.account.currency;
     const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+    // Only through the covered days that reach today (see the header).
+    const run = runThrough(coverageOf(a, read, counted, currency, opts.today).covered, opts.today);
+    if (!run) continue;
     for (const r of counted) {
-      if (r.date < opts.since || r.date > opts.today) continue;
+      if (r.date < opts.since || r.date > opts.today || r.date < run.from) continue;
       if (currency && r.currency !== currency) continue;
       flows.push({ date: r.date, account_id: a.account.account_id, amount: r.amount });
     }
@@ -187,6 +193,9 @@ export async function yieldToBackfill(ctx: Ctx, baseFrom: string | null): Promis
 
 const DEPOSITORY_OR_CREDIT = new Set(['depository', 'credit']);
 
+/** The calendar day before `day` (YYYY-MM-DD). */
+const dayBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_400_000).toISOString().slice(0, 10);
+
 /** Records why a drawing couldn't be made, leaving the drawing as it was. */
 async function recordProblem(ctx: Ctx, accounts: string[]): Promise<void> {
   await historyWalkStore
@@ -194,32 +203,23 @@ async function recordProblem(ctx: Ctx, accounts: string[]): Promise<void> {
     .catch((err) => console.warn('history import: why the estimated history was not drawn could not be kept', loggable(err)));
 }
 
-/** One bank account's or card's walk (lib/history-import/walk.ts), and what
- *  is said of it: where its bank's rows begin, and the imports not used. */
-function walkOf(a: ImportedAccountRead, read: ImportedRead, anchorDate: string, today: string): { walk: WalkAccount; excluded: ExcludedImport[]; importedAfter: boolean } {
-  const currency = a.account.currency;
-  const inCurrency = (c: string) => currency === null || c === currency;
-  const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
-  const flows = new Map<string, number>();
-  let movedAfter = false;
-  let importedAfter = false;
-  const add = (date: string, amount: number, imported: boolean) => {
-    if (date > anchorDate) {
-      movedAfter = true;
-      importedAfter ||= imported;
-      return;
-    }
-    flows.set(date, (flows.get(date) ?? 0) + amount);
-  };
-  for (const b of a.banks) if (!b.pending) add(b.date, b.amount, false);
-  for (const r of counted) if (inCurrency(r.currency)) add(r.date, r.amount, true);
-  // The days covered: the bank's window, and each import's period but for one
-  // whose file had lines that couldn't be read (unless the person said they
-  // aren't transactions) or rows in another currency, which aren't walked.
+/** An account's covered days (lib/history-import/walk.ts): its bank's
+ *  window, from its connection's earliest posted row to today, and each
+ *  import's period, but for one whose file had lines that couldn't be read
+ *  (unless the person said they aren't transactions) or rows in another
+ *  currency than `currency`, which aren't used: those are `excluded`, with
+ *  why. The one rule for the backfill's imported rows and the drawing. */
+function coverageOf(
+  a: ImportedAccountRead,
+  read: ImportedRead,
+  counted: readonly ImportedTxn[],
+  currency: string | null,
+  today: string
+): { covered: CoveredRange[]; excluded: ExcludedImport[] } {
   const covered: CoveredRange[] = a.bank_from ? [{ from: a.bank_from, to: today, kind: 'bank' }] : [];
   const excluded: ExcludedImport[] = [];
   const foreign = new Map<string, string>();
-  for (const r of counted) if (!inCurrency(r.currency)) foreign.set(r.import_id, r.currency);
+  for (const r of counted) if (currency !== null && r.currency !== currency) foreign.set(r.import_id, r.currency);
   for (const [id, s] of read.summaries) {
     if (!a.ids.includes(s.account_id)) continue;
     const other = foreign.get(id) ?? (currency && s.currency && s.currency !== currency ? s.currency : null);
@@ -228,10 +228,43 @@ function walkOf(a: ImportedAccountRead, read: ImportedRead, anchorDate: string, 
     else covered.push({ from: s.covers.from, to: s.covers.to, kind: 'import' });
   }
   excluded.sort((x, y) => (x.from < y.from ? -1 : x.from > y.from ? 1 : 0));
+  return { covered, excluded };
+}
+
+/** One bank account's or card's walk (lib/history-import/walk.ts), and what
+ *  is said of it: where its bank's rows begin, the imports not used, and
+ *  whether the backfill walked imported rows of it dated after the anchor
+ *  (those in the run of covered days that reaches today, which begins on
+ *  `runFrom`). */
+function walkOf(
+  a: ImportedAccountRead,
+  read: ImportedRead,
+  anchorDate: string,
+  today: string
+): { walk: WalkAccount; excluded: ExcludedImport[]; importedAfter: boolean; runFrom: string | null } {
+  const currency = a.account.currency;
+  const inCurrency = (c: string) => currency === null || c === currency;
+  const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+  const { covered, excluded } = coverageOf(a, read, counted, currency, today);
+  const run = runThrough(covered, today);
+  const flows = new Map<string, number>();
+  let movedAfter = false;
+  let importedAfter = false;
+  const add = (date: string, amount: number, walkedByBackfill: boolean) => {
+    if (date > anchorDate) {
+      movedAfter = true;
+      importedAfter ||= walkedByBackfill;
+      return;
+    }
+    flows.set(date, (flows.get(date) ?? 0) + amount);
+  };
+  for (const b of a.banks) if (!b.pending) add(b.date, b.amount, false);
+  for (const r of counted) if (inCurrency(r.currency)) add(r.date, r.amount, run !== null && r.date >= run.from);
   return {
     walk: { account_id: a.account.account_id, ids: a.ids, type: a.account.type as 'depository' | 'credit', flows, covered, movedAfter },
     excluded,
     importedAfter,
+    runFrom: run?.from ?? null,
   };
 }
 
@@ -266,26 +299,29 @@ export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {
   const anchor = walkable.length > 0 || drawn ? await readEarliestPoint(ctx, drawn) : null;
 
   const accounts: WalkAccount[] = [];
-  const said = new Map<string, { bank_from: string | null; excluded: ExcludedImport[]; importedAfter: boolean }>();
+  const said = new Map<string, { bank_from: string | null; excluded: ExcludedImport[]; importedAfter: boolean; runFrom: string | null }>();
   if (anchor) {
     for (const a of walkable) {
       const w = walkOf(a, read, anchor.date, today);
       accounts.push(w.walk);
-      said.set(a.account.account_id, { bank_from: a.bank_from, excluded: w.excluded, importedAfter: w.importedAfter });
+      said.set(a.account.account_id, { bank_from: a.bank_from, excluded: w.excluded, importedAfter: w.importedAfter, runFrom: w.runFrom });
     }
   }
   const extension = anchor
     ? extendHistory({ anchor: { date: anchor.date, total: anchor.total, balances: anchor.balances, walked: anchor.estimated ? anchor.walked : null }, accounts, today })
     : { points: [], accounts: [], from: null };
   // What each account's estimate follows: imported rows back to its reach
-  // when drawn here; back to the anchor when the backfill walked those dated
-  // after it, though nothing before it was drawn.
+  // when drawn here; when the backfill walked those dated after the anchor,
+  // though nothing before it was drawn, back to the day before the covered
+  // run it walked them through begins (it holds the account flat before
+  // that), or to the anchor, when that run holds it.
   const backfilled = new Set(anchor?.estimated ? (anchor.walked ?? []) : []);
   const reached: WalkAccountState[] = extension.accounts.map((r) => {
     const w = said.get(r.account_id)!;
     const ids = accounts.find((x) => x.account_id === r.account_id)?.ids ?? [r.account_id];
     const viaBackfill = r.reach === null && r.why === null && w.importedAfter && ids.some((i) => backfilled.has(i));
-    return { ...r, reach: viaBackfill ? anchor!.date : r.reach, bank_from: w.bank_from, excluded: w.excluded };
+    const before = w.runFrom ? dayBefore(w.runFrom) : anchor!.date;
+    return { ...r, reach: viaBackfill ? (before > anchor!.date ? before : anchor!.date) : r.reach, bank_from: w.bank_from, excluded: w.excluded };
   });
 
   // The days the earlier drawing drew that are still its own (older than the

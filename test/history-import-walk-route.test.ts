@@ -518,3 +518,78 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     expect(await isBackfillDone(ctx)).toBe(true);
   });
 });
+
+describe('the backfill walks imported rows only across covered days', () => {
+  /** The checking account's rows reach back 300 days; the card, on a
+   *  connection of its own, gives Plaid 40 days. */
+  async function twoConnections() {
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_chase: await encrypt(
+        JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])
+      ),
+      item_card: await encrypt(JSON.stringify([{ account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' }])),
+    });
+    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt('access-sandbox-card') });
+    plaid.accounts = [account('acc_chk', 'depository', 1000), account('acc_card', 'credit', 1300)];
+    await storeBank([bankTxn('b_first', 'acc_chk', 300, 10)], 'item_chase', { acc_chk: CHASE_ACCOUNTS.acc_chk });
+    await storeBank([bankTxn('c_buy', 'acc_card', 40, 50)], 'item_card', { acc_card: CHASE_ACCOUNTS.acc_card });
+  }
+
+  test('a file a hole cuts off from the card’s own days isn’t walked by the backfill, and the chart says so; imported, the hole joins it up', async () => {
+    await twoConnections();
+    await runBackfill();
+    // A purchase on day 200, in a file ending on day 100: what happened
+    // between days 99 and 41 (a 1,000 payment on day 70) neither it nor the
+    // bank has.
+    const first = await importReviewed('acc_card', ofx([{ fitid: 'P200', days: 200, amount: -500, name: 'BIG PURCHASE' }], { start: 280, end: 100 }, true));
+    expect(first.body.history).toMatchObject({ backfill: true });
+    await runBackfill();
+    let card = await getAccountHistory(ctx, 'acc_card');
+    const at = (n: number) => card.find((p) => p.date === daysAgo(n))?.value;
+    // Held at what it owed before its own rows begin, never walked across the hole.
+    expect([at(50), at(150), at(250)]).toEqual([1250, 1250, 1250]);
+    let state = (await readDrawState(ctx))!;
+    expect(state.accounts.find((a) => a.account_id === 'acc_card')).toMatchObject({
+      reach: null,
+      gaps: [{ imported: { from: daysAgo(280), to: daysAgo(100) }, uncovered: { from: daysAgo(99), to: daysAgo(41) } }],
+    });
+    expect(importedHistoryLines(importedHistoryView(state)!, () => 'Visa', (d) => d)).toEqual([
+      `Not drawn: Visa’s import from ${daysAgo(280)} to ${daysAgo(100)}, since nothing covers ${daysAgo(99)} to ${daysAgo(41)}. Import that period to join it up.`,
+    ]);
+
+    // The hole imported: walked through, the payment and the purchase both.
+    await importReviewed('acc_card', ofx([{ fitid: 'PAY70', days: 70, amount: 1000, name: 'PAYMENT THANK YOU' }], { start: 99, end: 41 }, true));
+    await runBackfill();
+    card = await getAccountHistory(ctx, 'acc_card');
+    expect([at(50), at(150), at(250)]).toEqual([1250, 2250, 1750]);
+    state = (await readDrawState(ctx))!;
+    expect(state.accounts.find((a) => a.account_id === 'acc_card')).toMatchObject({ reach: daysAgo(281), gaps: [], bank_from: daysAgo(40) });
+  });
+
+  test('a file with lines that couldn’t be read joins nothing up unless the person said those lines aren’t transactions', async () => {
+    await twoConnections();
+    await runBackfill();
+    await importReviewed('acc_card', ofx([{ fitid: 'P200', days: 200, amount: -500, name: 'BIG PURCHASE' }], { start: 280, end: 100 }, true));
+    const hole = ofx(
+      [
+        { fitid: 'PAY70', days: 70, amount: 1000, name: 'PAYMENT THANK YOU' },
+        { fitid: 'BAD', days: 60, amount: 1234.56, name: 'BROKEN' },
+      ],
+      { start: 99, end: 41 },
+      true
+    ).replace('<TRNAMT>1234.56</TRNAMT>', '<TRNAMT>12x4</TRNAMT>');
+    const p = await routes.POST(upload({ action: 'preview', account_id: 'acc_card' }, hole));
+    const review = (await p.json()).preview.review;
+    const res = await routes.POST(upload({ action: 'import', account_id: 'acc_card', review }, hole));
+    const { import_id } = await res.json();
+    await runBackfill();
+    const at = async (n: number) => (await getAccountHistory(ctx, 'acc_card')).find((x) => x.date === daysAgo(n))?.value;
+    // Not walked: not the payment in it, nor the purchase it would join up.
+    expect([await at(150), await at(250)]).toEqual([1250, 1250]);
+    // Said to hold every transaction of its period: walked.
+    await undo('acc_card', import_id);
+    await routes.POST(upload({ action: 'import', account_id: 'acc_card', review, whole: true }, hole));
+    await runBackfill();
+    expect([await at(150), await at(250)]).toEqual([2250, 1750]);
+  });
+});

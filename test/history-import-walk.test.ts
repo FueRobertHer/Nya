@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { extendHistory, mergeRanges, reachOf, MAX_EXTENSION_DAYS, type WalkAccount } from '@/lib/history-import/walk';
+import { extendHistory, mergeRanges, reachOf, runThrough, MAX_EXTENSION_DAYS, type WalkAccount } from '@/lib/history-import/walk';
 import { importedHistoryLines, importedHistoryView } from '@/lib/history-import/view';
 import type { WalkState } from '@/lib/history-import/store';
 
@@ -71,6 +71,20 @@ describe('covered ranges', () => {
       { today: '2025-10-09' }
     );
     expect(r).toMatchObject({ reach: null, why: null, gaps: [{ imported: { from: '2024-01-01', to: '2024-11-30' }, uncovered: { from: '2024-12-01', to: '2024-12-31' } }] });
+  });
+
+  test('an import after the anchor that a hole cuts off from today is a gap too: the backfill doesn’t walk it either', () => {
+    const covered = [
+      { from: '2025-01-01', to: '2025-06-30', kind: 'import' as const },
+      { from: '2025-09-01', to: '2025-10-09', kind: 'bank' as const },
+    ];
+    const r = reachOf(account({ covered }), '2024-10-10', true, { today: '2025-10-09' });
+    expect(r).toMatchObject({ reach: null, why: 'anchor-not-covered', gaps: [{ imported: { from: '2025-01-01', to: '2025-06-30' }, uncovered: { from: '2025-07-01', to: '2025-08-31' } }] });
+    // Joined to today's days, it is the backfill's to walk: no gap.
+    expect(reachOf(account({ covered: [{ from: '2025-01-01', to: '2025-08-31', kind: 'import' as const }, covered[1]] }), '2024-10-10', true, { today: '2025-10-09' }).gaps).toEqual([]);
+    // The run the backfill walks through.
+    expect(runThrough(covered, '2025-10-09')).toEqual({ from: '2025-09-01', to: '2025-10-09' });
+    expect(runThrough(covered, '2025-08-01')).toBeNull();
   });
 
   test('an account the anchor held at one balance is walked only if nothing happened to it since', () => {

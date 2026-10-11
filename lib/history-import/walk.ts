@@ -29,7 +29,11 @@
 // where it begins: imports of 2019 and 2023 without 2020 to 2022 extend the
 // chart through 2023 and no further, never interpolating across the hole, and
 // an import that ends before the bank's window begins isn't drawn at all. The
-// gaps are reported, so the chart can say what isn't drawn and why. The point
+// same holds after the anchor: the backfill walks imported rows only through
+// the run of covered days that reaches today, so an import after the anchor
+// that a hole cuts off from today isn't walked anywhere. The gaps are
+// reported, before the anchor and after it, so the chart can say what isn't
+// drawn and why. The point
 // the day before a covered run begins is kept: it is what the account held
 // before that run's first flow. An account the anchor's estimate held at a
 // balance (one whose connection brings no transactions) is walked only if
@@ -145,6 +149,15 @@ export function mergeRanges(ranges: readonly CoveredRange[]): { from: number; to
   return out;
 }
 
+/** The run of covered days that holds `day`, merged, or null when no range
+ *  covers it. The run holding today is the one the backfill walks imported
+ *  rows through (lib/history-import/extend.ts importedFlowsForBackfill). */
+export function runThrough(covered: readonly CoveredRange[], day: string): { from: string; to: string } | null {
+  const d = dayNumber(day);
+  const run = mergeRanges(covered).find((b) => b.from <= d && d <= b.to);
+  return run ? { from: dayOf(run.from), to: dayOf(run.to) } : null;
+}
+
 /**
  * How far back one account can be walked from the anchor (see the header):
  * to the day before the covered run holding the anchor's day begins, no
@@ -170,11 +183,13 @@ export function reachOf(
   // The run holding the anchor counts only if it reaches today: otherwise the
   // anchor's balance rests on days nothing covers, and that run is cut off too.
   const holding = found && found.to >= t ? found : null;
-  // The imported runs not drawn: every one beginning before the anchor but
-  // the one drawn through, each cut off by the uncovered days after it.
+  // The imported runs not drawn, each cut off by the uncovered days after it:
+  // every one beginning before the anchor but the one drawn through, and
+  // every one after it that doesn't reach today, which the backfill doesn't
+  // walk either (lib/history-import/extend.ts importedFlowsForBackfill).
   const gaps: Gap[] = [];
   blocks.forEach((b, i) => {
-    if (!b.imported || b === holding || b.from >= a) return;
+    if (!b.imported || b === holding || (b.from >= a && b.to >= t)) return;
     const next = i + 1 < blocks.length ? blocks[i + 1].from - 1 : t;
     gaps.push({ imported: { from: dayOf(b.from), to: dayOf(b.to) }, uncovered: { from: dayOf(b.to + 1), to: dayOf(Math.max(b.to + 1, next)) } });
   });
