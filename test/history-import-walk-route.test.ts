@@ -40,6 +40,7 @@ const backfill = await import('@/app/api/backfill/route');
 const routes = await import('@/app/api/history-import/route');
 const netWorth = await import('@/app/api/net-worth/route');
 const { readBalanceHistory } = await import('@/lib/api-read');
+const { markEnded, getEffectiveLifecycle } = await import('@/lib/lifecycle');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -280,6 +281,37 @@ describe('the estimated history after an import', () => {
     await setAccountHidden(ctx, 'acc_chk', 'depository', false);
     await undo('acc_chk', body.import_id);
     expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toBeNull();
+  });
+
+  test('an account that ended inside what was drawn counts in it only before its end; the API’s stretch and the chart’s note stop there too', async () => {
+    await runBackfill();
+    await importReviewed(
+      'acc_chk',
+      ofx(
+        [
+          { fitid: 'A', days: 100, amount: -30, name: 'OLD SHOP' },
+          { fitid: 'B', days: 200, amount: 400, name: 'OLD PAY' },
+        ],
+        { start: 400, end: 55 }
+      )
+    );
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(150) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
+    const { ended } = await getEffectiveLifecycle(ctx, new Map());
+    const history = await getHistory(ctx, new Map(), ended);
+    // Before its end, the drawn balances count as drawn; from it, none of it.
+    expect(valueOn(history, 201)).toBe(440 - 250 - 9000);
+    expect(valueOn(history, 151)).toBe(840 - 250 - 9000);
+    expect(valueOn(history, 101)).toBe(-250 - 9000);
+    expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toEqual({ from: daysAgo(401), until: daysAgo(150) });
+    // Ended before its bank's own begin: the note says what counts of it follows the imported ones.
+    expect(importedHistoryView(await readDrawState(ctx), new Set(), ended)?.accounts).toEqual([{ account_id: 'acc_chk', reach: daysAgo(401), bank_from: null }]);
+    // Its own history keeps every day it was drawn for.
+    expect((await readBalanceHistory(ctx, { accountId: 'acc_chk', includeEstimated: true }))!.from_imports).toEqual({ from: daysAgo(401), until: daysAgo(60) });
+    // Ended before the oldest day drawn, nothing of the drawing counts, and the note says nothing of it.
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(500) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
+    expect((await readBalanceHistory(ctx, { includeEstimated: true }))!.from_imports).toBeNull();
+    const before = await getEffectiveLifecycle(ctx, new Map());
+    expect(importedHistoryView(await readDrawState(ctx), new Set(), before.ended)?.accounts ?? []).toEqual([]);
   });
 
   test('a card walks with its own sign: what was charged before is owed less further back', async () => {

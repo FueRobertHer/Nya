@@ -55,18 +55,28 @@ type NetWorthPayload = {
 // ask /api/backfill), and what it covers, for the chart to say which stretch
 // comes from imported rows and what it couldn't draw (imported_history),
 // never naming a hidden account (any id it has had), which the chart leaves
-// out: when the hidden set can't be read, the note says nothing.
+// out, nor what of an account that ended was drawn from its end day on: when
+// the hidden set can't be read, the note says nothing.
 async function staleFlag(
   ctx: Ctx
 ): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; imported_history?: ImportedHistoryView }> {
   const [done, backup_problem, drawn] = await Promise.all([isBackfillDone(ctx), backupProblem(), readDrawState(ctx)]);
-  const hidden = drawn
+  // The accounts that ended too (lib/lifecycle.ts), which the chart leaves
+  // out from their end day: an end that can't be read fails the load itself,
+  // so here it only says nothing more.
+  const seen = drawn
     ? await getEffectiveHidden(ctx, { readOnly: true }).then(
-        (h) => new Set(h.hidden.keys()),
+        async (h) => ({
+          hidden: new Set(h.hidden.keys()),
+          ended: await getEffectiveLifecycle(ctx, h.links).then(
+            (l) => l.ended,
+            () => new Map<string, { from: string }>()
+          ),
+        }),
         () => null
       )
-    : new Set<string>();
-  const view = hidden ? importedHistoryView(drawn, hidden) : null;
+    : { hidden: new Set<string>(), ended: new Map<string, { from: string }>() };
+  const view = seen ? importedHistoryView(drawn, seen.hidden, seen.ended) : null;
   return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, ...(view ? { imported_history: view } : {}) };
 }
 

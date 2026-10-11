@@ -46,18 +46,38 @@ export type ImportedHistoryView = {
   problem: { accounts: string[] } | null;
 };
 
+/** Accounts that ended (#50, lib/lifecycle.ts EndedAccounts): every id of
+ *  each, with the day it stops counting. */
+export type EndedDays = ReadonlyMap<string, { from: string }>;
+
+/** Whether an account counts on a day: before its end, if it has one. */
+const countsOn = (ended: EndedDays, account_id: string, day: string) => {
+  const end = ended.get(account_id)?.from;
+  return end === undefined || day < end;
+};
+
 /** The view of what was drawn, or null when there is nothing to say.
  *  `hidden` are the hidden accounts' ids, which the chart leaves out, so it
- *  says nothing of them either. */
-export function importedHistoryView(state: WalkState | null, hidden: ReadonlySet<string> = new Set()): ImportedHistoryView | null {
+ *  says nothing of them either. `ended` are the accounts that ended
+ *  (lib/lifecycle.ts), which the chart leaves out from their end day on, the
+ *  days drawn included: an account's imported history drawn only from its
+ *  end on, or an import not drawn from then, says nothing of the chart, so
+ *  it isn't said either, and one that ended before its bank's own
+ *  transactions begin counts in the chart only where its estimate follows
+ *  imported ones (the chart marks its end). */
+export function importedHistoryView(state: WalkState | null, hidden: ReadonlySet<string> = new Set(), ended: EndedDays = new Map()): ImportedHistoryView | null {
   if (!state) return null;
   const shown = state.accounts.filter((a) => !hidden.has(a.account_id));
   const problem = state.problem ? { accounts: state.problem.accounts.filter((id) => !hidden.has(id)) } : null;
   if (!state.anchor && !problem) return null;
-  const accounts = shown.flatMap((a) => (a.reach ? [{ account_id: a.account_id, reach: a.reach, bank_from: a.bank_from }] : []));
-  const gaps = shown.flatMap((a) => a.gaps.map((g) => ({ account_id: a.account_id, ...g })));
+  const accounts = shown.flatMap((a) => {
+    if (!a.reach || !countsOn(ended, a.account_id, a.reach)) return [];
+    const end = ended.get(a.account_id)?.from;
+    return [{ account_id: a.account_id, reach: a.reach, bank_from: a.bank_from && end !== undefined && end <= a.bank_from ? null : a.bank_from }];
+  });
+  const gaps = shown.flatMap((a) => a.gaps.filter((g) => countsOn(ended, a.account_id, g.imported.from)).map((g) => ({ account_id: a.account_id, ...g })));
   const unwalked = shown.flatMap((a) => (a.why ? [{ account_id: a.account_id, why: a.why }] : []));
-  const excluded = shown.flatMap((a) => a.excluded.map((x) => ({ account_id: a.account_id, ...x })));
+  const excluded = shown.flatMap((a) => a.excluded.filter((x) => countsOn(ended, a.account_id, x.from)).map((x) => ({ account_id: a.account_id, ...x })));
   if (accounts.length === 0 && gaps.length === 0 && unwalked.length === 0 && excluded.length === 0 && !problem) return null;
   return {
     until: state.anchor ?? state.from ?? '',
@@ -76,16 +96,29 @@ export function importedHistoryView(state: WalkState | null, hidden: ReadonlySet
  * The stretch of estimated points that follows imported transactions, for
  * the read-only API (`from_imports`): of net worth (`ids` null), from the
  * oldest day an account's estimate follows them up to (not including) the
- * last day any account's does, where its bank's own begin; or of one account
- * (any of its ids). Null when none does.
+ * last day any account's does, where its bank's own begin, or where it ended
+ * (`ended`: net worth leaves it out from then, lib/lifecycle.ts); or of one
+ * account (any of its ids), whose own history keeps every day. Null when none
+ * does.
  */
-export function importedStretch(state: WalkState | null, ids: readonly string[] | null, hidden: ReadonlySet<string> = new Set()): { from: string; until: string } | null {
+export function importedStretch(
+  state: WalkState | null,
+  ids: readonly string[] | null,
+  hidden: ReadonlySet<string> = new Set(),
+  ended: EndedDays = new Map()
+): { from: string; until: string } | null {
   if (!state?.anchor) return null;
   const anchor = state.anchor;
-  const following = state.accounts.filter((a) => a.reach && !hidden.has(a.account_id) && (ids === null || ids.includes(a.account_id)));
+  const following = state.accounts.flatMap((a) => {
+    if (!a.reach || hidden.has(a.account_id) || (ids !== null && !ids.includes(a.account_id))) return [];
+    const own = a.bank_from && a.bank_from > a.reach ? a.bank_from : anchor;
+    const end = ids === null ? ended.get(a.account_id)?.from : undefined;
+    const until = end !== undefined && end < own ? end : own;
+    return until > a.reach ? [{ from: a.reach, until }] : [];
+  });
   if (following.length === 0) return null;
-  const from = following.map((a) => a.reach!).sort()[0];
-  const until = following.map((a) => (a.bank_from && a.bank_from > a.reach! ? a.bank_from : anchor)).sort().pop()!;
+  const from = following.map((a) => a.from).sort()[0];
+  const until = following.map((a) => a.until).sort().pop()!;
   return until > from ? { from, until } : null;
 }
 

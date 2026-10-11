@@ -9,9 +9,11 @@ import { parseCsv } from './csv-parse';
 // and counted before it; kept in the download and its OFX statement. An
 // account its bank stopped returning once it closed keeps its imported rows
 // before its end, and takes a file all the same, the review saying what of
-// it counts in nothing.
+// it counts in nothing. The chart's note and the API's stretch from imports say
+// nothing of what was drawn of an account from its end on.
 //
-// The lifecycle's questions reading the bank's own are in
+// The drawn points themselves are in test/history-import-walk-route.test.ts,
+// and the lifecycle's questions reading the bank's own in
 // test/lifecycle-detection.test.ts.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -41,6 +43,7 @@ const { queryTransactions, readSpending } = await import('@/lib/api-read');
 const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 const { ofxFile } = await import('@/lib/ofx-export');
 const { importedTxnStore } = await import('@/lib/history-import/store');
+const { importedHistoryView, importedStretch, importedHistoryLines } = await import('@/lib/history-import/view');
 const { readReport } = await import('@/lib/report/read');
 const { resolvePeriod } = await import('@/lib/report/period');
 const routes = await import('@/app/api/history-import/route');
@@ -246,5 +249,46 @@ describe('rows imported into an account that ended', () => {
     expect(after).toContain(now['BOOK SHOP']);
     expect(after).not.toContain(now['LATE FEE']);
     expect(now['LATE FEE']).toBeDefined();
+  });
+});
+
+describe('the chart’s note and the API’s stretch from imports', () => {
+  const state = (account: { reach: string | null; bank_from: string | null; gaps?: any[]; excluded?: any[] }) =>
+    ({
+      version: 1,
+      generation: 1,
+      built: 1,
+      built_at: '2026-01-01T00:00:00.000Z',
+      anchor: '2025-06-01',
+      from: '2023-01-01',
+      drawn: { from: '2023-01-01', until: '2025-06-01' },
+      accounts: [{ account_id: 'acc_chk', why: null, capped: false, gaps: [], excluded: [], ...account }],
+      rows: 0,
+      problem: null,
+    }) as any;
+
+  test('say nothing of what was drawn of an account from its end on, and keep what came before', () => {
+    const drawn = state({ reach: '2024-01-01', bank_from: '2025-01-01' });
+    // Ended after all it drew: as before.
+    expect(importedHistoryView(drawn, new Set(), new Map([['acc_chk', { from: '2025-09-01' }]]))?.accounts).toEqual([{ account_id: 'acc_chk', reach: '2024-01-01', bank_from: '2025-01-01' }]);
+    expect(importedStretch(drawn, null, new Set(), new Map([['acc_chk', { from: '2025-09-01' }]]))).toEqual({ from: '2024-01-01', until: '2025-01-01' });
+    // Ended inside it: net worth's stretch stops at the end, the account's own
+    // doesn't, and the note says its estimate follows only what was imported,
+    // as it counts only before its end (which the chart marks).
+    expect(importedStretch(drawn, null, new Set(), new Map([['acc_chk', { from: '2024-06-01' }]]))).toEqual({ from: '2024-01-01', until: '2024-06-01' });
+    const inside = importedHistoryView(drawn, new Set(), new Map([['acc_chk', { from: '2024-06-01' }]]))!;
+    expect(inside.accounts).toEqual([{ account_id: 'acc_chk', reach: '2024-01-01', bank_from: null }]);
+    expect(importedHistoryLines(inside, () => 'Chase Checking', (d) => d)[0]).toBe('Chase Checking: the estimate follows the transactions you imported, back to 2024-01-01.');
+    // Ended after its bank's own begin: said as before.
+    expect(importedHistoryView(drawn, new Set(), new Map([['acc_chk', { from: '2025-03-01' }]]))?.accounts).toEqual([{ account_id: 'acc_chk', reach: '2024-01-01', bank_from: '2025-01-01' }]);
+    expect(importedStretch(drawn, ['acc_chk'], new Set(), new Map([['acc_chk', { from: '2024-06-01' }]]))).toEqual({ from: '2024-01-01', until: '2025-01-01' });
+    // Ended before it: nothing it drew of the account counts, so nothing is said.
+    expect(importedHistoryView(drawn, new Set(), new Map([['acc_chk', { from: '2023-06-01' }]]))).toBeNull();
+    expect(importedStretch(drawn, null, new Set(), new Map([['acc_chk', { from: '2023-06-01' }]]))).toBeNull();
+    // An import not drawn: said only where it reaches days the account counts on.
+    const gap = { imported: { from: '2023-01-01', to: '2023-12-31' }, uncovered: { from: '2024-01-01', to: '2024-02-01' } };
+    const gapped = state({ reach: null, bank_from: '2025-01-01', gaps: [gap] });
+    expect(importedHistoryView(gapped, new Set(), new Map([['acc_chk', { from: '2024-06-01' }]]))?.gaps).toHaveLength(1);
+    expect(importedHistoryView(gapped, new Set(), new Map([['acc_chk', { from: '2022-06-01' }]]))).toBeNull();
   });
 });
