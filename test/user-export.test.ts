@@ -383,6 +383,13 @@ describe('everything stored, decrypted, and nothing else', () => {
       nya_category: 'Treats',
       nya_category_id: null,
       nya_group: 'Other',
+      // No tags or note on it, no rule, and its name the one I gave it.
+      tags: [],
+      your_note: null,
+      nya_name: 'BB Coffee',
+      excluded: false,
+      excluded_by_rule: false,
+      rule_ids: [],
     });
     // Plaid's category and merchant are kept as they came.
     expect(coffee.category).toBe('food and drink');
@@ -1104,6 +1111,8 @@ describe('stores built on the storage seam', () => {
       'manual-transactions',
       'planned-items',
       'report-settings',
+      'rules',
+      'tags',
       'transaction-annotations',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
@@ -1457,7 +1466,7 @@ describe('writing it out', () => {
     const file = exportFile(doc, 'transactions-csv');
     const [header, ...rows] = parseCsv([...file.pieces()].join(''));
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
-    expect(header.slice(-5)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group']);
+    expect(header.slice(-8)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group', 'tags', 'nya_name', 'excluded']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
     // Newest first, among the bank's rows; on a day, after the rows with a time.
     expect(rows.map((r) => col(r, 'transaction_id'))).toEqual(['t_evil', 't_posted', typed, 't_card', 't_pending', imported, 't_coffee', 't_bakery']);

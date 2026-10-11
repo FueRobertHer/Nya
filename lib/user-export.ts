@@ -79,7 +79,7 @@ import {
   type DirectoryEntry,
   type Link,
 } from './links';
-import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, type ManualAccount } from './manual';
+import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, normalizeInstitutionName, type ManualAccount } from './manual';
 import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
 import {
   readStoredItem,
@@ -104,6 +104,8 @@ import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
 import { settle, type BankRow } from './history-import/match';
 import { standsFor } from './history-import/read';
+import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
+import { txnAnnotationStore } from './txn-annotations';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
 import { connectorOf } from './connectors/registry';
 import type { ConnectorKind } from './connectors/types';
@@ -720,6 +722,22 @@ export type ExportTransaction = StoredTxn & {
   your_merchant_name: string | null;
   superseded_by_posted: boolean;
   account_hidden: boolean;
+  /** The tags it carries, by name, as the app shows them (lib/txn-layers.ts):
+   *  put on by the person, carried from an earlier account, or added by a
+   *  rule. */
+  tags: string[];
+  /** The person's note on it, or null. */
+  your_note: string | null;
+  /** The name the app shows: the person's for its merchant, else a rule's,
+   *  else the bank's. */
+  nya_name: string;
+  /** Left out of budgets and reports, as the app counts it: by the person,
+   *  carried from an earlier account, or hidden by a rule (excluded_by_rule);
+   *  null when the person's record couldn't be read (it counts then). */
+  excluded: boolean | null;
+  excluded_by_rule: boolean;
+  /** The person's rules that match it, in the order they run (lib/rules.ts). */
+  rule_ids: string[];
 };
 
 export type ExportInvestmentTransaction = Record<string, unknown> & {
@@ -1200,23 +1218,39 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       { limit: Infinity }
     ).taxonomy
   );
-  const filed = (t: StoredTxn) => filedAs(filing, factsOf(t));
+  // The rules, what the person said about each row, and what was carried
+  // across a re-link, from the file's own parts, as the app applies them; and
+  // each row filed with its rule's category among the rest.
+  const sectionOf = new Map(data.sections);
+  const layers = exportLayers((key) => sectionOf.get(key), { links: effective, ix: filing, unknown: missingIds(data.problems, txnAnnotationStore.name) });
+  const shown = (t: StoredTxn) => {
+    const facts = factsOf(t);
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null);
+    return { l, filed: filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }) };
+  };
   const transactions: ExportTransaction[] = data.stores
     .flatMap((s) => {
       const superseded = supersededPendingIds(s.txns);
-      return Object.values(s.txns).map(
-        (t): ExportTransaction => ({
+      return Object.values(s.txns).map((t): ExportTransaction => {
+        const { l, filed } = shown(t);
+        return {
           ...t,
           item_id: s.item_id,
           vendor_key: vendorKey(t),
           your_category: data.overrides.get(t.transaction_id) ?? null,
           your_category_from_earlier_account: carried.get(contentKey(t.account_id, t)) ?? null,
-          ...filed(t),
+          ...filed,
           your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
           superseded_by_posted: superseded.has(t.transaction_id),
           account_hidden: hidden.has(t.account_id),
-        })
-      );
+          tags: l.tags,
+          your_note: l.note,
+          nya_name: l.name,
+          excluded: l.excluded,
+          excluded_by_rule: l.excluded_by_rule,
+          rule_ids: l.rule_ids,
+        };
+      });
     })
     // Newest first, as the app lists them; then by the event time, then the id,
     // so two downloads of the same data are the same file.
@@ -1324,7 +1358,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     const words = data.overrides.has(t.transaction_id) ? undefined : fromImports.get(t.transaction_id);
     if (words) Object.assign(t, filedAs(filing, { ...factsOf(t), category: words, category_set: true }));
   }
-  docFilings.set(doc, (facts) => filedAs(filing, facts));
+  docFilings.set(doc, filing);
   return doc;
 }
 
@@ -1479,6 +1513,10 @@ export const TRANSACTION_COLUMNS = [
   'nya_category',
   'nya_category_id',
   'nya_group',
+  // Added with tags (#40) and rules (#36), at the end too.
+  'tags',
+  'nya_name',
+  'excluded',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -1536,10 +1574,13 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     logo_url: t.logo_url,
     category_icon_url: t.personal_finance_category_icon_url,
     source: PROVIDER,
-    note: null,
+    note: t.your_note,
     nya_category: t.nya_category,
     nya_category_id: t.nya_category_id,
     nya_group: t.nya_group,
+    tags: t.tags.join('; '),
+    nya_name: t.nya_name,
+    excluded: t.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1553,7 +1594,7 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory): CsvValue[] {
+function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory, l: Layered): CsvValue[] {
   const cells: Record<TransactionColumn, CsvValue> = {
     ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
     date: row.date,
@@ -1571,8 +1612,13 @@ function manualTransactionRow(row: ManualTxn, account: { name: string | null; in
     transaction_id: row.id,
     account_id: row.account_id,
     source: row.source,
-    note: row.note,
+    // The person's note: the row's own, or, on one SimpleFIN brought, the one
+    // kept beside it (lib/txn-layers.ts).
+    note: l.note,
     ...filed,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
   };
   return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
@@ -1614,27 +1660,43 @@ function manualRowsOf(entries: unknown): ManualTxn[] {
   });
 }
 
-/** For each document buildUserExport makes, how it files a row: by the same
- *  set as the bank's rows (see there). */
-const docFilings = new WeakMap<UserExport, (facts: CategoryFacts) => NyaCategory>();
+/** For each document buildUserExport makes, the categories it files the
+ *  bank's rows by, which file the rows listed beside them too (see there). */
+const docFilings = new WeakMap<UserExport, CategoryIndex>();
 
 /**
- * How the rows the CSV lists beside the bank's (the manual accounts', and
- * those imported into linked accounts) are filed, as the app files them
- * (lib/categories.ts resolveCategory): as buildUserExport filed the bank's,
- * for a document it made. For any other, against the categories in it, grown
- * in memory by any words of `facts` no category has yet (provisional, so
- * their id is empty), or, without them, the seed the app would make.
+ * The categories the rows the files list beside the bank's (the manual
+ * accounts', and those imported into linked accounts) are filed by, as the
+ * app files them (lib/categories.ts resolveCategory): those buildUserExport
+ * filed the bank's by, for a document it made. For any other, the categories
+ * in it, grown in memory by any words of `facts` no category has yet
+ * (provisional, so their id is empty), or, without them, the seed the app
+ * would make.
  */
-function docFiling(doc: UserExport, facts: readonly CategoryFacts[]): (facts: CategoryFacts) => NyaCategory {
+function docIndex(doc: UserExport, facts: readonly CategoryFacts[]): CategoryIndex {
   const made = docFilings.get(doc);
   if (made) return made;
   const stored = doc[taxonomyStore.name];
   let n = 0;
   const newId = () => `new:${++n}`;
   const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
-  const ix = indexTaxonomy(growTaxonomy(base, observedKeys(facts), newId, { limit: Infinity }).taxonomy);
+  return indexTaxonomy(growTaxonomy(base, observedKeys(facts), newId, { limit: Infinity }).taxonomy);
+}
+
+/** How a row listed beside the bank's is filed (see docIndex). */
+function docFiling(doc: UserExport, facts: readonly CategoryFacts[]): (facts: CategoryFacts) => NyaCategory {
+  const ix = docIndex(doc, facts);
   return (f) => filedAs(ix, f);
+}
+
+/**
+ * The manual rows' categories, by their own words and the category a rule
+ * gives one (see docIndex), with the categories they are filed by (`ix`),
+ * which the rules are read against (lib/export-layers.ts).
+ */
+function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
+  const ix = docIndex(doc, rows.map(manualFacts));
+  return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
 }
 
 /** Every row of the manual accounts' books in the file, once each: a book
@@ -1782,6 +1844,39 @@ export function bookAccountTypes(doc: UserExport): Map<string, string> {
   return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
 }
 
+/** Each book account's institution as the Activity tab shows it
+ *  (lib/manual-txns.ts, lib/manual.ts toInstitutions), which a rule's
+ *  institution condition reads: a manual account's, `Manual` when it has
+ *  none, and an account SimpleFIN feeds, its bank's as SimpleFIN names it. */
+export function bookInstitutions(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].map(([id, a]) => [id, normalizeInstitutionName(a.institution_name ?? '') || 'Manual']));
+}
+
+/**
+ * The books' rows (a manual account's own, and those SimpleFIN brought) as
+ * the app shows them: each side of a pair between two SimpleFIN accounts in
+ * the pair's words (lib/manual-txns.ts withPairWords), and for each, what the
+ * read layer puts on it (its rules, tags, note and exclusion:
+ * lib/export-layers.ts layerManualRow, by its account's institution as the
+ * app shows it) and the category it is filed under. For the transactions CSV
+ * and an OFX statement alike, so the two and the app never disagree.
+ */
+export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r: ManualTxn) => { l: Layered; filed: NyaCategory } } {
+  const rows = withPairWords(manualTransactionsIn(doc), bookAccountTypes(doc));
+  const filing = manualFiling(doc, rows);
+  // A book's rows carry nothing from an earlier account, and its account is
+  // never linked: no links needed.
+  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institutionOf = bookInstitutions(doc);
+  return {
+    rows,
+    shown: (r) => {
+      const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
+      return { l, filed: filing.filed(r, l.rule_category) };
+    },
+  };
+}
+
 /**
  * transactions.csv: one row per transaction, newest first: every one stored
  * from the banks, every one on a manual account (manualTransactionRow), and
@@ -1795,7 +1890,6 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
   const accounts = bookAccountsIn(doc);
-  const typeOf = bookAccountTypes(doc);
   const linked = new Map(doc.accounts.map((a) => [a.account_id, a]));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
   const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
@@ -1804,9 +1898,11 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // payment, a loan's, a move between them) is worked out each time the rows
   // are read, never stored: listed as the app shows it, each side in the
   // pair's words and filed by them, so the file leaves out of a total what
-  // the app does (lib/manual-txns.ts withPairWords).
-  const manual = withPairWords(manualTransactionsIn(doc), typeOf);
-  const filed = docFiling(doc, [...manual.map(manualFacts), ...imported.rows.map(({ row }) => importedFacts(row, yours.get(row.id) ?? null))]);
+  // the app does; and every row with the read layer's facts on it, as the
+  // app shows them (layeredBookRows).
+  const book = layeredBookRows(doc);
+  // The rows imported into linked accounts, filed as the bank's are.
+  const fileImported = docFiling(doc, imported.rows.map(({ row }) => importedFacts(row, yours.get(row.id) ?? null)));
   const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
     ...doc.transactions.map((t) => {
       // A category set on an imported row this bank row now stands for is
@@ -1814,11 +1910,14 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
       const carried = t.your_category === null ? imported.carried.get(t.transaction_id) : undefined;
       return { date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(carried ? { ...t, your_category: carried } : t) };
     }),
-    ...manual.map((r) => ({
+    ...book.rows.map((r) => ({
       date: r.date,
       time: '',
       id: r.id,
-      cells: () => manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed(manualFacts(r))),
+      cells: () => {
+        const { l, filed } = book.shown(r);
+        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
+      },
     })),
     ...imported.rows.map(({ row, account_id }) => ({
       date: row.date,
@@ -1826,7 +1925,7 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
       id: row.id,
       cells: () => {
         const mine = yours.get(row.id) ?? null;
-        return importedTransactionRow(row, account_id, linked.get(account_id), mine, hidden.has(account_id) || hidden.has(row.account_id), filed(importedFacts(row, mine)));
+        return importedTransactionRow(row, account_id, linked.get(account_id), mine, hidden.has(account_id) || hidden.has(row.account_id), fileImported(importedFacts(row, mine)));
       },
     })),
   ];

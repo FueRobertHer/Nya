@@ -71,7 +71,7 @@
 import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
-import { getEffectiveHidden, sameAccountIds, type Link } from './links';
+import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
 import type { HiddenMap } from './hidden';
 import { rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
@@ -100,6 +100,8 @@ import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
 import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { readTagSet, tagNameKey, type TagSet } from './tags';
+import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 import { readDrawState } from './history-import/extend';
@@ -433,6 +435,18 @@ export type ApiAccounts = {
   notes: string[];
 };
 
+/**
+ * Each account's name as the app labels it where a rule names one
+ * (components/Dashboard.tsx: the institution, the account and its mask), by
+ * id, hidden ones too, following links from an earlier account to the one
+ * it became; null for one no longer here. For saying a rule in words.
+ */
+export async function accountLabels(ctx: Ctx): Promise<(id: string) => string | null> {
+  const { accounts, links } = await accountsRead(ctx, true);
+  const byId = new Map(accounts.map((a) => [a.id, `${a.institution} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`]));
+  return (id) => byId.get(id) ?? byId.get(resolveId(id, links)) ?? null;
+}
+
 /** Every account: linked and manual, with its newest measured balance and as
  *  of when. Hidden ones only with `includeHidden`. */
 export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiAccounts> {
@@ -717,12 +731,21 @@ export type ApiTransaction = {
    *  supersedes it. Open: version 1 may add values. */
   source: string;
   hidden: boolean;
+  /** The person's note on it: one written with a row they entered or
+   *  imported, or put on a bank's row. */
   note: string | null;
   counterparty: string | null;
   payment_channel: string | null;
   city: string | null;
   region: string | null;
   website: string | null;
+  /** The tags it carries (lib/tags.ts), in the order they were made: put
+   *  on by the person, carried from an earlier account, or added by a rule. */
+  tags: { id: string; name: string }[];
+  /** The person's rules that match it (lib/rules.ts), in the order they run. */
+  rule_ids: string[];
+  /** It is excluded because a rule hides it, not by the person's own hand. */
+  excluded_by_rule: boolean;
 };
 
 /** An id as the API shows it: null for a provisional one (see CATEGORIES). */
@@ -739,7 +762,7 @@ function describer(ix: CategoryIndex): (bucket: string) => Described {
   };
 }
 
-function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTransaction {
+function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex, tagNames: ReadonlyMap<string, string>): ApiTransaction {
   const account = t.account_id ?? '';
   const filed = t.category_id ? categoryById(ix, t.category_id) : null;
   const group = filed ? groupOf(ix, filed) : null;
@@ -769,23 +792,39 @@ function toApiTransaction(t: Txn, hidden: Set<string>, ix: CategoryIndex): ApiTr
     city: t.city,
     region: t.region,
     website: t.website,
+    tags: (t.tags ?? []).filter((id) => tagNames.has(id)).map((id) => ({ id, name: tagNames.get(id)! })),
+    rule_ids: t.rule_ids ?? [],
+    excluded_by_rule: t.excluded_by_rule === true,
   };
 }
+
+/** Each tag's name, by id: the tags that exist. */
+const namesOf = (set: TagSet | null): Map<string, string> => new Map((set?.tags ?? []).map((t) => [t.id, t.name]));
 
 /** Where an institution's transactions come from, and as of when; or why it
  *  brings in none (lib/item-products.ts). */
 export type ApiSource = { institution: string; synced_at: string | null; complete: boolean; no_transactions: NoTransactionsReason | null };
 
-type ActivityRead = { rows: Txn[]; history: OlderTxn[]; notes: string[]; sources: ApiSource[]; hidden: Set<string>; view: NoTransactionsView; ix: CategoryIndex };
+export type ActivityRead = {
+  rows: Txn[];
+  history: OlderTxn[];
+  notes: string[];
+  sources: ApiSource[];
+  hidden: Set<string>;
+  view: NoTransactionsView;
+  ix: CategoryIndex;
+  /** The tags that exist (lib/tags.ts), or null: none saved, or unreadable (said in notes). */
+  tags: TagSet | null;
+};
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
  *  (lib/no-transactions.ts), the rows before them that recurring detection
  *  needs (`history`), and the categories they were filed by (`ix`), grown in
  *  memory where the app hasn't yet (see CATEGORIES). */
-async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
+export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const [{ transactions, notes, history, taxonomy }, fed] = await Promise.all([
+  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
     // assembly's own notes.
@@ -795,8 +834,9 @@ async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityR
   return {
     rows: transactions,
     history,
-    notes: [...notes, ...fedSources.notes],
+    notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
     ix: indexTaxonomy(taxonomy),
+    tags,
     sources: [
       ...bank.sources.map((s: BankSource) => ({
         institution: s.institution_name,
@@ -846,7 +886,7 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
  * transactions don't come in (Plaid doesn't provide them, or the person
  * didn't allow them), as missing from a `list` or not counted in `totals`.
  */
-function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
+export function withoutTransactionsNotes(view: NoTransactionsView, rows: number, kind: 'list' | 'totals'): string[] {
   const none = noSpending(view, rows);
   if (none) return [`${none.lead}, so no bank or card transactions come in. To see spending, ${none.remedy}.`];
   const named = withoutNote(view, rows);
@@ -873,7 +913,7 @@ export type TransactionQuery = {
   accountIds?: ReadonlySet<string>;
   includeHidden?: boolean;
   /** Matched, in any case, against the name, the merchant behind it, the
-   *  category and the note. */
+   *  category, the note and the names of its tags. */
   text?: string;
   /** A category's name as listed (categories), in any case: "other" for
    *  none, while the uncategorized category is named so. */
@@ -881,6 +921,11 @@ export type TransactionQuery = {
   /** A category's id (categories): rows filed under it, or under one merged
    *  into it. An id no category has is a 404 (NotFound). */
   categoryId?: string;
+  /** A tag's name as listed (tags), in any case: rows carrying it. */
+  tag?: string;
+  /** A tag's id (tags): rows carrying it. An id no tag has is a 404
+   *  (NotFound). */
+  tagId?: string;
   /** On the signed amount, Plaid's sign: inclusive. */
   minAmount?: number;
   maxAmount?: number;
@@ -901,20 +946,29 @@ export type ApiTransactionPage = {
 
 /** One page of transactions, newest first, matching the query. */
 export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<ApiTransactionPage> {
-  const activity = await readActivity(ctx, !!q.includeHidden);
+  // Asked by tag: tags that can't be read are a 409 (unreadable), never "no
+  // tag has that id" or no transactions.
+  const [activity] = await Promise.all([readActivity(ctx, !!q.includeHidden), q.tagId !== undefined || q.tag !== undefined ? readTagSet(ctx) : null]);
   const text = q.text?.toLowerCase();
   const category = q.category?.toLowerCase();
   const describe = describer(activity.ix);
   const wanted = q.categoryId === undefined ? undefined : categoryById(activity.ix, q.categoryId);
   if (wanted === null || (wanted && isProvisionalId(wanted.id))) throw new NotFound('No category has that id: list them with categories.');
+  const tagNames = namesOf(activity.tags);
+  if (q.tagId !== undefined && !tagNames.has(q.tagId)) throw new NotFound('No tag has that id: list them with tags.');
+  // A name no tag has matches nothing, as a category's does.
+  const byName = q.tag === undefined ? undefined : (activity.tags?.tags.find((t) => tagNameKey(t.name) === tagNameKey(q.tag!))?.id ?? null);
+  const tagged = (t: Txn) => (q.tagId === undefined || !!t.tags?.includes(q.tagId)) && (byName === undefined || (byName !== null && !!t.tags?.includes(byName)));
+  const tagText = (t: Txn) => (t.tags ?? []).map((id) => tagNames.get(id));
   const matching = activity.rows
     .filter((t) => t.date >= q.from && t.date <= q.to)
     .filter((t) => !q.accountIds || q.accountIds.has(t.account_id ?? ''))
     .filter((t) => category === undefined || describe(bucketOf(t)).category.toLowerCase() === category)
     .filter((t) => wanted === undefined || categoryById(activity.ix, bucketOf(t))?.id === wanted.id)
     .filter((t) => (q.minAmount === undefined || t.amount >= q.minAmount) && (q.maxAmount === undefined || t.amount <= q.maxAmount))
-    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
-    .map((t) => toApiTransaction(t, activity.hidden, activity.ix))
+    .filter(tagged)
+    .filter((t) => !text || [t.name, t.counterparty, t.category_name, t.subcategory, t.note, ...tagText(t)].some((f) => typeof f === 'string' && f.toLowerCase().includes(text)))
+    .map((t) => toApiTransaction(t, activity.hidden, activity.ix, tagNames))
     .sort((a, b) => comparePageKeys(keyOf(a), keyOf(b)));
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
@@ -1136,6 +1190,10 @@ export type ApiSpending = Summary & {
   /** Money out by group, most first, with how many rows each sums: the
    *  categories' rolled up (ids null for one the app hasn't stored yet). */
   groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
+  /** Money out by tag, most first (lib/tag-totals.ts): each counted outflow
+   *  under every tag its row carries, so a tag is exactly what its rows add
+   *  to the categories, and a row with two tags is in both. */
+  tags: { id: string; name: string; spent: number; transactions: number }[];
   sources: ApiSource[];
   notes: string[];
 };
@@ -1168,6 +1226,10 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
     groups: [...groups.values()]
       .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
       .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions })),
+    tags: spendingByTag(activity.rows, inRange, currency).flatMap((s) => {
+      const name = namesOf(activity.tags).get(s.tag);
+      return name === undefined ? [] : [{ id: s.tag, name, spent: s.spent, transactions: s.transactions }];
+    }),
     sources: activity.sources,
     notes,
   };

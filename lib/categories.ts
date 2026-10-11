@@ -36,8 +36,8 @@
 //   1. the person's own: a category chosen for this transaction, or for the
 //      one it continues across a re-link, or written on a row they entered or
 //      imported (its text key);
-//   2. rules (#36) will go here: below a choice made on one transaction, above
-//      what the bank says;
+//   2. a rule's category (#36, lib/rules.ts), by id: below a choice made on one
+//      transaction, above what the bank says;
 //   3. the provider's: Plaid's detailed category, then its primary one;
 //   4. the text the row carries, for a row stored before Plaid's values were;
 //   5. the uncategorized category, for a row that says nothing at all.
@@ -325,6 +325,9 @@ export type CategoryFacts = {
   /** Plaid's own values, on a bank's row. */
   pfc_primary?: string | null;
   pfc_detailed?: string | null;
+  /** The category a rule files it under, by id (lib/rules.ts, applied by
+   *  lib/txn-layers.ts): the rules slot of resolveCategory. */
+  rule_category?: string;
 };
 
 /** Where a transaction is filed: its category, and whether the row said
@@ -338,15 +341,27 @@ export type CategoryFacts = {
  *  transfer. */
 export type Filed = { category: Category; said: boolean; filed: boolean };
 
+/** The person's own category for a transaction (RESOLUTION 1): one chosen
+ *  for it, carried to it, or written on a row they entered or imported, when
+ *  a category has those words; else null. What a rule's category never
+ *  replaces (lib/txn-layers.ts). */
+export function ownCategory(ix: CategoryIndex, f: CategoryFacts): Category | null {
+  const text = f.category ? textKey(f.category) : '';
+  if (!(f.category_set || f.source !== undefined) || !text) return null;
+  return categoryForKey(ix, TEXT, text);
+}
+
 /** The category a transaction is filed under (see RESOLUTION in the header). */
 export function resolveCategory(ix: CategoryIndex, f: CategoryFacts): Filed {
   const text = f.category ? textKey(f.category) : '';
   const own = !!f.category_set || f.source !== undefined;
-  if (own && text) {
-    const c = categoryForKey(ix, TEXT, text);
+  const mine = ownCategory(ix, f);
+  if (mine) return { category: mine, said: true, filed: true };
+  // A rule's (#36): by id, following a merge; one deleted files nothing.
+  if (f.rule_category) {
+    const c = categoryById(ix, f.rule_category);
     if (c) return { category: c, said: true, filed: true };
   }
-  // Rules (#36) go here.
   if (!own) {
     for (const value of [f.pfc_detailed, f.pfc_primary]) {
       if (!value) continue;
@@ -736,8 +751,10 @@ export function mergeCategories(t: Taxonomy, fromId: string, intoId: unknown): T
 export const KIND_WORDS: Readonly<Record<CategoryKind, string>> = { expense: 'spending', income: 'income', transfer: 'a transfer' };
 
 /** What still uses a category, for deleting it (lib/category-usage.ts
- *  categoryUsage), and the keys it had when its uses were counted. */
-export type CategoryUsage = { transactions: number; budget: boolean; keys?: readonly ProviderKey[] };
+ *  categoryUsage), and the keys it had when its uses were counted. `rules`:
+ *  how many rules name it, in a condition or as the category they file
+ *  into (lib/rules.ts). */
+export type CategoryUsage = { transactions: number; budget: boolean; rules?: number; keys?: readonly ProviderKey[] };
 
 const keyList = (keys: readonly ProviderKey[]) => keys.map((k) => slot(k.provider, k.key)).sort().join('\n');
 
@@ -760,11 +777,19 @@ export function deleteCategory(t: Taxonomy, id: string, usage: CategoryUsage): T
   if (usage.keys && keyList(usage.keys) !== keyList(c.provider_keys)) {
     throw new CategoryError(`${c.name} changed while it was being deleted (a category was merged into it, say), so it wasn't. Look again, then try again.`, 409);
   }
-  if (usage.transactions > 0 || usage.budget) {
-    const what = [
+  // A rule naming it would be left broken: it is changed first, never
+  // quietly re-pointed (lib/rules.ts).
+  const rules = usage.rules ?? 0;
+  if (usage.transactions > 0 || usage.budget || rules > 0) {
+    const parts = [
       ...(usage.transactions > 0 ? [`${usage.transactions} transaction${usage.transactions === 1 ? '' : 's'}`] : []),
       ...(usage.budget ? ['a budget'] : []),
-    ].join(' and ');
+      ...(rules > 0 ? [`${rules} rule${rules === 1 ? '' : 's'}`] : []),
+    ];
+    const what = parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts[0];
+    if (usage.transactions === 0 && !usage.budget) {
+      throw new CategoryError(`${c.name} is used by ${what}, so it can't be deleted. Change ${rules === 1 ? 'that rule' : 'those rules'} first, or merge it into another category.`, 409);
+    }
     throw new CategoryError(`${c.name} is used by ${what}, so it can't be deleted. Merge it into another category, or archive it to hide it.`, 409);
   }
   const merged = Object.fromEntries(Object.entries(t.merged ?? {}).filter(([, into]) => into !== id));

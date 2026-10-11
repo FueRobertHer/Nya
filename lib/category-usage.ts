@@ -8,10 +8,11 @@
 // a manual or imported row (every one, of any date), a row imported into a
 // linked account from its bank's files (every one, of any date, whether or
 // not it counts now: a bank row standing for one today may be gone
-// tomorrow), and a transaction from before Plaid's values were kept; and a
-// budget, by id. Every read here is strict: a store that can't be read
-// refuses the delete rather than letting a category go that something may
-// use.
+// tomorrow), and a transaction from before Plaid's values were kept; a
+// budget, by id; and a rule, by id, in a condition or as the category it
+// files into (lib/rules.ts). Every read here is strict: a store that can't be
+// read refuses the delete rather than letting a category go that something
+// may use.
 
 import type { Ctx } from './containers';
 import { assembleBankRows, finishActivity } from './activity';
@@ -20,7 +21,8 @@ import { manualTxnStore } from './manual-txns';
 import { importedTxnStore } from './history-import/store';
 import { loadBudgets } from './budget-store';
 import { placeBudgets } from './budget-set';
-import { indexTaxonomy, textKey, TEXT, type CategoryUsage, type Taxonomy } from './categories';
+import { categoryById, indexTaxonomy, textKey, TEXT, type CategoryUsage, type Taxonomy } from './categories';
+import { readRuleSet, ruleCategories } from './rules';
 
 /** How many transactions are filed under the category, and whether it has a
  *  budget. Reads the stored rows (no Plaid call), hidden accounts' too. */
@@ -30,13 +32,14 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   const words = new Set(c.provider_keys.filter((k) => k.provider === TEXT).map((k) => k.key));
   const uses = (text: string | null | undefined) => !!text && words.has(textKey(text));
 
-  const [bank, overrides, carried, books, imported, budgets] = await Promise.all([
+  const [bank, overrides, carried, books, imported, budgets, rules] = await Promise.all([
     assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true }),
     readOverridesStrict(ctx),
     readCarriedStrict(ctx),
     manualTxnStore.getAll(ctx),
     importedTxnStore.getAll(ctx),
     loadBudgets(ctx),
+    readRuleSet(ctx),
   ]);
   const shown = await finishActivity(ctx, bank.payload, new Set());
   // Rows in the window, as filed; then what keeps words outside it.
@@ -48,6 +51,9 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   for (const book of books.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
   for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
   const placed = placeBudgets(budgets.budgets, indexTaxonomy(budgets.taxonomy));
+  // A rule naming it, or a category merged into it.
+  const ix = indexTaxonomy(taxonomy);
+  const ruleUses = (rules?.rules ?? []).filter((r) => ruleCategories(r).some((ref) => categoryById(ix, ref)?.id === id)).length;
   // The keys counted for: the delete refuses if they change before it lands.
-  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), keys: c.provider_keys };
+  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), rules: ruleUses, keys: c.provider_keys };
 }

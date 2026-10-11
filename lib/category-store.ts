@@ -195,6 +195,7 @@ export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filin
     delete r.category_set;
     delete r.pfc_primary;
     delete r.pfc_detailed;
+    delete r.rule_category;
   }
 }
 
@@ -207,9 +208,24 @@ export function fileRows(ix: CategoryIndex, rows: Iterable<CategoryFacts & Filin
  * read as it is and grown in memory, for the next load to store.
  */
 export async function fileTransactions(ctx: Ctx, rows: (CategoryFacts & Filing)[], opts: { grow: boolean }): Promise<{ taxonomy: Taxonomy; notes: string[] }> {
+  const set = await filingSet(ctx, rows, opts);
+  fileRows(indexTaxonomy(set.taxonomy), rows);
+  return set;
+}
+
+/** The set fileTransactions files rows by, without filing them: for a reader
+ *  that applies rules first, which read the categories (lib/activity.ts),
+ *  then files them with fileRows. `unreadable` when the stored set couldn't
+ *  be read, and the rows are filed by a seed made in memory. */
+export async function filingSet(
+  ctx: Ctx,
+  rows: readonly CategoryFacts[],
+  opts: { grow: boolean }
+): Promise<{ taxonomy: Taxonomy; notes: string[]; unreadable?: true }> {
   const observed = observedKeys(rows);
   const notes: string[] = [];
   let taxonomy: Taxonomy;
+  let unreadable: true | undefined;
   try {
     taxonomy = opts.grow ? await ensureTaxonomy(ctx, { observed }) : (await taxonomyForReading(ctx, { observed })).taxonomy;
   } catch (err) {
@@ -217,12 +233,12 @@ export async function fileTransactions(ctx: Ctx, rows: (CategoryFacts & Filing)[
       console.error('Stored categories unreadable:', describeUnreadable(err));
       notes.push("Your categories couldn't be read, so each transaction shows the category it came with until they can be.");
       taxonomy = grown(null, { observed }, provisionalIds());
+      unreadable = true;
     } else if (err instanceof UpdateConflictError) {
       taxonomy = (await taxonomyForReading(ctx, { observed })).taxonomy;
     } else throw err;
   }
-  fileRows(indexTaxonomy(taxonomy), rows);
-  return { taxonomy, notes };
+  return { taxonomy, notes, ...(unreadable ? { unreadable } : {}) };
 }
 
 /** One row the app answers with on its own (a manual row just saved, for the
