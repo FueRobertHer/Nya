@@ -4595,6 +4595,227 @@ button.tag-suggestion.chosen {
   margin-right: 4px;
 }
 
+/* --- savings goals: the "where you should be" marker, outlooks and the
+   archived list (#42, components/GoalsCard.tsx and GoalSheet.tsx) --- */
+
+/* The track places the marker. */
+.goal-meter {
+  position: relative;
+}
+
+/* Where the goal should be by now on the way to its target date: a lighter
+   tick across the track. Its meaning is in the meter's label, for a screen
+   reader. */
+.goal-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.goal-outlook {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+/* Underfunded: short of its target date, or nothing went in lately. The
+   words say so; the hue only draws the eye. */
+.goal-outlook.behind {
+  color: var(--warn);
+}
+
+.goal-note {
+  margin-top: 4px;
+}
+
+.goal-unallocated {
+  margin: 0 0 4px;
+}
+
+/* "Set part of the balance aside": a checkbox on its own line, its words
+   beside it. */
+.goal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.goal-check input {
+  width: auto;
+  margin: 0;
+}
+
+.goal-room {
+  margin: -4px 0 12px;
+}
+
+.goal-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Restore and delete beside an archived goal, kept on one line while its
+   name wraps. */
+.goal-archived-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* --- budget rollover and income carryover (#37: components/BudgetsCard.tsx,
+   components/IncomePool.tsx, components/BudgetsTab.tsx) --- */
+
+/* What rolled into a budget, beneath its meter: muted for leftover, amber for
+   overspending carried, the hole the next months climb out of. */
+.budget-carry {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.budget-carry.negative {
+  color: var(--warn);
+}
+
+/* Rolling a budget over, below its amount in the editor. */
+.budget-rollover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
+
+.budget-rollover .card-actions {
+  margin-top: 0;
+}
+
+/* The month shown, under the card's heading. */
+.month-picker {
+  margin: 4px 0 8px;
+}
+
+/* Available to allocate, above the meters while income carryover is on. */
+.pool-header {
+  margin: 8px 0 16px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--raised);
+}
+
+.pool-line {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.pool-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.pool-amount {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.pool-amount.negative {
+  color: var(--down);
+}
+
+.pool-breakdown {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+button.pool-toggle {
+  margin-top: 10px;
+  padding: 6px 10px;
+  font-size: 13px;
+}
+
+/* The pool month by month: four narrow columns fit a phone, and amounts
+   wider still scroll inside the box rather than widening the page. The
+   cells set their own size and padding, since the global th, td set theirs. */
+.pool-scroll {
+  margin: 10px -6px 0;
+  overflow-x: auto;
+}
+
+.pool-table {
+  width: 100%;
+  margin-top: 0;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+
+.pool-table th,
+.pool-table td {
+  padding: 4px 2px;
+  text-align: right;
+  white-space: nowrap;
+  border-top: 1px solid var(--line);
+  border-bottom: none;
+}
+
+.pool-table td,
+.pool-table th[scope='row'] {
+  font-size: 12px;
+}
+
+.pool-table thead th {
+  border-top: none;
+}
+
+.pool-table th[scope='row'],
+.pool-table thead th:first-child {
+  text-align: left;
+}
+
+.pool-table th[scope='row'] {
+  color: inherit;
+  font-weight: 400;
+  text-transform: none;
+}
+
+.pool-uncertain {
+  color: var(--warn);
+}
+
+/* The setting, at the foot of the budgets. */
+.income-setting {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.income-setting .panel-note {
+  margin: 0;
+}
+
+.income-setting .card-actions {
+  margin-top: 0;
+}
+
 /* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
    the link under the account's chart, the period a file covers, and the note
    under the net-worth chart saying which stretch comes from imported files. */

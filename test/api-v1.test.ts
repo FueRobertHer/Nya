@@ -348,6 +348,11 @@ describe('categories, budgets and spending', () => {
       category_id: null,
       group_id: null,
       group: 'Food',
+      // Beside it (#37): with nothing rolling over, what is available is the budget.
+      available: 100,
+      available_remaining: 100 - food,
+      rollover: null,
+      assumed: false,
     });
     expect(byCat.housing.spent).toBe(inMonth(3) ? 1200 : 0);
     // The EUR charge is named, not added.

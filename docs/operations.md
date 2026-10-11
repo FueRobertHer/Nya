@@ -12,6 +12,8 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
 - [Rules, tags and notes, and rolling back](#rules-tags-and-notes-and-rolling-back)
+- [Goals: plans and rolling back](#goals-plans-and-rolling-back)
+- [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -291,6 +293,47 @@ The release that added tags and notes (#40) and rules (#36) ([features.md](featu
 **Rolling forward again.** The transactions cached by the release before are a miss (they lack what rules and re-links read, `layer_facts`), so each person's next load syncs once. Rules, tags and notes are where they were.
 
 **A new field in a rule** ships in two releases, as allocation settings do: one that reads it, then one that writes it. The rules' stored shape is closed, so a rule with a field this release doesn't know makes every rule unrecognised (none applied, nothing saved over them), rather than one rule applied without a condition and matching more than it should.
+
+## Goals: plans and rolling back
+
+The release that gave goals plans (#42, [features.md](features.md#savings-goals)) keeps each goal's plan (its allocation, monthly target, target date and whether it is archived, with what the server works out for them) in a store of its own, `goal-plans` (`lib/goal-plans.ts`), one entry per goal id. The `goals` value keeps each goal's name, target and account, as before. There is nothing to run: a goal without an entry has no plan, and reads exactly as it did.
+
+**What a rollback sees.** The release before reads `goals` as it always did: every goal, archived ones among the rest (it has no archive), each counting its account's whole balance (it has no allocations), with no monthly target, date or projection. It neither reads nor writes `goal-plans`, a store it doesn't know, and its saves rewrite `goals` with the four fields, which is all this release keeps there, so no save of its loses anything set in this one. It refuses to save more than 20 goals, and this release keeps to that limit, archived goals included, so it can always save. It doesn't know the `goal-plans` key either: its data download leaves the plans out, and its re-encryption pass names the key under `unclassified` and leaves it alone ([above](#moving-existing-data-to-the-data-key)), so the pass reports complete again only once this release is back.
+
+**Rolling forward again.** Each entry holds its goal's four fields as the save that wrote it left them in `goals` and, only while that save hasn't finished, the goal as it read before it (`before`). On the next read:
+
+- a goal whose four fields are those: its plan, as set;
+- a goal that a save which stopped between its writes left with its four fields as they were before it: as it read before that save, plan and all;
+- a goal the release before renamed, retargeted or moved to another account, even back to how it was before this release's last save: its plan still applies, but an allocation, and where the line to its target date starts, only on the account they were set on (following account links, so a reconnect doesn't count as a move): an allocation is never a claim on another account. The goal then counts what the allocated goals leave, as it did there, says what its allocation was, and the next save drops it; a goal with a target date shows no "where you should be" line until the next save starts one on the account it tracks now;
+- a goal the release before deleted: its entry belongs to no goal and is never read as anyone's (goal ids are random, so no later goal can take it over), and the next save deletes it;
+- a goal the release before added: no entry, no plan.
+
+Nothing else set is lost, and no entry outlives the next save. A save the page was told failed may leave `before` in an entry until the next save; only then can the release before, setting a goal back to how it was, bring back the plan it had before that save.
+
+**The order of a save.** A save writes the entry of every goal it lists with a plan, and of each plan it empties, in one write (one `HSET`, all or none), each changed one with the goal as it read before the save; then `goals`; then settles the entries, in compare-and-set writes of up to 16 entries each: it clears `before` from those it wrote, and deletes those no goal needs (of goals it removed, those the release before left, and plans it emptied), each only while the entry is still what this save wrote or read. Whatever point a save stops at, every goal reads either as it did before the save or as the save left it, never a mix: a changed entry carries the goal as it read before, and reads that way until `goals` holds the new fields (a save that changes only plans leaves the four fields in `goals` as they were, so it is whole once its entries are written); an entry for a goal the save adds belongs to no goal until `goals` lists it; and an entry the save deletes belongs to no goal by then. The page is told the save failed, and shows what is stored; the next save settles what it left.
+
+**Two devices saving at the same moment.** `goals` is the list of whichever save wrote it last, as with `goals` alone, and every goal in it has the plan one of the two saves gave it: each save writes the entry of every goal it lists. Those writes are plain, so whichever save writes an entry last wins it, as whichever writes `goals` last wins the list; settling is the only compare-and-set, and each entry carries the random id of the save that wrote it (`save`), so settling never deletes an entry, nor clears its `before`, once another save has written it since this one read. A goal one device deletes, which the other device's page still lists and saves last, comes back as that page had it, plan and all.
+
+**A page from before plans.** A page cached on a phone from the release before sends goals without plans; each keeps its stored plan, so it can't clear an allocation it can't see. This release's page always sends each goal's plan, even an empty one.
+
+**If a read fails.** Goals or plans that can't be read answer 409 and are never saved over, as goals always have: the card says so and editing is paused. A plan saved by a later release reads as unrecognised, also 409, and is kept exactly as it is, for that release to read again. The app doesn't yet offer to remove a damaged plan: one that can't be recovered from a backup (the 409 names its goal under `unreadable_ids`; never one under `unrecognised_ids`) can be deleted by hand in the Upstash console, `HDEL <prefix>:c:<id>:goal-plans <goal id>`, and its goal then reads with no plan. Account links that can't be read stop a save, since a save decides on them whether a goal moved: a damaged link, or what Nya keeps of a stored connection's accounts (`accounts:meta`, which tells a link whose earlier id is live again), answers 409 with which it is and what still works, and nothing is written. The card still shows the goals, each on its account id as stored, and says why the save didn't go through: a damaged link is removed under Reconnected accounts on the Accounts tab; a connection's record is written again the next time its accounts load. A record of a connection no longer stored names no live account, so it stops nothing.
+
+## Budget rollover and rolling back
+
+The release with budget rollover and income carryover ([features.md](features.md#budget-rollover-and-income-carryover)) keeps what it adds in two stores of its own, beside the budget set: `budget-months` (each budget's amounts by month and the months it rolled over) and `income-carryover` (the setting). It never changes the `budget-set` store's shape, and writes it exactly as the release before does. There is nothing to run: the record begins the first time the app is opened after this release with budgets set (`since`), and a budget's amount in a month before then is assumed to be its earliest recorded one.
+
+**What a rollback sees.** The release before reads neither store: it shows every budget flat, from `budget-set`, as it always did, with no carry, no month picker and no income pool. Nothing it saves can reach the new stores, so nothing it saves can corrupt them; its budget saves write `budget-set` and the name-keyed copy as before ([Category ids](#category-ids-the-migration-and-rolling-back)). Backups keep both stores, as they keep every store on the seam.
+
+**Rolling forward again.** The app's next read of the month's budgets (on opening it) notes what the release before changed in the budget set, against what the record last saw:
+
+- **an amount it changed** applies from the month it is first read here; the months before keep the amounts recorded for them. A change made during the rollback in an earlier month is so counted from the month it is first seen: the months between show the amount before it, and a carry across them counts that amount;
+- **a budget it added** had none before the month it is first seen, so a rollover turned on for it counts from then;
+- **a budget it removed** ends its rollover from that month (turned on again, it starts afresh);
+- **a category it merged** is followed: the record of the merged one is read as part of the one it went into, amounts added month by month, and moves there with the next change; **one it deleted** is dropped.
+
+Rollover settings and the income setting themselves are as they were before the rollback.
+
+**If a read fails.** A record or setting that can't be read is never taken for none: the Budgets tab's month answers 409 and says so, showing this month's budgets without any carry; rollover changes are refused (409); the read-only API answers 409 `unreadable`; the download names the part it couldn't read. Budgets still save: a save writes only the budget set, and the record, once it can be read again, notes the change as of the month it is read in, as it does after a rollback. Nothing is saved over either store. A damaged record is a backup to restore, or a bug to fix: a record a later release wrote reads as unrecognised and waits for that release.
 
 ## Rolling back once the brokerage option is on
 

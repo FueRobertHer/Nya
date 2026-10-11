@@ -1,0 +1,384 @@
+// lib/goal-plans.ts
+//
+// Where a goal's plan is kept (#42): the `goal-plans` map store on the storage
+// seam (lib/repo.ts), one entry per goal id, beside the `goals` blob
+// (lib/goals.ts) that keeps each goal's name, target and account as every
+// release has. The release before this one reads that blob, and its PUT
+// rewrites it with those four fields only, so nothing new is put there: a
+// plan in the blob would be gone the first time that release saved.
+//
+// AN ENTRY holds the plan (lib/goal-model.ts: an allocation, a monthly target,
+// a target date, archived, and what the server works out for them), the four
+// fields' values as the save that wrote it left them in the blob (`core`, its
+// witness), and, only while that save hasn't finished, what the goal read as
+// before it (`before`), so that a read can tell which of these it is looking
+// at:
+//   - the blob's goal is the witness: the entry's plan is the goal's plan. The
+//     save finished, or it changed only the plan, which leaves the blob's four
+//     fields as they were, so it is whole once its entry is written.
+//   - the blob's goal is `before`'s witness: the save stopped between its
+//     writes (see THE WRITE ORDER). The goal reads as it did before it, plan
+//     and all.
+//   - anything else: the release before changed the goal after a rollback
+//     (renamed it, retargeted it, or moved it to another account), even back
+//     to what it was before this release's last save, which `before` no longer
+//     holds once that save finished. Its plan still applies, but an
+//     allocation, and where its line to a target date starts, only on the
+//     account they were set on, following links (lib/links.ts): an allocation
+//     on one account is never a claim on another. The goal then reads as it
+//     did there, claiming what the allocated goals leave, and says what it had
+//     (`earlier_allocation`).
+// An entry whose goal isn't in the blob (the release before deleted it, or a
+// save adding it stopped before the blob was written) is never read as
+// anyone's, and the next save deletes it. Goal ids are random, so no later
+// goal can take it over.
+//
+// THE WRITE ORDER (writeGoalRecords). A save writes the entry of every goal
+// that has a plan, or whose plan it empties, all in one HSET, each changed one
+// with its `before`; then the blob; then settles: clears `before` from the
+// entries it wrote, and deletes those no goal needs (of goals it removed, the
+// orphans, the plans it emptied), each only while it is still what this save
+// wrote or read (MapStore.updateMany, a compare-and-set), so it never takes
+// another save's write for its own. Read at any point between, every goal
+// reads as it did before the save or as the save left it, never a mix: an
+// entry already written for a goal whose blob write hadn't happened carries
+// the goal as it was in `before`, a goal the save adds has no blob entry yet
+// (so its entry is an orphan), and one it removes keeps its entry until after
+// the blob says it is gone. Each entry carries the random id of the save that
+// wrote it (`save`), which is what tells one save's write from another's
+// that holds the same.
+//
+// TWO SAVES AT ONCE (two devices). The blob is the last save's list, as it
+// always was. Every goal in it has the plan one of the two saves wrote for
+// it, since each save writes the entry of every goal it lists: a goal the
+// other save deleted, which the last save still lists, comes back with the
+// plan the last save gave it, never without one. The writes themselves are
+// plain, so the save whose HSET lands last wins each entry, as the save
+// whose blob lands last wins the list; only settling is a compare-and-set,
+// so it never deletes an entry, nor clears its `before`, once another save
+// has written it since this one read.
+//
+// READS ARE STRICT. An entry that can't be read stops the read
+// (UnreadableEntriesError, which the routes answer with 409), never "no
+// plan": the next save would write over the goal's plan with nothing. The
+// shape is closed: a field a later release adds reads as unrecognised, and
+// nothing here saves over it. Version 1 is the first shape, so there is
+// nothing to upgrade yet.
+
+import { defineMapStore, MANY_AT_ONCE, StoreRefusedError } from './repo';
+import type { Ctx } from './containers';
+import { getGoals, setGoals, type Goal as StoredGoal } from './goals';
+import { getLinks, effectiveLinks, liveAccountIds, resolveId, type Link } from './links';
+import { readLinks } from './link-core';
+import { rememberedAccountsReport } from './last-known';
+import { getItems } from './storage';
+import { isCalendarDay } from './manual-txn-input';
+import { MAX_GOAL_AMOUNT, type Goal, type GoalPlan } from './goal-model';
+
+/** A goal's four stored fields, without its id: what the blob holds. */
+export type Witness = { name: string; target: number; account_id: string | null };
+
+/** A goal's plan as stored. */
+export type StoredPlan = {
+  /** In the account's currency, bound to the account it was set on. */
+  allocation?: { amount: number; account_id: string };
+  monthly_target?: number;
+  target_date?: string;
+  /** Set by the server when the target date is set: the day, what the goal
+   *  held then (null when the balance wasn't known), and the account it held
+   *  it on: the line starts again on another account. */
+  plan_start?: { date: string; amount: number | null; account_id?: string | null };
+  /** Set by the server when it is archived: the day, and what it held then. */
+  archived?: { on: string; amount: number | null };
+};
+
+export type GoalPlanEntry = {
+  v: 1;
+  /** The random id of the save that wrote it (see THE WRITE ORDER). */
+  save?: string;
+  core: Witness;
+  plan: StoredPlan;
+  /** The goal as it read before the save that wrote this entry, while that
+   *  save hasn't finished; null otherwise, and for a goal that save added. */
+  before: { core: Witness; plan: StoredPlan } | null;
+};
+
+const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
+const onlyKeys = (o: Record<string, unknown>, allowed: readonly string[]) => Object.keys(o).every((k) => allowed.includes(k));
+const finite = (n: unknown): n is number => typeof n === 'number' && Number.isFinite(n);
+const amountOrNull = (n: unknown) => n === null || finite(n);
+
+function isWitness(v: unknown): v is Witness {
+  return (
+    isObject(v) &&
+    onlyKeys(v, ['name', 'target', 'account_id']) &&
+    typeof v.name === 'string' &&
+    finite(v.target) &&
+    (v.account_id === null || typeof v.account_id === 'string')
+  );
+}
+
+function isStoredPlan(v: unknown): v is StoredPlan {
+  if (!isObject(v) || !onlyKeys(v, ['allocation', 'monthly_target', 'target_date', 'plan_start', 'archived'])) return false;
+  const { allocation, monthly_target, target_date, plan_start, archived } = v;
+  if (
+    allocation !== undefined &&
+    !(isObject(allocation) && onlyKeys(allocation, ['amount', 'account_id']) && finite(allocation.amount) && allocation.amount >= 0 && allocation.amount <= MAX_GOAL_AMOUNT && typeof allocation.account_id === 'string' && allocation.account_id !== '')
+  ) {
+    return false;
+  }
+  if (monthly_target !== undefined && !(finite(monthly_target) && monthly_target > 0 && monthly_target <= MAX_GOAL_AMOUNT)) return false;
+  if (target_date !== undefined && !isCalendarDay(target_date)) return false;
+  if (
+    plan_start !== undefined &&
+    !(
+      isObject(plan_start) &&
+      onlyKeys(plan_start, ['date', 'amount', 'account_id']) &&
+      isCalendarDay(plan_start.date) &&
+      amountOrNull(plan_start.amount) &&
+      (plan_start.account_id === undefined || plan_start.account_id === null || typeof plan_start.account_id === 'string')
+    )
+  ) {
+    return false;
+  }
+  if (archived !== undefined && !(isObject(archived) && onlyKeys(archived, ['on', 'amount']) && isCalendarDay(archived.on) && amountOrNull(archived.amount))) return false;
+  return true;
+}
+
+/** The current shape, closed: anything else is unrecognised. */
+export function isGoalPlanEntry(v: unknown): v is GoalPlanEntry {
+  return (
+    isObject(v) &&
+    onlyKeys(v, ['v', 'save', 'core', 'plan', 'before']) &&
+    v.v === 1 &&
+    (v.save === undefined || (typeof v.save === 'string' && v.save.length > 0 && v.save.length <= 64)) &&
+    isWitness(v.core) &&
+    isStoredPlan(v.plan) &&
+    (v.before === null || (isObject(v.before) && onlyKeys(v.before, ['core', 'plan']) && isWitness(v.before.core) && isStoredPlan(v.before.plan)))
+  );
+}
+
+export const goalPlansStore = defineMapStore<GoalPlanEntry>('goal-plans', {
+  what: 'goal plans',
+  isValid: isGoalPlanEntry,
+  exportable: true, // what the person set for each goal
+});
+
+/** A goal from the blob, as its four fields: what every release reads, so
+ *  whatever an earlier one left there reads as it always did. */
+export type GoalCore = { id: string } & Witness;
+
+export function coreOf(g: StoredGoal): GoalCore {
+  const raw = g as Partial<Record<keyof StoredGoal, unknown>>;
+  return {
+    id: String(raw.id ?? ''),
+    name: String(raw.name ?? ''),
+    target: Number(raw.target),
+    account_id: typeof raw.account_id === 'string' ? raw.account_id : null,
+  };
+}
+
+export const witnessOf = (g: Witness): Witness => ({ name: g.name, target: g.target, account_id: g.account_id });
+const sameWitness = (a: Witness, b: Witness) => a.name === b.name && a.target === b.target && a.account_id === b.account_id;
+const emptyStoredPlan = (p: StoredPlan) => Object.keys(p).length === 0;
+const samePlan = (a: StoredPlan, b: StoredPlan) => JSON.stringify(canonical(a)) === JSON.stringify(canonical(b));
+/** A plan with its fields in one order, for comparing. */
+function canonical(p: StoredPlan): StoredPlan {
+  return {
+    ...(p.allocation ? { allocation: { amount: p.allocation.amount, account_id: p.allocation.account_id } } : {}),
+    ...(p.monthly_target !== undefined ? { monthly_target: p.monthly_target } : {}),
+    ...(p.target_date !== undefined ? { target_date: p.target_date } : {}),
+    ...(p.plan_start
+      ? { plan_start: { date: p.plan_start.date, amount: p.plan_start.amount, ...(p.plan_start.account_id !== undefined ? { account_id: p.plan_start.account_id } : {}) } }
+      : {}),
+    ...(p.archived ? { archived: { on: p.archived.on, amount: p.archived.amount } } : {}),
+  };
+}
+
+/** A goal as read: its four fields as stored, the plan the entry gives it
+ *  (`stored`, by the rule in the header), and that plan as it applies
+ *  (`plan`: an allocation set on another account taken off, and kept in
+ *  `earlierAllocation`). */
+export type GoalRecord = {
+  core: GoalCore;
+  stored: StoredPlan;
+  plan: StoredPlan;
+  earlierAllocation: number | null;
+};
+
+/** The plan an entry gives the goal (see AN ENTRY in the header). */
+export function chosenPlan(core: Witness, entry: GoalPlanEntry | undefined): StoredPlan {
+  if (!entry) return {};
+  if (sameWitness(core, entry.core)) return entry.plan;
+  if (entry.before && sameWitness(core, entry.before.core)) return entry.before.plan;
+  return entry.plan;
+}
+
+/** Two account ids are the same account once links are followed. */
+const sameAccount = (a: string | null, b: string | null, links: ReadonlyMap<string, Link>) =>
+  a !== null && b !== null && resolveId(a, links as Map<string, Link>) === resolveId(b, links as Map<string, Link>);
+
+/** The goal as read, from its blob entry and its plan entry: its allocation,
+ *  and where its line to a target date starts, apply only on the account they
+ *  were set on (a start saved without one is taken as its goal's). */
+export function recordOf(g: GoalCore, entry: GoalPlanEntry | undefined, links: ReadonlyMap<string, Link>): GoalRecord {
+  const stored = chosenPlan(g, entry);
+  const { allocation, plan_start, ...rest } = stored;
+  const allocationApplies = !allocation || sameAccount(allocation.account_id, g.account_id, links);
+  const startApplies = !plan_start || plan_start.account_id === undefined || sameAccount(plan_start.account_id ?? null, g.account_id, links);
+  const plan: StoredPlan = { ...rest, ...(allocation && allocationApplies ? { allocation } : {}), ...(plan_start && startApplies ? { plan_start } : {}) };
+  return { core: g, stored, plan: allocationApplies && startApplies ? stored : plan, earlierAllocation: allocation && !allocationApplies ? allocation.amount : null };
+}
+
+export type GoalsRead = { records: GoalRecord[]; entries: Map<string, GoalPlanEntry>; links: Map<string, Link> };
+
+/**
+ * Every goal as read, in the blob's order, with the entries as stored and the
+ * links followed (goalLinks, read after both stores). Strict: a blob or an
+ * entry that can't be read throws (StoredDataUnreadableError), never reads as
+ * no goals or no plan. `readOnly` for a reader that must change nothing;
+ * `strictLinks` for a writer, which decides on the links (whether a goal
+ * moved) and so must never take links it couldn't read for none.
+ */
+export async function readGoalRecords(ctx: Ctx, opts: { readOnly?: boolean; strictLinks?: boolean } = {}): Promise<GoalsRead> {
+  const goals = await getGoals(ctx);
+  const entries = await goalPlansStore.getAll(ctx);
+  const links = await goalLinks(ctx, opts);
+  return { records: goals.map((g) => recordOf(coreOf(g), entries.get(coreOf(g).id), links)), entries, links };
+}
+
+/** Why a save can't be taken just now: what it follows account links with
+ *  can't be read, and it decides on them whether a goal moved. A 409 with
+ *  what can't be read, and what still works (lib/store-failure.ts). */
+export class GoalLinksUnreadableError extends StoreRefusedError {
+  constructor(readonly part: 'link' | 'accounts') {
+    super(
+      part === 'link'
+        ? 'A saved account link can’t be read, and a save needs the links to tell whether a goal moved to another account. Your goals are still shown as saved. To save changes, remove that link under Reconnected accounts on the Accounts tab, and link again if needed.'
+        : 'What Nya keeps of a connection’s accounts can’t be read just now, and a save needs it to tell whether a goal moved to another account. Your goals are still shown as saved. It is written again the next time that connection’s accounts load, and changes can be saved then.',
+      409
+    );
+    this.name = 'GoalLinksUnreadableError';
+  }
+}
+
+/**
+ * The ids live at a stored connection (lib/links.ts liveAccountIds), strictly,
+ * for a save: a stored connection's record that can't be read throws
+ * GoalLinksUnreadableError. One of a connection no longer stored names no live
+ * id either way, so it stops nothing. Storage out of reach throws as it is.
+ */
+async function liveIdsForSave(ctx: Ctx): Promise<Set<string>> {
+  const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
+  const stored = new Set(items.map((i) => i.item_id));
+  if (remembered.unreadable.some((id) => stored.has(id))) throw new GoalLinksUnreadableError('accounts');
+  return new Set(Object.entries(remembered.byItem).flatMap(([item, accounts]) => (stored.has(item) ? accounts.map((a) => a.account_id) : [])));
+}
+
+/**
+ * The account links that apply, for following a goal's account to the id it
+ * has now. Lenient for a display, as the goals route always was: links that
+ * can't be read leave every id as stored, which can only leave a goal on an
+ * older id (it then reads as disconnected), never move one to an account it
+ * doesn't track. `strictLinks` is for a save, which decides on them: a link,
+ * or a stored connection's record of its accounts, that can't be read throws
+ * GoalLinksUnreadableError, saying which; storage out of reach throws as it
+ * is. `readOnly` changes nothing while reading (lib/links.ts liveAccountIds).
+ */
+export async function goalLinks(ctx: Ctx, opts: { readOnly?: boolean; strictLinks?: boolean } = {}): Promise<Map<string, Link>> {
+  if (opts.strictLinks) {
+    const [{ links, unreadable }, live] = await Promise.all([readLinks(ctx), liveIdsForSave(ctx)]);
+    if (unreadable.size > 0) throw new GoalLinksUnreadableError('link');
+    return effectiveLinks(links, live);
+  }
+  try {
+    return effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { readOnly: opts.readOnly }));
+  } catch {
+    return new Map();
+  }
+}
+
+/** A goal as the app and the API are given it (lib/goal-model.ts Goal): its
+ *  account followed to the id it has now, its plan, and what the server
+ *  worked out, read only. */
+export function wireGoal(r: GoalRecord, links: ReadonlyMap<string, Link>): Goal {
+  const account_id = r.core.account_id ? resolveId(r.core.account_id, links as Map<string, Link>) : null;
+  const plan: GoalPlan = {
+    ...(r.plan.allocation ? { allocation: r.plan.allocation.amount } : {}),
+    ...(r.plan.monthly_target !== undefined ? { monthly_target: r.plan.monthly_target } : {}),
+    ...(r.plan.target_date !== undefined ? { target_date: r.plan.target_date } : {}),
+    ...(r.plan.archived ? { archived: true as const } : {}),
+  };
+  return {
+    id: r.core.id,
+    name: r.core.name,
+    target: r.core.target,
+    account_id,
+    ...(Object.keys(plan).length > 0 ? { plan } : {}),
+    ...(r.plan.plan_start ? { plan_start: { date: r.plan.plan_start.date, amount: r.plan.plan_start.amount } } : {}),
+    ...(r.plan.archived ? { archived_on: r.plan.archived.on, ...(r.plan.archived.amount !== null ? { archived_amount: r.plan.archived.amount } : {}) } : {}),
+    ...(account_id !== r.core.account_id ? { relinked: true as const } : {}),
+    ...(r.earlierAllocation !== null ? { earlier_allocation: r.earlierAllocation } : {}),
+  };
+}
+
+/** A goal as a save leaves it: its four fields, and its plan as stored. */
+export type NextGoal = { core: GoalCore; plan: StoredPlan };
+
+/** An entry in one form, for telling two apart by what they hold. */
+const entryText = (e: GoalPlanEntry) =>
+  JSON.stringify({ v: e.v, save: e.save ?? null, core: witnessOf(e.core), plan: canonical(e.plan), before: e.before ? { core: witnessOf(e.before.core), plan: canonical(e.before.plan) } : null });
+
+/**
+ * Saves the goal list, by THE WRITE ORDER in the header: every goal's entry,
+ * the blob, then each entry settled (its `before` cleared, or it deleted when
+ * no goal needs it) while it is still what this save wrote or read. `read` is
+ * what this save read, strictly, before deciding anything (readGoalRecords):
+ * each changed entry carries the goal as it read then as its `before`.
+ */
+export async function writeGoalRecords(ctx: Ctx, next: readonly NextGoal[], read: { records: readonly GoalRecord[]; entries: ReadonlyMap<string, GoalPlanEntry> }): Promise<void> {
+  const save = crypto.randomUUID();
+  const before = new Map(read.records.map((r) => [r.core.id, r]));
+  const writes: [string, GoalPlanEntry][] = [];
+  for (const n of next) {
+    if (!read.entries.has(n.core.id) && emptyStoredPlan(n.plan)) continue;
+    const was = before.get(n.core.id);
+    const changed = !was || !sameWitness(was.core, n.core) || !samePlan(was.stored, n.plan);
+    writes.push([
+      n.core.id,
+      { v: 1, save, core: witnessOf(n.core), plan: canonical(n.plan), before: was && changed ? { core: witnessOf(was.core), plan: canonical(was.stored) } : null },
+    ]);
+  }
+  if (writes.length > 0) await goalPlansStore.setMany(ctx, writes);
+  await setGoals(ctx, next.map((n) => ({ id: n.core.id, name: n.core.name, target: n.core.target, account_id: n.core.account_id })));
+
+  // Settled, each only while it is what this save left (or, for an entry no
+  // goal of this save has, what it read): a `before` cleared, an entry no goal
+  // needs deleted. Anything another save has written since is left to it.
+  const kept = new Set(next.map((n) => n.core.id));
+  const settle = new Map<string, { expect: string; then: GoalPlanEntry | null }>();
+  for (const [id, entry] of writes) {
+    if (emptyStoredPlan(entry.plan)) settle.set(id, { expect: entryText(entry), then: null });
+    else if (entry.before) settle.set(id, { expect: entryText(entry), then: { ...entry, before: null } });
+  }
+  for (const [id, entry] of read.entries) if (!kept.has(id)) settle.set(id, { expect: entryText(entry), then: null });
+  const ids = [...settle.keys()];
+  try {
+    for (let i = 0; i < ids.length; i += MANY_AT_ONCE) {
+      await goalPlansStore.updateMany(ctx, ids.slice(i, i + MANY_AT_ONCE), (current) => {
+        const out = new Map<string, GoalPlanEntry | null>();
+        for (const [id, cur] of current) {
+          const want = settle.get(id)!;
+          if (cur && entryText(cur) === want.expect) out.set(id, want.then);
+        }
+        return out;
+      });
+    }
+  } catch (err) {
+    // The save itself has landed: a refusal now (entries that kept changing)
+    // must not tell the page it wasn't made. It is told the save failed and
+    // shows what is stored, and the next save settles what this one left.
+    if (err instanceof StoreRefusedError) throw new Error(`Goal plans: saved, but settling was refused (${err.name})`);
+    throw err;
+  }
+}

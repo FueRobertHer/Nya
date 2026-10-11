@@ -47,6 +47,8 @@ export type EndedAccount = {
   label: { name: string; institution: string; mask: string | null };
   type: string | null;
   item_id: string | null;
+  /** Its balance's currency, where its end recorded it. */
+  currency?: string;
   set_at: string;
 };
 
