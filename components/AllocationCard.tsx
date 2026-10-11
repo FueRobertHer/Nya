@@ -46,7 +46,7 @@ import {
   tenthPct,
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { compactMoney } from '@/lib/format';
+import { compactMoney, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { instantDay } from '@/lib/local-date';
 import {
@@ -378,7 +378,7 @@ export function ShareTable<K extends string>({
   if (rows.length === 0) return <p className="empty-note">Nothing to show: no balance or position to count.</p>;
   return (
     <>
-      <div className="alloc-bar" role="img" aria-label={rows.map((r) => `${label(r.slot)} ${r.label ?? money(r.amount)}`).join(', ')}>
+      <div className="alloc-bar" role="img" aria-label={spoken(rows.map((r) => `${label(r.slot)} ${r.label ?? money(r.amount)}`).join(', '))}>
         {positive.map((r) => (
           <span key={r.slot} className="alloc-seg" style={{ flexGrow: r.amount, background: colors[r.slot] }} />
         ))}

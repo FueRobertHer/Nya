@@ -30,7 +30,9 @@ import {
 } from '@/lib/category-templates';
 import { budgetMeters, placeBudgets, type Budgets } from '@/lib/budget-set';
 import { changeLine, keptLine, PlanView, CategoryTemplatesView } from '@/components/CategoryTemplates';
+import TemplateOffer, { offeredHere, TemplateOfferCard, TEMPLATE_OFFER_KEY } from '@/components/TemplateOffer';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { createElement } from 'react';
 
 // Starter category templates (lib/category-templates.ts): what a template may
 // change and nothing else (it never deletes or merges a category, never moves
@@ -306,6 +308,31 @@ describe('the preview', () => {
     const list = renderToStaticMarkup(CategoryTemplatesView({ step: { at: 'list' }, busy: false, error: null, onPreview: () => {}, onApply: () => {}, onUndo: () => {}, onList: () => {} }));
     for (const id of TEMPLATE_IDS) expect(list).toContain(TEMPLATES[id].name);
     expect(list).toContain('it never deletes or merges one');
+  });
+});
+
+describe('the offer, once', () => {
+  test('says what the sets are, and lets you keep yours', () => {
+    const html = renderToStaticMarkup(TemplateOfferCard({ onKeep: () => {}, onSee: () => {} }));
+    expect(html).toContain('Categories that fit you');
+    expect(html).toContain('Keep mine');
+    expect(html).toContain('See starter sets');
+  });
+
+  test('isn’t drawn on the server, before the device says whether it had it', () => {
+    expect(renderToStaticMarkup(createElement(TemplateOffer, { taxonomy: seeded(), onTaxonomy: () => {} }))).toBe('');
+  });
+
+  test('a device that can’t say whether it had the offer offers it, and one that had it doesn’t', () => {
+    const was = globalThis.localStorage;
+    try {
+      Object.assign(globalThis, { localStorage: { getItem: () => { throw new Error('SecurityError'); } } });
+      expect(offeredHere()).toBe(false);
+      Object.assign(globalThis, { localStorage: { getItem: (k: string) => (k === TEMPLATE_OFFER_KEY ? '1' : null) } });
+      expect(offeredHere()).toBe(true);
+    } finally {
+      Object.assign(globalThis, { localStorage: was });
+    }
   });
 });
 

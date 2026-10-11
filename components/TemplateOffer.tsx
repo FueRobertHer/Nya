@@ -51,32 +51,38 @@ export default function TemplateOffer({ taxonomy, onTaxonomy }: { taxonomy: Taxo
   return (
     <>
       {offered && (
-        <div className="card template-offer">
-          <div className="inst-header">
-            <div className="inst-name">Categories that fit you</div>
-          </div>
-          <p className="panel-note" style={{ marginTop: 0 }}>
-            Your categories are the ones Nya started you with, one for each of Plaid’s. A starter set may suit you better: Simple, with about a dozen
-            broad ones, or Freelancer, with your business income and expenses apart. You see what one changes before it does.
-          </p>
-          <div className="button-pair">
-            <button className="secondary" onClick={end}>
-              Keep mine
-            </button>
-            <button
-              onClick={() => {
-                end();
-                setOpen(true);
-              }}
-            >
-              See starter sets
-            </button>
-          </div>
-        </div>
+        <TemplateOfferCard
+          onKeep={end}
+          onSee={() => {
+            end();
+            setOpen(true);
+          }}
+        />
       )}
       <Sheet open={open} title="Starter sets" onClose={() => setOpen(false)}>
         <CategoryTemplates onTaxonomy={onTaxonomy} />
       </Sheet>
     </>
+  );
+}
+
+/** The offer itself. */
+export function TemplateOfferCard({ onKeep, onSee }: { onKeep: () => void; onSee: () => void }) {
+  return (
+    <div className="card template-offer">
+      <div className="inst-header">
+        <div className="inst-name">Categories that fit you</div>
+      </div>
+      <p className="panel-note" style={{ marginTop: 0 }}>
+        Your categories are the ones Nya started you with, one for each of Plaid’s. A starter set may suit you better: Simple, with about a dozen broad
+        ones, or Freelancer, with your business income and expenses apart. You see what one changes before it does.
+      </p>
+      <div className="button-pair">
+        <button className="secondary" onClick={onKeep}>
+          Keep mine
+        </button>
+        <button onClick={onSee}>See starter sets</button>
+      </div>
+    </div>
   );
 }

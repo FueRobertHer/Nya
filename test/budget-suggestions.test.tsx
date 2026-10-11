@@ -47,6 +47,7 @@ const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { syncsStore } = await import('@/lib/connection-records');
 const { setExcluded } = await import('@/lib/txn-annotations');
+const { rulesStore } = await import('@/lib/rules');
 const monthRoute = await import('@/app/api/budgets/month/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
 
@@ -305,9 +306,17 @@ describe('the month answer', () => {
       bankRow('b', on(-2), 99.5),
       bankRow('c', on(-1), 90),
       bankRow('excluded', on(-1, 12), 1000),
+      bankRow('gym', on(-2, 14), 400),
+      bankRow('euro', on(-2, 15), 500, 'food and drink', { iso_currency_code: 'EUR' }),
       bankRow('now', on(0, 2), 700),
     ]);
+    // One you excluded, and one a rule of yours hides: neither counts.
     await setExcluded(ctx, 'excluded', true);
+    const now = new Date().toISOString();
+    await rulesStore.set(ctx, {
+      version: 1,
+      rules: [{ id: 'rule-1', enabled: true, priority: 1, conditions: [{ field: 'name', op: 'contains', value: 'GYM' }], actions: { hide: true }, created_at: now, updated_at: now }],
+    });
     const t: Taxonomy = (await call(budgetsRoute.GET())).body.categories;
     const food = t.categories.find((c) => c.name === 'food and drink')!;
     const { status, body } = await month();
@@ -316,6 +325,8 @@ describe('the month answer', () => {
     expect(body.suggestions.categories[food.id]).toEqual({ average: 103.33, amount: 105 });
     expect(body.suggestions.groups[food.group]).toEqual({ average: 103.33, amount: 105 });
     expect(body.suggestions.currency).toBe('USD');
+    // The one in euros is named, never added.
+    expect(body.suggestions.left_out).toEqual([{ currency: 'EUR', count: 1 }]);
   });
 
   test('none for a month gone by, nor without the history', async () => {
