@@ -269,6 +269,14 @@ export async function readReport(
     return ids.map((id) => endDay.get(id)!).sort().at(-1)!;
   };
 
+  // A connection's accounts that ended and that it no longer reports, as
+  // their ends name them: still its accounts on the days before.
+  const endedOnly = (item_id: string): { id: string; name: string; type: string | null }[] => {
+    const reported = new Set((remembered.byItem[item_id] ?? []).map((a) => bank.lifecycle.rootOf.get(a.account_id) ?? a.account_id));
+    return [...bank.lifecycle.accounts].flatMap(([root, { entry }]) =>
+      entry.item_id === item_id && endOf(entry.lifecycle) !== null && !reported.has(root) ? [{ id: root, name: entry.label.name, type: entry.type }] : []
+    );
+  };
   const sources: SourceFacts[] = bank.sources.map((s) => {
     const f = facts.of(s.item_id);
     return {
@@ -285,11 +293,16 @@ export async function readReport(
       problem: f.problem,
       records_unreadable: f.records_unreadable === true,
       holds: holds.get(s.item_id) ?? { investment: false, loans: false },
-      // Its bank accounts and cards, as it last reported them, not hidden,
-      // with what files imported into each cover.
-      accounts: (remembered.byItem[s.item_id] ?? [])
-        .filter((a) => (a.type === 'depository' || a.type === 'credit') && !hidden.has(a.account_id))
-        .map((a) => ({ name: a.name, covers: covered.get(a.account_id) ?? [] })),
+      // Its bank accounts and cards, as it last reported them, and those
+      // that ended that it no longer reports (a bank stops returning a closed
+      // account), not hidden, with what files imported into each cover and
+      // the day each that ended stopped counting, up to which it needs them.
+      accounts: [
+        ...(remembered.byItem[s.item_id] ?? []).map((a) => ({ id: a.account_id, name: a.name, type: a.type })),
+        ...endedOnly(s.item_id),
+      ]
+        .filter((a) => (a.type === 'depository' || a.type === 'credit') && !hidden.has(a.id))
+        .map((a) => ({ name: a.name, covers: covered.get(a.id) ?? [], end: endDay.get(a.id) ?? null })),
       ended_by: endedBy(s.item_id),
     };
   });

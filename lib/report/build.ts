@@ -105,12 +105,15 @@
 //
 // IMPORTED. Transactions imported into a linked account from its bank's
 // files (#52, lib/history-import/) are its rows, in the period as the
-// Activity tab counts them, from the period's first day on. Where they
-// reach, the bank's own don't need to: an institution's transactions begin,
-// for a period, on the latest day from which each of its bank accounts and
-// cards is covered through the period's last day, by the bank's own days
-// (its oldest stored transaction on) or by a file imported into it that
-// holds every transaction of its own period. So a period the files cover for
+// Activity tab counts them, from the period's first day on (and, for an
+// account that ended, up to its end: see ENDED ACCOUNTS). Where they reach,
+// the bank's own don't need to: an institution's transactions begin, for a
+// period, on the latest day from which each of its bank accounts and cards
+// is covered through the period's last day (one that ended in the period,
+// through the day before its end; one that ended by its first, not at all),
+// by the bank's own days (its oldest stored transaction on) or by a file
+// imported into it that holds every transaction of its own period. So a
+// period the files cover for
 // every account has no gap, and one they cover for some accounts names
 // those, and how far back each reaches, beside the day the rest begin. A
 // bank whose transactions Plaid doesn't provide, or the person didn't allow,
@@ -189,8 +192,10 @@ export type SourceFacts = {
   /** Set for a bank a SimpleFIN connection reaches. */
   connector?: ConnectorSourceFacts;
   /** Its bank accounts and cards (not hidden), each with the days the files
-   *  imported into it cover (see IMPORTED); absent when not known. */
-  accounts?: { name: string; covers: { from: string; to: string }[] }[];
+   *  imported into it cover (see IMPORTED) and the day it stopped counting,
+   *  when it ended (lib/lifecycle.ts): it needs covering only up to then;
+   *  absent when not known. */
+  accounts?: { name: string; covers: { from: string; to: string }[]; end?: string | null }[];
 };
 
 /** Accounts a SimpleFIN connection kept up to date, let go on one day and
@@ -567,10 +572,12 @@ function joinedRanges(ranges: readonly { from: string; to: string }[]): { from: 
  *  that reach further back. Null when every account covers the whole
  *  period. `bank` is its oldest stored transaction. */
 function startsFor(s: SourceFacts, bank: string, period: Period): { first: string; files: boolean; imported: { account: string; from: string }[] } | null {
-  const accounts = s.accounts ?? [];
+  // An account that ended by the period's first day needs nothing of it.
+  const accounts = (s.accounts ?? []).filter((a) => throughOf(a, period) !== null);
   if (!accounts.some((a) => a.covers.length > 0)) return bank > period.start ? { first: bank, files: false, imported: [] } : null;
   const starts = accounts.map((a) => {
-    const run = joinedRanges([{ from: bank, to: period.today }, ...a.covers]).find((r) => r.from <= period.through && period.through <= r.to);
+    const through = throughOf(a, period)!;
+    const run = joinedRanges([{ from: bank, to: period.today }, ...a.covers]).find((r) => r.from <= through && through <= r.to);
     return { account: a.name, from: run && run.from < bank ? run.from : bank };
   });
   const first = starts.reduce((latest, a) => (a.from > latest ? a.from : latest), starts[0].from);
@@ -578,15 +585,27 @@ function startsFor(s: SourceFacts, bank: string, period: Period): { first: strin
   return { first, files: first < bank, imported: starts.filter((a) => a.from < first) };
 }
 
+/** The last day of the period an account needs its transactions through:
+ *  the period's last, or, for one that ended in it (lib/lifecycle.ts), the
+ *  day before its end; null for one that ended by the period's first day,
+ *  which needs none of it. */
+function throughOf(a: { end?: string | null }, period: Pick<Period, 'start' | 'through'>): string | null {
+  if (!a.end) return period.through;
+  if (a.end <= period.start) return null;
+  return minDay(period.through, addDays(a.end, -1));
+}
+
 /** Whether every one of an institution's bank accounts and cards (none
- *  known: no) is covered for the whole period, by the bank's own days from
- *  `bank` on, if any, and by the files imported into it (see IMPORTED). */
+ *  known: no) is covered for the period, each through the day it counts to
+ *  (throughOf), by the bank's own days from `bank` on, if any, and by the
+ *  files imported into it (see IMPORTED). */
 function filesCoverAll(s: SourceFacts, bank: string | null, period: Period): boolean {
   const accounts = s.accounts ?? [];
   if (accounts.length === 0 || !accounts.some((a) => a.covers.length > 0)) return false;
-  return accounts.every((a) =>
-    joinedRanges([...(bank ? [{ from: bank, to: period.today }] : []), ...a.covers]).some((r) => r.from <= period.start && period.through <= r.to)
-  );
+  return accounts.every((a) => {
+    const through = throughOf(a, period);
+    return through === null || joinedRanges([...(bank ? [{ from: bank, to: period.today }] : []), ...a.covers]).some((r) => r.from <= period.start && through <= r.to);
+  });
 }
 
 /** Each account whose files reach back before the institution's oldest

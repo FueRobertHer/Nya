@@ -312,4 +312,23 @@ describe('a bank Plaid gives no transactions for, or that never synced', () => {
     expect(built({ first_seen: seen, accounts: [] }, period(daysAgo(1200), daysAgo(1100))).gaps.map((g) => g.kind)).toEqual(['begins_late']);
     expect(built({ first_seen: seen, accounts: [{ name: 'Checking', covers: [{ from: daysAgo(1300), to: daysAgo(1000) }] }] }, period(daysAgo(1200), daysAgo(1100))).gaps).toEqual([]);
   });
+
+  test('an account that ended (#50) needs the files only up to its end, and one that ended before the period none of it', () => {
+    const p = period(daysAgo(300), daysAgo(200));
+    const checking = { name: 'Checking', covers: [{ from: daysAgo(400), to: daysAgo(100) }] };
+    // Savings closed on day 259: its files reach the day before, so the
+    // period is whole; closed on day 240, its days 259 to 241 aren't.
+    expect(built({ no_transactions: 'refused', accounts: [checking, { name: 'Savings', covers: [{ from: daysAgo(400), to: daysAgo(260) }], end: daysAgo(259) }] }, p).gaps).toEqual([]);
+    expect(
+      built({ no_transactions: 'refused', accounts: [checking, { name: 'Savings', covers: [{ from: daysAgo(400), to: daysAgo(260) }], end: daysAgo(240) }] }, p).gaps.map((g) => g.kind)
+    ).toEqual(['refused']);
+    // Ended before the period: nothing of it is needed, files or none.
+    expect(built({ no_transactions: 'refused', accounts: [checking, { name: 'Savings', covers: [], end: daysAgo(350) }] }, p).gaps).toEqual([]);
+    // The bank's own begin late (day 250): the files carry Checking back,
+    // and Savings needs them only to the day before it closed.
+    const late = (end: string | null) =>
+      built({ first_date: daysAgo(250), accounts: [checking, { name: 'Savings', covers: [{ from: daysAgo(400), to: daysAgo(270) }], end }] }, p).gaps.map((g) => g.kind);
+    expect(late(daysAgo(269))).toEqual([]);
+    expect(late(null)).toEqual(['begins_late']);
+  });
 });

@@ -8,13 +8,15 @@ import { parseCsv } from './csv-parse';
 // which counts them as not counted), through every id the account has had,
 // and counted before it; kept in the download and its OFX statement. An
 // account its bank stopped returning once it closed keeps its imported rows
-// before its end, and takes a file all the same, the review saying what of
-// it counts in nothing. The chart's note and the API's stretch from imports say
-// nothing of what was drawn of an account from its end on.
+// before its end, takes a file all the same, the review saying what of it
+// counts in nothing, and is covered by its files in a report up to its end.
+// The chart's note and the API's stretch from imports say nothing of what
+// was drawn of an account from its end on.
 //
 // The drawn points themselves are in test/history-import-walk-route.test.ts,
-// and the lifecycle's questions reading the bank's own in
-// test/lifecycle-detection.test.ts.
+// the rest of reports' coverage by files of an account that ended in
+// test/history-import-report.test.ts, and the lifecycle's questions reading
+// the bank's own in test/lifecycle-detection.test.ts.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 delete process.env.MAX_TXN_BLOB_CHARS;
@@ -249,6 +251,18 @@ describe('rows imported into an account that ended', () => {
     expect(after).toContain(now['BOOK SHOP']);
     expect(after).not.toContain(now['LATE FEE']);
     expect(now['LATE FEE']).toBeDefined();
+  });
+
+  test('its bank no longer returning it, a report still counts its files as covering it up to its end', async () => {
+    await importFile(STATEMENT);
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(100) }, CHECKING);
+    await remember(['acc_card']);
+    // Chase's own transactions begin on day 55: the card's earlier ones
+    // aren't in Nya, while Checking's files reach back past the period.
+    const period = resolvePeriod({ kind: 'range', start: daysAgo(300), end: daysAgo(120) }, 'UTC', Date.now());
+    if ('error' in period) throw new Error(period.error);
+    const report = await readReport(ctx, period);
+    expect(report.gaps.find((g) => g.kind === 'begins_late')).toMatchObject({ first: daysAgo(55), imported: [{ account: 'Checking', from: daysAgo(320) }] });
   });
 });
 
