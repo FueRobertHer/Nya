@@ -31,7 +31,8 @@
 // UNDO takes out every row the import kept (counted ones and duplicates)
 // except those a later import found already there, which it hands to the
 // earliest such import, and what was said about them (an exclusion, a
-// category), then its records. The import changed nothing else, so the
+// category), their splits and their places in groups (lib/split-gone.ts),
+// then its records. The import changed nothing else, so the
 // account is exactly as it was before it; which rows count is worked out on
 // every read (lib/history-import/match.ts settle), so that is as it was too:
 // a later import's duplicate of one of its rows counts again.
@@ -41,6 +42,7 @@ import type { Ctx } from '../containers';
 import { MANY_AT_ONCE, StoreRefusedError, StoredDataUnreadableError, UnreadableEntriesError } from '../repo';
 import { forgetAnnotations } from '../txn-annotations';
 import { forgetOverrides } from '../overrides';
+import { forgetSplitsAndGroups } from '../split-gone';
 import { loggable } from '../log-safe';
 import type { FileFormat, Problem } from '../import/record';
 import type { NormalizedRecord } from '../import/normalize';
@@ -508,10 +510,13 @@ export async function undoHistoryImport(ctx: Ctx, ids: readonly string[], import
       .catch((err) => console.warn('history import: rows kept for a later import could not be noted on it', loggable(err)));
   }
   // What was said about the rows (an exclusion, tags, a note, a category)
-  // goes with them. Best effort: a record left behind names a row that no
-  // longer exists, which is never shown.
+  // goes with them, and so do their splits and their places in groups (a
+  // group left with none goes). Best effort: a record left behind names a row
+  // that no longer exists, which is never shown, and a group says one of its
+  // transactions isn't there.
   await forgetAnnotations(ctx, result.ids).catch((err) => console.warn('history import: exclusions, tags and notes of undone rows were left behind', loggable(err)));
   await forgetOverrides(ctx, result.ids).catch((err) => console.warn('history import: categories of undone rows were left behind', loggable(err)));
+  await forgetSplitsAndGroups(ctx, result.ids).catch((err) => console.warn('history import: splits or groups of undone rows were left behind', loggable(err)));
   await historyImportStore.remove(ctx, import_id);
   await historyImportSummaryStore.remove(ctx, import_id);
   return result;
@@ -622,7 +627,8 @@ export async function listHistoryImports(ctx: Ctx, ids: readonly string[], settl
 /**
  * For forgetting an earlier account (lib/links.ts forgetEarlierAccount): the
  * rows imported under its id, its imports' records and summaries, what was
- * said about those rows, and how its last file was read. Readable or not: the
+ * said about those rows, their splits and their places in groups, and how
+ * its last file was read. Readable or not: the
  * person asked for everything about it to go. But a row an import into
  * another account found already there (an import made while the two were
  * linked) is that import's transaction too: it is handed to the earliest
@@ -695,6 +701,7 @@ export async function forgetImportedHistory(ctx: Ctx, account_id: string): Promi
   const gone = rows.filter((r) => !relied.has(r.id)).map((r) => r.id);
   await forgetAnnotations(ctx, gone);
   await forgetOverrides(ctx, gone);
+  await forgetSplitsAndGroups(ctx, gone);
   // How its last file was read (lib/import/store.ts), kept per account.
   await importSettingsStore.remove(ctx, account_id);
   return { handedTo: [...handed.keys()] };

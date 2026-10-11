@@ -37,6 +37,7 @@ import { Sheet } from './Sheet';
 import { categoryOptions, nameForRules, type Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { bankRows } from '@/lib/split-rows';
 import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
 import { formatMoney } from '@/lib/format';
@@ -162,6 +163,14 @@ export function changedFields(fields: Fields, start: ReturnType<typeof editStart
   return out as Partial<Fields>;
 }
 
+/** The rows a payee typed is matched against, newest first: each transaction
+ *  entered or imported, as it was, a split one whole under its own category,
+ *  never a group's row, whose name is the group's (#39, lib/split-rows.ts
+ *  bankRows). */
+export function pastPayeeRows(txns: readonly Txn[] | null): Txn[] {
+  return bankRows(txns ?? []).filter((t) => t.source);
+}
+
 export default function ManualTxnSheet({
   target,
   institutions,
@@ -195,7 +204,7 @@ export default function ManualTxnSheet({
   );
   const categories = useMemo(() => categoryOptions(txns), [txns]);
   // Payees entered before, newest first, for the payee field to suggest.
-  const pastRows = useMemo(() => (txns ?? []).filter((t) => t.source), [txns]);
+  const pastRows = useMemo(() => pastPayeeRows(txns), [txns]);
   const payees = useMemo(() => [...new Set(pastRows.map((t) => t.name))].slice(0, 50), [pastRows]);
 
   // What the form shows: kept while the drawer slides out, so it doesn't

@@ -58,8 +58,9 @@
 // never counted while its twin is there (lib/history-import/match.ts settle);
 // or `distinct_from` (the bank rows the person said it is not). Rows are never
 // edited: a category is changed over them (lib/overrides.ts) and an exclusion
-// beside them (lib/txn-annotations.ts), as a bank's row is, and both go with
-// the row, or carry to the bank's row that later stands for it.
+// beside them (lib/txn-annotations.ts), as a bank's row is, a split and a
+// place in a group by their id (lib/splits.ts, lib/groups.ts), and each goes
+// with the row, or carries to the bank's row that later stands for it.
 //
 // READS ARE STRICT, as the seam's are. A book that can't be read is named and
 // its account's imported rows aren't shown or walked, never read as none.

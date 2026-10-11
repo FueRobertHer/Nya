@@ -15,7 +15,8 @@
 // an undo or a re-link does can leave it stale: a duplicate whose bank row a
 // re-link no longer brings counts again. What the person said about a row
 // (its category, an exclusion or an include, tags, a note) carries to the
-// bank's row that stands for it (importedForActivity's `represents`).
+// bank's row that stands for it (importedForActivity's `represents`), and so
+// do its split and its place in a group (lib/split-rows.ts).
 //
 // WHOSE ROWS. A book is filed under the account id its rows were imported
 // into, and an account's rows are those of every id it has had, by the links

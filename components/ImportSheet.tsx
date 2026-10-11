@@ -1545,7 +1545,7 @@ export function PastImports({
                     <div className="error">{plan.error}</div>
                   ) : (
                     <p className="panel-note" style={{ marginTop: 6 }}>
-                      {undoText(plan.plan)} Your exclusions, tags and notes on them are forgotten with them. The balance stays as it is. This can’t be undone.
+                      {undoText(plan.plan)} Your exclusions, tags, notes and splits on them are forgotten with them, and they leave any group they’re in. The balance stays as it is. This can’t be undone.
                     </p>
                   )}
                   <div className="button-pair" style={{ marginTop: 8 }}>

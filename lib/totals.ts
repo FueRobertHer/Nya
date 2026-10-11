@@ -14,7 +14,7 @@
 // out (a bank's fees count as spending), and what was left out for its
 // currency named, never added.
 
-import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText, type Countable, type LeftOut } from './spending';
+import { countsInTotals, isTransfer, isExcluded, leftOutByCurrency, leftOutText, transactionCounter, type Countable, type LeftOut } from './spending';
 import { expectedDates, perMonth, type RecurringSeries } from './recurring';
 
 /** What these totals read of a transaction: its category's words, and,
@@ -34,14 +34,15 @@ export const bucketOf = (t: Pick<TotalsRow, 'category' | 'category_id'>): string
 /** A bucket's sums, and what to call it when nothing names it (a total's
  *  `describe`): the first name a row in it was filed under (one that says
  *  nothing of its category has none), else the first row's words, or
- *  "other". Never an id. */
-type BucketSum = { amount: number; transactions: number; named: string | null; words: string };
+ *  "other". Never an id. Its transactions are counted as transactions, not
+ *  rows (transactionCounter: two parts of one split transaction are one). */
+type BucketSum = { amount: number; transactions: ReturnType<typeof transactionCounter>; named: string | null; words: string };
 
 function addTo(sums: Map<string, BucketSum>, t: TotalsRow, amount: number): void {
   const bucket = bucketOf(t);
-  const s = sums.get(bucket) ?? { amount: 0, transactions: 0, named: null, words: categoryOf(t) };
+  const s = sums.get(bucket) ?? { amount: 0, transactions: transactionCounter(), named: null, words: categoryOf(t) };
   s.amount += amount;
-  s.transactions++;
+  s.transactions.add(t);
   if (s.named === null && t.category_name) s.named = t.category_name;
   sums.set(bucket, s);
 }
@@ -111,7 +112,7 @@ export function categoryTotals(
   }
   const listed = (m: Map<string, BucketSum>): CategoryTotal[] =>
     [...m]
-      .map(([bucket, s]) => ({ category: nameOf(bucket, s, describe), amount: tidy(s.amount), transactions: s.transactions }))
+      .map(([bucket, s]) => ({ category: nameOf(bucket, s, describe), amount: tidy(s.amount), transactions: s.transactions.n }))
       .sort((a, b) => b.amount - a.amount || (a.category < b.category ? -1 : 1));
   return { in: listed(into), out: listed(outOf) };
 }
@@ -129,10 +130,12 @@ export type Summary = {
    *  category's name, and, filed into the person's categories, its id and
    *  group's (null for one not stored yet). */
   categories: SummaryCategory[];
-  /** Rows in the range, and of them: counted in these totals; left out as
-   *  transfers, cash withdrawals or loan payments; left out because the person
-   *  excluded them; counted although whether the person excluded them could
-   *  not be read; left out for another currency (left_out). */
+  /** Transactions in the range, and of them: counted in these totals; left
+   *  out as transfers, cash withdrawals or loan payments; left out because the
+   *  person excluded them; counted although whether the person excluded them
+   *  could not be read; left out for another currency (left_out). Each counted
+   *  as a transaction, never by its rows (transactionCounter): a split one is
+   *  one, a group as many as it holds. */
   transactions: number;
   counted: number;
   transfers: number;
@@ -158,22 +161,22 @@ export function summarize(
 ): Summary {
   let moneyIn = 0;
   let moneyOut = 0;
-  let counted = 0;
-  let transfers = 0;
-  let excluded = 0;
-  let unknown = 0;
-  let transactions = 0;
+  const counted = transactionCounter();
+  const transfers = transactionCounter();
+  const excluded = transactionCounter();
+  const unknown = transactionCounter();
+  const transactions = transactionCounter();
   const byCategory = new Map<string, BucketSum>();
   const ranged: TotalsRow[] = [];
   for (const t of rows) {
     if (!inRange(t.date)) continue;
     ranged.push(t);
-    transactions++;
-    if (t.excluded === null) unknown++;
-    if (isExcluded(t)) excluded++;
-    else if (isTransfer(t)) transfers++;
+    transactions.add(t);
+    if (t.excluded === null) unknown.add(t);
+    if (isExcluded(t)) excluded.add(t);
+    else if (isTransfer(t)) transfers.add(t);
     if (!countsInTotals(t, currency)) continue;
-    counted++;
+    counted.add(t);
     if (t.amount < 0) {
       moneyIn += -t.amount;
     } else if (t.amount > 0) {
@@ -189,13 +192,13 @@ export function summarize(
     net: tidy(moneyIn - moneyOut),
     // Named by `describe`, else by the rows' own name: never an id.
     categories: [...byCategory]
-      .map(([bucket, s]) => ({ ...(describe ? describe(bucket) : { category: nameOf(bucket, s) }), spent: tidy(s.amount), transactions: s.transactions }))
+      .map(([bucket, s]) => ({ ...(describe ? describe(bucket) : { category: nameOf(bucket, s) }), spent: tidy(s.amount), transactions: s.transactions.n }))
       .sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1)),
-    transactions,
-    counted,
-    transfers,
-    excluded,
-    exclusion_unknown: unknown,
+    transactions: transactions.n,
+    counted: counted.n,
+    transfers: transfers.n,
+    excluded: excluded.n,
+    exclusion_unknown: unknown.n,
     left_out: leftOut,
     left_out_text: leftOutText(leftOut, currency),
   };

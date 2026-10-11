@@ -1179,7 +1179,7 @@ function PastHistoryImports({
                     <div className="error">{plan.error}</div>
                   ) : (
                     <p className="panel-note" style={{ marginTop: 6 }}>
-                      {undoText(plan.plan)} What you said about them (a category, an exclusion) goes with them, and the estimated history is drawn again without them. The
+                      {undoText(plan.plan)} What you said about them (a category, an exclusion, a split) goes with them, they leave any group they’re in, and the estimated history is drawn again without them. The
                       balance stays as it is. This can’t be undone.
                     </p>
                   )}

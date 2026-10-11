@@ -10,6 +10,7 @@
 
 import type { Ctx } from './containers';
 import { accountLabels, firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { bankRows } from './split-rows';
 import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, withLiveTags, type RuleActions, type RuleCondition } from './rules';
 import { liveTagIds } from './tags';
 
@@ -35,7 +36,9 @@ export async function readRules(ctx: Ctx, opts: { includeHidden?: boolean } = {}
   // Strict: rules that can't be read are an error (409), never "no rules".
   const [set, activity] = await Promise.all([readRuleSet(ctx), readActivity(ctx, !!opts.includeHidden)]);
   const counts = new Map<string, number>();
-  for (const t of activity.rows) for (const id of t.rule_ids ?? []) counts.set(id, (counts.get(id) ?? 0) + 1);
+  // Each transaction once, as rules match it: a split one whole, a group's
+  // each on its own (lib/split-rows.ts).
+  for (const t of bankRows(activity.rows)) for (const id of t.rule_ids ?? []) counts.set(id, (counts.get(id) ?? 0) + 1);
   // Accounts named as the app names them, read only when a rule names one.
   const account = set?.rules.some((r) => r.conditions.some((c) => c.field === 'account')) ? await accountLabels(ctx) : undefined;
   const names = { ix: activity.ix, tags: activity.tags, account };

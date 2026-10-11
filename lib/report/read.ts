@@ -166,7 +166,9 @@ export async function readReport(
   // out by buildReport, by the Activity tab's rule, and said.
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: period.start, withAccountIds: true, keepEnded: true });
   const [activity, facts, manual, items, settings, remembered, links, fed, letGo] = await Promise.all([
-    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true }),
+    // The ends too, so a split or a group leaves an ended account's later
+    // rows whole and out of its net, for buildReport to leave out and count.
+    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true, endedFrom: endDays(bank.lifecycle) }),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the API lists them: an account that
     // can't be read is left out here and named by the assembly's notes.

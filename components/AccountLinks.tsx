@@ -478,7 +478,8 @@ export function AccountLinksView({
       {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
-        matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
+        matching transactions. Splits and groups don&apos;t carry across: split or group those transactions again.
+        Nothing stored is changed, and Unlink puts it back as it was.
       </p>
     </div>
   );

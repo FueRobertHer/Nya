@@ -327,7 +327,7 @@ export function sourceName(source: string): string {
 /** The words for how an appendix row stands in the totals, or null when it
  *  counts as any other. */
 export function appendixStatus(row: {
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
   pending: boolean;
   exclusion_unknown: boolean;
   currency: string | null;
@@ -337,9 +337,32 @@ export function appendixStatus(row: {
   if (row.not_counted === 'hidden') parts.push('Not counted: hidden by a rule');
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');
   if (row.not_counted === 'currency') parts.push(`Not counted: in ${row.currency}`);
+  if (row.not_counted === 'group') parts.push('Not counted: in a group counted before this period');
   if (row.pending) parts.push('Pending');
   if (row.exclusion_unknown) parts.push('Whether you excluded it couldn’t be read');
   return parts.length > 0 ? parts.join('; ') : null;
+}
+
+/** What a row of the appendix is when it isn't a transaction listed whole:
+ *  a part of a split one, what the bank changed a split one by, or a group's
+ *  net (lib/split-rows.ts). `money` writes an amount in the row's currency. */
+export function appendixSplitWords(
+  row: { source?: string; split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
+  money: (n: number) => string
+): string | null {
+  // The bank changes its own rows' amounts (through Plaid or SimpleFIN); one
+  // entered by hand or imported changes when it is edited or imported again.
+  if (row.split?.remainder) {
+    const bank = row.source === undefined || row.source === 'plaid' || row.source === 'simplefin';
+    return bank ? `What the bank changed this ${money(row.split.whole)} transaction by since it was split` : `What this ${money(row.split.whole)} transaction changed by since it was split`;
+  }
+  if (row.split) return `Part ${row.split.part} of ${row.split.parts} of a ${money(row.split.whole)} transaction`;
+  if (row.group) {
+    const n = row.group.transactions;
+    const missing = row.group.missing > 0 ? `; ${row.group.missing} more ${row.group.missing === 1 ? 'isn’t' : 'aren’t'} here` : '';
+    return `The net of a group of ${n} transaction${n === 1 ? '' : 's'}${missing}`;
+  }
+  return null;
 }
 
 /** A connection's recorded state, in the words of its badge on the Connection

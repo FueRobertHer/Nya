@@ -70,7 +70,43 @@ export type Countable = {
   /** True when you excluded it; null when whether you did could not be read,
    *  which counts it (see isExcluded). */
   excluded?: boolean | null;
+  /** On a part of a split transaction (lib/split-rows.ts): the transaction
+   *  it is part of, counted once where transactions are counted. */
+  split_of?: string;
+  /** On a group's row (lib/split-rows.ts): the transactions it stands for,
+   *  each counted where transactions are counted. */
+  group_members?: readonly unknown[];
+  /** On a transaction of a group counted on a day before what was read
+   *  (lib/split-rows.ts): it counts there, through its group, so in no total
+   *  of what was read. */
+  group_outside?: unknown;
 };
+
+/**
+ * Counts transactions, not rows, as a total's counts do (#39): a split
+ * transaction's parts (split_of) are one transaction, and a group's row is
+ * as many as it holds. Every other row is one. `add` a row, read `n`.
+ */
+export function transactionCounter(): { add: (t: Pick<Countable, 'split_of' | 'group_members'>) => void; readonly n: number } {
+  const splits = new Set<string>();
+  let rows = 0;
+  return {
+    add(t) {
+      if (t.split_of !== undefined) splits.add(t.split_of);
+      else rows += t.group_members ? t.group_members.length : 1;
+    },
+    get n() {
+      return rows + splits.size;
+    },
+  };
+}
+
+/** How many transactions the rows are (transactionCounter). */
+export function countTransactions(rows: Iterable<Pick<Countable, 'split_of' | 'group_members'>>): number {
+  const c = transactionCounter();
+  for (const t of rows) c.add(t);
+  return c.n;
+}
 
 // Plaid's transaction_code is the reliable signal for money that moves without
 // being spent (transfers, ATM withdrawals); the category heuristic covers rows
@@ -152,9 +188,10 @@ export function inCurrency(t: Pick<Countable, 'iso_currency_code' | 'unofficial_
 
 /** Whether a transaction counts in totals of money in and out kept in
  *  `currency` (totalsCurrency): not a transfer or loan payment, not excluded,
- *  and in that currency. */
+ *  in that currency, and not one of a group counted on a day before what was
+ *  read (group_outside), which counts there. */
 export function countsInTotals(t: Countable, currency: string | null): boolean {
-  return !isExcluded(t) && !isTransfer(t) && inCurrency(t, currency);
+  return !isExcluded(t) && !isTransfer(t) && inCurrency(t, currency) && !t.group_outside;
 }
 
 /** How many rows were left out of a total for being in another currency, by
@@ -169,14 +206,19 @@ export type LeftOut = { currency: string; count: number }[];
 export function leftOutByCurrency<T extends Countable>(
   txns: readonly T[],
   currency: string | null,
-  counts: (t: T) => boolean = (t) => !isExcluded(t) && !isTransfer(t)
+  counts: (t: T) => boolean = (t) => !isExcluded(t) && !isTransfer(t) && !t.group_outside
 ): LeftOut {
-  const by = new Map<string, number>();
+  // Transactions, not rows: a split one's parts are one, a group as many as
+  // it holds (transactionCounter).
+  const counters = new Map<string, ReturnType<typeof transactionCounter>>();
   for (const t of txns) {
     if (inCurrency(t, currency) || !counts(t)) continue;
     const c = currencyOf(t)!;
-    by.set(c, (by.get(c) ?? 0) + 1);
+    const counter = counters.get(c) ?? transactionCounter();
+    counter.add(t);
+    counters.set(c, counter);
   }
+  const by = new Map([...counters].map(([c, counter]) => [c, counter.n] as const));
   return [...by].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1));
 }
 
