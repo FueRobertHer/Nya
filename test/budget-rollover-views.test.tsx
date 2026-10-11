@@ -216,6 +216,9 @@ describe('income carryover', () => {
     const on = text(renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: true, start: NOW }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />));
     expect(on).toContain('My income is irregular On');
     expect(on).toContain('Turn off');
+    // Off again, the month it counted from is offered first.
+    const kept = renderToStaticMarkup(<IncomeSetting setting={{ version: 1, enabled: false, start: addMonths(NOW, -2) }} today={NOW} earliest={null} disabled={false} onChange={async () => true} />);
+    expect(kept).toContain(`<option value="${addMonths(NOW, -2)}" selected="">`);
   });
 });
 

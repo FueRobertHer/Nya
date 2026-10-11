@@ -207,11 +207,12 @@ export type BudgetMonthRead = {
  * The month's budgets (see the header). `today` is this month, as the page
  * has it (lib/rollover.ts thisMonth), or the UTC month for the API. `app`
  * reads as the app does, writing what lib/budget-months-store.ts writes on a
- * read; without it nothing is written. Strict: budgets, their record or the
- * income setting that can't be read throw (StoredDataUnreadableError), and
- * so does storage out of reach.
+ * read; without it nothing is written. `pool: false` leaves the income pool
+ * out, unread. Strict: budgets, their record or the income setting that
+ * can't be read throw (StoredDataUnreadableError), and so does storage out
+ * of reach.
  */
-export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: boolean }): Promise<BudgetMonthRead> {
+export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: boolean; pool?: false }): Promise<BudgetMonthRead> {
   const { month, today } = opts;
   let budgetsNow: Budgets;
   let taxonomy: Taxonomy;
@@ -232,7 +233,10 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
     const filed = new Set(activity.taxonomy.categories.map((c) => c.id));
     taxonomy = loaded.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : loaded.taxonomy;
   } else {
-    const [stored, setting] = await Promise.all([budgetMonthsStore.get(ctx), incomeCarryoverStore.get(ctx)]);
+    // `pool: false` (the download, which has the setting in a section of its
+    // own) reads no income setting, so one that can't be read never keeps the
+    // budgets' carries out.
+    const [stored, setting] = await Promise.all([budgetMonthsStore.get(ctx), opts.pool === false ? null : incomeCarryoverStore.get(ctx)]);
     income = setting;
     activity = await readMonthActivity(ctx, { since: sinceFor(neededFrom(stored, setting, month)), includeHidden: opts.includeHidden });
     ({ budgets: budgetsNow, taxonomy } = await budgetsForReading(ctx, activity.taxonomy));

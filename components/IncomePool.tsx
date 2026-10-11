@@ -108,7 +108,9 @@ export function IncomeSetting({
   /** Resolves true once saved. */
   onChange: (change: { enabled: true; start: string } | { enabled: false }) => Promise<boolean>;
 }) {
-  const [start, setStart] = useState(today);
+  const choices = startChoices(today, earliest);
+  // Turned off, it kept the month it counted from: offered again first.
+  const [start, setStart] = useState(setting?.start && choices.includes(setting.start) ? setting.start : today);
   const [busy, setBusy] = useState(false);
   const save = async (change: { enabled: true; start: string } | { enabled: false }) => {
     setBusy(true);
@@ -147,7 +149,7 @@ export function IncomeSetting({
             Count from
           </label>
           <select id="income-start" className="text-input budget-select" value={start} onChange={(e) => setStart(e.target.value)} disabled={disabled || busy}>
-            {startChoices(today, earliest).map((m) => (
+            {choices.map((m) => (
               <option key={m} value={m}>
                 {m === today ? `${monthName(m, today)} (this month)` : monthName(m, today)}
               </option>
