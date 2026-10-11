@@ -326,12 +326,12 @@ describe('rules, tags or what was said about a transaction that can’t be read'
     };
     const bank = noteOf('acc_new');
     expect(bank.notes).toContain(
-      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and its tags aren’t in its memo, nor is your note on it. The JSON download lists them under problems. ${unchanged}`
+      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and the tags you put on it aren’t in its memo, nor is your note on it. The JSON download lists them under problems. ${unchanged}`
     );
     expect(bank.text).not.toContain('Paid back in October');
     const wallet = noteOf('manual_wallet');
     expect(wallet.notes).toContain(
-      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and its tags aren’t in its memo (its note, written with it, is). The JSON download lists them under problems. ${unchanged}`
+      `Whether 1 of these transactions is excluded from budgets and reports could not be read, so it isn’t marked either way, and the tags you put on it aren’t in its memo (its note, written with it, is). The JSON download lists them under problems. ${unchanged}`
     );
     expect(wallet.text).toContain('<MEMO>apples\r\n');
     // The CSV likewise: the bank's row without your note, the one entered by hand with its own.

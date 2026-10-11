@@ -107,9 +107,9 @@
 // NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1). Built from the
 // document the route already read, so whatever couldn't be read is known: a
 // manual account's transactions, whether a transaction was excluded (with
-// its tags, and your note on a bank's or a SimpleFIN one: a note written with
-// a transaction entered or imported is its own), and the rules and tags, that
-// couldn't be read
+// the tags you put on it, and your note on a bank's or a SimpleFIN one: a
+// note written with a transaction entered or imported is its own), and the
+// rules and tags, that couldn't be read
 // are said in a note and in the parts the file is short of (`incomplete`),
 // never left out quietly. So are an account SimpleFIN keeps
 // up to date whose older transactions may still be arriving, a few months a
@@ -735,9 +735,10 @@ export function ofxFile(
   const unmarkedRows = rows.filter((r) => unknown.has(r.id));
   const unmarked = unmarkedRows.length;
   if (unmarked > 0) {
-    // Their tags are in the record; so is your note on a bank's or a
-    // SimpleFIN transaction, while one written with a transaction entered or
-    // imported is its own, and still in its memo.
+    // The tags put on them are in the record (a rule's and a carried
+    // record's still show); so is your note on a bank's or a SimpleFIN
+    // transaction, while one written with a transaction entered or imported
+    // is its own, and still in its memo.
     const one = unmarked === 1;
     const own = unmarkedRows.filter((r) => ownNote.has(r.id)).length;
     const note =
@@ -751,7 +752,7 @@ export function ofxFile(
             : ' (their notes, written with them, are)'
           : ', nor are your notes on those the bank or SimpleFIN brought (a note written with one you entered or imported is there)';
     notes.push(
-      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'its tags aren’t in its memo' : 'their tags aren’t in their memos'}${note}. The JSON download lists them under problems. ${UNCHANGED}`
+      `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}. The JSON download lists them under problems. ${UNCHANGED}`
     );
     incomplete.add(txnAnnotationStore.name);
   }
