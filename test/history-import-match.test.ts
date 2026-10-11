@@ -251,6 +251,26 @@ describe('as many pairs as can be', () => {
     expect(pairs.get(0)?.days).toBe(0);
   });
 
+  test('where the edges of each side’s days are known, the pairs inside them come first: a same-day pair is never given up for pairs across an edge', () => {
+    // The bank's days start on day 30, the file's end on it: a pair is across
+    // an edge when the file's row is dated before day 30 or the bank's after.
+    const edge = (r: FileRow, b: BankRow) => r.date < day(30) || b.date > day(30);
+    // A daily fare, the file's on days 25 to 30, the bank's on days 30 to 34.
+    const file = [25, 26, 27, 28, 29, 30].map((d, i) => row(i, { date: day(d), amount: 2.75, name: 'MTA SUBWAY' }));
+    const banks = [30, 31, 32, 33, 34].map((d) => bank({ transaction_id: `b${d}`, date: day(d), amount: 2.75, name: 'MTA*NYCT PAYGO', merchant_name: 'MTA' }));
+    // Blind to the edges, a lag of four days pairs as many in fewer days.
+    expect(pairUp(file, banks).get(5)?.twin.transaction_id).toBe('b34');
+    const pairs = pairUp(file, banks, undefined, edge);
+    expect(pairs.get(5)).toMatchObject({ days: 0, twin: { transaction_id: 'b30' } });
+    // The others pair across the edge only among what is left over.
+    expect([0, 1, 2, 3, 4].map((i) => pairs.get(i)?.twin.transaction_id)).toEqual([undefined, 'b31', 'b32', 'b33', 'b34']);
+    // Even where pairs across an edge would pair more: a class every three days.
+    const classes = [24, 27, 30].map((d, i) => row(i, { date: day(d), amount: 12, name: 'YOGA STUDIO 0042' }));
+    const studio = [30, 33, 36].map((d) => bank({ transaction_id: `c${d}`, date: day(d), amount: 12, name: 'YOGA STUDIO', merchant_name: 'Yoga Studio' }));
+    expect(pairUp(classes, studio).size).toBe(2);
+    expect([...pairUp(classes, studio, undefined, edge)].map(([i, p]) => [i, p.twin.transaction_id, p.days])).toEqual([[2, 'c30', 0]]);
+  });
+
   test('years of one amount every day still pair quickly', () => {
     const file = Array.from({ length: 1460 }, (_, i) => row(i, { date: day(i), amount: 2.75 }));
     const banks = Array.from({ length: 730 }, (_, i) => bank({ transaction_id: `b${i}`, date: day(730 + i), amount: 2.75 }));

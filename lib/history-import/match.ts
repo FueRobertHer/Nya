@@ -20,16 +20,16 @@
 // other way round too, so two identical coffees in a week are two in both.
 // Of every way to pair a run of one amount, the one with the most pairs
 // wins, and of those the one whose pairs are fewest days apart in all, then
-// the most alike: with a daily fare dated by purchase in the file and by
-// posting at the bank, every fare finds its own, never its neighbour's, and
-// none at the edge of a window is left over to be counted twice (pairUp).
+// the most alike, so no row is left without a twin because a closer pair
+// took it: with a daily fare dated by purchase in the file and by posting at
+// the bank, every one of the bank's fares finds one in the file (pairUp).
 // Where a review knows the edges of each side's days (see ACROSS AN EDGE),
-// of the pairings with the most pairs, the one with the most pairs inside
-// both sides' days wins: a file exported up to the bank's first day, dated as
-// the bank posts, has its last day's fare proposed as the bank's first, not
-// pushed out by a lag of days across the edge that pairs no more rows. A
-// pending row is never a match: its amount can still change, and it is
-// replaced by the posted row, which is.
+// the pairs inside both sides' days come first, as many as can be, and pairs
+// across an edge are made only among the rows and twins left over: a file
+// exported up to the bank's first day, dated as the bank posts, has its last
+// day's fare proposed as the bank's first, never pushed out by a lag of days
+// across the edge. A pending row is never a match: its amount can still
+// change, and it is replaced by the posted row, which is.
 //
 // WHAT A DECISION LEAVES. A row the person says is a transaction already
 // there is kept, never counted, as a DUPLICATE naming its twin: the bank's
@@ -59,12 +59,13 @@
 // days as with none. So such a pair is only ever the person's to answer: the
 // review shows it as possibly the same, and why (lib/history-import/plan.ts;
 // for an OFX file, dated by posting as the bank's rows are, it isn't made at
-// all), and a read never makes one, so an answer that a row is its own
-// stands, and nothing is absorbed behind the person's back. What that costs:
-// a file dated by purchase whose days the bank's own reach only after the
-// review (its history arriving later, a re-link) may count a lag's worth of
-// rows at an edge beside the bank's, in plain sight on the Activity tab,
-// rather than lose any.
+// all), only for rows the pairs inside both sides' days left over, and a read
+// never makes one, so an answer that a row is its own stands, and nothing is
+// absorbed behind the person's back. What that costs: a file dated by
+// purchase, with one amount day after day, may count a lag's worth of rows at
+// an edge beside the bank's (the fares inside both sides' days pair up on
+// the same day, leaving those at the edges), in plain sight on the Activity
+// tab, rather than lose any.
 
 import { digitsOf, normalizeDescription } from '../import/normalize';
 
@@ -305,11 +306,11 @@ function pairGreedy<T extends Matchable>(rows: FileRow[], twins: T[], ok: (row: 
  * The twin each row looks like, one to one (see the header): of the pairs
  * that couldBe, as many as can be, the closest. `forbidden` leaves out a pair
  * the person said is not one. `edge` marks a pair across the edge of either
- * side's days (crossesEdge), one only a posting lag would make: of the
- * pairings with as many pairs as can be, the one with the most pairs inside
- * both sides' days wins, so a match inside them is never pushed out by lagged
- * pairs across an edge that pair no more rows. Rows and twins not in a pair
- * are left out of the answer.
+ * side's days (crossesEdge), one only a posting lag would make: the pairs
+ * inside both sides' days come first, as many as can be, and pairs across an
+ * edge are made only among the rows and twins left over, so a match inside
+ * them (a same-day one above all) is never pushed out by lagged pairs. Rows
+ * and twins not in a pair are left out of the answer.
  */
 export function pairUp<T extends Matchable>(
   rows: readonly FileRow[],
@@ -318,36 +319,17 @@ export function pairUp<T extends Matchable>(
   edge?: (row: FileRow, twin: T) => boolean
 ): Map<number, Pair<T>> {
   const ok = (row: FileRow, twin: T) => couldBe(row, twin) && !forbidden?.(row, twin);
-  const fullest = pairAll(rows, twins, ok);
-  if (!edge) return fullest;
-  // The pairs inside both sides' days first, as many as can be, then those
-  // across an edge among the rows and twins left over. Kept unless it pairs
-  // fewer: under a uniform posting lag (a file dated by purchase), the lag
-  // explains more pairs than the matches inside the days that happen to fall
-  // on one day, so the fuller pairing stands, its pairs across an edge for
-  // the person to answer.
+  if (!edge) return pairAll(rows, twins, ok);
+  // Inside both sides' days first; across an edge, only what is left (see
+  // ACROSS AN EDGE in the header for what a uniform posting lag costs).
   const inside = pairAll(rows, twins, (row, twin) => ok(row, twin) && !edge(row, twin));
   const taken = new Set<T>([...inside.values()].map((p) => p.twin));
-  const rest = pairAll(
+  const across = pairAll(
     rows.filter((r) => !inside.has(r.index)),
     twins.filter((t) => !taken.has(t)),
     ok
   );
-  const firstInside = new Map([...inside, ...rest]);
-  const rowsOf = new Map(rows.map((r) => [r.index, r]));
-  const score = (pairs: Map<number, Pair<T>>) => {
-    let within = 0;
-    let days = 0;
-    for (const [index, p] of pairs) {
-      if (!edge(rowsOf.get(index)!, p.twin)) within++;
-      days += p.days;
-    }
-    return { count: pairs.size, within, days };
-  };
-  const a = score(firstInside);
-  const b = score(fullest);
-  const keep = a.count !== b.count ? a.count > b.count : a.within !== b.within ? a.within > b.within : a.days <= b.days;
-  return keep ? firstInside : fullest;
+  return new Map([...inside, ...across]);
 }
 
 /** As many pairs as can be, the closest (see pairUp): run by run, of one

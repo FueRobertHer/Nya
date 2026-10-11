@@ -27,8 +27,9 @@
 //      and the import waits for it. A pair across the edge of either side's
 //      coverage (the file's row before the bank's earliest row, the other row
 //      outside the period the file covers) is one only through a posting lag:
-//      it is low, and says why, and for a file dated by posting, as OFX is,
-//      never made.
+//      it is low, and says why, it is made only for the rows and transactions
+//      no pair inside both sides' days takes, and for a file dated by
+//      posting, as OFX is, never.
 //   4. New: nothing like it, imported and counted. Dated before the bank's
 //      own rows begin, it is history the bank never gave.
 // Never a silent merge: every proposal is listed with both rows, and the
@@ -314,8 +315,8 @@ export function planHistoryImport(input: {
   );
   // A file dated by posting never pairs across an edge with a row dated so too.
   const postedHere = rows.length > 0 && POSTED_DATED(rows[0].row.source);
-  // Of the fullest pairings, the one with the most pairs inside both sides'
-  // days (lib/history-import/match.ts pairUp).
+  // The pairs inside both sides' days first, those across an edge only among
+  // the rows and transactions left over (lib/history-import/match.ts pairUp).
   const found = pairUp(
     matching,
     known,

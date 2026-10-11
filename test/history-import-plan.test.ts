@@ -333,20 +333,26 @@ describe('what earlier imports and the edges of each side’s days change', () =
     expect(p.proposals[0]).toMatchObject({ confidence: 'low', choice: null, edge: { kind: 'outside-file', from: day(1), to: day(30) } });
   });
 
-  test('a daily fare dated two days before the bank posts it: every one of the bank’s is proposed with its own', () => {
+  test('a daily fare dated two days before the bank posts it: inside both sides’ days each pairs with the bank’s fare that day, never pushed out by pairs across an edge', () => {
     const banks = Array.from({ length: 13 }, (_, i) => bankFare(10 + i));
-    const p = plan({ records: Array.from({ length: 21 }, (_, i) => fare(i, day(i))), banks, bankFrom: day(10) });
-    expect(p.proposals.length).toBe(13);
-    expect(p.proposals.every((x) => x.days === 2)).toBe(true);
-    expect(p.counts.new + p.counts.unanswered + p.counts.duplicates).toBe(21);
-    // With the period the file covers, as the route passes it: pairing the
-    // fares that fall on one day first would pair two fewer, leaving the two
-    // at each edge counted twice, so the lag's pairing stands, its four
-    // across an edge low, for the person to answer.
-    const { rows: normalized, problems } = rows(Array.from({ length: 21 }, (_, i) => fare(i, day(i))));
-    const covered = planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: day(10), covers: { from: day(0), to: day(20) } });
-    expect(covered.proposals.length).toBe(13);
-    expect(covered.proposals.filter((x) => x.edge !== null).map((x) => x.file.date)).toEqual([day(8), day(9), day(19), day(20)]);
+    const records = Array.from({ length: 21 }, (_, i) => fare(i, day(i)));
+    // The dates of one amount can't show the lag, so the fares inside both
+    // sides' days pair on the same day, and none across the bank's first day
+    // is made at the cost of one of them (pairUp, without the edges, still
+    // pairs every one of the bank's with a fare: as many as can be).
+    for (const p of [
+      plan({ records, banks, bankFrom: day(10) }),
+      (() => {
+        const { rows: normalized, problems } = rows(records);
+        return planHistoryImport({ rows: normalized, problems, held: [], banks, order: [], bankFrom: day(10), covers: { from: day(0), to: day(20) } });
+      })(),
+    ]) {
+      expect(p.proposals.length).toBe(11);
+      expect(p.proposals.every((x) => x.days === 0 && x.edge === null && x.choice === 'same')).toBe(true);
+      // What it costs, as on a read: the two fares before the bank's first
+      // day count beside the bank's own last two, 23 for 21, in plain sight.
+      expect(p.counts.new).toBe(10);
+    }
   });
 
   test('a CSV dated as the bank posts, exported up to its first day: its last day’s fare is proposed as the bank’s own, never pushed out by lagged pairs across the edge', () => {
