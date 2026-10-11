@@ -39,7 +39,7 @@ import CategoryPicker from './CategoryPicker';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import {
   balanceAfter,
@@ -548,7 +548,8 @@ export default function ManualTxnSheet({
       )}
       <p className="panel-note">{balanceNote}</p>
 
-      {error && <div className="error">{error}</div>}
+      {/* The server's words can name a balance (one changed since the form opened). */}
+      {error && <div className="error">{hideAmountsIn(error)}</div>}
 
       {done ? (
         <div className="button-pair" style={{ marginTop: 16 }}>

@@ -32,6 +32,7 @@ import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/
 import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
+import { Masked } from './HideAmounts';
 
 export type FiProgressProps = {
   txns: Txn[] | null;
@@ -153,7 +154,9 @@ export function FiProgressView({
         </button>
       </div>
       <div className="fi-lead">
-        <span className="fi-lead-value">{money(view.fiNumber)}</span>
+        <span className="fi-lead-value">
+          <Masked>{money(view.fiNumber)}</Masked>
+        </span>
         <span className="plan-stat-label">FI number</span>
       </div>
       <div className="fi-stats">

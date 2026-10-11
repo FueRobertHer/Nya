@@ -4815,3 +4815,39 @@ button.pool-toggle {
 .income-setting .card-actions {
   margin-top: 0;
 }
+
+/* --- hide amounts (components/hide-amounts.ts, components/HideAmounts.tsx) ---
+   The switch in the header, pressed while amounts are hidden; on the report
+   page it sits across from the way back to Nya. While amounts are hidden the
+   root carries data-amounts="hidden", the hook for a figure drawn without
+   the formatters in lib/format.ts: an amount typed into a field shows as
+   dots until the field is in use, so a form opened in public shows no
+   figure either. */
+.hide-amounts-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.report-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.report-top .report-nav {
+  margin-bottom: 0;
+}
+
+:root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not(:focus) {
+  -webkit-text-security: disc;
+}
+
+/* Where the browser can't draw a field's text as dots, it is blurred. */
+@supports not (-webkit-text-security: disc) {
+  :root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not(:focus) {
+    color: transparent;
+    text-shadow: 0 0 8px var(--text);
+  }
+}

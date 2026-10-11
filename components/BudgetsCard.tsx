@@ -33,6 +33,7 @@ import { categoriesIn, displayName, indexTaxonomy, sortedGroups, type Taxonomy }
 import { carryText, monthName, sinceText, startChoices, withCarry, type Carries, type Carry } from '@/lib/rollover';
 import { localMonth } from '@/lib/local-date';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -59,7 +60,7 @@ function Amounts({ spent, limit, money }: { spent: number; limit: number; money:
   const over = limit > 0 ? spent >= limit : spent > 0 || limit < 0;
   return (
     <>
-      {limit > 0 ? `${money(spent)} of ${money(limit)}` : `${money(spent)} spent, nothing left`}
+      <Masked>{limit > 0 ? `${money(spent)} of ${money(limit)}` : `${money(spent)} spent, nothing left`}</Masked>
       {over && <span className="over-tag"> · over</span>}
     </>
   );
@@ -68,7 +69,11 @@ function Amounts({ spent, limit, money }: { spent: number; limit: number; money:
 /** Beneath a meter whose month began over (an overspent carry deeper than
  *  the budget): by how much, rather than a limit below zero. */
 function BeganOver({ limit, money }: { limit: number; money: (n: number) => string }) {
-  return limit < 0 ? <div className="budget-carry negative">Began the month {money(-limit)} over.</div> : null;
+  return limit < 0 ? (
+    <div className="budget-carry negative">
+      <Masked>{`Began the month ${money(-limit)} over.`}</Masked>
+    </div>
+  ) : null;
 }
 
 /** In the reset's confirmation: when a reset is what a carry needs. */
@@ -320,7 +325,11 @@ export default function BudgetsCard({
   const carryLine = (t: Target) => {
     const c = carryOf(t);
     if (!c) return null;
-    return <div className={`budget-carry${c.carry < 0 ? ' negative' : ''}`}>{carryText(c, money, shownMonth)}</div>;
+    return (
+      <div className={`budget-carry${c.carry < 0 ? ' negative' : ''}`}>
+        <Masked>{carryText(c, money, shownMonth)}</Masked>
+      </div>
+    );
   };
 
   // What can still be budgeted: spending groups without one of their own,
@@ -363,7 +372,7 @@ export default function BudgetsCard({
                   {m.group.name}
                 </span>
                 <span className="budget-amounts">
-                  {noSpending ? (m.limit! > 0 ? `${money(m.limit!)} limit` : 'Nothing left') : <Amounts spent={m.spent} limit={m.limit!} money={money} />}
+                  {noSpending ? <Masked>{m.limit! > 0 ? `${money(m.limit!)} limit` : 'Nothing left'}</Masked> : <Amounts spent={m.spent} limit={m.limit!} money={money} />}
                 </span>
               </div>
               {!noSpending && <Meter spent={m.spent} limit={m.limit!} />}
@@ -387,7 +396,9 @@ export default function BudgetsCard({
                   <button className="budget-summary budget-own" onClick={() => startEdit(groupTarget)} disabled={!editable || past}>
                     <div className="budget-line">
                       <span className="budget-label">For {m.group.name} as a whole</span>
-                      <span className="budget-amounts">{own !== null ? money(own) : 'Not set'}</span>
+                      <span className="budget-amounts">
+                        <Masked>{own !== null ? money(own) : 'Not set'}</Masked>
+                      </span>
                     </div>
                     {carryLine(groupTarget)}
                   </button>
@@ -409,9 +420,9 @@ export default function BudgetsCard({
                             </span>
                             <span className="budget-amounts">
                               {budget === null ? (
-                                `${money(s)}, no budget`
+                                <Masked>{`${money(s)}, no budget`}</Masked>
                               ) : noSpending ? (
-                                budget > 0 ? `${money(budget)} limit` : 'Nothing left'
+                                <Masked>{budget > 0 ? `${money(budget)} limit` : 'Nothing left'}</Masked>
                               ) : (
                                 <Amounts spent={s} limit={budget} money={money} />
                               )}
@@ -436,7 +447,9 @@ export default function BudgetsCard({
           <div className="budget-row" key={`${o.kind}:${o.id}`}>
             <div className="budget-line">
               <span className="budget-label">A {o.kind} since deleted</span>
-              <span className="budget-amounts">{money(o.amount)}</span>
+              <span className="budget-amounts">
+                <Masked>{money(o.amount)}</Masked>
+              </span>
             </div>
             <div className="card-actions">
               <button className="secondary" onClick={() => remove({ kind: o.kind, id: o.id })} disabled={!editable}>

@@ -7,7 +7,7 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { formatMoney } from '@/lib/format';
+import { amountsHidden, formatMoney, hiddenMoney } from '@/lib/format';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -79,6 +79,7 @@ function fmtDay(iso: string): string {
  */
 function fmtAmount(t: InvestmentTxn): string {
   const flipped = -t.amount;
+  if (amountsHidden()) return hiddenMoney(flipped, t.currency || 'USD', 'always');
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',

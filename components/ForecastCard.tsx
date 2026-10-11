@@ -32,6 +32,7 @@ import {
 } from '@/lib/forecast';
 import { EMPTY_PLANNED, thresholdOf, type Planned } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
+import { useAmountsHidden } from './hide-amounts';
 import { isCurrencyCode, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { refusedNames, unallowedNames, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { joinNames, type Incomplete, type Stopped } from '@/lib/month-coverage';
@@ -132,6 +133,9 @@ export default function ForecastCard({
     [position.start, events, today, range, threshold, position.currency]
   );
 
+  // The notes name amounts, so they are written again when hiding amounts is
+  // turned on or off (components/hide-amounts.ts).
+  const hidden = useAmountsHidden();
   const notes = useMemo(
     () =>
       forecastNotes({
@@ -148,7 +152,9 @@ export default function ForecastCard({
         today,
         days: DAYS,
       }),
-    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, planned, ready, stopped, incomplete, withoutTransactions, today]
+    // `hidden` isn't read inside: it changes what formatMoney writes there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, planned, ready, stopped, incomplete, withoutTransactions, today, hidden]
   );
 
   // The what-if: one purchase, in the forecast's currency, within its range.

@@ -7,6 +7,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Payment details](#payment-details)
 - [Debt payoff plan](#debt-payoff-plan)
 - [Hiding accounts](#hiding-accounts)
+- [Hiding amounts](#hiding-amounts)
 - [Accounts that end](#accounts-that-end)
   - [When Nya asks](#when-nya-asks)
   - [Notes on the timeline](#notes-on-the-timeline)
@@ -141,6 +142,16 @@ Hiding is **retroactive**: the net-worth chart redraws as though the account was
 Hiding is not a security feature: the data is still fetched and stored, it just isn't shown or counted. To actually remove an account, disconnect it (Plaid) or delete it (manual). A disconnected account that was hidden stays hidden (its history is kept, so unhiding it would change past totals) until you unhide it.
 
 Hiding leaves an account out of every day, past ones too. To stop counting an account only from a day on, because it closed, isn't yours any more, or you stopped following it, give it an end instead ([below](#accounts-that-end)): every day before it still counts.
+
+## Hiding amounts
+
+For using Nya in public, on a shared screen or in a screenshot: the eye in the header, beside Refresh (and on the Reports page), hides every amount on screen and keeps everything else. Balances and net worth, transactions and their day totals, the month's totals and top spending, budgets and what their meters say, goals, the income pool, the forecast, the calendar and recurring bills, the payoff plan, the Plan, the sharing preview of what someone sees, reports on screen, and every chart's axis, readout and label show **$•••**. The sign and the currency stay where they were (money in still reads "+$•••", a euro account "€•••", an amount in a currency without a symbol "••• DOGE"), the figures go, and one mask stands for any size, so not even a compact "$1.2K" on an axis says how much. A holding's quantity and the amount in a rule are hidden too, and so is an amount in a message from the server, such as a balance that changed since a form opened. An amount typed into a field shows as dots until you are in the field.
+
+What shows proportions stays: meters and bars keep their lengths, the charts their lines, bands and markers, and percentages stay (a budget at 95%, a card's utilization, a change over a range, a goal's share, the Plan's success rates), since a percentage says no amount. A screen reader hears "hidden" for each hidden amount, never a row of bullets; the switch is a button named Hide amounts, pressed while amounts are hidden.
+
+It is remembered on this device, in the browser's own storage (beside the dashboard's last-known snapshot), and never stored on the server: it follows you to another tab on the device, not to another device. Where the browser keeps nothing (a private window, blocked site data), it lasts as long as the page is open, and a page that can't read the choice shows amounts.
+
+It never changes what leaves Nya: the read-only API and the MCP server, the data download (JSON, CSV and OFX), a report's CSV and every answer from the server carry the figures. A report printed, or saved as a PDF, has its figures too: printing is a deliberate act, so the Reports page shows them while the browser prints and hides them again after. Printing any other page prints what is on screen. Where it applies in the code is in [architecture.md](architecture.md#hiding-amounts).
 
 ## Accounts that end
 

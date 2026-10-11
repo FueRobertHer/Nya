@@ -8,6 +8,99 @@
 // as dollars. Only with no currency at all does it fall back to a plain "$":
 // the common single-currency case, and account-level figures (net worth,
 // balances) that don't yet surface a currency code.
+//
+// HIDING AMOUNTS (components/hide-amounts.ts). A person can hide every amount
+// on their screen, to use Nya in public, on a shared screen or in a
+// screenshot: each formatter here then writes the amount's figures as MASK,
+// keeping its sign and its currency where they would be ("-$•••", "••• €"),
+// so the page keeps its shape and nothing of the size. Only the page in the
+// browser ever turns it on (the switch in the header, remembered on the
+// device). The server never does, so the read-only API, the downloads and
+// every route's answer always carry the figures; a page that must show them
+// whatever the switch says (a report being printed) turns it off meanwhile.
+
+/** What a hidden amount's figures are written as. */
+export const MASK = '•••';
+
+let hidden = false;
+
+/** Turns hiding amounts on or off for this page. Only the browser's switch
+ *  (components/hide-amounts.ts) calls it. */
+export function setAmountsHidden(on: boolean): void {
+  hidden = on;
+}
+
+/** Whether this page hides amounts now. */
+export function amountsHidden(): boolean {
+  return hidden;
+}
+
+type Sign = 'auto' | 'always' | 'exceptZero';
+
+const signOf = (n: number, sign: Sign) => (n < 0 ? '-' : (n > 0 && sign !== 'auto') || (n === 0 && sign === 'always') ? '+' : '');
+
+// The parts of a formatted number that tell its size, written once as MASK.
+const FIGURES: ReadonlySet<string> = new Set(['integer', 'group', 'decimal', 'fraction', 'compact', 'exponentSeparator', 'exponentMinusSign', 'exponentInteger', 'nan', 'infinity', 'unknown']);
+
+/**
+ * An amount as it shows while amounts are hidden: the sign and the currency
+ * where the formatters below write them, in this locale, and MASK for the
+ * figures, the same whatever the size (a compact "K" or "M" says a size too).
+ * The sign stays, as the color of money in and out already says it.
+ */
+export function hiddenMoney(amount: number, currency?: string | null, sign: Sign = 'auto'): string {
+  const n = amount === 0 ? 0 : amount; // never "-0"
+  if (currency) {
+    try {
+      let out = '';
+      let masked = false;
+      for (const p of new Intl.NumberFormat(undefined, { style: 'currency', currency, signDisplay: sign }).formatToParts(n)) {
+        if (!FIGURES.has(p.type)) out += p.value;
+        else if (!masked) {
+          out += MASK;
+          masked = true;
+        }
+      }
+      return out;
+    } catch {
+      return `${signOf(n, sign)}${MASK} ${currency}`;
+    }
+  }
+  return `${signOf(n, sign)}$${MASK}`;
+}
+
+/** A figure written some other way than the formatters below (a holding's
+ *  quantity, a rule's amount), as MASK while amounts are hidden. */
+export function hiddenFigure(text: string): string {
+  return hidden ? MASK : text;
+}
+
+// An amount in text written elsewhere (an answer from the server): a
+// currency's symbol before the figures (with a code's letters, "CA$12.00",
+// or an ISO code and a no-break space, "XAU 12.00"), or a symbol or a code
+// after them ("12,50 €", "12.50 DOGE"). The figures end on a digit, so a full
+// stop after an amount stays.
+const AMOUNT_IN_TEXT =
+  /[+\-−]?(?:(?:[A-Z]{0,3}\p{Sc}|\b[A-Z]{3} )[\s  ]?\d(?:[\d,.  ]*\d)?|\d(?:[\d,.  ]*\d)?[\s  ]?(?:\p{Sc}|[A-Z]{3,10}\b))/gu;
+const FIGURES_IN_TEXT = /\d(?:[\d,.  ]*\d)?/u;
+
+/** Text written elsewhere (an error a route answers with, which names a
+ *  balance) with each amount in it MASK'd while amounts are hidden, and as
+ *  it is otherwise. For text the formatters here didn't write. */
+export function hideAmountsIn(text: string): string {
+  return hidden ? text.replace(AMOUNT_IN_TEXT, (m) => m.replace(FIGURES_IN_TEXT, MASK)) : text;
+}
+
+// A hidden amount as the formatters write it: its sign, its symbol before
+// MASK (with a code's letters, "CA$"), or an ISO code and a no-break space,
+// or its symbol or code after it. Never a word's letters before it.
+const HIDDEN_IN_TEXT = /[+\-−]?(?:[A-Z]{0,3}\p{Sc}[\s  ]?|\b[A-Z]{3} )?•••(?:[\s  ]?(?:\p{Sc}|[A-Z]{2,10}\b))?/gu;
+
+/** Text that may hold hidden amounts, as a screen reader is to say it: each
+ *  one as "hidden" ("Groceries hidden of hidden"), never a row of bullets. */
+export function spoken(text: string): string {
+  return text.includes(MASK) ? text.replace(HIDDEN_IN_TEXT, 'hidden') : text;
+}
 
 const plain = (abs: number) =>
   abs.toLocaleString(undefined, {
@@ -21,6 +114,7 @@ function withCode(amount: number, currency: string, sign: string): string {
 }
 
 export function formatMoney(amount: number, currency?: string | null): string {
+  if (hidden) return hiddenMoney(amount, currency);
   if (currency) {
     try {
       return new Intl.NumberFormat(undefined, {
@@ -38,6 +132,7 @@ export function formatMoney(amount: number, currency?: string | null): string {
  *  ("+$0.00"); otherwise zero has none. */
 export function signedMoney(amount: number, currency: string | null, opts: { always?: boolean } = {}): string {
   const n = amount === 0 ? 0 : amount; // never "-0"
+  if (hidden) return hiddenMoney(n, currency, opts.always ? 'always' : 'exceptZero');
   const sign = n > 0 || (n === 0 && opts.always) ? '+' : n < 0 ? '-' : '';
   if (currency) {
     try {
@@ -55,6 +150,7 @@ export function signedMoney(amount: number, currency: string | null, opts: { alw
 
 // Compact form for dense labels (chart axes): $1.2K, €3.4M.
 export function compactMoney(amount: number, currency?: string | null): string {
+  if (hidden) return hiddenMoney(amount, currency);
   if (currency) {
     try {
       return new Intl.NumberFormat(undefined, {

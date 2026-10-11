@@ -15,9 +15,11 @@ import { indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { ruleSentence, sortedRules, type Rule } from '@/lib/rules';
 import type { Tag } from '@/lib/tags';
 import { draftFromRule, newDraft, type RulesState } from './rules-state';
+import { hiddenFigure } from '@/lib/format';
 
-/** An amount in a rule: a size, in whatever currency the transaction is. */
-const size = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 8 });
+/** An amount in a rule: a size, in whatever currency the transaction is
+ *  (hidden while amounts are, lib/format.ts). */
+const size = (n: number) => hiddenFigure(n.toLocaleString(undefined, { maximumFractionDigits: 8 }));
 
 export default function RulesCard({
   rules,

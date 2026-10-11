@@ -18,7 +18,8 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
-import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
+import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { Masked } from "./HideAmounts";
 import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
@@ -593,7 +594,7 @@ export default function MonthBreakdown({
                   className={`trend-col${m === selected ? " active" : ""}`}
                   onClick={() => setMonth(m)}
                   aria-pressed={m === selected}
-                  aria-label={`${monthLabel(m)}: net ${formatMoney(net, currency)}`}
+                  aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
                 >
                   <span className="trend-val">{fmtCompactSigned(net, currency)}</span>
                   <span
@@ -625,19 +626,21 @@ export default function MonthBreakdown({
           <div>
             <div className="total-label">In</div>
             <div className="summary-value inflow">
-              {formatMoney(moneyIn, currency)}
+              <Masked>{formatMoney(moneyIn, currency)}</Masked>
             </div>
           </div>
           <div>
             <div className="total-label">Out</div>
-            <div className="summary-value">{formatMoney(moneyOut, currency)}</div>
+            <div className="summary-value">
+              <Masked>{formatMoney(moneyOut, currency)}</Masked>
+            </div>
           </div>
           <div>
             <div className="total-label">Net</div>
             <div
               className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
             >
-              {formatMoney(net, currency)}
+              <Masked>{formatMoney(net, currency)}</Masked>
             </div>
           </div>
         </div>
@@ -684,7 +687,9 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / maxCat) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{formatMoney(sum, currency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
@@ -715,7 +720,9 @@ export default function MonthBreakdown({
                         style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
                       />
                     </div>
-                    <span className="cat-val">{formatMoney(sum, currency)}</span>
+                    <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
                   </div>
                 ))}
               </div>
@@ -739,7 +746,9 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{formatMoney(sum, currency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
@@ -802,7 +811,9 @@ export default function MonthBreakdown({
                 <Fragment key={g.date}>
                   <tr className="txn-date-header">
                     <td>{fmtTxnDate(g.date)}</td>
-                    <td className="num">{fmtDayNet(g.nets, currency)}</td>
+                    <td className="num">
+                      <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                    </td>
                   </tr>
                   {g.txns.map((t, i) => (
                     <tr
@@ -1024,7 +1035,7 @@ export default function MonthBreakdown({
                         )}
                       </td>
                       <td className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true ? " excluded" : ""}`}>
-                        {fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}
+                        <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
                       </td>
                     </tr>
                   ))}

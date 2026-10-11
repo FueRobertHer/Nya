@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { formatMoney } from '@/lib/format';
 import { addMonths, monthName, monthsText, startChoices, type IncomeCarryover, type IncomePool } from '@/lib/rollover';
+import { Masked } from './HideAmounts';
 
 /** The "available to allocate" header, with the pool's history. */
 export function IncomePoolHeader({ pool, currency, month, today }: { pool: IncomePool; currency: string | null; month: string; today: string }) {
@@ -41,7 +42,9 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
     <div className="pool-header">
       <div className="pool-line">
         <span className="pool-label">{running ? 'Available to allocate' : `Left to allocate at the end of ${name(month)}`}</span>
-        <span className={`pool-amount${pool.available < 0 ? ' negative' : ''}`}>{money(pool.available)}</span>
+        <span className={`pool-amount${pool.available < 0 ? ' negative' : ''}`}>
+          <Masked>{money(pool.available)}</Masked>
+        </span>
       </div>
       <div className="pool-breakdown">
         {month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}, plus {money(pool.income)} income{running ? ' so far' : ''}, less{' '}

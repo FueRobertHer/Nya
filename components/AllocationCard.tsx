@@ -80,6 +80,7 @@ import {
 } from '@/lib/allocation/settings';
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { FirePlan } from '@/lib/fire/plan';
+import { Masked } from './HideAmounts';
 
 /** The local day recovered balances were observed: the local day of the
  *  instant when the server knew it, else the stored UTC day (as the Plan's
@@ -415,7 +416,7 @@ function Row({ label, value, note, action }: { label: React.ReactNode; value: Re
     <div className="plan-row">
       <div className="plan-row-main">
         <span className="plan-row-label">{label}</span>
-        <span className="plan-row-value">{value}</span>
+        <span className="plan-row-value">{typeof value === 'string' ? <Masked>{value}</Masked> : value}</span>
       </div>
       {(note || action) && (
         <div className="plan-row-note">

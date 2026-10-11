@@ -15,6 +15,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 - [Budgets by month and rollover](#budgets-by-month-and-rollover)
 - [Containers](#containers)
 - [On-device snapshot and offline use](#on-device-snapshot-and-offline-use)
+- [Hiding amounts](#hiding-amounts)
 - [Security headers and the public pages](#security-headers-and-the-public-pages)
 - [Tests](#tests)
 
@@ -299,6 +300,14 @@ Every record belongs to a container, stored under `<prefix>:c:<container id>:`. 
 ## On-device snapshot and offline use
 
 The dashboard keeps its last-known snapshot in the browser's `localStorage` so the PWA opens instantly and still shows balances offline. The service worker never caches `/api/*` responses, so refreshing, linking, transactions and the Plan tab's saved assumptions need a network connection. The Plan tab's code is fetched the first time the tab opens (the service worker keeps a copy once it has been fetched); if that fails, the tab says it couldn't be loaded and offers to try again, and the other tabs work as before (`components/PlanTabLoader.tsx`). The snapshot is readable on the device without the app password; see [authentication.md](authentication.md#what-is-not-covered).
+
+## Hiding amounts
+
+Hiding amounts ([features.md](features.md#hiding-amounts)) is applied where amounts are written, not where they are drawn, so no screen can miss it. `lib/format.ts` holds the one flag, and while it is on its formatters (`formatMoney`, `signedMoney`, `compactMoney`) write an amount as its sign and currency, placed by the locale (`Intl.NumberFormat.formatToParts`), around one mask for the figures (`hiddenMoney`). Every amount on screen goes through them: the components' own helpers (`fmt` in the dashboard, `money` in the cards, the Plan's `wholeMoney`, the calendar's cell figure, the payoff plan's and investment activity's) delegate to them or check the flag first, and the sentences built from amounts (goal outlooks, insights, forecast notes, carries, the report's figures) are written by them, so they are hidden too. A figure written some other way (a holding's quantity, a rule's amount) goes through `hiddenFigure`, and text the server wrote with an amount in it (a balance that changed since a form opened, a card a connector reports as money held) through `hideAmountsIn` where it is shown. The two memos that keep sentences with amounts (Home's insights, the forecast's notes) are worked out again when the flag changes.
+
+Only the browser sets the flag: `components/hide-amounts.ts`, which keeps the choice in `localStorage` (`nya:hide-amounts`, read leniently: what can't be read is shown), reads it when the page loads the module, before the dashboard or the report page draws its first amount (the server renders their loading state, with no amount in it), and follows a change made in another tab (the storage event). Components draw again when it changes (`useAmountsHidden`, a `useSyncExternalStore` whose server snapshot is "shown"); the dashboard and the report page subscribe at their root, so everything under them is drawn again. Nothing on the server imports it, so routes, the read-only API and MCP server (whose goal sentences are written by the same `lib/goal-text.ts`), reports' CSV and the downloads always carry the figures; `test/hide-amounts.test.tsx` holds that by scanning the source. The report page shows the figures while the browser prints (`showFigures`, from `beforeprint`, drawn at once with `flushSync`, to `afterprint`).
+
+While the flag is on, the root element carries `data-amounts="hidden"` (marked once the page has hydrated, never under React), the CSS hook (`app/globals.css`, "Hide amounts") for what no formatter writes: a field holding an amount (`inputmode="decimal"`, the budget fields) shows its text as dots, or blurred where a browser can't, until it has focus. For a screen reader, `spoken` says each hidden amount as "hidden": the charts' and meters' labels go through it, and the figures that stand alone (net worth, balances, transactions and day totals, the month's totals and top spending, the budgets' meters, goals, the Plan's rows, the reports' totals) are drawn by `Masked` (`components/HideAmounts.tsx`), which hides the bullets from it and gives it the spoken words instead.
 
 ## Security headers and the public pages
 

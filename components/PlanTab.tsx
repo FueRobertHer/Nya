@@ -89,6 +89,7 @@ import {
 import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED, type GridCell, type SimResult } from '@/lib/fire/simulate';
 import { canRunOut, vpwExpectedReturn } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
+import { Masked } from './HideAmounts';
 
 /** The grid's rows and columns; the plan's own rate and length are added. */
 const GRID_RATES = [0.03, 0.035, 0.04, 0.045, 0.05];
@@ -600,7 +601,7 @@ function Row({ label, value, note, action }: { label: string; value: React.React
     <div className="plan-row">
       <div className="plan-row-main">
         <span className="plan-row-label">{label}</span>
-        <span className="plan-row-value">{value}</span>
+        <span className="plan-row-value">{typeof value === 'string' ? <Masked>{value}</Masked> : value}</span>
       </div>
       {(note || action) && (
         <div className="plan-row-note">

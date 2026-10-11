@@ -45,6 +45,7 @@ import ForecastCard from './ForecastCard';
 import CalendarView from './CalendarView';
 import RecurringCard from './RecurringCard';
 import PlannedCard from './PlannedCard';
+import { Masked } from './HideAmounts';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
@@ -334,9 +335,11 @@ export default function BudgetsTab({
           <div className="inst-name">{monthName} budgets</div>
           {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
-              {totalBudget > 0
-                ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
-                : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+              <Masked>
+                {totalBudget > 0
+                  ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                  : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+              </Masked>
             </div>
           )}
         </div>

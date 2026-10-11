@@ -20,6 +20,7 @@
 // same in a test (test/report-view.test.tsx) as in the browser.
 
 import { formatMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import { endedBefore, type Report, type ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
@@ -123,15 +124,21 @@ export function ReportView({ report }: { report: Report }) {
           <div className="report-bottom-line">
             <div>
               <div className="total-label">Money in</div>
-              <div className="report-figure">{money(totals.money_in)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.money_in)}</Masked>
+              </div>
             </div>
             <div>
               <div className="total-label">Money out</div>
-              <div className="report-figure">{money(totals.money_out)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.money_out)}</Masked>
+              </div>
             </div>
             <div>
               <div className="total-label">Net</div>
-              <div className="report-figure">{money(totals.net)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.net)}</Masked>
+              </div>
             </div>
             <p className="report-note">
               {totals.counted} of {totals.transactions} transactions counted. {totalsNote(report)}

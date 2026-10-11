@@ -15,7 +15,7 @@
 
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
-import { compactMoney, formatMoney } from '@/lib/format';
+import { compactMoney, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import {
   HORIZON_MONTHS,
@@ -93,13 +93,13 @@ function moneyIn(currency: string | null): (cents: number) => string {
   return (cents) =>
     currency
       ? formatMoney(cents / 100, currency)
-      : (cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      : hiddenFigure((cents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
 }
 
 function compactIn(currency: string | null, amount: number): string {
   return currency
     ? compactMoney(amount, currency)
-    : new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(amount);
+    : hiddenFigure(new Intl.NumberFormat(undefined, { notation: 'compact', maximumFractionDigits: 1 }).format(amount));
 }
 
 // "Aug 7" from a YYYY-MM-DD, parsed at local midnight so it never shows the day before.

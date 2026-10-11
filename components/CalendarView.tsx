@@ -15,7 +15,7 @@ import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
-import { compactMoney, formatMoney, signedMoney } from '@/lib/format';
+import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -30,6 +30,8 @@ const MONTHS_AHEAD = 12;
 function cellFigure(n: number, currency: string | null): string {
   const abs = Math.abs(n);
   const sign = Math.round(abs) === 0 ? '' : n < 0 ? '-' : '+';
+  // Hidden amounts (lib/format.ts): the sign and the currency, never a size.
+  if (amountsHidden()) return `${sign}${hiddenMoney(abs, currency)}`;
   if (abs >= 1000) return `${sign}${compactMoney(abs, currency)}`;
   if (currency) {
     try {
@@ -213,7 +215,7 @@ export default function CalendarView({
               className={`cal-day${date === today ? ' today' : ''}${date === selected ? ' selected' : ''}${past ? ' past' : ''}`}
               onClick={() => setSelected(date)}
               aria-pressed={date === selected}
-              aria-label={label}
+              aria-label={spoken(label)}
             >
               <span className="cal-num">{Number(date.slice(8))}</span>
               <span className={`cal-fig${figure === null ? '' : figure > 0 ? ' in' : figure < 0 ? ' out' : ''}${estimated ? ' estimated' : ''}`}>
