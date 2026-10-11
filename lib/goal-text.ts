@@ -10,6 +10,7 @@ import { formatMoney } from './format';
 import { addMonths, type MonthGap } from './goal-projection';
 import type { AccountSplit } from './goal-allocation';
 import type { GoalView } from './goal-view';
+import type { Goal } from './goal-model';
 
 /** "March 2027" for 2027-03. */
 export function monthLabel(month: string): string {
@@ -187,4 +188,22 @@ export function splitText(split: AccountSplit, name: string): string {
  *  for the editor's preview of a monthly target. */
 export function monthsFromNow(today: string, months: number): string {
   return monthLabel(addMonths(today.slice(0, 7), months));
+}
+
+/** Where the pace comes from, when it isn't the account's transactions: a
+ *  label the outlook carries, so a change in balance is never read as
+ *  contributions. Null otherwise. */
+export function sourceNote(view: GoalView): string | null {
+  if (view.projection?.rateFrom !== 'contributions' || view.measured?.source !== 'balances') return null;
+  return 'Paced by its recorded balance, which includes interest and market moves';
+}
+
+/** An archived goal in a line: reached or not, what it held, and when it was
+ *  archived. `currency` is its account's. */
+export function archivedText(goal: Pick<Goal, 'target' | 'archived_on' | 'archived_amount'>, currency: string | null): string {
+  const on = goal.archived_on ? `archived ${dayLabel(goal.archived_on)}` : 'archived';
+  const held = goal.archived_amount;
+  if (held === undefined) return on[0].toUpperCase() + on.slice(1);
+  if (held >= goal.target) return `Reached ${formatMoney(goal.target, currency)} · ${on}`;
+  return `Had ${formatMoney(held, currency)} of ${formatMoney(goal.target, currency)} · ${on}`;
 }

@@ -58,6 +58,14 @@ export function createWholeListStore<T>(opts: {
   /** How to try loading again, for the message when a load fails: the
    *  dashboard's Refresh button unless the screen offers its own. */
   reloadHint?: string;
+  /** Keep the list the server answered a save with, when it is a valid one,
+   *  rather than the list sent: for a store whose server works out fields of
+   *  its own on a save (goals: where a target date's line starts). */
+  adoptSaved?: boolean;
+  /** Say why the server refused a save (a 400 with an `error`), for a store
+   *  whose server checks what the screen can't be sure of (goals: an
+   *  allocation against the balance the server knows). */
+  showRefusal?: boolean;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -110,6 +118,8 @@ export function createWholeListStore<T>(opts: {
     const before = state.value;
     set({ saving: true, value: next, saveError: null }); // optimistic
     let ok = false;
+    let answer: Record<string, unknown> | null = null;
+    let refusal: string | null = null;
     try {
       const res = await doFetch(opts.url, {
         method: 'PUT',
@@ -117,16 +127,19 @@ export function createWholeListStore<T>(opts: {
         body: JSON.stringify({ [opts.field]: next }),
       });
       ok = res.ok;
+      if (opts.adoptSaved || opts.showRefusal) answer = await res.json().catch(() => null);
+      if (!ok && opts.showRefusal && res.status === 400 && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
       ok = false;
     }
     if (ok) {
-      set({ saving: false });
+      const saved = answer?.[opts.field];
+      set({ saving: false, ...(opts.adoptSaved && opts.isValid(saved) ? { value: saved } : {}) });
       return true;
     }
     // Back to the last list the server confirmed straight away, so even if
     // the reload below fails too, nothing on the page shows an unsaved list.
-    set({ value: before, saveError: `Could not save ${opts.noun}. Showing what is saved.` });
+    set({ value: before, saveError: refusal ? `Not saved: ${refusal}` : `Could not save ${opts.noun}. Showing what is saved.` });
     await load(); // still marked saving, so nothing else starts meanwhile
     set({ saving: false });
     return false;

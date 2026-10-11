@@ -4091,3 +4091,75 @@ button.cat-manage-row.archived {
   font-size: 13px;
   overflow-wrap: anywhere;
 }
+
+/* --- savings goals: the "where you should be" marker, outlooks and the
+   archived list (#42, components/GoalsCard.tsx and GoalSheet.tsx) --- */
+
+/* The track places the marker. */
+.goal-meter {
+  position: relative;
+}
+
+/* Where the goal should be by now on the way to its target date: a lighter
+   tick across the track. Its meaning is in the meter's label, for a screen
+   reader. */
+.goal-marker {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: var(--text);
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.goal-outlook {
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--muted);
+}
+
+.goal-note {
+  margin-top: 4px;
+}
+
+.goal-unallocated {
+  margin: 0 0 4px;
+}
+
+/* "Set part of the balance aside": a checkbox on its own line, its words
+   beside it. */
+.goal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.goal-check input {
+  width: auto;
+  margin: 0;
+}
+
+.goal-room {
+  margin: -4px 0 12px;
+}
+
+.goal-sheet-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* Restore and delete beside an archived goal, kept on one line while its
+   name wraps. */
+.goal-archived-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}

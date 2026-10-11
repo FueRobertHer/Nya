@@ -271,3 +271,56 @@ describe('loading', () => {
     expect(store.get()).toMatchObject({ status: 'ready', error: null, value: { Food: 300 } });
   });
 });
+
+describe('opted in: what the server said about a save (goals)', () => {
+  /** A server that answers a PUT as given, at once. */
+  const answering = (status: number, body: unknown) => {
+    const calls: string[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      calls.push(init?.method ?? 'GET');
+      if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ goals: [{ id: 'a' }] }), { status: 200 });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof globalThis.fetch;
+    return { fetch, calls };
+  };
+  const goals = async (server: ReturnType<typeof answering>, opts: { adoptSaved?: boolean; showRefusal?: boolean }) => {
+    const store = createWholeListStore<{ id: string; worked_out?: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch: server.fetch,
+      ...opts,
+    });
+    await store.load();
+    return store;
+  };
+
+  test('the list the server answered with is kept, with what it worked out', async () => {
+    const store = await goals(answering(200, { goals: [{ id: 'a', worked_out: 'by the server' }] }), { adoptSaved: true });
+    expect(await store.save([{ id: 'a' }])).toBe(true);
+    expect(store.get().value).toEqual([{ id: 'a', worked_out: 'by the server' }]);
+  });
+
+  test('without it, or with an answer that isn’t a list, the list sent is kept', async () => {
+    expect(await (await goals(answering(200, { goals: [{ id: 'x' }] }), {})).save([{ id: 'a' }])).toBe(true);
+    const store = await goals(answering(200, { goals: 'nope' }), { adoptSaved: true });
+    await store.save([{ id: 'a' }]);
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('a refusal says why, and the list goes back to what is saved', async () => {
+    const store = await goals(answering(400, { error: 'Allocations on Savings would come to $10.01, more than its balance of $10.00.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: Allocations on Savings would come to $10.01, more than its balance of $10.00.');
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('anything but a refusal keeps the plain message', async () => {
+    const store = await goals(answering(500, { error: 'Failed to save goals' }), { showRefusal: true });
+    await store.save([{ id: 'b' }]);
+    expect(store.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+});

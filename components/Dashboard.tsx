@@ -515,6 +515,10 @@ export default function Dashboard({
         empty: [],
         isValid: (v): v is Goal[] => Array.isArray(v),
         onChange: setGoalsState,
+        // The server works out where a target date's line starts, and checks
+        // allocations on the balances it knows: keep what it says (#42).
+        adoptSaved: true,
+        showRefusal: true,
       }),
     []
   );
@@ -2440,6 +2444,7 @@ export default function Dashboard({
                     balance: a.balance,
                     currency: a.currency,
                     hidden: a.hidden,
+                    type: a.type,
                   }))
                 )}
                 loading={txnsLoading}

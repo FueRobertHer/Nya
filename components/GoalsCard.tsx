@@ -1,31 +1,40 @@
 'use client';
 
-// Savings goals: a target amount tracked against a linked account's live
-// balance. Progress meters use the accent hue, switching to the up-green
-// once the goal is reached (state, not severity -- reaching a goal is good).
+// Savings goals (#42): a target tracked against an account's balance. Each
+// goal counts its allocation of that balance, or what the allocations on it
+// leave (the whole balance when none is allocated, as every goal did before
+// allocations), never more than the account holds (lib/goal-allocation.ts);
+// says when it will be reached at the pace money went in, or at its monthly
+// target (lib/goal-projection.ts); and, with a target date, marks on its
+// meter where it should be by now. What each account leaves unallocated is
+// above the list. Goals reached are archived rather than deleted, so their
+// history survives, in a list that can be opened to restore one or delete it
+// for good.
+//
+// Progress meters use the accent hue, switching to the up-green once the goal
+// is reached (state, not severity: reaching a goal is good); the "where you
+// should be" marker is a lighter tick on the track, said in words to a
+// screen reader (lib/goal-text.ts meterLabel). Everything is worked out here
+// from the balances this page shows; the months behind each pace come from
+// the server (components/goal-flows-state.ts), and nothing derived is saved.
 
 import { useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { formatMoney } from '@/lib/format';
+import { localDate } from '@/lib/local-date';
+import { goalViews, type GoalAccount, type GoalView } from '@/lib/goal-view';
+import { archivedText, claimNotes, gapsText, meterLabel, outlookText, sourceNote, splitText, stateText } from '@/lib/goal-text';
+import { MAX_GOALS, type Goal } from '@/lib/goal-model';
+import { useGoalFlows } from './goal-flows-state';
+import GoalSheet from './GoalSheet';
 
-export type Goal = {
-  id: string;
-  name: string;
-  target: number;
-  account_id: string | null;
-};
+export type { Goal } from '@/lib/goal-model';
+export type { GoalAccount } from '@/lib/goal-view';
 
-export type GoalAccount = {
-  account_id: string;
-  name: string;
-  institution: string;
-  balance: number | null;
-  currency: string | null;
-  // Hidden accounts are still passed in so a goal tracking one can say so,
-  // rather than falling through to "linked account disconnected", which would
-  // be alarming and false. They're kept out of the picker below.
-  hidden?: boolean;
-};
+/** A goal as a save sends it: its four fields and its plan, always, `{}` for
+ *  none (a goal sent without one keeps what is stored: lib/goal-model.ts).
+ *  What the server works out is left out; it sends that back. */
+export const forSave = (g: Goal): Goal => ({ id: g.id, name: g.name, target: g.target, account_id: g.account_id, plan: g.plan ?? {} });
 
 export default function GoalsCard({
   goals,
@@ -43,112 +52,31 @@ export default function GoalsCard({
   error?: string | null;
   /** Why the last save did not go through; shown above the list. */
   saveError?: string | null;
+  /** Every account, hidden ones too: a goal tracking one says so, rather
+   *  than "disconnected", which would be alarming and false. The editor
+   *  keeps them out of its picker. */
   accounts: GoalAccount[];
-  /** Resolves true once saved; the form only closes then. */
+  /** Resolves true once saved; the editor only closes then. */
   onSave: (next: Goal[]) => Promise<boolean>;
 }) {
-  const [editing, setEditing] = useState<string | null>(null);
-  const [name, setName] = useState('');
-  const [target, setTarget] = useState('');
-  const [accountId, setAccountId] = useState('');
-  const [adding, setAdding] = useState(false);
+  const today = localDate();
+  const flows = useGoalFlows(status === 'ready');
+  // The editor: a fresh form each time it opens (a new key), kept while it
+  // slides shut.
+  const [sheet, setSheet] = useState<{ open: boolean; goal: Goal | null; key: number }>({ open: false, goal: null, key: 0 });
+  const [showArchived, setShowArchived] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
 
-  const accountById = new Map(accounts.map((a) => [a.account_id, a]));
-
-  function startAdd() {
-    setAdding(true);
-    setEditing(null);
-    setName('');
-    setTarget('');
-    setAccountId('');
-  }
-
-  function startEdit(goal: Goal) {
-    setEditing(goal.id);
-    setAdding(false);
-    setName(goal.name);
-    setTarget(String(goal.target));
-    setAccountId(goal.account_id ?? '');
-  }
-
-  async function commit() {
-    const value = Number(target);
-    if (!name.trim() || !Number.isFinite(value) || value <= 0) return;
-    const entry: Goal = {
-      id: editing ?? crypto.randomUUID(),
-      name: name.trim(),
-      target: value,
-      account_id: accountId || null,
-    };
-    const next = editing ? goals.map((g) => (g.id === editing ? entry : g)) : [...goals, entry];
-    if (await onSave(next)) {
-      setEditing(null);
-      setAdding(false);
+  const save = async (next: Goal[]) => {
+    setBusy(true);
+    try {
+      return await onSave(next.map(forSave));
+    } finally {
+      setBusy(false);
     }
-  }
-
-  async function remove(id: string) {
-    if (await onSave(goals.filter((g) => g.id !== id))) setEditing(null);
-  }
-
-  const form = (
-    <div className="budget-edit">
-      <input
-        className="text-input budget-input"
-        placeholder="Goal name (e.g. Emergency fund)"
-        value={name}
-        onChange={(e) => setName(e.target.value)}
-        aria-label="Goal name"
-      />
-      <input
-        className="text-input budget-input"
-        type="number"
-        min="1"
-        step="1"
-        placeholder="Target amount"
-        value={target}
-        onChange={(e) => setTarget(e.target.value)}
-        aria-label="Target amount"
-      />
-      <select
-        className="text-input budget-select"
-        value={accountId}
-        onChange={(e) => setAccountId(e.target.value)}
-        aria-label="Tracked account"
-      >
-        <option value="">No linked account</option>
-        {accounts
-          // Hidden accounts aren't offered, but one that's already selected
-          // stays listed so the picker doesn't render blank on an existing goal.
-          .filter((a) => !a.hidden || a.account_id === accountId)
-          .map((a) => (
-            <option key={a.account_id} value={a.account_id}>
-              {a.name} ({a.institution})
-              {a.hidden ? ' · hidden' : ''}
-            </option>
-          ))}
-      </select>
-      <div className="card-actions">
-        <button onClick={commit} disabled={!name.trim() || !target}>
-          Save
-        </button>
-        {editing && (
-          <button className="secondary" onClick={() => remove(editing)}>
-            Remove
-          </button>
-        )}
-        <button
-          className="secondary"
-          onClick={() => {
-            setEditing(null);
-            setAdding(false);
-          }}
-        >
-          Cancel
-        </button>
-      </div>
-    </div>
-  );
+  };
+  const edit = (goal: Goal | null) => setSheet((s) => ({ open: true, goal, key: s.key + 1 }));
 
   if (status !== 'ready') {
     return (
@@ -156,14 +84,28 @@ export default function GoalsCard({
         <div className="inst-header">
           <div className="inst-name">Goals</div>
         </div>
-        {status === 'loading' ? (
-          <p className="empty-note">Loading goals…</p>
-        ) : (
-          <p className="stale-note">{error}</p>
-        )}
+        {status === 'loading' ? <p className="empty-note">Loading goals…</p> : <p className="stale-note">{error}</p>}
       </div>
     );
   }
+
+  const { views, splits } = goalViews(goals, accounts, flows.flows, today);
+  const archived = goals.filter((g) => g.plan?.archived);
+  const nameOf = (id: string) => goals.find((g) => g.id === id)?.name ?? 'another goal';
+  const accountName = (id: string) => accounts.find((a) => a.account_id === id)?.name ?? 'An account';
+  const currencyOf = (g: Goal) => accounts.find((a) => a.account_id === g.account_id)?.currency ?? null;
+
+  /** The outlook, once the months behind it are in; when they couldn't be
+   *  read, only what the monthly targets say. */
+  const outlook = (v: GoalView): string | null => {
+    const p = v.projection;
+    if (!p) return null;
+    if (flows.status === 'loading' && p.status !== 'complete' && p.rateFrom !== 'monthly_target') return null;
+    if (flows.status === 'error' && p.status === 'no_rate' && v.sharing.length === 0) return null;
+    const said = outlookText(v, nameOf);
+    const from = sourceNote(v);
+    return said && from ? `${said}. ${from}` : said;
+  };
 
   return (
     <div className="card">
@@ -172,70 +114,120 @@ export default function GoalsCard({
       </div>
 
       {saveError && <p className="stale-note">{saveError}</p>}
-
-      {goals.length === 0 && !adding && (
-        <p className="empty-note">
-          No goals yet — set a target and track it against an account balance.
-        </p>
+      {flows.status === 'error' && views.some((v) => v.projection) && (
+        <p className="stale-note">How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.</p>
       )}
 
-      {goals.map((goal) => {
-        if (editing === goal.id) {
-          return (
-            <div className="budget-row" key={goal.id}>
-              {form}
-            </div>
-          );
-        }
-        const account = goal.account_id ? accountById.get(goal.account_id) : undefined;
-        // A hidden account contributes nothing anywhere else, so it shouldn't
-        // drive a progress meter either. Treated as untracked, but labelled
-        // distinctly below so it doesn't read as "disconnected".
-        const balance = account && !account.hidden ? account.balance : null;
-        const currency = account?.currency ?? null;
-        const ratio = balance != null ? Math.max(balance, 0) / goal.target : null;
-        const done = ratio != null && ratio >= 1;
+      {/* Each account with allocations on it: what they leave, or how far
+          they are over its balance. */}
+      {[...splits.values()]
+        .filter((s) => s.hasAllocations)
+        .map((s) => (
+          <p className="panel-note goal-unallocated" key={s.account_id}>
+            {splitText(s, accountName(s.account_id))}
+          </p>
+        ))}
+
+      {views.length === 0 && <p className="empty-note">No goals yet. Set a target, track it against an account’s balance, and see when you’ll reach it.</p>}
+
+      {views.map((v) => {
+        const goal = v.goal;
+        const done = v.projection?.status === 'complete';
+        const ratio = v.saved !== null ? Math.max(v.saved, 0) / goal.target : null;
+        const marker = v.shouldHave !== null ? Math.min(Math.max(v.shouldHave, 0) / goal.target, 1) : null;
+        const said = outlook(v);
+        const gaps = v.measured && v.projection?.rateFrom === 'contributions' ? gapsText(v.measured.gaps) : null;
+        const notes = [...(gaps ? [gaps] : []), ...claimNotes(v, nameOf, goal.account_id ? splits.get(goal.account_id) : undefined)];
         return (
           <div className="budget-row" key={goal.id}>
-            <button className="budget-summary" onClick={() => startEdit(goal)}>
+            <button className="budget-summary" onClick={() => edit(goal)}>
               <div className="budget-line">
                 <span className="budget-name">{goal.name}</span>
                 <span className="budget-amounts">
-                  {balance != null ? `${formatMoney(balance, currency)} of ` : ''}
-                  {formatMoney(goal.target, currency)}
+                  {v.saved !== null ? `${formatMoney(v.saved, v.currency)} of ` : ''}
+                  {formatMoney(goal.target, v.currency)}
                   {done && <span className="done-tag"> · reached</span>}
                 </span>
               </div>
-              {ratio != null ? (
-                <div className="meter-track">
-                  <div
-                    className={`meter-fill${done ? ' done' : ''}`}
-                    style={{ width: `${Math.min(ratio * 100, 100)}%` }}
-                  />
+              {ratio !== null ? (
+                <div className="meter-track goal-meter" role="img" aria-label={meterLabel(v)}>
+                  <div className={`meter-fill${done ? ' done' : ''}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
+                  {marker !== null && <span className="goal-marker" style={{ left: `${marker * 100}%` }} />}
                 </div>
               ) : (
-                <div className="type-tag">
-                  {account?.hidden
-                    ? 'tracked account is hidden'
-                    : goal.account_id
-                      ? 'linked account disconnected'
-                      : 'no account linked'}
-                </div>
+                <div className="type-tag">{stateText(v)}</div>
               )}
             </button>
+            {said && <p className="goal-outlook">{said}</p>}
+            {notes.map((n) => (
+              <p className="stale-note goal-note" key={n}>
+                {n}
+              </p>
+            ))}
           </div>
         );
       })}
 
-      {adding ? (
-        <div className="budget-row">{form}</div>
-      ) : (
-        <div className="card-actions" style={{ marginTop: 16 }}>
-          <button className="secondary" onClick={startAdd}>
-            Add Goal
+      <div className="card-actions" style={{ marginTop: 16 }}>
+        <button className="secondary" onClick={() => edit(null)} disabled={goals.length >= MAX_GOALS}>
+          Add Goal
+        </button>
+      </div>
+      {goals.length >= MAX_GOALS && <p className="panel-note">{MAX_GOALS} goals is the most, archived ones included: delete an archived one to add another.</p>}
+
+      {archived.length > 0 && (
+        <div className="recurring-dismissed">
+          <button className="link-btn" onClick={() => setShowArchived(!showArchived)} aria-expanded={showArchived}>
+            {archived.length} archived · {showArchived ? 'Hide' : 'Show'}
           </button>
+          {showArchived && (
+            <ul className="recurring-dismissed-list">
+              {archived.map((g) => {
+                const { archived: _restored, ...restored } = g.plan ?? {};
+                return (
+                  <li key={g.id}>
+                    <span>
+                      {g.name} <span className="type-tag">{archivedText(g, currencyOf(g))}</span>
+                    </span>
+                    {confirmDelete === g.id ? (
+                      <span className="goal-archived-actions">
+                        <button className="link-btn" onClick={() => setConfirmDelete(null)} disabled={busy}>
+                          Keep
+                        </button>
+                        <button className="link-btn danger-link" onClick={async () => (await save(goals.filter((o) => o.id !== g.id))) && setConfirmDelete(null)} disabled={busy}>
+                          Delete for good
+                        </button>
+                      </span>
+                    ) : (
+                      <span className="goal-archived-actions">
+                        <button className="link-btn" onClick={() => void save(goals.map((o) => (o.id === g.id ? { ...g, plan: restored } : o)))} disabled={busy}>
+                          Restore
+                        </button>
+                        <button className="link-btn danger-link" onClick={() => setConfirmDelete(g.id)} disabled={busy}>
+                          Delete
+                        </button>
+                      </span>
+                    )}
+                  </li>
+                );
+              })}
+            </ul>
+          )}
         </div>
       )}
+
+      <GoalSheet
+        key={sheet.key}
+        open={sheet.open}
+        goal={sheet.goal}
+        goals={goals}
+        accounts={accounts}
+        flows={flows.flows}
+        today={today}
+        saveError={saveError}
+        onClose={() => setSheet((s) => ({ ...s, open: false }))}
+        onSave={save}
+      />
     </div>
   );
 }
