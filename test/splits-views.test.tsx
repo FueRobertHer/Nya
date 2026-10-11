@@ -10,6 +10,7 @@ import { indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
 import Insights from '@/components/Insights';
+import MonthFlowChart from '@/components/MonthFlowChart';
 import { trailingFlows } from '@/lib/fire/inputs';
 
 // Splits and groups on the Activity tab (#39): a split transaction listed
@@ -161,6 +162,13 @@ describe('what else the dashboard counts from the same rows', () => {
     expect(split).not.toContain('general merchandise budget');
     // The biggest purchase is the whole charge, as the bank made it, never its largest part.
     expect(split).toContain('Biggest purchase this month: Costco, $150.00');
+  });
+
+  test('the month’s flow chart: a split moves nothing, a group counts its net', () => {
+    const flow = (rows: Txn[]) => renderToStaticMarkup(<MonthFlowChart txns={rows} month={today.slice(0, 7)} />).match(/aria-label="([^"]*)"/)![1];
+    expect(flow(raw())).toContain('Income $0.00, spending $274.50.');
+    expect(flow(served({ grouped: false }))).toContain('Income $0.00, spending $274.50.');
+    expect(flow(served())).toContain('Income $0.00, spending $214.50.');
   });
 
   test('the Plan’s year of spending: a split moves nothing, a group counts its net', () => {
