@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
-import { entryLabel, entryNotice, SplitActions } from '@/components/SplitRows';
+import { entryLabel, entryNotice, heldInGroupAs, splitKeptUnder, SplitActions } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { pastPayeeRows } from '@/components/ManualTxnSheet';
 import { splitChangedText } from '@/components/SplitChangedNote';
@@ -425,6 +425,42 @@ describe('the split sheet', () => {
     const page = renderToStaticMarkup(<SplitSheet t={t} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />);
     expect(text(page)).toContain('Split transaction');
     expect(page).toMatch(/<button[^>]*disabled=""[^>]*>Save split<\/button>/);
+  });
+});
+
+describe('a bank row standing for a row imported from a file (#52)', () => {
+  test('is split and grouped as that row was, and an edit names that row, where they are kept', () => {
+    const imported = 'imported-txn:0b9c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d';
+    const lunch = 'imported-txn:1c0d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e';
+    const rows = expandSplitsAndGroups(raw() as any, {
+      splits: new Map([[imported, record(150, [['groceries', 100], ['household', 50]])]]),
+      splitsUnknown: new Set(),
+      groups: new Map([
+        [
+          'g1',
+          { version: 1, name: 'Dinner with Sam', category_id: cat('restaurants'), members: [lunch, 'Venmo from Sam'], date: today, currency: 'USD', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' },
+        ],
+      ]),
+      groupsUnknown: 0,
+      ix,
+      stands: new Map([
+        ['Costco', [imported]],
+        ['Bistro', [lunch]],
+      ]),
+    }).rows as unknown as Txn[];
+    const entries = bankRows(rows, { groups: 'keep' }) as Txn[];
+    const costco = entries.find((t) => t.transaction_id === 'Costco')!;
+    expect([entryLabel(costco), splitKeptUnder(costco)]).toEqual(['Split into 2', imported]);
+    const group = entries.find((t) => t.group_members)!;
+    expect(group.group_members!.map(heldInGroupAs)).toEqual([lunch, 'Venmo from Sam']);
+    // Its own split, and its own place: named by its own id.
+    const own = bankRows(served()) as Txn[];
+    expect(splitKeptUnder(own.find((t) => t.transaction_id === 'Costco')!)).toBe('Costco');
+    expect(own.filter((t) => t.group_id).map(heldInGroupAs)).toEqual(['Bistro', 'Venmo from Sam']);
+    // The list shows it as any split transaction and group.
+    const page = list(rows);
+    expect(page).toContain('Split into 2');
+    expect(page).toContain('Group of 2');
   });
 });
 

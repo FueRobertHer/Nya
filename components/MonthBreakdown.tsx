@@ -119,7 +119,10 @@ export type Txn = {
   // As in lib/transactions.ts (#39, lib/split-rows.ts): a part of a split
   // transaction, in its place; a transaction whose split couldn't be read or
   // no longer fits; a group's row, its transactions inside it. And, on a
-  // split transaction put back whole for the list (bankRows), its parts.
+  // split transaction put back whole for the list (bankRows), its parts. A
+  // bank row standing for a row imported from a file is split or grouped as
+  // that row was, its parts or its place in the group naming that row, where
+  // an edit is made (split_carried_from, group_carried_from).
   split_of?: string;
   split_index?: number;
   split_count?: number;
@@ -127,6 +130,7 @@ export type Txn = {
   split_remainder?: { was: number };
   split_parent?: SplitParent;
   split_updated_at?: string;
+  split_carried_from?: string;
   split_unread?: true;
   split_unapplied?: "currency";
   split_parts?: Txn[];
@@ -136,6 +140,7 @@ export type Txn = {
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
   group_outside?: GroupOutside;
+  group_carried_from?: string;
 };
 
 /** The name rules match a row by: the one it had before any rule named it. */

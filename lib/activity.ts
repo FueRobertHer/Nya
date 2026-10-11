@@ -51,8 +51,11 @@
 // cache, the person's layers and the rules, once the rows are filed
 // (lib/split-rows.ts): a split transaction is answered as its parts and a
 // group's transactions as its net, so every reader's totals count those and
-// nothing twice. The rows before the year stay as the bank has them: only
-// recurring detection reads them, and it reads whole transactions.
+// nothing twice. A bank row standing for rows imported from files takes
+// their split and their place in a group (`stands_for`, read before the
+// layers take it off), as it takes what was said about them. The rows before
+// the year stay as the bank has them: only recurring detection reads them,
+// and it reads whole transactions.
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
@@ -525,6 +528,12 @@ export async function finishActivity(
         ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
+  // What each posted bank row standing for rows imported from files stands
+  // for (#52), which the layers take off the row once they have laid what
+  // was said about those rows on it: their splits and their places in groups
+  // are its too (lib/split-rows.ts).
+  const stands = new Map<string, readonly string[]>();
+  for (const t of transactions) if (t.stands_for?.length && !t.pending) stands.set(t.transaction_id, t.stands_for);
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
@@ -539,8 +548,10 @@ export async function finishActivity(
   fileRows(ix, rows);
   // Last, splits and groups (lib/split-rows.ts): each split transaction of
   // the year in its parts' place, each group's transactions in its net's, so
-  // every total counts those and nothing twice. Not the rows before the year,
-  // which only recurring detection reads, and it reads transactions whole.
+  // every total counts those and nothing twice; a bank row standing for
+  // imported rows split or grouped as they were. Not the rows before the
+  // year, which only recurring detection reads, and it reads transactions
+  // whole.
   const expanded = expandSplitsAndGroups(transactions, {
     splits: splitRead.records,
     splitsUnknown: splitRead.unknown,
@@ -550,6 +561,7 @@ export async function finishActivity(
     orderTags: (ids) => orderTagIds(tagRead.set, ids),
     from: cutoff,
     ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
+    ...(stands.size > 0 ? { stands } : {}),
   });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that

@@ -18,6 +18,7 @@ import { formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
+import { heldInGroupAs } from './SplitRows';
 
 /** How many transactions the list offers at once; the search finds the rest. */
 const OFFERED = 60;
@@ -193,12 +194,15 @@ export default function GroupSheet({
       return;
     }
     const before = new Set(members0.map((m) => m.transaction_id));
+    // Each as the group holds it: itself, or the row imported from a file
+    // that it stands for.
+    const held = new Map(members0.map((m) => [m.transaction_id, heldInGroupAs(m)]));
     void send('PATCH', {
       id: group.group_id,
       ...(name.trim() !== group.name ? { name: name.trim() } : {}),
       ...(categoryId !== group.category_id ? { category_id: categoryId } : {}),
       add: [...chosen].filter((id) => !before.has(id)),
-      remove: [...before].filter((id) => !chosen.has(id)),
+      remove: [...before].filter((id) => !chosen.has(id)).map((id) => held.get(id) ?? id),
     });
   }
 

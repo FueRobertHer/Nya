@@ -71,6 +71,22 @@
 //     (group_outside), and count in no total (lib/spending.ts
 //     countsInTotals): never a part of its net answered as the whole.
 //
+// A ROW IMPORTED FROM A FILE (#52) that a bank row now stands for (the bank
+// sent the same transaction since, or the person said in a review that it is
+// the bank's: lib/history-import/match.ts) doesn't count, and neither does
+// what was made on it. Instead, as what was said about it carries to that
+// bank row (lib/txn-layers.ts), so do its split and its place in a group
+// (SplitInputs.stands): the bank row is answered as its parts, or counts in
+// its group in its place, each part or its row in the group naming the
+// imported row (split_carried_from, group_carried_from), where an edit of
+// the split or the group is made, as that is where it is kept. The bank
+// row's own split, or its own place in a group, comes first; a pending one
+// takes neither until it posts, as it takes nothing said about the row. So
+// the transaction counts once, as its parts or in its group, never as its
+// parts and its twin; and the bank removing its row (or a re-link whose
+// window starts later) puts the imported row back, split and grouped as it
+// was.
+//
 // WHERE A TRANSACTION STAYS ONE ROW (bankRows): recurring detection
 // (lib/recurring.ts) looks for a monthly bill in the bank's transactions,
 // not in a bill's parts or a dinner's net; the read-only API lists each
@@ -159,7 +175,7 @@ const PARENT_KEYS = [
   'paired',
 ] as const;
 /** The fields only a part has. */
-const PART_KEYS = ['split_of', 'split_index', 'split_count', 'split_excluded', 'split_remainder', 'split_parent', 'split_updated_at'] as const;
+const PART_KEYS = ['split_of', 'split_index', 'split_count', 'split_excluded', 'split_remainder', 'split_parent', 'split_updated_at', 'split_carried_from'] as const;
 
 /** A whole transaction's own values (SplitParent). */
 function parentFacts(t: Txn): SplitParent {
@@ -187,8 +203,9 @@ function partExcluded(parent: Txn, own: boolean): Pick<Txn, 'excluded' | 'exclud
 }
 
 /** A split transaction's parts, in its place, and how many name a category
- *  none has. */
-function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null): { rows: Txn[]; unknownCategory: number } {
+ *  none has. `from`, for a bank row's split carried from a row imported from
+ *  a file that it stands for: that row's id, where the split is kept. */
+function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null, from?: string): { rows: Txn[]; unknownCategory: number } {
   const scale = unitScale(currencyOf(parent));
   const facts = parentFacts(parent);
   const base: Txn = { ...parent };
@@ -196,7 +213,7 @@ function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null): {
   const left = toUnits(parent.amount, scale) - record.parts.reduce((n, p) => n + toUnits(p.amount, scale), 0);
   const count = record.parts.length + (left !== 0 ? 1 : 0);
   // When the split was saved, so an edit made from it can say what it saw.
-  const of = { split_of: parent.transaction_id, split_count: count, split_parent: facts, split_updated_at: record.updated_at };
+  const of = { split_of: parent.transaction_id, split_count: count, split_parent: facts, split_updated_at: record.updated_at, ...(from ? { split_carried_from: from } : {}) };
   let unknownCategory = 0;
   const rows = record.parts.map((p, i): Txn => {
     const c = ix ? categoryById(ix, p.category_id) : null;
@@ -319,6 +336,13 @@ export type SplitInputs = {
    *  it out whole, and a group nets only its transactions still counting,
    *  as everywhere else (where those rows were never read). */
   ended?: ReadonlyMap<string, string>;
+  /** For each bank row standing for rows imported into its account from
+   *  files (#52: lib/history-import/read.ts importedForActivity's
+   *  `represents`, which the read layer carries on the row as `stands_for`),
+   *  those rows' ids, earlier imports first. A split made on one of them, or
+   *  its place in a group, is the bank row's while it stands for it, if the
+   *  bank row is posted and has none of its own (see the header). */
+  stands?: ReadonlyMap<string, readonly string[]>;
 };
 
 /** What a transaction of a group counted outside what was read carries
@@ -343,6 +367,40 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
     return end !== undefined && t.date >= end;
   };
   const byId = new Map(rows.filter((t) => !endedRow(t)).map((t) => [t.transaction_id, t]));
+  // The rows imported from files that a posted bank row here stands for
+  // (SplitInputs.stands): by each bank row, those of them not here
+  // themselves, earlier imports first, and by each of them, the bank row.
+  const standsFor = new Map<string, string[]>();
+  const standIn = new Map<string, Txn>();
+  for (const [bankId, ids] of inputs.stands ?? []) {
+    const bank = byId.get(bankId);
+    if (!bank || bank.pending) continue;
+    const away = ids.filter((id) => !byId.has(id));
+    if (away.length === 0) continue;
+    standsFor.set(bankId, away);
+    for (const id of away) if (!standIn.has(id)) standIn.set(id, bank);
+  }
+  // The split that applies to a row: its own, else the first of those of the
+  // imported rows it stands for, with that row's id (`from`); 'unread' when
+  // the one that would apply couldn't be read.
+  const splitOf = (t: Txn): { record: SplitRecord; from?: string } | 'unread' | null => {
+    const own = inputs.splits.get(t.transaction_id);
+    if (own) return { record: own };
+    if (inputs.splitsUnknown.has(t.transaction_id)) return 'unread';
+    for (const id of standsFor.get(t.transaction_id) ?? []) {
+      const record = inputs.splits.get(id);
+      if (record) return { record, from: id };
+      if (inputs.splitsUnknown.has(id)) return 'unread';
+    }
+    return null;
+  };
+  const isSplit = (t: Txn) => {
+    const split = splitOf(t);
+    return split !== null && split !== 'unread';
+  };
+  // Every transaction in a group in its own right: that place comes before
+  // one a bank row takes from an imported row it stands for.
+  const ownPlace = new Set([...inputs.groups.values()].flatMap((g) => g.members));
 
   // Groups first, oldest made first: a transaction in two (two devices at
   // once) counts in the first, and the other says it isn't there.
@@ -360,7 +418,15 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   let splitAndGrouped = 0;
   const ordered = [...inputs.groups].sort(([a, x], [b, y]) => (x.created_at !== y.created_at ? (x.created_at < y.created_at ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0));
   for (const [id, g] of ordered) {
-    const here = g.members.filter((m) => byId.has(m) && !claimed.has(m)).map((m) => byId.get(m)!);
+    // Each of its transactions here, or the bank row standing for it.
+    const here: Txn[] = [];
+    for (const m of g.members) {
+      const own = byId.get(m);
+      const t = own ?? standIn.get(m);
+      if (!t || claimed.has(t.transaction_id) || here.some((x) => x.transaction_id === t.transaction_id)) continue;
+      if (!own && ownPlace.has(t.transaction_id)) continue;
+      here.push(own ?? { ...t, group_carried_from: m });
+    }
     if (here.length === 0) continue;
     if (new Set(here.map((t) => currencyOf(t))).size > 1) {
       mixed++;
@@ -374,14 +440,14 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
       for (const t of here) {
         claimed.add(t.transaction_id);
         outside.set(t.transaction_id, marked);
-        if (inputs.splits.has(t.transaction_id)) splitAndGrouped++;
+        if (isSplit(t)) splitAndGrouped++;
       }
       continue;
     }
     for (const t of here) {
       claimed.add(t.transaction_id);
       inGroup.add(t.transaction_id);
-      if (inputs.splits.has(t.transaction_id)) splitAndGrouped++;
+      if (isSplit(t)) splitAndGrouped++;
     }
     groupRows.push(groupRow(id, g, here, g.members.length - here.length, inputs));
   }
@@ -405,19 +471,19 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
     }
     const stale = unapplied.get(given.transaction_id);
     const t = stale ? { ...given, group_unapplied: stale } : given;
-    const record = inputs.splits.get(t.transaction_id);
-    if (record && !t.pending) {
-      if (record.currency !== currencyOf(t)) {
+    const split = splitOf(t);
+    if (split && split !== 'unread' && !t.pending) {
+      if (split.record.currency !== currencyOf(t)) {
         otherCurrency++;
         out.push({ ...t, split_unapplied: 'currency' });
         continue;
       }
-      const parts = partRows(t, record, inputs.ix);
+      const parts = partRows(t, split.record, inputs.ix, split.from);
       unknownCategory += parts.unknownCategory;
       out.push(...parts.rows);
       continue;
     }
-    if (inputs.splitsUnknown.has(t.transaction_id)) {
+    if (split === 'unread') {
       unread++;
       out.push({ ...t, split_unread: true });
       continue;

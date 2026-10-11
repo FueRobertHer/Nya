@@ -35,6 +35,18 @@ export function entryLabel(t: Pick<Txn, 'split_parts' | 'group_members' | 'group
  *  imported again. */
 export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConnectorKind(t.source);
 
+/** Where a split transaction's split is kept, which an edit of it names: the
+ *  transaction itself, or the row imported from a file that a bank row stands
+ *  for, whose split it shows (lib/split-rows.ts split_carried_from). `t` is
+ *  the transaction put back whole, its parts beside it. */
+export const splitKeptUnder = (t: Pick<Txn, 'transaction_id' | 'split_parts'>): string => t.split_parts?.[0]?.split_carried_from ?? t.transaction_id;
+
+/** The id a group holds one of its transactions by, which taking it out
+ *  names: its own, or that of the row imported from a file that it stands
+ *  for, whose place in the group it takes (lib/split-rows.ts
+ *  group_carried_from). */
+export const heldInGroupAs = (m: Pick<Txn, 'transaction_id' | 'group_carried_from'>): string => m.group_carried_from ?? m.transaction_id;
+
 /** A row's notice under its name about its split or group, if any. */
 export function entryNotice(t: Txn): string | null {
   if (t.group_outside) {
@@ -150,7 +162,7 @@ export function PartRows({
 }) {
   const currency = currencyOf(parent);
   const patch = async (part: Txn, change: Record<string, unknown>) => {
-    onError(await sendChange('/api/transaction-splits', 'PATCH', { transaction_id: parent.transaction_id, part_id: part.transaction_id.slice(PART_PREFIX.length), ...change }));
+    onError(await sendChange('/api/transaction-splits', 'PATCH', { transaction_id: splitKeptUnder(parent), part_id: part.transaction_id.slice(PART_PREFIX.length), ...change }));
     onChanged();
   };
   return (
@@ -276,7 +288,7 @@ export function MemberRows({
                         className="secondary"
                         onClick={async () => {
                           onOpen(null);
-                          onError(await sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [m.transaction_id] }));
+                          onError(await sendChange('/api/transaction-groups', 'PATCH', { id: group.group_id, remove: [heldInGroupAs(m)] }));
                           onChanged();
                         }}
                       >

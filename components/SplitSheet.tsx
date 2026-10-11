@@ -21,7 +21,7 @@ import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
-import { bankKept } from './SplitRows';
+import { bankKept, splitKeptUnder } from './SplitRows';
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
@@ -164,9 +164,12 @@ export default function SplitSheet({
   // changed meanwhile on another device is refused, never written over; not
   // said for one that no longer fits its transaction, which isn't shown.
   const seen = t.split_parts ? (t.split_parts[0]?.split_updated_at ?? undefined) : t.split_unapplied ? undefined : null;
+  // Where it is kept: the transaction itself, or the row imported from a
+  // file that it stands for, whose split it shows.
+  const kept = splitKeptUnder(t);
   const save = () =>
     send('PUT', {
-      transaction_id: t.transaction_id,
+      transaction_id: kept,
       ...(seen !== undefined ? { updated_at: seen } : {}),
       parts: drafts.map((d, i) => ({
         ...(d.id ? { id: d.id } : {}),
@@ -272,7 +275,7 @@ export default function SplitSheet({
             Unsplit {t.name}? Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
           </p>
           <div className="button-pair">
-            <button className="danger" onClick={() => send('DELETE', { transaction_id: t.transaction_id, ...(seen !== undefined ? { updated_at: seen } : {}) })} disabled={saving}>
+            <button className="danger" onClick={() => send('DELETE', { transaction_id: kept, ...(seen !== undefined ? { updated_at: seen } : {}) })} disabled={saving}>
               Unsplit
             </button>
             <button className="secondary" onClick={() => setConfirming(false)} disabled={saving}>

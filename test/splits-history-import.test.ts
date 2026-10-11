@@ -6,8 +6,12 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 // bank's are, their parts and nets counted where every total counts; kept
 // past what prunes the bank's (a sync, a disconnect, an earlier account
 // forgotten), and gone with their rows when the import is undone or the
-// account they were imported into is forgotten; and a month's note on
-// imported transactions counts transactions, never parts.
+// account they were imported into is forgotten; carried to the bank's row
+// that comes to stand for one, as what was said about it is, so the
+// transaction counts once, as its parts or in its group, never as both its
+// parts and its twin, edited where it is kept, and back on the imported row
+// when the bank's goes; and a month's note on imported transactions counts
+// transactions, never parts.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // The real ceiling on a stored value: a file run before this one may have
@@ -41,7 +45,7 @@ const { forgetImportedHistory } = await import('@/lib/history-import/commit');
 const { importedRowsNote } = await import('@/lib/history-import/view');
 const { summarize, spendingByCategory } = await import('@/lib/totals');
 const { filedId, indexTaxonomy } = await import('@/lib/categories');
-const { PART_PREFIX } = await import('@/lib/split-rows');
+const { PART_PREFIX, bankRows } = await import('@/lib/split-rows');
 const routes = await import('@/app/api/history-import/route');
 
 const ctx = TEST_CTX;
@@ -86,6 +90,7 @@ function bankTxn(id: string, account_id: string, days: number, amount: number, o
 
 const BANK = [
   bankTxn('b_rent', 'acc_chk', 55, 1850, { name: 'ZELLE PAYMENT TO LANDLORD', category: 'rent and utilities' }),
+  bankTxn('b_tip', 'acc_chk', 49, 5, { name: 'TIP JAR', category: 'food and drink' }),
   bankTxn('b_payback', 'acc_chk', 48, -20, { name: 'ZELLE FROM SAM', category: 'transfer in' }),
   bankTxn('b_grocer', 'acc_chk', 3, 20, { name: 'GROCER', category: 'food and drink' }),
 ];
@@ -349,6 +354,159 @@ describe('gone with their row, and only with it', () => {
     await forgetImportedHistory(ctx, 'acc_chk');
     expect(await splitStore.get(ctx, ids['OLD STORE'])).toBeNull();
     expect(await groupStore.get(ctx, group)).toMatchObject({ members: ['b_payback'], removed: 1 });
+  });
+});
+
+describe('when the bank sends the same transaction', () => {
+  /** The bank's own row for the corner shop: the imported one's twin, which
+   *  supersedes it from now on. */
+  const corner = (over: Record<string, unknown> = {}) => bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042', ...over });
+  const splitCorner = async (id: string) => {
+    const res = await splitPut(id, [
+      { amount: 45, category_id: catId('food and drink'), note: 'Sandwiches' },
+      { amount: 15, category_id: catId('home improvement') },
+    ]);
+    expect(res.status).toBe(200);
+  };
+
+  test('its split carries to the bank’s row: counted once, as the parts, never as the parts and the bank’s row, nor the imported row too', async () => {
+    const { ids } = await importStatement();
+    await splitCorner(ids['CORNER SHOP']);
+    await storeBank([...BANK, corner()]);
+
+    const rows = await rowsOf();
+    expect(rows.some((t) => t.transaction_id === ids['CORNER SHOP'] || t.split_of === ids['CORNER SHOP'])).toBe(false);
+    expect(rows.some((t) => t.transaction_id === 'b_corner')).toBe(false);
+    const parts = rows.filter((t) => t.split_of === 'b_corner');
+    expect(parts.map((p) => [p.amount, p.category_id, p.note ?? null, p.split_carried_from, p.source])).toEqual([
+      [45, catId('food and drink'), 'Sandwiches', ids['CORNER SHOP'], undefined],
+      [15, catId('home improvement'), null, ids['CORNER SHOP'], undefined],
+    ]);
+    expect(summarize(rows, (d) => d === daysAgo(50), 'USD')).toMatchObject({ money_out: 60 });
+    expect(await spentOn(daysAgo(50))).toEqual({ 'food and drink': 45, 'home improvement': 15 });
+    // Put back whole for the list, the bank's row is the transaction, its
+    // parts beneath it.
+    const whole = bankRows(rows).find((t) => t.transaction_id === 'b_corner')!;
+    expect([whole.amount, whole.split_carried_from, whole.split_parts?.length]).toEqual([60, undefined, 2]);
+
+    // The bank taking its row back puts the imported row back, split as it was.
+    await storeBank(BANK);
+    const back = await rowsOf();
+    expect(back.filter((t) => t.split_of === ids['CORNER SHOP']).map((p) => [p.amount, p.split_carried_from])).toEqual([
+      [45, undefined],
+      [15, undefined],
+    ]);
+  });
+
+  test('an edit made from the bank’s row changes the split where it is kept, and unsplit puts the bank’s row back whole', async () => {
+    const { ids } = await importStatement();
+    await splitCorner(ids['CORNER SHOP']);
+    await storeBank([...BANK, corner()]);
+    const parts = (await rowsOf()).filter((t) => t.split_of === 'b_corner');
+    const kept = parts[0].split_carried_from!;
+    expect(kept).toBe(ids['CORNER SHOP']);
+
+    // A part, as the list changes one.
+    const home = parts[1].transaction_id.slice(PART_PREFIX.length);
+    expect((await route('transaction-splits', 'PATCH', { transaction_id: kept, part_id: home, category_id: catId('food and drink') })).status).toBe(200);
+    expect(await spentOn(daysAgo(50))).toEqual({ 'food and drink': 60 });
+    // The whole split, as the sheet saves it, from the split it opened on.
+    const seen = (await rowsOf()).find((t) => t.split_of === 'b_corner')!.split_updated_at;
+    const put = await splitPut(
+      kept,
+      [
+        { amount: 50, category_id: catId('food and drink') },
+        { amount: 10, category_id: catId('travel') },
+      ],
+      { updated_at: seen }
+    );
+    expect(put.status).toBe(200);
+    expect(await spentOn(daysAgo(50))).toEqual({ 'food and drink': 50, travel: 10 });
+    expect(await splitStore.get(ctx, 'b_corner')).toBeNull();
+
+    // Unsplit: the bank's row counts whole again.
+    expect((await route('transaction-splits', 'DELETE', { transaction_id: kept })).body).toEqual({ transaction_id: kept, removed: true });
+    const row = (await rowsOf()).find((t) => t.transaction_id === 'b_corner')!;
+    expect([row.amount, row.split_of]).toEqual([60, undefined]);
+  });
+
+  test('the bank’s row split in its own right keeps its own parts; one still pending takes none', async () => {
+    const { ids } = await importStatement();
+    await splitCorner(ids['CORNER SHOP']);
+    // Pending: shown whole in the imported row's place until it posts.
+    await storeBank([...BANK, corner({ pending: true })]);
+    let rows = await rowsOf();
+    expect(rows.some((t) => t.split_of !== undefined)).toBe(false);
+    expect(rows.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ amount: 60, pending: true });
+    expect(rows.some((t) => t.transaction_id === ids['CORNER SHOP'])).toBe(false);
+
+    // Posted, and split on its own: its own split wins.
+    await storeBank([...BANK, corner()]);
+    const own = await splitPut('b_corner', [
+      { amount: 30, category_id: catId('travel') },
+      { amount: 30, category_id: catId('travel') },
+    ]);
+    expect(own.status).toBe(200);
+    rows = await rowsOf();
+    expect(rows.filter((t) => t.split_of === 'b_corner').map((p) => [p.amount, p.category_id, p.split_carried_from])).toEqual([
+      [30, catId('travel'), undefined],
+      [30, catId('travel'), undefined],
+    ]);
+    expect(summarize(rows, (d) => d === daysAgo(50), 'USD')).toMatchObject({ money_out: 60 });
+    // The imported row's is kept, as it is, for the day the bank's row goes.
+    expect(await splitStore.get(ctx, ids['CORNER SHOP'])).not.toBeNull();
+  });
+
+  test('its place in a group carries: the group nets the bank’s row, and taking that out takes the imported row out', async () => {
+    const { ids } = await importStatement();
+    const food = catId('food and drink');
+    const made = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: food, members: [ids['CORNER SHOP'], 'b_payback', 'b_tip'] });
+    expect(made.status).toBe(200);
+    await storeBank([...BANK, corner()]);
+
+    let rows = await rowsOf();
+    const group = rows.find((t) => t.group_members && t.group_id === made.body.id)!;
+    expect([group.amount, group.group_missing]).toEqual([45, undefined]);
+    expect(group.group_members!.map((m) => [m.transaction_id, m.group_carried_from])).toEqual([
+      ['b_corner', ids['CORNER SHOP']],
+      ['b_tip', undefined],
+      ['b_payback', undefined],
+    ]);
+    expect(rows.some((t) => t.transaction_id === 'b_corner' || t.transaction_id === ids['CORNER SHOP'])).toBe(false);
+    // The rent, the lunch's net and the grocer's: nothing else.
+    expect(summarize(rows, (d) => d >= daysAgo(55), 'USD')).toMatchObject({ money_out: 1850 + 45 + 20, money_in: 0 });
+
+    // Taken out from its row in the group, as the list does: by the id the
+    // group holds.
+    const kept = group.group_members!.find((m) => m.transaction_id === 'b_corner')!.group_carried_from!;
+    expect((await route('transaction-groups', 'PATCH', { id: made.body.id, remove: [kept] })).status).toBe(200);
+    expect((await groupStore.get(ctx, made.body.id))!.members).toEqual(['b_payback', 'b_tip']);
+    rows = await rowsOf();
+    expect(rows.find((t) => t.group_id === made.body.id && t.group_members)!.amount).toBe(-15);
+    expect(rows.find((t) => t.transaction_id === 'b_corner')!.amount).toBe(60);
+  });
+
+  test('the bank’s row in a group in its own right stays there: the imported row’s group says it isn’t here, and nothing counts twice', async () => {
+    const { ids } = await importStatement();
+    const food = catId('food and drink');
+    const lunch = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: food, members: [ids['CORNER SHOP'], 'b_payback'] });
+    await storeBank([...BANK, corner()]);
+    const errand = await route('transaction-groups', 'POST', { name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'] });
+    expect(errand.status).toBe(200);
+
+    const rows = await rowsOf();
+    const of = (id: string) => rows.find((t) => t.group_members && t.group_id === id)!;
+    expect([of(lunch.body.id).amount, of(lunch.body.id).group_missing, of(lunch.body.id).group_members!.map((m) => m.transaction_id)]).toEqual([-20, 1, ['b_payback']]);
+    expect([of(errand.body.id).amount, of(errand.body.id).group_members!.map((m) => [m.transaction_id, m.group_carried_from])]).toEqual([
+      65,
+      [
+        ['b_corner', undefined],
+        ['b_tip', undefined],
+      ],
+    ]);
+    // The rent, the errand's net and the grocer's out; Sam's payback, all
+    // that is left of the lunch, in.
+    expect(summarize(rows, (d) => d >= daysAgo(55), 'USD')).toMatchObject({ money_out: 1850 + 65 + 20, money_in: 20 });
   });
 });
 

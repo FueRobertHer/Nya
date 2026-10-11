@@ -30,7 +30,10 @@
 // deleted, or one imported into a linked account whose import was undone,
 // leaves its group (forgetGroupMembers, from lib/split-gone.ts: by the rules
 // lib/txn-annotations.ts prunes by), counted in `removed` so the group says
-// so; a group left with none goes. Groups are not carried across a
+// so; a group left with none goes. A row imported into a linked account that
+// a bank row comes to stand for keeps its place, by its own id, and the bank
+// row counts in the group in its place while it stands for it, unless it is
+// in a group in its own right (lib/split-rows.ts). Groups are not carried across a
 // re-link (docs/features.md says why).
 
 import { defineMapStore } from './repo';

@@ -38,6 +38,13 @@
 // the row is. Splits are not carried across a re-link (docs/features.md says
 // why).
 //
+// FROM A FILE TO THE BANK'S ROW. A row imported into a linked account that a
+// bank row comes to stand for (lib/history-import/match.ts) keeps its split,
+// under its own id, and the bank row shows it while it stands for it, as it
+// shows what was said about the row (lib/split-rows.ts): an edit made from
+// the bank row is made here, on the imported row's record, unless the bank
+// row is split in its own right.
+//
 // SIZE. The read layer reads every record on each request (one HGETALL), as
 // it reads what was said about each transaction: cheap for what people split
 // by hand, far under MAX_SPLITS.

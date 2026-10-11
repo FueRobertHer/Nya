@@ -628,6 +628,84 @@ describe('groups net their transactions', () => {
   });
 });
 
+describe('a bank row standing for rows imported from files (#52)', () => {
+  const imp1 = 'imported-txn:0b9c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d';
+  const imp2 = 'imported-txn:1c0d2e3f-4051-4b6c-9d7e-8f9a0b1c2d3e';
+  const first = split(150, [
+    { id: 'p1', amount: 100, category: 'groceries' },
+    { id: 'p2', amount: 50, category: 'household' },
+  ]);
+  const second = split(150, [
+    { id: 'q1', amount: 75, category: 'auto' },
+    { id: 'q2', amount: 75, category: 'auto' },
+  ]);
+  const stands = new Map([['t_bank', [imp1, imp2]]]);
+
+  test('takes the first of their splits, earlier imports first, its parts naming the row it is kept under; its own comes first', () => {
+    const out = expandSplitsAndGroups([row('t_bank')], inputs({ splits: new Map([[imp2, second], [imp1, first]]), stands }));
+    expect(out.rows.map((t) => [t.transaction_id, t.split_of, t.amount, t.split_carried_from])).toEqual([
+      [`${PART_PREFIX}p1`, 't_bank', 100, imp1],
+      [`${PART_PREFIX}p2`, 't_bank', 50, imp1],
+    ]);
+    // Put back whole, it is the bank's row as it came.
+    expect(bankRows(out.rows).map((t) => ({ ...t, split_parts: undefined }))).toEqual([{ ...row('t_bank'), split_parts: undefined }]);
+    const own = expandSplitsAndGroups([row('t_bank')], inputs({ splits: new Map([[imp1, first], ['t_bank', second]]), stands }));
+    expect(own.rows.map((t) => [t.split_of, t.amount, t.split_carried_from])).toEqual([
+      ['t_bank', 75, undefined],
+      ['t_bank', 75, undefined],
+    ]);
+  });
+
+  test('pending, or beside the imported row itself, it takes none', () => {
+    const splits = new Map([[imp1, first]]);
+    expect(expandSplitsAndGroups([row('t_bank', { pending: true })], inputs({ splits, stands })).rows).toEqual([row('t_bank', { pending: true })]);
+    // A row here is never one the bank row stands for: its split is its own.
+    const both = expandSplitsAndGroups([row('t_bank'), row(imp1)], inputs({ splits, stands }));
+    expect(both.rows.map((t) => [t.transaction_id, t.split_of, t.split_carried_from])).toEqual([
+      ['t_bank', undefined, undefined],
+      [`${PART_PREFIX}p1`, imp1, undefined],
+      [`${PART_PREFIX}p2`, imp1, undefined],
+    ]);
+  });
+
+  test('one of theirs that can’t be read leaves it whole, marked, with the note, as its own would', () => {
+    const out = expandSplitsAndGroups([row('t_bank')], inputs({ splitsUnknown: new Set([imp1]), stands }));
+    expect(out.rows).toEqual([{ ...row('t_bank'), split_unread: true }]);
+    expect(out.notes).toEqual(['How you split 1 transaction couldn’t be read, so it shows whole until it can be.']);
+  });
+
+  test('takes their place in a group, marked, unless it has one of its own; split as well, it counts whole there', () => {
+    const venmo = row('t_venmo', { amount: -60, date: '2026-10-10', category_id: cat('transfer in') });
+    const dinner = row('t_bank', { amount: 120, date: '2026-10-03', category_id: cat('food and drink') });
+    const dinnerGroup = group([imp1, 't_venmo']);
+    const out = expandSplitsAndGroups([venmo, dinner], inputs({ groups: new Map([['g1', dinnerGroup]]), stands }));
+    const g1 = out.rows.find((t) => t.group_id === 'g1' && t.group_members)!;
+    expect([g1.amount, g1.group_missing]).toEqual([60, undefined]);
+    expect(g1.group_members!.map((m) => [m.transaction_id, m.group_carried_from])).toEqual([
+      ['t_bank', imp1],
+      ['t_venmo', undefined],
+    ]);
+    expect(out.rows.filter((t) => !t.group_members)).toEqual([]);
+
+    // In a group in its own right, it stays there, even one made later: the
+    // imported row's group says it isn't here.
+    const own = group(['t_bank', 't_coffee'], { name: 'Errand', created_at: '2026-10-07T00:00:00.000Z' });
+    const coffee = row('t_coffee', { amount: 5, date: '2026-10-07' });
+    const both = expandSplitsAndGroups([venmo, dinner, coffee], inputs({ groups: new Map([['g1', dinnerGroup], ['g2', own]]), stands }));
+    const [a, b] = ['g1', 'g2'].map((id) => both.rows.find((t) => t.group_id === id && t.group_members)!);
+    expect([a.amount, a.group_missing, b.amount, b.group_members!.map((m) => m.group_carried_from)]).toEqual([-60, 1, 125, [undefined, undefined]]);
+
+    // Split as well (two devices at once), it counts whole in the group.
+    const splitToo = expandSplitsAndGroups(
+      [venmo, dinner],
+      inputs({ groups: new Map([['g1', group([imp2, 't_venmo'])]]), splits: new Map([[imp1, split(120, [{ id: 'd1', amount: 100, category: 'restaurants' }, { id: 'd2', amount: 20, category: 'household' }])]]), stands })
+    );
+    expect(splitToo.rows.some((t) => t.split_of)).toBe(false);
+    expect(splitToo.rows.find((t) => t.group_members)!.amount).toBe(60);
+    expect(splitToo.notes).toEqual(['1 transaction in a group is split too, so its parts aren’t used and the group counts it whole.']);
+  });
+});
+
 describe('what a group may hold (checkMembers)', () => {
   const m = (id: string, date: string, currency: string | null = 'USD', pending = false) => ({ transaction_id: id, date, currency, pending, amount: 10 });
   test('two or more posted transactions in one currency, dated by the earliest', () => {

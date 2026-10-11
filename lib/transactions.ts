@@ -178,7 +178,11 @@ export type Txn = {
   // what it saw; a transaction of a group that no longer applies (its
   // transactions' currencies differ now) says which (group_unapplied), and
   // one of a group counted on a day before what was read says which, and
-  // counts in no total (group_outside).
+  // counts in no total (group_outside). A bank row standing for a row
+  // imported from a file (#52) takes that row's split, its parts naming the
+  // row it is kept under (split_carried_from), and its place in a group, its
+  // row there naming it the same way (group_carried_from), where an edit of
+  // them is made.
   split_of?: string;
   split_index?: number;
   split_count?: number;
@@ -186,10 +190,12 @@ export type Txn = {
   split_remainder?: { was: number };
   split_parent?: SplitParent;
   split_updated_at?: string;
+  split_carried_from?: string;
   split_unread?: true;
   split_unapplied?: 'currency';
   group_id?: string;
   group_members?: Txn[];
+  group_carried_from?: string;
   group_missing?: number;
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
