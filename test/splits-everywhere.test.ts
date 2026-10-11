@@ -262,10 +262,11 @@ describe('the download', () => {
     await splitStore.set(ctx, 't_card', { ...(await splitStore.get(ctx, 't_card'))!, amount: 70, parts: [{ id: 'p-food', amount: 40, category_id: cat('food and drink') }, { id: 'p-home', amount: 30, category_id: cat('home improvement') }] });
     const { rows, col } = await csvRows();
     const parts = rows.filter((r) => col(r, 'split_of') === 't_card');
-    expect(parts.map((r) => [col(r, 'transaction_id'), col(r, 'nya_amount'), col(r, 'nya_category')])).toEqual([
-      ['split:p-food', '40', 'food and drink'],
-      ['split:p-home', '30', 'home improvement'],
-      ['split-rest:t_card', '10', 'general merchandise'],
+    expect(parts.map((r) => [col(r, 'transaction_id'), col(r, 'nya_amount'), col(r, 'category'), col(r, 'nya_category')])).toEqual([
+      ['split:p-food', '40', 'food and drink', 'food and drink'],
+      ['split:p-home', '30', 'home improvement', 'home improvement'],
+      // The difference is filed as the transaction is, its category the transaction's own.
+      ['split-rest:t_card', '10', 'general merchandise', 'general merchandise'],
     ]);
   });
 

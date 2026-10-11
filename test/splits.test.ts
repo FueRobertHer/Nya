@@ -8,7 +8,7 @@ import { leftOutByCurrency, leftOutText, countsInTotals, countTransactions } fro
 import { detectRecurring } from '@/lib/recurring';
 import { spendingByTag } from '@/lib/tag-totals';
 import type { Txn } from '@/lib/transactions';
-import { splitMemoOf } from '@/lib/export-splits';
+import { appliedSplitsOf, splitMemoOf } from '@/lib/export-splits';
 import { appendixSplitWords } from '@/lib/report/words';
 
 // Splits and groups (#39), the pure part: what a split may hold
@@ -423,7 +423,11 @@ describe('the bank changes a split transaction’s amount', () => {
   });
 
   test('an OFX statement’s memo says which way the bank changed it', () => {
-    const memo = (amount: number) => splitMemoOf({ id: 't1', amount, currency: 'USD' }, inputs({ splits: new Map([['t1', record]]) }));
+    // As the statement says it: of the row, from how the file's splits apply.
+    const memoOf = (t: Txn, given: SplitInputs, bank?: boolean) =>
+      splitMemoOf({ id: t.transaction_id, amount: t.amount, currency: t.iso_currency_code ?? null, ...(bank === undefined ? {} : { bank }) }, given, appliedSplitsOf([t], given));
+    const withRecord = inputs({ splits: new Map([['t1', record]]) });
+    const memo = (amount: number) => memoOf(row('t1', { amount }), withRecord);
     expect(memo(50)).toBe('Split in Nya: Restaurants 40.00; Household 10.00');
     expect(memo(60)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since');
     expect(memo(45.5)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; the bank took 4.50 off since');
@@ -432,19 +436,29 @@ describe('the bank changes a split transaction’s amount', () => {
       { id: 'p1', amount: -40, category: 'restaurants' },
       { id: 'p2', amount: -10, category: 'household' },
     ]);
-    expect(splitMemoOf({ id: 't1', amount: -60, currency: 'USD' }, inputs({ splits: new Map([['t1', refund]]) }))).toBe(
-      'Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since'
-    );
+    expect(memoOf(row('t1', { amount: -60 }), inputs({ splits: new Map([['t1', refund]]) }))).toBe('Split in Nya: Restaurants 40.00; Household 10.00; the bank added 10.00 since');
     // One entered by hand or imported changes when it is edited, not by the bank.
-    expect(splitMemoOf({ id: 't1', amount: 60, currency: 'USD', bank: false }, inputs({ splits: new Map([['t1', record]]) }))).toBe(
-      'Split in Nya: Restaurants 40.00; Household 10.00; 10.00 added since'
-    );
-    expect(splitMemoOf({ id: 't1', amount: 45.5, currency: 'USD', bank: false }, inputs({ splits: new Map([['t1', record]]) }))).toBe(
-      'Split in Nya: Restaurants 40.00; Household 10.00; 4.50 taken off since'
-    );
+    expect(memoOf(row('t1', { amount: 60 }), withRecord, false)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; 10.00 added since');
+    expect(memoOf(row('t1', { amount: 45.5 }), withRecord, false)).toBe('Split in Nya: Restaurants 40.00; Household 10.00; 4.50 taken off since');
     // Pending, or in another currency now: whole, so nothing to say.
-    expect(splitMemoOf({ id: 't1', amount: 50, currency: 'USD', pending: true }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
-    expect(splitMemoOf({ id: 't1', amount: 50, currency: 'EUR' }, inputs({ splits: new Map([['t1', record]]) }))).toBeNull();
+    expect(memoOf(row('t1', { amount: 50, pending: true }), withRecord)).toBeNull();
+    expect(memoOf(row('t1', { amount: 50, iso_currency_code: 'EUR' }), withRecord)).toBeNull();
+  });
+
+  test('the memo names a group only as the app applies it: never one in two currencies now, nor the second of two holding it', () => {
+    const a = row('t_a', { amount: 30 });
+    const b = row('t_b', { amount: -10, iso_currency_code: 'EUR' });
+    const c = row('t_c', { amount: -5 });
+    const mixed = inputs({ groups: new Map([['g1', group(['t_a', 't_b'])]]) });
+    expect(appliedSplitsOf([a, b], mixed).groupOf.size).toBe(0);
+    const twice = inputs({
+      groups: new Map([
+        ['g1', group(['t_a', 't_c'], { name: 'First', created_at: '2026-10-01T00:00:00.000Z' })],
+        ['g2', group(['t_a', 't_c'], { name: 'Second', created_at: '2026-10-02T00:00:00.000Z' })],
+      ]),
+    });
+    const applied = appliedSplitsOf([a, c], twice);
+    expect(splitMemoOf({ id: 't_a', amount: 30, currency: 'USD' }, twice, applied)).toBe('In the group First in Nya');
   });
 });
 

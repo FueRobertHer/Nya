@@ -126,8 +126,8 @@ import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { bookAccountTypes, docFiling, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
-import { splitInputsOf, splitMemoOf } from './export-splits';
+import { bookAccountTypes, docFiling, layeredBookRows, missingIds, manualTransactionsIn, splitFactRows, type ExportFile, type UserData, type UserExport } from './user-export';
+import { anySplitsOrGroups, appliedSplitsOf, splitInputsOf, splitMemoOf } from './export-splits';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 import { connectionsStore, connectorAccountsStore } from './connectors/store';
@@ -589,8 +589,12 @@ export function ofxFile(
   // (lib/export-splits.ts): each transaction listed whole, how it is split or
   // its group in its memo.
   const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc));
-  const splitWords = (r: { id: string; amount: number; currency: string | null; pending?: boolean; bank?: boolean }) => {
-    const words = splitMemoOf(r, splitInputs);
+  // How they apply, from every row of the file, once: a group across
+  // accounts, a transaction in two, a split on a row pending or in another
+  // currency now, each as the app has it.
+  const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc), splitInputs) : null;
+  const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
+    const words = applied && splitMemoOf(r, splitInputs, applied);
     return words ? { split: words } : {};
   };
 

@@ -4340,6 +4340,12 @@ button.tag-suggestion.chosen {
   padding-left: 46px;
 }
 
+/* A split transaction's own amount: the bank's, shown quieter, since its
+   parts below are what every total counts. */
+.txn-table .num.split-whole {
+  color: var(--muted);
+}
+
 .part-text {
   min-width: 0;
   overflow-wrap: anywhere;

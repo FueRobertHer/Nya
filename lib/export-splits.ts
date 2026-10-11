@@ -151,8 +151,9 @@ export function csvLinesWithSplits<C extends Record<string, unknown> & Filled>(
               transaction_id: part.transaction_id,
               amount: null,
               nya_amount: part.amount,
-              category: part.category,
-              ...(part.split_remainder ? {} : nyaCategory(part, ix)),
+              // Its own category; the difference the bank made since is
+              // filed as the transaction is, as the app files it.
+              ...(part.split_remainder ? {} : { category: part.category, ...nyaCategory(part, ix) }),
               note: part.note ?? null,
               excluded: excludedCell(part),
               split_of: part.split_of,
@@ -227,6 +228,25 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 
 // ---- An OFX statement's memo ----
 
+/** How the file's splits and groups apply, as the app applies them: the
+ *  group each transaction counts in, by name, and the transactions whose
+ *  split applies (one pending, in another currency now, or in a group shows
+ *  whole). From the read layer's own function, once for the file. */
+export type AppliedSplits = { groupOf: ReadonlyMap<string, string>; split: ReadonlySet<string> };
+
+/** The file's splits and groups as they apply (AppliedSplits), from every row
+ *  of the file (lib/user-export.ts splitFactRows). */
+export function appliedSplitsOf(rows: readonly Txn[], inputs: SplitInputs): AppliedSplits {
+  const groupOf = new Map<string, string>();
+  const split = new Set<string>();
+  if (!anySplitsOrGroups(inputs)) return { groupOf, split };
+  for (const t of expandSplitsAndGroups(rows, inputs).rows) {
+    if (t.group_members) for (const m of t.group_members) groupOf.set(m.transaction_id, t.name);
+    else if (t.split_of !== undefined) split.add(t.split_of);
+  }
+  return { groupOf, split };
+}
+
 /** "100.00" in the currency's own places. */
 function amountText(amount: number, currency: string | null): string {
   const scale = unitScale(currency);
@@ -245,14 +265,15 @@ function amountText(amount: number, currency: string | null): string {
  * currency now than when it was split, shows whole there.
  */
 export function splitMemoOf(
-  row: { id: string; amount: number; currency: string | null; pending?: boolean; /** The bank keeps its amount (false: entered by hand or imported). */ bank?: boolean },
-  inputs: SplitInputs
+  row: { id: string; amount: number; currency: string | null; /** The bank keeps its amount (false: entered by hand or imported). */ bank?: boolean },
+  inputs: SplitInputs,
+  applied: AppliedSplits
 ): string | null {
-  const group = [...inputs.groups].find(([, g]) => g.members.includes(row.id));
-  const ix = inputs.ix;
-  if (group) return `In the group ${group[1].name} in Nya`;
+  const group = applied.groupOf.get(row.id);
+  if (group !== undefined) return `In the group ${group} in Nya`;
   const record = inputs.splits.get(row.id);
-  if (!record || row.pending || record.currency !== row.currency || !ix) return null;
+  const ix = inputs.ix;
+  if (!record || !applied.split.has(row.id) || !ix) return null;
   const scale = unitScale(row.currency);
   const parts = record.parts.map((p) => {
     const c = categoryById(ix, p.category_id);

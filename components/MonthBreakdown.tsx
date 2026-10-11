@@ -1093,7 +1093,8 @@ export default function MonthBreakdown({
                           </div>
                         )}
                       </td>
-                      <td className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true ? " excluded" : ""}`}>
+                      {/* A split transaction's own amount is the bank's; its parts below are what count (#39). */}
+                      <td className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}>
                         {fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}
                       </td>
                     </tr>
