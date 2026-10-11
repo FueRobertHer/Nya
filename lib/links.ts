@@ -43,6 +43,7 @@ import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
 import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
+import { forgetImportedHistory } from './history-import/commit';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -676,8 +677,9 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * Forgets an earlier account for good, at the user's request: its balances
  * in every per-account layer, its positions in holdings history, its
  * directory entry (name, mask, institution), the categories recorded to carry
- * across a re-link, dismissed offers that name it, leftover remembered records
- * naming it, and its hidden entry. The past net-worth totals stay as they were
+ * across a re-link, the transactions imported into it from files, dismissed
+ * offers that name it, leftover remembered records naming it, and its hidden
+ * entry. The past net-worth totals stay as they were
  * (they were the user's net worth on those dates); a hidden account is folded
  * out of them first, so the chart shows them as it did while it was hidden
  * (lib/history.ts foldHiddenAccount).
@@ -760,6 +762,9 @@ export async function forgetEarlierAccount(
   if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
   await forgetCarried(ctx, id);
   await forgetCarriedAnnotations(ctx, id);
+  // The transactions imported into it from files (#52), their records, and
+  // what was said about them: kept past its disconnect for a re-link, gone now.
+  await forgetImportedHistory(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
   // read before the pass above could have written the account back, and a

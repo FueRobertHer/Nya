@@ -4816,6 +4816,26 @@ button.pool-toggle {
   margin-top: 0;
 }
 
+/* Importing a linked account's history (#52, components/HistoryImportSheet.tsx):
+   the link under the account's chart, the period a file covers, and the note
+   under the net-worth chart saying which stretch comes from imported files. */
+.history-import-link {
+  display: block;
+  margin-top: 10px;
+}
+
+.history-import-period {
+  margin-top: 8px;
+}
+
+.imported-history-note {
+  margin-top: 8px;
+}
+
+.imported-history-note .panel-note {
+  margin: 4px 0 0;
+}
+
 /* --- cash flow (#41): the Activity tab's Sankey (components/CashFlowSankey.tsx,
    laid out by lib/sankey.ts), its table, and the list showing a node's
    transactions (components/MonthBreakdown.tsx). The app's own colors: money in

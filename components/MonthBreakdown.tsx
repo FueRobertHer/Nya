@@ -24,6 +24,7 @@ import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
+import { IMPORTED_TXN_PREFIX, importedRowsNote } from "@/lib/history-import/view";
 import { isConnectorKind } from "@/lib/connectors/types";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
@@ -391,6 +392,8 @@ export default function MonthBreakdown({
   // (lib/spending.ts).
   const currency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
   const leftOut = useMemo(() => leftOutText(leftOutByCurrency(monthTxns, currency), currency), [monthTxns, currency]);
+  // Rows imported into linked accounts from files (#52): the totals say so.
+  const importedNote = useMemo(() => importedRowsNote(monthTxns), [monthTxns]);
 
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
@@ -701,6 +704,7 @@ export default function MonthBreakdown({
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
           {leftOut && ` ${leftOut}`}
           {namedWithout && ` ${namedWithout}`}
+          {importedNote && ` ${importedNote}`}
         </div>
         {gapNotes.map((n) => (
           <div className="stale-note" key={n}>
@@ -963,9 +967,10 @@ export default function MonthBreakdown({
                                 ))}
                               </select>
                             )}
-                            {/* Not a row SimpleFIN brought: the bank's
+                            {/* Not a row SimpleFIN brought nor one imported into
+                                a linked account: the bank's or the file's
                                 record, whose category alone is the person's. */}
-                            {t.source && !isConnectorKind(t.source) && onEditTransaction && (
+                            {t.source && !isConnectorKind(t.source) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && (
                               <div className="rename-row">
                                 <button
                                   className="secondary"

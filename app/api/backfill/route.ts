@@ -23,6 +23,7 @@ import {
 import { clearCaches } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
 import { classifyFailure, CAUSES } from '@/lib/connection-state';
+import { drawImportedHistory, drawIsStale, importedFlowsForBackfill, rowsUnchangedSince, rowsVersion, yieldToBackfill } from '@/lib/history-import/extend';
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -55,6 +56,15 @@ import { classifyFailure, CAUSES } from '@/lib/connection-state';
 // answers it with no rows and no note, and its investment accounts are walked
 // from their own flows like any other.
 //
+// Transactions imported into a bank account or card from its bank's files
+// (#52, lib/history-import/) are walked with the bank's, where they count (no
+// bank row stands for them) and fall in the window: a card whose bank gives
+// Plaid 90 days, beside a bank that gives a year, is walked through its
+// imported rows rather than held at its balance on its first row. What is
+// before the window is drawn from the earliest point back, afterwards
+// (lib/history-import/extend.ts). A run during which the imported rows
+// changed isn't recorded as done, so the next load runs it again.
+//
 // Plaid's sign convention: a positive amount is money leaving the account. For
 // the net-worth total every transaction's effect is exactly -amount for both
 // depository and credit accounts (a card purchase raises the owed balance, so
@@ -85,6 +95,24 @@ async function settleDoneFlag(ctx: Ctx, invPending: boolean): Promise<boolean> {
   await markBackfillDone(ctx);
   await clearBackfillPending(ctx);
   return false;
+}
+
+/**
+ * The estimated history drawn back through transactions imported into linked
+ * accounts (#52, lib/history-import/extend.ts), when it is marked to draw:
+ * after an import or an undo, a link or a forget, and after every run here,
+ * whose earliest point it joins. Only once the backfill is done (it waits
+ * otherwise). Answers how many points it wrote. Never fails the run: a
+ * drawing that fails stays marked, and a later load draws it.
+ */
+async function drawIfMarked(ctx: Ctx): Promise<number> {
+  try {
+    if (!(await drawIsStale(ctx))) return 0;
+    return (await drawImportedHistory(ctx)).points;
+  } catch (err) {
+    console.error('Backfill: the history drawn from imports was not drawn', loggable(err));
+    return 0;
+  }
 }
 
 /**
@@ -142,6 +170,10 @@ export async function POST() {
   try {
     const ctx = await dataCtx();
     if (await isBackfillDone(ctx)) {
+      // The backfill's own points are built; history from imports may still
+      // be marked to draw (an import, an undo, a link since).
+      const drawn = await drawIfMarked(ctx);
+      if (drawn > 0) return NextResponse.json({ backfilled: drawn, from_imports: drawn });
       return NextResponse.json({ skipped: true, reason: 'already backfilled' });
     }
 
@@ -149,6 +181,8 @@ export async function POST() {
     if (items.length === 0) {
       return NextResponse.json({ skipped: true, reason: 'no linked institutions' });
     }
+    // Which imported rows this run walks, as of now (see the header).
+    const rowsSeen = await rowsVersion(ctx);
 
     // Fetch every institution's balances + transactions concurrently.
     // Transactions come from the shared cursor-based store (lib/transactions), so
@@ -213,6 +247,7 @@ export async function POST() {
     let totalNow = 0; // current net worth across all accounts
     const walkType: Record<string, WalkType> = {}; // reconstructable
     const cashIds = new Set<string>(); // depository/credit only -- see the txn loop below
+    const cashCurrency = new Map<string, string | null>(); // each one's currency, for its imported rows
     const balances: Record<string, number> = {}; // running raw balances for the walk
     const dailyByAccount: Record<string, Record<string, number>> = {}; // date -> account -> txn sum
     let oldestTxn: string | null = null;
@@ -242,6 +277,7 @@ export async function POST() {
           }
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
+          cashCurrency.set(a.account_id, a.balances.iso_currency_code ?? a.balances.unofficial_currency_code ?? null);
           balances[a.account_id] = current;
         } else if (isInvestmentType(a.type) && invCoveredIds.has(a.account_id)) {
           walkType[a.account_id] = 'investment';
@@ -266,6 +302,18 @@ export async function POST() {
       // in lib/backfill.ts.
       const oldestHere = addInvestmentFlows(dailyByAccount, invTxns, walkType, isoDaysAgo(LOOKBACK_DAYS));
       if (oldestHere && (!oldestInvTxn || oldestHere < oldestInvTxn)) oldestInvTxn = oldestHere;
+    }
+
+    // The imported rows that count, of the cash accounts walked, in the window
+    // (see the header). An account whose imported rows can't be read is
+    // walked without them; the drawing from imports then waits, and says why.
+    if (cashIds.size > 0) {
+      const imported = await importedFlowsForBackfill(ctx, { items, walked: cashCurrency, since: isoDaysAgo(LOOKBACK_DAYS), today: isoDaysAgo(0) });
+      for (const f of imported.flows) {
+        const day = (dailyByAccount[f.date] ??= {});
+        day[f.account_id] = (day[f.account_id] ?? 0) + f.amount;
+      }
+      if (imported.unreadable.length > 0) console.error('Backfill: transactions imported into some accounts could not be read, and were not walked');
     }
 
     // A brokerage-only user has no cash balances to freeze past their data, so
@@ -300,11 +348,13 @@ export async function POST() {
     }
 
     if (!oldestTxn) {
-      await settleDoneFlag(ctx, invPending);
+      if (await rowsUnchangedSince(ctx, rowsSeen)) await settleDoneFlag(ctx, invPending);
+      // Imported history may still reach back from the earliest point there is.
+      const drawn = await drawIfMarked(ctx);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches(ctx);
-      return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
+      return NextResponse.json({ backfilled: drawn, reason: 'no transaction history', ...(drawn > 0 ? { from_imports: drawn } : {}) });
     }
 
     // Everything not being walked is held flat at today's value.
@@ -361,6 +411,13 @@ export async function POST() {
       return NextResponse.json({ skipped: true, reason: 'institutions changed' });
     }
 
+    // Every estimate from this run's oldest point on is this run's own: history
+    // drawn from imports there (lib/history-import/extend.ts) stops claiming
+    // those days, and is drawn again from the new earliest point once the run
+    // is done. Before the writes, so a drawing can't take them for its own.
+    const baseFrom = [...estimatedTotals, ...estimatedAccounts.filter((p) => p.date >= oldestTxn)].reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+    await yieldToBackfill(ctx, baseFrom);
+
     // Breakdowns before totals (the order recordSnapshot keeps, for the same
     // reason): a forget of a hidden account reading between the writes must see
     // new breakdowns beside old totals, never the reverse.
@@ -380,11 +437,16 @@ export async function POST() {
     // date retained from an earlier run keeps that run's flat balances.
     await replaceEstimatedFlat(ctx, estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
     await replaceEstimated(ctx, estimatedTotals);
-    const waiting = await settleDoneFlag(ctx, invPending);
+    // Imported rows that changed while it ran (an import, an undo, a link)
+    // aren't in these points: not done, so the next load runs it again.
+    const waiting = (await rowsUnchangedSince(ctx, rowsSeen)) ? await settleDoneFlag(ctx, invPending) : invPending;
+    const drawn = await drawIfMarked(ctx);
     await clearCaches(ctx); // cached payloads don't include the new history yet
 
     return NextResponse.json({
-      backfilled: estimatedTotals.length,
+      backfilled: estimatedTotals.length + drawn,
+      // Of them, the days drawn back through imported transactions (#52).
+      ...(drawn > 0 ? { from_imports: drawn } : {}),
       from: estimatedTotals.length > 0 ? estimatedTotals[estimatedTotals.length - 1].date : null,
       // Investment accounts whose flows out-ran their balance and were floored at
       // zero partway back. Reported, not silent: a number that stays high run

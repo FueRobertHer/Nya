@@ -9,9 +9,10 @@
 // field at once.
 //
 // A map store on the storage seam (lib/repo.ts), keyed by transaction_id:
-// Plaid's own id, or a manual row's "manual-txn:<uuid>", both opaque as the
-// seam requires of field names (Plaid's are in plaintext in the category
-// overrides already). The values are encrypted.
+// Plaid's own id, a manual row's "manual-txn:<uuid>", or a row's imported
+// into a linked account, "imported-txn:<uuid>" (lib/history-import/), all
+// opaque as the seam requires of field names (Plaid's are in plaintext in the
+// category overrides already). The values are encrypted.
 //
 // Applied on read, in /api/transactions, like a category override: nothing in
 // the transaction stores changes, so clearing the flag puts the transaction
@@ -28,16 +29,22 @@
 // cleared on a bank row is kept as an empty note, so a note carried across a
 // re-link doesn't come back.
 //
-// NOTES. A bank row's note is kept here. A manual or imported row has a note
-// of its own, written with it (lib/manual-txns.ts): an edit of that note
-// changes the row (app/api/transaction-annotations), so a row never has two.
+// NOTES. A bank row's note is kept here, and so is one on a row that stays as
+// its source gave it: one SimpleFIN brought, or one imported into a linked
+// account (whose file's memo shows until the person writes one, and an empty
+// note clears). A row entered by hand or imported into a manual account has
+// a note of its own, written with it (lib/manual-txns.ts): an edit of that
+// note changes the row (app/api/transaction-annotations), so a row never has
+// two. What is said about a row imported into a linked account carries to
+// the bank row that later stands for it (lib/txn-layers.ts).
 //
 // GONE WITH ITS TRANSACTION. A bank transaction's record goes once no stored
 // Item holds the transaction (pruneOrphanAnnotations, by the rules of the
 // category overrides' own prune: nothing goes while a store can't be read or
 // is behind, nor a record this release doesn't recognise): after a sync that
 // saved the bank's removal of it (lib/transactions.ts), after a disconnect,
-// and after an earlier account is forgotten. A manual row's goes with its row.
+// and after an earlier account is forgotten. A manual row's goes with its row,
+// and so does a row's imported into a linked account (lib/history-import/).
 //
 // CARRIED ACROSS A RE-LINK, as categories are (#46, lib/overrides.ts). A
 // disconnect records what was said about the Item's posted transactions
@@ -72,6 +79,7 @@ import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
 import { resolveId, type Link } from './link-core';
 import { MANUAL_TXN_PREFIX, MAX_NOTE_CHARS } from './manual-txn-input';
+import { IMPORTED_TXN_PREFIX } from './history-import/store';
 import { isTagId, MAX_TAGS_PER_TRANSACTION } from './tags';
 
 /** What is said about one transaction. Fields a later release adds ride along. */
@@ -84,8 +92,10 @@ export type TxnAnnotation = {
   /** Tags the person took off it, by id: a rule that would add one, or a tag
    *  carried across a re-link, doesn't put it back. */
   untagged?: string[];
-  /** A bank row's note. Empty: the person cleared it (which beats a note
-   *  carried across a re-link). A manual row's note is the row's own. */
+  /** The note on a row that stays as its source gave it: a bank's, one
+   *  SimpleFIN brought, one imported into a linked account. Empty: the person
+   *  cleared it (which beats a note carried across a re-link, or an imported
+   *  file's own). A manual row's note is the row's own. */
   note?: string;
   /** When it last changed. */
   updated_at: string;
@@ -461,7 +471,8 @@ export async function retireAnnotations(ctx: Ctx, txns: RetiringTxn[]): Promise<
  * storedTransactionIds), or null when a store couldn't be read or is behind,
  * and then nothing is pruned. The records are read first and the stores
  * after, so a record set meanwhile on a newly stored row is checked against a
- * read that has the row. A manual row's record goes with its row, never here;
+ * read that has the row. A manual row's record goes with its row, never here,
+ * as does a row's imported into a linked account;
  * one this release doesn't recognise is left for the release that wrote it.
  * `among` keeps it to the records of those transactions (the ones a sync just
  * saw the bank remove), and the stores are read only if one of them has a
@@ -475,7 +486,9 @@ export async function pruneOrphanAnnotations(
   opts: { among?: ReadonlySet<string> } = {}
 ): Promise<number> {
   const { entries, unreadable } = await txnAnnotationStore.getAllReport(ctx);
-  const ids = [...entries.keys(), ...unreadable].filter((id) => !id.startsWith(MANUAL_TXN_PREFIX) && (!opts.among || opts.among.has(id)));
+  const ids = [...entries.keys(), ...unreadable].filter(
+    (id) => !id.startsWith(MANUAL_TXN_PREFIX) && !id.startsWith(IMPORTED_TXN_PREFIX) && (!opts.among || opts.among.has(id))
+  );
   if (ids.length === 0) return 0;
   const known = await readKnown();
   if (!known) return 0;

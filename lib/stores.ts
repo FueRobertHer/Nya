@@ -27,6 +27,7 @@ import './connection-records';
 import './connectors/store';
 import './fire-plan';
 import './goal-plans';
+import './history-import/store';
 import './holdings-history';
 import './import/store';
 import './lifecycle';

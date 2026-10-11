@@ -119,6 +119,9 @@ import { readTagSet, tagNameKey, type TagSet } from './tags';
 import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
+import { readDrawState } from './history-import/extend';
+import { importedStretch } from './history-import/view';
+import type { WalkState } from './history-import/store';
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -688,14 +691,40 @@ export type ApiHistory = {
   /** Oldest first. `estimated` is true for a point reconstructed from
    *  transactions rather than recorded (only with include_estimated). */
   points: { date: string; value: number; estimated: boolean }[];
+  /** With include_estimated: the estimated points dated `from` up to (not
+   *  including) `until` follow, at least for one account, transactions
+   *  imported from files rather than the bank's own (#52,
+   *  lib/history-import/extend.ts); null when none do. Added in version 1,
+   *  as its promise allows. */
+  from_imports: { from: string; until: string } | null;
   notes: string[];
 };
 
 export type HistoryQuery = { accountId?: string; from?: string; to?: string; includeEstimated?: boolean; includeHidden?: boolean; interval?: Interval };
 
+/** The stretch of estimated points that follows imported transactions
+ *  (ApiHistory.from_imports): net worth's, or one account's (any of its ids).
+ *  `hidden`, the accounts net worth leaves out (every id each has had), are
+ *  left out of it too, as the chart's note leaves them out, and so is an
+ *  account that ended from its end day on (`ended`, lib/lifecycle.ts). */
+function fromImports(
+  drawn: WalkState | null,
+  ids: readonly string[] | null,
+  hidden: ReadonlySet<string> = new Set(),
+  ended: ReadonlyMap<string, { from: string }> = new Map()
+): ApiHistory['from_imports'] {
+  return importedStretch(drawn, ids, hidden, ended);
+}
+
 /** A series as answered: recorded points only unless estimated ones are
  *  asked for, in [from, to], one point per interval. */
-function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { account_id: string | null; currency: string | null; mixed: boolean }, notes: string[]): ApiHistory {
+function seriesOf(
+  points: readonly HistoryPoint[],
+  q: HistoryQuery,
+  head: { account_id: string | null; currency: string | null; mixed: boolean },
+  notes: string[],
+  imported: ApiHistory['from_imports'] = null
+): ApiHistory {
   const interval = q.interval ?? 'day';
   const kept = points.filter(
     (p) => (q.includeEstimated || !p.estimated) && (q.from === undefined || p.date >= q.from) && (q.to === undefined || p.date <= q.to)
@@ -706,14 +735,21 @@ function seriesOf(points: readonly HistoryPoint[], q: HistoryQuery, head: { acco
     mixed_currencies: head.mixed,
     interval,
     points: sampleSeries(kept, interval).map((p) => ({ date: p.date, value: tidy(p.value), estimated: !!p.estimated })),
+    from_imports: q.includeEstimated ? imported : null,
     notes,
   };
 }
 
 /** Net worth's history from a read already made. */
-function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery): ApiHistory {
+function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState | null): ApiHistory {
   const { currency, mixed } = netWorthCurrency(nw.read.accounts.filter(countsNow));
-  return seriesOf(nw.history, q, { account_id: null, currency, mixed }, []);
+  return seriesOf(
+    nw.history,
+    q,
+    { account_id: null, currency, mixed },
+    [],
+    fromImports(drawn, null, q.includeHidden ? new Set() : new Set(nw.read.hidden.keys()), nw.read.lifecycle.ended)
+  );
 }
 
 /**
@@ -760,7 +796,7 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     }
   }
   if (!known && points.length === 0) throw new NotFound('No account has that id. The ids are in /api/v1/accounts.');
-  return seriesOf(points, q, { account_id: id, currency, mixed: false }, notes);
+  return seriesOf(points, q, { account_id: id, currency, mixed: false }, notes, fromImports(await readDrawState(ctx), [id, ...older]));
 }
 
 /**
@@ -771,13 +807,14 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
  */
 export async function readBalanceHistory(ctx: Ctx, q: HistoryQuery): Promise<ApiHistory | null> {
   if (q.accountId !== undefined) return accountHistory(ctx, q.accountId, q);
-  return netWorthHistoryOf(await netWorthRead(ctx, !!q.includeHidden), q);
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden), readDrawState(ctx)]);
+  return netWorthHistoryOf(nw, q, drawn);
 }
 
 /** Net worth now and its history, from one read of each (get_net_worth). */
 export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
-  const nw = await netWorthRead(ctx, !!q.includeHidden);
-  return { now: netWorthOf(nw), history: netWorthHistoryOf(nw, q) };
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden), readDrawState(ctx)]);
+  return { now: netWorthOf(nw), history: netWorthHistoryOf(nw, q, drawn) };
 }
 
 // ---- Transactions ----
@@ -816,9 +853,10 @@ export type ApiTransaction = {
   account_name: string;
   institution: string;
   /** 'plaid' for a bank's row; 'manual' for one entered by hand; 'import:ofx',
-   *  'import:csv' or 'import:qif' for one imported from a file into a manual
-   *  account (lib/import/), served as the typed ones are. Open: version 1 may
-   *  add values. */
+   *  'import:csv' or 'import:qif' for one imported from a file, into a manual
+   *  account (lib/import/), served as the typed ones are, or into a linked
+   *  account (lib/history-import/), served beside the bank's where no bank row
+   *  supersedes it. Open: version 1 may add values. */
   source: string;
   hidden: boolean;
   /** The person's note on it: one written with a row they entered or
