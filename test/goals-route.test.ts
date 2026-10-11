@@ -520,7 +520,9 @@ describe('accounts linked across a reconnect', () => {
 });
 
 describe('links that can’t be read', () => {
-  test('stop a save, which decides on them, rather than taking a goal for moved; a page still shows the goals', async () => {
+  const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
+  /** A goal tracking an account by its id before a reconnect, linked since. */
+  const relinked = async () => {
     await setGoals(ctx, [G(1, { account_id: 'acc_gone' })]);
     await goalPlansStore.set(ctx, ID(1), {
       v: 1,
@@ -529,14 +531,63 @@ describe('links that can’t be read', () => {
       before: null,
     });
     await links.linkAccounts(ctx, 'acc_gone', 'acc_sav', {});
-    const shown = (await get()).body.goals;
-    await fake.hset(ctxKey('account-links'), { acc_other: 'not-a-link-but-long-enough-to-be-tried' });
-    expect((await quietly(get)).status).toBe(200);
+    return (await get()).body.goals;
+  };
+  /** A save, and that nothing was written. */
+  const refused = async (goals: unknown) => {
     const blob = await fake.get<string>(ctxKey('goals'));
     const stored = await fake.hget<string>(ctxKey('goal-plans'), ID(1));
-    expect(await quietly(() => put(shown))).toEqual({ status: 500, body: { error: 'Failed to save goals' } });
+    const res = await quietly(() => put(goals));
     expect(await fake.get<string>(ctxKey('goals'))).toBe(blob);
     expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe(stored);
+    return res;
+  };
+
+  test('a damaged link stops a save, which decides on the links, rather than take a goal for moved; it says which, and what still works', async () => {
+    const shown = await relinked();
+    await fake.hset(ctxKey('account-links'), { acc_other: DAMAGED });
+    // The page still shows the goals.
+    expect((await quietly(get)).status).toBe(200);
+    expect(await refused(shown)).toEqual({
+      status: 409,
+      body: {
+        error:
+          'A saved account link can’t be read, and a save needs the links to tell whether a goal moved to another account. Your goals are still shown as saved. To save changes, remove that link under Reconnected accounts on the Accounts tab, and link again if needed.',
+      },
+    });
+    // Removed, the save goes through, on the links as they are.
+    await fake.hdel(ctxKey('account-links'), 'acc_other');
+    expect((await put(shown)).status).toBe(200);
+    expect((await get()).body.goals[0]).toMatchObject({ account_id: 'acc_sav', plan: { allocation: 1500 }, plan_start: { date: '2026-01-01', amount: 900 } });
+  });
+
+  test('so does a connection’s record of its accounts that can’t be read, saying so; one of a connection no longer stored stops nothing', async () => {
+    const shown = await relinked();
+    await fake.hset(ctxKey('accounts:meta'), { item_removed: DAMAGED });
+    expect((await quietly(() => put(shown))).status).toBe(200);
+    await fake.hset(ctxKey('accounts:meta'), { item_bank: DAMAGED });
+    const res = await refused(shown);
+    expect(res.status).toBe(409);
+    expect(res.body.error).toStartWith('What Nya keeps of a connection’s accounts can’t be read just now');
+    expect(res.body.error).toContain('Your goals are still shown as saved.');
+    expect(res.body).not.toHaveProperty('unreadable');
+  });
+
+  test('storage out of reach as they are read is still a 500, never taken for damage', async () => {
+    const shown = await relinked();
+    const hgetall = fake.hgetall;
+    for (const key of [ctxKey('account-links'), ctxKey('accounts:meta')]) {
+      // Only that one read fails.
+      fake.hgetall = (async (k: string, ...rest: unknown[]) => {
+        if (k === key) throw new Error('FakeRedis: out of reach');
+        return (hgetall as (...a: unknown[]) => Promise<unknown>).apply(fake, [k, ...rest]);
+      }) as typeof hgetall;
+      try {
+        expect(await quietly(() => put(shown))).toEqual({ status: 500, body: { error: 'Failed to save goals' } });
+      } finally {
+        fake.hgetall = hgetall;
+      }
+    }
   });
 });
 

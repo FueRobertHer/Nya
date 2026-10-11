@@ -62,9 +62,11 @@ export function createWholeListStore<T>(opts: {
    *  rather than the list sent: for a store whose server works out fields of
    *  its own on a save (goals: where a target date's line starts). */
   adoptSaved?: boolean;
-  /** Say why the server refused a save (a 400 with an `error`), for a store
-   *  whose server checks what the screen can't be sure of (goals: an
-   *  allocation against the balance the server knows). */
+  /** Say why the server refused a save, for a store whose server checks
+   *  what the screen can't be sure of (goals: an allocation against the
+   *  balance the server knows): the `error` of a 400 (what was sent can't be
+   *  taken), or of a 409 not flagged `unreadable` (what is stored stops it
+   *  just now, and the server says what and what still works). */
   showRefusal?: boolean;
   /** More for the server beside the list on a save, read when it is sent
    *  (goals: the person's own day, which the server dates an archive by). */
@@ -132,7 +134,8 @@ export function createWholeListStore<T>(opts: {
       });
       ok = res.ok;
       if (opts.adoptSaved || opts.showRefusal) answer = await res.json().catch(() => null);
-      if (!ok && opts.showRefusal && res.status === 400 && typeof answer?.error === 'string') refusal = answer.error;
+      const refused = res.status === 400 || (res.status === 409 && !answer?.unreadable);
+      if (!ok && opts.showRefusal && refused && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
       ok = false;
     }

@@ -320,6 +320,16 @@ describe('opted in: what the server said about a save (goals)', () => {
     expect(store.get().value).toEqual([{ id: 'a' }]);
   });
 
+  test('a 409 not flagged unreadable is a refusal too: what is stored stops it just now, and why', async () => {
+    const store = await goals(answering(409, { error: 'A saved account link can’t be read.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: A saved account link can’t be read.');
+    // Flagged unreadable, it is the list that can't be read: the plain message.
+    const flagged = await goals(answering(409, { error: 'x', unreadable: true }), { showRefusal: true });
+    await flagged.save([{ id: 'b' }]);
+    expect(flagged.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+
   test('anything but a refusal keeps the plain message', async () => {
     const store = await goals(answering(500, { error: 'Failed to save goals' }), { showRefusal: true });
     await store.save([{ id: 'b' }]);

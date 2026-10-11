@@ -65,10 +65,13 @@
 // nothing here saves over it. Version 1 is the first shape, so there is
 // nothing to upgrade yet.
 
-import { defineMapStore, MANY_AT_ONCE } from './repo';
+import { defineMapStore, MANY_AT_ONCE, StoreRefusedError } from './repo';
 import type { Ctx } from './containers';
 import { getGoals, setGoals, type Goal as StoredGoal } from './goals';
 import { getLinks, effectiveLinks, liveAccountIds, resolveId, type Link } from './links';
+import { readLinks } from './link-core';
+import { rememberedAccountsReport } from './last-known';
+import { getItems } from './storage';
 import { isCalendarDay } from './manual-txn-input';
 import { MAX_GOAL_AMOUNT, type Goal, type GoalPlan } from './goal-model';
 
@@ -244,17 +247,50 @@ export async function readGoalRecords(ctx: Ctx, opts: { readOnly?: boolean; stri
   return { records: goals.map((g) => recordOf(coreOf(g), entries.get(coreOf(g).id), links)), entries, links };
 }
 
+/** Why a save can't be taken just now: what it follows account links with
+ *  can't be read, and it decides on them whether a goal moved. A 409 with
+ *  what can't be read, and what still works (lib/store-failure.ts). */
+export class GoalLinksUnreadableError extends StoreRefusedError {
+  constructor(readonly part: 'link' | 'accounts') {
+    super(
+      part === 'link'
+        ? 'A saved account link can’t be read, and a save needs the links to tell whether a goal moved to another account. Your goals are still shown as saved. To save changes, remove that link under Reconnected accounts on the Accounts tab, and link again if needed.'
+        : 'What Nya keeps of a connection’s accounts can’t be read just now, and a save needs it to tell whether a goal moved to another account. Your goals are still shown as saved. It is written again the next time that connection’s accounts load, and changes can be saved then.',
+      409
+    );
+    this.name = 'GoalLinksUnreadableError';
+  }
+}
+
+/**
+ * The ids live at a stored connection (lib/links.ts liveAccountIds), strictly,
+ * for a save: a stored connection's record that can't be read throws
+ * GoalLinksUnreadableError. One of a connection no longer stored names no live
+ * id either way, so it stops nothing. Storage out of reach throws as it is.
+ */
+async function liveIdsForSave(ctx: Ctx): Promise<Set<string>> {
+  const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
+  const stored = new Set(items.map((i) => i.item_id));
+  if (remembered.unreadable.some((id) => stored.has(id))) throw new GoalLinksUnreadableError('accounts');
+  return new Set(Object.entries(remembered.byItem).flatMap(([item, accounts]) => (stored.has(item) ? accounts.map((a) => a.account_id) : [])));
+}
+
 /**
  * The account links that apply, for following a goal's account to the id it
  * has now. Lenient for a display, as the goals route always was: links that
  * can't be read leave every id as stored, which can only leave a goal on an
  * older id (it then reads as disconnected), never move one to an account it
- * doesn't track. `strictLinks` throws instead, for a save, which decides on
- * them. `readOnly` changes nothing while reading (lib/links.ts
- * liveAccountIds).
+ * doesn't track. `strictLinks` is for a save, which decides on them: a link,
+ * or a stored connection's record of its accounts, that can't be read throws
+ * GoalLinksUnreadableError, saying which; storage out of reach throws as it
+ * is. `readOnly` changes nothing while reading (lib/links.ts liveAccountIds).
  */
 export async function goalLinks(ctx: Ctx, opts: { readOnly?: boolean; strictLinks?: boolean } = {}): Promise<Map<string, Link>> {
-  if (opts.strictLinks) return effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }));
+  if (opts.strictLinks) {
+    const [{ links, unreadable }, live] = await Promise.all([readLinks(ctx), liveIdsForSave(ctx)]);
+    if (unreadable.size > 0) throw new GoalLinksUnreadableError('link');
+    return effectiveLinks(links, live);
+  }
   try {
     return effectiveLinks(await getLinks(ctx), await liveAccountIds(ctx, { readOnly: opts.readOnly }));
   } catch {
@@ -327,14 +363,22 @@ export async function writeGoalRecords(ctx: Ctx, next: readonly NextGoal[], read
   }
   for (const [id, entry] of read.entries) if (!kept.has(id)) settle.set(id, { expect: entryText(entry), then: null });
   const ids = [...settle.keys()];
-  for (let i = 0; i < ids.length; i += MANY_AT_ONCE) {
-    await goalPlansStore.updateMany(ctx, ids.slice(i, i + MANY_AT_ONCE), (current) => {
-      const out = new Map<string, GoalPlanEntry | null>();
-      for (const [id, cur] of current) {
-        const want = settle.get(id)!;
-        if (cur && entryText(cur) === want.expect) out.set(id, want.then);
-      }
-      return out;
-    });
+  try {
+    for (let i = 0; i < ids.length; i += MANY_AT_ONCE) {
+      await goalPlansStore.updateMany(ctx, ids.slice(i, i + MANY_AT_ONCE), (current) => {
+        const out = new Map<string, GoalPlanEntry | null>();
+        for (const [id, cur] of current) {
+          const want = settle.get(id)!;
+          if (cur && entryText(cur) === want.expect) out.set(id, want.then);
+        }
+        return out;
+      });
+    }
+  } catch (err) {
+    // The save itself has landed: a refusal now (entries that kept changing)
+    // must not tell the page it wasn't made. It is told the save failed and
+    // shows what is stored, and the next save settles what this one left.
+    if (err instanceof StoreRefusedError) throw new Error(`Goal plans: saved, but settling was refused (${err.name})`);
+    throw err;
   }
 }
