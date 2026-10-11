@@ -106,7 +106,6 @@ import { getContainer, isContainerId, type Ctx, type ContainerId } from './conta
 import { ownersKey } from './owners';
 import { liveAccountIds, directoryParts, directoryTypes, getEffectiveHidden } from './links';
 import { readLifecycleView, lifecycleOf, endedNow, endOf, accountWords } from './lifecycle';
-import { getManualAccounts } from './manual';
 import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { getAccountHistory } from './history';
@@ -1013,7 +1012,7 @@ export type SharedAccount = {
    *  one doesn't know), so none are shown, never an empty list in their place. */
   transactions_unreadable?: true;
   /** It ended (lib/lifecycle.ts): closed, left (no longer theirs) or no
-   *  longer tracked, from `on`. No balance is shown then, and only the
+   *  longer followed, from `on`. No balance is shown then, and only the
    *  transactions from before it. */
   ended?: { state: 'closed' | 'left' | 'untracked'; on: string };
 };
