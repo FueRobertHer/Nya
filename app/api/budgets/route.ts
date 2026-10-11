@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { ContainerError } from '@/lib/containers';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { loadBudgets, saveBudgets } from '@/lib/budget-store';
 import { BudgetError, budgetsFromNames, legacyCopy, readBudgets, MAX_CATEGORY_BUDGETS, type Budgets } from '@/lib/budget-set';
@@ -67,9 +66,9 @@ export async function GET() {
 }
 
 /** A record of budgets by month that couldn't be noted: logged, never a
- *  reason to stop a save (see BY MONTH). A deployment problem still throws. */
+ *  reason to stop a save (see BY MONTH). Storage out of reach stops the save
+ *  itself, which answers for it. */
 function logUnnoted(when: string, err: unknown): void {
-  if (err instanceof ContainerError) throw err;
   console.error(`${when}; the change is recorded by month on the next read that can:`, err instanceof StoredDataUnreadableError ? describeUnreadable(err) : err instanceof Error ? err.name : typeof err);
 }
 
