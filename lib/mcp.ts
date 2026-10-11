@@ -153,6 +153,15 @@ const SUMMARIES: Record<string, Tool['summary']> = {
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;
   },
   list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')} in use, in ${plural(r.groups.length, 'group')}.${withoutTransactions(r)}`,
+  get_goals: (r) => {
+    const active = r.goals.filter((g: any) => !g.archived);
+    const count = (status: string) => active.filter((g: any) => g.projection?.status === status).length;
+    const archived = r.goals.length - active.length;
+    return (
+      `${plural(active.length, 'goal')}${archived ? `, and ${archived} archived` : ''}: ${count('complete')} reached, ${count('on_track')} on track, ${count('behind')} behind, ` +
+      `${count('no_recent_contributions')} with no recent contributions.${missingAccounts(r.missing_accounts)}`
+    );
+  },
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
 };
 

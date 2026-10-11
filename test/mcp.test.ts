@@ -187,6 +187,7 @@ describe('tools', () => {
       'get_budgets',
       'list_recurring_bills',
       'list_categories',
+      'get_goals',
       'get_holdings',
     ]);
     for (const t of tools) {

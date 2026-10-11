@@ -306,6 +306,11 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     args: { include_hidden: INCLUDE_HIDDEN },
   },
   {
+    name: 'goals',
+    summary: 'Savings goals, each with what it counts of its account, what went in over the last three months, and when it will be reached.',
+    args: { include_hidden: INCLUDE_HIDDEN },
+  },
+  {
     name: 'holdings',
     summary: 'Each investment account’s latest recorded positions, and the day they were recorded.',
     args: {
@@ -434,6 +439,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'categories',
     'Categories',
     'The person’s categories in use, with how many transactions each has, whether it has a budget or is a transfer category (never counted as spending), its id and its group; and every group, in the person’s order, with every category in it.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'get_goals',
+    'goals',
+    'Savings goals',
+    'Savings goals: each one’s target, what it counts as saved of the account it tracks (its allocation, or what the allocations leave, never more than the balance), its monthly target and target date, what went into the account over the last three complete months, and when it is projected to be reached: from that average, or from the monthly target when there is none (rate_from says which), and never a date for a goal nothing went into. Archived goals are listed, marked. Every amount is in the goal’s own account currency; nothing is converted.',
     NARROW_HIDDEN
   ),
   fromOperation(

@@ -26,6 +26,7 @@ import {
   type Interval,
   type PageKey,
 } from './api-read';
+import { readGoals } from './api-goals';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
 import { OPERATION_SPECS, BadRequest, NotFound, type Args, type OperationSpec } from './api-spec';
 
@@ -189,6 +190,8 @@ const RUNS: Record<string, Operation['run']> = {
   },
 
   recurring: async (auth, a) => readRecurring(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  goals: async (auth, a) => readGoals(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   holdings: async (auth, a) => readHoldings(auth.ctx, { includeHidden: flag(a, 'include_hidden'), accountId: str(a, 'account_id') }),
 };
