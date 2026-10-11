@@ -704,14 +704,19 @@ export function ofxFile(
   // one.
   const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
   const standsForUnread = new Set<string>();
+  // The rows imported into linked accounts from files that count as their
+  // own, as posted rows count (see the header), and the bank's rows standing
+  // for the rest, read once.
+  const imported = importedTransactionsIn(doc, { pending: false });
   // Splits and groups, from the file's own parts, as the app applies them
   // (lib/export-splits.ts): each transaction listed whole, how it is split or
-  // its group in its memo.
-  const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc));
+  // its group in its memo, a bank's row standing for imported ones split and
+  // grouped as they were.
+  const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents);
   // How they apply, from every row of the file, once: a group across
   // accounts, a transaction in two, a split on a row pending or in another
   // currency now, each as the app has it.
-  const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc), splitInputs) : null;
+  const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc, imported.rows), splitInputs) : null;
   const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
     const words = applied && splitMemoOf(r, splitInputs, applied);
     return words ? { split: words } : {};
@@ -820,10 +825,9 @@ export function ofxFile(
   } else if (linked) {
     rows = [];
     // The transactions imported into it from its bank's files that count as
-    // its own, as posted rows count (see the header). A bank's row standing
-    // for imported ones has what was said about them in the document's
-    // layered fields already (lib/user-export.ts buildUserExport).
-    const imported = importedTransactionsIn(doc, { pending: false });
+    // its own (`imported`, above). A bank's row standing for imported ones
+    // has what was said about them in the document's layered fields already
+    // (lib/user-export.ts buildUserExport).
     for (const t of doc.transactions) {
       if (t.account_id !== account_id) continue;
       if (t.pending) {
@@ -878,6 +882,9 @@ export function ofxFile(
         hidden_by_rule: l.excluded_by_rule,
         unmarked: l.excluded === null,
         tags: l.tags,
+        // How it is split, or its group, as a bank's row's: its amount is
+        // the file's, changed only by importing it again.
+        ...splitWords({ id: row.id, amount: row.amount, currency: row.currency, bank: false }),
       });
     }
     if (fromFiles.length > 0) {

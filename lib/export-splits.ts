@@ -23,6 +23,12 @@
 // group's net here is of all its transactions in the file, as `amount` adds
 // them (the app leaves a hidden account's out, as it leaves the account out).
 //
+// A BANK ROW STANDING FOR ROWS IMPORTED FROM FILES (#52, `stands`: the
+// file's imported rows as lib/user-export.ts importedTransactionsIn settles
+// them) is split and grouped as they were, as the app does it
+// (lib/split-rows.ts): its parts name it (`split_of`), and the split itself
+// is in `transaction-splits` under the imported row's id.
+//
 // AN OFX STATEMENT lists each transaction once, whole, as a bank's statement
 // does (its amounts add up to the balance), and says in its memo how it is
 // split ("Split in Nya: Food and drink 100.00; Home improvement 50.00") or
@@ -50,8 +56,9 @@ function entriesOf<T>(part: unknown, valid: (v: unknown) => v is T): Map<string,
 }
 
 /** The splits and groups in the file, and what of them couldn't be read, as
- *  the read layer takes them, filed against `ix`. */
-export function splitInputsOf(part: (key: string) => unknown, problems: readonly Problem[], ix: CategoryIndex): SplitInputs {
+ *  the read layer takes them, filed against `ix`; `stands`, each bank row's
+ *  imported rows it stands for (see the header). */
+export function splitInputsOf(part: (key: string) => unknown, problems: readonly Problem[], ix: CategoryIndex, stands?: ReadonlyMap<string, readonly string[]>): SplitInputs {
   const unread = (section: string) => problems.filter((p) => p.section === section);
   return {
     splits: entriesOf<SplitRecord>(part(splitStore.name), isSplitRecord),
@@ -59,6 +66,7 @@ export function splitInputsOf(part: (key: string) => unknown, problems: readonly
     groups: entriesOf<TxnGroup>(part(groupStore.name), isTxnGroup),
     groupsUnknown: unread(groupStore.name).reduce((n, p) => n + (p.ids?.length ?? p.count ?? 0), 0),
     ix,
+    ...(stands && stands.size > 0 ? { stands } : {}),
   };
 }
 
@@ -231,18 +239,20 @@ const cmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 /** How the file's splits and groups apply, as the app applies them: the
  *  group each transaction counts in, by name, and the transactions whose
  *  split applies (one pending, in another currency now, or in a group shows
- *  whole). From the read layer's own function, once for the file. */
-export type AppliedSplits = { groupOf: ReadonlyMap<string, string>; split: ReadonlySet<string> };
+ *  whole), each with the id the split is kept under (its own, or that of the
+ *  row imported from a file a bank row stands for). From the read layer's
+ *  own function, once for the file. */
+export type AppliedSplits = { groupOf: ReadonlyMap<string, string>; split: ReadonlyMap<string, string> };
 
 /** The file's splits and groups as they apply (AppliedSplits), from every row
  *  of the file (lib/user-export.ts splitFactRows). */
 export function appliedSplitsOf(rows: readonly Txn[], inputs: SplitInputs): AppliedSplits {
   const groupOf = new Map<string, string>();
-  const split = new Set<string>();
+  const split = new Map<string, string>();
   if (!anySplitsOrGroups(inputs)) return { groupOf, split };
   for (const t of expandSplitsAndGroups(rows, inputs).rows) {
     if (t.group_members) for (const m of t.group_members) groupOf.set(m.transaction_id, t.name);
-    else if (t.split_of !== undefined) split.add(t.split_of);
+    else if (t.split_of !== undefined) split.set(t.split_of, t.split_carried_from ?? t.split_of);
   }
   return { groupOf, split };
 }
@@ -271,9 +281,10 @@ export function splitMemoOf(
 ): string | null {
   const group = applied.groupOf.get(row.id);
   if (group !== undefined) return `In the group ${group} in Nya`;
-  const record = inputs.splits.get(row.id);
+  const kept = applied.split.get(row.id);
+  const record = kept === undefined ? undefined : inputs.splits.get(kept);
   const ix = inputs.ix;
-  if (!record || !applied.split.has(row.id) || !ix) return null;
+  if (!record || !ix) return null;
   const scale = unitScale(row.currency);
   const parts = record.parts.map((p) => {
     const c = categoryById(ix, p.category_id);

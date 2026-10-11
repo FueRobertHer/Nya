@@ -2140,13 +2140,15 @@ const bookFacts = (r: ManualTxn, l: Layered) => splitFacts({ id: r.id, date: r.d
  *  applied as the app applies them. */
 const importedRowFacts = (r: ImportedTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
 
-/** Every row of the file, a bank's and a book's, as the function for splits
- *  and groups reads them: for an OFX statement, which lists one account's
- *  rows but says of a group what the app does (lib/export-splits.ts
- *  appliedSplitsOf). */
-export function splitFactRows(doc: UserExport): Txn[] {
+/** Every row of the file, a bank's, a book's and one imported into a linked
+ *  account that counts (`imported`, as importedTransactionsIn settles them),
+ *  as the function for splits and groups reads them: for an OFX statement,
+ *  which lists one account's rows but says of a group what the app does
+ *  (lib/export-splits.ts appliedSplitsOf). */
+export function splitFactRows(doc: UserExport, imported: readonly { row: ImportedTxn; account_id: string }[]): Txn[] {
   const book = layeredBookRows(doc);
-  return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l))];
+  const shown = layeredImportedRows(doc, imported);
+  return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l)), ...imported.map((r) => importedRowFacts(r.row, shown(r).l))];
 }
 
 /**
@@ -2178,8 +2180,10 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   const importedShown = layeredImportedRows(doc, imported.rows);
   // Splits and groups, by the read layer's own function, from the file's own
   // parts (lib/export-splits.ts): a split transaction's parts and a group's
-  // net beside the transactions, `nya_amount` what the app counts. A row's
-  // read-layer facts are what that function reads of it.
+  // net beside the transactions, `nya_amount` what the app counts, and a
+  // bank's row standing for imported ones split and grouped as they were
+  // (`represents`). A row's read-layer facts are what that function reads of
+  // it.
   const ix = manualFiling(doc, book.rows).ix;
   const rows: CsvLine<Record<TransactionColumn, CsvValue>>[] = [
     ...doc.transactions.map((t) => {
@@ -2217,7 +2221,7 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
     }),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
-  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix), blankCells)) {
+  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix, imported.represents), blankCells)) {
     const cells = row.cells();
     yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
   }

@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { parseCsv } from './csv-parse';
 
 // Splits and groups (#39) on the rows imported into a linked account from its
 // bank's files (#52): split and grouped through the routes by their ids, as a
@@ -10,8 +11,9 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 // that comes to stand for one, as what was said about it is, so the
 // transaction counts once, as its parts or in its group, never as both its
 // parts and its twin, edited where it is kept, and back on the imported row
-// when the bank's goes; and a month's note on imported transactions counts
-// transactions, never parts.
+// when the bank's goes; in the download as the app has them (the
+// transactions CSV's parts and nets, an OFX statement's memo); and a month's
+// note on imported transactions counts transactions, never parts.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 // The real ceiling on a stored value: a file run before this one may have
@@ -46,6 +48,9 @@ const { importedRowsNote } = await import('@/lib/history-import/view');
 const { summarize, spendingByCategory } = await import('@/lib/totals');
 const { filedId, indexTaxonomy } = await import('@/lib/categories');
 const { PART_PREFIX, bankRows } = await import('@/lib/split-rows');
+const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
+const { ofxFile } = await import('@/lib/ofx-export');
+const { parseOfx, ofxRecords } = await import('@/lib/import/ofx');
 const routes = await import('@/app/api/history-import/route');
 
 const ctx = TEST_CTX;
@@ -174,6 +179,22 @@ const spentOn = async (day: string) => {
   const name = new Map(done.taxonomy.categories.map((c) => [c.id, c.name]));
   const by = spendingByCategory(done.transactions, (d) => d === day, 'USD', (r) => filedId(ix, r));
   return Object.fromEntries(Object.entries(by).map(([id, amount]) => [name.get(id) ?? id, amount]));
+};
+
+const download = async () => buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
+/** transactions.csv's rows, each by its column names. */
+const csvOf = (doc: Awaited<ReturnType<typeof download>>) => {
+  const [, ...rows] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+  return rows.map((r) => Object.fromEntries(TRANSACTION_COLUMNS.map((c, i) => [c, r[i]])));
+};
+/** The checking account's OFX statement, read back: its records by FITID. */
+const statement = async () => {
+  const data = await collectUserData({ ctx, userId: null });
+  const made = ofxFile(data, buildUserExport(data, new Date()), 'acc_chk', new Date());
+  if (!('file' in made)) throw new Error(made.refused);
+  const parsed = parseOfx([...made.file.pieces()].join(''));
+  expect(parsed.error).toBeNull();
+  return new Map(parsed.statements.flatMap((st) => ofxRecords(st).records).map((r) => [r.source_id ?? '', r]));
 };
 
 const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
@@ -507,6 +528,73 @@ describe('when the bank sends the same transaction', () => {
     // The rent, the errand's net and the grocer's out; Sam's payback, all
     // that is left of the lunch, in.
     expect(summarize(rows, (d) => d >= daysAgo(55), 'USD')).toMatchObject({ money_out: 1850 + 65 + 20, money_in: 20 });
+  });
+});
+
+describe('the download', () => {
+  test('transactions.csv lists an imported row whole with its parts, and a group’s net beside its transactions: nothing counted twice', async () => {
+    const { ids } = await importStatement();
+    const [food, home] = [catId('food and drink'), catId('home improvement')];
+    await splitPut(ids['OLD STORE'], [
+      { amount: 60, category_id: food },
+      { amount: 40, category_id: home },
+    ]);
+    const made = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: food, members: [ids['CORNER SHOP'], 'b_payback'] });
+    const csv = csvOf(await download());
+    const cells = (r: Record<string, string>) => [r.transaction_id, r.amount, r.nya_amount, r.split_of, r.group_id, r.nya_category];
+    expect(csv.filter((r) => r.transaction_id === ids['OLD STORE'] || r.split_of === ids['OLD STORE']).map(cells)).toEqual([
+      [ids['OLD STORE'], '100', '', '', '', expect.any(String)],
+      [expect.stringMatching(/^split:/), '', '60', ids['OLD STORE'], '', 'food and drink'],
+      [expect.stringMatching(/^split:/), '', '40', ids['OLD STORE'], '', 'home improvement'],
+    ]);
+    // Newest first: Sam's payback, then the group's row on its day.
+    expect(csv.filter((r) => r.group_id === made.body.id).map(cells)).toEqual([
+      ['b_payback', '-20', '', '', made.body.id, 'transfer in'],
+      [`group:${made.body.id}`, '', '40', '', made.body.id, 'food and drink'],
+      [ids['CORNER SHOP'], '60', '', '', made.body.id, expect.any(String)],
+    ]);
+    // What the app counts, and only that, adds up: every row counted once.
+    const counted = csv.filter((r) => r.nya_amount !== '').reduce((n, r) => n + Number(r.nya_amount), 0);
+    const moved = csv.filter((r) => r.amount !== '' && r.superseded_by_posted !== 'true').reduce((n, r) => n + Number(r.amount), 0);
+    expect(Math.round(counted * 100)).toBe(Math.round(moved * 100));
+  });
+
+  test('a bank row standing for a split imported row is split as it was there too; its memo in an OFX statement says so, and the imported row’s own', async () => {
+    const { ids } = await importStatement();
+    const [food, home] = [catId('food and drink'), catId('home improvement')];
+    await splitPut(ids['CORNER SHOP'], [
+      { amount: 45, category_id: food },
+      { amount: 15, category_id: home },
+    ]);
+    await splitPut(ids['OLD STORE'], [
+      { amount: 60, category_id: food },
+      { amount: 40, category_id: home },
+    ]);
+    let records = await statement();
+    expect(records.get(ids['OLD STORE'])!.note).toContain('Split in Nya: Food and drink 60.00; Home improvement 40.00');
+    expect(records.get(ids['CORNER SHOP'])!.note).toContain('Split in Nya: Food and drink 45.00; Home improvement 15.00');
+
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    const csv = csvOf(await download());
+    expect(csv.some((r) => r.transaction_id === ids['CORNER SHOP'])).toBe(false);
+    expect(csv.filter((r) => r.transaction_id === 'b_corner' || r.split_of === 'b_corner').map((r) => [r.transaction_id, r.amount, r.nya_amount, r.split_of, r.nya_category])).toEqual([
+      ['b_corner', '60', '', '', expect.any(String)],
+      [expect.stringMatching(/^split:/), '', '45', 'b_corner', 'food and drink'],
+      [expect.stringMatching(/^split:/), '', '15', 'b_corner', 'home improvement'],
+    ]);
+    records = await statement();
+    expect(records.has(ids['CORNER SHOP'])).toBe(false);
+    expect(records.get('b_corner')!.note).toContain('Split in Nya: Food and drink 45.00; Home improvement 15.00');
+  });
+
+  test('an OFX statement names the group an imported row is in, and the bank’s row that takes its place', async () => {
+    const { ids } = await importStatement();
+    await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: catId('food and drink'), members: [ids['CORNER SHOP'], 'b_payback'] });
+    let records = await statement();
+    for (const id of [ids['CORNER SHOP'], 'b_payback']) expect(records.get(id)!.note).toContain('In the group Lunch with Sam in Nya');
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    records = await statement();
+    for (const id of ['b_corner', 'b_payback']) expect(records.get(id)!.note).toContain('In the group Lunch with Sam in Nya');
   });
 });
 
