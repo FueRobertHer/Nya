@@ -23,10 +23,11 @@
 // a day only if every transaction of that day is known: the bank's window
 // (its earliest row on), and the period each import covers (its statement's,
 // or the file's first to last day, or wider where the person said so). These
-// are its COVERED RANGES. The anchor's balance is only as good as every day
-// after it, so the run of covered days that holds the anchor must reach
-// today, and the walk goes back from the anchor through that run and stops
-// where it begins: imports of 2019 and 2023 without 2020 to 2022 extend the
+// are its COVERED RANGES. An estimated anchor's balance is only as good as
+// every day after it, so the run of covered days that holds it must reach
+// today; a recorded one's was measured that day, so the run need only hold
+// it. The walk goes back from the anchor through that run and stops where it
+// begins: imports of 2019 and 2023 without 2020 to 2022 extend the
 // chart through 2023 and no further, never interpolating across the hole, and
 // an import that ends before the bank's window begins isn't drawn at all. The
 // same holds after the anchor: the backfill walks imported rows only through
@@ -173,7 +174,7 @@ export function reachOf(
   account: Pick<WalkAccount, 'account_id' | 'covered' | 'movedAfter'>,
   anchor: string,
   counted: boolean,
-  opts: { today: string; heldFlat?: boolean; maxDays?: number }
+  opts: { today: string; heldFlat?: boolean; maxDays?: number; measured?: boolean }
 ): AccountReach {
   const blocks = mergeRanges(account.covered);
   const a = dayNumber(anchor);
@@ -181,15 +182,18 @@ export function reachOf(
   const maxDays = opts.maxDays ?? MAX_EXTENSION_DAYS;
   const found = blocks.find((b) => b.from <= a && a <= b.to) ?? null;
   // The run holding the anchor counts only if it reaches today: otherwise the
-  // anchor's balance rests on days nothing covers, and that run is cut off too.
-  const holding = found && found.to >= t ? found : null;
+  // anchor's balance rests on days nothing covers, and that run is cut off
+  // too. Unless the anchor was measured (`measured`, a recorded point), which
+  // rests on nothing after it.
+  const holding = found && (opts.measured || found.to >= t) ? found : null;
   // The imported runs not drawn, each cut off by the uncovered days after it:
-  // every one beginning before the anchor but the one drawn through, and
-  // every one after it that doesn't reach today, which the backfill doesn't
-  // walk either (lib/history-import/extend.ts importedFlowsForBackfill).
+  // every one beginning before the anchor but the one drawn through, and,
+  // after an estimated anchor, every one that doesn't reach today, which the
+  // backfill doesn't walk either (lib/history-import/extend.ts
+  // importedFlowsForBackfill). After a measured one, nothing is missing.
   const gaps: Gap[] = [];
   blocks.forEach((b, i) => {
-    if (!b.imported || b === holding || (b.from >= a && b.to >= t)) return;
+    if (!b.imported || b === holding || (b.from >= a && (b.to >= t || opts.measured))) return;
     const next = i + 1 < blocks.length ? blocks[i + 1].from - 1 : t;
     gaps.push({ imported: { from: dayOf(b.from), to: dayOf(b.to) }, uncovered: { from: dayOf(b.to + 1), to: dayOf(Math.max(b.to + 1, next)) } });
   });
@@ -219,7 +223,7 @@ export function extendHistory(input: { anchor: Anchor; accounts: readonly WalkAc
   for (const account of input.accounts) {
     const id = account.ids.find((i) => typeof anchor.balances[i] === 'number' && Number.isFinite(anchor.balances[i]));
     const heldFlat = walkedThere !== null && !account.ids.some((i) => walkedThere.has(i));
-    const reach = reachOf(account, anchor.date, id !== undefined, { today: input.today, heldFlat, maxDays: input.maxDays });
+    const reach = reachOf(account, anchor.date, id !== undefined, { today: input.today, heldFlat, maxDays: input.maxDays, measured: anchor.walked === null });
     reaches.push(reach);
     if (reach.reach === null || id === undefined || reach.reach >= anchor.date) continue;
     walking.push({ account, reach: dayNumber(reach.reach), start: anchor.balances[id] });

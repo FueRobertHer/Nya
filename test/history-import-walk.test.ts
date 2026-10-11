@@ -87,6 +87,17 @@ describe('covered ranges', () => {
     expect(runThrough(covered, '2025-08-01')).toBeNull();
   });
 
+  test('a recorded anchor was measured: the run holding it needn’t reach today, and nothing after it is missing', () => {
+    // An account with no bank rows, whose files reach the anchor but not today.
+    const covered = [
+      { from: '2024-01-01', to: '2024-11-30', kind: 'import' as const },
+      { from: '2025-02-01', to: '2025-03-31', kind: 'import' as const },
+    ];
+    expect(reachOf(account({ covered }), '2024-10-10', true, { today: '2025-10-09', measured: true })).toEqual({ account_id: 'chk', reach: '2023-12-31', why: null, gaps: [], capped: false });
+    // An estimated one rests on every day after it: not drawn, and said.
+    expect(reachOf(account({ covered }), '2024-10-10', true, { today: '2025-10-09' })).toMatchObject({ reach: null, gaps: [{ imported: { from: '2024-01-01', to: '2024-11-30' } }, { imported: { from: '2025-02-01', to: '2025-03-31' } }] });
+  });
+
   test('an account the anchor held at one balance is walked only if nothing happened to it since', () => {
     const covered = [{ from: '2024-01-01', to: '2025-10-09', kind: 'import' as const }];
     expect(reachOf(account({ covered, movedAfter: true }), '2024-10-10', true, { today: '2025-10-09', heldFlat: true })).toMatchObject({ reach: null, why: 'held-flat' });
