@@ -34,6 +34,8 @@ import { carryText, monthName, sinceText, startChoices, withCarry, type Carries,
 import { localMonth } from '@/lib/local-date';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import BudgetSuggestion from './BudgetSuggestion';
+import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -113,6 +115,7 @@ export default function BudgetsCard({
   past = false,
   rollover = null,
   onRollover,
+  suggestions = null,
 }: {
   taxonomy: Taxonomy;
   budgets: Budgets;
@@ -141,6 +144,10 @@ export default function BudgetsCard({
   rollover?: RolloverSettings | null;
   /** Resolves true once the change is saved. */
   onRollover?: (target: Target, change: RolloverChange) => Promise<boolean>;
+  /** What was spent on average in the last three complete months, by
+   *  category and group (lib/budget-suggestions.ts), for the editor and for
+   *  a budget about to be added; null when not known. */
+  suggestions?: BudgetSuggestions | null;
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set(opened));
   const [editing, setEditing] = useState<string | null>(edit && !past ? keyOf(edit) : null);
@@ -184,15 +191,23 @@ export default function BudgetsCard({
   async function remove(t: Target) {
     if (await onSave(withAmount(t, null))) setEditing(null);
   }
-  async function add() {
-    const value = Number(addAmount);
+  /** A suggestion used in the editor: saved at once, one tap. */
+  async function applyAmount(t: Target, amount: number) {
+    if (await onSave(withAmount(t, amount))) setEditing(null);
+  }
+  /** The category or group chosen to add a budget to. */
+  const addingTarget = (): Target | null => {
     const [kind, id] = adding.split(':') as ['category' | 'group', string];
-    if (!id || !Number.isFinite(value) || value <= 0) return;
-    if (await onSave(withAmount({ kind, id }, value))) {
+    return id ? { kind, id } : null;
+  };
+  async function add(amount: number = Number(addAmount)) {
+    const target = addingTarget();
+    if (!target || !Number.isFinite(amount) || amount <= 0) return;
+    if (await onSave(withAmount(target, amount))) {
       setAdding('');
       setAddAmount('');
       // Opened, so the budget just set is in view.
-      const group = kind === 'group' ? id : ix.byId.get(id)?.group;
+      const group = target.kind === 'group' ? target.id : ix.byId.get(target.id)?.group;
       if (group) setOpen((prev) => new Set(prev).add(group));
     }
   }
@@ -283,6 +298,15 @@ export default function BudgetsCard({
         value={editAmount}
         onChange={(e) => setEditAmount(e.target.value)}
         aria-label={`Monthly budget for ${name}`}
+      />
+      <BudgetSuggestion
+        suggestions={suggestions}
+        target={t}
+        currency={currency}
+        rolling={rollingSince(t) !== null}
+        busy={!editable}
+        verb="Use"
+        onUse={(amount) => void applyAmount(t, amount)}
       />
       <div className="card-actions">
         <button onClick={() => saveEdit(t)} disabled={!editable}>
@@ -497,9 +521,19 @@ export default function BudgetsCard({
             aria-label="Monthly limit"
             disabled={!editable}
           />
-          <button onClick={add} disabled={!editable || !adding || !addAmount}>
+          <button onClick={() => void add()} disabled={!editable || !adding || !addAmount}>
             Add Budget
           </button>
+          {addingTarget() && (
+            <BudgetSuggestion
+              suggestions={suggestions}
+              target={addingTarget()!}
+              currency={currency}
+              busy={!editable}
+              verb="Add at"
+              onUse={(amount) => void add(amount)}
+            />
+          )}
         </div>
       )}
 

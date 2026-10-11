@@ -3,7 +3,8 @@ import { dataCtx } from '@/lib/data-ctx';
 import { budgetsWithoutHistory, readAppBudgets, readBudgetMonth } from '@/lib/budget-month';
 import { leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { indexTaxonomy } from '@/lib/categories';
-import { endedIn, rollingIn, rolloverStarts } from '@/lib/rollover';
+import { endedIn, monthGapsOf, rollingIn, rolloverStarts } from '@/lib/rollover';
+import { suggestBudgets } from '@/lib/budget-suggestions';
 import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 
 // A month of budgets for the Budgets tab (#37, lib/budget-month.ts): each
@@ -48,6 +49,10 @@ import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 //   left_out_text, notes     what the month's totals left out, and the read's notes
 //   counted_left_out_text    what the earlier months a carry or the pool counts
 //                            left out for being in another currency
+//   suggestions              this month, from the history: each budget's
+//                            trailing average over the last three complete
+//                            months, rounded up (lib/budget-suggestions.ts);
+//                            null for another month, or without the history
 
 export async function GET(req: Request) {
   try {
@@ -78,6 +83,7 @@ export async function GET(req: Request) {
         left_out_text: null,
         counted_left_out_text: null,
         notes: [],
+        suggestions: null,
       });
     }
     const read = await readBudgetMonth(ctx, { month: params.month, today: params.today, app });
@@ -104,6 +110,11 @@ export async function GET(req: Request) {
       left_out_text: leftOutText(leftOut, read.currency, { where: 'these budgets' }),
       counted_left_out_text: leftOutText(read.countedLeftOut, read.currency, { where: 'what rolled over from earlier months', plural: false }),
       notes: read.activity.notes,
+      // From the history read anyway, for the editor: never for a month gone by.
+      suggestions:
+        read.month === read.today
+          ? suggestBudgets({ month: read.month, rows: read.activity.rows, currency: read.currency, ix: read.ix, earliest: read.activity.earliest, gaps: (m) => monthGapsOf(m, read.activity.facts) })
+          : null,
     });
   } catch (err) {
     return rolloverFailure(err, 'Failed to load the month’s budgets');

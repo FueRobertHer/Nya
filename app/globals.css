@@ -4884,3 +4884,23 @@ button.pool-toggle {
 .template-changes li + li {
   margin-top: 4px;
 }
+
+/* --- budget suggestions from history (components/BudgetSuggestion.tsx) ---
+   In the editor and under the budget about to be added: the line, a button
+   as wide as its words, and the notes. */
+.budget-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.budget-suggestion .budget-note {
+  margin: 0;
+}
+
+.budget-suggestion > button {
+  align-self: flex-start;
+  width: auto;
+  padding: 8px 14px;
+  font-size: 14px;
+}

@@ -293,6 +293,8 @@ Budget rollover and income carryover (#37) live beside the budget set, never in 
 
 **Groups.** A group's own budget rolls over what is left of it after everything spent in the group. The reconcile rule works on what is available, a carry included, and the month's total adds each group's limit once, so a carry is never counted twice.
 
+**Suggestions.** This month's answer, with the history, carries budget suggestions (`suggestions`, `lib/budget-suggestions.ts`, pure): each month's `spendingByCategory` over the three months before, from the same assembled rows, filed by `filedId` and rolled up to the spending groups, averaged in the currency's minor units over the months the stored history reaches whole (not one before `earliest`, nor the month the rows begin in from a later day, nor one with a `begins` gap), the others' gaps (`monthGapsOf`) named. It needs no read of its own: the Budgets tab asks for the history anyway, and a month gone by, or an answer without the history, carries none.
+
 **Merges and deletes.** The categories route moves a merged category's record onto the one it went into (`monthsAfterMerge`: amounts added month by month, the rollover of the one it went into, else its own) after it moves the budget, and drops a deleted category's or group's. Both are best effort: reads follow a merge and add the records up all the same, and the next note drops a deleted one's.
 
 ## Containers

@@ -404,6 +404,7 @@ export default function BudgetsTab({
             past={past}
             rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
             onRollover={!past && view ? onRollover : undefined}
+            suggestions={!past ? (view?.suggestions ?? null) : null}
           />
         )}
         {!past && view && (
