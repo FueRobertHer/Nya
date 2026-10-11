@@ -16,7 +16,7 @@ import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
-import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
 
 /** How many transactions the list offers at once; the search finds the rest. */
@@ -53,6 +53,36 @@ export function groupCandidates(rows: readonly Txn[], opts: { currency: string |
     .sort((a, b) => Math.abs(dayNumber(a.date) - near) - Math.abs(dayNumber(b.date) - near) || (a.date < b.date ? 1 : -1));
 }
 
+/**
+ * The category a new group is filed under until the person picks one: that
+ * of its largest outflow not filed as a transfer (the dinner, never the
+ * payback a friend sent, which a bank files as a transfer in), else of its
+ * first transaction not filed as a transfer, else, when every one is (two
+ * sides of a move between accounts), the first one's. Pure.
+ */
+export function groupCategoryFor(rows: readonly Txn[], ix: CategoryIndex, uncategorized: string): string {
+  const filed = (t: Txn) => (t.category_id ? categoryById(ix, t.category_id) : null);
+  const isTransfer = (t: Txn) => {
+    const c = filed(t);
+    return (c ? groupOf(ix, c).kind : t.category_kind) === 'transfer';
+  };
+  const spending = rows.filter((t) => !isTransfer(t));
+  const largest = spending.filter((t) => t.amount > 0).sort((a, b) => b.amount - a.amount)[0];
+  const pick = largest ?? spending[0] ?? rows[0];
+  return (pick && filed(pick)?.id) || uncategorized;
+}
+
+/** What the group sheet says the ticked transactions come to, and where. */
+export function groupStatus(opts: { count: number; net: number; currency: string | null; category: { name: string; kind: CategoryKind } | null }): string {
+  if (opts.count < MIN_MEMBERS) return `Choose at least ${MIN_MEMBERS} transactions.`;
+  if (opts.count > MAX_MEMBERS) return `A group holds at most ${MAX_MEMBERS} transactions.`;
+  const under = opts.category ? displayName(opts.category.name) : null;
+  // A transfer category's net counts in no total: say so, never "counted".
+  if (opts.category?.kind === 'transfer') return `${opts.count} transactions. ${under} is a transfer category, so this group isn’t counted in spending.`;
+  if (opts.net === 0) return `${opts.count} transactions, netting to nothing${under ? `, under ${under}` : ''}.`;
+  return `${opts.count} transactions, counted as ${formatMoney(Math.abs(opts.net), opts.currency)} ${opts.net > 0 ? 'out' : 'in'}${under ? ` under ${under}` : ''}.`;
+}
+
 export default function GroupSheet({
   start,
   group,
@@ -77,7 +107,9 @@ export default function GroupSheet({
   const members0 = useMemo(() => (group ? (group.group_members ?? []) : start ? [start] : []), [group, start]);
   // From what it opens on (and afresh each time it opens on something).
   const [name, setName] = useState(() => (group ? group.name : (start?.name ?? '')));
-  const [categoryId, setCategoryId] = useState(() => first?.category_id ?? taxonomy.uncategorized);
+  // The person's pick of a category: a group's own, or, for a new one, none
+  // until they pick (the ticked transactions suggest one, groupCategoryFor).
+  const [picked, setPicked] = useState<string | null>(() => (group ? (group.category_id ?? taxonomy.uncategorized) : null));
   const [chosen, setChosen] = useState<Set<string>>(() => new Set(members0.map((m) => m.transaction_id)));
   const [query, setQuery] = useState('');
   const [saving, setSaving] = useState(false);
@@ -88,7 +120,7 @@ export default function GroupSheet({
   useEffect(() => {
     if (!first) return;
     setName(group ? group.name : (start?.name ?? ''));
-    setCategoryId(first.category_id ?? taxonomy.uncategorized);
+    setPicked(group ? (group.category_id ?? taxonomy.uncategorized) : null);
     setChosen(new Set(members0.map((m) => m.transaction_id)));
     setQuery('');
     setError('');
@@ -110,12 +142,21 @@ export default function GroupSheet({
   const shown = new Set(offered.map((t) => t.transaction_id));
   const hidden = [...chosen].filter((id) => !inGroup.has(id) && !shown.has(id)).flatMap((id) => pool.get(id) ?? []);
   const toAdd = [...hidden, ...offered];
-  // What the ticked ones come to.
+  // What the ticked ones come to, and where.
+  const ticked = [...chosen].flatMap((id) => pool.get(id) ?? []);
   const scale = unitScale(currency);
-  const net = [...chosen].flatMap((id) => pool.get(id) ?? []).reduce((n, t) => n + toUnits(t.amount, scale), 0) / scale;
+  const net = ticked.reduce((n, t) => n + toUnits(t.amount, scale), 0) / scale;
+  const categoryId = picked ?? groupCategoryFor(ticked, ix, taxonomy.uncategorized);
   const missing = (group?.group_missing ?? 0) + (group?.group_removed ?? 0);
   const category = categoryById(ix, categoryId);
-  const ready = name.trim().length > 0 && chosen.size >= MIN_MEMBERS && chosen.size <= MAX_MEMBERS && !!categoryId;
+  // A group's edit saves only a change.
+  const changed =
+    !group ||
+    name.trim() !== group.name ||
+    categoryId !== group.category_id ||
+    [...chosen].some((id) => !inGroup.has(id)) ||
+    [...inGroup].some((id) => !chosen.has(id));
+  const ready = name.trim().length > 0 && chosen.size >= MIN_MEMBERS && chosen.size <= MAX_MEMBERS && !!categoryId && changed;
   const toggle = (id: string) =>
     setChosen((now) => {
       const next = new Set(now);
@@ -166,6 +207,10 @@ export default function GroupSheet({
         <span className="type-tag">
           {shownDay(t.date)} · {t.account_name}
         </span>
+        {/* Left out on its own, it counts through the group once in it. */}
+        {chosen.has(t.transaction_id) && t.excluded === true && (
+          <span className="excluded-tag">{t.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</span>
+        )}
       </span>
       <span className={`num${t.amount < 0 ? ' inflow' : ''}`}>{signedMoney(-t.amount, currency, { always: true })}</span>
     </label>
@@ -184,7 +229,7 @@ export default function GroupSheet({
         </label>
         <label className="field">
           Category
-          <CategoryPicker taxonomy={taxonomy} value={categoryId} onChange={setCategoryId} disabled={saving} />
+          <CategoryPicker taxonomy={taxonomy} value={categoryId} onChange={setPicked} disabled={saving} />
         </label>
         <div className="group-list" role="group" aria-label="Transactions in the group">
           {members0.map(row)}
@@ -209,9 +254,7 @@ export default function GroupSheet({
         </div>
       </div>
       <p className="split-left" role="status">
-        {chosen.size < MIN_MEMBERS
-          ? `Choose at least ${MIN_MEMBERS} transactions.`
-          : `${chosen.size} transactions, counted as ${formatMoney(Math.abs(net), currency)} ${net > 0 ? 'out' : net < 0 ? 'in' : ''}${category ? ` under ${displayName(category.name)}` : ''}.`}
+        {groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}
       </p>
       {error && <div className="error">{error}</div>}
       <div className="button-pair">

@@ -19,7 +19,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
-import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
@@ -34,7 +34,7 @@ import TagChips from "./TagChips";
 import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
-import { searchRows } from "./txn-search";
+import { searchEntries } from "./txn-search";
 import { bankRows, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
@@ -513,7 +513,9 @@ export default function MonthBreakdown({
   // The search reads a row's tags and note too (#40), and the tag filter
   // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
   const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
-  const visible = useMemo(() => searchRows(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
+  // A split transaction is kept whole, every part of it, when any part is
+  // (#39): its parts are listed under it, and its split edited from all.
+  const visible = useMemo(() => searchEntries(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -785,8 +787,9 @@ export default function MonthBreakdown({
         <div className="inst-header">
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
-            {visible.length}
-            {query || filterTag ? ` of ${monthTxns.length}` : ""}
+            {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
+            {countTransactions(visible)}
+            {query || filterTag ? ` of ${countTransactions(monthTxns)}` : ""}
           </div>
         </div>
 

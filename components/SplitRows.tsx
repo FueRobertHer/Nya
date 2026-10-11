@@ -20,8 +20,9 @@ import { isConnectorKind } from '@/lib/connectors/types';
 
 /** What a row of the list says in place of its category: a split
  *  transaction's parts, a group's size; null for any other. */
-export function entryLabel(t: Pick<Txn, 'split_parts' | 'split_count' | 'group_members' | 'group_missing' | 'group_removed'>): string | null {
-  if (t.split_parts) return `Split into ${t.split_count ?? t.split_parts.length}`;
+export function entryLabel(t: Pick<Txn, 'split_parts' | 'group_members' | 'group_missing' | 'group_removed'>): string | null {
+  // The parts the person made: the difference the bank made since is not one.
+  if (t.split_parts) return `Split into ${t.split_parts.filter((p) => !p.split_remainder).length}`;
   if (t.group_members) {
     const n = t.group_members.length;
     return `Group of ${n}`;
@@ -232,6 +233,8 @@ export function MemberRows({
                 <div className="type-tag">
                   {new Date(`${m.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })} · {m.institution_name} · {m.account_name}
                 </div>
+                {/* What was said of it on its own doesn't change the group's net. */}
+                {m.excluded === true && <div className="excluded-tag">{m.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</div>}
               </div>
               {opened && (
                 <div className="txn-edit" onClick={(e) => e.stopPropagation()}>

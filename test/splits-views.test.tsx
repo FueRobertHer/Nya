@@ -2,9 +2,9 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, startingParts } from '@/components/SplitSheet';
-import GroupSheet, { groupCandidates } from '@/components/GroupSheet';
+import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
 import { entryLabel, entryNotice } from '@/components/SplitRows';
-import { searchRows } from '@/components/txn-search';
+import { searchEntries, searchRows } from '@/components/txn-search';
 import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
@@ -124,6 +124,26 @@ describe('the Activity tab’s list', () => {
     expect(list(rows)).toContain('and 1 transaction you left out');
   });
 
+  test('a search that finds one part of a split transaction keeps all of them, so its split is edited from every part', () => {
+    const rows = served();
+    const kept = searchEntries(rows, { query: 'groceries', tag: '' }, []);
+    expect(kept.map((t) => t.transaction_id)).toEqual(rows.filter((t) => t.split_of === 'Costco').map((t) => t.transaction_id));
+    const whole = bankRows(kept, { groups: 'keep' })[0] as Txn;
+    expect(entryLabel(whole)).toBe('Split into 3');
+    expect(startingParts(whole, taxonomy.uncategorized).map((d) => [d.amount, d.note])).toEqual([
+      ['100.01', 'food'],
+      ['30.00', ''],
+      ['19.99', ''],
+    ]);
+    // Nothing found, nothing kept; a row not split, alone.
+    expect(searchEntries(rows, { query: 'nothing like it', tag: '' }, [])).toEqual([]);
+    expect(searchEntries(rows, { query: 'coffee', tag: '' }, []).map((t) => t.name)).toEqual(['Coffee']);
+  });
+
+  test('the list counts transactions, not rows: a split one is one, a group as many as it holds', () => {
+    expect(list(served())).toContain('Transactions 4 ');
+  });
+
   test('the search finds a part by its transaction’s note, and a group by one of its transactions', () => {
     const rows = served();
     expect(searchRows(rows, { query: 'monthly run', tag: '' }, []).map((t) => t.split_of)).toEqual(['Costco', 'Costco', 'Costco']);
@@ -141,6 +161,8 @@ describe('the Activity tab’s list', () => {
       ix,
     }).rows as unknown as Txn[];
     expect(entryNotice(bankRows(changed)[0] as Txn)).toBe('The bank changed this amount since you split it.');
+    // The difference the bank made isn't one of the parts the person made.
+    expect(entryLabel(bankRows(changed)[0] as Txn)).toBe('Split into 2');
     // One entered by hand changes when it is edited, not by the bank.
     const edited = expandSplitsAndGroups([txn('Costco', { amount: 160, source: 'manual' })] as any, {
       splits: new Map([['Costco', record(150, [['groceries', 100], ['household', 50]])]]),
@@ -259,5 +281,53 @@ describe('the group sheet', () => {
     expect(edit).toContain('Edit group');
     expect(edit).toContain('2 transactions, counted as $60.00 out under Restaurants.');
     expect(edit).toContain('Ungroup');
+  });
+
+  test('a new group is filed with the dinner, never under the payback’s transfer category, until the person picks one', () => {
+    const [dinner, payback] = [raw()[1], raw()[2]];
+    expect(payback.category_kind).toBe('transfer');
+    // Opened from the payback, the newest, which a bank files as a transfer in.
+    expect(groupCategoryFor([payback, dinner], ix, taxonomy.uncategorized)).toBe(cat('general merchandise'));
+    expect(groupCategoryFor([payback, txn('Dinner', { amount: 120, category_id: cat('restaurants'), category: 'restaurants', category_name: 'restaurants' })], ix, taxonomy.uncategorized)).toBe(
+      cat('restaurants')
+    );
+    // The largest outflow decides among the rest; a refund alone, the first.
+    expect(groupCategoryFor([txn('Small', { amount: 5, category_id: cat('auto') }), txn('Big', { amount: 50, category_id: cat('household') })], ix, taxonomy.uncategorized)).toBe(
+      cat('household')
+    );
+    expect(groupCategoryFor([payback, txn('Refund', { amount: -20, category_id: cat('household') })], ix, taxonomy.uncategorized)).toBe(cat('household'));
+    // Two sides of a move: a transfer, as both are.
+    expect(groupCategoryFor([payback, txn('Out', { amount: 60, category_id: cat('transfer out'), category_kind: 'transfer' })], ix, taxonomy.uncategorized)).toBe(cat('transfer in'));
+    // Opened from the payback, nothing is offered to save until there are two.
+    const sheet = renderToStaticMarkup(<GroupSheet start={payback} group={null} txns={raw()} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />);
+    expect(text(sheet)).toContain('Choose at least 2 transactions.');
+    expect(sheet).toMatch(/<button[^>]*disabled=""[^>]*>Group them<\/button>/);
+  });
+
+  test('what it says before saving: never "counted" under a transfer category, and nothing for a net of nothing', () => {
+    const transferIn = { name: 'transfer in', kind: 'transfer' as const };
+    const restaurants = { name: 'restaurants', kind: 'expense' as const };
+    expect(groupStatus({ count: 2, net: 60, currency: 'USD', category: transferIn })).toBe('2 transactions. Transfer in is a transfer category, so this group isn’t counted in spending.');
+    expect(groupStatus({ count: 2, net: 60, currency: 'USD', category: restaurants })).toBe('2 transactions, counted as $60.00 out under Restaurants.');
+    expect(groupStatus({ count: 3, net: -12.5, currency: 'USD', category: restaurants })).toBe('3 transactions, counted as $12.50 in under Restaurants.');
+    expect(groupStatus({ count: 2, net: 0, currency: 'USD', category: restaurants })).toBe('2 transactions, netting to nothing, under Restaurants.');
+    expect(groupStatus({ count: 1, net: 60, currency: 'USD', category: restaurants })).toBe('Choose at least 2 transactions.');
+    // A group filed under a transfer category says so when opened.
+    const rows = served();
+    const group = { ...rows.find((t) => t.group_members)!, category_id: cat('transfer in'), category: 'transfer in', category_name: 'transfer in', category_kind: 'transfer' as const };
+    expect(text(renderToStaticMarkup(<GroupSheet start={null} group={group} txns={rows} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />))).toContain(
+      'Transfer in is a transfer category, so this group isn’t counted in spending.'
+    );
+  });
+
+  test('a group’s edit saves only a change, and says which transactions count through it although left out on their own', () => {
+    const rows = served();
+    const group = rows.find((t) => t.group_members)!;
+    const edit = renderToStaticMarkup(<GroupSheet start={null} group={group} txns={rows} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />);
+    expect(edit).toMatch(/<button[^>]*disabled=""[^>]*>Save group<\/button>/);
+    const hidden = { ...group, group_members: group.group_members!.map((m, i) => (i === 1 ? { ...m, excluded: true as const, excluded_by_rule: true as const } : m)) };
+    expect(text(renderToStaticMarkup(<GroupSheet start={null} group={hidden} txns={rows} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />))).toContain(
+      'A rule hides it: in the group, it counts through the group.'
+    );
   });
 });
