@@ -61,7 +61,7 @@
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
 //
-// ACCOUNTS THAT ENDED (closed, left, or no longer tracked: lib/lifecycle.ts)
+// ACCOUNTS THAT ENDED (closed, left, or no longer followed: lib/lifecycle.ts)
 // are listed with when (`lifecycle`, a field version 1 gained), even once
 // their bank stops returning them, with the newest balance measured before,
 // and count in nothing from that day on, as in the app: net worth now leaves

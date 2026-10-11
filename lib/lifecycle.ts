@@ -605,7 +605,7 @@ export function autoNoteText(entry: Pick<LifecycleEntry, 'lifecycle' | 'label' |
     case 'left':
       return `${who} no longer yours${why}`;
     case 'untracked':
-      return `${who} no longer tracked`;
+      return `${who} no longer followed`;
     default:
       return null;
   }

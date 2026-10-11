@@ -120,7 +120,7 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         break;
       case 'untracked':
         out.push(
-          `You stopped tracking ${g.account}${at(g.institution)} from ${day(g.from)}: it is still yours, but its transactions from then aren’t in this report${
+          `You stopped following ${g.account}${at(g.institution)} from ${day(g.from)}: it is still yours, but its transactions from then aren’t in this report${
             g.not_counted > 0 ? `, ${plural(g.not_counted, 'transaction')} in Nya among them` : ''
           }.`
         );
@@ -163,7 +163,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
     case 'missed':
       return `${g.account} missing ${span(g.from, g.to, day)}`;
     case 'untracked':
-      return `${g.account} not tracked from ${day(g.from)}`;
+      return `${g.account} not followed from ${day(g.from)}`;
   }
 }
 
@@ -182,7 +182,7 @@ export function statusHeadline(report: Pick<Report, 'empty' | 'gaps'>): string {
 
 /** What settles an assumed closure: said once, after the gaps, when any is. */
 export const ASSUMED_REMEDY =
-  'Closed, left and untracked on the Accounts tab lists each account Nya assumed closed, to confirm or correct. Then make this report again.';
+  'Accounts that ended, on the Accounts tab, lists each account Nya assumed closed, to confirm or correct. Then make this report again.';
 
 /** What may be missing: each gap, the remedy where a sync or an answer can
  *  help, and why no connection brings in spending, when none can. */
@@ -279,7 +279,7 @@ export function endedWords(e: Pick<ReportEnded, 'state' | 'assumed' | 'end'>, da
     case 'left':
       return `No longer yours from ${day(e.end)}`;
     case 'untracked':
-      return `Not tracked from ${day(e.end)}`;
+      return `Not followed from ${day(e.end)}`;
   }
 }
 
@@ -299,7 +299,7 @@ export function endedConnection(endedBy: string, day: DayFormat): string {
 
 /** What the list of accounts that ended means. */
 export const ENDED_NOTE =
-  'Each of these counts on every day before the one it ended, and on none after, as everywhere in Nya. Closed: it no longer exists. No longer yours: it still exists, but isn’t yours. Not tracked: it is still yours, but you stopped following it, so its later transactions aren’t here.';
+  'Each of these counts on every day before the one it ended, and on none after, as everywhere in Nya. Closed: it no longer exists. No longer yours: it still exists, but isn’t yours. Not followed: it is still yours, but you stopped following it, so its later transactions aren’t here.';
 
 /** Where an appendix row came from: a bank's, or a manual row's source as
  *  the Activity tab names it. */

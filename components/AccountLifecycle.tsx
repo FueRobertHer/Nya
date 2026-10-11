@@ -6,9 +6,9 @@
 // weeks are answered here (lib/lifecycle-questions.ts).
 //
 //   - LifecycleSheet: the form, opened from an account's Close… action, from a
-//     question, or from the Closed, left and untracked card.
+//     question, or from the Accounts that ended card.
 //   - AccountQuestions: the questions on an institution's card (and in
-//     connection health): Closed, Still open, Stop tracking.
+//     connection health): Closed, Still open, Stop following.
 //   - EndedAccounts: the collapsed card of accounts that ended, with when,
 //     to change or reopen.
 //   - useAccountLifecycle: the state and the one route behind all three
@@ -19,7 +19,10 @@
 //
 // The words keep the three apart where it matters: closed and left are the
 // same to the math and differ only in what they say; untracked counts before
-// its day and not after, where hidden leaves an account out of every day.
+// its day and not after, where hidden leaves an account out of every day. It
+// is said as following, never tracking: stopping tracking is what letting an
+// account go from SimpleFIN is called (components/Connectors.tsx), which ends
+// nothing.
 // Nothing here removes anything: reopening restores an account exactly, and
 // one its bank no longer returns is held at its last known balance and asked
 // about until it does. The sheet says what an end does to net worth when the
@@ -105,7 +108,7 @@ export function endText(l: EndedAccount['lifecycle']): string {
     case 'left':
       return `No longer yours since ${dayText(l.on)}`;
     case 'untracked':
-      return `Not tracked since ${dayText(l.from)}`;
+      return `Not followed since ${dayText(l.from)}`;
   }
 }
 
@@ -114,8 +117,8 @@ const CHOICES: { value: EndState; label: string; note: string }[] = [
   { value: 'left', label: 'No longer yours', note: 'It still exists, but isn’t yours: sold, transferred, or divided.' },
   {
     value: 'untracked',
-    label: 'Stop tracking',
-    note: 'You stop following it. It still counts on every day before the one you choose, and not after. Hiding is different: a hidden account is left out of every day, past ones too.',
+    label: 'Stop following',
+    note: 'It is still yours, and you stop following it. It still counts on every day before the one you choose, and not after. Hiding is different: a hidden account is left out of every day, past ones too.',
   },
 ];
 
@@ -527,7 +530,7 @@ export function AccountQuestions({
                 </button>
               )}
               <button className="secondary" onClick={() => onOpen(target('untracked'))} disabled={busy}>
-                Stop tracking
+                Stop following
               </button>
             </div>
           </li>
@@ -561,7 +564,7 @@ export function EndedAccounts({
     <div className="card hidden-section lifecycle-card">
       <button className="holdings-toggle" onClick={() => setExpanded((v) => !v)} aria-expanded={expanded}>
         <span className="holdings-title">
-          Closed, left and untracked
+          Accounts that ended
           <span className="holdings-count">{ended.length}</span>
         </span>
         <span className="holdings-summary">

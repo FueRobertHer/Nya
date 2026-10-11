@@ -16,7 +16,7 @@ import { ConnectionHealthView, needsAttention, type HealthInstitution } from '@/
 import { CAUSES, type ConnectionHealth } from '@/lib/connection-state';
 
 // What the person sees of accounts that end (#50): the questions, the sheet,
-// the Closed, left and untracked card, the repair when closures can't be
+// the Accounts that ended card, the repair when closures can't be
 // read, and the notes card. Days are in 2024, so each is said with its year
 // whatever year the tests run in.
 
@@ -86,14 +86,14 @@ describe('the questions', () => {
     expect(detail).toBe('Nothing waits on your answer: a zero counts the same either way.');
   });
 
-  test('each question offers Closed, Still open and Stop tracking; Still open once only', () => {
+  test('each question offers Closed, Still open and Stop following; Still open once only', () => {
     const accounts = [
       { account_id: 'a', name: 'Savings', mask: '4821', balance: 900, currency: 'USD', question: { kind: 'missing' as const, end: '2024-03-13', since: '2024-03-12' } },
       { account_id: 'b', name: 'Card', mask: null, balance: 0, currency: 'USD', question: { kind: 'missing' as const, end: '2024-03-13', since: '2024-03-12', still_open: true as const } },
       { account_id: 'c', name: 'Checking', mask: null, balance: 10, currency: 'USD' },
     ];
     const html = renderToStaticMarkup(<AccountQuestions accounts={accounts} institution="Chase" busy={false} onOpen={noop} onStillOpen={noop} />);
-    expect(buttons(html)).toEqual(['Closed', 'Still open', 'Stop tracking', 'Closed', 'Stop tracking']);
+    expect(buttons(html)).toEqual(['Closed', 'Still open', 'Stop following', 'Closed', 'Stop following']);
     expect(text(html)).toContain('Savings ••4821 hasn’t appeared since Mar 12, 2024. Closed?');
     expect(text(html)).not.toContain('Checking');
     // Nothing asked, nothing drawn.
@@ -142,7 +142,9 @@ describe('the sheet', () => {
     const t = text(form());
     expect(t).toContain('Closed It no longer exists');
     expect(t).toContain('No longer yours It still exists, but isn’t yours');
-    expect(t).toContain('Stop tracking You stop following it. It still counts on every day before the one you choose, and not after.');
+    expect(t).toContain('Stop following It is still yours, and you stop following it. It still counts on every day before the one you choose, and not after.');
+    // Never "tracking": that is what letting an account go from SimpleFIN is called.
+    expect(t).not.toMatch(/track/i);
     expect(t).toContain('Hiding is different: a hidden account is left out of every day, past ones too.');
   });
 
@@ -184,7 +186,7 @@ describe('the sheet', () => {
   });
 });
 
-describe('the Closed, left and untracked card', () => {
+describe('the Accounts that ended card', () => {
   const entry = (over: Partial<EndedAccount> = {}): EndedAccount => ({
     account_id: 'a',
     lifecycle: { state: 'closed', on: '2024-03-13', note: 'Moved to Chase' },
@@ -200,12 +202,12 @@ describe('the Closed, left and untracked card', () => {
   test('closed and left say different things; the math is the same', () => {
     expect(endText({ state: 'closed', on: '2024-03-13' })).toBe('Closed Mar 13, 2024');
     expect(endText({ state: 'left', on: '2024-03-13' })).toBe('No longer yours since Mar 13, 2024');
-    expect(endText({ state: 'untracked', from: '2024-03-13' })).toBe('Not tracked since Mar 13, 2024');
+    expect(endText({ state: 'untracked', from: '2024-03-13' })).toBe('Not followed since Mar 13, 2024');
   });
 
   test('collapsed, with a count, until opened', () => {
     const html = card([entry()]);
-    expect(text(html)).toContain('Closed, left and untracked 1');
+    expect(text(html)).toContain('Accounts that ended 1');
     expect(html).toContain('aria-expanded="false"');
     expect(html).not.toContain('Moved to Chase');
     expect(card([])).toBe('');
@@ -217,7 +219,7 @@ describe('the Closed, left and untracked card', () => {
     expect(html).toContain('aria-expanded="true"');
     expect(t).toContain('1 to confirm');
     expect(t).toContain('Assumed closed: Ally stopped reporting it and nobody answered. Is it?');
-    expect(t).toContain('Vanguard · Not tracked since Jan 2, 2024 · also hidden');
+    expect(t).toContain('Vanguard · Not followed since Jan 2, 2024 · also hidden');
     expect(buttons(html)).toEqual(['Yes, closed', 'Still open', 'Change', 'Reopen']);
   });
 });

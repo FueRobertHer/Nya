@@ -649,7 +649,7 @@ describe('auto notes', () => {
     await markEnded(ctx, 'sav', { state: 'left', on: '2026-03-12', note: 'Sold' }, ABOUT, NOW);
     expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-03-12', text: 'Ally Savings ••1234 no longer yours: Sold' });
     await markEnded(ctx, 'sav', { state: 'untracked', from: '2026-04-01' }, ABOUT, NOW);
-    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-04-01', text: 'Ally Savings ••1234 no longer tracked' });
+    expect(await timelineNotesStore.get(ctx, autoNoteId('sav'))).toMatchObject({ date: '2026-04-01', text: 'Ally Savings ••1234 no longer followed' });
     expect(await timelineNotesStore.count(ctx)).toBe(1);
     await reopenAccount(ctx, 'sav', new Map(), NOW);
     expect(await timelineNotesStore.count(ctx)).toBe(0);
@@ -671,7 +671,7 @@ describe('auto notes', () => {
     const label = { name: 'Vanguard Brokerage', institution: 'Vanguard', mask: null };
     expect(autoNoteText({ lifecycle: { state: 'closed', on: '2026-01-01' }, label })).toBe('Vanguard Brokerage closed');
     expect(autoNoteText({ lifecycle: { state: 'left', on: '2026-01-01', note: 'Transferred to Fidelity' }, label })).toBe('Vanguard Brokerage no longer yours: Transferred to Fidelity');
-    expect(autoNoteText({ lifecycle: { state: 'untracked', from: '2026-01-01' }, label })).toBe('Vanguard Brokerage no longer tracked');
+    expect(autoNoteText({ lifecycle: { state: 'untracked', from: '2026-01-01' }, label })).toBe('Vanguard Brokerage no longer followed');
     expect(autoNoteText({ lifecycle: { state: 'active' }, label })).toBeNull();
   });
 

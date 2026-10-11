@@ -517,7 +517,7 @@ export function endedNote(
         : `This account was closed in Nya on ${when}`
       : lifecycle.state === 'left'
         ? `This account is no longer yours in Nya from ${when}`
-        : `This account isn’t tracked in Nya from ${when}`;
+        : `This account isn’t followed in Nya from ${when}`;
   const after = rows.filter((r) => r.date >= lifecycle.date).length;
   const listed =
     after > 0

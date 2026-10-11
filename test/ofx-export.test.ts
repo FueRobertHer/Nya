@@ -580,7 +580,7 @@ describe('which accounts have a statement', () => {
     );
     // With no balance in the statement, nothing is said of one (its own note says why).
     expect(endedNote({ state: 'untracked', date: '2026-09-02', assumed: false }, rows, null)).toBe(
-      'This account isn’t tracked in Nya from Sep 2, 2026: the statement still lists every transaction Nya stored for it, 1 of them dated from then, which Nya leaves out of every total.'
+      'This account isn’t followed in Nya from Sep 2, 2026: the statement still lists every transaction Nya stored for it, 1 of them dated from then, which Nya leaves out of every total.'
     );
   });
 

@@ -94,7 +94,7 @@
 // Hiding an account pauses its sharing: the share stays, and is honoured again
 // if the account is unhidden.
 //
-// An account that ENDED (lib/lifecycle.ts: closed, left, no longer tracked)
+// An account that ENDED (lib/lifecycle.ts: closed, left, no longer followed)
 // shows as such to the other person from its day: still listed, with when,
 // no balance, and at the transactions level only the rows from before it.
 // Even once nothing live lists it (a bank stops returning a closed account),

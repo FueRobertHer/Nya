@@ -2,7 +2,7 @@
 //
 // Detection (#50): Nya ASKS whether an account ended, and never guesses. Two
 // signals raise a question on the account and in connection health, with
-// three answers: Closed (the day prefilled), Still open, and Stop tracking.
+// three answers: Closed (the day prefilled), Still open, and Stop following.
 //
 //   MISSING. An account absent from an otherwise healthy answer of its bank
 //   (lib/vanished.ts). "Chase Savings ••4821 hasn't appeared since Mar 12.

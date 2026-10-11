@@ -130,7 +130,7 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
     return { kind: 'end', account_id, lifecycle: { state, on, ...(note ? { note } : {}) }, ...(seen ? { seen } : {}) };
   }
   if (state === 'untracked') {
-    const from = day(b.from, 'The day to stop tracking it from');
+    const from = day(b.from, 'The day to stop following it from');
     if (typeof from !== 'string') return from.error;
     return { kind: 'end', account_id, lifecycle: { state, from }, ...(seen ? { seen } : {}) };
   }

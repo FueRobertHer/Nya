@@ -65,7 +65,7 @@
 //   - missed: a window an account was missing from its bank's answer before
 //     it came back (lib/lifecycle.ts `missed`, the days the chart leaves out
 //     as short of it): its transactions from those days may be missing;
-//   - untracked: an account the person stopped tracking, still theirs: its
+//   - untracked: an account the person stopped following, still theirs: its
 //     transactions from then exist, and aren't counted (see ENDED ACCOUNTS).
 // A connection that holds only investment accounts, or no bank account or
 // card, brings in no transactions by design: it is listed, never a gap, and
@@ -79,7 +79,7 @@
 // (lib/activity.ts keepEnded) so that the report leaves them out by that rule
 // itself and says what it left out, never passing them off as nothing: each
 // account whose end the period has something to say of is listed with the
-// sources, as closed, no longer the person's, or not tracked, from its day,
+// sources, as closed, no longer the person's, or not followed, from its day,
 // with how many of its rows in the period are in Nya and not counted. Listed
 // when its end falls in the period, or before it when the account is only
 // assumed closed, still the person's (untracked), or holds rows in it. Closed

@@ -928,7 +928,7 @@ describe('the CSV', () => {
 });
 
 describe('accounts that ended (#50): counted as the Activity tab counts them, and said', () => {
-  // A card closed in May, savings no longer tracked from September, a joint
+  // A card closed in May, savings no longer followed from September, a joint
   // account no longer the person's from March (one of its rows under the id
   // it had before a re-link), a card Nya assumed closed in October, a cash
   // wallet closed in November, an account untracked since 2024 that is still
@@ -992,7 +992,7 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     expect(shown.out).toBe(formatMoney(20, 'USD'));
   });
 
-  test('the sources list each account whose end the period has something to say of, as closed, no longer yours or not tracked from its day', () => {
+  test('the sources list each account whose end the period has something to say of, as closed, no longer yours or not followed from its day', () => {
     const r = report();
     expect(r.ended).toEqual([
       { account: 'Brokerage cash', institution: 'Schwab', state: 'untracked', assumed: false, end: '2024-01-01', counted_through: null, not_counted: 1 },
@@ -1003,10 +1003,10 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
       { account: 'Wallet', institution: 'Cash', state: 'closed', assumed: false, end: '2025-11-01', counted_through: '2025-10-31', not_counted: 1 },
     ]);
     expect(r.ended.map((e) => [endedWords(e, iso), endedCounted(e, iso)])).toEqual([
-      ['Not tracked from 2024-01-01', 'Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
+      ['Not followed from 2024-01-01', 'Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
       ['No longer yours from 2025-03-15', 'Counted through 2025-03-14; 1 transaction dated from then is in Nya and left out'],
       ['Closed on 2025-05-01', 'Counted through 2025-04-30; 2 transactions dated from then are in Nya and left out'],
-      ['Not tracked from 2025-09-01', 'Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
+      ['Not followed from 2025-09-01', 'Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
       ['Assumed closed on 2025-10-20', 'Counted through 2025-10-19'],
       ['Closed on 2025-11-01', 'Counted through 2025-10-31; 1 transaction dated from then is in Nya and left out'],
     ]);
@@ -1025,7 +1025,7 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     expect(totalsNote(buildReport(input({ rows: KEPT })))).not.toContain('ended');
   });
 
-  test('closed and no longer yours are never gaps; an assumed closure and an account still yours but not tracked are, from their day', () => {
+  test('closed and no longer yours are never gaps; an assumed closure and an account still yours but not followed are, from their day', () => {
     const r = report();
     expect(r.gaps).toEqual([
       { kind: 'assumed_closed', item_id: 'item_citi', institution: 'Citi', account: 'Double Cash ••5555', on: '2025-10-20' },
@@ -1035,13 +1035,13 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     expect(statusHeadline(r)).toBe('This report may be incomplete:');
     expect(problemLines(r, iso)).toEqual([
       'Double Cash ••5555 at Citi stopped appearing, and as nobody said whether it closed, Nya took it as closed on 2025-10-20: if it is still open, its transactions from then aren’t here.',
-      'You stopped tracking Savings ••3333 at Chase from 2025-09-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
-      'You stopped tracking Brokerage cash at Schwab from 2024-01-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
+      'You stopped following Savings ••3333 at Chase from 2025-09-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
+      'You stopped following Brokerage cash at Schwab from 2024-01-01: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.',
       ASSUMED_REMEDY,
     ]);
     // Said in its connection's row too, in a few words.
     expect(r.gaps.filter((g) => g.item_id === 'item_citi').map((g) => gapShort(g, iso))).toEqual(['Double Cash ••5555 assumed closed on 2025-10-20']);
-    expect(r.gaps.filter((g) => g.item_id === 'item_chase').map((g) => gapShort(g, iso))).toEqual(['Savings ••3333 not tracked from 2025-09-01']);
+    expect(r.gaps.filter((g) => g.item_id === 'item_chase').map((g) => gapShort(g, iso))).toEqual(['Savings ••3333 not followed from 2025-09-01']);
     // Each month from its day says it.
     const gapsIn = (m: string) => r.months.find((x) => x.month === m)!.gaps;
     expect(gapsIn('2025-01')).toEqual(['Schwab']);
@@ -1065,7 +1065,7 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     });
     expect(scoped.gaps).toEqual([]);
     expect(scoped.ended.map((e) => [e.account, endedWords(e, iso)])).toEqual([
-      ['Car loan', 'Not tracked from 2025-02-01'],
+      ['Car loan', 'Not followed from 2025-02-01'],
       ['IRA ••4444', 'Assumed closed on 2025-06-01'],
     ]);
   });
@@ -1143,10 +1143,10 @@ describe('accounts that ended (#50): counted as the Activity tab counts them, an
     const rows = parseCsv(reportCsv(r).slice(1));
     const of = (section: string) => rows.filter((x) => x[0] === section);
     expect(of('ended_account').map((x) => [x[1], x[7]])).toEqual([
-      ['Schwab: Brokerage cash', 'Not tracked from 2024-01-01. Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
+      ['Schwab: Brokerage cash', 'Not followed from 2024-01-01. Not counted on any day of this period; 1 transaction dated from then is in Nya and left out'],
       ['Ally: Joint ••4444', 'No longer yours from 2025-03-15. Counted through 2025-03-14; 1 transaction dated from then is in Nya and left out'],
       ['Chase: Card ••2222', 'Closed on 2025-05-01. Counted through 2025-04-30; 2 transactions dated from then are in Nya and left out'],
-      ['Chase: Savings ••3333', 'Not tracked from 2025-09-01. Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
+      ['Chase: Savings ••3333', 'Not followed from 2025-09-01. Counted through 2025-08-31; 1 transaction dated from then is in Nya and left out'],
       ['Citi: Double Cash ••5555', 'Assumed closed on 2025-10-20. Counted through 2025-10-19'],
       ['Cash: Wallet', 'Closed on 2025-11-01. Counted through 2025-10-31; 1 transaction dated from then is in Nya and left out'],
     ]);

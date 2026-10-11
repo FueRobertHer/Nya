@@ -8,7 +8,7 @@
 // whether anything may be missing and why (the gaps, in plain words, at the
 // top), every institution with its last sync and its gaps, the manual
 // accounts with their last update, the accounts that ended (closed, no longer
-// the person's, or not tracked, from a day the period has something to say
+// the person's, or not followed, from a day the period has something to say
 // of), and the bottom line. Then the totals by
 // category on a page of their own, the months, the categories the person
 // marked, and the appendix, each starting a new page. A figure that may be

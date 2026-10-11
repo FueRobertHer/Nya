@@ -8,7 +8,7 @@ import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys
 // group budgets; a category's uses, for deleting it; and what the data
 // download says of closures and notes it can't read. Through the real read
 // layer, from stored data: a closure stored under an earlier id and carried
-// by a link, an account no longer tracked, a manual account closed, an
+// by a link, an account no longer followed, a manual account closed, an
 // assumed closure, a missing window, and a hidden account that ended.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
@@ -121,7 +121,7 @@ async function seed() {
 
 /**
  * The ends: the card closed on the 10th, stored under the id it had before a
- * re-link; checking no longer tracked from the 18th; the wallet closed on the
+ * re-link; checking no longer followed from the 18th; the wallet closed on the
  * 21st; an old savings account Nya assumed closed on the 25th; savings missing
  * from Chase's answer from the 6th to the 9th, assumed closed and back; and a
  * hidden account that closed.
@@ -191,7 +191,7 @@ describe('a report on a period an account ended in', () => {
     );
   });
 
-  test('the sources name each account as closed, no longer tracked or assumed closed on its day, with what of it isn’t counted; a hidden one isn’t named', async () => {
+  test('the sources name each account as closed, no longer followed or assumed closed on its day, with what of it isn’t counted; a hidden one isn’t named', async () => {
     await seed();
     await endThem();
     const report = await quiet(() => readReport(ctx, monthPeriod()));
@@ -212,7 +212,7 @@ describe('a report on a period an account ended in', () => {
     expect(gapSentences(report.gaps, (d) => d)).toEqual([
       `Old Savings ••4821 at Chase stopped appearing, and as nobody said whether it closed, Nya took it as closed on ${day(25)}: if it is still open, its transactions from then aren’t here.`,
       `Savings ••3333 was missing at Chase from ${day(6)} to ${day(9)}, so this report may be missing its transactions from those days.`,
-      `You stopped tracking Checking ••1111 at Chase from ${day(18)}: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.`,
+      `You stopped following Checking ••1111 at Chase from ${day(18)}: it is still yours, but its transactions from then aren’t in this report, 1 transaction in Nya among them.`,
     ]);
     expect(report.months[0].gaps).toEqual(['Chase']);
     // The wallet counts on the days before it closed: a source of this month.

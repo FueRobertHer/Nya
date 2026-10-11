@@ -598,7 +598,7 @@ export default function Dashboard({
   >([]);
   const [togglingHidden, setTogglingHidden] = useState<string | null>(null);
   // The accounts that ended (#50, lib/lifecycle.ts), the stored set like
-  // hiddenMeta, for the Closed, left and untracked card; closures that
+  // hiddenMeta, for the Accounts that ended card; closures that
   // couldn't be read, which stop the load rather than count a closed account;
   // and the connection whose every account ended, which the disconnect sheet
   // then offers to remove.
@@ -2115,7 +2115,7 @@ export default function Dashboard({
                                           <button
                                             className="link-btn"
                                             disabled={lifecycle.busy}
-                                            aria-label={`${a.name}: closed, no longer yours, or stop tracking`}
+                                            aria-label={`${a.name}: closed, no longer yours, or stop following`}
                                             onClick={() =>
                                               lifecycle.open({
                                                 account_id: a.account_id,
@@ -2482,7 +2482,7 @@ export default function Dashboard({
                           These accounts still sync, but are left out of net worth, transactions,
                           budgets and insights, on every day, past ones too. Unhiding restores their
                           history in full. To stop counting one only from a day on, unhide it, then use
-                          Close… on it (under Manage) and choose Stop tracking: every day before then
+                          Close… on it (under Manage) and choose Stop following: every day before then
                           still counts.
                         </p>
                         <table>
@@ -2520,7 +2520,7 @@ export default function Dashboard({
                   </div>
                 )}
 
-                {/* Closed, left and untracked accounts (#50), from the
+                {/* Accounts that ended (#50), from the
                     stored set, with when each ended, to change or reopen. */}
                 <EndedAccounts
                   ended={ended}

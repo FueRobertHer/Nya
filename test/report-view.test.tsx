@@ -159,7 +159,7 @@ describe('the printed report', () => {
     expect(appendix.text).toContain('Mar 3, 2025 Co-pay medical Cash: Wallet (entered by hand) -$25.00 receipt kept');
   });
 
-  test('an account that ended is named among the sources, as closed, no longer yours or not tracked on its day, and its gaps said with the rest', () => {
+  test('an account that ended is named among the sources, as closed, no longer yours or not followed on its day, and its gaps said with the rest', () => {
     const ended = [
       { ids: ['acc_chk'], account: 'Checking ••1111', institution: 'Chase', item_id: 'item_chase', type: 'depository', state: 'closed' as const, assumed: false, end: '2025-02-15' },
       { ids: ['acc_sav'], account: 'Savings ••3333', institution: 'Chase', item_id: 'item_chase', type: 'depository', state: 'untracked' as const, assumed: false, end: '2025-06-01' },
@@ -170,13 +170,13 @@ describe('the printed report', () => {
     const [first] = parts(s);
     expect(first.text).toContain('Accounts that ended Account Ended In this report');
     expect(first.text).toContain('Chase: Checking ••1111 Closed on Feb 15, 2025 Counted through Feb 14, 2025; 2 transactions dated from then are in Nya and left out');
-    expect(first.text).toContain('Chase: Savings ••3333 Not tracked from Jun 1, 2025 Counted through May 31, 2025');
+    expect(first.text).toContain('Chase: Savings ••3333 Not followed from Jun 1, 2025 Counted through May 31, 2025');
     expect(first.text).toContain('Citi: Double Cash ••5555 Assumed closed on Aug 1, 2025 Counted through Jul 31, 2025');
-    expect(first.text).toContain('Not tracked: it is still yours, but you stopped following it');
+    expect(first.text).toContain('Not followed: it is still yours, but you stopped following it');
     // The gaps in plain words at the top, and in each connection's row.
     expect(first.text).toContain('Nya took it as closed on Aug 1, 2025: if it is still open, its transactions from then aren’t here.');
-    expect(first.text).toContain('You stopped tracking Savings ••3333 at Chase from Jun 1, 2025: it is still yours, but its transactions from then aren’t in this report.');
-    expect(first.text).toContain('Savings ••3333 not tracked from Jun 1, 2025');
+    expect(first.text).toContain('You stopped following Savings ••3333 at Chase from Jun 1, 2025: it is still yours, but its transactions from then aren’t in this report.');
+    expect(first.text).toContain('Savings ••3333 not followed from Jun 1, 2025');
     expect(first.text).toContain('Double Cash ••5555 assumed closed on Aug 1, 2025');
     // The checking account's rows from its end day on (the card payment, and
     // the late fee, which would count) aren't in the bottom line, and it says so.

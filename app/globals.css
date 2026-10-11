@@ -4244,7 +4244,7 @@ button.cat-manage-row.archived {
   margin-top: 10px;
 }
 
-/* The Closed, left and untracked card: an archive, like Hidden. */
+/* The Accounts that ended card: an archive, like Hidden. */
 .lifecycle-list {
   list-style: none;
   margin: 8px 0 0;

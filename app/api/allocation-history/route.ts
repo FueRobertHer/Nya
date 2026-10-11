@@ -62,7 +62,7 @@ import { loggable } from '@/lib/log-safe';
 // The months are read in turn, and each reduced to its days' figures before
 // the next is read, so no more than a month of positions is held at once.
 //
-// An account that ENDED (lib/lifecycle.ts: closed, left, no longer tracked)
+// An account that ENDED (lib/lifecycle.ts: closed, left, no longer followed)
 // counts on the days before its end and not from it on, as in net worth: on
 // the days before, as a listed account counts (its balance beside its
 // positions, and its splits), whether or not the Plan still lists it (it no

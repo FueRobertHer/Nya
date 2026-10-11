@@ -18,7 +18,7 @@
 // real closure or a provider glitch, and the honest response to an unresolved
 // measurement is to record nothing (close the gate). So absence is held as
 // unconfirmed, no snapshot is recorded, and the person is asked (#50,
-// lib/lifecycle-questions.ts): Closed, Still open, or Stop tracking. An answer
+// lib/lifecycle-questions.ts): Closed, Still open, or Stop following. An answer
 // settles it: an end (lib/lifecycle.ts) holds nothing, and "Still open" holds
 // while the account stays missing, for STILL_OPEN_HOLD_DAYS from the answer,
 // when it is asked about again with a grace window of its own. Holding
