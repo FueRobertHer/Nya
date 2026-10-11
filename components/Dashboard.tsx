@@ -14,7 +14,7 @@ import DownloadMyData from './DownloadMyData';
 import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
-import { instantDay, localMonth } from '@/lib/local-date';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
@@ -66,6 +66,7 @@ import { detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
+import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency } from '@/lib/format';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
@@ -535,7 +536,7 @@ export default function Dashboard({
         noun: 'budgets',
         // The month a change is made in, as this page has it: the months
         // before it keep their amounts (#37, app/api/budgets).
-        extraBody: () => ({ month: localMonth() }),
+        extra: () => ({ month: localMonth() }),
         empty: EMPTY_BUDGETS,
         isValid: (v): v is Budgets => {
           const b = v as Budgets | null;
@@ -554,6 +555,12 @@ export default function Dashboard({
         empty: [],
         isValid: (v): v is Goal[] => Array.isArray(v),
         onChange: setGoalsState,
+        // The server works out where a target date's line starts, and checks
+        // allocations on the balances it knows: keep what it says (#42).
+        adoptSaved: true,
+        showRefusal: true,
+        // What a save dates (an archive) is dated on the person's own day.
+        extra: () => ({ today: localDate() }),
       }),
     []
   );
@@ -2699,18 +2706,23 @@ export default function Dashboard({
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
                 onSaveGoals={goalsStore.save}
-                // Hidden accounts stay in this list: GoalsCard needs them to tell
-                // "you hid this account" from "this account was disconnected". It
-                // excludes them from the picker itself.
-                accounts={institutions.flatMap((i) =>
-                  i.accounts.map((a) => ({
-                    account_id: a.account_id,
-                    name: a.name,
-                    institution: i.institution_name,
-                    balance: a.balance,
-                    currency: a.currency,
-                    hidden: a.hidden,
-                  }))
+                // Hidden accounts stay in this list, and those that ended join
+                // it with their end (#50): GoalsCard needs them to tell "you hid
+                // this account" or "it closed" from "this account was
+                // disconnected". It excludes them from the picker itself.
+                accounts={withAccountEnds(
+                  institutions.flatMap((i) =>
+                    i.accounts.map((a) => ({
+                      account_id: a.account_id,
+                      name: a.name,
+                      institution: i.institution_name,
+                      balance: a.balance,
+                      currency: a.currency,
+                      hidden: a.hidden,
+                      type: a.type,
+                    }))
+                  ),
+                  ended
                 )}
                 loading={txnsLoading}
                 incomplete={txnIncomplete}

@@ -595,6 +595,29 @@ describe('sharing accounts on a connection', () => {
   });
 });
 
+describe('goals', () => {
+  // Goals (#42) are the owner's own plans: nothing of them is shared, at any
+  // level, nor shown in the owner's preview of what is.
+  test('are never shared: not their names, targets, allocations or plans, whatever the level', async () => {
+    const goals = await import('@/app/api/goals/route');
+    const saved = await as('user_owner', () =>
+      goals.PUT(
+        new Request('http://x/api/goals', {
+          method: 'PUT',
+          body: JSON.stringify({
+            goals: [{ id: '3f0c9a7b-1d2e-4f5a-8b6c-7d8e9f0a1b2c', name: 'SECRET-GOAL', target: 4321, account_id: 'acct_joint', plan: { allocation: 100, monthly_target: 77, target_date: '2031-01-01' } }],
+          }),
+        })
+      )
+    );
+    expect(saved.status).toBe(200);
+    await share({ acct_joint: 'transactions', manual_house: 'transactions' });
+    const seen = JSON.stringify([await sharedWithPartner(), (await previewOf('user_owner')).body]);
+    expect(seen).toContain('acct_joint');
+    expect(seen).not.toMatch(/SECRET-GOAL|4321|allocation|monthly_target|target_date|goal/i);
+  });
+});
+
 describe('ending a connection', () => {
   const connectionFields = async () => Object.keys((await fake.hgetall(testKey('connections'))) ?? {});
 
