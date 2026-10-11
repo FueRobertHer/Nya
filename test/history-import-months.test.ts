@@ -36,7 +36,7 @@ const { loadBudgets } = await import('@/lib/budget-store');
 const { budgetMonthsStore } = await import('@/lib/budget-months-store');
 const { startMonths, setRollover, monthGapsOf, NO_COVERAGE_GAPS } = await import('@/lib/rollover');
 const { readBudgetMonth } = await import('@/lib/budget-month');
-const { trailingMonths } = await import('@/lib/goal-projection');
+const { trailingMonths, addMonths } = await import('@/lib/goal-projection');
 const routes = await import('@/app/api/history-import/route');
 const budgetsRoute = await import('@/app/api/budgets/route');
 const progressRoute = await import('@/app/api/goals/progress/route');
@@ -258,6 +258,69 @@ describe('a goal’s pace', () => {
   test('a file that begins part way through a month says so', async () => {
     await importCsv('acc_sav', savingsFile, { from: `${M1}-03`, to: `${M2}-13` });
     expect((await progress()).flows.acc_sav.months[0]).toEqual({ month: M1, amount: 300, gaps: [{ kind: 'begins', on: `${M1}-03` }] });
+  });
+
+  describe('at a connection with no rows of its own', () => {
+    // A credit union whose transactions Plaid doesn't provide, or one not
+    // synced yet: its savings account is paced by its recorded balances,
+    // here at each month's end since the month before M1.
+    async function creditUnion(kind: 'refused' | 'unsynced') {
+      await saveItem(ctx, {
+        item_id: 'item_cu',
+        institution_name: 'Credit union',
+        encrypted_access_token: await encrypt('access-sandbox-cu'),
+        ...(kind === 'refused' ? { transactions_billed: false } : {}),
+      });
+      await fake.hset(ctxKey('accounts:meta'), {
+        item_cu: await encrypt(JSON.stringify([{ account_id: 'acc_cu', name: 'Savings', official_name: null, mask: '4444', type: 'depository', subtype: 'savings', limit: null, currency: 'USD' }])),
+      });
+      if (kind === 'refused') {
+        await fake.set(
+          ctxKey('txns:item_cu'),
+          await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: new Date().toISOString(), code: 'PRODUCTS_NOT_SUPPORTED', accounts: ['acc_cu'] } })
+        );
+      }
+      const balance = async (m: string, value: number) => fake.hset(ctxKey('history:accounts'), { [lastDayOf(m)]: await encrypt(JSON.stringify({ acc_cu: value })) });
+      await balance(addMonths(M1, -1), 1000);
+      await balance(M1, 1500);
+      await balance(M2, 1500);
+      await balance(M3, 1600);
+    }
+    const BY_BALANCES = {
+      source: 'balances',
+      months: [
+        { month: M1, amount: 500 },
+        { month: M2, amount: 0 },
+        { month: M3, amount: 100 },
+      ],
+    };
+    const july = csv([
+      { date: `${M1}-05`, name: 'OLD TRANSFER', amount: 300, category: 'transfer in' },
+      { date: `${M1}-20`, name: 'OLD TRANSFER', amount: 200, category: 'transfer in' },
+    ]);
+    const after = csv([{ date: `${M3}-10`, name: 'TRANSFER', amount: 100, category: 'transfer in' }]);
+
+    for (const kind of ['refused', 'unsynced'] as const) {
+      test(`${kind}: files that stop before the last month averaged leave it paced by its balances, never by months read as nothing in; once they reach it, its transactions count from where they begin`, async () => {
+        await creditUnion(kind);
+        expect((await progress()).flows.acc_cu).toEqual(BY_BALANCES);
+        // A file covering M1 alone: what comes after it isn't known from
+        // transactions, so the balances still say.
+        await importCsv('acc_cu', july, { from: `${M1}-03`, to: lastDayOf(M1) });
+        expect((await progress()).flows.acc_cu).toEqual(BY_BALANCES);
+        // Another up to the end of M3: one run of covered days reaches it,
+        // and begins where the first file does, not on its first row.
+        await importCsv('acc_cu', after, { from: `${M2}-01`, to: lastDayOf(M3) });
+        expect((await progress()).flows.acc_cu).toEqual({
+          source: 'transactions',
+          months: [
+            { month: M1, amount: 500, gaps: [{ kind: 'begins', on: `${M1}-03` }] },
+            { month: M2, amount: 0 },
+            { month: M3, amount: 100 },
+          ],
+        });
+      });
+    }
   });
 
   test('cut off from the bank’s own days by days nothing covers, a file changes nothing', async () => {
