@@ -78,17 +78,6 @@ export default function GoalsCard({
   };
   const edit = (goal: Goal | null) => setSheet((s) => ({ open: true, goal, key: s.key + 1 }));
 
-  if (status !== 'ready') {
-    return (
-      <div className="card">
-        <div className="inst-header">
-          <div className="inst-name">Goals</div>
-        </div>
-        {status === 'loading' ? <p className="empty-note">Loading goals…</p> : <p className="stale-note">{error}</p>}
-      </div>
-    );
-  }
-
   const { views, splits } = goalViews(goals, accounts, flows.flows, today);
   const archived = goals.filter((g) => g.plan?.archived);
   const nameOf = (id: string) => goals.find((g) => g.id === id)?.name ?? 'another goal';
@@ -106,6 +95,36 @@ export default function GoalsCard({
     const from = sourceNote(v);
     return said && from ? `${said}. ${from}` : said;
   };
+
+  // The editor stays mounted whatever the list's state: a save that fails
+  // reloads the list (lib/whole-list-store.ts), and what was typed, with why
+  // it wasn't saved, must still be there when it is back.
+  const editor = (
+    <GoalSheet
+      key={sheet.key}
+      open={sheet.open}
+      goal={sheet.goal}
+      goals={goals}
+      accounts={accounts}
+      flows={flows.flows}
+      today={today}
+      saveError={saveError}
+      onClose={() => setSheet((s) => ({ ...s, open: false }))}
+      onSave={save}
+    />
+  );
+
+  if (status !== 'ready') {
+    return (
+      <div className="card">
+        <div className="inst-header">
+          <div className="inst-name">Goals</div>
+        </div>
+        {status === 'loading' ? <p className="empty-note">Loading goals…</p> : <p className="stale-note">{error}</p>}
+        {editor}
+      </div>
+    );
+  }
 
   return (
     <div className="card">
@@ -216,18 +235,7 @@ export default function GoalsCard({
         </div>
       )}
 
-      <GoalSheet
-        key={sheet.key}
-        open={sheet.open}
-        goal={sheet.goal}
-        goals={goals}
-        accounts={accounts}
-        flows={flows.flows}
-        today={today}
-        saveError={saveError}
-        onClose={() => setSheet((s) => ({ ...s, open: false }))}
-        onSave={save}
-      />
+      {editor}
     </div>
   );
 }

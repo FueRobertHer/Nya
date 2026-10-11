@@ -6,7 +6,7 @@
 // read: nothing is saved on it, and while it loads, or if it fails, the card
 // projects at the monthly targets alone and says why.
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { localMonth } from '@/lib/local-date';
 import type { AccountFlow } from '@/lib/goal-projection';
 
@@ -38,23 +38,34 @@ export function readFlowsAnswer(body: unknown): { flows: Map<string, AccountFlow
   return { flows, notes };
 }
 
+/** Read once, the first time `enabled` (the goals have loaded): the months
+ *  don't change with the goals, so a reload of the list (after a save that
+ *  failed, say) doesn't read them again. */
 export function useGoalFlows(enabled: boolean): GoalFlowsState {
   const [state, setState] = useState<GoalFlowsState>({ status: 'loading', flows: null, notes: [] });
+  const requested = useRef(false);
+  // Set on every mount, not only the first: React's development StrictMode
+  // mounts, unmounts and mounts again, and the answer to the one request
+  // must still land.
+  const mounted = useRef(true);
   useEffect(() => {
-    if (!enabled) return;
-    let live = true;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!enabled || requested.current) return;
+    requested.current = true;
     (async () => {
       try {
         const res = await fetch(`/api/goals/progress?month=${localMonth()}`);
         const read = res.ok ? readFlowsAnswer(await res.json().catch(() => null)) : null;
-        if (live) setState(read ? { status: 'ready', ...read } : { status: 'error', flows: null, notes: [] });
+        if (mounted.current) setState(read ? { status: 'ready', ...read } : { status: 'error', flows: null, notes: [] });
       } catch {
-        if (live) setState({ status: 'error', flows: null, notes: [] });
+        if (mounted.current) setState({ status: 'error', flows: null, notes: [] });
       }
     })();
-    return () => {
-      live = false;
-    };
   }, [enabled]);
   return state;
 }
