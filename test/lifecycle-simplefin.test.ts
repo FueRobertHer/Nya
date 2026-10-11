@@ -36,7 +36,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 const { setTransportForTests } = await import('@/lib/connectors/http');
 const { connect, trackAccounts, releaseAccounts } = await import('@/lib/connectors/manage');
 const { connectorAccountsStore, connectionsStore } = await import('@/lib/connectors/store');
-const { syncConnection } = await import('@/lib/connectors/sync');
+const { syncConnection, withLeftOut, withoutLeftOut } = await import('@/lib/connectors/sync');
 const { lifecycleStore } = await import('@/lib/lifecycle');
 const { timelineNotesStore, autoNoteId } = await import('@/lib/timeline-notes');
 const { readAccounts, readSpending } = await import('@/lib/api-read');
@@ -370,72 +370,130 @@ describe('the OFX statement of an account SimpleFIN keeps up to date that ended'
 describe('what an answer that moved the history on left out of an account that ended', () => {
   const ON = 'My Bank (through SimpleFIN)';
   const shown = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+  const plus = (day: string, n: number) => dayOf(Date.parse(`${day}T00:00:00Z`) + n * DAY);
   const statement = async (id: string, now = NOW) => {
     const data = await collectUserData({ ctx, userId: null });
     const out = ofxFile(data, buildUserExport(data, new Date(now)), id, new Date(now));
     if (!('file' in out)) throw new Error(out.refused);
     return out.file.notes;
   };
+  /** The next day's request budget, as a new day's window gives it. */
+  const nextDay = () => fake.del(ctxKey('connector-requests'));
+  const leftOut = async (id: string) => (await connectorAccountsStore.get(ctx, id))!.left_out;
 
-  test('older history it isn’t in: the days before its own reach that it counted on may be missing, under its bank and in its statement', async () => {
-    const { connection_id, card, checking } = await trackBoth();
+  test('older windows it isn’t in may be missing it, under its bank and in its statement; an older window that holds it again takes its days off', async () => {
+    // Older rows all the way back, so the history isn't complete after a night.
+    const checkingBack = () =>
+      fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': ago(1), transactions: [100, 180, 260, 340, 420].map((n) => txn(`old${n}`, n, '-1.00', 'OLD')) });
+    const { connection_id, card, checking } = await trackBoth([checkingBack(), CARD()]);
     const reach = (await connectionsStore.get(ctx, connection_id))!.history!.from;
     await post({ account_id: card, state: 'closed', on: dayOf(NOW - 2 * DAY), balance: 432.1 });
-    server.accounts = [CHECKING()];
+    server.accounts = [checkingBack()];
     expect((await syncConnection(ctx, connection_id, { purpose: 'daily', now: NOW })).backfilled.windows).toBeGreaterThan(0);
     const history = (await connectionsStore.get(ctx, connection_id))!.history!;
     expect(history.from < reach).toBe(true);
-    expect(history.failed).toBeNull();
-    // Its own transactions are known from where the history was; the
-    // checking account's reach is its bank's.
-    expect((await connectorAccountsStore.get(ctx, card))!).toMatchObject({ history_from: reach });
-    // The recent answer moved nothing on: the day was the history's already.
-    expect((await connectorAccountsStore.get(ctx, card))!.history_to).toBeUndefined();
-    expect((await connectorAccountsStore.get(ctx, checking))!.history_from).toBeUndefined();
+    expect(history).toMatchObject({ failed: null, complete: false });
+    // The days the history moved back over without it; the recent answer
+    // moved nothing on (the day was the history's already), and the checking
+    // account's are its bank's.
+    expect(await leftOut(card)).toEqual([{ from: history.from, to: plus(reach, -1) }]);
+    expect(await leftOut(checking)).toBeUndefined();
 
-    const r = await report(dayOf(NOW - 150 * DAY));
+    let r = await report(dayOf(NOW - 150 * DAY));
     const bank = r.institutions.find((i) => i.institution_name === ON)!;
-    const before = dayOf(Date.parse(reach) - DAY);
-    expect(r.gaps).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', from: history.from, to: before }]);
+    expect(r.gaps).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', from: history.from, to: plus(reach, -1) }]);
     expect(gapSentences(r.gaps, (d) => d)).toEqual([
-      `Visa was missing at ${ON} from ${history.from} to ${before}, so this report may be missing its transactions from those days.`,
+      `Visa was missing at ${ON} from ${history.from} to ${plus(reach, -1)}, so this report may be missing its transactions from those days.`,
     ]);
-    // A period inside its reach is short of nothing.
+    // A period inside what came is short of nothing.
     expect((await report(dayOf(NOW - 30 * DAY))).gaps).toEqual([]);
-    // Reopened, it counts on those days too, and what didn't come then never will.
+    expect(await statement(card)).toContain(
+      `SimpleFIN left this account out of its answers about ${shown(history.from)} to ${shown(plus(reach, -1))}, so the statement may be missing its transactions from those days.`
+    );
+
+    // SimpleFIN holds it again in the next older window: what that window
+    // covers came, so only the days no window holding it covered stay.
+    server.accounts = [checkingBack(), CARD()];
+    await nextDay();
+    expect((await syncConnection(ctx, connection_id, { purpose: 'daily', now: NOW })).backfilled.windows).toBeGreaterThan(0);
+    const still = [{ from: plus(history.from, 5), to: plus(reach, -1) }];
+    expect(await leftOut(card)).toEqual(still);
+    // Reopened, it counts on those days too, and what didn't come then hasn't.
     expect((await post({ account_id: card, state: 'active' })).body).toMatchObject({ reopened: true });
-    expect((await report(dayOf(NOW - 150 * DAY))).gaps).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', from: history.from, to: before }]);
-    await post({ account_id: card, state: 'closed', on: dayOf(NOW - 2 * DAY), balance: 432.1 });
-    expect(await statement(card)).toContain(`SimpleFIN left this account out of its answers about the days before ${shown(reach)}, so the statement may be missing its transactions from then.`);
+    r = await report(dayOf(NOW - 150 * DAY));
+    expect(r.gaps.filter((g) => g.kind === 'missed')).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', ...still[0] }]);
   });
 
-  test('a recent answer it isn’t in, once it has ended: the days it counted after the last answer that had it may be missing, kept when it is let go', async () => {
+  test('a recent answer it isn’t in, once it has ended: missing from the last day the history had reached, until an answer holds it again', async () => {
     const { connection_id, card } = await trackBoth();
-    const later = NOW + 3 * DAY;
+    const D = (n: number) => NOW + n * DAY;
+    const noon = (n: number) => Math.floor(Date.parse(`${dayOf(D(n))}T12:00:00Z`) / 1000);
     // SimpleFIN stops returning it; three days on, it is closed in Nya from then.
-    server.accounts = [fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': Math.floor((later - DAY) / 1000) })];
-    setSystemTime(new Date(later));
+    server.accounts = [fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': noon(2) })];
+    setSystemTime(new Date(D(3)));
     await syncConnection(ctx, connection_id, { purpose: 'refresh' });
     // Held, and not moved on: it still counts.
     expect((await connectionsStore.get(ctx, connection_id))!.history!.to).toBe(dayOf(NOW));
-    await post({ account_id: card, state: 'closed', on: dayOf(later), balance: 432.1 });
+    expect(await leftOut(card)).toBeUndefined();
+    await post({ account_id: card, state: 'closed', on: dayOf(D(3)), balance: 432.1 });
     await syncConnection(ctx, connection_id, { purpose: 'refresh' });
-    expect((await connectionsStore.get(ctx, connection_id))!.history!.to).toBe(dayOf(later));
-    expect((await connectorAccountsStore.get(ctx, card))!.history_to).toBe(dayOf(NOW));
-
-    const missed = { kind: 'missed' as const, institution: ON, account: 'Visa', from: dayOf(NOW + DAY), to: dayOf(NOW + 2 * DAY) };
-    let r = await report(dayOf(NOW - 20 * DAY), later);
+    expect((await connectionsStore.get(ctx, connection_id))!.history!.to).toBe(dayOf(D(3)));
+    // Open from the last day the history had reached (rows post late into it).
+    expect(await leftOut(card)).toEqual([{ from: dayOf(NOW), to: null }]);
+    const r = await report(dayOf(NOW - 20 * DAY), D(3));
     const bank = r.institutions.find((i) => i.institution_name === ON)!;
-    expect(r.gaps.filter((g) => g.kind === 'missed')).toEqual([{ ...missed, item_id: bank.item_id }]);
-    expect(await statement(card, later)).toContain(`SimpleFIN left this account out of its answers about the days after ${shown(dayOf(NOW))}, so the statement may be missing its transactions from then.`);
+    expect(r.gaps.filter((g) => g.kind === 'missed')).toEqual([{ kind: 'missed', item_id: bank.item_id, institution: ON, account: 'Visa', from: dayOf(NOW), to: dayOf(D(2)) }]);
+    expect(await statement(card, D(3))).toContain(`SimpleFIN has left this account out of its answers since ${shown(dayOf(NOW))}, so the statement may be missing its transactions from then.`);
 
-    // Let go and kept by hand: still said, and nothing more, since it had ended by then.
-    await releaseAccounts(ctx, [card], true);
-    r = await report(dayOf(NOW - 20 * DAY), later);
-    expect(r.gaps).toEqual([{ ...missed, item_id: null }]);
+    // SimpleFIN returns it, with what it had while it was gone; it is
+    // reopened. The next answer starts before the window did: closed, empty.
+    server.accounts = [
+      fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': noon(4) }),
+      fakeAccount({
+        id: 'CARD',
+        name: 'Visa',
+        balance: '-500.00',
+        'balance-date': noon(4),
+        transactions: [
+          { id: 'v1d', posted: noon(1), amount: '-7.00', description: 'WHILE GONE 1' },
+          { id: 'v2d', posted: noon(2), amount: '-8.00', description: 'WHILE GONE 2' },
+          { id: 'v4', posted: noon(4), amount: '-10.00', description: 'LUNCH' },
+        ],
+      }),
+    ];
+    setSystemTime(new Date(D(4) + 13 * 3_600_000));
+    expect((await post({ account_id: card, state: 'active' })).body).toMatchObject({ reopened: true });
+    await syncConnection(ctx, connection_id, { purpose: 'refresh' });
+    expect(await leftOut(card)).toBeUndefined();
+    setSystemTime(new Date(D(10) + 13 * 3_600_000));
+    await syncConnection(ctx, connection_id, { purpose: 'refresh' });
+    const later = await report(dayOf(NOW - 20 * DAY), D(10) + 13 * 3_600_000);
+    expect(later.gaps.filter((g) => g.kind === 'missed')).toEqual([]);
+    const notes = await statement(card, D(10) + 13 * 3_600_000);
+    expect(notes.some((n) => n.includes('left this account out'))).toBe(false);
+    expect(await readSpending(ctx, { from: dayOf(NOW - 20 * DAY), to: dayOf(D(10)) })).toMatchObject({ money_out: expect.any(Number) });
+    const spent = await readSpending(ctx, { from: dayOf(D(1)), to: dayOf(D(4)) });
+    expect(spent.money_out).toBeCloseTo(7 + 8 + 10, 6);
   });
 
-  test('one let go and kept by hand that its connection’s history has since reached back past may be missing what its bank holds there', async () => {
+  test('one let go and kept by hand keeps what it was left out of, up to the day it was let go, in a report and in its statement', async () => {
+    const { connection_id, card } = await trackBoth();
+    const D = (n: number) => NOW + n * DAY;
+    server.accounts = [fakeAccount({ id: 'CHK', name: 'Checking', balance: '1500.25', 'balance-date': Math.floor((D(3) - DAY) / 1000) })];
+    setSystemTime(new Date(D(3)));
+    await post({ account_id: card, state: 'closed', on: dayOf(D(3)), balance: 432.1 });
+    await syncConnection(ctx, connection_id, { purpose: 'refresh' });
+    expect(await leftOut(card)).toEqual([{ from: dayOf(NOW), to: null }]);
+    await releaseAccounts(ctx, [card], true);
+    const r = await report(dayOf(NOW - 20 * DAY), D(3));
+    // Nothing more: it had ended by the day it was let go.
+    expect(r.gaps).toEqual([{ kind: 'missed', item_id: null, institution: ON, account: 'Visa', from: dayOf(NOW), to: dayOf(D(2)) }]);
+    expect(await statement(card, D(3))).toContain(
+      `SimpleFIN left this account out of its answers about ${shown(dayOf(NOW))} to ${shown(dayOf(D(2)))}, so the statement may be missing its transactions from those days.`
+    );
+  });
+
+  test('one let go and kept by hand that its connection’s history has since reached back past was let go before those days came in', async () => {
     const { connection_id, checking } = await trackBoth();
     const reach = (await connectionsStore.get(ctx, connection_id))!.history!.from;
     await releaseAccounts(ctx, [checking], true);
@@ -443,17 +501,45 @@ describe('what an answer that moved the history on left out of an account that e
     const history = (await connectionsStore.get(ctx, connection_id))!.history!;
     expect(history.from < reach).toBe(true);
     const r = await report(dayOf(NOW - 150 * DAY));
-    expect(r.gaps.filter((g) => g.kind === 'missed')).toEqual([
-      { kind: 'missed', item_id: null, institution: ON, account: 'Checking', from: history.from, to: dayOf(Date.parse(reach) - DAY) },
+    const gap = { kind: 'missed' as const, item_id: null, institution: ON, account: 'Checking', from: history.from, to: plus(reach, -1), let_go: true as const };
+    expect(r.gaps.filter((g) => g.kind === 'missed')).toEqual([gap]);
+    expect(gapSentences([gap], (d) => d)).toEqual([
+      `You stopped tracking Checking at ${ON} before its transactions from ${history.from} to ${plus(reach, -1)} came in, so this report may be missing them.`,
     ]);
+    expect(await statement(checking)).toContain(
+      `You stopped tracking this account through SimpleFIN before its transactions from ${shown(history.from)} to ${shown(plus(reach, -1))} came in, so the statement may be missing them.`
+    );
   });
 
-  test('one that ended and that every answer holds: its reach is its bank’s', async () => {
+  test('one that ended and that every answer holds: nothing left out', async () => {
     const { connection_id, card } = await trackBoth();
     await post({ account_id: card, state: 'closed', on: dayOf(NOW - 2 * DAY), balance: 432.1 });
     await syncConnection(ctx, connection_id, { purpose: 'daily', now: NOW });
-    const entry = (await connectorAccountsStore.get(ctx, card))!;
-    expect([entry.history_from, entry.history_to]).toEqual([undefined, undefined]);
+    expect(await leftOut(card)).toBeUndefined();
     expect((await report(dayOf(NOW - 150 * DAY))).gaps.filter((g) => g.kind === 'missed')).toEqual([]);
+  });
+
+  test('the days kept, as answers open and close them', () => {
+    expect(withLeftOut(undefined, '2026-01-01', '2026-01-10')).toEqual([{ from: '2026-01-01', to: '2026-01-10' }]);
+    // Days that touch are one window; apart, two; an open one takes in what follows.
+    expect(withLeftOut([{ from: '2026-01-01', to: '2026-01-10' }], '2026-01-11', '2026-01-20')).toEqual([{ from: '2026-01-01', to: '2026-01-20' }]);
+    expect(withLeftOut([{ from: '2026-01-01', to: '2026-01-10' }], '2026-02-01', null)).toEqual([
+      { from: '2026-01-01', to: '2026-01-10' },
+      { from: '2026-02-01', to: null },
+    ]);
+    expect(withLeftOut([{ from: '2026-02-01', to: null }], '2026-03-01', '2026-03-05')).toEqual([{ from: '2026-02-01', to: null }]);
+    // An answer holding it: an open window closes the day before its start,
+    // or goes; a closed one loses the days it covers.
+    expect(withoutLeftOut([{ from: '2026-02-01', to: null }], '2026-01-27', null)).toEqual([]);
+    expect(withoutLeftOut([{ from: '2026-02-01', to: null }], '2026-02-10', null)).toEqual([{ from: '2026-02-01', to: '2026-02-09' }]);
+    expect(withoutLeftOut([{ from: '2026-01-01', to: '2026-01-31' }], '2026-01-10', '2026-01-20')).toEqual([
+      { from: '2026-01-01', to: '2026-01-09' },
+      { from: '2026-01-21', to: '2026-01-31' },
+    ]);
+    // More than are kept: one, from the first day to the last.
+    let many: ReturnType<typeof withLeftOut> = [];
+    for (let i = 0; i < 20; i++) many = withLeftOut(many, plus('2026-01-01', i * 3), plus('2026-01-01', i * 3));
+    expect(many).toHaveLength(20);
+    expect(withLeftOut(many, '2026-06-01', null)).toEqual([{ from: '2026-01-01', to: null }]);
   });
 });

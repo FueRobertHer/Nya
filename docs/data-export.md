@@ -393,7 +393,7 @@ The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-ow
 | `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
 | `fetched_at` | When Nya received it. |
 | `ok_at` | When the bank last synced it cleanly: the time of the balance from the latest answer that reported no problem about it. Absent or `null` before one. |
-| `history_from`, `history_to` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the first day its own transactions are known from, once an older window of its connection's history left it out (or reported a problem with it alone), and the last day they are known to, once a recent answer that moved the history on did. Absent while its own transactions reach as far as its connection's history. A report says the days it counts on outside them (before its end, or every day once it is reopened) that its connection's history covers may be missing. |
+| `left_out[]` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the days answers that moved its connection's history on left it out of (or reported a problem with it alone in), so its own transactions from them may be missing: `from` and `to`, UTC days, both included, `to` `null` while the latest answers still leave it out. An older window adds the days it reached; a recent answer, the days from the last one the history had reached. An answer that holds it again takes the days it covers off (a recent one, every day from its own start). Absent when there are none. A report says those it counts on (before its end, or every day once it is reopened) may be missing, and so does its OFX statement. |
 | `created_at` | When you started tracking it. |
 
 It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.
@@ -430,8 +430,8 @@ The accounts SimpleFIN kept up to date that you stopped tracking or disconnected
 | `name`, `institution_name`, `type` | Its name, its bank's and what you said it was. |
 | `currency` | Its currency's ISO 4217 code. |
 | `tracked_at` | When you started tracking it. |
-| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any; or the account's own `history_from` from `connector-accounts`, when that was later. A report on a period its connection's history has since reached back to says its transactions from the days before this one may be missing. |
-| `history_to` | The account's own `history_to` from `connector-accounts`, when it had one. Absent otherwise. |
+| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. Kept by hand, a report on a period its connection's history has since reached back to says you stopped tracking it before its transactions from the days before this one came in, and so does its OFX statement. |
+| `left_out[]` | Its `left_out` from `connector-accounts` when you let it go, if it had any: read as there, up to the day you let it go. |
 | `ended_at` | When you let it go. |
 | `kept` | `true` when it was kept as a manual account, its transactions with it; `false` when it was removed, with them. |
 

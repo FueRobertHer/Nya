@@ -64,7 +64,10 @@
 //     it is still open, its transactions from then aren't here;
 //   - missed: a window an account was missing from its bank's answer before
 //     it came back (lib/lifecycle.ts `missed`, the days the chart leaves out
-//     as short of it): its transactions from those days may be missing;
+//     as short of it), or that SimpleFIN left an account that ended out of
+//     (lib/report/read.ts connectorMissed): its transactions from those days
+//     may be missing; or (`let_go`) days a SimpleFIN account was let go
+//     before its connection's history reached them;
 //   - untracked: an account the person stopped following, still theirs: its
 //     transactions from then exist, and aren't counted (see ENDED ACCOUNTS).
 // A connection that holds only investment accounts, or no bank account or
@@ -217,8 +220,10 @@ export type EndedFacts = {
 };
 
 /** A window an account was missing from its bank's answer before it came
- *  back, on the days it counts (lib/lifecycle.ts `missed`). */
-export type MissedFacts = { account: string; institution: string; item_id: string | null; type: string | null; from: string; to: string };
+ *  back, on the days it counts (lib/lifecycle.ts `missed`), or that SimpleFIN
+ *  left it out of; `let_go` when it was let go from SimpleFIN before its
+ *  connection's history reached those days. */
+export type MissedFacts = { account: string; institution: string; item_id: string | null; type: string | null; from: string; to: string; let_go?: true };
 
 export type ReportInput = {
   period: Period;
@@ -296,7 +301,7 @@ export type Gap =
   | { kind: 'unreadable'; item_id: null; institution: null; note: string }
   /** Placed under the connection the account is at now, if any. */
   | { kind: 'assumed_closed'; item_id: string | null; institution: string; account: string; on: string }
-  | { kind: 'missed'; item_id: string | null; institution: string; account: string; from: string; to: string }
+  | { kind: 'missed'; item_id: string | null; institution: string; account: string; from: string; to: string; let_go?: true }
   /** `not_counted`: its transactions in the period from then that are in
    *  Nya, left out. */
   | { kind: 'untracked'; item_id: string | null; institution: string; account: string; from: string; not_counted: number };
@@ -726,7 +731,7 @@ export function buildReport(input: ReportInput): Report {
     ),
     ...(input.missed ?? [])
       .filter((m) => holdsTransactions(m.type) && m.from <= period.through && m.to >= period.start)
-      .map((m): Gap => ({ kind: 'missed', item_id: m.item_id, institution: m.institution, account: m.account, from: m.from, to: m.to })),
+      .map((m): Gap => ({ kind: 'missed', item_id: m.item_id, institution: m.institution, account: m.account, from: m.from, to: m.to, ...(m.let_go ? { let_go: true as const } : {}) })),
   ].sort((a, b) => GAP_ORDER.indexOf(a.kind) - GAP_ORDER.indexOf(b.kind) || String(a.institution).localeCompare(String(b.institution)));
 
   const months: ReportMonth[] = periodMonths(period).map((m) => {

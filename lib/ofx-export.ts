@@ -124,7 +124,12 @@
 // for a closure Nya noticed by the account's absence is from before it. One
 // SimpleFIN keeps up to date gives the balance SimpleFIN last gave for it,
 // even once SimpleFIN stops returning it: an account that ended holds no
-// bank's balances (lib/connectors/institutions.ts).
+// bank's balances (lib/connectors/institutions.ts). Its connection's history
+// then moves on without it, so the days SimpleFIN left it out of, until an
+// answer held it again, may be missing its transactions; and those of one
+// let go and kept by hand that its connection's history reached back to
+// after it was let go. Its statement says so, as a report does
+// (lib/report/read.ts connectorMissed).
 
 import { createHash } from 'node:crypto';
 import { cleanText } from './import/normalize';
@@ -134,10 +139,10 @@ import { tagStore } from './tags';
 import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
 import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
-import { minorDigits } from './manual-txn-input';
+import { addDays, minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
 import { bookAccountTypes, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type ExportLifecycle, type UserData, type UserExport } from './user-export';
-import { connectionsStore, connectorAccountsStore } from './connectors/store';
+import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
 import { lastEndDay } from './lifecycle';
@@ -544,6 +549,32 @@ export function endedNote(
   return `${what}: ${listed}${balance}.`;
 }
 
+/**
+ * What a SimpleFIN account's statement may be missing although its
+ * connection's history covers it (see AN ACCOUNT THAT ENDED): the days
+ * answers left it out of (`windows`, lib/connectors/store.ts LeftOut), one
+ * still open running to `until` when it was let go, else said as since its
+ * first day; and, for one let go and kept by hand, the days its connection's
+ * history reached back to after (`letGo`). Pure.
+ */
+export function leftOutNotes(windows: readonly LeftOut[] | undefined, until: string | null, letGo: { from: string; to: string } | null): string[] {
+  const days = (from: string, to: string) => (from === to ? shownDay(from) : `${shownDay(from)} to ${shownDay(to)}`);
+  const out: string[] = [];
+  for (const w of windows ?? []) {
+    const to = w.to === null || (until !== null && w.to > until) ? until : w.to;
+    if (to === null) {
+      out.push(`SimpleFIN has left this account out of its answers since ${shownDay(w.from)}, so the statement may be missing its transactions from then.`);
+    } else if (w.from <= to) {
+      out.push(`SimpleFIN left this account out of its answers about ${days(w.from, to)}, so the statement may be missing its transactions from ${w.from === to ? 'that day' : 'those days'}.`);
+    }
+  }
+  if (letGo && letGo.from <= letGo.to) {
+    const span = letGo.from === letGo.to ? `on ${shownDay(letGo.from)}` : `from ${shownDay(letGo.from)} to ${shownDay(letGo.to)}`;
+    out.push(`You stopped tracking this account through SimpleFIN before its transactions ${span} came in, so the statement may be missing them.`);
+  }
+  return out;
+}
+
 /** Where the person is, and what the route read for the balance's day. */
 export type OfxOptions = {
   /** The time zone the person's device sent (lib/access-log.ts timeZoneOf),
@@ -676,16 +707,9 @@ export function ofxFile(
         `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
       );
     }
-    // Once it had ended, answers moving its connection's history on left it
-    // out (lib/connectors/sync.ts): its own transactions are known over less.
-    if (!unreadConnection && conn?.history) {
-      if (entry.history_from && conn.history.from < entry.history_from) {
-        notes.push(`SimpleFIN left this account out of its answers about the days before ${shownDay(entry.history_from)}, so the statement may be missing its transactions from then.`);
-      }
-      if (entry.history_to && entry.history_to < conn.history.to) {
-        notes.push(`SimpleFIN left this account out of its answers about the days after ${shownDay(entry.history_to)}, so the statement may be missing its transactions from then.`);
-      }
-    }
+    // The days answers left it out of once it had ended (see AN ACCOUNT THAT
+    // ENDED).
+    notes.push(...leftOutNotes(entry.left_out, null, null));
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
     // date for it, where the person is: none while Nya holds it, as the
     // Accounts tab does (lib/connectors/institutions.ts), for which an
@@ -778,6 +802,14 @@ export function ofxFile(
   } else {
     const m = manual!;
     rows = bookRows();
+    // Let go from SimpleFIN and kept by hand: what it may be missing from
+    // then (see AN ACCOUNT THAT ENDED).
+    const letGo = data.ended.get(account_id);
+    if (letGo?.kept) {
+      const history = data.connections.get(letGo.connection_id)?.history;
+      const before = letGo.history_from && history && history.from < letGo.history_from ? { from: history.from, to: addDays(letGo.history_from, -1) } : null;
+      notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before));
+    }
     // Kept in US dollars (lib/manual.ts), unless SimpleFIN fed it in
     // another currency before it was kept as a manual account.
     const currency = m.currency ?? MANUAL_CURRENCY;

@@ -115,7 +115,9 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         break;
       case 'missed':
         out.push(
-          `${g.account} was missing${at(g.institution)} ${span(g.from, g.to, day)}, so this report may be missing its transactions from ${g.from === g.to ? 'that day' : 'those days'}.`
+          g.let_go
+            ? `You stopped tracking ${g.account}${at(g.institution)} before its transactions ${span(g.from, g.to, day)} came in, so this report may be missing them.`
+            : `${g.account} was missing${at(g.institution)} ${span(g.from, g.to, day)}, so this report may be missing its transactions from ${g.from === g.to ? 'that day' : 'those days'}.`
         );
         break;
       case 'untracked':
@@ -161,7 +163,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
     case 'assumed_closed':
       return `${g.account} assumed closed on ${day(g.on)}`;
     case 'missed':
-      return `${g.account} missing ${span(g.from, g.to, day)}`;
+      return g.let_go ? `${g.account} let go before its transactions ${span(g.from, g.to, day)} came in` : `${g.account} missing ${span(g.from, g.to, day)}`;
     case 'untracked':
       return `${g.account} not followed from ${day(g.from)}`;
   }
