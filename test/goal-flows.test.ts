@@ -44,6 +44,9 @@ const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
 const { setExcluded } = await import('@/lib/txn-annotations');
 const { rulesStore } = await import('@/lib/rules');
 const { assembleBankRows, finishActivity } = await import('@/lib/activity');
+const { setOverride } = await import('@/lib/overrides');
+const { taxonomyStore } = await import('@/lib/category-store');
+const { seedTaxonomy, textKeys } = await import('@/lib/categories');
 const { txn } = await import('./api-fixture');
 const { trailingMonths, addMonths } = await import('@/lib/goal-projection');
 const route = await import('@/app/api/goals/progress/route');
@@ -183,6 +186,52 @@ describe('the months behind each account’s pace', () => {
       { month: M2, amount: 189.75 },
       { month: M3, amount: 330.1 },
     ]);
+  });
+
+  describe('a transfer the bank calls interest, re-filed as a transfer in', () => {
+    const interest = { category: 'income', personal_finance_category: { primary: 'INCOME', detailed: 'INCOME_INTEREST_EARNED', confidence_level: 'LOW' } };
+    beforeEach(async () => {
+      await fake.set(
+        ctxKey('txns:item_chase'),
+        await blob([
+          row('t_first', 'acc_sav', `${PRIOR}-02`, -1),
+          ...[M1, M2, M3].map((m, i) => row(`x${i + 1}`, 'acc_sav', `${m}-03`, -500, { ...interest, name: 'MONTHLY TRANSFER' })),
+        ])
+      );
+    });
+    const months = async () => (await progress()).body.flows.acc_sav.months;
+
+    test('as the bank labels it: interest, not money put in', async () => {
+      expect(await months()).toEqual([M1, M2, M3].map((month) => ({ month, amount: 0, growth: 500 })));
+    });
+
+    test('re-filed by you: a choice made on a transaction wins, so it is money put in', async () => {
+      for (const id of ['x1', 'x2', 'x3']) await setOverride(ctx, id, 'transfer in');
+      expect(await months()).toEqual([M1, M2, M3].map((month) => ({ month, amount: 500 })));
+    });
+
+    test('re-filed by a rule: the same (#36)', async () => {
+      let n = 0;
+      const taxonomy = seedTaxonomy(textKeys(['transfer in', 'income']), () => `c${++n}`);
+      await taxonomyStore.set(ctx, taxonomy);
+      const transferIn = taxonomy.categories.find((c) => c.provider_keys.some((k) => k.key === 'transfer in'))!;
+      const at = new Date().toISOString();
+      await rulesStore.set(ctx, {
+        version: 1,
+        rules: [
+          {
+            id: '2f1e0d9c-8b7a-4695-a4b3-c2d1e0f9a8b7',
+            enabled: true,
+            priority: 1,
+            conditions: [{ field: 'name', op: 'contains', value: 'monthly transfer' }],
+            actions: { set_category: transferIn.id },
+            created_at: at,
+            updated_at: at,
+          },
+        ],
+      });
+      expect(await months()).toEqual([M1, M2, M3].map((month) => ({ month, amount: 500 })));
+    });
   });
 
   test('a quiet account at a bank that brings transactions in: nothing went in, which is known', async () => {

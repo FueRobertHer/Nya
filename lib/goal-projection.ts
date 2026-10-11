@@ -12,9 +12,11 @@
 //     transfers included (a transfer into savings is the contribution, unlike
 //     in spending, where transfers are left out). Deposits and transfers in,
 //     less what went out. Pending rows are left out until they post, and
-//     interest and dividends (a bank's "interest earned" or "dividends", or a
-//     row filed as interest, by the person, a rule or as it was entered) are
-//     counted apart, as growth: they grow the balance, but nobody put them in.
+//     interest and dividends (a row filed as interest, by the person, a rule
+//     or as it was entered; or a bank's "interest earned" or "dividends",
+//     unless the person or a rule filed the row under another category, which
+//     wins as everywhere) are counted apart, as growth: they grow the
+//     balance, but nobody put them in.
 //     A row excluded from budgets and reports, by the person or a rule's
 //     hide, still counts: the money moved all the same. The rows are the
 //     Activity tab's, rules applied (lib/goal-flows.ts), so a rule's name
@@ -89,8 +91,16 @@ export type FlowRow = {
   amount: number;
   pending?: boolean;
   account_id?: string;
+  /** Plaid's detailed category, in words ("interest earned"). */
   subcategory?: string | null;
+  /** The words of the category it is filed under: the person's, a rule's,
+   *  the bank's, or the row's own as it was entered or imported. */
   category?: string | null;
+  /** Its category is the person's own (chosen for it, or carried across a
+   *  re-link) or a rule's. A choice made on one transaction always wins
+   *  (lib/categories.ts resolveCategory), so Plaid's label then no longer
+   *  says what it is. */
+  chosen?: boolean;
 };
 
 /** How many complete months the rate averages. */
@@ -135,11 +145,14 @@ export function trailingMonths(month: string, n: number = RATE_MONTHS): string[]
 }
 
 /** Interest and dividends: money the balance earned, not money put in. By
- *  Plaid's detailed category (shown as a subcategory), or by the words of a
- *  row's category (one entered or imported by hand). */
+ *  the words of the category a row is filed under (the person's, a rule's,
+ *  or one entered or imported by hand), or, while neither the person nor a
+ *  rule filed it, by Plaid's detailed category (shown as a subcategory): a
+ *  transfer the bank called interest, re-filed as a transfer in, is money
+ *  put in. */
 const GROWTH_WORDS = new Set(['interest earned', 'interest', 'interest income', 'dividends', 'dividend', 'interest and dividends']);
-export function isGrowth(row: Pick<FlowRow, 'subcategory' | 'category'>): boolean {
-  const sub = row.subcategory?.trim().toLowerCase();
+export function isGrowth(row: Pick<FlowRow, 'subcategory' | 'category' | 'chosen'>): boolean {
+  const sub = row.chosen ? undefined : row.subcategory?.trim().toLowerCase();
   const cat = row.category?.trim().toLowerCase();
   return (!!sub && GROWTH_WORDS.has(sub)) || (!!cat && GROWTH_WORDS.has(cat));
 }
