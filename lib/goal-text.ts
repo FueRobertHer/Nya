@@ -9,7 +9,7 @@
 import { formatMoney } from './format';
 import type { MonthGap } from './goal-projection';
 import type { AccountSplit } from './goal-allocation';
-import type { GoalView } from './goal-view';
+import type { GoalAccountEnd, GoalView } from './goal-view';
 import type { Goal } from './goal-model';
 
 /** "March 2027" for 2027-03. */
@@ -30,6 +30,42 @@ function instantLabel(iso: string): string {
 
 const lastMonths = (n: number) => (n === 1 ? 'the last month' : `the last ${n} months`);
 
+/** How an account ended, from its day: "it closed on Mar 12, 2026". */
+export function endedWhy(end: GoalAccountEnd): string {
+  const day = dayLabel(end.on);
+  switch (end.state) {
+    case 'closed':
+      return end.assumed ? `it is assumed closed from ${day}` : `it closed on ${day}`;
+    case 'left':
+      return `it isn’t yours from ${day}`;
+    case 'untracked':
+      return `it isn’t followed from ${day}`;
+  }
+}
+
+/** An account that ended, in a word or two, beside its name in a list. */
+export function endedTag(end: GoalAccountEnd): string {
+  switch (end.state) {
+    case 'closed':
+      return end.assumed ? 'assumed closed' : 'closed';
+    case 'left':
+      return 'no longer yours';
+    case 'untracked':
+      return 'not followed';
+  }
+}
+
+/** Why a goal on an account that ended counts nothing, with the day, and,
+ *  when Nya assumed the closure, where to say whether it did. */
+function endedText(view: GoalView): string {
+  const end = view.account?.ended;
+  if (!end) return 'Its account has ended, so it counts nothing';
+  if (end.assumed) {
+    return `Its account is assumed closed from ${dayLabel(end.on)}, as ${view.account?.institution || 'its bank'} stopped reporting it, so it counts nothing from then. Say whether it closed under Accounts that ended, on the Accounts tab`;
+  }
+  return `${endedWhy(end).replace(/^it /, 'Its account ')}, so it counts nothing from then`;
+}
+
 /** Why a goal shows no progress, for every state but tracked. */
 export function stateText(view: GoalView): string | null {
   switch (view.state) {
@@ -40,7 +76,7 @@ export function stateText(view: GoalView): string | null {
     case 'disconnected':
       return 'Linked account disconnected';
     case 'ended':
-      return 'Its account has closed, so nothing more goes into it';
+      return endedText(view);
     case 'owed':
       return 'Tracks a credit card or loan, whose balance is owed, not saved, so no progress is shown. Choose a savings account for it, or plan a payoff with the debt payoff planner.';
     case 'no_balance':

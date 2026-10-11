@@ -45,7 +45,8 @@ type CardProps = {
   error?: string | null;
   /** Why the last save did not go through; shown above the list. */
   saveError?: string | null;
-  /** Every account, hidden ones too: a goal tracking one says so, rather
+  /** Every account, hidden ones too, and those that ended, each with its end
+   *  (lib/goal-view.ts withAccountEnds): a goal tracking one says so, rather
    *  than "disconnected", which would be alarming and false. The editor
    *  keeps them out of its picker. */
   accounts: GoalAccount[];

@@ -8,6 +8,7 @@ import { isOwedType } from '@/lib/balance';
 import { formatMoney } from '@/lib/format';
 import { isCalendarDay, parseAmountInput } from '@/lib/manual-txn-input';
 import { allocationRoom } from '@/lib/goal-allocation';
+import { endedWhy } from '@/lib/goal-text';
 import { accountState, type GoalAccount } from '@/lib/goal-view';
 import { LATEST_TARGET_DATE, MAX_GOAL_AMOUNT, type Goal, type GoalPlan } from '@/lib/goal-model';
 
@@ -43,8 +44,8 @@ export type DraftRead = {
   entry: Goal;
   account: GoalAccount | null;
   currency: string | null;
-  /** The account can be counted (there, not hidden, held not owed, with a
-   *  balance). */
+  /** The account can be counted (there, open, not hidden, held not owed,
+   *  with a balance). */
   trackable: boolean;
   /** The most it may set aside, by the server's rule; null when the account
    *  can't be counted. */
@@ -82,7 +83,13 @@ export function readDraft(d: Draft, opts: { goal: Goal | null; goals: readonly G
   if (allocate && !kept) {
     if (!account) errors.push('That account isn’t among yours any more: choose another to set part of its balance aside from.');
     else if (!trackable) {
-      const why = account.type && isOwedType(account.type) ? 'its balance is owed, not saved' : account.hidden ? 'it is hidden' : 'no balance is known for it yet';
+      const why = account.ended
+        ? endedWhy(account.ended)
+        : account.type && isOwedType(account.type)
+          ? 'its balance is owed, not saved'
+          : account.hidden
+            ? 'it is hidden'
+            : 'no balance is known for it yet';
       errors.push(`Nothing can be set aside from ${account.name}: ${why}.`);
     } else if (d.allocation.trim() && allocation === null) errors.push('Enter the part of the balance to set aside, like 1500, or 0.');
     else if (allocation != null && room !== null && allocation > room) errors.push(`${account.name} has ${money(room)} you can set aside for this goal.`);

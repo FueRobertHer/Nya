@@ -6,7 +6,7 @@ import { archivedGoal, draftOf, pickAccount, readDraft } from '@/components/goal
 import { readFlowsAnswer } from '@/components/goal-flows-state';
 import { localDate } from '@/lib/local-date';
 import type { Goal } from '@/lib/goal-model';
-import type { GoalAccount } from '@/lib/goal-view';
+import { withAccountEnds, type GoalAccount } from '@/lib/goal-view';
 
 // The Goals card and its editor (#42), as rendered: what each goal shows,
 // the "where you should be" marker and its words, the unallocated remainder,
@@ -98,6 +98,17 @@ describe('the card', () => {
     expect(t).toContain('owed, not saved');
     expect(t).not.toContain('$1,200.00 of');
     expect(t).toContain('No balance is known for its account yet');
+  });
+
+  test('an account that ended: the goal says so with its day, and its balance is no one’s (#50)', () => {
+    const accounts = withAccountEnds(ACCOUNTS, [{ account_id: 'sav', lifecycle: { state: 'closed', on: '2026-09-30' }, label: { name: 'Savings', institution: 'Chase' }, type: 'depository' }]);
+    const html = renderToStaticMarkup(<GoalsCard goals={[goal('Trip', 'sav', 12_000, { allocation: 4000 })]} accounts={accounts} onSave={async () => true} />);
+    const t = text(html);
+    expect(t).toContain('Its account closed on Sep 30, 2026, so it counts nothing from then');
+    expect(t).not.toContain('$4,000.00 of');
+    // No unallocated line for it, and no meter.
+    expect(t).not.toContain('unallocated');
+    expect(html).not.toContain('meter-fill');
   });
 
   test('reached: marked, in green', () => {
@@ -204,6 +215,20 @@ describe('the editor', () => {
   test('a goal on a card keeps its account listed, marked', () => {
     const g = goal('Old', 'card', 500);
     expect(sheet(g, [g])).toContain('Visa (Chase) · owed, not saved');
+  });
+
+  test('an account that ended isn’t offered; a goal on one keeps it listed, marked, and nothing more can be set aside from it', () => {
+    const ended = [{ account_id: 'sav', lifecycle: { state: 'left' as const, on: '2026-09-30' }, label: { name: 'Savings', institution: 'Chase' }, type: 'depository' }];
+    const accounts = withAccountEnds(ACCOUNTS, ended);
+    const render = (g: Goal | null, goals: Goal[]) =>
+      text(renderToStaticMarkup(<GoalSheet open goal={g} goals={goals} accounts={accounts} flows={null} today={TODAY} saveError={null} onClose={() => {}} onSave={async () => true} />));
+    expect(render(null, [])).not.toContain('Savings');
+    const g = goal('Trip', 'sav', 3000, { allocation: 1000 });
+    expect(render(g, [g])).toContain('Savings (Chase) · no longer yours');
+    const opts = { goal: g, goals: [g], accounts, today: '2026-10-10', newId: 'n' };
+    // Kept as it is, it saves; raised, it says why.
+    expect(readDraft(draftOf(g), opts).ready).toBe(true);
+    expect(readDraft({ ...draftOf(g), allocation: '1500' }, opts).errors).toEqual(['Nothing can be set aside from Savings: it isn’t yours from Sep 30, 2026.']);
   });
 
   test('the box to set part of the balance aside: checked with an allocation, never checked without an account', () => {

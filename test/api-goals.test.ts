@@ -28,7 +28,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, OTHER, seedPerson, seedOther } = await import('./api-fixture');
+const { ctx, OTHER, seedPerson, seedOther, daysAgo } = await import('./api-fixture');
 const { createToken } = await import('@/lib/api-tokens');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { setGoals } = await import('@/lib/goals');
@@ -36,6 +36,10 @@ const { goalPlansStore } = await import('@/lib/goal-plans');
 const { saveManualAccount } = await import('@/lib/manual');
 const { setAccountHidden } = await import('@/lib/hidden');
 const links = await import('@/lib/links');
+const { markEnded, recordAssumedClosures, reopenAccount } = await import('@/lib/lifecycle');
+const { exportedGoals } = await import('@/lib/goal-export');
+const { getGoals } = await import('@/lib/goals');
+const { dayLabel } = await import('@/lib/goal-text');
 const v1 = await import('@/app/api/v1/goals/route');
 const mcp = await import('@/app/api/mcp/route');
 const app = await import('@/app/api/goals/route');
@@ -210,6 +214,72 @@ describe('GET /api/v1/goals', () => {
     const before = JSON.stringify([...((fake as any).hashes as Map<string, Map<string, string>>).get(ctxKey('goal-plans'))!.entries()]);
     await ask('include_hidden=true');
     expect(JSON.stringify([...((fake as any).hashes as Map<string, Map<string, string>>).get(ctxKey('goal-plans'))!.entries()])).toBe(before);
+  });
+});
+
+describe('a goal whose account ended (#50)', () => {
+  const CHECKING = { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' };
+  const rainy = async (query = '') => byId((await ask(query)).body).get(ID(1));
+
+  test('closed, no longer yours, or no longer followed: ended, with when, counting nothing, its plan kept', async () => {
+    const day = daysAgo(1);
+    const cases = [
+      [{ state: 'closed', on: day, note: 'Moved banks' }, `Its account closed on ${dayLabel(day)}, so it counts nothing from then.`],
+      [{ state: 'left', on: day }, `Its account isn’t yours from ${dayLabel(day)}, so it counts nothing from then.`],
+      [{ state: 'untracked', from: day }, `Its account isn’t followed from ${dayLabel(day)}, so it counts nothing from then.`],
+    ] as const;
+    for (const [lifecycle, said] of cases) {
+      await markEnded(ctx, 'acc_chk', lifecycle, CHECKING);
+      const { body } = await ask();
+      const g = byId(body).get(ID(1));
+      expect(g).toMatchObject({
+        state: 'ended',
+        account_id: 'acc_chk',
+        account_name: 'Checking',
+        account_lifecycle: { state: lifecycle.state, date: day, assumed: false },
+        saved: null,
+        saved_as_of: null,
+        pace: null,
+        projection: null,
+        notes: [said],
+        // Its plan, as set.
+        allocation: 1000,
+        monthly_target: 100,
+        target_date: '2030-01-31',
+      });
+      // None of its balance is allocated, or left unallocated: it counts in nothing.
+      expect(body.accounts).toEqual([]);
+    }
+  });
+
+  test('an assumed closure says so, and where to say whether it closed', async () => {
+    await recordAssumedClosures(ctx, [{ account_id: 'acc_chk', on: daysAgo(2), about: CHECKING }]);
+    const g = await rainy();
+    expect(g).toMatchObject({ state: 'ended', account_lifecycle: { state: 'closed', date: daysAgo(2), note: null, assumed: true }, saved: null });
+    expect(g.notes).toEqual([
+      `Its account is assumed closed from ${dayLabel(daysAgo(2))}, as Chase stopped reporting it, so it counts nothing from then. Say whether it closed under Accounts that ended, on the Accounts tab.`,
+    ]);
+  });
+
+  test('reopened, it counts again, allocation and all', async () => {
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(1) }, CHECKING);
+    expect((await rainy()).state).toBe('ended');
+    await reopenAccount(ctx, 'acc_chk', new Map());
+    expect(await rainy()).toMatchObject({ state: 'tracked', account_lifecycle: null, saved: 1000, allocation: 1000 });
+    expect((await ask()).body.accounts).toEqual([{ account_id: 'acc_chk', currency: 'USD', balance: 1250, allocated: 1000, unallocated: 250, over_allocated: 0 }]);
+  });
+
+  test('the download agrees: its plan as set, the account’s end in its own part', async () => {
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(1) }, CHECKING);
+    const api = await rainy();
+    const [exported] = await exportedGoals(ctx, await getGoals(ctx));
+    expect(exported).toMatchObject({ id: ID(1), account_id: 'acc_chk', allocation: api.allocation, monthly_target: api.monthly_target, target_date: api.target_date, archived: false });
+  });
+
+  test('a hidden account that ended says only that it is hidden, unless hidden accounts are asked for', async () => {
+    await markEnded(ctx, 'acc_save', { state: 'closed', on: daysAgo(1) }, { ...CHECKING, label: { name: 'Savings', institution: 'Chase', mask: '3333' } });
+    expect(byId((await ask()).body).get(ID(2))).toMatchObject({ state: 'hidden', account_id: null, account_lifecycle: null, notes: ['Tracked account is hidden.'] });
+    expect(byId((await ask('include_hidden=true')).body).get(ID(2))).toMatchObject({ state: 'ended', account_id: 'acc_save', account_lifecycle: { state: 'closed' } });
   });
 });
 

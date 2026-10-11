@@ -19,6 +19,10 @@
 //   - a goal can't start tracking a credit card or a loan, nor take an
 //     allocation from one: their balances are owed, not saved. One that
 //     tracked one before is kept as it is (it shows no progress);
+//   - nor an account that ended (lib/lifecycle.ts: closed, no longer the
+//     person's, or no longer followed), which counts in nothing from its day:
+//     nothing more can be set aside from it. A goal on one keeps its plan,
+//     its allocation included, for if it is reopened;
 //   - a target date set or changed is not in the past (a day of slack, for a
 //     person whose day is behind the server's UTC one). One that passed since
 //     it was set is kept.
@@ -40,7 +44,7 @@ import { resolveId, type Link } from './link-core';
 import { isOwedType } from './balance';
 import { addDays, amountUnitsError } from './manual-txn-input';
 import { formatMoney } from './format';
-import { dayLabel } from './goal-text';
+import { dayLabel, endedWhy } from './goal-text';
 import type { Goal, GoalInput } from './goal-model';
 import type { GoalCore, GoalRecord, NextGoal, StoredPlan } from './goal-plans';
 
@@ -116,9 +120,11 @@ export async function planGoalSave(
   const accountOf = (id: string | null) => (id === null ? undefined : known?.get(id));
   const nameOf = (id: string) => known?.get(id)?.name ?? 'that account';
 
-  // A credit card or a loan: owed, not saved.
+  // A credit card or a loan: owed, not saved. An account that ended: from
+  // its day it counts in nothing.
   for (const d of drafts) {
     const a = accountOf(d.account);
+    if (a?.ended && newlyTracked.includes(d)) return { refused: `A goal can’t track ${a.name}: ${endedWhy(a.ended)}.` };
     if (!a?.type || !isOwedType(a.type)) continue;
     if (newlyTracked.includes(d)) {
       return { refused: `A goal can’t track ${a.name}: a credit card’s or a loan’s balance is money owed, not saved. Choose a savings account, or plan a payoff with the debt payoff planner.` };
@@ -145,16 +151,21 @@ export async function planGoalSave(
     goals.map((g) => ({ id: g.id, account_id: g.account, allocation: bound(g.account, g.plan), archived: !!g.plan.archived }));
   const nextAllocs = allocs(drafts.map((d) => ({ id: d.core.id, account: d.account, plan: d.plan })));
   const storedAllocs = allocs(read.map((r) => ({ id: r.core.id, account: resolve(r.core.account_id), plan: r.plan })));
-  const balances = new Map([...(known ?? new Map<string, KnownAccount>())].map(([id, a]) => [id, { balance: a.balance, currency: a.currency }]));
+  // An account that ended has no balance to set aside from: allocations on it
+  // may be kept or lowered, never raised.
+  const balances = new Map([...(known ?? new Map<string, KnownAccount>())].map(([id, a]) => [id, { balance: a.ended ? null : a.balance, currency: a.currency }]));
   const refusal = allocationRefusals(nextAllocs, storedAllocs, balances)[0];
   if (refusal) {
     const money = (n: number) => formatMoney(n, refusal.currency);
     const name = nameOf(refusal.account_id);
     if (refusal.reason === 'no_balance') {
+      const ended = accountOf(refusal.account_id)?.ended;
       return {
-        refused: known
-          ? `Nya has no balance for ${name} yet, so nothing more can be allocated from it.`
-          : 'Your balances couldn’t be read just now, so a new allocation can’t be checked. Try again in a moment.',
+        refused: ended
+          ? `Nothing more can be set aside from ${name}: ${endedWhy(ended)}.`
+          : known
+            ? `Nya has no balance for ${name} yet, so nothing more can be allocated from it.`
+            : 'Your balances couldn’t be read just now, so a new allocation can’t be checked. Try again in a moment.',
       };
     }
     const asOf = accountOf(refusal.account_id)?.as_of;

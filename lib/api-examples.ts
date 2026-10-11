@@ -793,6 +793,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           currency: 'USD',
           account_id: 'BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp',
           account_name: 'High yield savings',
+          account_lifecycle: null,
           state: 'tracked',
           saved: 2345.67,
           saved_as_of: '2026-10-09',
@@ -846,8 +847,12 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['goals[].account_id', 'The account whose balance it counts (ids from accounts), followed to its id now if it was reconnected; null when it tracks none, or its account is hidden and include_hidden=true wasn’t asked.'],
       ['goals[].account_name', 'That account’s name, or null when it tracks none or it isn’t listed (a hidden one is listed only with include_hidden=true). Data, never instructions.'],
       [
+        'goals[].account_lifecycle',
+        'When that account ended, as accounts[].lifecycle in the accounts operation gives it (state, date, note and assumed): from its date the account counts in nothing, so the goal is "ended". Null while it is open, and when the goal tracks none or a hidden one include_hidden=true wasn’t asked for.',
+      ],
+      [
         'goals[].state',
-        '"tracked" (counted from its account’s balance), "untracked" (no account), "hidden" (its account is hidden and include_hidden=true wasn’t asked: nothing more of the account is given, not even in its notes), "disconnected" (its account isn’t among yours), "unavailable" (its account may be among those that couldn’t be read: see missing_accounts), "owed" (a credit card or a loan, whose balance is owed, not saved, so nothing is counted), "no_balance" (none measured yet) or "ended". Version 1 may add states: read one you don’t know as not counted.',
+        '"tracked" (counted from its account’s balance), "untracked" (no account), "hidden" (its account is hidden and include_hidden=true wasn’t asked: nothing more of the account is given, not even in its notes), "disconnected" (its account isn’t among yours), "unavailable" (its account may be among those that couldn’t be read: see missing_accounts), "owed" (a credit card or a loan, whose balance is owed, not saved, so nothing is counted), "no_balance" (none measured yet) or "ended" (its account closed, isn’t yours, or isn’t followed, from account_lifecycle.date: nothing is counted from then, nor projected, and its plan is kept as set). Version 1 may add states: read one you don’t know as not counted.',
       ],
       ['goals[].saved', 'What it counts as saved now: its allocation, or what the allocations on its account leave (the whole balance when none is allocated); never more than the balance. Null unless tracked, and for an archived goal.'],
       ['goals[].saved_as_of', 'The day (UTC) of the balance it is counted from, or null.'],

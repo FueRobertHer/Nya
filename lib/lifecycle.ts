@@ -1028,6 +1028,9 @@ export type LifecycleForClient = {
   type: string | null;
   /** A Plaid connection's id; null for a manual account. */
   item_id: string | null;
+  /** Its balance's currency, where its end recorded it: what a goal on it
+   *  is shown in once no live list has it (lib/goal-view.ts). */
+  currency?: string;
   set_at: string;
 };
 
@@ -1044,6 +1047,7 @@ export function lifecycleForClient(view: LifecycleView): LifecycleForClient[] {
       label: entry.label,
       type: entry.type,
       item_id: entry.item_id,
+      ...currencyOf(entry),
       set_at: entry.set_at,
     });
   }

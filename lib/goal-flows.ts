@@ -33,6 +33,7 @@
 
 import { ContainerError, type Ctx } from './containers';
 import { readAccounts, type ApiAccount } from './api-read';
+import { lastEndDay } from './lifecycle';
 import { assembleBankRows, finishActivity } from './activity';
 import { rememberedAccountsReport } from './last-known';
 import { readMeasuredBalances } from './history';
@@ -42,7 +43,16 @@ import { localDate } from './local-date';
 import { addDays } from './manual-txn-input';
 import { addMonths, flowsFromBalances, flowsFromRows, lastDay, trailingMonths, MONTH_END_DAYS, type AccountFlow, type FlowRow, type MonthGap } from './goal-projection';
 import type { KnownAccount } from './goal-save';
+import type { GoalAccountEnd } from './goal-view';
 import { loggable } from './log-safe';
+
+/** An account's end (lib/lifecycle.ts), once it has come: from it the account
+ *  counts in nothing, as the API's net worth has it. Null while it is open. */
+export function accountEnd(a: Pick<ApiAccount, 'lifecycle'>): GoalAccountEnd | null {
+  const l = a.lifecycle;
+  if (!l || l.date > lastEndDay()) return null;
+  return { state: l.state, on: l.date, ...(l.assumed ? { assumed: true } : {}) };
+}
 
 /** An account as the goals know it, from the read-only API's account. */
 export const knownAccount = (a: ApiAccount): KnownAccount => ({
@@ -53,6 +63,7 @@ export const knownAccount = (a: ApiAccount): KnownAccount => ({
   currency: a.currency,
   type: a.type,
   hidden: a.hidden,
+  ended: accountEnd(a),
   as_of: a.as_of,
 });
 
@@ -110,15 +121,16 @@ function monthEndDays(months: readonly string[]): string[] {
 /**
  * The last complete months before `month` (YYYY-MM: the viewer's own in the
  * app, UTC in the API) for each of `accounts` (lib/api-read.ts readAccounts),
- * as GoalFlows. A credit card or a loan has none: no goal counts one. Hidden
- * accounts' rows are read only when a hidden account is among `accounts`.
+ * as GoalFlows. A credit card or a loan has none, nor has an account that
+ * ended (lib/lifecycle.ts): no goal counts one. Hidden accounts' rows are
+ * read only when a hidden account is among `accounts`.
  * Storage that can't be reached throws; a part that can't be read is left out
  * and named in `notes`, and its months read as unknown, never as zero.
  */
 export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: readonly ApiAccount[]; links: ReadonlyMap<string, Link> }): Promise<GoalFlows> {
   const months = trailingMonths(opts.month);
   const links = opts.links as Map<string, Link>;
-  const accounts = opts.accounts.filter((a) => !a.is_debt);
+  const accounts = opts.accounts.filter((a) => !a.is_debt && !accountEnd(a));
   const flows = new Map<string, AccountFlow>();
   const notes: string[] = [];
   if (accounts.length === 0) return { months, flows, notes };

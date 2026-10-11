@@ -24,6 +24,8 @@ const { planGoalSave } = await import('@/lib/goal-save');
 const { parseGoals } = await import('@/lib/goal-model');
 const { knownGoalAccounts } = await import('@/lib/goal-flows');
 const links = await import('@/lib/links');
+const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
+const { dayLabel } = await import('@/lib/goal-text');
 const route = await import('@/app/api/goals/route');
 
 const ctx = TEST_CTX;
@@ -588,6 +590,33 @@ describe('links that can’t be read', () => {
         fake.hgetall = hgetall;
       }
     }
+  });
+});
+
+describe('an account that ended (#50)', () => {
+  const ABOUT = { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: null }, item_id: 'item_bank' };
+  const on = (plan: Record<string, unknown>, over: Record<string, unknown> = {}) => ({ ...G(1), account_id: 'acc_chk', ...over, plan });
+
+  test('a goal can’t start tracking one, nor set more aside from one; a goal on one keeps its plan, and saves', async () => {
+    await put([on({ allocation: 1000, monthly_target: 50 })]);
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(3) }, ABOUT);
+    const why = `it closed on ${dayLabel(daysAgo(3))}`;
+    expect(await put([on({ allocation: 1000, monthly_target: 50 }), { ...G(2), account_id: 'acc_chk', plan: {} }])).toEqual({
+      status: 400,
+      body: { error: `A goal can’t track Checking: ${why}.` },
+    });
+    // Renamed, retargeted, its allocation kept or lowered: saved.
+    expect((await put([on({ allocation: 1000, monthly_target: 75 }, { name: 'Renamed' })])).status).toBe(200);
+    expect((await put([on({ allocation: 400, monthly_target: 75 }, { name: 'Renamed' })])).status).toBe(200);
+    // Raised: refused, saying why.
+    expect(await put([on({ allocation: 500, monthly_target: 75 }, { name: 'Renamed' })])).toEqual({
+      status: 400,
+      body: { error: `Nothing more can be set aside from Checking: ${why}.` },
+    });
+    expect((await get()).body.goals[0]).toEqual({ ...G(1), name: 'Renamed', account_id: 'acc_chk', plan: { allocation: 400, monthly_target: 75 } });
+    // Reopened, it counts again: raised within its balance.
+    await reopenAccount(ctx, 'acc_chk', new Map());
+    expect((await put([on({ allocation: 2500, monthly_target: 75 }, { name: 'Renamed' })])).status).toBe(200);
   });
 });
 

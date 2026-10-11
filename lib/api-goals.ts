@@ -19,13 +19,17 @@
 // missing (missing_accounts, complete and notes are of the accounts asked
 // for), and a goal on one is `hidden` and says nothing of it: no account id,
 // currency or name, and of its notes only that its account is hidden.
+// A goal whose account ended (lib/lifecycle.ts: closed, no longer the
+// person's, or no longer followed) is `ended`, with when (account_lifecycle),
+// and counts nothing from that day, as in the app: none of the balance its
+// account last had, no allocation, no unallocated line, no projection.
 // Archived goals are listed, marked, with the day they were archived and what
 // they held then, and count nothing. A goal whose account isn't listed is
 // `disconnected`, or `unavailable` while some accounts couldn't be read
 // (complete: false).
 
 import type { Ctx } from './containers';
-import { readAccounts, type ApiMissing } from './api-read';
+import { readAccounts, type ApiLifecycle, type ApiMissing } from './api-read';
 import { getEffectiveHidden } from './links';
 import { readGoalRecords, wireGoal } from './goal-plans';
 import { knownAccount, readGoalFlows } from './goal-flows';
@@ -59,10 +63,16 @@ export type ApiGoal = {
    *  weren't asked for (state 'hidden'). */
   account_id: string | null;
   account_name: string | null;
+  /** When its account ended, as the accounts list gives it (lib/api-read.ts
+   *  ApiLifecycle): from its date it counts in nothing (state 'ended'). Null
+   *  while it is open, and for no account or a hidden one not asked for. */
+  account_lifecycle: ApiLifecycle | null;
   /** 'tracked', 'untracked' (no account), 'hidden', 'disconnected',
    *  'unavailable' (its account may be among those that couldn't be read),
    *  'owed' (a credit card or a loan: owed, not saved, so nothing is
-   *  counted), 'no_balance' or 'ended'. Version 1 may add states. */
+   *  counted), 'no_balance' or 'ended' (its account closed, isn't theirs, or
+   *  isn't followed: nothing counted from then, nor projected). Version 1 may
+   *  add states. */
   state: string;
   /** What it counts as saved now; null unless tracked. */
   saved: number | null;
@@ -156,6 +166,7 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
     accounts.push({ account_id: id, name: '', balance: null, currency: null, hidden: true, as_of: null });
   }
   const byId = new Map(accounts.map((a) => [a.account_id, a]));
+  const lifecycleOf = new Map(listed.accounts.map((a) => [a.id, a.lifecycle]));
   const counted = new Set(goals.filter((g) => !g.plan?.archived && g.account_id && accountState(g, byId.get(g.account_id)) === 'tracked').map((g) => g.account_id!));
   const flows = await readGoalFlows(ctx, { month: today.slice(0, 7), accounts: listed.accounts.filter((a) => counted.has(a.id)), links });
   const { views, splits } = goalViews(goals, accounts, flows.flows, today);
@@ -186,6 +197,7 @@ export async function readGoals(ctx: Ctx, opts: { includeHidden?: boolean; today
       currency: isHidden ? null : (account?.currency ?? null),
       account_id: isHidden ? null : g.account_id,
       account_name: account && !account.hidden ? account.name : null,
+      account_lifecycle: isHidden || !g.account_id ? null : (lifecycleOf.get(g.account_id) ?? null),
       state,
       saved: v?.saved ?? null,
       saved_as_of: v?.saved !== null && v?.saved !== undefined ? (account?.as_of ?? null) : null,

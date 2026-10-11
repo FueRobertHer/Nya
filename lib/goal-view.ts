@@ -6,13 +6,21 @@
 // (lib/goal-projection.ts). One function for both, so the card and the API
 // can't tell a goal's story two ways. Pure, safe to import from client code.
 //
-// AN ACCOUNT IS COUNTED only when it is there, not hidden, holds money (a
-// credit card's or a loan's balance is owed, not saved, so a goal on one shows
-// no progress rather than reading a debt as savings) and has a balance. Each
-// of the other cases says which it is: no account, hidden, disconnected (not
-// among the accounts, which includes one forgotten), owed, no balance yet, or
-// ended. Nothing marks an account ended yet: that is the seam for the account
-// lifecycle work, which knows when a bank closes one.
+// AN ACCOUNT IS COUNTED only when it is there, hasn't ended, isn't hidden,
+// holds money (a credit card's or a loan's balance is owed, not saved, so a
+// goal on one shows no progress rather than reading a debt as savings) and
+// has a balance. Each of the other cases says which it is: no account, ended,
+// hidden, disconnected (not among the accounts, which includes one
+// forgotten), owed, or no balance yet.
+//
+// AN ACCOUNT THAT ENDED (lib/lifecycle.ts: closed, no longer the person's, or
+// no longer followed, from a day, or assumed closed once its bank stopped
+// returning it) counts in nothing from that day, as everywhere in the app: a
+// goal on it counts none of its balance, its allocation claims nothing, the
+// account has no unallocated line, and the goal isn't projected, since
+// nothing more goes into it. Its plan is kept as set: reopened, the account
+// counts again, allocation and all. An end is said before hidden: it says
+// more.
 
 import { isOwedType } from './balance';
 import { splitBalances, type AccountSplit, type AllocAccount, type Claim } from './goal-allocation';
@@ -30,10 +38,59 @@ export type GoalAccount = {
   /** Plaid's type, or a manual account's. Unknown counts as money held. */
   type?: string;
   hidden?: boolean;
-  /** The account ended at its bank. The account lifecycle work sets this;
-   *  until it does, an ended account reads as disconnected once it is gone. */
-  ended?: boolean;
+  /** It ended (see AN ACCOUNT THAT ENDED); null or absent while it is open. */
+  ended?: GoalAccountEnd | null;
 };
+
+/** How an account ended (lib/lifecycle.ts): the day it stopped counting, and
+ *  whether Nya assumed it closed, nobody having said, after its bank stopped
+ *  returning it. */
+export type GoalAccountEnd = { state: 'closed' | 'left' | 'untracked'; on: string; assumed?: boolean };
+
+/** An account that ended, as the app is sent it (lib/lifecycle.ts
+ *  LifecycleForClient): one per account, under its current id. */
+export type EndedAccountFor = {
+  account_id: string;
+  lifecycle: { state: 'closed' | 'left'; on: string } | { state: 'untracked'; from: string };
+  assumed?: boolean;
+  label: { name: string; institution: string };
+  type: string | null;
+  currency?: string;
+};
+
+/**
+ * The accounts as the goals know them, each that ended marked with its end:
+ * one still listed (a hidden one stays listed) as it is shown, one no longer
+ * listed from what its end keeps, with no balance, since from its end it
+ * counts in nothing. One reopened is no longer among `ended`, and reads as
+ * listed.
+ */
+export function withAccountEnds(accounts: readonly GoalAccount[], ended: readonly EndedAccountFor[]): GoalAccount[] {
+  const endOf = (e: EndedAccountFor): GoalAccountEnd => ({
+    state: e.lifecycle.state,
+    on: e.lifecycle.state === 'untracked' ? e.lifecycle.from : e.lifecycle.on,
+    ...(e.assumed ? { assumed: true } : {}),
+  });
+  const byId = new Map(ended.map((e) => [e.account_id, e]));
+  const out = accounts.map((a) => {
+    const e = byId.get(a.account_id);
+    return e ? { ...a, ended: endOf(e) } : a;
+  });
+  const listed = new Set(accounts.map((a) => a.account_id));
+  for (const e of ended) {
+    if (listed.has(e.account_id)) continue;
+    out.push({
+      account_id: e.account_id,
+      name: e.label.name || 'Account',
+      ...(e.label.institution ? { institution: e.label.institution } : {}),
+      balance: null,
+      currency: e.currency ?? null,
+      ...(e.type ? { type: e.type } : {}),
+      ended: endOf(e),
+    });
+  }
+  return out;
+}
 
 export type GoalState = 'tracked' | 'untracked' | 'hidden' | 'disconnected' | 'ended' | 'owed' | 'no_balance';
 
@@ -69,8 +126,8 @@ const archived = (g: Goal) => g.plan?.archived === true;
 export function accountState(goal: Goal, account: GoalAccount | undefined): GoalState {
   if (!goal.account_id) return 'untracked';
   if (!account) return 'disconnected';
-  if (account.hidden) return 'hidden';
   if (account.ended) return 'ended';
+  if (account.hidden) return 'hidden';
   if (account.type && isOwedType(account.type)) return 'owed';
   if (account.balance === null) return 'no_balance';
   return 'tracked';

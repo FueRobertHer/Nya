@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { goalViews, type GoalAccount } from '@/lib/goal-view';
+import { goalViews, withAccountEnds, type GoalAccount, type GoalAccountEnd } from '@/lib/goal-view';
 import { fallbackText, gapNote, gapsText, goalNotes, goalSentences, meterLabel, outlookText, paceText, shouldHaveText, splitText, stateText } from '@/lib/goal-text';
 import type { Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
@@ -15,7 +15,7 @@ const ACCOUNTS: GoalAccount[] = [
   { account_id: 'loan', name: 'Car loan', institution: 'Chase', balance: 9000, currency: 'USD', type: 'loan' },
   { account_id: 'hid', name: 'Old savings', institution: 'Chase', balance: 500, currency: 'USD', type: 'depository', hidden: true },
   { account_id: 'nobal', name: 'New account', institution: 'Ally', balance: null, currency: 'USD', type: 'depository' },
-  { account_id: 'closed', name: 'Closed', institution: 'Ally', balance: 0, currency: 'USD', type: 'depository', ended: true },
+  { account_id: 'closed', name: 'Closed', institution: 'Ally', balance: 0, currency: 'USD', type: 'depository', ended: { state: 'closed', on: '2026-09-30' } },
   // A manual account: its balance kept in US dollars, typed by hand.
   { account_id: 'manual_jar', name: 'Jar', institution: 'Home', balance: 340.25, currency: 'USD', type: 'depository' },
   { account_id: 'ira', name: 'IRA', institution: 'Fidelity', balance: 20_000, currency: 'USD', type: 'investment' },
@@ -40,6 +40,69 @@ const viewsOf = (goals: Goal[], accounts = ACCOUNTS, flows: Map<string, AccountF
   const { views, splits } = goalViews(goals, accounts, flows, TODAY);
   return { views: new Map(views.map((v) => [v.goal.id, v])), splits };
 };
+
+describe('an account that ended (#50)', () => {
+  const at = (end: GoalAccountEnd) => ACCOUNTS.map((a) => (a.account_id === 'sav' ? { ...a, ended: end } : a));
+  const GOALS = [goal('fund', 'sav', 15_000, { allocation: 4000, monthly_target: 300, target_date: '2027-06-30' }), goal('trip', 'sav', 2000), goal('euro', 'eur', 3000)];
+
+  test('closed, no longer yours, no longer followed, or assumed closed: says so with its day, counts nothing, and isn’t projected', () => {
+    const cases: [GoalAccountEnd, string][] = [
+      [{ state: 'closed', on: '2026-09-30' }, 'Its account closed on Sep 30, 2026, so it counts nothing from then'],
+      [{ state: 'left', on: '2026-09-30' }, 'Its account isn’t yours from Sep 30, 2026, so it counts nothing from then'],
+      [{ state: 'untracked', on: '2026-09-30' }, 'Its account isn’t followed from Sep 30, 2026, so it counts nothing from then'],
+      [
+        { state: 'closed', on: '2026-09-30', assumed: true },
+        'Its account is assumed closed from Sep 30, 2026, as Chase stopped reporting it, so it counts nothing from then. Say whether it closed under Accounts that ended, on the Accounts tab',
+      ],
+    ];
+    for (const [end, said] of cases) {
+      const { views, splits } = viewsOf(GOALS, at(end));
+      const v = views.get('fund')!;
+      expect([v.state, v.saved, v.claim, v.measured, v.projection, v.shouldHave]).toEqual(['ended', null, null, null, null, null]);
+      expect(stateText(v)).toBe(said);
+      // Nothing else is said of it: no pace, no allocation scaled or shared.
+      expect(goalSentences(v, nameOf, undefined)).toEqual([`${said}.`]);
+      // Its allocation claims nothing, and the account has no unallocated
+      // line; the other goal on it is ended too. Another account is untouched.
+      expect(views.get('trip')!.state).toBe('ended');
+      expect(splits.has('sav')).toBe(false);
+      expect(views.get('euro')!.state).toBe('tracked');
+      // Its plan is kept as set, for if it is reopened.
+      expect(v.goal.plan).toEqual({ allocation: 4000, monthly_target: 300, target_date: '2027-06-30' });
+    }
+  });
+
+  test('an end is said before hidden: it says more', () => {
+    const accounts = ACCOUNTS.map((a) => (a.account_id === 'hid' ? { ...a, ended: { state: 'closed' as const, on: '2026-09-30' } } : a));
+    expect(viewsOf([goal('old', 'hid', 100)], accounts).views.get('old')!.state).toBe('ended');
+  });
+
+  test('the accounts the app lists, with those that ended: one no longer listed comes from its end, with no balance; one reopened is as listed', () => {
+    const live: GoalAccount[] = [ACCOUNTS[0], ACCOUNTS[4]];
+    const ended = [
+      { account_id: 'gone', lifecycle: { state: 'closed' as const, on: '2026-09-30' }, assumed: true, label: { name: 'Old savings', institution: 'Chase' }, type: 'depository', currency: 'EUR' },
+      { account_id: 'hid', lifecycle: { state: 'untracked' as const, from: '2026-08-01' }, label: { name: 'Old savings', institution: 'Chase' }, type: 'depository' },
+    ];
+    const out = withAccountEnds(live, ended);
+    expect(out.find((a) => a.account_id === 'gone')).toEqual({
+      account_id: 'gone',
+      name: 'Old savings',
+      institution: 'Chase',
+      balance: null,
+      currency: 'EUR',
+      type: 'depository',
+      ended: { state: 'closed', on: '2026-09-30', assumed: true },
+    });
+    // A hidden one stays listed, with what it shows, and its end.
+    expect(out.find((a) => a.account_id === 'hid')).toEqual({ ...ACCOUNTS[4], ended: { state: 'untracked', on: '2026-08-01' } });
+    expect(out.find((a) => a.account_id === 'sav')).toEqual(ACCOUNTS[0]);
+    // A goal on the one no longer listed says so, in its own currency.
+    const v = viewsOf([goal('trip', 'gone', 900)], out).views.get('trip')!;
+    expect([v.state, v.currency]).toEqual(['ended', 'EUR']);
+    // Reopened: no longer among those that ended, so as the app lists it.
+    expect(withAccountEnds(live, [])).toEqual(live);
+  });
+});
 
 describe('whether an account can be counted', () => {
   test('each case says which it is, and shows no progress', () => {

@@ -14,7 +14,7 @@ import { Sheet } from './Sheet';
 import { formatMoney } from '@/lib/format';
 import { isOwedType } from '@/lib/balance';
 import { goalViews, type GoalAccount } from '@/lib/goal-view';
-import { outlookText, sourceNote } from '@/lib/goal-text';
+import { endedTag, outlookText, sourceNote } from '@/lib/goal-text';
 import { LATEST_TARGET_DATE, MAX_GOAL_NAME_CHARS, type Goal } from '@/lib/goal-model';
 import type { AccountFlow } from '@/lib/goal-projection';
 import { archivedGoal, draftOf, pickAccount, readDraft, type Draft } from './goal-draft';
@@ -56,9 +56,10 @@ export default function GoalSheet({
   const { entry, account, currency, room } = read;
   const money = (n: number) => formatMoney(n, currency);
   const nameOf = (id: string) => goals.find((g) => g.id === id)?.name ?? 'another goal';
-  // Hidden accounts, cards and loans aren't offered; one a goal tracks
-  // already stays listed, marked, so the picker never shows it blank.
-  const offered = accounts.filter((a) => (!a.hidden && !(a.type && isOwedType(a.type))) || a.account_id === goal?.account_id);
+  // Hidden accounts, ones that ended, cards and loans aren't offered; one a
+  // goal tracks already stays listed, marked, so the picker never shows it
+  // blank.
+  const offered = accounts.filter((a) => (!a.hidden && !a.ended && !(a.type && isOwedType(a.type))) || a.account_id === goal?.account_id);
 
   // How it would go with what is typed: the same view the card shows, for
   // the list as this save would leave it (a handful of goals: cheap enough to
@@ -112,7 +113,7 @@ export default function GoalSheet({
               <option key={a.account_id} value={a.account_id}>
                 {a.name}
                 {a.institution ? ` (${a.institution})` : ''}
-                {a.hidden ? ' · hidden' : a.type && isOwedType(a.type) ? ' · owed, not saved' : ''}
+                {a.ended ? ` · ${endedTag(a.ended)}` : a.hidden ? ' · hidden' : a.type && isOwedType(a.type) ? ' · owed, not saved' : ''}
               </option>
             ))}
             {goal?.account_id && !accounts.some((a) => a.account_id === goal.account_id) && <option value={goal.account_id}>Disconnected account</option>}

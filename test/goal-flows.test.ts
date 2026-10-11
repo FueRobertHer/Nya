@@ -40,6 +40,7 @@ const { setAccountHidden } = await import('@/lib/hidden');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { noticesStore, syncsStore } = await import('@/lib/connection-records');
 const links = await import('@/lib/links');
+const { markEnded, reopenAccount } = await import('@/lib/lifecycle');
 const { txn } = await import('./api-fixture');
 const { trailingMonths, addMonths } = await import('@/lib/goal-projection');
 const route = await import('@/app/api/goals/progress/route');
@@ -193,6 +194,19 @@ describe('the months behind each account’s pace', () => {
     const { flows } = (await progress()).body;
     expect(flows.acc_card).toBeUndefined();
     expect(flows.acc_hid).toBeUndefined();
+  });
+
+  test('none for an account that ended: nothing goes into it from its day, and no goal counts it (#50)', async () => {
+    const about = { type: 'depository', label: { name: 'Savings', institution: 'Chase', mask: null }, item_id: 'item_chase' };
+    await markEnded(ctx, 'acc_sav', { state: 'closed', on: `${M3}-15` }, about);
+    await markEnded(ctx, 'manual_jar', { state: 'untracked', from: `${M3}-01` }, { ...about, label: { name: 'Jar', institution: 'Home', mask: null }, item_id: null });
+    const { flows } = (await progress()).body;
+    expect(flows.acc_sav).toBeUndefined();
+    expect(flows.manual_jar).toBeUndefined();
+    expect(flows.acc_quiet).toBeDefined();
+    // Reopened, its months are back.
+    await reopenAccount(ctx, 'acc_sav', new Map());
+    expect((await progress()).body.flows.acc_sav.months.map((m: any) => m.amount)).toEqual([375.5, 189.75, 330.1]);
   });
 
   test('a connection that stopped syncing: the month it stopped in may be short, and a month after it is unknown, never zero', async () => {
