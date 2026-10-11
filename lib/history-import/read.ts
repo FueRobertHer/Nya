@@ -46,8 +46,9 @@ import { effectiveLinks, getLinks, resolveId, sameAccountIds, type Link } from '
 import { liveAccountIds } from '../links';
 import { readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
-import { endOf, lifecycleStore } from '../lifecycle';
+import { endDays, endOf, lifecycleStore, type LifecycleView } from '../lifecycle';
 import { settle, type BankRow, type Settled } from './match';
+import type { CoveredAccount, DayRange } from './coverage';
 import { historyImportSummaryStore, importedTxnStore, type HistoryImportSummary, type ImportedTxn } from './store';
 
 /** A linked account, as importing and reading name it. */
@@ -464,6 +465,34 @@ export async function importedCoverage(ctx: Ctx, links: ReadonlyMap<string, Pick
     out.set(id, [...(out.get(id) ?? []), { from: s.covers.from, to: s.covers.to }]);
   }
   return out;
+}
+
+/**
+ * A connection's bank accounts and cards, for what the files imported into
+ * them cover (lib/history-import/coverage.ts): as it last reported them
+ * (`reported`, lib/last-known.ts), and each that ended that it no longer
+ * reports (a bank stops returning a closed account), as its end names it,
+ * under its current id; never one `leftOut` (hidden). Each with what its
+ * files cover (`covered`, importedCoverage) and the day it stopped counting,
+ * when it ended (lib/lifecycle.ts), up to which it needs them. For a
+ * report's gaps (lib/report/read.ts) and the months a rollover counts
+ * (lib/budget-month.ts) alike.
+ */
+export function coveredAccountsOf(
+  item_id: string,
+  reported: readonly { account_id: string; name: string; type: string | null }[],
+  lifecycle: LifecycleView,
+  covered: ReadonlyMap<string, readonly DayRange[]>,
+  leftOut: ReadonlySet<string>
+): (CoveredAccount & { id: string; name: string })[] {
+  const roots = new Set(reported.map((a) => lifecycle.rootOf.get(a.account_id) ?? a.account_id));
+  const endedThere = [...lifecycle.accounts].flatMap(([root, { entry }]) =>
+    entry.item_id === item_id && endOf(entry.lifecycle) !== null && !roots.has(root) ? [{ id: root, name: entry.label.name, type: entry.type }] : []
+  );
+  const ends = endDays(lifecycle);
+  return [...reported.map((a) => ({ id: a.account_id, name: a.name, type: a.type })), ...endedThere]
+    .filter((a) => (a.type === 'depository' || a.type === 'credit') && !leftOut.has(a.id))
+    .map((a) => ({ id: a.id, name: a.name, covers: covered.get(a.id) ?? [], end: ends.get(a.id) ?? null }));
 }
 
 /**

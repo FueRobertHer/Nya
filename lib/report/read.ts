@@ -89,7 +89,7 @@ import { connectorBadge } from '../connectors/health';
 import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
 import type { TxnCoverage } from '../transactions';
-import { importedCoverage } from '../history-import/read';
+import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -269,14 +269,6 @@ export async function readReport(
     return ids.map((id) => endDay.get(id)!).sort().at(-1)!;
   };
 
-  // A connection's accounts that ended and that it no longer reports, as
-  // their ends name them: still its accounts on the days before.
-  const endedOnly = (item_id: string): { id: string; name: string; type: string | null }[] => {
-    const reported = new Set((remembered.byItem[item_id] ?? []).map((a) => bank.lifecycle.rootOf.get(a.account_id) ?? a.account_id));
-    return [...bank.lifecycle.accounts].flatMap(([root, { entry }]) =>
-      entry.item_id === item_id && endOf(entry.lifecycle) !== null && !reported.has(root) ? [{ id: root, name: entry.label.name, type: entry.type }] : []
-    );
-  };
   const sources: SourceFacts[] = bank.sources.map((s) => {
     const f = facts.of(s.item_id);
     return {
@@ -297,12 +289,7 @@ export async function readReport(
       // that ended that it no longer reports (a bank stops returning a closed
       // account), not hidden, with what files imported into each cover and
       // the day each that ended stopped counting, up to which it needs them.
-      accounts: [
-        ...(remembered.byItem[s.item_id] ?? []).map((a) => ({ id: a.account_id, name: a.name, type: a.type })),
-        ...endedOnly(s.item_id),
-      ]
-        .filter((a) => (a.type === 'depository' || a.type === 'credit') && !hidden.has(a.id))
-        .map((a) => ({ name: a.name, covers: covered.get(a.id) ?? [], end: endDay.get(a.id) ?? null })),
+      accounts: coveredAccountsOf(s.item_id, remembered.byItem[s.item_id] ?? [], bank.lifecycle, covered, hidden).map(({ name, covers, end }) => ({ name, covers, end })),
       ended_by: endedBy(s.item_id),
     };
   });

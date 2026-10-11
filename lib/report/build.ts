@@ -145,6 +145,7 @@ import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../to
 import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
 import { categoryKey } from './settings';
 import { addDays, dayIn, periodMonths, type Period } from './period';
+import { filesCoverAll as everyAccountCovered, runStart, throughFor } from '../history-import/coverage';
 
 /** How long a bank can take to post a transaction: a period's transactions
  *  are all in once a connection has synced this many days after its last day
@@ -195,7 +196,7 @@ export type SourceFacts = {
    *  imported into it cover (see IMPORTED) and the day it stopped counting,
    *  when it ended (lib/lifecycle.ts): it needs covering only up to then;
    *  absent when not known. */
-  accounts?: { name: string; covers: { from: string; to: string }[]; end?: string | null }[];
+  accounts?: { name: string; covers: readonly { from: string; to: string }[]; end?: string | null }[];
 };
 
 /** Accounts a SimpleFIN connection kept up to date, let go on one day and
@@ -553,18 +554,6 @@ const nameKey = (s: string) => s.replace(/\s+/g, ' ').trim().toLowerCase();
  *  isn't known. */
 const reachOf = (firstSeen: string | null) => (firstSeen ? addDays(firstSeen, -TRANSACTIONS_DAYS_REQUESTED) : null);
 
-/** Days as ranges, joined where they overlap or touch. */
-function joinedRanges(ranges: readonly { from: string; to: string }[]): { from: string; to: string }[] {
-  const out: { from: string; to: string }[] = [];
-  for (const r of [...ranges].sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : 0))) {
-    const last = out[out.length - 1];
-    if (last && r.from <= addDays(last.to, 1)) {
-      if (r.to > last.to) last.to = r.to;
-    } else out.push({ ...r });
-  }
-  return out;
-}
-
 /** Where an institution's transactions begin for the period, counting the
  *  days files imported into its accounts cover (see IMPORTED): the latest day
  *  from which each account is covered through the period's last day (the
@@ -576,9 +565,8 @@ function startsFor(s: SourceFacts, bank: string, period: Period): { first: strin
   const accounts = (s.accounts ?? []).filter((a) => throughOf(a, period) !== null);
   if (!accounts.some((a) => a.covers.length > 0)) return bank > period.start ? { first: bank, files: false, imported: [] } : null;
   const starts = accounts.map((a) => {
-    const through = throughOf(a, period)!;
-    const run = joinedRanges([{ from: bank, to: period.today }, ...a.covers]).find((r) => r.from <= through && through <= r.to);
-    return { account: a.name, from: run && run.from < bank ? run.from : bank };
+    const run = runStart(a, bank, throughOf(a, period)!);
+    return { account: a.name, from: run && run < bank ? run : bank };
   });
   const first = starts.reduce((latest, a) => (a.from > latest ? a.from : latest), starts[0].from);
   if (first <= period.start) return null;
@@ -588,25 +576,15 @@ function startsFor(s: SourceFacts, bank: string, period: Period): { first: strin
 /** The last day of the period an account needs its transactions through:
  *  the period's last, or, for one that ended in it (lib/lifecycle.ts), the
  *  day before its end; null for one that ended by the period's first day,
- *  which needs none of it. */
-function throughOf(a: { end?: string | null }, period: Pick<Period, 'start' | 'through'>): string | null {
-  if (!a.end) return period.through;
-  if (a.end <= period.start) return null;
-  return minDay(period.through, addDays(a.end, -1));
-}
+ *  which needs none of it (lib/history-import/coverage.ts throughFor). */
+const throughOf = (a: { end?: string | null }, period: Pick<Period, 'start' | 'through'>): string | null => throughFor(a, period.start, period.through);
 
 /** Whether every one of an institution's bank accounts and cards (none
  *  known: no) is covered for the period, each through the day it counts to
  *  (throughOf), by the bank's own days from `bank` on, if any, and by the
- *  files imported into it (see IMPORTED). */
-function filesCoverAll(s: SourceFacts, bank: string | null, period: Period): boolean {
-  const accounts = s.accounts ?? [];
-  if (accounts.length === 0 || !accounts.some((a) => a.covers.length > 0)) return false;
-  return accounts.every((a) => {
-    const through = throughOf(a, period);
-    return through === null || joinedRanges([...(bank ? [{ from: bank, to: period.today }] : []), ...a.covers]).some((r) => r.from <= period.start && through <= r.to);
-  });
-}
+ *  files imported into it (see IMPORTED; lib/history-import/coverage.ts,
+ *  the rule a rollover's months and a goal's pace follow too). */
+const filesCoverAll = (s: SourceFacts, bank: string | null, period: Period): boolean => everyAccountCovered(s.accounts ?? [], bank, period.start, period.through);
 
 /** Each account whose files reach back before the institution's oldest
  *  stored transaction (or all with files, when none is stored), with the
