@@ -2,7 +2,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, test } from 'bun:test
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { FakeSimplefin, fakeAccount, at, TEST_CERT } from './simplefin-fake';
+import { FakeSimplefin, fakeAccount, at, recentBalanceDate, TEST_CERT } from './simplefin-fake';
 import { setTransportForTests, guardedRequest, UnsafeUrlError, RequestFailedError, MAX_REDIRECTS } from '@/lib/connectors/http';
 import { isPublicAddress } from '@/lib/connectors/net-guard';
 import { ConnectorFailure, ExchangeFailure } from '@/lib/connectors/types';
@@ -179,7 +179,7 @@ describe('reading accounts', () => {
     // negative until the person says it is a card.
     expect([chk.balance, chk.available, card.balance, card.available]).toEqual([1500.25, 1400.25, -432.1, 4567.9]);
     expect(card.transactions[0]).toMatchObject({ source: 'simplefin', currency: 'USD', raw: { id: 'c-buy', amount: '-45.67', description: 'COFFEE SHOP 123', payee: 'Coffee Shop' } });
-    expect(chk.balance_at).toBe('2026-10-08T12:00:00.000Z');
+    expect(chk.balance_at).toBe(new Date(recentBalanceDate() * 1000).toISOString());
   });
 
   test('pending transactions are left out and counted, and so are unreadable ones', async () => {

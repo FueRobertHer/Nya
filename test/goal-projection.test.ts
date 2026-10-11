@@ -105,6 +105,16 @@ describe('contributions from transactions', () => {
     expect(isGrowth({ category: 'interest charge' })).toBe(false);
   });
 
+  test('a category the person or a rule chose wins over Plaid’s label, as everywhere', () => {
+    // Plaid calls it interest; the person re-filed it as a transfer in.
+    expect(isGrowth({ subcategory: 'interest earned', category: 'income' })).toBe(true);
+    expect(isGrowth({ subcategory: 'interest earned', category: 'transfer in', chosen: true })).toBe(false);
+    // Filed as interest, it is interest, whatever Plaid said.
+    expect(isGrowth({ subcategory: 'deposit', category: 'Interest', chosen: true })).toBe(true);
+    const rows = [row('2026-07-03', -500, { subcategory: 'interest earned', category: 'transfer in', chosen: true }), row('2026-07-28', -1.25, { subcategory: 'interest earned', category: 'income' })];
+    expect(flowsFromRows(rows, SAV, ['2026-07'], { start: null, currency: 'USD' })).toEqual([{ month: '2026-07', amount: 500, growth: 1.25 }]);
+  });
+
   test('whole units for a currency without cents', () => {
     const rows = [row('2026-07-05', -1000.4), row('2026-07-06', -1000.4)];
     expect(flowsFromRows(rows, SAV, ['2026-07'], { start: null, currency: 'JPY' })).toEqual([{ month: '2026-07', amount: 2001 }]);

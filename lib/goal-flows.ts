@@ -137,6 +137,11 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
 
   const includeHidden = accounts.some((a) => a.hidden);
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
+  // The bank rows whose category the person chose, or carried across a
+  // re-link (Txn.category_set): read before they are filed, which drops what
+  // says so. A rule's category is marked on the row after (category_by_rule).
+  // Either wins over Plaid's label, as everywhere (FlowRow.chosen).
+  const chosen = new Set(bank.payload.transactions.filter((t) => t.category_set).map((t) => t.transaction_id));
   const [activity, remembered] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // Only which Item each account is at, for when its rows begin: without
@@ -150,7 +155,15 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
   for (const t of activity.transactions) {
     if (!t.account_id) continue;
     const list = rowsOf.get(t.account_id) ?? [];
-    list.push(t);
+    list.push({
+      date: t.date,
+      amount: t.amount,
+      pending: t.pending,
+      account_id: t.account_id,
+      subcategory: t.subcategory,
+      category: t.category,
+      ...(chosen.has(t.transaction_id) || t.category_by_rule ? { chosen: true } : {}),
+    });
     rowsOf.set(t.account_id, list);
   }
   const unread = activity.manual_unread;
