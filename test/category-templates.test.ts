@@ -12,6 +12,7 @@ import {
   setArchived,
   textKeys,
   MAX_GROUPS,
+  MAX_CATEGORIES,
   type CategoryUsage,
   type Taxonomy,
 } from '@/lib/categories';
@@ -284,6 +285,18 @@ describe('the preview', () => {
     const back = planTemplate(simple, TEMPLATES.detailed, facts(simple, { usage: nothing(simple, TEMPLATES.detailed) }));
     expect(shape(back.taxonomy)).toEqual(shape(seed));
     expect(back.categories.filter((c) => c.archive === 'unarchive').map((c) => c.name).sort()).toEqual(['government and non profit', 'home improvement', 'personal care']);
+  });
+
+  test('at the most categories a set can hold, its own aren’t added, nor their groups made empty', () => {
+    const full = seeded(Array.from({ length: MAX_CATEGORIES - 17 }, (_, i) => `kept ${i}`));
+    expect(full.categories.length).toBe(MAX_CATEGORIES);
+    const plan = planTemplate(full, TEMPLATES.freelancer, facts(full, { usage: nothing(full, TEMPLATES.freelancer) }));
+    expect(plan.groups.added).toEqual([]);
+    expect(plan.taxonomy.categories.length).toBe(MAX_CATEGORIES);
+    expect(plan.kept.filter((k) => k.why === 'full').map((k) => k.name)).toEqual(TEMPLATES.freelancer.added.map((a) => a.name));
+    expect(keptLine(plan.kept.find((k) => k.why === 'full')!, 'Freelancer')).toBe(`Client payments isn’t added: you have ${MAX_CATEGORIES} categories, the most there can be.`);
+    // What it can do, it does.
+    expect(named(plan.taxonomy, 'Personal income')).toBeDefined();
   });
 
   test('refused whole when it would leave more groups than a set can have', () => {

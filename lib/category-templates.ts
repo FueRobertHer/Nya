@@ -290,7 +290,7 @@ export function archiveCandidates(t: Taxonomy, template: CategoryTemplate): stri
   return [...out];
 }
 
-/** Groups by id, in their order. */
+/** Groups in their order (then by name, for groups saved with the same). */
 const ordered = (groups: readonly CategoryGroup[]) => [...groups].sort((a, b) => a.order - b.order || a.name.localeCompare(b.name));
 
 /**
@@ -321,7 +321,7 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
 
   // Each category's end state, from the seeded ones the template places and
   // the names it adds that you have already.
-  type End = { name: string; group: string; archived: boolean; wanted: string };
+  type End = { name: string; group: string; archived: boolean };
   const ends = new Map<string, End>();
   const order: string[] = [];
   const place = (c: Category, p: Placement, archive: boolean) => {
@@ -333,7 +333,7 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
       else if (locked(c.group) || locked(target.id)) kept.push({ id: c.id, name: c.name, why: 'group-budget', group: locked(c.group) ? now.name : target.name });
       else group = target.id;
     } else if (!target) kept.push({ id: c.id, name: c.name, why: 'kind', group: now.name });
-    ends.set(c.id, { name: p.name, group, archived: archive, wanted: p.name });
+    ends.set(c.id, { name: p.name, group, archived: archive });
     order.push(c.id);
   };
 
@@ -389,38 +389,18 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
     }
   }
 
-  let categories: Category[] = t.categories.map((c) => {
-    const end = ends.get(c.id);
-    if (!end) return c;
-    const next: Category = { ...c, name: end.name, group: end.group };
-    if (end.archived) next.archived = true;
-    else delete next.archived;
-    return next;
-  });
-
-  // Groups it emptied, with no budget of their own, go; the template's own,
-  // left empty, aren't made.
-  const holds = (id: string) => categories.some((c) => c.group === id) || toAdd.some((a) => groupOfTemplate.get(a.group)?.id === id);
-  const before = new Set(t.groups.map((g) => g.id));
-  const emptied = t.groups.filter((g) => t.categories.some((c) => c.group === g.id) && !holds(g.id) && !locked(g.id));
-  const unmade = added.filter((id) => !holds(id));
-  groups = groups.filter((g) => !emptied.some((e) => e.id === g.id) && !unmade.includes(g.id));
-  const groupsAdded = added.filter((id) => !unmade.includes(id));
-  if (groups.length > MAX_GROUPS) throw new CategoryError(`This template would leave you with more than ${MAX_GROUPS} groups. Delete some first.`, 409);
-
-  // The order: the template's groups first, as it lists them, then the rest
-  // as they were.
-  const first = template.groups.map((tg) => groupOfTemplate.get(tg.name)).filter((g): g is CategoryGroup => !!g && groups.some((x) => x.id === g.id));
-  const rest = ordered(groups).filter((g) => !first.some((f) => f.id === g.id));
-  const inOrder = [...first, ...rest];
-  groups = inOrder.map((g, order) => ({ ...g, order }));
-  // Moved about: the groups you had, that stay, in another order than before.
-  const stayed = ordered(t.groups)
-    .filter((g) => groups.some((x) => x.id === g.id))
-    .map((g) => g.id);
-  const reordered = stayed.join() !== inOrder.filter((g) => before.has(g.id)).map((g) => g.id).join();
-
-  let taxonomy: Taxonomy = { ...t, groups, categories };
+  let taxonomy: Taxonomy = {
+    ...t,
+    groups,
+    categories: t.categories.map((c) => {
+      const end = ends.get(c.id);
+      if (!end) return c;
+      const next: Category = { ...c, name: end.name, group: end.group };
+      if (end.archived) next.archived = true;
+      else delete next.archived;
+      return next;
+    }),
+  };
 
   // Its own categories, added where it says (lib/categories.ts addCategory:
   // a name no category has, a key of its own, the limit).
@@ -443,7 +423,29 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
       kept.push({ id: null, name: a.name, why: 'name-taken', wanted: a.name });
     }
   }
-  categories = taxonomy.categories;
+
+  // Groups it emptied, with no budget of their own, go; the template's own,
+  // left empty (what it was to hold stayed where it was, or couldn't be
+  // added), aren't made.
+  const holds = (id: string) => taxonomy.categories.some((c) => c.group === id);
+  const before = new Set(t.groups.map((g) => g.id));
+  const emptied = t.groups.filter((g) => t.categories.some((c) => c.group === g.id) && !holds(g.id) && !locked(g.id));
+  const unmade = added.filter((id) => !holds(id));
+  groups = taxonomy.groups.filter((g) => !emptied.some((e) => e.id === g.id) && !unmade.includes(g.id));
+  const groupsAdded = added.filter((id) => !unmade.includes(id));
+  if (groups.length > MAX_GROUPS) throw new CategoryError(`This template would leave you with more than ${MAX_GROUPS} groups. Delete some first.`, 409);
+
+  // The order: the template's groups first, as it lists them, then the rest
+  // as they were.
+  const first = template.groups.map((tg) => groupOfTemplate.get(tg.name)).filter((g): g is CategoryGroup => !!g && groups.some((x) => x.id === g.id));
+  const rest = ordered(groups).filter((g) => !first.some((f) => f.id === g.id));
+  const inOrder = [...first, ...rest];
+  // Moved about: the groups you had, that stay, in another order than before.
+  const stayed = ordered(t.groups)
+    .filter((g) => groups.some((x) => x.id === g.id))
+    .map((g) => g.id);
+  const reordered = stayed.join() !== inOrder.filter((g) => before.has(g.id)).map((g) => g.id).join();
+  taxonomy = { ...taxonomy, groups: inOrder.map((g, order) => ({ ...g, order })) };
   if (!isTaxonomy(taxonomy)) throw new Error('A template made a set that is not one');
 
   const groupName = (id: string) => taxonomy.groups.find((g) => g.id === id)?.name ?? ix.groupById.get(id)?.name ?? '';
