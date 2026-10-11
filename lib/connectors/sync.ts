@@ -17,7 +17,10 @@
 // under REFETCH_HOURS old and was whole for every tracked account (no
 // failure, no problem that concerns them, none missing, every balance there
 // and current: lib/connectors/institutions.ts answeredWhole), so a bank held
-// out of the day's total is always asked again.
+// out of the day's total is always asked again. An account that ended
+// (lib/lifecycle.ts) holds nothing there, nor in judging an answer whole for
+// the history below: a card closed at the bank that SimpleFIN stops
+// returning never stalls the history of the accounts beside it.
 //
 // WINDOWS. A request asks for the transactions posted in a window of at most
 // the connector's windowDays (90 for SimpleFIN). The recent window has no end
@@ -64,6 +67,7 @@ import { normalizeRecords, type ImportRow } from '../import/normalize';
 import { MANY_AT_ONCE, StoreRefusedError, StoredDataUnreadableError } from '../repo';
 import { addDays } from '../manual-txn-input';
 import { clearCaches } from '../cache';
+import { endedIdsUnlinked } from '../lifecycle';
 import { loggable } from '../log-safe';
 import type { Ctx } from '../containers';
 import type { RawRecord } from '../import/record';
@@ -352,21 +356,28 @@ async function writeBalances(ctx: Ctx, pairs: { account: ConnectorAccount; remot
 }
 
 /** Whether an answer, as recorded, was whole for the accounts tracked: none
- *  missing, and no problem reported that concerns them or names no bank. */
-function wholeRecord(record: FetchRecord): boolean {
-  return record.failure === null && record.missing.length === 0 && record.problems.every((p) => p.accounts !== null && p.accounts.length === 0);
+ *  missing, and no problem reported that concerns them or names no bank;
+ *  those that ended (`ended`) aside, which hold nothing (see the header). */
+function wholeRecord(record: FetchRecord, ended: ReadonlySet<string>): boolean {
+  return record.failure === null && record.missing.every((id) => ended.has(id)) && record.problems.every((p) => p.accounts !== null && p.accounts.every((id) => ended.has(id)));
 }
 
 /** Stores what a request for balances came to, on the connection entry. Only
  *  a whole answer moves the history on: after one that wasn't, the next
  *  recent window starts where the last whole one ended, so a stretch an
  *  account was missing from is fetched again. */
-async function saveFetch(ctx: Ctx, connection_id: string, record: FetchRecord, answered: { answer: RemoteAnswer; start: string | null; today: string } | null): Promise<void> {
+async function saveFetch(
+  ctx: Ctx,
+  connection_id: string,
+  record: FetchRecord,
+  answered: { answer: RemoteAnswer; start: string | null; today: string } | null,
+  ended: ReadonlySet<string> = new Set()
+): Promise<void> {
   await connectionsStore.update(ctx, connection_id, (current) => {
     if (!current) return null;
     if (!answered) return { ...current, last_fetch: record };
     const tracked = new Set(current.tracked.map((t) => t.remote_id));
-    const moves = answered.start !== null && wholeRecord(record);
+    const moves = answered.start !== null && wholeRecord(record, ended);
     return {
       ...current,
       last_fetch: record,
@@ -429,6 +440,8 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
   const done = { windows: 0, added: 0 };
   const today = utcDay(now);
   const limit = addDays(today, -HISTORY_DAYS);
+  // Accounts that ended hold nothing in judging a window whole (see the header).
+  const ended = await endedIdsUnlinked(ctx, now);
   while (done.windows < BACKFILL_WINDOWS_PER_RUN) {
     const conn = await connectionsStore.get(ctx, connection_id);
     const window = backfillWindow(conn?.history ?? null, def);
@@ -446,6 +459,8 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
       break;
     }
     const remotes = new Set(tracked.map((a) => a.remote_id));
+    const live = tracked.filter((a) => !ended.has(a.account_id));
+    const liveRemotes = new Set(live.map((a) => a.remote_id));
     const byRemote = new Map(answer.accounts.map((a) => [a.remote_id, a]));
     const merged = await mergeRecords(
       ctx,
@@ -461,7 +476,7 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
     // tracked account, or with a problem that concerns one (or names no
     // bank), is noted as failed, and the window is asked again next night.
     const whole =
-      tracked.every((a) => byRemote.has(a.remote_id)) && !answer.problems.some((p) => p.accounts === null || p.accounts.some((id) => remotes.has(id)));
+      live.every((a) => byRemote.has(a.remote_id)) && !answer.problems.some((p) => p.accounts === null || p.accounts.some((id) => liveRemotes.has(id)));
     if (!whole) {
       await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, failed: new Date(now).toISOString() } } : c));
       break;
@@ -501,10 +516,12 @@ export async function syncConnection(
   const def = connectorOf(conn.connector);
   const tracked = await trackedOf(ctx, connection_id);
   const today = utcDay(now);
+  // Accounts that ended hold nothing (see the header).
+  const ended = tracked.length > 0 ? await endedIdsUnlinked(ctx, now) : new Set<string>();
 
   const lastAnswer = conn.last_answer_at ? Date.parse(conn.last_answer_at) : null;
   // Recent and whole for every tracked account: anything less is asked again.
-  const fresh = opts.purpose === 'daily' && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR && answeredWhole(conn, tracked, now);
+  const fresh = opts.purpose === 'daily' && lastAnswer !== null && now - lastAnswer < REFETCH_HOURS * HOUR && answeredWhole(conn, tracked, now, ended);
   let secret: string | null = null;
   let changed = false;
 
@@ -532,7 +549,7 @@ export async function syncConnection(
       return result;
     }
     result.record = await applyAnswer(ctx, tracked, result.answer, now);
-    await saveFetch(ctx, connection_id, result.record, { answer: result.answer, start: request.balancesOnly ? null : request.start, today });
+    await saveFetch(ctx, connection_id, result.record, { answer: result.answer, start: request.balancesOnly ? null : request.start, today }, ended);
     changed = tracked.length > 0;
   }
 

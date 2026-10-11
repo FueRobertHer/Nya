@@ -20,6 +20,7 @@ import { linkedAs, type LinkKind } from './item-products';
 import type { UnshownAccount } from './last-known';
 import { loggable } from './log-safe';
 import { connectorInstitutions, unreadableConnectorInstitution } from './connectors/institutions';
+import { endedNowIds } from './lifecycle';
 import type { ConnectorKind } from './connectors/types';
 
 /**
@@ -364,7 +365,10 @@ export async function computeNetWorth(
   // unhandled rejection while Plaid answers.
   const connected = (opts.connectorsReady ?? Promise.resolve())
     .catch(() => {})
-    .then(() => connectorInstitutions(ctx))
+    // An account that ended holds no bank (lib/connectors/institutions.ts);
+    // closures that can't be read end none, which only holds more.
+    .then(() => vanishedReads.then((v) => (v.lifecycle ? endedNowIds(v.lifecycle) : new Set<string>()), () => new Set<string>()))
+    .then((ended) => connectorInstitutions(ctx, Date.now(), ended))
     .then(
       (list) => ({ ok: true as const, list }),
       (err: unknown) => ({ ok: false as const, err })

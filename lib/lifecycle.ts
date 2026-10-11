@@ -414,6 +414,24 @@ export async function recordReportedCheck(
   });
 }
 
+/**
+ * The ids of the accounts whose end has come (endedNow), as stored, for a
+ * reader that only holds more without them (lib/connectors/: a bank SimpleFIN
+ * reaches is never held for an account that ended): LENIENT, so closures
+ * that can't be read read as none ended, and nothing is let go of on a
+ * failed read. Without links: for accounts that never join one, a manual
+ * account's kind of id, as SimpleFIN's are.
+ */
+export async function endedIdsUnlinked(ctx: Ctx, now: number = Date.now()): Promise<Set<string>> {
+  try {
+    const entries = await readLifecycleEntries(ctx);
+    return entries.size === 0 ? new Set() : endedNowIds(effectiveLifecycle(entries, new Map()), now);
+  } catch (err) {
+    console.error('Account lifecycle: closures could not be read, so no account is taken to have ended here', err instanceof Error ? err.name : typeof err);
+    return new Set();
+  }
+}
+
 /** What the vanished-account guard (lib/vanished.ts) needs of the answers. */
 export type LifecycleAnswers = {
   /** Every id of every account with an end (an assumed closure among them):
