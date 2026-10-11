@@ -14,8 +14,10 @@
 // spending against what is available (the amount plus what rolled over, which
 // is negative after overspending), with the carry beneath it ("+$120 rolled
 // over", "$45 overspent, carried over") and, when a month it counts may be
-// incomplete, that it may be off. The reconcile rule works on what is
-// available. Without carries (not loaded, or none), meters are as before.
+// incomplete, that it may be off. Nothing available is said in words, never
+// as a limit of zero or below: "$37.50 spent, nothing left", and how far over
+// the month began. The reconcile rule works on what is available. Without
+// carries (not loaded, or none), meters are as before.
 // Editing a budget offers rolling it over, from a month chosen (this month by
 // default), turning it off, and resetting its carry to zero (confirmed first).
 //
@@ -47,6 +49,26 @@ function Meter({ spent, limit }: { spent: number; limit: number }) {
       <div className={`meter-fill${meterState(ratio)}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
     </div>
   );
+}
+
+/** Spending against what is available, in words: "$80.00 of $300.00"; with
+ *  nothing available (an overspent carry as deep as the budget, or deeper),
+ *  "$37.50 spent, nothing left". Tagged over once the limit is used up, and
+ *  with nothing left only once something is spent or the month began over. */
+function Amounts({ spent, limit, money }: { spent: number; limit: number; money: (n: number) => string }) {
+  const over = limit > 0 ? spent >= limit : spent > 0 || limit < 0;
+  return (
+    <>
+      {limit > 0 ? `${money(spent)} of ${money(limit)}` : `${money(spent)} spent, nothing left`}
+      {over && <span className="over-tag"> · over</span>}
+    </>
+  );
+}
+
+/** Beneath a meter whose month began over (an overspent carry deeper than
+ *  the budget): by how much, rather than a limit below zero. */
+function BeganOver({ limit, money }: { limit: number; money: (n: number) => string }) {
+  return limit < 0 ? <div className="budget-carry negative">Began the month {money(-limit)} over.</div> : null;
 }
 
 /** What is being edited: a category's budget or a group's own. */
@@ -270,10 +292,17 @@ export default function BudgetsCard({
         ? `Its categories’ budgets add up to ${money(r.categories)}, more than the ${money(r.group)} set for ${m.group.name}, so ${money(r.group)} is the limit.`
         : `Every category in ${m.group.name} has a budget, and they add up to ${money(r.categories)}, less than the ${money(r.group)} set for the group, so ${money(r.categories)} is the limit.`;
     }
-    // With carries, each side is what is available: amount plus carry.
-    return r.binds === 'group'
-      ? `What its categories have available adds up to ${money(r.categories)}, more than the ${money(r.group)} available to ${m.group.name} as a whole, so ${money(r.group)} is the limit.`
-      : `Every category in ${m.group.name} has a budget, and what they have available adds up to ${money(r.categories)}, less than the ${money(r.group)} available to the group as a whole, so ${money(r.categories)} is the limit.`;
+    // With carries, each side is what is available: amount plus carry, which
+    // an overspent carry can take to nothing or below: said in words.
+    const other = (n: number) => (n > 0 ? ` (${money(n)})` : '');
+    if (r.binds === 'group') {
+      return r.group > 0
+        ? `What its categories have available adds up to ${money(r.categories)}, more than the ${money(r.group)} available to ${m.group.name} as a whole, so ${money(r.group)} is the limit.`
+        : `Nothing is left of the budget for ${m.group.name} as a whole after what it carried over, so nothing more can be spent in the group, whatever its categories have available${other(r.categories)}.`;
+    }
+    return r.categories > 0
+      ? `Every category in ${m.group.name} has a budget, and what they have available adds up to ${money(r.categories)}, less than the ${money(r.group)} available to the group as a whole, so ${money(r.categories)} is the limit.`
+      : `Every category in ${m.group.name} has a budget, and after what they carried over nothing is left of them, so nothing more can be spent in the group, whatever it has available as a whole${other(r.group)}.`;
   };
 
   /** The carry beneath a meter, or nothing for a budget that doesn't roll over. */
@@ -323,19 +352,14 @@ export default function BudgetsCard({
                   {m.group.name}
                 </span>
                 <span className="budget-amounts">
-                  {noSpending ? (
-                    `${money(m.limit!)} limit`
-                  ) : (
-                    <>
-                      {money(m.spent)} of {money(m.limit!)}
-                      {m.spent >= m.limit! && <span className="over-tag"> · over</span>}
-                    </>
-                  )}
+                  {noSpending ? (m.limit! > 0 ? `${money(m.limit!)} limit` : 'Nothing left') : <Amounts spent={m.spent} limit={m.limit!} money={money} />}
                 </span>
               </div>
               {!noSpending && <Meter spent={m.spent} limit={m.limit!} />}
               {m.reconcile && <div className="budget-reconcile">{m.reconcile.binds === 'group' ? 'Capped by the group’s budget' : 'Limited to its categories’ budgets'}</div>}
+              {/* Opened, its budgets say their own. */}
               {!expanded && carryLine(groupTarget)}
+              {!expanded && <BeganOver limit={m.limit!} money={money} />}
             </button>
             {expanded && (
               <div className="budget-children">
@@ -376,17 +400,15 @@ export default function BudgetsCard({
                               {budget === null ? (
                                 `${money(s)}, no budget`
                               ) : noSpending ? (
-                                `${money(budget)} limit`
+                                budget > 0 ? `${money(budget)} limit` : 'Nothing left'
                               ) : (
-                                <>
-                                  {money(s)} of {money(budget)}
-                                  {s >= budget && <span className="over-tag"> · over</span>}
-                                </>
+                                <Amounts spent={s} limit={budget} money={money} />
                               )}
                             </span>
                           </div>
                           {budget !== null && !noSpending && <Meter spent={s} limit={budget} />}
                           {budget !== null && carryLine(t)}
+                          {budget !== null && <BeganOver limit={budget} money={money} />}
                         </button>
                       )}
                     </div>
@@ -483,8 +505,15 @@ export default function BudgetsCard({
 }
 
 /** The month's total: every group's limit and what counts against it, over
- *  what is available when the month's carries are known. */
-export function budgetTotals(taxonomy: Taxonomy, budgets: Budgets, spent: Readonly<Record<string, number>>, carries: Carries | null = null): { budget: number; spent: number } {
+ *  what is available when the month's carries are known; `any` when there is
+ *  a budget at all (what is available in all can be nothing, or less). */
+export function budgetTotals(
+  taxonomy: Taxonomy,
+  budgets: Budgets,
+  spent: Readonly<Record<string, number>>,
+  carries: Carries | null = null
+): { budget: number; spent: number; any: boolean } {
   const ix = indexTaxonomy(taxonomy);
-  return budgetMeters(ix, withCarry(placeBudgets(budgets, ix), carries), new Map(Object.entries(spent))).total;
+  const meters = budgetMeters(ix, withCarry(placeBudgets(budgets, ix), carries), new Map(Object.entries(spent)));
+  return { ...meters.total, any: meters.groups.some((g) => g.limit !== null) };
 }

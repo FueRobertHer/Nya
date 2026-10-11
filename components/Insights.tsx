@@ -203,7 +203,17 @@ export default function Insights({
         .slice(0, 2);
       for (const { key, name, budget, spent } of flagged) {
         out.push(
-          spent >= budget
+          budget <= 0
+            ? {
+                // Nothing available: said as what was carried over, never "of" a limit of zero or less.
+                key: `budget-${key}`,
+                text:
+                  budget < 0
+                    ? `Over your ${name} budget: overspending carried over left it ${formatMoney(-budget, displayCurrency)} over before this month${spent > 0 ? `, and ${formatMoney(spent, displayCurrency)} is spent` : ''}`
+                    : `Over your ${name} budget: overspending carried over left nothing of it this month, and ${formatMoney(spent, displayCurrency)} is spent`,
+                tone: 'down',
+              }
+            : spent >= budget
             ? {
                 key: `budget-${key}`,
                 text: `Over your ${name} budget: ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,

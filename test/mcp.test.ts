@@ -267,6 +267,11 @@ describe('tools', () => {
     const summary = TOOLS.find((t) => t.name === 'get_budgets')!.summary;
     const base = { month: '2026-10', currency: 'USD', budgets: [], groups: [], total: { budget: 100, spent: 10, available: 100 }, income: null, sources: [], earliest_month: '2026-01', notes: [] as string[] };
     expect(summary(base)).toBe('0 category budgets for 2026-10: 10.00 USD spent of 100.00 USD.');
+    // Nothing left with what rolled over: in words, never a negative available.
+    expect(summary({ ...base, total: { budget: 100, spent: 10, available: -40 } })).toBe(
+      '0 category budgets for 2026-10: 10.00 USD spent of 100.00 USD, nothing left with what rolled over: it began the month 40.00 USD over.'
+    );
+    expect(summary({ ...base, total: { budget: 100, spent: 10, available: 0 } })).toBe('0 category budgets for 2026-10: 10.00 USD spent of 100.00 USD, nothing left with what rolled over.');
     expect(summary({ ...base, notes: ['2026-10 may be incomplete, so what is spent may be off: Chase hasn’t synced since 2026-10-03'] })).toEndWith(
       ' 2026-10 may be incomplete, so what is spent may be off: see notes.'
     );

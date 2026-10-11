@@ -219,7 +219,7 @@ export default function BudgetsTab({
 
   // Every limit and what counts against it, each group's once (lib/budget-set.ts).
   const totals = useMemo(
-    () => (taxonomy && shownBudgets && shownSpent ? budgetTotals(taxonomy, shownBudgets, shownSpent, carries) : { budget: 0, spent: 0 }),
+    () => (taxonomy && shownBudgets && shownSpent ? budgetTotals(taxonomy, shownBudgets, shownSpent, carries) : { budget: 0, spent: 0, any: false }),
     [taxonomy, shownBudgets, shownSpent, carries]
   );
 
@@ -297,8 +297,8 @@ export default function BudgetsTab({
   const totalBudget = totals.budget;
   const totalSpent = totals.spent;
   // With rollover, what is available in all can be nothing or less (an
-  // overspent carry): there are budgets all the same, over at once.
-  const hasTotal = totalBudget !== 0;
+  // overspent carry): there are budgets all the same, said in words.
+  const hasTotal = totals.any;
   const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : totalBudget < 0 || totalSpent > 0 ? 1 : 0;
   // No connection can bring in spending, and none came from anywhere else
   // (rows entered by hand count): say so, rather than "$0 of" every limit.
@@ -320,8 +320,9 @@ export default function BudgetsTab({
           <div className="inst-name">{monthName} budgets</div>
           {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
-              {formatMoney(totalSpent, shownCurrency)} of{' '}
-              {formatMoney(totalBudget, shownCurrency)}
+              {totalBudget > 0
+                ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
             </div>
           )}
         </div>

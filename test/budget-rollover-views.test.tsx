@@ -34,6 +34,7 @@ const id = (t: Taxonomy, name: string) => t.categories.find((c) => c.name === na
 const FOOD = taxonomy.groups.find((g) => g.name === 'Food')!.id;
 const GROCERIES = id(taxonomy, 'groceries');
 const RESTAURANTS = id(taxonomy, 'restaurants');
+const COFFEE = id(taxonomy, 'coffee');
 
 const carry = (over: Partial<Carry>): Carry => ({ carry: 0, from: addMonths(NOW, -2), why: 'start', start: addMonths(NOW, -2), uncertain: [], ...over });
 const carries = (categories: Record<string, Partial<Carry>>, groups: Record<string, Partial<Carry>> = {}): Carries => ({
@@ -88,8 +89,51 @@ describe('the meters, against what is available', () => {
         carries={carries({ [GROCERIES]: { carry: -150 } })}
       />
     );
-    expect(text(html)).toContain('Groceries $0.00 of -$50.00 · over');
+    // Said in words, never as a limit below zero.
+    expect(text(html)).toContain('Groceries $0.00 spent, nothing left · over $150.00 overspent, carried over Began the month $50.00 over.');
+    expect(text(html)).not.toContain('-$');
     expect(html).toContain('meter-fill over" style="width:100%"');
+  });
+
+  test('a carry that uses up the budget exactly: nothing left, and over only once something is spent', () => {
+    const at = (spent: number) =>
+      renderToStaticMarkup(
+        <BudgetsCard
+          taxonomy={taxonomy}
+          budgets={{ categories: { [GROCERIES]: { amount: 100 } }, groups: {} }}
+          spent={{ [GROCERIES]: spent }}
+          currency="USD"
+          editable
+          noSpending={false}
+          onSave={async () => true}
+          open={[FOOD]}
+          carries={carries({ [GROCERIES]: { carry: -100 } })}
+        />
+      );
+    expect(text(at(0))).toContain('Groceries $0.00 spent, nothing left $100.00 overspent, carried over');
+    expect(at(0)).not.toContain('over-tag');
+    expect(at(0)).not.toContain('Began the month');
+    expect(at(0)).toContain('meter-fill" style="width:0%"');
+    expect(text(at(12))).toContain('Groceries $12.00 spent, nothing left · over');
+    expect(at(12)).toContain('meter-fill over" style="width:100%"');
+  });
+
+  test('the reconcile rule with nothing left on one side says so in words', () => {
+    const own = card({
+      budgets: { categories: { [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 } }, groups: { [FOOD]: { amount: 350 } } },
+      carries: carries({}, { [FOOD]: { carry: -500 } }),
+    });
+    expect(own).toContain('Food $200.00 spent, nothing left · over');
+    expect(own).toContain('Nothing is left of the budget for Food as a whole after what it carried over, so nothing more can be spent in the group, whatever its categories have available ($400.00).');
+    expect(own).not.toContain('-$');
+    // Every category in it budgeted, so theirs can bind.
+    const all = Object.fromEntries(taxonomy.categories.filter((c) => c.group === FOOD).map((c) => [c.id, { amount: 10 }]));
+    const theirs = card({
+      budgets: { categories: { ...all, [GROCERIES]: { amount: 300 }, [RESTAURANTS]: { amount: 100 }, [COFFEE]: { amount: 50 } }, groups: { [FOOD]: { amount: 350 } } },
+      carries: carries({ [GROCERIES]: { carry: -400 }, [RESTAURANTS]: { carry: -150 }, [COFFEE]: { carry: -100 } }),
+    });
+    expect(theirs).toContain('Food $200.00 spent, nothing left · over');
+    expect(theirs).toContain('Every category in Food has a budget, and after what they carried over nothing is left of them, so nothing more can be spent in the group, whatever it has available as a whole ($350.00).');
   });
 
   test('a group’s own budget rolling over: its carry beneath its own amount, and the reconcile rule over what is available', () => {
@@ -313,7 +357,8 @@ describe('the Budgets tab, with the month loaded', () => {
         budgetMonth={state(view({ carries: carries({ [GROCERIES]: { carry: -500 } }) }))}
       />
     );
-    expect(text(html)).toContain('$80.00 of -$200.00');
+    expect(text(html)).toContain(`${new Date().toLocaleDateString(undefined, { month: 'long' })} budgets $80.00 spent, nothing left`);
+    expect(text(html)).not.toContain('of -$');
     expect(html).toContain('meter-fill over" style="width:100%"');
   });
 
@@ -427,6 +472,17 @@ describe('Home’s budget alerts weigh what is available', () => {
     expect(alerts(null)).toContain('Over your groceries budget: $320.00 of $300.00');
     expect(alerts(carries({ [GROCERIES]: { carry: 150 } }))).not.toContain('groceries budget');
     expect(alerts(carries({ [GROCERIES]: { carry: -50 } }))).toContain('Over your groceries budget: $320.00 of $250.00');
+  });
+
+  test('nothing available after what was overspent: its own sentence, never "of" a limit of zero or less', () => {
+    expect(alerts(carries({ [GROCERIES]: { carry: -350 } }))).toContain(
+      'Over your groceries budget: overspending carried over left it $50.00 over before this month, and $320.00 is spent'
+    );
+    expect(alerts(carries({ [GROCERIES]: { carry: -300 } }))).toContain('Over your groceries budget: overspending carried over left nothing of it this month, and $320.00 is spent');
+    const none = text(renderToStaticMarkup(<Insights txns={[]} budgets={budgets} taxonomy={taxonomy} accounts={[]} budgetCarries={carries({ [GROCERIES]: { carry: -350 } })} />));
+    expect(none).toContain('Over your groceries budget: overspending carried over left it $50.00 over before this month');
+    expect(none).not.toContain('is spent');
+    for (const t of [alerts(carries({ [GROCERIES]: { carry: -350 } })), none]) expect(t).not.toContain('of -$');
   });
 
   test('the dashboard passes this month’s carries, once loaded', () => {
