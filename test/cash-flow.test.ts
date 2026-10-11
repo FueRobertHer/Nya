@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import {
   cashFlow,
   cashFlowNotes,
+  drawnNodeOf,
   flowGraph,
   historyNote,
   inPeriod,
@@ -232,6 +233,11 @@ describe('the chart’s nodes and links', () => {
     expect(g.nodes.filter((x) => x.column === 0).map((x) => x.label)).toEqual(['Payer 1', 'Payer 2']);
   });
 
+  test('seven large payers are drawn as seven: the seventh would be alone in Other income', () => {
+    const g = flowGraph(flowWith([1800, 1700, 1600, 1500, 1400, 1300, 1200], { Eating: [1000] }));
+    expect(g.nodes.filter((x) => x.column === 0).map((x) => x.label)).toEqual(['Payer 1', 'Payer 2', 'Payer 3', 'Payer 4', 'Payer 5', 'Payer 6', 'Payer 7']);
+  });
+
   test('at most six payers stand alone, however large the rest', () => {
     const g = flowGraph(flowWith([1800, 1700, 1600, 1500, 1400, 1300, 1200, 1100], { Eating: [1000] }));
     const sources = g.nodes.filter((x) => x.column === 0);
@@ -336,6 +342,27 @@ describe('the rows behind a node: what a tap shows', () => {
   });
 });
 
+describe('what the chart marks for a pick from its table', () => {
+  test('the node itself when drawn; for a folded payer Other income, for a folded category its group’s Other, else its group', () => {
+    const f = flowWith([5000, 300, 100, 50], { Eating: [450, 10, 8], Fees: [20, 15] });
+    const g = flowGraph(f);
+    const eating = f.groups.find((x) => x.name === 'Eating')!;
+    const fees = f.groups.find((x) => x.name === 'Fees')!;
+    const big = f.payers[0];
+    expect(drawnNodeOf(f, g, `payer:${big.key}`)).toBe(`payer:${big.key}`);
+    expect(drawnNodeOf(f, g, `payer:${f.payers[3].key}`)).toBe('other-income');
+    expect(drawnNodeOf(f, g, `category:${eating.categories[0].id}`)).toBe(`category:${eating.categories[0].id}`);
+    expect(drawnNodeOf(f, g, `category:${eating.categories[2].id}`)).toBe(`other:${eating.id}`);
+    // Fees is under 3%: it ends at its group, which holds its categories.
+    expect(drawnNodeOf(f, g, `category:${fees.categories[0].id}`)).toBe(`group:${fees.id}`);
+    expect(drawnNodeOf(f, g, `group:${fees.id}`)).toBe(`group:${fees.id}`);
+    expect(drawnNodeOf(f, g, 'total')).toBe('total');
+    // Nothing for one that isn't there.
+    expect(drawnNodeOf(f, g, 'payer:nobody')).toBeNull();
+    expect(drawnNodeOf(f, g, 'category:gone')).toBeNull();
+  });
+});
+
 describe('the periods', () => {
   const months = (key: Parameters<typeof periodOf>[0], today: string) => periodOf(key, today).months;
 
@@ -392,7 +419,7 @@ describe('the transactions held', () => {
     // March 2 a year back, a day after the twelve months begin.
     const now = Date.parse('2028-03-01T04:00:00Z');
     const p = periodOf('last-12-months', '2028-02-29');
-    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("Nya holds the last 365 days of transactions, from Mar 2, 2027 on, so this period's first days aren't in it.");
+    expect(historyNote(p, [{ date: '2027-03-02' }], now)).toBe("The Activity tab loads the last 365 days of transactions, from Mar 2, 2027 on, so this period's first days aren't in it.");
     expect(historyNote(periodOf('last-3-months', '2028-02-29'), [{ date: '2027-03-02' }], now)).toBeNull();
   });
 
@@ -404,6 +431,17 @@ describe('the transactions held', () => {
     // With nothing at all, nothing is said of a history: the chart says there is nothing.
     expect(historyNote(ytd, [], now)).toBeNull();
   });
+
+  test('a history reaching back to the window’s first days is no late start, however quiet the period’s first days', () => {
+    // The last evening of October: the window starts October 31 a year back,
+    // the twelve months on November 1, and the first transaction was November 3.
+    const now = Date.parse('2026-10-31T18:00:00Z');
+    const year = periodOf('last-12-months', '2026-10-31');
+    expect(historyNote(year, [{ date: '2025-11-03' }, { date: '2026-10-20' }], now)).toBeNull();
+    // A week in, still none; more than a week in, the history begins late.
+    expect(historyNote(year, [{ date: '2025-11-07' }], now)).toBeNull();
+    expect(historyNote(year, [{ date: '2025-11-08' }], now)).toBe('The earliest transaction here is from Nov 8, 2025, so this period may be missing what came before it.');
+  });
 });
 
 describe('what is said beside the chart', () => {
@@ -413,13 +451,23 @@ describe('what is said beside the chart', () => {
 
   test('what it leaves out, by the totals’ rules: transfers, exclusions, a rule’s hides, unreadable exclusions, other currencies, refunds', () => {
     expect(notes().counted).toEqual([
-      'Transfers, cash withdrawals and loan payments are left out, as in every total (3 here). So are 1 transaction you excluded and 1 a rule hides.',
+      "Transfers, cash withdrawals and loan payments are left out, as in the month's totals (3 here). So are 1 transaction you excluded and 1 a rule hides.",
       "Whether you excluded 1 transaction couldn't be read, so it counts here.",
       "1 transaction in EUR isn't in these totals, which are in USD.",
-      'A refund counts as money in, as in every total, never as less spending in its category.',
+      "A refund counts as money in, as in the month's totals, never as less spending in its category.",
     ]);
     const plain = cashFlow([row('2026-09-02', 'Pay', -10, { category: 'income' })], inSep, 'USD', ix);
-    expect(notes({ flow: plain }).counted).toEqual(['Transfers, cash withdrawals and loan payments are left out, as in every total.']);
+    expect(notes({ flow: plain }).counted).toEqual(["Transfers, cash withdrawals and loan payments are left out, as in the month's totals."]);
+  });
+
+  test('what the load couldn’t read comes first, each once, as a sentence', () => {
+    const read = ["Manual accounts: couldn't be read, so transactions entered for them aren't shown", "Your rules couldn't be read, so none are applied until they can be: transactions show as the bank and you have them.", "Manual accounts: couldn't be read, so transactions entered for them aren't shown"];
+    const gaps = notes({ read, stopped: [{ institution_name: 'Chase', last_ok_at: '2026-09-12T15:00:00.000Z' }] }).gaps;
+    expect(gaps.slice(0, 2)).toEqual([
+      "Manual accounts: couldn't be read, so transactions entered for them aren't shown.",
+      "Your rules couldn't be read, so none are applied until they can be: transactions show as the bank and you have them.",
+    ]);
+    expect(gaps[2]).toContain("Chase hasn't synced since");
   });
 
   test('connections that may leave it short, with the months they touch', () => {

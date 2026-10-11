@@ -9,7 +9,7 @@
 // one says when, this one says into what.
 //
 // THE TOTALS' OWN FIGURES. The flows are lib/cash-flow.ts's, from the rows the
-// tab totals, by the rules every total follows: the money in is the tab's
+// tab totals, by the rules the month's totals follow: the money in is the tab's
 // money in for the same months, and spending by category the Budgets tab's,
 // to the cent, in the one currency the tab's totals are in. What it leaves
 // out, and what may be missing from the period, is said beside it.
@@ -26,12 +26,13 @@
 // image to a screen reader: its text alternative is the table under it, every
 // flow with its amount, each row's name a button that does what a tap does.
 
-import { Fragment, useMemo, useState } from 'react';
+import { Fragment, useMemo, useState, type Ref } from 'react';
 import { compactMoney, formatMoney } from '@/lib/format';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import {
   cashFlow,
   cashFlowNotes,
+  drawnNodeOf,
   flowGraph,
   inPeriod,
   isPeriodKey,
@@ -54,6 +55,7 @@ import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transa
 // Stable empty defaults, as in MonthBreakdown.
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
+const NO_NOTES: readonly string[] = [];
 
 /** A label's text size in the viewBox, as the other charts' ticks. */
 const LABEL_SIZE = 10;
@@ -93,9 +95,12 @@ function linkTone(source: FlowNode, target: FlowNode): string {
 }
 
 /** What a node is, in a sentence, for its tooltip: "Food: $640.00, 41
- *  transactions", and what a fold holds. */
-function nodeTitle(n: FlowNode, currency: string | null): string {
-  const what = `${n.label}: ${formatMoney(n.value, currency)}${n.transactions > 0 ? `, ${plural(n.transactions, 'transaction')}` : ''}`;
+ *  transactions", and what a fold holds. The middle says both sides, since
+ *  its transactions are money in and money out alike. */
+function nodeTitle(n: FlowNode, flow: CashFlow): string {
+  const c = flow.currency;
+  if (n.kind === 'total') return `${n.label}: ${formatMoney(flow.money_in, c)} in and ${formatMoney(flow.money_out, c)} out, ${plural(n.transactions, 'transaction')}`;
+  const what = `${n.label}: ${formatMoney(n.value, c)}${n.transactions > 0 ? `, ${plural(n.transactions, 'transaction')}` : ''}`;
   return n.members ? `${what} (${n.members.map((m) => m.name).join(', ')})` : what;
 }
 
@@ -145,14 +150,20 @@ function hitBoxes(b: SankeyNodeBox, label: Label | null): { x: number; y: number
 }
 
 /** Says, above the Activity list, which node's transactions it is showing,
- *  and puts the month back. */
-export function FlowShown({ pick, count, onClear }: { pick: FlowPick; count: number; onClear: () => void }) {
+ *  and puts the month back. Focusable (`focusRef`), so a pick made from the
+ *  table by keyboard can move focus here, where the list now is. A node with
+ *  no rows now is one no longer in the cash flow (a fold that changed shape, a
+ *  category whose transactions all moved): said so, never that a payer's or a
+ *  category's transactions are gone. */
+export function FlowShown({ pick, count, onClear, focusRef }: { pick: FlowPick; count: number; onClear: () => void; focusRef?: Ref<HTMLDivElement> }) {
   const today = localDate();
   const caption = periodCaption(periodOf(pick.period, today), today);
   return (
-    <div className="flow-shown" role="status">
+    <div className="flow-shown" role="status" ref={focusRef} tabIndex={-1}>
       <span>
-        {pick.label}, {caption}, from the cash flow: {count === 0 ? 'none of its transactions are here now' : plural(count, 'transaction')}.
+        {count === 0
+          ? `${pick.label}, ${caption}, is no longer in the cash flow, so nothing is listed.`
+          : `${pick.label}, ${caption}, from the cash flow: ${plural(count, 'transaction')}.`}
       </span>
       <button className="secondary" onClick={onClear}>
         Back to the month
@@ -168,8 +179,11 @@ export default function CashFlowSankey({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  notes = NO_NOTES,
   pick = null,
   onPick,
+  period: shown,
+  onPeriod,
   initialPeriod = 'this-month',
 }: {
   /** Every row the Activity tab has loaded (lib/activity.ts). */
@@ -182,14 +196,24 @@ export default function CashFlowSankey({
   incomplete?: Incomplete[];
   stopped?: Stopped[];
   withoutTransactions?: NoTransactionsView;
+  /** What the load couldn't read, as the Activity list says it (a manual
+   *  account's rows, SimpleFIN's accounts, the rules, the categories): said
+   *  beside the chart first, since each can leave its figures short. */
+  notes?: readonly string[];
   /** The node whose transactions the list shows, and how to show another's
    *  (null puts the list back). Without onPick, nothing can be tapped. */
   pick?: FlowPick | null;
   onPick?: (pick: FlowPick | null) => void;
-  /** The period it opens on. */
+  /** The period shown, when the caller keeps it, and how to change it: the
+   *  Activity tab keeps it beside the pick, so a reload of the transactions,
+   *  which shows a spinner in this card's place, brings it back with the
+   *  pick. Without it, the card keeps its own, from `initialPeriod`. */
+  period?: PeriodKey;
+  onPeriod?: (period: PeriodKey) => void;
   initialPeriod?: PeriodKey;
 }) {
-  const [periodKey, setPeriodKey] = useState<PeriodKey>(initialPeriod);
+  const [own, setOwn] = useState<PeriodKey>(initialPeriod);
+  const periodKey = shown ?? own;
   const today = localDate();
   const period = useMemo(() => periodOf(periodKey, today), [periodKey, today]);
   const caption = periodCaption(period, today);
@@ -197,12 +221,15 @@ export default function CashFlowSankey({
   const flow = useMemo(() => cashFlow(txns, inPeriod(period), currency, ix), [txns, period, currency, ix]);
   const graph = useMemo(() => flowGraph(flow), [flow]);
   const layout = useMemo(() => layoutSankey(graph.nodes, graph.links), [graph]);
-  const notes = useMemo(
-    () => cashFlowNotes({ flow, period, rows: txns, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) }),
-    [flow, period, txns, incomplete, stopped, withoutTransactions, today]
+  const said = useMemo(
+    () => cashFlowNotes({ flow, period, rows: txns, read: notes, incomplete, stopped, view: withoutTransactions, today, day: (at) => instantDay(at) ?? at.slice(0, 10) }),
+    [flow, period, txns, notes, incomplete, stopped, withoutTransactions, today]
   );
   const byId = useMemo(() => new Map(graph.nodes.map((n) => [n.id, n])), [graph]);
   const picked = pick && pick.period === periodKey ? pick.node : null;
+  // What the chart marks for it: the node itself, or, for one from the table
+  // the chart folds or leaves to its group, the node that holds it.
+  const marked = picked ? drawnNodeOf(flow, graph, picked) : null;
 
   const choose = (node: string, label: string) => {
     if (!onPick) return;
@@ -222,7 +249,8 @@ export default function CashFlowSankey({
         value={periodKey}
         onChange={(e) => {
           if (!isPeriodKey(e.target.value)) return;
-          setPeriodKey(e.target.value);
+          setOwn(e.target.value);
+          onPeriod?.(e.target.value);
           // The list showed a node of the period left: it goes back too.
           if (pick) onPick?.(null);
         }}
@@ -255,13 +283,13 @@ export default function CashFlowSankey({
           </div>
 
           <svg
-            className={`sankey-svg${picked ? ' sankey-picking' : ''}`}
+            className={`sankey-svg${marked ? ' sankey-picking' : ''}`}
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             role="img"
             aria-label={summaryText(flow, caption)}
           >
             {layout.links.map((l) => {
-              const lit = picked !== null && (picked === 'total' || l.source === picked || l.target === picked);
+              const lit = marked !== null && (marked === 'total' || l.source === marked || l.target === marked);
               return <path key={`${l.source}>${l.target}`} className={`sankey-link ${linkTone(byId.get(l.source)!, byId.get(l.target)!)}${lit ? ' lit' : ''}`} d={l.path} />;
             })}
             {layout.nodes.map((b) => {
@@ -271,10 +299,10 @@ export default function CashFlowSankey({
               return (
                 <g
                   key={b.id}
-                  className={`sankey-node ${toneOf(n)}${tappable ? ' tappable' : ''}${picked === b.id ? ' picked' : ''}`}
+                  className={`sankey-node ${toneOf(n)}${tappable ? ' tappable' : ''}${marked === b.id ? ' picked' : ''}`}
                   onClick={tappable ? () => choose(n.id, n.label) : undefined}
                 >
-                  <title>{nodeTitle(n, c)}</title>
+                  <title>{nodeTitle(n, flow)}</title>
                   {/* At least a pixel, so the thinnest node still shows. */}
                   <rect className="sankey-bar" x={b.x} y={b.y} width={b.width} height={Math.max(b.height, 1)} rx={1} />
                   {b.label && label && (
@@ -322,8 +350,8 @@ export default function CashFlowSankey({
         </>
       )}
 
-      {notes.counted.length > 0 && <div className="chart-note">{notes.counted.join(' ')}</div>}
-      {notes.gaps.map((n) => (
+      {said.counted.length > 0 && <div className="chart-note">{said.counted.join(' ')}</div>}
+      {said.gaps.map((n) => (
         <div className="stale-note" key={n}>
           {n}
         </div>

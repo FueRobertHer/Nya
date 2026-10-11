@@ -6,8 +6,12 @@
 // assembly, hidden accounts left out unless asked for), and worked out by the
 // flows the Activity tab's cash flow chart draws (lib/cash-flow.ts), so the
 // chart, this answer and /api/v1/spending agree to the cent: money in and out
-// are the same, and so is spending by category and by group. Unfolded: every
-// payer and every category is listed; the chart's folds are only its own.
+// are the same, and so is spending by category and by group, but for a row no
+// category could be filed under (only past MAX_CATEGORIES), which this counts
+// under the uncategorized category, as the Budgets tab does (lib/categories.ts
+// filedId), where spending's categories keep its words and its groups leave it
+// out. Unfolded: every payer and every category is listed; the chart's folds
+// are only its own.
 //
 // STRICT, as the assembly is: hidden accounts or accounts' ends that can't be
 // read fail the answer (lib/api-http.ts), and an institution or a manual

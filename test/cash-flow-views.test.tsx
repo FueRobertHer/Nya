@@ -160,9 +160,9 @@ describe('the chart', () => {
 
   test('says what it leaves out, as the totals do, and what is in another currency', () => {
     const t = text(sankey());
-    expect(t).toContain('Transfers, cash withdrawals and loan payments are left out, as in every total (1 here). So is 1 transaction you excluded.');
+    expect(t).toContain("Transfers, cash withdrawals and loan payments are left out, as in the month's totals (1 here). So is 1 transaction you excluded.");
     expect(t).toContain("1 transaction in EUR isn't in these totals, which are in USD.");
-    expect(t).toContain('A refund counts as money in, as in every total, never as less spending in its category.');
+    expect(t).toContain("A refund counts as money in, as in the month's totals, never as less spending in its category.");
   });
 
   test('colors are the app’s variables, never a color of its own, and labels sit outside their nodes', () => {
@@ -198,6 +198,20 @@ describe('the chart', () => {
     expect(html).not.toContain('<button');
   });
 
+  test('the middle node’s tooltip says both sides, since its transactions are money in and out alike', () => {
+    expect(sankey()).toContain('<title>Everything counted: $3,138.50 in and $2,881.30 out, 7 transactions</title>');
+  });
+
+  test('a pick from the table the chart folds marks the node that holds it, and lights its ribbon rather than dimming them all', () => {
+    const payers = [row(day(1), 'Big Employer', -100_000, 'income'), ...['Ann', 'Bo', 'Cy'].map((name) => row(day(2), name, -500, 'income'))];
+    const html = sankey({ txns: [...payers, row(day(3), 'Landlord', 30_000, 'rent and utilities')], pick: { period: 'this-month', node: 'payer:bo', label: 'Bo' } });
+    expect(html).toContain('sankey-svg sankey-picking');
+    expect(html).toMatch(/<g class="sankey-node in tappable picked"><title>Other income:/);
+    expect((html.match(/sankey-link[^"]* lit"/g) ?? []).length).toBe(1);
+    // A pick of something no longer there dims nothing.
+    expect(sankey({ pick: { period: 'this-month', node: 'payer:nobody', label: 'Nobody' } })).not.toContain('sankey-picking');
+  });
+
   test('the node whose transactions are listed is marked, and its ribbons lit', () => {
     const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
     const html = sankey({ pick: { period: 'this-month', node: `group:${food}`, label: 'Food' } });
@@ -206,6 +220,44 @@ describe('the chart', () => {
     expect((html.match(/sankey-link[^"]* lit"/g) ?? []).length).toBe(3);
     // A pick from another period marks nothing here.
     expect(sankey({ pick: { period: 'last-month', node: `group:${food}`, label: 'Food' } })).not.toContain('picked');
+  });
+});
+
+describe('the period, kept beside the pick', () => {
+  test('a period kept by the caller is the one shown, with the pick it belongs to marked', () => {
+    const food = taxonomy.groups.find((g) => g.name === 'Food')!.id;
+    const html = sankey({ period: 'last-3-months', onPeriod: () => {}, pick: { period: 'last-3-months', node: `group:${food}`, label: 'Food' } });
+    expect(html).toContain('<option value="last-3-months" selected="">');
+    expect(text(html)).toContain(periodCaption(periodOf('last-3-months', today), today));
+    expect(html).toContain('class="sankey-node out tappable picked"');
+    // The card's own first period gives way to it.
+    expect(sankey({ period: 'last-month', initialPeriod: 'this-month' })).toContain('<option value="last-month" selected="">');
+  });
+
+  test('the Activity tab keeps it beside the pick, so a reload, which shows a spinner in the card’s place, brings both back', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
+    const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
+    expect(mount).toContain('period={flowPeriod}');
+    expect(mount).toContain('onPeriod={setFlowPeriod}');
+    expect(source).toContain('const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");');
+  });
+});
+
+describe('what the load couldn’t read, beside the chart', () => {
+  const manual = "Manual accounts: couldn't be read, so transactions entered for them aren't shown";
+
+  test('said first among what may be missing, as a sentence', () => {
+    const html = sankey({ notes: [manual, 'Your rules couldn’t be read, so none are applied until they can be: transactions show as the bank and you have them.'] });
+    expect(html).toContain('<div class="stale-note">Manual accounts: couldn&#x27;t be read, so transactions entered for them aren&#x27;t shown.</div>');
+    expect(text(html)).toContain('Your rules couldn’t be read, so none are applied until they can be');
+    // Even with nothing to draw: the period may only look empty.
+    expect(text(sankey({ txns: [], notes: ['Could not load transactions.'] }))).toContain('Could not load transactions.');
+  });
+
+  test('the Activity tab passes its notes: the chart says them as well as the list', () => {
+    const html = renderToStaticMarkup(<MonthBreakdown txns={ROWS} notes={[manual]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    expect(html).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
+    expect(html).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
   });
 });
 
@@ -272,7 +324,12 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
   test('the list says which node it shows, from which months, and puts the month back', () => {
     const t = text(renderToStaticMarkup(<FlowShown pick={pick} count={4} onClear={() => {}} />));
     expect(t).toBe(`Food, ${periodCaption(periodOf('last-3-months', today), today)}, from the cash flow: 4 transactions. Back to the month`);
-    expect(text(renderToStaticMarkup(<FlowShown pick={pick} count={0} onClear={() => {}} />))).toContain('none of its transactions are here now');
+    // A node no longer there (a fold that changed shape, say) is said to be gone, never its transactions.
+    expect(text(renderToStaticMarkup(<FlowShown pick={{ ...pick, node: 'other-income', label: 'Other income' }} count={0} onClear={() => {}} />))).toBe(
+      `Other income, ${periodCaption(periodOf('last-3-months', today), today)}, is no longer in the cash flow, so nothing is listed. Back to the month`
+    );
+    // Focus can be moved to it, where the list is, after a pick.
+    expect(renderToStaticMarkup(<FlowShown pick={pick} count={4} onClear={() => {}} />)).toContain('<div class="flow-shown" role="status" tabindex="-1">');
   });
 
   test('the Activity tab mounts the chart with what its months say, and lists a tapped node’s rows through its own search', () => {

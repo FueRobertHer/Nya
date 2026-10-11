@@ -881,9 +881,12 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['payers[].transactions', 'How many transactions that sums.'],
       [
         'payers[].refund',
-        'Every one of its transactions is filed under a spending category it names: money back on spending, a refund or a return. A refund counts as money in, as in every total, never as less spending in its category.',
+        'Every one of its transactions is filed under a spending category it names: money back on spending, a refund or a return. A refund counts as money in, as in spending’s totals and the app’s month and budgets, never as less spending in its category.',
       ],
-      ['groups', 'Money out by category group, most first, each with its categories: they add up to money_out, and are the same as spending’s groups and categories.'],
+      [
+        'groups',
+        'Money out by category group, most first, each with its categories: they add up to money_out, filed as the Budgets tab files them, so the same as spending’s groups and categories, but for a transaction no category could be filed under (only past the 500 categories a set holds), which this counts under your uncategorized category.',
+      ],
       ['groups[].id', 'The group’s id; null for one the app hasn’t stored yet.'],
       ['groups[].name', 'Its name.'],
       ['groups[].kind', 'How its categories’ transactions count: "expense", or "income" for money out filed under an income category (a paycheck taken back, say). Transfers never count.'],
@@ -892,7 +895,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['groups[].categories', 'Its categories with money out, most first.'],
       ['groups[].categories[].id', 'The category’s id (see categories); null for one the app hasn’t stored yet.'],
       ['groups[].categories[].name', 'Its name ("other", your uncategorized category, for a transaction that says none).'],
-      ['groups[].categories[].amount', 'What went out in it: the same as spending’s categories[].spent.'],
+      ['groups[].categories[].amount', 'What went out in it.'],
       ['groups[].categories[].transactions', 'How many transactions that sums.'],
       ['transactions', 'Transactions in the range, counted or not.'],
       ['counted', 'Those in these figures.'],

@@ -20,7 +20,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
 import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
-import { instantDay, localMonth } from "@/lib/local-date";
+import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
@@ -36,8 +36,7 @@ import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchRows } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
-import { pickedRows, type FlowPick } from "@/lib/cash-flow";
-import { localDate } from "@/lib/local-date";
+import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -360,8 +359,13 @@ export default function MonthBreakdown({
   const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
   // A node of the cash flow tapped (#41): the list shows its transactions,
   // from every month of its period, until it is cleared or a month is chosen.
+  // The chart's period is kept here beside it: a reload shows a spinner in
+  // the chart's place, and it must come back on the pick's period.
   const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
+  const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");
   const listRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef<HTMLDivElement>(null);
+  const pickedNow = useRef(false);
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -496,6 +500,15 @@ export default function MonthBreakdown({
   );
   const listed = picked ?? monthTxns;
   const visible = useMemo(() => searchRows(listed, { query, tag: filterTag }, tags), [listed, query, filterTag, tags]);
+  // Once a pick has filled the list: the list into view, and focus on the
+  // line saying what it shows, so a pick made from the chart's table by
+  // keyboard goes on from the list rather than from the button left above.
+  useEffect(() => {
+    if (!flowPick || !pickedNow.current) return;
+    pickedNow.current = false;
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    shownRef.current?.focus({ preventScroll: true });
+  }, [flowPick]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -602,11 +615,14 @@ export default function MonthBreakdown({
           incomplete={incomplete}
           stopped={stopped}
           withoutTransactions={withoutTransactions}
+          notes={notes}
           pick={flowPick}
           onPick={(p) => {
+            pickedNow.current = p !== null;
             setFlowPick(p);
-            if (p) listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
           }}
+          period={flowPeriod}
+          onPeriod={setFlowPeriod}
         />
       )}
       {trend.length > 1 && (
@@ -788,7 +804,7 @@ export default function MonthBreakdown({
             {query || filterTag ? ` of ${listed.length}` : ""}
           </div>
         </div>
-        {flowPick && <FlowShown pick={flowPick} count={picked?.length ?? 0} onClear={() => setFlowPick(null)} />}
+        {flowPick && <FlowShown pick={flowPick} count={picked?.length ?? 0} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
         <input
           className="text-input search-input"

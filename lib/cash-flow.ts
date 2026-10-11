@@ -27,8 +27,10 @@
 // (flowGraph). Nothing names a source the rows don't: each is a name on them,
 // the fold, or the money that came from savings or debt (below).
 //
-// A REFUND is money in, as every total counts it (lib/totals.ts), never less
-// spending in its category: a shop that refunded something is among the
+// A REFUND is money in, as the month's totals count it (lib/totals.ts: the
+// Activity tab's, the budgets', the API's; the Plan's spending, with rules of
+// its own, takes refunds off it), never less spending in its category: a shop
+// that refunded something is among the
 // payers, marked a refund when every row of it is filed under a spending
 // category the row names. Not the uncategorized one, where a deposit that
 // says nothing of itself is filed (a paycheck from SimpleFIN, which brings no
@@ -228,7 +230,8 @@ export type FlowGraph = { nodes: FlowNode[]; links: SankeyLinkInput[]; total: nu
 /** The least share of the period's flow a payer or a category is drawn with
  *  on its own: smaller ones fold, so none is an unreadable hairline. */
 export const MIN_SHARE = 0.03;
-/** The most payers drawn on their own. */
+/** The most payers drawn on their own, but for one more when only one would
+ *  be left to fold (fold never folds one alone). */
 export const MAX_PAYERS = 6;
 
 /** What a payer is called on the chart: its name, or that it has none. */
@@ -248,7 +251,8 @@ function fold<T>(items: readonly T[], keep: (t: T, i: number) => boolean): { sho
  * the foot), everything counted, the groups (and the left over, at the foot),
  * and each group's categories. Every amount is the flow's own. A payer drawn
  * on its own takes at least `minShare` of the larger of money in and out, and
- * is among the `maxPayers` largest; the rest fold into Other income. A
+ * is among the `maxPayers` largest (or is the one more that alone would be
+ * left to fold); the rest fold into Other income. A
  * group's categories under `minShare` fold into Other, in its group; a group
  * under it, or whose categories would all fold, ends at its group.
  */
@@ -353,6 +357,24 @@ export function rowIdsOf(flow: CashFlow, graph: FlowGraph, id: string): readonly
   return null;
 }
 
+/**
+ * The node drawn for an id from the chart or its table: the node itself when
+ * it is drawn; else what holds it, a folded payer's Other income, a folded
+ * category's Other in its group, and a category of a group that ends at its
+ * group, that group. Null for an id that isn't there.
+ */
+export function drawnNodeOf(flow: CashFlow, graph: FlowGraph, id: string): string | null {
+  if (graph.nodes.some((n) => n.id === id)) return id;
+  const [kind, rest] = [id.slice(0, id.indexOf(':')), id.slice(id.indexOf(':') + 1)];
+  const drawn = (node: string) => (graph.nodes.some((n) => n.id === node) ? node : null);
+  if (kind === 'payer') return flow.payers.some((p) => p.key === rest) ? drawn('other-income') : null;
+  if (kind === 'category') {
+    const group = flow.groups.find((g) => g.categories.some((c) => c.id === rest));
+    return group ? (drawn(`other:${group.id}`) ?? drawn(`group:${group.id}`)) : null;
+  }
+  return null;
+}
+
 /** A node of the chart, or a row of its table, tapped: the period it was in,
  *  its id, and what it was called then. */
 export type FlowPick = { period: PeriodKey; node: string; label: string };
@@ -441,6 +463,14 @@ export const WINDOW_DAYS = 365;
 /** The first day of that window at `now`. */
 export const windowStart = (now: number = Date.now()): string => new Date(now - WINDOW_DAYS * 86_400_000).toISOString().slice(0, 10);
 
+/** The day `n` days after a calendar day. */
+const daysAfter = (day: string, n: number): string => new Date(Date.parse(`${day}T00:00:00Z`) + n * 86_400_000).toISOString().slice(0, 10);
+
+/** How long after the window's first day the earliest row may be with the
+ *  history still taken to reach back to it: a few quiet days at the start of
+ *  the window are no late start. */
+const QUIET_DAYS = 7;
+
 /** "Mar 2, 2027": a calendar day in words, as it is (never moved by a time
  *  zone). */
 export const dayText = (day: string): string =>
@@ -450,14 +480,18 @@ export const dayText = (day: string): string =>
  * What to say when a period reaches before the transactions held: before the
  * Activity tab's window (`now`), whose first days aren't loaded; or before the
  * earliest transaction there is (`rows`, every row loaded, counted or not),
- * so its first months may be missing what came before it. Null when neither.
+ * when that is well into the window too (more than QUIET_DAYS after its first
+ * day), so the history itself begins late and the period's first months may
+ * be missing what came before it. Null when neither.
  */
 export function historyNote(p: Pick<Period, 'from'>, rows: readonly { date: string }[], now: number = Date.now()): string | null {
   const start = windowStart(now);
-  if (p.from < start) return `Nya holds the last ${WINDOW_DAYS} days of transactions, from ${dayText(start)} on, so this period's first days aren't in it.`;
+  if (p.from < start) return `The Activity tab loads the last ${WINDOW_DAYS} days of transactions, from ${dayText(start)} on, so this period's first days aren't in it.`;
   let earliest: string | null = null;
   for (const t of rows) if (earliest === null || t.date < earliest) earliest = t.date;
-  if (earliest !== null && earliest > p.from) return `The earliest transaction here is from ${dayText(earliest)}, so this period may be missing what came before it.`;
+  if (earliest !== null && earliest > p.from && earliest > daysAfter(start, QUIET_DAYS)) {
+    return `The earliest transaction here is from ${dayText(earliest)}, so this period may be missing what came before it.`;
+  }
   return null;
 }
 
@@ -468,7 +502,11 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
 /**
  * Beside the chart (#41): what may be missing from the period (`gaps`, in the
  * stale notes' words) and what it leaves out by the totals' rules
- * (`counted`). Gaps: an institution whose transactions couldn't be loaded or
+ * (`counted`). Gaps: first, what the load itself couldn't read (`read`: the
+ * Activity list's notes, lib/activity.ts finishActivity's, such as a manual
+ * account's rows, SimpleFIN's accounts, the rules or the categories, each a
+ * reason the figures may be short or filed otherwise), said as it is; then
+ * an institution whose transactions couldn't be loaded or
  * are still importing; a connection that stopped syncing, with the months it
  * may leave short (lib/month-coverage.ts, months as the Activity tab reads
  * them); a bank account or card whose transactions Plaid doesn't provide or
@@ -484,6 +522,8 @@ export function cashFlowNotes(input: {
   period: Period;
   /** Every row loaded, counted or not. */
   rows: readonly FlowRow[];
+  /** What the load couldn't read, as the Activity list says it. */
+  read?: readonly string[];
   incomplete?: readonly Incomplete[];
   stopped?: readonly Stopped[];
   view?: NoTransactionsView;
@@ -496,7 +536,8 @@ export function cashFlowNotes(input: {
   const whole = period.months.length === 1 ? monthName(period.months[0], today) : 'this period';
   /** The months a gap touches, in words: the period's, when it is all of them. */
   const touched = (months: string[]) => (months.length === period.months.length ? whole : monthsText(months, today));
-  const gaps: string[] = [];
+  // Each once, as a sentence.
+  const gaps: string[] = [...new Set((input.read ?? []).map((n) => (/[.!?]$/.test(n) ? n : `${n}.`)))];
 
   const byMonth = period.months.map((m) => ({ m, gaps: monthGaps(m, [...(input.incomplete ?? [])], [...(input.stopped ?? [])]) }));
   const missing = [...new Set(byMonth.flatMap((g) => g.gaps.missing))];
@@ -538,7 +579,7 @@ export function cashFlowNotes(input: {
     ...(hidden > 0 ? [byYou > 0 ? `${hidden} a rule hides` : `${plural(hidden, 'transaction')} a rule hides`] : []),
   ];
   counted.push(
-    `Transfers, cash withdrawals and loan payments are left out, as in every total${flow.transfers > 0 ? ` (${flow.transfers} here)` : ''}.` +
+    `Transfers, cash withdrawals and loan payments are left out, as in the month's totals${flow.transfers > 0 ? ` (${flow.transfers} here)` : ''}.` +
       (excluded.length > 0 ? ` So ${byYou + hidden === 1 ? 'is' : 'are'} ${joinNames(excluded)}.` : '')
   );
   if (flow.exclusion_unknown > 0) {
@@ -546,7 +587,7 @@ export function cashFlowNotes(input: {
     counted.push(`Whether you excluded ${plural(n, 'transaction')} couldn't be read, so ${n === 1 ? 'it counts' : 'they count'} here.`);
   }
   if (flow.left_out_text) counted.push(flow.left_out_text);
-  if (flow.payers.some((p) => p.refund)) counted.push('A refund counts as money in, as in every total, never as less spending in its category.');
+  if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
   const named = withoutNote(view, input.rows.length);
   if (named) counted.push(named);
   return { gaps, counted };
