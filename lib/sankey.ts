@@ -255,40 +255,51 @@ export function layoutSankey(nodes: readonly SankeyNodeInput[], links: readonly 
 // ---- Labels that fit ----
 
 /** Characters about a third of an em wide in a sans serif face. */
-const NARROW = /[ .,:;'!|()[\]{}"ijlrtf’]/;
-/** About four fifths of an em: the widest Latin letters. */
-const WIDE = /[MWmw@%]/;
+const NARROW = /[ .,:;'!|()[\]{}"ijlrtfI’]/;
+/** About an em: the widest. */
+const WIDEST = /[MW@%]/;
+/** Nine tenths of an em. */
+const WIDE = /[mw]/;
 
-/** The width text takes at `size`, by an estimate a little over what a
- *  system sans serif face draws: narrow, wide and full-width characters
- *  (CJK, an emoji) apart from the rest. */
+/** The width text takes at `size`, by an estimate at or a little over what a
+ *  system sans serif face draws (measured against Inter, about as wide as
+ *  iOS's San Francisco and wider than Android's Roboto): narrow, wide and
+ *  full-width characters (CJK, an emoji) apart from the rest. */
 export function textWidth(text: string, size = 10): number {
   let em = 0;
   for (const ch of text) {
     const code = ch.codePointAt(0)!;
     if (code >= 0x2e80) em += 1;
     else if (NARROW.test(ch)) em += 0.32;
-    else if (WIDE.test(ch)) em += 0.84;
-    else if (/[A-Z]/.test(ch)) em += 0.68;
-    else em += 0.58;
+    else if (WIDEST.test(ch)) em += 1;
+    else if (WIDE.test(ch)) em += 0.9;
+    else if (/[A-Z$&#]/.test(ch)) em += 0.68;
+    else em += 0.6;
   }
   return em * size;
 }
 
-/**
- * A label as it fits in `maxWidth`: the name and its amount, with a space
- * between; the name cut with an ellipsis when both don't fit; the amount
- * alone when not even a letter of the name does; null when the amount alone
- * doesn't fit either. Never splits a character written as two (an emoji).
- */
-export function fitLabel(name: string, amount: string, maxWidth: number, size = 10): { name: string; amount: string } | null {
-  const space = textWidth(' ', size);
-  const room = maxWidth - textWidth(amount, size) - space;
-  if (textWidth(name, size) <= room) return { name, amount };
-  const chars = [...name];
+/** Text as it fits in `maxWidth`: whole, or cut with an ellipsis (never
+ *  inside a character written as two, an emoji, nor just after a space), or
+ *  '' when not even a letter does. */
+export function fitText(text: string, maxWidth: number, size = 10): string {
+  if (textWidth(text, size) <= maxWidth) return text;
+  const chars = [...text];
   for (let n = chars.length - 1; n >= 1; n--) {
     const cut = `${chars.slice(0, n).join('').trimEnd()}…`;
-    if (textWidth(cut, size) <= room) return { name: cut, amount };
+    if (textWidth(cut, size) <= maxWidth) return cut;
   }
+  return '';
+}
+
+/**
+ * A label as it fits in `maxWidth` on one line: the name and its amount, with
+ * a space between; the name cut with an ellipsis when both don't fit; the
+ * amount alone when not even a letter of the name does; null when the amount
+ * alone doesn't fit either.
+ */
+export function fitLabel(name: string, amount: string, maxWidth: number, size = 10): { name: string; amount: string } | null {
+  const fitted = fitText(name, maxWidth - textWidth(amount, size) - textWidth(' ', size), size);
+  if (fitted) return { name: fitted, amount };
   return textWidth(amount, size) <= maxWidth ? { name: '', amount } : null;
 }

@@ -270,7 +270,7 @@ describe('the chart’s nodes and links', () => {
     expect([f.net, f.from_savings_or_debt, f.left_over]).toEqual([-500, 500, 0]);
     const g = flowGraph(f);
     const deficit = g.nodes.find((x) => x.kind === 'deficit')!;
-    expect(deficit).toMatchObject({ column: 0, value: 500, label: 'From savings or debt', ids: null });
+    expect(deficit).toMatchObject({ column: 0, value: 500, label: 'Savings or debt', ids: null });
     expect(g.nodes.some((x) => x.kind === 'left-over')).toBe(false);
     expect(g.links.find((k) => k.source === 'deficit')).toEqual({ source: 'deficit', target: 'total', value: 500 });
     // The middle carries what was spent; nothing runs from a group back.

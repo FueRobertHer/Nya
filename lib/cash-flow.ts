@@ -281,7 +281,8 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
     links.push({ source: 'other-income', target: 'total', value });
   }
   if (flow.from_savings_or_debt > 0) {
-    nodes.push({ id: 'deficit', column: 0, side: 'right', kind: 'deficit', label: 'From savings or debt', value: flow.from_savings_or_debt, transactions: 0, ids: null });
+    // Among the sources, so its label says what, not where from.
+    nodes.push({ id: 'deficit', column: 0, side: 'right', kind: 'deficit', label: 'Savings or debt', value: flow.from_savings_or_debt, transactions: 0, ids: null });
     links.push({ source: 'deficit', target: 'total', value: flow.from_savings_or_debt });
   }
 
@@ -346,6 +347,22 @@ export function rowIdsOf(flow: CashFlow, graph: FlowGraph, id: string): readonly
   if (kind === 'group') return flow.groups.find((g) => g.id === rest)?.ids ?? null;
   if (kind === 'category') return flow.groups.flatMap((g) => g.categories).find((c) => c.id === rest)?.ids ?? null;
   return null;
+}
+
+/** A node of the chart, or a row of its table, tapped: the period it was in,
+ *  its id, and what it was called then. */
+export type FlowPick = { period: PeriodKey; node: string; label: string };
+
+/**
+ * The rows a pick shows in the Activity list: its node's rows in its period,
+ * worked out again from the rows as they are now, so a row recategorized or
+ * excluded since leaves it. Empty when the node isn't there now. `today` is
+ * the person's own (lib/local-date.ts localDate).
+ */
+export function pickedRows<T extends FlowRow>(rows: readonly T[], pick: FlowPick, opts: { ix: CategoryIndex; currency: string | null; today: string }): T[] {
+  const flow = cashFlow(rows, inPeriod(periodOf(pick.period, opts.today)), opts.currency, opts.ix);
+  const ids = new Set(rowIdsOf(flow, flowGraph(flow), pick.node) ?? []);
+  return rows.filter((t) => ids.has(t.transaction_id));
 }
 
 // ---- Periods ----

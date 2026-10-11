@@ -35,6 +35,9 @@ import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchRows } from "./txn-search";
+import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
+import { pickedRows, type FlowPick } from "@/lib/cash-flow";
+import { localDate } from "@/lib/local-date";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -355,6 +358,10 @@ export default function MonthBreakdown({
   // After a transaction is given another category: the offer to do the same
   // for every transaction with its name, as a rule (#36).
   const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
+  // A node of the cash flow tapped (#41): the list shows its transactions,
+  // from every month of its period, until it is cleared or a month is chosen.
+  const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -481,7 +488,14 @@ export default function MonthBreakdown({
   // The search reads a row's tags and note too (#40), and the tag filter
   // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
   const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
-  const visible = useMemo(() => searchRows(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
+  // A tapped node's rows, worked out again as the rows change, in place of
+  // the month's; the search and the tag filter narrow them the same way.
+  const picked = useMemo(
+    () => (flowPick && taxonomy ? pickedRows(txns ?? [], flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }) : null),
+    [flowPick, txns, taxonomy, currency],
+  );
+  const listed = picked ?? monthTxns;
+  const visible = useMemo(() => searchRows(listed, { query, tag: filterTag }, tags), [listed, query, filterTag, tags]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -578,6 +592,23 @@ export default function MonthBreakdown({
   return (
     <>
       {addCard}
+      {/* Where the money came from and went (#41), over a period of its own;
+          tapping a node lists its transactions below. */}
+      {taxonomy && (
+        <CashFlowSankey
+          txns={txns}
+          taxonomy={taxonomy}
+          currency={currency}
+          incomplete={incomplete}
+          stopped={stopped}
+          withoutTransactions={withoutTransactions}
+          pick={flowPick}
+          onPick={(p) => {
+            setFlowPick(p);
+            if (p) listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+        />
+      )}
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
@@ -591,7 +622,10 @@ export default function MonthBreakdown({
                 <button
                   key={m}
                   className={`trend-col${m === selected ? " active" : ""}`}
-                  onClick={() => setMonth(m)}
+                  onClick={() => {
+                    setMonth(m);
+                    setFlowPick(null);
+                  }}
                   aria-pressed={m === selected}
                   aria-label={`${monthLabel(m)}: net ${formatMoney(net, currency)}`}
                 >
@@ -746,14 +780,15 @@ export default function MonthBreakdown({
         </div>
       )}
 
-      <div className="card">
+      <div className="card" ref={listRef}>
         <div className="inst-header">
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
             {visible.length}
-            {query || filterTag ? ` of ${monthTxns.length}` : ""}
+            {query || filterTag ? ` of ${listed.length}` : ""}
           </div>
         </div>
+        {flowPick && <FlowShown pick={flowPick} count={picked?.length ?? 0} onClear={() => setFlowPick(null)} />}
 
         <input
           className="text-input search-input"
@@ -793,7 +828,9 @@ export default function MonthBreakdown({
           <p className="empty-note">
             {query || filterTag
               ? "No transactions match your search."
-              : "No transactions this month."}
+              : flowPick
+                ? "None of its transactions are here now."
+                : "No transactions this month."}
           </p>
         ) : (
           <table className="txn-table">
