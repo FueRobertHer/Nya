@@ -1085,6 +1085,7 @@ describe('stores built on the storage seam', () => {
     // Not the records of showings: "sharing" has them (covers).
     expect(keys.slice(keys.indexOf('sharing') + 1)).toEqual([
       'allocation-settings',
+      'budget-months',
       'carried-annotations',
       'categories',
       'connection-notices',
@@ -1099,6 +1100,7 @@ describe('stores built on the storage seam', () => {
       'holdings:history',
       'import-settings',
       'imports',
+      'income-carryover',
       'manual-transactions',
       'planned-items',
       'report-settings',

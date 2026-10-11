@@ -519,6 +519,21 @@ export function periodIn(periods: readonly RolloverPeriod[] | undefined, month: 
   return (periods ?? []).find((p) => p.from <= month && (p.to === undefined || month < p.to)) ?? null;
 }
 
+/** The earliest month whose spending a month's carries and pool count: the
+ *  start of each rollover period covering it, and the income pool's, when
+ *  earlier than the month itself. What a read of the month must reach. */
+export function neededFrom(months: BudgetMonths | null, income: IncomeCarryover | null, month: string): string {
+  let from = month;
+  for (const kind of KINDS) {
+    for (const t of Object.values(months?.[kind] ?? {})) {
+      const p = periodIn(t.rollover, month);
+      if (p && p.from < from) from = p.from;
+    }
+  }
+  if (income?.enabled && income.start < from) from = income.start;
+  return from;
+}
+
 /** Why the carry counts from the month it does: the month rollover was turned
  *  on from (`start`), a reset (`reset`), the first month with transactions
  *  (`data`: the clamp), the first month with this budget after one without
@@ -648,6 +663,38 @@ export function budgetsInMonth(input: MonthInput): MonthBudgets {
   return out;
 }
 
+/** Each budget rolling over in `month` (this month, for the editor), by
+ *  category or group id as placed (a merged category's on the one it went
+ *  into): the month its rollover period began. */
+export function rollingIn(ix: CategoryIndex, budgets: Budgets, months: BudgetMonths | null, month: string): { categories: Record<string, string>; groups: Record<string, string> } {
+  const placed = placeMonths(budgets, months, ix);
+  const open = (m: Map<string, Placed>) =>
+    Object.fromEntries(
+      [...m].flatMap(([id, p]) => {
+        const period = periodIn(p.rollover, month);
+        return period && placedAmount(p, month) !== null ? [[id, period.from]] : [];
+      })
+    );
+  return { categories: open(placed.categories), groups: open(placed.groups) };
+}
+
+/** For each budget with an amount in `month` (this month, for the editor),
+ *  the earliest month a rollover can start from and count: the first of the
+ *  months it has had a budget in without a break up to `month`, at most
+ *  MAX_MONTHS_BACK back (a budget older than the record goes back that far,
+ *  its earlier amounts assumed). By category or group id as placed. */
+export function rolloverStarts(ix: CategoryIndex, budgets: Budgets, months: BudgetMonths | null, month: string): { categories: Record<string, string>; groups: Record<string, string> } {
+  const placed = placeMonths(budgets, months, ix);
+  const floor = earliestStart(month);
+  const first = (p: Placed) => {
+    let m = month;
+    while (m > floor && placedAmount(p, addMonths(m, -1)) !== null) m = addMonths(m, -1);
+    return m;
+  };
+  const of = (m: Map<string, Placed>) => Object.fromEntries([...m].flatMap(([id, p]) => (placedAmount(p, month) !== null ? [[id, first(p)]] : [])));
+  return { categories: of(placed.categories), groups: of(placed.groups) };
+}
+
 /** Placed budgets (lib/budget-set.ts placeBudgets) with each one's carry
  *  added: what is available, for the reconcile rule to work on. */
 export function withCarry(placed: ReturnType<typeof placeBudgets>, carries: Carries | null | undefined): ReturnType<typeof placeBudgets> {
@@ -741,7 +788,9 @@ export type MonthGap =
   /** Something the read couldn't read, in words ("your own categories"). */
   | { kind: 'unread'; what: string }
   /** Transactions that month whose exclusion couldn't be read: counted. */
-  | { kind: 'exclusions'; count: number };
+  | { kind: 'exclusions'; count: number }
+  /** The month isn't over yet: counted only by a month still to come. */
+  | { kind: 'running' };
 
 /** What says whether a month's transactions may be incomplete, gathered by
  *  lib/budget-month.ts from the read. */
@@ -799,6 +848,8 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
       return `${g.what} couldn’t be read`;
     case 'exclusions':
       return `whether you excluded ${g.count} transaction${g.count === 1 ? '' : 's'} couldn’t be read`;
+    case 'running':
+      return 'it isn’t over yet';
   }
 }
 
