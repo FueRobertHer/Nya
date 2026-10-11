@@ -384,7 +384,7 @@ describe('what the transaction’s own layers do to its parts', () => {
     const gone = { ...record, parts: [record.parts[0], { ...record.parts[1], category_id: 'deleted-category' }] };
     const out = expandSplitsAndGroups([row('t1')], inputs({ splits: new Map([['t1', gone]]) }));
     expect(out.rows[1]).toMatchObject({ category: null, category_id: taxonomy.uncategorized, category_name: null, amount: 50 });
-    expect(out.notes).toEqual(['1 part of your split transactions is under a category that no longer exists, so it is uncategorized: edit the split to choose one.']);
+    expect(out.notes).toEqual(['1 part of your split transactions is under a category that no longer exists, so it is uncategorized until you edit the split.']);
   });
 });
 
@@ -553,7 +553,26 @@ describe('groups net their transactions', () => {
     const euro = { ...venmo, iso_currency_code: 'EUR' } as Txn;
     const out = expandSplitsAndGroups([euro, dinner], inputs({ groups: new Map([['g1', group(['t_dinner', 't_venmo'])]]) }));
     expect(out.rows.map((t) => t.transaction_id)).toEqual(['t_venmo', 't_dinner']);
-    expect(out.notes).toEqual(['The transactions in 1 of your groups are in more than one currency now, so they count on their own: a group nets one currency.']);
+    expect(out.notes).toEqual([
+      'The transactions in 1 of your groups are in more than one currency now, so they count on their own, since a group nets one currency. Ungroup it from one of its transactions.',
+    ]);
+    // Each says which group, so it can be ungrouped from it: the list has no row for the group.
+    expect(out.rows.map((t) => t.group_unapplied)).toEqual([
+      { id: 'g1', name: 'Dinner with Sam' },
+      { id: 'g1', name: 'Dinner with Sam' },
+    ]);
+    // Put back whole, nothing of it is left on the transactions.
+    expect(bankRows(expandSplitsAndGroups([euro, dinner], inputs()).rows)).toEqual([euro, dinner]);
+  });
+
+  test('a group dated before the first day read counts on its day, outside what was read: left out with its transactions', () => {
+    // The dinner (October 3) has left what was read; only the payback is here.
+    const out = expandSplitsAndGroups([venmo, coffee], inputs({ groups: new Map([['g1', group(['t_dinner', 't_venmo'])]]), from: '2026-10-05' }));
+    expect(out.rows.map((t) => t.transaction_id)).toEqual(['t_coffee']);
+    expect(summarize(out.rows, october, 'USD').money_in).toBe(0);
+    // Read from its day, it is all here, at its whole net.
+    const whole = expandSplitsAndGroups([venmo, coffee, dinner], inputs({ groups: new Map([['g1', group(['t_dinner', 't_venmo'])]]), from: '2026-10-03' }));
+    expect(whole.rows.find((t) => t.group_members)).toMatchObject({ amount: 60, date: '2026-10-03' });
   });
 
   test('a transaction in two groups counts in the one made first; one also split counts whole in its group', () => {
@@ -567,7 +586,7 @@ describe('groups net their transactions', () => {
     const g2 = out.rows.find((t) => t.group_id === 'g2')!;
     expect([g1.amount, g2.amount, g2.group_missing]).toEqual([60, 5, 1]);
     expect(out.rows.some((t) => t.split_of)).toBe(false);
-    expect(out.notes).toEqual(['1 transaction in a group is split too, so its parts aren’t used: the group counts it whole.']);
+    expect(out.notes).toEqual(['1 transaction in a group is split too, so its parts aren’t used and the group counts it whole.']);
   });
 
   test('groups that couldn’t be read leave their transactions on their own, with a note', () => {

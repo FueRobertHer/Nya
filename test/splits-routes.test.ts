@@ -177,6 +177,29 @@ describe('a split, saved through the route, read as its parts', () => {
     expect(await splitStore.get(ctx, 't_costco')).toBeNull();
   });
 
+  test('an edit opened on a split another device changed since is refused, and nothing it made there is lost', async () => {
+    await listed();
+    // Opened when it wasn't split; split on another device meanwhile.
+    const first = await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: null });
+    expect(first.status).toBe(200);
+    const late = await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: null });
+    expect([late.status, late.body.error]).toEqual([409, 'This split was changed on another device since you opened it. Close it and open it again to see the change.']);
+    // The parts carry the split's time, which an edit sends back.
+    const seen = (await listed()).transactions.find((t) => t.split_of === 't_costco').split_updated_at;
+    expect(seen).toBe(first.body.split.updated_at);
+    const part = first.body.split.parts[0];
+    await route('transaction-splits', 'PATCH', { transaction_id: 't_costco', part_id: part.id, note: 'changed elsewhere' });
+    const stale = await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: seen });
+    expect(stale.status).toBe(409);
+    expect((await route('transaction-splits', 'DELETE', { transaction_id: 't_costco', updated_at: seen })).status).toBe(409);
+    expect((await splitStore.get(ctx, 't_costco'))!.parts[0].note).toBe('changed elsewhere');
+    // From what is there now, it saves; and one that says nothing still does.
+    const now = (await splitStore.get(ctx, 't_costco'))!.updated_at;
+    expect((await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: now })).status).toBe(200);
+    expect((await route('transaction-splits', 'DELETE', { transaction_id: 't_costco' })).status).toBe(200);
+    expect((await route('transaction-splits', 'PUT', { transaction_id: 't_costco', parts: costcoSplit(), updated_at: 'not a time' })).status).toBe(400);
+  });
+
   test('a manual row and an imported one split as a bank’s does, and their splits go with their row', async () => {
     expect((await splitPut(typed, [{ amount: 20, category_id: catId('food and drink') }, { amount: 10, category_id: catId('general merchandise') }])).status).toBe(200);
     expect((await splitPut(imported, [{ amount: 60, category_id: catId('home improvement') }, { amount: 4.5, category_id: catId('general merchandise') }])).status).toBe(200);

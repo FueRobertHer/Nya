@@ -154,7 +154,7 @@ const PARENT_KEYS = [
   'paired',
 ] as const;
 /** The fields only a part has. */
-const PART_KEYS = ['split_of', 'split_index', 'split_count', 'split_excluded', 'split_remainder', 'split_parent'] as const;
+const PART_KEYS = ['split_of', 'split_index', 'split_count', 'split_excluded', 'split_remainder', 'split_parent', 'split_updated_at'] as const;
 
 /** A whole transaction's own values (SplitParent). */
 function parentFacts(t: Txn): SplitParent {
@@ -190,7 +190,8 @@ function partRows(parent: Txn, record: SplitRecord, ix: CategoryIndex | null): {
   for (const k of PARENT_KEYS) delete base[k];
   const left = toUnits(parent.amount, scale) - record.parts.reduce((n, p) => n + toUnits(p.amount, scale), 0);
   const count = record.parts.length + (left !== 0 ? 1 : 0);
-  const of = { split_of: parent.transaction_id, split_count: count, split_parent: facts };
+  // When the split was saved, so an edit made from it can say what it saw.
+  const of = { split_of: parent.transaction_id, split_count: count, split_parent: facts, split_updated_at: record.updated_at };
   let unknownCategory = 0;
   const rows = record.parts.map((p, i): Txn => {
     const c = ix ? categoryById(ix, p.category_id) : null;
@@ -300,6 +301,11 @@ export type SplitInputs = {
   ix: CategoryIndex | null;
   /** Orders tag ids as the tags were made (lib/tags.ts orderTagIds). */
   orderTags?: (ids: ReadonlySet<string>) => string[];
+  /** The first day the rows were read from (lib/activity.ts): a group dated
+   *  before it counts on that day, outside what was read, so it is left out
+   *  with its transactions here, as a report for a later period leaves it
+   *  out; never answered at a part of its net. */
+  from?: string;
 };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
@@ -318,6 +324,9 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   // once) counts in the first, and the other says it isn't there.
   const inGroup = new Set<string>();
   const groupRows: Txn[] = [];
+  // Transactions of a group that no longer applies (their currencies differ
+  // now): on their own, saying which group, so it can be ungrouped.
+  const unapplied = new Map<string, { id: string; name: string }>();
   let mixed = 0;
   let splitAndGrouped = 0;
   const ordered = [...inputs.groups].sort(([a, x], [b, y]) => (x.created_at !== y.created_at ? (x.created_at < y.created_at ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0));
@@ -326,6 +335,12 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
     if (here.length === 0) continue;
     if (new Set(here.map((t) => currencyOf(t))).size > 1) {
       mixed++;
+      for (const t of here) unapplied.set(t.transaction_id, { id, name: g.name });
+      continue;
+    }
+    if (inputs.from !== undefined && g.date < inputs.from) {
+      // Counted on its day, before what was read: not here, nor its transactions.
+      for (const t of here) inGroup.add(t.transaction_id);
       continue;
     }
     for (const t of here) {
@@ -340,8 +355,10 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   let unread = 0;
   let otherCurrency = 0;
   let unknownCategory = 0;
-  for (const t of rows) {
-    if (inGroup.has(t.transaction_id)) continue;
+  for (const given of rows) {
+    if (inGroup.has(given.transaction_id)) continue;
+    const stale = unapplied.get(given.transaction_id);
+    const t = stale ? { ...given, group_unapplied: stale } : given;
     const record = inputs.splits.get(t.transaction_id);
     if (record && !t.pending) {
       if (record.currency !== currencyOf(t)) {
@@ -368,21 +385,21 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
       : []),
     ...(otherCurrency > 0
       ? [
-          `${plural(otherCurrency, 'split transaction is', 'split transactions are')} in another currency now than when ${otherCurrency === 1 ? 'it was' : 'they were'} split, so ${otherCurrency === 1 ? 'it shows' : 'they show'} whole: split ${otherCurrency === 1 ? 'it' : 'them'} again.`,
+          `${plural(otherCurrency, 'split transaction is', 'split transactions are')} in another currency now than when ${otherCurrency === 1 ? 'it was' : 'they were'} split, so ${otherCurrency === 1 ? 'it shows' : 'they show'} whole until you split ${otherCurrency === 1 ? 'it' : 'them'} again.`,
         ]
       : []),
     ...(unknownCategory > 0
-      ? [`${plural(unknownCategory, 'part of your split transactions is', 'parts of your split transactions are')} under a category that no longer exists, so ${unknownCategory === 1 ? 'it is' : 'they are'} uncategorized: edit the split to choose one.`]
+      ? [`${plural(unknownCategory, 'part of your split transactions is', 'parts of your split transactions are')} under a category that no longer exists, so ${unknownCategory === 1 ? 'it is' : 'they are'} uncategorized until you edit the split.`]
       : []),
     ...(inputs.groupsUnknown > 0
       ? [`${plural(inputs.groupsUnknown, 'of your groups', 'of your groups')} couldn’t be read, so ${inputs.groupsUnknown === 1 ? 'its transactions count' : 'their transactions count'} on their own until ${inputs.groupsUnknown === 1 ? 'it' : 'they'} can be.`]
       : []),
     ...(mixed > 0
-      ? [`The transactions in ${plural(mixed, 'of your groups are', 'of your groups are')} in more than one currency now, so they count on their own: a group nets one currency.`]
+      ? [`The transactions in ${plural(mixed, 'of your groups are', 'of your groups are')} in more than one currency now, so they count on their own, since a group nets one currency. Ungroup ${mixed === 1 ? 'it' : 'them'} from one of ${mixed === 1 ? 'its' : 'their'} transactions.`]
       : []),
     ...(splitAndGrouped > 0
       ? [
-          `${plural(splitAndGrouped, 'transaction in a group is', 'transactions in groups are')} split too, so ${splitAndGrouped === 1 ? 'its parts aren’t' : 'their parts aren’t'} used: the group counts ${splitAndGrouped === 1 ? 'it' : 'them'} whole.`,
+          `${plural(splitAndGrouped, 'transaction in a group is', 'transactions in groups are')} split too, so ${splitAndGrouped === 1 ? 'its parts aren’t' : 'their parts aren’t'} used and the group counts ${splitAndGrouped === 1 ? 'it' : 'them'} whole.`,
         ]
       : []),
   ];

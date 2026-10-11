@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
-import { entryLabel, entryNotice } from '@/components/SplitRows';
+import { entryLabel, entryNotice, SplitActions } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { searchEntries, searchRows } from '@/components/txn-search';
 import { expandSplitsAndGroups, bankRows } from '@/lib/split-rows';
@@ -176,6 +176,10 @@ describe('the Activity tab’s list', () => {
     }).rows as unknown as Txn[];
     expect(entryNotice(bankRows(edited)[0] as Txn)).toBe('This amount changed since you split it.');
     expect(entryNotice(txn('x', { split_unread: true }))).toBe('How you split this couldn’t be read, so it shows whole.');
+    // One of a group that no longer applies says which, and offers to ungroup it.
+    const stale = txn('x', { group_unapplied: { id: 'g9', name: 'Trip' } });
+    expect(entryNotice(stale)).toBe('It is in the group “Trip”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.');
+    expect(text(renderToStaticMarkup(<SplitActions t={stale} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
     expect(entryNotice(txn('x', { group_members: [txn('a')], group_removed: 1 }))).toContain('1 of its transactions isn’t here');
   });
 

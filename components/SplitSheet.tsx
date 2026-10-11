@@ -160,9 +160,14 @@ export default function SplitSheet({
     return false;
   }
 
+  // The split as it was when the sheet opened (none for a new one), so one
+  // changed meanwhile on another device is refused, never written over; not
+  // said for one that no longer fits its transaction, which isn't shown.
+  const seen = t.split_parts ? (t.split_parts[0]?.split_updated_at ?? undefined) : t.split_unapplied ? undefined : null;
   const save = () =>
     send('PUT', {
       transaction_id: t.transaction_id,
+      ...(seen !== undefined ? { updated_at: seen } : {}),
       parts: drafts.map((d, i) => ({
         ...(d.id ? { id: d.id } : {}),
         amount: Math.sign(t.amount) * parsed[i]!,
@@ -261,7 +266,7 @@ export default function SplitSheet({
             Unsplit {t.name}? Its parts go, and it counts whole again, under {own ? displayName(own.name) : 'its own category'}.
           </p>
           <div className="button-pair">
-            <button className="danger" onClick={() => send('DELETE', { transaction_id: t.transaction_id })} disabled={saving}>
+            <button className="danger" onClick={() => send('DELETE', { transaction_id: t.transaction_id, ...(seen !== undefined ? { updated_at: seen } : {}) })} disabled={saving}>
               Unsplit
             </button>
             <button className="secondary" onClick={() => setConfirming(false)} disabled={saving}>

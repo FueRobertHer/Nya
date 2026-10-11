@@ -37,6 +37,9 @@ export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConn
 
 /** A row's notice under its name about its split or group, if any. */
 export function entryNotice(t: Txn): string | null {
+  if (t.group_unapplied) {
+    return `It is in the group “${t.group_unapplied.name}”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.`;
+  }
   if (t.split_unread) return 'How you split this couldn’t be read, so it shows whole.';
   if (t.split_unapplied) return 'Its split no longer fits (its currency changed), so it shows whole: split it again.';
   if (t.split_parts?.some((p) => p.split_remainder)) return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
@@ -49,8 +52,30 @@ export function entryNotice(t: Txn): string | null {
 
 /** The actions a transaction's detail gains: Split and Group with others on
  *  one counted on its own, Edit split on a split one, Edit group on a
- *  group's row. Not on a pending one, which gets a new id when it posts. */
-export function SplitActions({ t, onSplit, onGroup }: { t: Txn; onSplit: (t: Txn) => void; onGroup: (t: Txn) => void }) {
+ *  group's row, and Ungroup on one of a group that no longer applies (the
+ *  list has no row for it). Not on a pending one, which gets a new id when it
+ *  posts. */
+export function SplitActions({
+  t,
+  onSplit,
+  onGroup,
+  onUngroup,
+}: {
+  t: Txn;
+  onSplit: (t: Txn) => void;
+  onGroup: (t: Txn) => void;
+  /** Ungroups the group by its id. */
+  onUngroup: (id: string) => void;
+}) {
+  if (t.group_unapplied) {
+    return (
+      <div className="rename-row">
+        <button className="secondary" onClick={() => onUngroup(t.group_unapplied!.id)}>
+          Ungroup “{t.group_unapplied.name}”
+        </button>
+      </div>
+    );
+  }
   if (t.group_members) {
     return (
       <div className="rename-row">

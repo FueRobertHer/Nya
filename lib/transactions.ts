@@ -168,19 +168,24 @@ export type Txn = {
   // transaction whose split couldn't be read, or no longer fits (its
   // currency changed), is shown whole and marked. A group's row, in its
   // transactions' place: the group's id, its transactions as they are, and
-  // how many of them aren't here or were taken out when they went.
+  // how many of them aren't here or were taken out when they went. A part
+  // carries when its split was saved (split_updated_at), so an edit says
+  // what it saw; a transaction of a group that no longer applies (its
+  // transactions' currencies differ now) says which (group_unapplied).
   split_of?: string;
   split_index?: number;
   split_count?: number;
   split_excluded?: true;
   split_remainder?: { was: number };
   split_parent?: SplitParent;
+  split_updated_at?: string;
   split_unread?: true;
   split_unapplied?: 'currency';
   group_id?: string;
   group_members?: Txn[];
   group_missing?: number;
   group_removed?: number;
+  group_unapplied?: { id: string; name: string };
 };
 
 /** A row from before the lookback, sent only for recurring detection, which

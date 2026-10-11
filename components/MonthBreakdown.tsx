@@ -125,6 +125,7 @@ export type Txn = {
   split_excluded?: true;
   split_remainder?: { was: number };
   split_parent?: SplitParent;
+  split_updated_at?: string;
   split_unread?: true;
   split_unapplied?: "currency";
   split_parts?: Txn[];
@@ -132,6 +133,7 @@ export type Txn = {
   group_members?: Txn[];
   group_missing?: number;
   group_removed?: number;
+  group_unapplied?: { id: string; name: string };
 };
 
 /** The name rules match a row by: the one it had before any rule named it. */
@@ -968,6 +970,13 @@ export default function MonthBreakdown({
                                 onGroup={(x) => {
                                   setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null });
                                   setRecatId(null);
+                                }}
+                                onUngroup={(id) => {
+                                  setRecatId(null);
+                                  void sendChange("/api/transaction-groups", "DELETE", { id }).then((failed) => {
+                                    setSplitError(failed);
+                                    onSplitsChanged?.();
+                                  });
                                 }}
                               />
                             )}

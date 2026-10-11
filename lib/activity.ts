@@ -455,6 +455,7 @@ export async function finishActivity(
     groupsUnknown: groupRead.unknown,
     ix,
     orderTags: (ids) => orderTagIds(tagRead.set, ids),
+    from: cutoff,
   });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that

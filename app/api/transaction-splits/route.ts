@@ -14,19 +14,21 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 // in the layer every reader shares (lib/split-rows.ts), so nothing cached is
 // dropped and nothing stored about the transaction itself changes.
 //
-// PUT { transaction_id, parts: [{ id?, amount, category_id, note?, excluded? }] }
+// PUT { transaction_id, parts: [{ id?, amount, category_id, note?, excluded? }], updated_at? }
 //   splits it, replacing any split it had: at least two parts, each of the
 //   transaction's own sign, adding up to its amount exactly in its
 //   currency's minor units, each under one of the person's categories (by
 //   id, kept as the category it is now, following a merge). Refused for a
 //   transaction still pending (409: it gets a new id when it posts), one in a
 //   group (409: the group counts it whole), one that isn't stored (404).
+//   `updated_at` is the split the edit was opened on (null: none): one
+//   changed since, on another device, is refused (409), nothing lost.
 // PATCH { transaction_id, part_id, category_id?, note?, excluded? }
 //   changes one part, its amount left as it is: its category, its note
 //   (empty clears it), or whether it alone is left out of budgets and
 //   reports. So a split whose transaction's amount the bank changed since can
 //   still be changed a part at a time; placing what changed is a PUT.
-// DELETE { transaction_id }
+// DELETE { transaction_id, updated_at? }
 //   unsplits it: it shows and counts whole again, exactly as before.
 // GET ?item_id=
 //   how many of a connection's transactions are split, and how many are in a
@@ -50,6 +52,15 @@ async function bodyOf(req: Request): Promise<Record<string, unknown> | NextRespo
   } catch {
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   }
+}
+
+/** The split an edit was opened on, as a request says it (lib/splits.ts
+ *  SeenSplit): its time, null for none, absent for not said. */
+function seenOf(body: Record<string, unknown>): string | null | undefined {
+  const v = body.updated_at;
+  if (v === undefined || v === null) return v;
+  if (typeof v !== 'string' || v.length > 40 || Number.isNaN(Date.parse(v))) throw new SplitError('Invalid updated_at');
+  return v;
 }
 
 /** The transaction id a request names: a transaction's, never a part's or a
@@ -97,7 +108,7 @@ export async function PUT(req: Request) {
     const parts = checkParts(body.parts, found);
     const ix = indexTaxonomy(await ensureTaxonomy(ctx));
     for (const p of parts) p.category_id = categoryOf(ix, p.category_id);
-    const split = await saveSplit(ctx, transaction_id, found, parts);
+    const split = await saveSplit(ctx, transaction_id, found, parts, new Date(), seenOf(body));
     return NextResponse.json({ transaction_id, split });
   } catch (err) {
     return failure(err, 'Failed to save the split');
@@ -136,7 +147,7 @@ export async function DELETE(req: Request) {
     const body = await bodyOf(req);
     if (body instanceof NextResponse) return body;
     const transaction_id = transactionIdOf(body);
-    const removed = await removeSplit(ctx, transaction_id);
+    const removed = await removeSplit(ctx, transaction_id, seenOf(body));
     return NextResponse.json({ transaction_id, removed });
   } catch (err) {
     return failure(err, 'Failed to unsplit it');

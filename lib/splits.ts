@@ -221,18 +221,40 @@ export function checkParts(raw: unknown, parent: SplitParentRow, newId: () => st
   return parts;
 }
 
+/** What an edit was made from: the split as it was saved then (its
+ *  `updated_at`), null for none, or undefined when the edit doesn't say. */
+export type SeenSplit = string | null | undefined;
+
+/** Refused when the split changed since the edit was opened on it (another
+ *  device): nothing it made there is lost. */
+function checkSeen(current: SplitRecord | null, seen: SeenSplit): void {
+  if (seen === undefined || (current?.updated_at ?? null) === seen) return;
+  throw new SplitError('This split was changed on another device since you opened it. Close it and open it again to see the change.', 409);
+}
+
 /**
  * Saves a transaction's split, replacing any it had, in one compare-and-set,
  * and returns it as saved. A new split past MAX_SPLITS is refused; changing
  * one there already never is. A record that can't be read is refused
- * (UnreadableEntriesError), never saved over.
+ * (UnreadableEntriesError), never saved over; and, given `seen`, one that
+ * changed since the edit was opened on it (checkSeen).
  */
-export async function saveSplit(ctx: Ctx, transaction_id: string, parent: SplitParentRow, parts: SplitPart[], now: Date = new Date()): Promise<SplitRecord> {
+export async function saveSplit(
+  ctx: Ctx,
+  transaction_id: string,
+  parent: SplitParentRow,
+  parts: SplitPart[],
+  now: Date = new Date(),
+  seen: SeenSplit = undefined
+): Promise<SplitRecord> {
   if (!(await splitStore.has(ctx, transaction_id)) && (await splitStore.count(ctx)) >= MAX_SPLITS) {
     throw new SplitError(`At most ${MAX_SPLITS.toLocaleString('en-US')} transactions can be split. Unsplit some first.`, 409);
   }
   const record: SplitRecord = { version: SPLITS_VERSION, amount: parent.amount, currency: parent.currency, parts, updated_at: now.toISOString() };
-  return (await splitStore.update(ctx, transaction_id, () => record))!;
+  return (await splitStore.update(ctx, transaction_id, (current) => {
+    checkSeen(current, seen);
+    return record;
+  }))!;
 }
 
 /** A change to one part that leaves the amounts alone: its category, its
@@ -271,10 +293,12 @@ export async function changePart(ctx: Ctx, transaction_id: string, part_id: stri
 /** Unsplits a transaction: its split goes, so it shows and counts whole again,
  *  exactly as before it was split. Reads it first, strictly: one that can't
  *  be read, or isn't recognised, is refused (UnreadableEntriesError), never
- *  deleted unseen. Returns whether there was one. */
-export async function removeSplit(ctx: Ctx, transaction_id: string): Promise<boolean> {
+ *  deleted unseen; and, given `seen`, one changed since (checkSeen). Returns
+ *  whether there was one. */
+export async function removeSplit(ctx: Ctx, transaction_id: string, seen: SeenSplit = undefined): Promise<boolean> {
   let had = false;
   await splitStore.update(ctx, transaction_id, (current) => {
+    checkSeen(current, seen);
     had = current !== null;
     return null;
   });
