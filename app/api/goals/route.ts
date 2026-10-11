@@ -5,6 +5,7 @@ import { parseGoals } from '@/lib/goal-model';
 import { readGoalRecords, recordOf, wireGoal, witnessOf, writeGoalRecords } from '@/lib/goal-plans';
 import { planGoalSave } from '@/lib/goal-save';
 import { knownGoalAccounts } from '@/lib/goal-flows';
+import { addDays, isCalendarDay } from '@/lib/manual-txn-input';
 
 // Savings goals (#42). Each goal's name, target and account are kept in the
 // `goals` blob, as every release has kept them (lib/goals.ts), and its plan
@@ -33,6 +34,14 @@ export async function GET() {
   }
 }
 
+/** The day the person is on, for what the save dates (an archive, where a
+ *  target date's line starts): the page's own day when it sends one within a
+ *  day of the server's UTC day (no time zone is further), else that UTC day. */
+function personsDay(sent: unknown): string {
+  const utc = new Date().toISOString().slice(0, 10);
+  return isCalendarDay(sent) && sent >= addDays(utc, -1) && sent <= addDays(utc, 1) ? sent : utc;
+}
+
 // Replaces the whole goal list (the client always sends the full set): every
 // field checked (lib/goal-model.ts parseGoals), then what needs the stored
 // goals and the balances Nya knows (lib/goal-save.ts), a clear 400 when the
@@ -46,11 +55,13 @@ export async function PUT(req: Request) {
     } catch {
       return NextResponse.json({ error: 'Invalid goals' }, { status: 400 });
     }
-    const parsed = parseGoals(typeof body === 'object' && body !== null ? (body as { goals?: unknown }).goals : undefined);
+    const sent = typeof body === 'object' && body !== null ? (body as { goals?: unknown; today?: unknown }) : {};
+    const parsed = parseGoals(sent.goals);
     if ('error' in parsed) return NextResponse.json({ error: parsed.error }, { status: 400 });
-    const read = await readGoalRecords(ctx);
+    // Links read strictly: the save decides on them (whether a goal moved).
+    const read = await readGoalRecords(ctx, { strictLinks: true });
     const planned = await planGoalSave(parsed.goals, read.records, {
-      today: new Date().toISOString().slice(0, 10),
+      today: personsDay(sent.today),
       links: read.links,
       accounts: () => knownGoalAccounts(ctx),
     });

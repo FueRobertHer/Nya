@@ -480,11 +480,11 @@ None of it is stored. It is worked out each time the card is shown, from the bal
 
 ### Where you should be by now
 
-With a target date, the meter has a lighter tick: where the goal would be on a straight line from what it held the day the date was set to the target on the date. A screen reader is told the same, in words, with the meter's figures. Moving the date keeps the line's start; moving the goal to another account starts it again, from what it holds there.
+With a target date, the meter has a lighter tick: where the goal would be on a straight line from what it held the day the date was set to the target on the date. The goal says the same under it, in words (**To reach it by Jun 30, 2027, it would have $2,400.00 by now**), and a screen reader is told it with the meter's figures. Moving the date keeps the line's start; moving the goal to another account starts it again, from what it holds there. A goal moved by a page from before plans, or by the release before after a rollback, has no line on its new account until it is next saved here, which starts one.
 
 ### Archiving
 
-A goal reached is archived rather than deleted, so its record survives: archiving keeps its name, target, plan, the day and what it held then, and releases its allocation, so the money is free for the others. Archived goals are in a list under the rest that opens to **Restore** one (without its allocation, which can be set again) or **Delete** it for good. A goal not reached can be archived or deleted. There can be 20 goals, archived ones included: the release before this one refuses to save more, so after a rollback it can still save the list.
+A goal reached is archived rather than deleted, so its record survives: archiving keeps its name, target, plan, the day (your own, as is the day a line to a target date starts) and what it held then, and releases its allocation, so the money is free for the others. Archived goals are in a list under the rest that opens to **Restore** one (without its allocation, which can be set again) or **Delete** it for good. A goal not reached can be archived or deleted. There can be 20 goals, archived ones included: the release before this one refuses to save more, so after a rollback it can still save the list.
 
 ### Where they are kept
 

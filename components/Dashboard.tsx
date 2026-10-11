@@ -13,7 +13,7 @@ import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
-import { instantDay } from '@/lib/local-date';
+import { instantDay, localDate } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
@@ -519,6 +519,8 @@ export default function Dashboard({
         // allocations on the balances it knows: keep what it says (#42).
         adoptSaved: true,
         showRefusal: true,
+        // What a save dates (an archive) is dated on the person's own day.
+        extra: () => ({ today: localDate() }),
       }),
     []
   );

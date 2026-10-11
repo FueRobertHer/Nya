@@ -24,8 +24,10 @@
 //     it was set is kept.
 //
 // WHAT THE SERVER WORKS OUT. When a target date is first set, or the goal
-// moves to another account, the day and what the goal holds then
-// (`plan_start`): where "where you should be by now" starts. When it is
+// moves to another account, the day, what the goal holds then and the account
+// it holds it on (`plan_start`): where "where you should be by now" starts.
+// The day is the person's own (`today`, which the route takes from the page
+// when it is within a day of the server's), not the server's UTC one. When it is
 // archived, the day and what it held just before (`archived`), and its
 // allocation is released. Each amount is null when the balance isn't known.
 //
@@ -93,10 +95,13 @@ export async function planGoalSave(
         return { refused: 'A target date can’t be in the past: pick today or a day after it.' };
       }
       plan.target_date = p.target_date;
+      // Kept while the goal stays on the account the line started on: the
+      // read leaves out a start on another account (lib/goal-plans.ts
+      // recordOf), however the goal got there.
       const start = was?.plan.target_date !== undefined && !moved ? was.plan.plan_start : undefined;
       if (start) plan.plan_start = start;
       else {
-        plan.plan_start = { date: opts.today, amount: null };
+        plan.plan_start = { date: opts.today, amount: null, account_id: core.account_id };
         needsStart = true;
       }
     }
@@ -172,7 +177,7 @@ export async function planGoalSave(
     const after = holds(drafts.map((d) => asGoal(d.core.id, d.account, d.plan)));
     const beforeSave = holds(read.map((r) => asGoal(r.core.id, resolve(r.core.account_id), r.plan)));
     for (const d of drafts) {
-      if (d.needsStart) d.plan.plan_start = { date: opts.today, amount: known ? (after.get(d.core.id) ?? null) : null };
+      if (d.needsStart) d.plan.plan_start = { date: opts.today, amount: known ? (after.get(d.core.id) ?? null) : null, account_id: d.core.account_id };
       if (d.needsArchivedAmount) d.plan.archived = { on: opts.today, amount: known ? (beforeSave.get(d.core.id) ?? null) : null };
     }
   }

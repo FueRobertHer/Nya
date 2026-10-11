@@ -66,6 +66,9 @@ export function createWholeListStore<T>(opts: {
    *  whose server checks what the screen can't be sure of (goals: an
    *  allocation against the balance the server knows). */
   showRefusal?: boolean;
+  /** More for the server beside the list on a save, read when it is sent
+   *  (goals: the person's own day, which the server dates an archive by). */
+  extra?: () => Record<string, unknown>;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -125,7 +128,7 @@ export function createWholeListStore<T>(opts: {
       const res = await doFetch(opts.url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [opts.field]: next }),
+        body: JSON.stringify({ ...(opts.extra?.() ?? {}), [opts.field]: next }),
       });
       ok = res.ok;
       if (opts.adoptSaved || opts.showRefusal) answer = await res.json().catch(() => null);

@@ -325,4 +325,31 @@ describe('opted in: what the server said about a save (goals)', () => {
     await store.save([{ id: 'b' }]);
     expect(store.get().saveError).toBe('Could not save goals. Showing what is saved.');
   });
+
+  test('what a save sends beside the list is read as each one is sent, and never takes the list’s place', async () => {
+    const bodies: unknown[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ goals: [] }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let day = '2026-10-11';
+    const store = createWholeListStore<{ id: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch,
+      extra: () => ({ today: day, goals: 'not the list' }),
+    });
+    await store.load();
+    await store.save([{ id: 'a' }]);
+    day = '2026-10-12';
+    await store.save([{ id: 'b' }]);
+    expect(bodies).toEqual([
+      { today: '2026-10-11', goals: [{ id: 'a' }] },
+      { today: '2026-10-12', goals: [{ id: 'b' }] },
+    ]);
+  });
 });

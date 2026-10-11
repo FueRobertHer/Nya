@@ -19,7 +19,10 @@ const { saveItem } = await import('@/lib/storage');
 const { saveManualAccount } = await import('@/lib/manual');
 const { setAccountHidden } = await import('@/lib/hidden');
 const { getGoals, setGoals } = await import('@/lib/goals');
-const { goalPlansStore } = await import('@/lib/goal-plans');
+const { goalPlansStore, readGoalRecords, writeGoalRecords } = await import('@/lib/goal-plans');
+const { planGoalSave } = await import('@/lib/goal-save');
+const { parseGoals } = await import('@/lib/goal-model');
+const { knownGoalAccounts } = await import('@/lib/goal-flows');
 const links = await import('@/lib/links');
 const route = await import('@/app/api/goals/route');
 
@@ -57,8 +60,9 @@ beforeEach(async () => {
   await saveManualAccount(ctx, { account_id: 'manual_yen', name: 'Yen', institution_name: 'Tokyo', type: 'depository', subtype: null, balance: 100_000, updated_at: at, currency: 'JPY' });
 });
 
-const put = async (goals: unknown) => {
-  const res: Response = await route.PUT(new Request('http://x/api/goals', { method: 'PUT', body: JSON.stringify({ goals }) }));
+/** A save as the page sends it: the list, and what it sends beside it. */
+const put = async (goals: unknown, beside: Record<string, unknown> = {}) => {
+  const res: Response = await route.PUT(new Request('http://x/api/goals', { method: 'PUT', body: JSON.stringify({ ...beside, goals }) }));
   return { status: res.status, body: (await res.json()) as any };
 };
 const get = async () => {
@@ -103,8 +107,15 @@ describe('a plan', () => {
     expect(await getGoals(ctx)).toEqual([G(1)]);
     expect((await entries())[ID(1)]).toEqual({
       v: 1,
+      save: expect.any(String),
       core: { name: 'Goal 1', target: 5000, account_id: 'acc_sav' },
-      plan: { allocation: { amount: 4000, account_id: 'acc_sav' }, monthly_target: 250.5, target_date: '2030-06-30', plan_start: { date: today(), amount: 4000 } },
+      plan: {
+        allocation: { amount: 4000, account_id: 'acc_sav' },
+        monthly_target: 250.5,
+        target_date: '2030-06-30',
+        plan_start: { date: today(), amount: 4000, account_id: 'acc_sav' },
+      },
+      // The save finished: nothing of how it read before is kept.
       before: null,
     });
     expect((await get()).body.goals).toEqual(body.goals);
@@ -272,14 +283,77 @@ describe('a save that stops part way never reads wrong', () => {
     expect(Object.keys(await entries())).toEqual([ID(1)]);
   });
 
-  test('stopped after the blob, before the tidying: reads as the save left it, and the next save tidies', async () => {
+  test('stopped after the blob, before settling: reads as the save left it, and the next save settles', async () => {
     await put([{ ...G(1), plan: { allocation: 1000 } }, { ...G(2), plan: { monthly_target: 9 } }]);
-    fake.failNext('hdel');
-    expect((await quietly(() => put([{ ...G(1), plan: {} }]))).status).toBe(500);
+    // The save, step by step as the route takes it, failing as it settles
+    // (the first compare-and-set after the writes).
+    const read = await readGoalRecords(ctx, { strictLinks: true });
+    const parsed = parseGoals([{ ...G(1), plan: {} }]);
+    if ('error' in parsed) throw new Error(parsed.error);
+    const planned = await planGoalSave(parsed.goals, read.records, { today: today(), links: read.links, accounts: () => knownGoalAccounts(ctx) });
+    if ('refused' in planned) throw new Error(planned.refused);
+    fake.failNext('eval');
+    await expect(writeGoalRecords(ctx, planned.next, read)).rejects.toThrow(/armed failure/);
     expect((await get()).body.goals).toEqual([G(1)]);
     expect(Object.keys(await entries()).sort()).toEqual([ID(1), ID(2)].sort());
-    expect((await put([G(1)])).status).toBe(200);
+    expect((await put([{ ...G(1), plan: {} }])).status).toBe(200);
     expect(await entries()).toEqual({});
+  });
+});
+
+describe('two saves at once', () => {
+  /** A save as the route takes it, from what it read earlier: for running
+   *  two saves interleaved, one from a page that read before the other saved. */
+  const saveFrom = async (read: Awaited<ReturnType<typeof readGoalRecords>>, goals: unknown) => {
+    const parsed = parseGoals(goals);
+    if ('error' in parsed) throw new Error(parsed.error);
+    const planned = await planGoalSave(parsed.goals, read.records, { today: today(), links: read.links, accounts: () => knownGoalAccounts(ctx) });
+    if ('refused' in planned) throw new Error(planned.refused);
+    await writeGoalRecords(ctx, planned.next, read);
+  };
+  /** Runs `between` once, just after the next write of the goals blob lands:
+   *  after a save's blob, before it settles its entries. */
+  const afterNextBlob = (between: () => Promise<unknown>) => {
+    const set = fake.set;
+    fake.set = (async (...args: Parameters<typeof set>) => {
+      const out = await set.apply(fake, args);
+      if (args[0] === ctxKey('goals')) {
+        fake.set = set;
+        await between();
+      }
+      return out;
+    }) as typeof set;
+  };
+  const withPlans = (goals: any[]) => goals.map((g) => ({ ...g, plan: g.plan ?? {} }));
+
+  test('a goal one deletes and the other, saving last, still lists comes back with its plan', async () => {
+    await put([{ ...G(1), plan: { monthly_target: 50, target_date: '2030-01-01', archived: true } }, { ...G(2), plan: { allocation: 1000 } }]);
+    const shown = (await get()).body.goals;
+    // The second page read the list; the first then deletes goal 1 for good.
+    const second = await readGoalRecords(ctx, { strictLinks: true });
+    expect((await put([shown[1]])).status).toBe(200);
+    expect(Object.keys(await entries())).toEqual([ID(2)]);
+    // The second saves last, from what it read: the list is its list, as with
+    // the blob alone, and goal 1 is in it as it was, plan and all.
+    await saveFrom(second, withPlans(shown));
+    expect((await get()).body.goals).toEqual(shown);
+  });
+
+  test('a save never deletes, nor rewrites, an entry another save wrote after it read', async () => {
+    await put([{ ...G(1), plan: { monthly_target: 100 } }]);
+    // The first empties the plan; the second, landing between its writes,
+    // sets one: the first leaves the second's entry as it is.
+    const first = await readGoalRecords(ctx, { strictLinks: true });
+    afterNextBlob(() => put([{ ...G(1), plan: { monthly_target: 300 } }]));
+    await saveFrom(first, [{ ...G(1), plan: {} }]);
+    expect((await get()).body.goals).toEqual([{ ...G(1), plan: { monthly_target: 300 } }]);
+    // The first changes it; the second again lands between: the first's
+    // settling doesn't put its own plan back over the second's.
+    const again = await readGoalRecords(ctx, { strictLinks: true });
+    afterNextBlob(() => put([{ ...G(1), plan: { monthly_target: 500 } }]));
+    await saveFrom(again, [{ ...G(1), plan: { monthly_target: 200 } }]);
+    expect((await get()).body.goals).toEqual([{ ...G(1), plan: { monthly_target: 500 } }]);
+    expect((await entries())[ID(1)].before).toBeNull();
   });
 });
 
@@ -326,12 +400,60 @@ describe('a rollback round trip', () => {
     }));
   });
 
+  test('the release before setting a goal back to how it was before this release’s last save keeps that save’s plan', async () => {
+    await put([{ ...G(1), plan: { monthly_target: 200, target_date: '2030-01-01' } }]);
+    // One save, as the editor makes it: the target, monthly target and date at once.
+    expect((await put([{ ...G(1), target: 8000, plan: { monthly_target: 300, target_date: '2031-06-30' } }])).status).toBe(200);
+    // It finished, so its entry keeps nothing of how the goal read before it.
+    expect((await entries())[ID(1)].before).toBeNull();
+    // After a rollback, the release before sets the target back to 5000.
+    await oldReleaseSaves([G(1)]);
+    const read = (await get()).body.goals[0];
+    expect(read).toMatchObject({ ...G(1), plan: { monthly_target: 300, target_date: '2031-06-30' } });
+    // And the next save keeps it.
+    expect((await put([read])).status).toBe(200);
+    expect((await get()).body.goals[0].plan).toEqual({ monthly_target: 300, target_date: '2031-06-30' });
+  });
+
+  test('a goal moved by the release before, or by a page from before plans, starts its line to a target date again on its new account', async () => {
+    await put([{ ...G(1), plan: { target_date: '2030-06-30' } }]);
+    expect((await get()).body.goals[0].plan_start).toEqual({ date: today(), amount: 10_000 });
+    // Moved there: what it held on savings is no start for checking, so it
+    // shows no line, and the next save starts one from what checking holds.
+    await oldReleaseSaves([{ ...G(1), account_id: 'acc_chk' }]);
+    const moved = (await get()).body.goals[0];
+    expect(moved).toEqual({ ...G(1), account_id: 'acc_chk', plan: { target_date: '2030-06-30' } });
+    await put([moved]);
+    expect((await get()).body.goals[0].plan_start).toEqual({ date: today(), amount: 2500 });
+    // A page from before plans sends no plan, which keeps the stored one: the same.
+    await recordBalances({ acc_sav: 12_000 }, today());
+    expect((await put([G(1)])).status).toBe(200);
+    expect((await get()).body.goals[0]).toEqual({ ...G(1), plan: { target_date: '2030-06-30' } });
+    await put([{ ...G(1), plan: { target_date: '2030-06-30' } }]);
+    expect((await get()).body.goals[0].plan_start).toEqual({ date: today(), amount: 12_000 });
+  });
+
   test('a goal the release before deleted leaves no claim behind, even before the next save', async () => {
     await put([{ ...G(1), plan: { allocation: 9000 } }]);
     await oldReleaseSaves([G(2)]);
     expect((await get()).body.goals).toEqual([G(2)]);
     // Its allocation is no one's: the whole balance is free to allocate.
     expect((await put([{ ...G(2), plan: { allocation: 10_000 } }])).status).toBe(200);
+  });
+});
+
+describe('the day a save dates', () => {
+  test('is the person’s own, as the page sends it, when it is within a day of the server’s; else the server’s UTC day', async () => {
+    const archive = (n: number) => [{ ...G(n), plan: { target_date: '2030-01-01', archived: true } }];
+    for (const day of [daysAgo(1), daysAgo(-1)]) {
+      expect((await put(archive(1), { today: day })).body.goals[0]).toMatchObject({ archived_on: day, plan_start: { date: day } });
+      await put([]);
+    }
+    // Further off than any time zone, or not a day: not taken.
+    for (const sent of [daysAgo(3), '2001-01-01', '2026-02-30', 'yesterday', 20_261_011, null]) {
+      expect((await put(archive(2), { today: sent })).body.goals[0]).toMatchObject({ archived_on: today(), plan_start: { date: today() } });
+      await put([]);
+    }
   });
 });
 
@@ -394,6 +516,27 @@ describe('accounts linked across a reconnect', () => {
     expect((await put(body.goals)).status).toBe(200);
     expect(await getGoals(ctx)).toEqual([G(1)]);
     expect((await get()).body.goals[0]).toEqual({ ...G(1), plan: { allocation: 1500, target_date: '2030-01-01' }, plan_start: { date: '2026-01-01', amount: 900 } });
+  });
+});
+
+describe('links that can’t be read', () => {
+  test('stop a save, which decides on them, rather than taking a goal for moved; a page still shows the goals', async () => {
+    await setGoals(ctx, [G(1, { account_id: 'acc_gone' })]);
+    await goalPlansStore.set(ctx, ID(1), {
+      v: 1,
+      core: { name: 'Goal 1', target: 5000, account_id: 'acc_gone' },
+      plan: { allocation: { amount: 1500, account_id: 'acc_gone' }, target_date: '2030-01-01', plan_start: { date: '2026-01-01', amount: 900 } },
+      before: null,
+    });
+    await links.linkAccounts(ctx, 'acc_gone', 'acc_sav', {});
+    const shown = (await get()).body.goals;
+    await fake.hset(ctxKey('account-links'), { acc_other: 'not-a-link-but-long-enough-to-be-tried' });
+    expect((await quietly(get)).status).toBe(200);
+    const blob = await fake.get<string>(ctxKey('goals'));
+    const stored = await fake.hget<string>(ctxKey('goal-plans'), ID(1));
+    expect(await quietly(() => put(shown))).toEqual({ status: 500, body: { error: 'Failed to save goals' } });
+    expect(await fake.get<string>(ctxKey('goals'))).toBe(blob);
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe(stored);
   });
 });
 
