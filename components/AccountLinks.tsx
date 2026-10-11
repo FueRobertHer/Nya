@@ -421,8 +421,9 @@ export function AccountLinksView({
           {earlierOpen && (
             <>
               <p className="chart-note">
-                Accounts of institutions you disconnected. Forget one to delete its balance history, its name
-                and the categories saved for it, for good. Past net-worth totals don&apos;t change.
+                Accounts of institutions you disconnected. Forget one to delete its balance history, its name,
+                the categories saved for it and the transactions imported into it from files, for good. Past
+                net-worth totals don&apos;t change.
               </p>
               {earlier.map((e) => {
                 const name = e.label ?? 'Balance history';
@@ -440,7 +441,7 @@ export function AccountLinksView({
                         const sure =
                           typeof window === 'undefined' ||
                           window.confirm(
-                            `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
+                            `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
                           );
                         if (sure) onAct('POST', { action: 'forget', old: e.id });
                       }}

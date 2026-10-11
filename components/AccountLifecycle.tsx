@@ -564,6 +564,8 @@ export function EndedAccounts({
   onOpen,
   onReopen,
   onStillOpen,
+  onImportHistory,
+  importable,
 }: {
   ended: EndedAccount[];
   hidden: ReadonlySet<string>;
@@ -571,6 +573,12 @@ export function EndedAccounts({
   onOpen: (t: LifecycleTarget) => void;
   onReopen: (account_id: string) => void;
   onStillOpen: (account_id: string, q: Pick<AccountQuestion, 'kind' | 'since' | 'end'>) => void;
+  /** Importing its history from a file (#52, components/HistoryImportSheet.tsx),
+   *  for a linked account whose connection is still stored (`importable`, by
+   *  connection): its rows before its end count, those from it are kept and
+   *  count in nothing, as its bank's own. */
+  onImportHistory?: (e: EndedAccount) => void;
+  importable?: ReadonlySet<string>;
 }) {
   const [expanded, setExpanded] = useState(ended.some((e) => e.assumed));
   if (ended.length === 0) return null;
@@ -650,6 +658,11 @@ export function EndedAccounts({
                           Reopen
                         </button>
                       </>
+                    )}
+                    {onImportHistory && e.item_id !== null && importable?.has(e.item_id) && (
+                      <button className="link-btn" disabled={busy} onClick={() => onImportHistory(e)}>
+                        Import history from a file
+                      </button>
                     )}
                   </div>
                 </li>

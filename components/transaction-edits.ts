@@ -329,8 +329,10 @@ export function useTransactionEdits({
     [setTxns, undo, onTagMade]
   );
 
-  /** Saves a transaction's note, or clears it: a manual or imported row's on
-   *  the row itself, a bank row's beside it. Shown at once. */
+  /** Saves a transaction's note, or clears it: one entered by hand or
+   *  imported into a manual account, on the row itself; any other (a bank's,
+   *  one SimpleFIN brought, one imported into a linked account), beside it.
+   *  Shown at once. */
   const saveNote = useCallback(
     async (t: Txn, note: string) => {
       setError(null);

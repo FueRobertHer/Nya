@@ -264,6 +264,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         { date: '2026-09-30', value: 429600.0, estimated: false },
         { date: '2026-10-09', value: 431870.25, estimated: false },
       ],
+      from_imports: null,
       notes: [],
     },
     fields: [
@@ -275,6 +276,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['points[].date', 'The day (UTC).'],
       ['points[].value', 'Net worth, or the account’s balance (what a card or a loan owes is positive).'],
       ['points[].estimated', 'True for a point reconstructed from transactions rather than recorded: only with include_estimated=true.'],
+      [
+        'from_imports',
+        'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from your bank’s files rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',
+      ],
       ['notes', 'Anything that couldn’t be read, in words for a person: an account’s currency, say. Empty when all is well. An account_id that names no account Nya has or had is a 404.'],
     ],
   },
@@ -426,7 +431,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['from', 'The first day read (UTC).'],
       ['to', 'The last.'],
       ['transactions', 'Newest first: the day, then the moment, then the id. The last 365 days are read, as the app shows them.'],
-      ['transactions[].id', 'The transaction’s id: Plaid’s, or manual-txn:… for one entered by hand, imported or brought in through SimpleFIN.'],
+      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN, or imported-txn:… for one imported from a file into a linked account.'],
       ['transactions[].date', 'The day it is dated: the bank’s posting date (not a UTC day), or the day picked for one entered by hand.'],
       ['transactions[].datetime', 'When it happened, where the bank says, or null.'],
       ['transactions[].amount', 'Plaid’s sign: positive is money out of the account, negative money in.'],
@@ -457,10 +462,13 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].institution', 'That account’s institution.'],
       [
         'transactions[].source',
-        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF) into a manual account, served as the ones you entered are. Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
+        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
       ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
-      ['transactions[].note', 'Your note on it, or null: the one written with a transaction you entered or imported, or one you put on a bank’s. Yours alone: sharing never shows notes.'],
+      [
+        'transactions[].note',
+        'Your note on it, or null: the one written with a transaction you entered or imported into a manual account, or one you put on a bank’s, on one your SimpleFIN connection brought in, or on one imported into a linked account (whose file’s own note it has until you write one), or on a transaction you imported that it now stands for. Yours alone: sharing never shows notes.',
+      ],
       ['transactions[].counterparty', 'The merchant behind a payment processor, when it differs from the name, or null.'],
       ['transactions[].payment_channel', 'online, in store or other, or null.'],
       ['transactions[].city', 'Where, when the bank says, or null.'],
@@ -468,7 +476,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].website', 'The merchant’s website, or null.'],
       [
         'transactions[].tags',
-        'The tags it carries, in the order you made them: put on by you, added by one of your rules, or carried from an earlier account when you linked it to this one. Empty for none. Yours alone: sharing never shows tags.',
+        'The tags it carries, in the order you made them: put on by you (on it, or on a transaction you imported that it now stands for), added by one of your rules, or carried from an earlier account when you linked it to this one. Empty for none. Yours alone: sharing never shows tags.',
       ],
       ['transactions[].tags[].id', 'The tag’s id, which stays the same when you rename it (see tags).'],
       ['transactions[].tags[].name', 'Its name.'],

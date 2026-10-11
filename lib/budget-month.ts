@@ -28,6 +28,13 @@
 // doing), and rows whose exclusion couldn't be read. Every carry and pool
 // counting such a month says it may be off. The first month with any
 // transactions is where carries and pools begin (the clamp), and is named.
+// Files imported into a linked connection's bank accounts and cards (#52)
+// stand for the bank's own where they cover a month for every one, each
+// through the day before its end: in the days before its stored history
+// begins, for a connection whose transactions don't come in, and for one
+// that hasn't synced yet, as a report counts them (lib/history-import/
+// coverage.ts, lib/rollover.ts Filed). A connection that stopped after it
+// synced is said to have stopped whatever files cover, as on a report.
 //
 // ENDED ACCOUNTS (lib/lifecycle.ts). An account that ended (closed, no
 // longer the person's, or no longer followed) has its rows from its end day
@@ -60,6 +67,8 @@ import { connectorBanksReport, type ConnectorBanksReport } from './connectors/in
 import { manualTxnStore } from './manual-txns';
 import { endDays } from './lifecycle';
 import { rememberedAccountsReport } from './last-known';
+import { readLinks } from './link-core';
+import { coveredAccountsOf, importedCoverage } from './history-import/read';
 import { loadBudgets, budgetsForReading } from './budget-store';
 import { budgetMonthsStore, incomeCarryoverStore, noteMonths } from './budget-months-store';
 import { filedId, indexTaxonomy, type CategoryIndex, type Taxonomy } from './categories';
@@ -107,7 +116,9 @@ export type MonthActivity = {
   fed: ConnectorBanksReport;
   view: NoTransactionsView;
   /** The first month with any stored transaction, hidden accounts' aside
-   *  (unless asked for), or null with none. */
+   *  (unless asked for), or null with none: a bank's, one entered or
+   *  imported into a manual account, or one imported into a linked account
+   *  from its bank's files that counts (#52). */
   earliest: string | null;
   facts: CoverageFacts;
 };
@@ -138,7 +149,15 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   const leftOut = opts.includeHidden ? new Set<string>() : bank.hidden;
   // When each account ended, through the links the hidden set was read by.
   const endDay = endDays(bank.lifecycle);
-  const [finished, fed, health, notices, manualFirst, remembered] = await Promise.all([
+  // LENIENT, for this display only, as a report reads them: what the files
+  // imported into linked accounts cover (lib/history-import/read.ts
+  // importedCoverage). An import whose summary can't be read, or links that
+  // can't be read, cover nothing here, so no month is said more complete for
+  // them.
+  const covering = readLinks(ctx)
+    .then((read) => importedCoverage(ctx, read.links))
+    .catch(() => new Map<string, { from: string; to: string }[]>());
+  const [finished, fed, health, notices, manualFirst, remembered, covered] = await Promise.all([
     finishActivity(ctx, bank.payload, leftOut, { since: opts.since, grow: !!opts.grow }),
     // LENIENT, for this display only, as the read-only API reads them: what
     // can't be read is said by the assembly's own notes.
@@ -150,9 +169,11 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     noticesStore.getAllReport(ctx).catch(() => null),
     firstManualDay(ctx, leftOut),
     // LENIENT, for this display only: each connection's accounts, as last
-    // recorded (lib/last-known.ts), read only when some account has ended.
-    // What can't be read leaves its connection's gaps as they are.
-    endDay.size > 0 ? rememberedAccountsReport(ctx).catch(() => null) : null,
+    // recorded (lib/last-known.ts), read only when some account has ended or
+    // files were imported into one. What can't be read leaves its
+    // connection's gaps as they are.
+    endDay.size > 0 ? rememberedAccountsReport(ctx).catch(() => null) : covering.then((c) => (c.size > 0 ? rememberedAccountsReport(ctx).catch(() => null) : null)),
+    covering,
   ]);
   const rows = finished.transactions;
   const view = noTransactionsView(bank.payload);
@@ -171,6 +192,17 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     const endedThere = [...bank.lifecycle.accounts].flatMap(([id, { entry }]) => (entry.item_id === item_id ? [id] : []));
     return endedBy([...(remembered.byItem[item_id] ?? []).map((a) => a.account_id), ...endedThere]);
   };
+  // A linked connection's bank accounts and cards with what the files
+  // imported into each cover, where those can stand for the bank's own
+  // (lib/rollover.ts Filed); nothing while none was imported, or while its
+  // accounts can't be read.
+  const filesOf = (item_id: string): { files?: ReturnType<typeof coveredAccountsOf> } => {
+    if (covered.size === 0 || !remembered || remembered.unreadable.includes(item_id)) return {};
+    return { files: coveredAccountsOf(item_id, remembered.byItem[item_id] ?? [], bank.lifecycle, covered, leftOut) };
+  };
+  // Not yet synced: its transactions are all missing, unless its files hold
+  // them (lib/report/build.ts sourceGaps says the same).
+  const unsynced = new Set(bank.sources.filter((s) => s.never_synced && s.coverage === 'missing').map((s) => s.item_id));
 
   // Connections whose transactions stopped arriving: each linked one in a
   // broken state (its notice's), with when it last synced, and each bank a
@@ -184,7 +216,7 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   });
   const cards = fed.cards.filter((c) => !c.accounts.every((a: { account_id: string }) => leftOut.has(a.account_id)));
   const stopped = [
-    ...linked.flatMap((l) => stoppedConnections([l], quiet).map((s) => ({ ...s, until: itemEndedBy(l.item_id) }))),
+    ...linked.flatMap((l) => stoppedConnections([l], quiet).map((s) => ({ ...s, until: itemEndedBy(l.item_id), ...(unsynced.has(l.item_id) ? filesOf(l.item_id) : {}) }))),
     ...cards.flatMap((c) => stoppedConnections([c], quiet).map((s) => ({ ...s, until: endedBy(c.accounts.map((a: { account_id: string }) => a.account_id)) }))),
   ];
 
@@ -211,8 +243,23 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   }
   const exclusionUnknown = new Map([...unknownBy].map(([m, c]) => [m, c.n] as const));
 
+  // Where the transactions in Nya begin: each bank's oldest stored row, the
+  // oldest row entered or imported into a manual account, and the oldest
+  // row imported into a linked account from its bank's files that counts.
   const firstDays = bank.sources.flatMap((s) => (s.first_date && !s.no_transactions ? [s.first_date] : []));
-  const earliestDay = [...firstDays, ...(manualFirst ? [manualFirst] : [])].sort()[0] ?? null;
+  const earliestDay = [...firstDays, ...(manualFirst ? [manualFirst] : []), ...(bank.imported_first ? [bank.imported_first] : [])].sort()[0] ?? null;
+
+  // The connections whose transactions aren't all in: a linked one that
+  // hasn't synced yet with its files (lib/rollover.ts Filed), and the rest
+  // (a SimpleFIN connection's banks) as the assembly says them.
+  const linkedIncomplete = bank.sources.flatMap((s) =>
+    s.coverage === 'complete' ? [] : [{ institution_name: s.institution_name, coverage: s.coverage, ...(unsynced.has(s.item_id) ? filesOf(s.item_id) : {}) }]
+  );
+  const others = [...finished.incomplete];
+  for (const l of linkedIncomplete) {
+    const at = others.findIndex((i) => i.institution_name === l.institution_name && i.coverage === l.coverage);
+    if (at >= 0) others.splice(at, 1);
+  }
 
   return {
     rows,
@@ -226,11 +273,15 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     view,
     earliest: earliestDay ? monthOf(earliestDay) : null,
     facts: {
-      incomplete: finished.incomplete,
+      incomplete: [...linkedIncomplete, ...others],
       stopped,
-      first: bank.sources.flatMap((s) => (s.first_date && !s.no_transactions && s.coverage !== 'missing' ? [{ institution: s.institution_name, day: s.first_date }] : [])),
+      first: bank.sources.flatMap((s) =>
+        s.first_date && !s.no_transactions && s.coverage !== 'missing' ? [{ institution: s.institution_name, day: s.first_date, ...filesOf(s.item_id) }] : []
+      ),
       without: bank.sources.flatMap((s) =>
-        s.no_transactions === 'refused' || s.no_transactions === 'no_consent' ? [{ institution: s.institution_name, reason: s.no_transactions, until: itemEndedBy(s.item_id) }] : []
+        s.no_transactions === 'refused' || s.no_transactions === 'no_consent'
+          ? [{ institution: s.institution_name, reason: s.no_transactions, until: itemEndedBy(s.item_id), ...filesOf(s.item_id) }]
+          : []
       ),
       unread,
       exclusionUnknown,

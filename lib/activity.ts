@@ -10,7 +10,14 @@
 //     categories and exclusions carried across a re-link, and the person's own
 //     category (by transaction) and vendor name (by vendor) applied. The app
 //     syncs each institution with Plaid first (`sync`); the API reads only
-//     what is stored, and never calls Plaid.
+//     what is stored, and never calls Plaid. With them, the rows imported into
+//     linked accounts from files (#52, lib/history-import/read.ts), counted
+//     only where no bank row stands for them, matched against the rows each
+//     sync has just written; and a category the person chose for an imported
+//     row carried to the bank row that stands for it, which also names the
+//     rows it stands for (`stands_for`, never sent), so what else they said
+//     about them (an exclusion, tags, a note) carries to it as it is read on
+//     each request (lib/txn-layers.ts).
 //   - the rest (finishActivity): the rows entered on manual accounts, and what
 //     the person said about each row (lib/txn-annotations.ts), read on every
 //     request and merged after the banks' part. So entering, editing or
@@ -59,6 +66,8 @@ import { getEffectiveHidden, liveAccountIds, type Link } from './links';
 import { getEffectiveLifecycle, endDays, type LifecycleView } from './lifecycle';
 import { readManualTxnsForDisplay } from './manual-txns';
 import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
+import { importedForActivity } from './history-import/read';
+import type { StoredTxn } from './transactions';
 import { filingSet, fileRows } from './category-store';
 import { indexTaxonomy, type Taxonomy } from './categories';
 import { liveTagIds, orderTagIds, tagsForDisplay, type TagSet } from './tags';
@@ -199,6 +208,22 @@ async function carriedFor(ctx: Ctx, links: Map<string, Link> | null, liveOk: boo
   };
 }
 
+/**
+ * The category the person chose for an imported row a bank row now stands
+ * for (lib/history-import/read.ts importedForActivity's `represents`, earlier
+ * imports first), by the bank row: the earliest import's first. What else
+ * was said about those rows (an exclusion, tags, a note) is read with every
+ * record on each request, and laid on by lib/txn-layers.ts.
+ */
+function categoriesFromImports(represents: ReadonlyMap<string, readonly string[]>, overrides: Readonly<Record<string, string>>): Map<string, string> {
+  const categories = new Map<string, string>();
+  for (const [bankId, rows] of represents) {
+    const category = rows.map((id) => overrides[id]).find((c) => !!c);
+    if (category) categories.set(bankId, category);
+  }
+  return categories;
+}
+
 /** Newest first. Within a day the posting `date` is equal, so fall back to the
  *  true event `datetime` when Plaid provides it for a precise order; rows
  *  without one keep the order they came in (the sort is stable). */
@@ -253,6 +278,10 @@ export async function assembleBankRows(
   /** When each account ended, through the links the hidden set was read by:
    *  what the rows were filtered by, or with keepEnded would have been. */
   lifecycle: LifecycleView;
+  /** The day of the earliest row imported into a linked account from its
+   *  bank's files that counts (#52), of any date, or null with none: where
+   *  its transactions in Nya begin, beside each bank's `first_date`. */
+  imported_first: string | null;
 }> {
   const items = await getItems(ctx);
   const { hidden, links, liveOk } = await getEffectiveHidden(ctx, { readOnly: opts.readOnly });
@@ -272,17 +301,35 @@ export async function assembleBankRows(
     since: opts.since,
   };
   const at = new Date().toISOString();
-  const [results, overrides, renames, carry] = await Promise.all([
-    Promise.all(
-      items.map(async (item) =>
-        opts.sync
-          ? { ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, inputs)), synced_at: null, first_date: null, never_synced: false }
-          : storedItemTransactions(ctx, item, inputs)
-      )
-    ),
+  const banks = Promise.all(
+    items.map(async (item) =>
+      opts.sync
+        ? {
+            ...(await syncItemTransactions(ctx, item, inputs.hiddenAccountIds, inputs.carriedIn, inputs.carriedExclusionsIn, { ...inputs, withStored: true })),
+            synced_at: null,
+            first_date: null,
+            never_synced: false,
+          }
+        : storedItemTransactions(ctx, item, inputs, { withStored: true })
+    )
+  );
+  const [results, overrides, renames, carry, imported] = await Promise.all([
+    banks,
     readOverridesReport(ctx),
     readRenamesReport(ctx),
     carried,
+    // The rows imported into linked accounts (#52), each counted only where
+    // no bank row stands for it: part of the banks' part, so a category or a
+    // rename applies to them as to the bank's own. Matched once the syncs
+    // are done, against the rows they wrote (never read twice), so a row the
+    // sync just brought supersedes in this very answer.
+    banks.then((done) => {
+      const bankStates = new Map<string, Record<string, StoredTxn> | null>();
+      done.forEach((r, i) => {
+        if (r.stored !== undefined) bankStates.set(items[i].item_id, r.stored);
+      });
+      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since, endedFrom });
+    }),
   ]);
 
   // The person's own changes win over Plaid's data: recategorization by
@@ -291,10 +338,17 @@ export async function assembleBankRows(
   // from that merchant). A renamed row keeps the bank's name beside it
   // (renamed_from, never sent): a rule's name condition reads it too, and a
   // rule's name never replaces the person's (lib/txn-layers.ts).
-  const transactions = results.flatMap((r) => r.txns);
-  const older = results.flatMap((r) => r.older);
+  const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
+  const older = [...results.flatMap((r) => r.older), ...imported.older];
+  // A bank row standing for imported rows the person chose a category for
+  // takes it, unless they chose one for the bank row itself. A posted one
+  // names those rows (`stands_for`), so what else was said about them (an
+  // exclusion or an include, tags, a note) carries to it in finishActivity,
+  // read with every record on each request: under what is said on the bank
+  // row itself (lib/txn-layers.ts).
+  const fromImports = categoriesFromImports(imported.represents, overrides.overrides);
   for (const t of [...transactions, ...older]) {
-    const manual = overrides.overrides[t.transaction_id];
+    const manual = overrides.overrides[t.transaction_id] ?? fromImports.get(t.transaction_id);
     if (manual) {
       t.category = manual;
       t.category_set = true;
@@ -304,8 +358,10 @@ export async function assembleBankRows(
       t.renamed_from = t.name;
       t.name = renamed;
     }
+    const stands = imported.represents.get(t.transaction_id);
+    if (stands && !('pending' in t && t.pending)) t.stands_for = stands;
   }
-  const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
+  const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
   const incomplete = results.flatMap((r, i) =>
     r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
@@ -346,6 +402,7 @@ export async function assembleBankRows(
     })),
     own_read: { categories: overrides.ok && carry.read.categories, names: renames.ok, exclusions: carry.read.exclusions },
     lifecycle,
+    imported_first: imported.first,
   };
 }
 
