@@ -47,6 +47,7 @@ import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
+import type { SplitParent } from './split-rows';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -156,6 +157,29 @@ export type Txn = {
   renamed_from?: string;
   carried?: CarriedRowFacts;
   own_name?: true;
+
+  // Splits and groups (#39), applied last on read (lib/split-rows.ts),
+  // absent on every other row. A part of a split transaction, in its place:
+  // the transaction's id, the part's place among its parts (from 0) and how
+  // many there are, whether the part alone is left out of budgets and
+  // reports, on the part that holds what the bank changed since the split the
+  // amount it was split from, and the whole transaction's own values. A
+  // transaction whose split couldn't be read, or no longer fits (its
+  // currency changed), is shown whole and marked. A group's row, in its
+  // transactions' place: the group's id, its transactions as they are, and
+  // how many of them aren't here or were taken out when they went.
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_unread?: true;
+  split_unapplied?: 'currency';
+  group_id?: string;
+  group_members?: Txn[];
+  group_missing?: number;
+  group_removed?: number;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which

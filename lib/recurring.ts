@@ -145,6 +145,7 @@ import { currencyOf, isExcluded, isMoneyMovement } from './spending';
 import type { CategoryKind } from './categories';
 import { localDate } from './local-date';
 import { toMinorUnits } from './manual-txn-input';
+import { bankRows } from './split-rows';
 
 /** What detection reads of a transaction: the Activity tab's Txn, or a
  *  compact row of the history before it (olderRowsForDetection). */
@@ -963,9 +964,13 @@ function paidCard(
 /**
  * Every recurring series in the rows: bills first, then income, each largest
  * first. Rows may come in any order and may hold anything (pending, transfers,
- * excluded): what can't belong to a series is left out here.
+ * excluded): what can't belong to a series is left out here. A split
+ * transaction's parts, or a group's net (lib/split-rows.ts), are read as the
+ * transactions they stand for (bankRows): a bill split in two each month is
+ * still one bill, and a dinner paid back is still a dinner and a payment in.
  */
-export function detectRecurring(txns: readonly RecurringRow[]): RecurringSeries[] {
+export function detectRecurring(given: readonly RecurringRow[]): RecurringSeries[] {
+  const txns = bankRows(given);
   const groups = new Map<string, { kind: RecurringKind; posted: RecurringRow[]; pending: RecurringRow[] }>();
   for (const t of txns) {
     const kind = rowKind(t);

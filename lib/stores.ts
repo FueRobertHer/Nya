@@ -25,6 +25,7 @@ import './category-store';
 import './connection-records';
 import './connectors/store';
 import './fire-plan';
+import './groups';
 import './holdings-history';
 import './import/store';
 import './manual-txns';
@@ -32,6 +33,7 @@ import './planned-store';
 import './rate-limit';
 import './report/store';
 import './rules';
+import './splits';
 import './tags';
 import './txn-annotations';
 

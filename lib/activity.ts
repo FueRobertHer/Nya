@@ -39,6 +39,13 @@
 // chosen before the person's own exclusions are applied, and finishActivity
 // narrows it after them (`history`), so an excluded row never keeps another
 // from being used.
+//
+// SPLITS AND GROUPS (#39) are applied last in finishActivity, after the
+// cache, the person's layers and the rules, once the rows are filed
+// (lib/split-rows.ts): a split transaction is answered as its parts and a
+// group's transactions as its net, so every reader's totals count those and
+// nothing twice. The rows before the year stay as the bank has them: only
+// recurring detection reads them, and it reads whole transactions.
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
@@ -53,8 +60,11 @@ import { readManualTxnsForDisplay } from './manual-txns';
 import { readAnnotations, getCarriedAnnotations, carriedAnnotations, type CarriedAnnotation } from './txn-annotations';
 import { filingSet, fileRows } from './category-store';
 import { indexTaxonomy, type Taxonomy } from './categories';
-import { liveTagIds, tagsForDisplay, type TagSet } from './tags';
+import { liveTagIds, orderTagIds, tagsForDisplay, type TagSet } from './tags';
 import { applyLayers } from './txn-layers';
+import { readSplitsForDisplay } from './splits';
+import { readGroupsForDisplay } from './groups';
+import { expandSplitsAndGroups } from './split-rows';
 import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 
@@ -385,11 +395,13 @@ export async function finishActivity(
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [manual, annotations, tagRead, ruleRead] = await Promise.all([
+  const [manual, annotations, tagRead, ruleRead, splitRead, groupRead] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
     rulesForDisplay(ctx),
+    readSplitsForDisplay(ctx),
+    readGroupsForDisplay(ctx),
   ]);
   // Manual rows come in newest entered first, so within a day without times
   // they follow Plaid's in that order.
@@ -432,6 +444,18 @@ export async function finishActivity(
   const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
   applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
   fileRows(ix, rows);
+  // Last, splits and groups (lib/split-rows.ts): each split transaction of
+  // the year in its parts' place, each group's transactions in its net's, so
+  // every total counts those and nothing twice. Not the rows before the year,
+  // which only recurring detection reads, and it reads transactions whole.
+  const expanded = expandSplitsAndGroups(transactions, {
+    splits: splitRead.records,
+    splitsUnknown: splitRead.unknown,
+    groups: groupRead.groups,
+    groupsUnknown: groupRead.unknown,
+    ix,
+    orderTags: (ids) => orderTagIds(tagRead.set, ids),
+  });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that
   // couldn't be read for a rule naming one (left out whole until they can be).
@@ -445,13 +469,14 @@ export async function finishActivity(
   // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
-    transactions,
-    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes],
+    transactions: expanded.rows,
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...expanded.notes],
     tags_note: tagRead.note,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
-    // counts toward a merchant's limit nor is used.
+    // counts toward a merchant's limit nor is used; from the transactions as
+    // the bank has them, never a split's parts or a group's net.
     history: olderRowsForDetection(transactions, candidates),
     taxonomy: filed.taxonomy,
     tags: tagRead.set,

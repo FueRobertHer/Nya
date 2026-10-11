@@ -70,6 +70,9 @@ export type Countable = {
   /** True when you excluded it; null when whether you did could not be read,
    *  which counts it (see isExcluded). */
   excluded?: boolean | null;
+  /** On a part of a split transaction (lib/split-rows.ts): the transaction
+   *  it is part of, counted once where transactions are counted. */
+  split_of?: string;
 };
 
 // Plaid's transaction_code is the reliable signal for money that moves without
@@ -172,8 +175,14 @@ export function leftOutByCurrency<T extends Countable>(
   counts: (t: T) => boolean = (t) => !isExcluded(t) && !isTransfer(t)
 ): LeftOut {
   const by = new Map<string, number>();
+  // A split transaction's parts are one transaction left out, not several.
+  const split = new Set<string>();
   for (const t of txns) {
     if (inCurrency(t, currency) || !counts(t)) continue;
+    if (t.split_of !== undefined) {
+      if (split.has(t.split_of)) continue;
+      split.add(t.split_of);
+    }
     const c = currencyOf(t)!;
     by.set(c, (by.get(c) ?? 0) + 1);
   }

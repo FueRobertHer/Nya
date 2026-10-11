@@ -1112,6 +1112,8 @@ describe('stores built on the storage seam', () => {
       'rules',
       'tags',
       'transaction-annotations',
+      'transaction-groups',
+      'transaction-splits',
     ]);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
