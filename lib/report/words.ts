@@ -260,6 +260,23 @@ export function appendixStatus(row: {
   return parts.length > 0 ? parts.join('; ') : null;
 }
 
+/** What a row of the appendix is when it isn't a transaction listed whole:
+ *  a part of a split one, what the bank changed a split one by, or a group's
+ *  net (lib/split-rows.ts). `money` writes an amount in the row's currency. */
+export function appendixSplitWords(
+  row: { split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
+  money: (n: number) => string
+): string | null {
+  if (row.split?.remainder) return `What the bank changed this ${money(row.split.whole)} transaction by since it was split`;
+  if (row.split) return `Part ${row.split.part} of ${row.split.parts} of a ${money(row.split.whole)} transaction`;
+  if (row.group) {
+    const n = row.group.transactions;
+    const missing = row.group.missing > 0 ? `; ${row.group.missing} more ${row.group.missing === 1 ? 'isn’t' : 'aren’t'} here` : '';
+    return `The net of a group of ${n} transaction${n === 1 ? '' : 's'}${missing}`;
+  }
+  return null;
+}
+
 /** A connection's recorded state, in the words of its badge on the Connection
  *  health card (components/ConnectionHealth.tsx; test/report.test.ts holds
  *  the two together). */

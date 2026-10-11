@@ -89,6 +89,7 @@ import {
   contentKey,
   type StoredAccount,
   type StoredTxn,
+  type Txn,
 } from './transactions';
 import { readInvStore, type InvStoreState } from './invstore';
 import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
@@ -103,6 +104,9 @@ import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
 import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
 import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
+import { csvLinesWithSplits, splitInputsOf, type CsvLine } from './export-splits';
 import { rulesStore } from './rules';
 import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
@@ -1057,6 +1061,24 @@ const PART_WORDS: Record<string, PartWords> = {
     inCsv: (counts) =>
       `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
   },
+  // What a split transaction's parts and a group's net are (lib/export-splits.ts):
+  // in a CSV, the rows that show whole instead.
+  [splitStore.name]: {
+    noun: splitStore.what,
+    one: 'split',
+    many: 'splits',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${splitStore.what} could be read: ${counts}. Those transactions are in this file whole, with no parts, and nya_amount counts each whole, as the app shows them until they can be read.`,
+  },
+  [groupStore.name]: {
+    noun: groupStore.what,
+    one: 'group',
+    many: 'groups',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${groupStore.what} could be read: ${counts}. Their transactions are in this file on their own, each counted in nya_amount, as the app counts them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
@@ -1528,14 +1550,25 @@ export const TRANSACTION_COLUMNS = [
   'tags',
   'nya_name',
   'excluded',
+  // Added with splits and groups (#39), at the end too: what the app counts
+  // of each row, and which split or group a row is of (lib/export-splits.ts).
+  'nya_amount',
+  'split_of',
+  'split_index',
+  'group_id',
+  'group_name',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
 
-function transactionRow(t: ExportTransaction): CsvValue[] {
+/** Every column empty: what a row fills. */
+const blankCells = () => Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>;
+
+function transactionCells(t: ExportTransaction): Record<TransactionColumn, CsvValue> {
   const loc = t.location ?? null;
   const pay = t.payment_meta ?? null;
-  const cells: Record<TransactionColumn, CsvValue> = {
+  return {
+    ...blankCells(),
     date: t.date,
     account_name: t.account_name,
     institution_name: t.institution_name,
@@ -1593,7 +1626,6 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     nya_name: t.nya_name,
     excluded: t.excluded,
   };
-  return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
 
 /**
@@ -1605,9 +1637,15 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory, l: Layered): CsvValue[] {
-  const cells: Record<TransactionColumn, CsvValue> = {
-    ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
+function manualTransactionCells(
+  row: ManualTxn,
+  account: { name: string | null; institution_name: string | null } | undefined,
+  hidden: boolean,
+  filed: NyaCategory,
+  l: Layered
+): Record<TransactionColumn, CsvValue> {
+  return {
+    ...blankCells(),
     date: row.date,
     account_name: account?.name ?? null,
     institution_name: account?.institution_name ?? null,
@@ -1631,7 +1669,6 @@ function manualTransactionRow(row: ManualTxn, account: { name: string | null; in
     nya_name: l.name,
     excluded: l.excluded,
   };
-  return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
 
 /** What a row is filed under, as the file says it (ExportTransaction's
@@ -1673,6 +1710,12 @@ const manualFilings = new WeakMap<UserExport, CategoryIndex>();
 function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
   const ix = manualFilings.get(doc) ?? grownFiling(doc, rows);
   return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
+}
+
+/** The categories the document's rows are filed by (manualFiling), for a
+ *  writer that names a split's parts (lib/ofx-export.ts). */
+export function docFiling(doc: UserExport): CategoryIndex {
+  return manualFilings.get(doc) ?? grownFiling(doc, manualRowsOf(doc[manualTxnStore.name]));
 }
 
 /** The categories in a document buildUserExport didn't make, grown by the
@@ -1772,20 +1815,47 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // the app does; and every row with the read layer's facts on it, as the
   // app shows them (layeredBookRows).
   const book = layeredBookRows(doc);
-  const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
-    ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
-    ...book.rows.map((r) => ({
-      date: r.date,
-      time: '',
-      id: r.id,
-      cells: () => {
-        const { l, filed } = book.shown(r);
-        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
-      },
+  // Splits and groups, by the read layer's own function, from the file's own
+  // parts (lib/export-splits.ts): a split transaction's parts and a group's
+  // net beside the transactions, `nya_amount` what the app counts. A row's
+  // read-layer facts are what that function reads of it.
+  const ix = manualFiling(doc, book.rows).ix;
+  const facts = (t: { id: string; date: string; amount: number; currency: string | null; unofficial?: string | null; pending: boolean; l: Layered | ExportTransaction }) =>
+    ({
+      transaction_id: t.id,
+      date: t.date,
+      amount: t.amount,
+      pending: t.pending,
+      iso_currency_code: t.currency,
+      unofficial_currency_code: t.unofficial ?? null,
+      excluded: t.l.excluded === true ? true : t.l.excluded === null ? null : undefined,
+      ...(t.l.excluded_by_rule ? { excluded_by_rule: true } : {}),
+      tags: t.l.tags,
+    }) as unknown as Txn;
+  const rows: CsvLine<Record<TransactionColumn, CsvValue>>[] = [
+    ...doc.transactions.map((t) => ({
+      date: t.date,
+      time: t.datetime ?? t.authorized_datetime ?? '',
+      id: t.transaction_id,
+      txn: facts({ id: t.transaction_id, date: t.date, amount: t.amount, currency: t.iso_currency_code, unofficial: t.unofficial_currency_code, pending: t.pending, l: t }),
+      cells: () => transactionCells(t),
     })),
+    ...book.rows.map((r) => {
+      const { l, filed } = book.shown(r);
+      return {
+        date: r.date,
+        time: '',
+        id: r.id,
+        txn: facts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l }),
+        cells: () => manualTransactionCells(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l),
+      };
+    }),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
-  for (const row of rows) yield csvRow(row.cells());
+  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix), blankCells)) {
+    const cells = row.cells();
+    yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
+  }
 }
 
 /** The columns of balances.csv, in order (docs/data-export.md). */
@@ -1878,6 +1948,10 @@ export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonl
     tagStore.name,
     txnAnnotationStore.name,
     carriedAnnotationStore.name,
+    // The splits and groups (lib/export-splits.ts): a part's and a group's
+    // rows, and nya_amount.
+    splitStore.name,
+    groupStore.name,
   ],
   // The days, and the names of the manual accounts the rows are for.
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts'],

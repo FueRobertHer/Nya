@@ -21,6 +21,7 @@ import { formatMoney } from '@/lib/format';
 import type { Report, ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
+  appendixSplitWords,
   gapShort,
   MANUAL_NOTE,
   MARKED_NOTE,
@@ -356,7 +357,7 @@ export function ReportView({ report }: { report: Report }) {
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
                         <td className="num">{formatMoney(-r.amount || 0, r.currency)}</td>
-                        <td>{[status, r.note].filter(Boolean).join('. ')}</td>
+                        <td>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</td>
                       </tr>
                     );
                   })}

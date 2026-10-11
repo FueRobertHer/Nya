@@ -307,6 +307,14 @@ export type AppendixRow = {
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
+  /** A part of a split transaction (#39, lib/split-rows.ts), listed as the
+   *  Activity tab lists it: its place, how many parts there are, the whole
+   *  transaction's amount, and whether it holds what the bank changed the
+   *  amount by since the split. Absent on a transaction listed whole. */
+  split?: { part: number; parts: number; whole: number; remainder: boolean };
+  /** A group's net: how many of its transactions it counts, and how many
+   *  aren't here. Absent on anything else. */
+  group?: { transactions: number; missing: number };
 };
 
 export type ReportAppendix = {
@@ -663,6 +671,10 @@ export function buildReport(input: ReportInput): Report {
         not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
         exclusion_unknown: t.excluded === null,
         note: t.note ?? null,
+        ...(t.split_of !== undefined
+          ? { split: { part: (t.split_index ?? 0) + 1, parts: t.split_count ?? 1, whole: t.split_parent?.amount ?? t.amount, remainder: t.split_remainder !== undefined } }
+          : {}),
+        ...(t.group_members ? { group: { transactions: t.group_members.length, missing: (t.group_missing ?? 0) + (t.group_removed ?? 0) } } : {}),
       })),
       total: listed.length,
       limit,

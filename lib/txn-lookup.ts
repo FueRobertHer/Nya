@@ -25,6 +25,9 @@ export type FoundTxn = {
   /** Its currency (ISO, or Plaid's unofficial code), or null when it says none. */
   currency: string | null;
   pending: boolean;
+  /** Its name as stored (the merchant, else the bank's words; a manual row's
+   *  payee), for a refusal to name it. */
+  name: string;
 };
 
 /** Some of the stores that could hold what was asked for couldn't be read,
@@ -73,6 +76,7 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
           amount: t.amount,
           currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
           pending: t.pending,
+          name: t.merchant_name || t.name,
         });
       }
     }
@@ -82,7 +86,7 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
     for (const book of entries.values()) {
       for (const r of book.rows) {
         if (!manual.has(r.id)) continue;
-        found.set(r.id, { transaction_id: r.id, account_id: r.account_id, date: r.date, amount: r.amount, currency: r.currency, pending: false });
+        found.set(r.id, { transaction_id: r.id, account_id: r.account_id, date: r.date, amount: r.amount, currency: r.currency, pending: false, name: r.name });
       }
     }
     unreadBooks = unreadable.length + unrecognised.length > 0;

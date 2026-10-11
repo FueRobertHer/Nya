@@ -126,7 +126,10 @@ import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
 import { MANUAL_CURRENCY } from './manual';
 import { minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
-import { bookAccountTypes, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { bookAccountTypes, docFiling, layeredBookRows, missingIds, manualTransactionsIn, type ExportFile, type UserData, type UserExport } from './user-export';
+import { splitInputsOf, splitMemoOf } from './export-splits';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
 import { connectionsStore, connectorAccountsStore } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
@@ -287,6 +290,9 @@ export type OfxRow = {
   /** One side of a pair Nya worked out between two SimpleFIN accounts
    *  (lib/manual-txns.ts), and what it is. */
   paired?: PairKind;
+  /** How it is split, or the group it is in, in words for its memo
+   *  (lib/export-splits.ts splitMemoOf). */
+  split?: string;
 };
 
 /** One account, ready to be written as statements. */
@@ -395,6 +401,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   let lossy = 0;
   let shortened = 0;
   let memosCut = 0;
+  let splitsLeftOut = 0;
   const line = (tag: string, value: string) => `<${tag}>${escape(value)}\r\n`;
   const status = '<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n';
   const pieces: string[] = [
@@ -426,6 +433,15 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
           if (!t.text || t.text.toLowerCase() === name.text.toLowerCase()) continue;
           memo.push(t.text);
           touched ||= t.lossy;
+        }
+        // How it is split, or its group, last, and only whole: cut, a part's
+        // amount could be read as another.
+        if (r.split) {
+          const t = to1252(r.split);
+          if ([...memo, t.text].join('; ').length <= MEMO_MAX) {
+            memo.push(t.text);
+            touched ||= t.lossy;
+          } else splitsLeftOut++;
         }
         if (touched) lossy++;
         const memoText = memo.join('; ');
@@ -462,6 +478,11 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   if (memosCut > 0) {
     notes.push(
       `${plural(memosCut, 'transaction’s memo is', 'transactions’ memos are')} longer than OFX’s ${MEMO_MAX} characters, so each is cut there, and its end (your note, its tags) may be missing. The CSV and JSON downloads have them whole.`
+    );
+  }
+  if (splitsLeftOut > 0) {
+    notes.push(
+      `${plural(splitsLeftOut, 'transaction is', 'transactions are')} split or in a group in Nya, and saying how doesn’t fit OFX’s ${MEMO_MAX}-character memo with the rest, so ${splitsLeftOut === 1 ? 'its memo leaves it' : 'their memos leave it'} out. Each is listed whole, as the bank has it; the CSV and JSON downloads have the parts and groups.`
     );
   }
   if (lossy > 0) {
@@ -564,6 +585,14 @@ export function ofxFile(
   // imported): an unreadable record leaves it in the memo. A bank's, or one
   // SimpleFIN brought, has the person's note in its record.
   const ownNote = new Set<string>();
+  // Splits and groups, from the file's own parts, as the app applies them
+  // (lib/export-splits.ts): each transaction listed whole, how it is split or
+  // its group in its memo.
+  const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc));
+  const splitWords = (r: { id: string; amount: number; currency: string | null; pending?: boolean }) => {
+    const words = splitMemoOf(r, splitInputs);
+    return words ? { split: words } : {};
+  };
 
   // The rows a book holds for the account (a manual account's own, or those
   // SimpleFIN brought), as the app shows them, each side of a pair the app
@@ -598,6 +627,7 @@ export function ofxFile(
           hidden_by_rule: l.excluded_by_rule,
           tags: l.tags,
           ...(paired ? { paired } : {}),
+          ...splitWords({ id: r.id, amount: r.amount, currency: r.currency }),
         };
       });
   };
@@ -683,6 +713,7 @@ export function ofxFile(
         excluded: t.excluded === true,
         hidden_by_rule: t.excluded_by_rule === true,
         tags: t.tags ?? [],
+        ...splitWords({ id: t.transaction_id, amount: t.amount, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null }),
       });
     }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
@@ -755,6 +786,17 @@ export function ofxFile(
       `Whether ${plural(unmarked, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}. The JSON download lists them under problems. ${UNCHANGED}`
     );
     incomplete.add(txnAnnotationStore.name);
+  }
+  const unreadSplits = rows.filter((r) => splitInputs.splitsUnknown.has(r.id)).length;
+  if (unreadSplits > 0) {
+    notes.push(
+      `How ${plural(unreadSplits, 'of these transactions is', 'of these transactions are')} split couldn’t be read, so ${unreadSplits === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadSplits === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
+    );
+    incomplete.add(splitStore.name);
+  }
+  if (rows.length > 0 && splitInputs.groupsUnknown > 0) {
+    notes.push(`Some of your groups couldn’t be read, so a transaction’s memo may not say the group it is in. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(groupStore.name);
   }
   // Rules and tags that couldn't be read: none applied, none shown, as the
   // app does until they can be; said, as every part the file is short of.
