@@ -25,6 +25,11 @@
 // nothing here edits until they have loaded; a save that fails puts back what
 // is stored. A budget on a category or group since deleted is shown, and can
 // be removed. A past month is shown as it was, and not edited.
+//
+// SUGGESTIONS (lib/budget-suggestions.ts, components/BudgetSuggestion.tsx).
+// The editor, and a category or group chosen to add a budget to, show what
+// was spent there on average over the last three complete months, rounded
+// up, with one tap to save it as the budget.
 
 import { useMemo, useState } from 'react';
 import { formatMoney } from '@/lib/format';

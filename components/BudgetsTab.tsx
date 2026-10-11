@@ -20,7 +20,11 @@
 // irregular" is on, above the meters (components/IncomePool.tsx). A month
 // picker shows a past month as it was: its budgets then, its spending, and
 // what rolled into it. Until the month has loaded, or when it can't be, this
-// month shows as it always has, with a note.
+// month shows as it always has, with a note. This month's answer carries the
+// budget suggestions from history the editor offers (lib/budget-suggestions.ts).
+//
+// While your categories are still the ones Nya made, the starter sets are
+// offered here once, above the budgets (components/TemplateOffer.tsx).
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
