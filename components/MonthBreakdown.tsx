@@ -35,7 +35,7 @@ import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
-import { bankRows, type SplitParent } from "@/lib/split-rows";
+import { bankRows, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
 import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions } from "./SplitRows";
@@ -134,6 +134,7 @@ export type Txn = {
   group_missing?: number;
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
 };
 
 /** The name rules match a row by: the one it had before any rule named it. */
@@ -532,7 +533,8 @@ export default function MonthBreakdown({
         groups.push(g);
       }
       g.txns.push(t);
-      if (isExcluded(t)) continue;
+      // Not counted: excluded, or counted in a group dated before this year (#39).
+      if (isExcluded(t) || t.group_outside) continue;
       const c = currencyOf(t) ?? currency;
       g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
@@ -922,7 +924,8 @@ export default function MonthBreakdown({
                             className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            {t.split_parts ? null : taxonomy ? (
+                            {/* Filed as its parts are, or as its group is (#39). */}
+                            {t.split_parts || t.group_outside ? null : taxonomy ? (
                               <CategoryPicker
                                 taxonomy={taxonomy}
                                 className="text-input recat-select"
@@ -942,7 +945,7 @@ export default function MonthBreakdown({
                                 }}
                                 label={`Category for ${t.name}`}
                               />
-                            ) : t.group_members ? null : (
+                            ) : t.group_members || t.group_outside ? null : (
                               <select
                                 className="text-input recat-select"
                                 value={t.category ?? "other"}
@@ -1027,14 +1030,14 @@ export default function MonthBreakdown({
                             )}
                             {/* Offered once a pending row has posted
                                 (exclusionOffer), one a rule hides too. */}
-                            {onToggleExcluded && !t.group_members && exclusionOffer(t) !== "toggle" && (
+                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) !== "toggle" && (
                               <div className="rename-hint">
                                 {exclusionOffer(t) === "wait-rule"
                                   ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
                                   : "Once it posts, it can be excluded from budgets and reports."}
                               </div>
                             )}
-                            {onToggleExcluded && !t.group_members && exclusionOffer(t) === "toggle" && (
+                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) === "toggle" && (
                               <>
                                 <div className="rename-row">
                                   <button

@@ -304,7 +304,9 @@ export type AppendixRow = {
   pending: boolean;
   /** Why it isn't in the totals (the person excluded it; a rule hides it; a
    *  transfer or loan payment; another currency), or null when it is. */
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
+  /** Why the totals don't count it: 'group' for one of a group counted on a
+   *  day before the period (lib/split-rows.ts group_outside). */
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
@@ -672,7 +674,7 @@ export function buildReport(input: ReportInput): Report {
         institution: t.institution_name,
         source: t.source ?? 'plaid',
         pending: t.pending,
-        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
+        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : t.group_outside ? 'group' : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
         exclusion_unknown: t.excluded === null,
         note: t.note ?? null,
         ...(t.split_of !== undefined

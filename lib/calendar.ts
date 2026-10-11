@@ -44,6 +44,9 @@ export type CalendarTxn = {
   split_parent?: unknown;
   split_remainder?: unknown;
   group_members?: readonly unknown[];
+  /** One of a group counted on a day before what was read: listed, not
+   *  counted (lib/split-rows.ts). */
+  group_outside?: { name: string; date: string };
 };
 
 /** A card or loan payment Plaid says is due (an account's liability). */
@@ -87,6 +90,9 @@ export type CalendarEntry = {
    *  `amount` (money in positive, as `amount`). */
   parts?: number;
   counted?: number;
+  /** Posted, in a group counted on a day before what was read: the group's
+   *  name and day (listed, never in the figure). */
+  group?: { name: string; date: string };
   /** Why an expected one isn't in the figure: another currency, an account
    *  that isn't cash (a card's charge) or whose type isn't known, or pay that
    *  varies too much to forecast. */
@@ -165,7 +171,7 @@ export function calendarMonth(opts: {
     if (!entries.has(t.date)) continue;
     const parts = t.split_parts;
     const excluded = parts ? parts.every((p) => isExcluded(p)) : isExcluded(t);
-    const uncounted = excluded || !inCurrency(t, currency);
+    const uncounted = excluded || !inCurrency(t, currency) || !!t.group_outside;
     // What counts of a split one: all of it, unless a part is left out on its own.
     const counted = parts && !uncounted ? -parts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : undefined;
     add({
@@ -179,6 +185,7 @@ export function calendarMonth(opts: {
       ...(excluded ? { excluded: true } : {}),
       ...(uncounted ? { uncounted: true } : {}),
       ...(parts ? { parts: parts.filter((p) => !p.split_remainder).length } : {}),
+      ...(t.group_outside ? { group: { name: t.group_outside.name, date: t.group_outside.date } } : {}),
       ...(counted !== undefined && Math.round(counted * scale) !== Math.round(-t.amount * scale) ? { counted: counted || 0 } : {}),
     });
   }

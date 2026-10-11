@@ -182,6 +182,26 @@ describe('the read-only API', () => {
     expect([inCategory(after, 'entertainment'), groupOf(after, 'Travel and entertainment')]).toEqual([3, 3]);
   });
 
+  test('a transaction of a group dated before the window read is listed, its group beside it with no net, and counted nowhere in the window', async () => {
+    const before = await call('spending', FROM);
+    await groupStore.set(ctx, 'g-old', {
+      version: 1,
+      name: 'Last year’s trip',
+      category_id: cat('travel'),
+      members: ['t_long_gone', 't_coffee'],
+      date: daysAgo(400),
+      currency: 'USD',
+      created_at: NOW_ISO,
+      updated_at: NOW_ISO,
+    });
+    const coffee = (await call('transactions', `${FROM}&limit=500`)).transactions.find((t: any) => t.id === 't_coffee');
+    expect(coffee).toMatchObject({ amount: 5.5, transaction_group: { id: 'g-old', name: 'Last year’s trip', date: daysAgo(400), net: null, category: 'travel', transactions: 1, missing: 1 } });
+    const after = await call('spending', FROM);
+    expect(after.money_out).toBeCloseTo(before.money_out - 5.5, 8);
+    expect(after.transactions).toBe(before.transactions);
+    expect(after.counted).toBe(before.counted - 1);
+  });
+
   test('a part left out on its own, or the whole transaction excluded, as the app counts it', async () => {
     await splitAndGroup();
     await setExcluded(ctx, 't_card', true);

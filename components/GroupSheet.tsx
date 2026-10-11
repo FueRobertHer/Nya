@@ -46,6 +46,9 @@ export function groupCandidates(rows: readonly Txn[], opts: { currency: string |
         !t.group_members &&
         !t.split_unread &&
         !t.split_unapplied &&
+        // In a group already, if one the list has no row for.
+        !t.group_unapplied &&
+        !t.group_outside &&
         !opts.exclude.has(t.transaction_id) &&
         currencyOf(t) === opts.currency &&
         (!q || t.name.toLowerCase().includes(q) || t.account_name.toLowerCase().includes(q) || String(Math.abs(t.amount)).includes(q))

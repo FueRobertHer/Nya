@@ -232,7 +232,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     const d = dayNumber(t.date);
     return d >= start && d <= end; // also skips a malformed date
   });
-  const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && counts(planFlow(t))));
+  const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t))));
   // Transactions, not rows: a split one's parts are one, a group as many as
   // it holds (lib/spending.ts transactionCounter).
   const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
@@ -264,6 +264,8 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       if (t.excluded_by_rule) hiddenCount.add(t);
       continue;
     }
+    // Counted in a group on a day before what was read (lib/split-rows.ts).
+    if (t.group_outside) continue;
     const flow = planFlow(t);
     if (!inCurrency(t, currency)) {
       if (flow !== 'transfer' && flow !== 'card-payment') {

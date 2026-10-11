@@ -64,7 +64,12 @@
 //     note: a net of two currencies is no amount;
 //   - one that is split as well (only two devices at once can do that: the
 //     routes refuse it) counts whole in the group, its split unused, with a
-//     note.
+//     note;
+//   - a group dated before the first day read (`from`) counts on a day
+//     outside what was read, so its transactions that are here are listed on
+//     their own, each saying which group and on which day it counts
+//     (group_outside), and count in no total (lib/spending.ts
+//     countsInTotals): never a part of its net answered as the whole.
 //
 // WHERE A TRANSACTION STAYS ONE ROW (bankRows): recurring detection
 // (lib/recurring.ts) looks for a monthly bill in the bank's transactions,
@@ -302,11 +307,17 @@ export type SplitInputs = {
   /** Orders tag ids as the tags were made (lib/tags.ts orderTagIds). */
   orderTags?: (ids: ReadonlySet<string>) => string[];
   /** The first day the rows were read from (lib/activity.ts): a group dated
-   *  before it counts on that day, outside what was read, so it is left out
-   *  with its transactions here, as a report for a later period leaves it
-   *  out; never answered at a part of its net. */
+   *  before it counts on that day, outside what was read, so its
+   *  transactions here are listed, marked (group_outside), and counted in no
+   *  total, as a report for a later period counts none of it; never a part
+   *  of its net answered as the whole. */
   from?: string;
 };
+
+/** What a transaction of a group counted outside what was read carries
+ *  (SplitInputs.from): the group, its day and category, how many of its
+ *  transactions are here, and how many aren't. */
+export type GroupOutside = { id: string; name: string; date: string; category_id: string; here: number; missing: number };
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
@@ -322,7 +333,12 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
 
   // Groups first, oldest made first: a transaction in two (two devices at
   // once) counts in the first, and the other says it isn't there.
+  // Taken by a group made earlier (a transaction counts in one), and of
+  // those, the ones in a group's row rather than on their own.
+  const claimed = new Set<string>();
   const inGroup = new Set<string>();
+  // Those of a group counted on a day before what was read.
+  const outside = new Map<string, GroupOutside>();
   const groupRows: Txn[] = [];
   // Transactions of a group that no longer applies (their currencies differ
   // now): on their own, saying which group, so it can be ungrouped.
@@ -331,7 +347,7 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   let splitAndGrouped = 0;
   const ordered = [...inputs.groups].sort(([a, x], [b, y]) => (x.created_at !== y.created_at ? (x.created_at < y.created_at ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0));
   for (const [id, g] of ordered) {
-    const here = g.members.filter((m) => byId.has(m) && !inGroup.has(m)).map((m) => byId.get(m)!);
+    const here = g.members.filter((m) => byId.has(m) && !claimed.has(m)).map((m) => byId.get(m)!);
     if (here.length === 0) continue;
     if (new Set(here.map((t) => currencyOf(t))).size > 1) {
       mixed++;
@@ -339,11 +355,18 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
       continue;
     }
     if (inputs.from !== undefined && g.date < inputs.from) {
-      // Counted on its day, before what was read: not here, nor its transactions.
-      for (const t of here) inGroup.add(t.transaction_id);
+      // Counted on its day, before what was read: its transactions here are
+      // listed, marked, and counted nowhere in what was read.
+      const marked: GroupOutside = { id, name: g.name, date: g.date, category_id: g.category_id, here: here.length, missing: g.members.length - here.length + (g.removed ?? 0) };
+      for (const t of here) {
+        claimed.add(t.transaction_id);
+        outside.set(t.transaction_id, marked);
+        if (inputs.splits.has(t.transaction_id)) splitAndGrouped++;
+      }
       continue;
     }
     for (const t of here) {
+      claimed.add(t.transaction_id);
       inGroup.add(t.transaction_id);
       if (inputs.splits.has(t.transaction_id)) splitAndGrouped++;
     }
@@ -357,6 +380,12 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   let unknownCategory = 0;
   for (const given of rows) {
     if (inGroup.has(given.transaction_id)) continue;
+    const before = outside.get(given.transaction_id);
+    if (before) {
+      // As it is, its split unused as in any group, counted in no total.
+      out.push({ ...given, group_id: before.id, group_outside: before });
+      continue;
+    }
     const stale = unapplied.get(given.transaction_id);
     const t = stale ? { ...given, group_unapplied: stale } : given;
     const record = inputs.splits.get(t.transaction_id);

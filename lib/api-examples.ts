@@ -474,7 +474,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].transaction_group.id', 'The group’s id.'],
       ['transactions[].transaction_group.name', 'The name you gave it.'],
       ['transactions[].transaction_group.date', 'The day its net counts on: its earliest transaction’s when you made it.'],
-      ['transactions[].transaction_group.net', 'Its transactions here added up, in Plaid’s sign: what is counted (60 for a 120 dinner and 60 paid back; 0 for a trip reimbursed in full).'],
+      [
+        'transactions[].transaction_group.net',
+        'Its transactions here added up, in Plaid’s sign: what is counted (60 for a 120 dinner and 60 paid back; 0 for a trip reimbursed in full). Null when the group’s date is before the transactions read, so it counts there: its transactions here count in no total.',
+      ],
       ['transactions[].transaction_group.currency', 'The currency its transactions are in (a group holds one).'],
       ['transactions[].transaction_group.category', 'The name of your category its net is filed under.'],
       ['transactions[].transaction_group.category_id', 'That category’s id.'],

@@ -760,8 +760,10 @@ export type ApiTransactionGroup = {
   name: string;
   /** The day its net counts on: its earliest transaction's when it was saved. */
   date: string;
-  /** Its transactions here, added up (Plaid's sign): what is counted. */
-  net: number;
+  /** Its transactions here, added up (Plaid's sign): what is counted. Null
+   *  when the group's day is before the window read, so its net counts there
+   *  and isn't known here: its transactions here count in no total. */
+  net: number | null;
   currency: string | null;
   /** The category its net is filed under: name, id, and its group's id and
    *  name (a category group, as transactions[].group is). */
@@ -808,6 +810,27 @@ function splitsOf(parts: readonly Txn[], ix: CategoryIndex): ApiSplitPart[] {
     excluded: p.excluded === true ? true : p.excluded === null ? null : false,
     remainder: p.split_remainder !== undefined,
   }));
+}
+
+/** The group of a transaction whose group counts on a day before the window
+ *  read (lib/split-rows.ts group_outside): as a group is shown, its net null. */
+function outsideGroupOf(t: Txn, ix: CategoryIndex): ApiTransactionGroup {
+  const o = t.group_outside!;
+  const c = categoryById(ix, o.category_id);
+  const g = c ? groupOf(ix, c) : null;
+  return {
+    id: o.id,
+    name: o.name,
+    date: o.date,
+    net: null,
+    currency: currencyOf(t),
+    category: c?.name ?? null,
+    category_id: shownId(c?.id),
+    category_group_id: shownId(g?.id),
+    category_group: g?.name ?? null,
+    transactions: o.here,
+    missing: o.missing,
+  };
 }
 
 /** A group's row as the API shows the group (lib/split-rows.ts). */
@@ -868,7 +891,7 @@ function toApiTransaction(
     rule_ids: t.rule_ids ?? [],
     excluded_by_rule: t.excluded_by_rule === true,
     splits: t.split_parts ? splitsOf(t.split_parts, ix) : null,
-    transaction_group: (t.group_id !== undefined && groups.get(t.group_id)) || null,
+    transaction_group: t.group_outside ? outsideGroupOf(t, ix) : (t.group_id !== undefined && groups.get(t.group_id)) || null,
   };
 }
 

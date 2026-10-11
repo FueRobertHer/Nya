@@ -47,7 +47,7 @@ import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
-import type { SplitParent } from './split-rows';
+import type { GroupOutside, SplitParent } from './split-rows';
 import { pruneSplitsAndGroups } from './split-gone';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -171,7 +171,9 @@ export type Txn = {
   // how many of them aren't here or were taken out when they went. A part
   // carries when its split was saved (split_updated_at), so an edit says
   // what it saw; a transaction of a group that no longer applies (its
-  // transactions' currencies differ now) says which (group_unapplied).
+  // transactions' currencies differ now) says which (group_unapplied), and
+  // one of a group counted on a day before what was read says which, and
+  // counts in no total (group_outside).
   split_of?: string;
   split_index?: number;
   split_count?: number;
@@ -186,6 +188,7 @@ export type Txn = {
   group_missing?: number;
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which

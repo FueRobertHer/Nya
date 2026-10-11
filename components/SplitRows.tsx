@@ -37,6 +37,10 @@ export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConn
 
 /** A row's notice under its name about its split or group, if any. */
 export function entryNotice(t: Txn): string | null {
+  if (t.group_outside) {
+    const day = new Date(`${t.group_outside.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+    return `It is in the group “${t.group_outside.name}”, which counts on ${day}, before the transactions shown here begin, so it isn’t counted here.`;
+  }
   if (t.group_unapplied) {
     return `It is in the group “${t.group_unapplied.name}”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.`;
   }
@@ -67,11 +71,14 @@ export function SplitActions({
   /** Ungroups the group by its id. */
   onUngroup: (id: string) => void;
 }) {
-  if (t.group_unapplied) {
+  // In a group the list has no row for: one that no longer applies, or one
+  // counted on a day before what is shown.
+  const listless = t.group_unapplied ?? t.group_outside;
+  if (listless) {
     return (
       <div className="rename-row">
-        <button className="secondary" onClick={() => onUngroup(t.group_unapplied!.id)}>
-          Ungroup “{t.group_unapplied.name}”
+        <button className="secondary" onClick={() => onUngroup(listless.id)}>
+          Ungroup “{listless.name}”
         </button>
       </div>
     );

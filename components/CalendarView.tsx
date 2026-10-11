@@ -150,6 +150,10 @@ export default function CalendarView({
       // One charge, split (#39): what of it the day's figure counts when a part is left out.
       e.parts ? `split into ${e.parts}` : null,
       e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
+      // Counted through its group, on the group's earlier day (#39).
+      e.group
+        ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
+        : null,
       e.excluded ? "excluded, not in the day's figure" : null,
       !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
     ]

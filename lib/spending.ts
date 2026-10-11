@@ -76,6 +76,10 @@ export type Countable = {
   /** On a group's row (lib/split-rows.ts): the transactions it stands for,
    *  each counted where transactions are counted. */
   group_members?: readonly unknown[];
+  /** On a transaction of a group counted on a day before what was read
+   *  (lib/split-rows.ts): it counts there, through its group, so in no total
+   *  of what was read. */
+  group_outside?: unknown;
 };
 
 /**
@@ -184,9 +188,10 @@ export function inCurrency(t: Pick<Countable, 'iso_currency_code' | 'unofficial_
 
 /** Whether a transaction counts in totals of money in and out kept in
  *  `currency` (totalsCurrency): not a transfer or loan payment, not excluded,
- *  and in that currency. */
+ *  in that currency, and not one of a group counted on a day before what was
+ *  read (group_outside), which counts there. */
 export function countsInTotals(t: Countable, currency: string | null): boolean {
-  return !isExcluded(t) && !isTransfer(t) && inCurrency(t, currency);
+  return !isExcluded(t) && !isTransfer(t) && inCurrency(t, currency) && !t.group_outside;
 }
 
 /** How many rows were left out of a total for being in another currency, by
@@ -201,7 +206,7 @@ export type LeftOut = { currency: string; count: number }[];
 export function leftOutByCurrency<T extends Countable>(
   txns: readonly T[],
   currency: string | null,
-  counts: (t: T) => boolean = (t) => !isExcluded(t) && !isTransfer(t)
+  counts: (t: T) => boolean = (t) => !isExcluded(t) && !isTransfer(t) && !t.group_outside
 ): LeftOut {
   // Transactions, not rows: a split one's parts are one, a group as many as
   // it holds (transactionCounter).

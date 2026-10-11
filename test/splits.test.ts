@@ -579,13 +579,31 @@ describe('groups net their transactions', () => {
     expect(bankRows(expandSplitsAndGroups([euro, dinner], inputs()).rows)).toEqual([euro, dinner]);
   });
 
-  test('a group dated before the first day read counts on its day, outside what was read: left out with its transactions', () => {
+  test('a group dated before the first day read counts on its day, outside what was read: its transactions here listed, marked, counted in no total', () => {
     // The dinner (October 3) has left what was read; only the payback is here.
-    const out = expandSplitsAndGroups([venmo, coffee], inputs({ groups: new Map([['g1', group(['t_dinner', 't_venmo'])]]), from: '2026-10-05' }));
-    expect(out.rows.map((t) => t.transaction_id)).toEqual(['t_coffee']);
-    expect(summarize(out.rows, october, 'USD').money_in).toBe(0);
+    const groups = new Map([['g1', group(['t_dinner', 't_venmo'])]]);
+    const out = expandSplitsAndGroups([venmo, coffee], inputs({ groups, from: '2026-10-05' }));
+    expect(out.rows.map((t) => [t.transaction_id, t.group_id ?? null])).toEqual([
+      ['t_venmo', 'g1'],
+      ['t_coffee', null],
+    ]);
+    expect(out.rows[0].group_outside).toEqual({ id: 'g1', name: 'Dinner with Sam', date: '2026-10-03', category_id: cat('restaurants'), here: 1, missing: 1 });
+    expect(countsInTotals(out.rows[0], 'USD')).toBe(false);
+    // Totals as if it weren't read: the coffee alone; the payback listed, in the count of transactions, not counted.
+    const s = summarize(out.rows, october, 'USD');
+    expect([s.money_in, s.money_out, s.transactions, s.counted, s.excluded]).toEqual([0, 5, 2, 1, 0]);
+    expect(leftOutByCurrency([{ ...out.rows[0], iso_currency_code: 'EUR' }], 'USD')).toEqual([]);
+    // Put back whole, it is the payback as it is, in its group.
+    expect(bankRows(out.rows).map((t) => t.transaction_id)).toEqual(['t_venmo', 't_coffee']);
+    // A later group holding it too doesn't take it: it counts in the first, and the later one says it isn't there.
+    const later = new Map([...groups, ['g2', group(['t_venmo', 't_coffee'], { created_at: '2026-10-07T00:00:00.000Z', date: '2026-10-07' })]]);
+    const both = expandSplitsAndGroups([venmo, coffee], inputs({ groups: later, from: '2026-10-05' })).rows;
+    expect(both.map((t) => [t.transaction_id, t.group_outside?.id ?? null, t.group_missing ?? null])).toEqual([
+      ['t_venmo', 'g1', null],
+      ['group:g2', null, 1],
+    ]);
     // Read from its day, it is all here, at its whole net.
-    const whole = expandSplitsAndGroups([venmo, coffee, dinner], inputs({ groups: new Map([['g1', group(['t_dinner', 't_venmo'])]]), from: '2026-10-03' }));
+    const whole = expandSplitsAndGroups([venmo, coffee, dinner], inputs({ groups, from: '2026-10-03' }));
     expect(whole.rows.find((t) => t.group_members)).toMatchObject({ amount: 60, date: '2026-10-03' });
   });
 

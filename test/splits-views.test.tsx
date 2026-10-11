@@ -17,6 +17,7 @@ import Insights from '@/components/Insights';
 import MonthFlowChart from '@/components/MonthFlowChart';
 import { trailingFlows } from '@/lib/fire/inputs';
 import { calendarMonth } from '@/lib/calendar';
+import { appendixStatus } from '@/lib/report/words';
 
 // Splits and groups on the Activity tab (#39): a split transaction listed
 // once, as the bank has it, its parts nested under it with their categories
@@ -183,6 +184,29 @@ describe('the Activity tab’s list', () => {
     expect(entryNotice(stale)).toBe('It is in the group “Trip”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.');
     expect(text(renderToStaticMarkup(<SplitActions t={stale} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
     expect(entryNotice(txn('x', { group_members: [txn('a')], group_removed: 1 }))).toContain('1 of its transactions isn’t here');
+  });
+
+  test('a transaction of a group counted before the year shown is listed, saying so, and counted nowhere here', () => {
+    const outside = { id: 'g7', name: 'Trip', date: '2025-09-20', category_id: cat('restaurants'), here: 1, missing: 1 };
+    const rows = [txn('Venmo from Sam', { amount: -60, group_id: 'g7', group_outside: outside }), txn('Coffee', { amount: 4.5 })];
+    const page = list(rows);
+    expect(page).toContain('It is in the group “Trip”, which counts on');
+    expect(page).toContain('before the transactions shown here begin, so it isn’t counted here.');
+    // The day's figure is the coffee's alone; the month's money in, nothing.
+    expect(page).toContain('-$4.50');
+    expect(page).not.toContain('+$55.50');
+    expect(text(renderToStaticMarkup(<SplitActions t={rows[0]} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
+    // Nor offered to join another group.
+    expect(groupCandidates(rows, { currency: 'USD', near: today, exclude: new Set(), query: '' }).map((t) => t.name)).toEqual(['Coffee']);
+    // The calendar lists it, outside the day's figure, and the Plan leaves it out.
+    const day = calendarMonth({ month: today.slice(0, 7), today, txns: rows, series: [], planned: [], currency: 'USD' }).days.get(today)!;
+    expect(day.entries.find((e) => e.name === 'Venmo from Sam')).toMatchObject({ uncounted: true, group: { name: 'Trip', date: '2025-09-20' } });
+    expect(day.posted).toBe(-4.5);
+    const rent = txn('Rent', { amount: 1000, date: new Date(Date.parse(`${today}T12:00:00Z`) - 60 * 86_400_000).toISOString().slice(0, 10) });
+    const plan = trailingFlows([...rows, rent] as any, today)!;
+    expect([plan.income, plan.count]).toEqual([0, 2]);
+    // A report's appendix says why it isn't counted.
+    expect(appendixStatus({ not_counted: 'group', pending: false, exclusion_unknown: false, currency: 'USD' })).toBe('Not counted: in a group counted before this period');
   });
 
   test('nothing is offered to split or group without somewhere to save it', () => {

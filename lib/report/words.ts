@@ -245,7 +245,7 @@ export function sourceName(source: string): string {
 /** The words for how an appendix row stands in the totals, or null when it
  *  counts as any other. */
 export function appendixStatus(row: {
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
   pending: boolean;
   exclusion_unknown: boolean;
   currency: string | null;
@@ -255,6 +255,7 @@ export function appendixStatus(row: {
   if (row.not_counted === 'hidden') parts.push('Not counted: hidden by a rule');
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');
   if (row.not_counted === 'currency') parts.push(`Not counted: in ${row.currency}`);
+  if (row.not_counted === 'group') parts.push('Not counted: in a group counted before this period');
   if (row.pending) parts.push('Pending');
   if (row.exclusion_unknown) parts.push('Whether you excluded it couldn’t be read');
   return parts.length > 0 ? parts.join('; ') : null;
