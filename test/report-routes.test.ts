@@ -294,6 +294,8 @@ describe('a report from stored data', () => {
       counted: api.counted,
       transfers: api.transfers,
       excluded: api.excluded,
+      // The fixture has no rules: none of what is left out is a rule's hide.
+      hidden_by_rule: 0,
       exclusion_unknown: api.exclusion_unknown,
       left_out: api.left_out,
       left_out_text: api.left_out_text,

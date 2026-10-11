@@ -269,13 +269,15 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
       from: { kind: 'day', description: `${TXN_FROM.description} Defaults to 30 days before to.` },
       to: { kind: 'day', description: `${TXN_TO.description} Defaults to today (UTC).` },
       account_id: { kind: 'ids', max: 50, description: 'Only these accounts (ids from accounts).' },
-      q: { kind: 'text', max: 100, description: 'Text to find, in any case, in the name, the merchant behind it, the category or the note.' },
+      q: { kind: 'text', max: 100, description: 'Text to find, in any case, in the name, the merchant behind it, the category, the note or a tag.' },
       category: { kind: 'text', max: 60, description: 'Only this category, by its name as categories lists it, in any case ("other", the uncategorized category, for none).' },
       category_id: {
         kind: 'id',
         named: 'a category id',
         description: 'Only this category, by its id (ids from categories), whatever it is named now; one merged into it since is the same category.',
       },
+      tag: { kind: 'text', max: 40, description: 'Only transactions carrying this tag, by its name as tags lists it, in any case.' },
+      tag_id: { kind: 'id', named: 'a tag id', description: 'Only transactions carrying this tag, by its id (ids from tags), whatever it is named now.' },
       min_amount: { kind: 'amount', description: 'The smallest amount, inclusive, in Plaid’s sign: positive is money out.' },
       max_amount: { kind: 'amount', description: 'The largest amount, inclusive, in Plaid’s sign: positive is money out.' },
       include_hidden: INCLUDE_HIDDEN,
@@ -284,6 +286,8 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     },
   },
   { name: 'categories', summary: 'The categories in use, on transactions or with a budget, each with its id and group, and every group with its categories.', args: { include_hidden: INCLUDE_HIDDEN } },
+  { name: 'tags', summary: 'Your tags, each with its id and color and how many transactions carry it.', args: { include_hidden: INCLUDE_HIDDEN } },
+  { name: 'rules', summary: 'Your rules, in the order they run, each with what it matches and does, and how many transactions it matches.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
     summary: 'Monthly budgets, per category and per group, with the month’s spending against each.',
@@ -396,7 +400,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'search_transactions',
     'transactions',
     'Search transactions',
-    `Transactions, newest first, filtered by text, dates, category (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it.`,
+    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own.`,
     'Ask for fewer at a time with limit, and page with cursor.',
     { limit: MCP_DEFAULT_PAGE_SIZE },
     {
@@ -412,7 +416,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'spending_by_category',
     'spending',
     'Spending by category',
-    'Money in, money out and spending by category and by category group for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
+    'Money in, money out and spending by category, by category group and by tag for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added. A transaction with two tags counts under each.',
     NARROW_HIDDEN
   ),
   fromOperation(
@@ -434,6 +438,20 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'categories',
     'Categories',
     'The person’s categories in use, with how many transactions each has, whether it has a budget or is a transfer category (never counted as spending), its id and its group; and every group, in the person’s order, with every category in it.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'list_tags',
+    'tags',
+    'Tags',
+    'The person’s tags (labels that cut across categories, several to a transaction, such as reimbursable or a trip), each with its id, its color and how many transactions carry it, put there by the person, by a rule or carried from an earlier account. Filter transactions by one with search_transactions.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'list_rules',
+    'rules',
+    'Rules',
+    'The person’s rules, in the order they run: each matches transactions by name, amount, account, institution, category or source (all its conditions), then files them under a category, gives them a name, adds tags or hides them from budgets and reports. Each with a sentence saying it, whether it is on, what keeps it from working, and how many transactions it matches. A choice the person made on one transaction always wins over a rule.',
     NARROW_HIDDEN
   ),
   fromOperation(

@@ -10,7 +10,8 @@
 //     rule. A bank's fee is spending: it leaves your money for good;
 //   - you excluded it (lib/txn-annotations.ts): a one-off you want left out of
 //     budgets and reports, such as a car bought outright or a work trip that
-//     was paid back. isExcluded;
+//     was paid back; or a rule of yours hides it (lib/rules.ts), which marks
+//     it excluded the same way, under what you set on the row. isExcluded;
 //   - it is in another currency than the total. Nothing is converted between
 //     currencies, so a total only ever adds up amounts in one: its currency
 //     (totalsCurrency, the one most of the rows are in), and it says what it

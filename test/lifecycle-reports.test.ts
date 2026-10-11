@@ -178,6 +178,8 @@ describe('a report on a period an account ended in', () => {
       counted: tab.counted,
       transfers: tab.transfers,
       excluded: tab.excluded,
+      // The fixture has no rules: none of what is left out is a rule's hide.
+      hidden_by_rule: 0,
       exclusion_unknown: tab.exclusion_unknown,
       left_out: tab.left_out,
       left_out_text: tab.left_out_text,
