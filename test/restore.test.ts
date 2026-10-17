@@ -13,6 +13,7 @@ const { verifyArchive, restoreArchive, checkTarget, targetKeys, RestoreRefused, 
   '@/lib/restore'
 );
 const { main, parseArgs } = await import('@/scripts/restore');
+const { verifyKeyArchive } = await import('@/lib/key-archive');
 
 async function exportText(): Promise<string> {
   let text = '';
@@ -121,8 +122,18 @@ describe('verifyArchive refuses anything it cannot vouch for', () => {
 
   test('a format version it does not know', async () => {
     const lines = linesOf(await exportText());
-    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), nya_export: 2 });
+    lines[0] = JSON.stringify({ ...JSON.parse(lines[0]), nya_export: 3 });
     expect(() => verifyArchive(reseal(lines))).toThrow(/format/);
+  });
+
+  test('format 2 never holds the key store; format 1, the release before’s, carries it inside', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    const keyStore = JSON.stringify({ key: 'crypto:keys', type: 'hash', ttl: null, value: { 'k1-0123abcd': '{}' } });
+    const withKeys = [lines[0], keyStore, ...lines.slice(1)];
+    expect(() => verifyArchive(reseal(withKeys))).toThrow(/belongs in a key archive/);
+    withKeys[0] = JSON.stringify({ ...JSON.parse(lines[0]), nya_export: 1 });
+    expect(verifyArchive(reseal(withKeys)).records.map((r) => r.key)).toContain('crypto:keys');
   });
 
   test('keys the export could not carry', async () => {
@@ -173,7 +184,7 @@ describe('restoreArchive', () => {
     fake.reset();
     const result = await restoreArchive(fake as any, archive, { overwrite: false });
 
-    expect(result).toEqual({ written: 5, deleted: 0 });
+    expect(result).toMatchObject({ written: 5, deleted: 0, keys: 0 });
     expect(snapshot()).toEqual(before);
     expect(await fake.ttl(testKey('txns-blocked:item_1'))).toBe(600);
   });
@@ -610,10 +621,14 @@ describe('the command', () => {
 
     await main([file, '--target', 'test', '--overwrite'], fake as any);
 
-    const saved = (await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-test-'));
-    expect(saved).toHaveLength(1);
+    // A pair: the data, and its key store as a key archive.
+    const saved = (await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-test-')).sort();
+    expect(saved).toHaveLength(2);
+    expect(saved[0]).toEndWith('.f2.ndjson');
+    expect(saved[1]).toEndWith('.keys.ndjson');
     const pre = verifyArchive(await Bun.file(join(dir, saved[0])).text());
     expect(pre.records.find((r) => r.key === 'budgets')!.value).toBe('newer');
+    expect(verifyKeyArchive(await Bun.file(join(dir, saved[1])).text()).keys.size).toBe(0);
     expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
   });
 
@@ -637,7 +652,7 @@ describe('the command', () => {
     // Neither comes back, the revoked one least of all; nor is either in the file saved before the restore.
     expect(await fake.hgetall(tokens)).toBeNull();
     expect(await fake.hgetall(counts)).toBeNull();
-    const saved = (await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-test-'));
+    const saved = (await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-test-') && f.endsWith('.f2.ndjson'));
     expect((await keysIn(join(dir, saved[0]))).filter((k) => /api-(tokens|requests)/.test(k))).toEqual([]);
     // The environment's own counters stay, as the login's always have.
     expect(await fake.get<string>(testKey('ratelimit:api:203.0.113.5'))).toBe('12');
@@ -660,7 +675,7 @@ describe('the command', () => {
     await fake.set(testKey('only'), 'one');
 
     await main([file, '--target', 'test', '--overwrite'], fake as any);
-    expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toHaveLength(1);
+    expect((await readdir(dir)).filter((f) => f.startsWith('nya-pre-restore-'))).toHaveLength(2);
   });
 
   test("a container's cache on the target does not stop an overwrite", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX } from './fake-redis';
 
 // Same k0 as every other test file, so the cached key agrees whichever file
 // loads lib/crypto first.
@@ -85,12 +85,12 @@ afterEach(() => {
 
 describe('v1, the format every stored value is in today', () => {
   test('round-trips', async () => {
-    expect(await decrypt(await encrypt('balance: 1234.56'))).toBe('balance: 1234.56');
+    expect(await decrypt(TEST_CTX, await encrypt(TEST_CTX, 'balance: 1234.56'))).toBe('balance: 1234.56');
   });
 
   test('without a master, encrypt writes v1: no header, nothing that needs a data key', async () => {
     delete process.env.MASTER_KEY;
-    const out = await encrypt('x');
+    const out = await encrypt(TEST_CTX, 'x');
     expect(out).not.toContain('.');
     expect(formatOf(out)).toEqual({ version: 1, keyId: 'k0', flags: '-' });
   });
@@ -101,22 +101,22 @@ describe('v1, the format every stored value is in today', () => {
     const ct = new Uint8Array(
       await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('legacy'))
     );
-    expect(await decrypt(Buffer.concat([iv, ct]).toString('base64'))).toBe('legacy');
+    expect(await decrypt(TEST_CTX, Buffer.concat([iv, ct]).toString('base64'))).toBe('legacy');
   });
 
   test('needs neither MASTER_KEY nor Redis, so neither can break it', async () => {
     delete process.env.MASTER_KEY;
-    const v1 = await encrypt('safe');
+    const v1 = await encrypt(TEST_CTX, 'safe');
     delete process.env.MASTER_KEY;
     fake.failNext('hget', 10);
     fake.failNext('hset', 10);
-    expect(await decrypt(v1)).toBe('safe');
+    expect(await decrypt(TEST_CTX, v1)).toBe('safe');
   });
 
   test('an altered value is reported as altered', async () => {
-    const v1 = await encrypt('x');
+    const v1 = await encrypt(TEST_CTX, 'x');
     const flipped = v1[20] === 'A' ? 'B' : 'A';
-    await expect(decrypt(v1.slice(0, 20) + flipped + v1.slice(21))).rejects.toBeInstanceOf(DecryptFailedError);
+    await expect(decrypt(TEST_CTX, v1.slice(0, 20) + flipped + v1.slice(21))).rejects.toBeInstanceOf(DecryptFailedError);
   });
 });
 
@@ -135,12 +135,12 @@ describe('stored layout, pinned', () => {
   });
 
   test('an unbound value', async () => {
-    expect(await decrypt(`v2.${K1}.-.BQUFBQUFBQUFBQUFccuPWwfWPFtc1JlbKA3XOpURREpGdg==`)).toBe('pinned');
+    expect(await decrypt(TEST_CTX, `v2.${K1}.-.BQUFBQUFBQUFBQUFccuPWwfWPFtc1JlbKA3XOpURREpGdg==`)).toBe('pinned');
   });
 
   test('a value bound to a context', async () => {
     expect(
-      await decrypt(`v2.${K1}.c.BQUFBQUFBQUFBQUFccuPWwfWE/AcbhC8ovyb/gWBZGUhSQHz2IrPp8wOOLrO6Z8=`, 'container-7')
+      await decrypt(TEST_CTX, `v2.${K1}.c.BQUFBQUFBQUFBQUFccuPWwfWE/AcbhC8ovyb/gWBZGUhSQHz2IrPp8wOOLrO6Z8=`, 'container-7')
     ).toBe('pinned with context');
   });
 });
@@ -151,29 +151,29 @@ describe('v2', () => {
       const out = await encryptV2(`under ${id}`, id);
       expect(out.startsWith(`v2.${id}.-.`)).toBe(true);
       expect(formatOf(out)).toEqual({ version: 2, keyId: id, flags: '-' });
-      expect(await decrypt(out)).toBe(`under ${id}`);
+      expect(await decrypt(TEST_CTX, out)).toBe(`under ${id}`);
     }
   });
 
   test('a value cannot be opened by relabelling it to another key', async () => {
     const out = await encryptV2('secret', K1);
-    await expect(decrypt(out.replace(`v2.${K1}.`, `v2.${K2}.`))).rejects.toBeInstanceOf(DecryptFailedError);
+    await expect(decrypt(TEST_CTX, out.replace(`v2.${K1}.`, `v2.${K2}.`))).rejects.toBeInstanceOf(DecryptFailedError);
   });
 
   test('flags are authenticated: an unbound value cannot be relabelled as bound', async () => {
     const out = await encryptV2('secret', K1);
-    await expect(decrypt(out.replace(`v2.${K1}.-.`, `v2.${K1}.c.`), 'anything')).rejects.toBeInstanceOf(
+    await expect(decrypt(TEST_CTX, out.replace(`v2.${K1}.-.`, `v2.${K1}.c.`), 'anything')).rejects.toBeInstanceOf(
       DecryptFailedError
     );
   });
 
   test('a v2 body cannot be read as v1', async () => {
     const out = await encryptV2('x', 'k0');
-    await expect(decrypt(out.slice('v2.k0.-.'.length))).rejects.toBeInstanceOf(DecryptFailedError);
+    await expect(decrypt(TEST_CTX, out.slice('v2.k0.-.'.length))).rejects.toBeInstanceOf(DecryptFailedError);
   });
 
   test('encryption is not deterministic in either format', async () => {
-    expect(await encrypt('same')).not.toBe(await encrypt('same'));
+    expect(await encrypt(TEST_CTX, 'same')).not.toBe(await encrypt(TEST_CTX, 'same'));
     expect(await encryptV2('same', K1)).not.toBe(await encryptV2('same', K1));
   });
 });
@@ -182,22 +182,22 @@ describe('context binding', () => {
   test('a bound value needs its context', async () => {
     const out = await encryptV2('mine', K1, 'container-a');
     expect(formatOf(out).flags).toBe('c');
-    expect(await decrypt(out, 'container-a')).toBe('mine');
-    await expect(decrypt(out, 'container-b')).rejects.toBeInstanceOf(DecryptFailedError);
-    const missing = await decrypt(out).catch((e) => e);
+    expect(await decrypt(TEST_CTX, out, 'container-a')).toBe('mine');
+    await expect(decrypt(TEST_CTX, out, 'container-b')).rejects.toBeInstanceOf(DecryptFailedError);
+    const missing = await decrypt(TEST_CTX, out).catch((e) => e);
     expect(missing).toBeInstanceOf(DecryptFailedError);
     expect(missing.message).toContain('none was given');
   });
 
   test('an unbound value ignores a context, so callers can start passing one early', async () => {
     const out = await encryptV2('shared', K1);
-    expect(await decrypt(out, 'container-a')).toBe('shared');
+    expect(await decrypt(TEST_CTX, out, 'container-a')).toBe('shared');
   });
 
   test('an empty context is still a context', async () => {
     const out = await encryptV2('x', K1, '');
-    expect(await decrypt(out, '')).toBe('x');
-    await expect(decrypt(out)).rejects.toBeInstanceOf(DecryptFailedError);
+    expect(await decrypt(TEST_CTX, out, '')).toBe('x');
+    await expect(decrypt(TEST_CTX, out)).rejects.toBeInstanceOf(DecryptFailedError);
   });
 
   test('a context that cannot be encoded exactly is refused', async () => {
@@ -205,7 +205,7 @@ describe('context binding', () => {
     // identically; refusing them keeps one context to one binding.
     await expect(encryptV2('x', K1, 'a\uD800')).rejects.toThrow(/unpaired surrogate/);
     const out = await encryptV2('x', K1, 'a');
-    await expect(decrypt(out, 'a\uDC00')).rejects.toThrow(/unpaired surrogate/);
+    await expect(decrypt(TEST_CTX, out, 'a\uDC00')).rejects.toThrow(/unpaired surrogate/);
   });
 });
 
@@ -213,7 +213,7 @@ describe('data keys', () => {
   test('a key that does not exist is named, and no other key is tried', async () => {
     const out = await encryptV2('secret', K2);
     const missing = 'k9-00000000';
-    const err = await decrypt(out.replace(`v2.${K2}.`, `v2.${missing}.`)).catch((e) => e);
+    const err = await decrypt(TEST_CTX, out.replace(`v2.${K2}.`, `v2.${missing}.`)).catch((e) => e);
     expect(err).toBeInstanceOf(UnknownKeyError);
     expect(err.keyId).toBe(missing);
   });
@@ -224,7 +224,7 @@ describe('data keys', () => {
     // is caught when the key is loaded rather than used.
     const liar = 'k3-012df8cb'; // K1's commitment
     await storeKey(3, K2_RAW, MASTER, liar);
-    const err = await decrypt(await handBuilt(liar, K2_RAW, 'x')).catch((e) => e);
+    const err = await decrypt(TEST_CTX, await handBuilt(liar, K2_RAW, 'x')).catch((e) => e);
     expect(err).toBeInstanceOf(MasterKeyError);
     expect(err.message).toContain('not the key its id names');
   });
@@ -234,17 +234,17 @@ describe('data keys', () => {
     const broken = await dataKeyId(4, K2_RAW);
     await fake.hset(keysHashKey(), { [broken]: 'not json' });
 
-    await expect(decrypt(await handBuilt(broken, K2_RAW, 'x'))).rejects.toBeInstanceOf(MasterKeyError);
-    expect(await decrypt(good)).toBe('fine');
+    await expect(decrypt(TEST_CTX, await handBuilt(broken, K2_RAW, 'x'))).rejects.toBeInstanceOf(MasterKeyError);
+    expect(await decrypt(TEST_CTX, good)).toBe('fine');
   });
 
   test('a key not wrapped for this master breaks only its own values', async () => {
     const other = await storeKey(5, new Uint8Array(32).fill(5), OTHER_MASTER);
     const good = await encryptV2('fine', K1);
-    const err = await decrypt(await handBuilt(other, new Uint8Array(32).fill(5), 'x')).catch((e) => e);
+    const err = await decrypt(TEST_CTX, await handBuilt(other, new Uint8Array(32).fill(5), 'x')).catch((e) => e);
     expect(err).toBeInstanceOf(MasterKeyError);
     expect(err.message).toContain('not wrapped for master key');
-    expect(await decrypt(good)).toBe('fine');
+    expect(await decrypt(TEST_CTX, good)).toBe('fine');
   });
 
   test('a wrapped key of the wrong length is refused', async () => {
@@ -256,15 +256,15 @@ describe('data keys', () => {
 
   test('a missing MASTER_KEY breaks data keys only, never v1 or k0', async () => {
     delete process.env.MASTER_KEY;
-    const v1 = await encrypt('a');
+    const v1 = await encrypt(TEST_CTX, 'a');
     process.env.MASTER_KEY = MASTER;
     const v2k0 = await encryptV2('b', 'k0');
     const v2k1 = await encryptV2('c', K1);
     delete process.env.MASTER_KEY;
 
-    expect(await decrypt(v1)).toBe('a');
-    expect(await decrypt(v2k0)).toBe('b');
-    await expect(decrypt(v2k1)).rejects.toBeInstanceOf(MasterKeyError);
+    expect(await decrypt(TEST_CTX, v1)).toBe('a');
+    expect(await decrypt(TEST_CTX, v2k0)).toBe('b');
+    await expect(decrypt(TEST_CTX, v2k1)).rejects.toBeInstanceOf(MasterKeyError);
   });
 
   test('a Redis failure loading a key is retried, not remembered', async () => {
@@ -273,8 +273,8 @@ describe('data keys', () => {
     const out = await handBuilt(id, raw, 'x');
     fake.failNext('hget');
 
-    await expect(decrypt(out)).rejects.toThrow();
-    expect(await decrypt(out)).toBe('x');
+    await expect(decrypt(TEST_CTX, out)).rejects.toThrow();
+    expect(await decrypt(TEST_CTX, out)).toBe('x');
   });
 
   test('concurrent first uses share one load, and later uses none', async () => {
@@ -288,8 +288,8 @@ describe('data keys', () => {
       return realHget(key, field);
     }) as typeof fake.hget;
     try {
-      await Promise.all(Array.from({ length: 10 }, () => decrypt(out)));
-      await decrypt(out);
+      await Promise.all(Array.from({ length: 10 }, () => decrypt(TEST_CTX, out)));
+      await decrypt(TEST_CTX, out);
       expect(hgets).toBe(1);
     } finally {
       fake.hget = realHget as typeof fake.hget;
@@ -300,7 +300,7 @@ describe('data keys', () => {
     const raw = await fake.hget<object>(keysHashKey(), K1);
     const moved = 'k10-012df8cb';
     await fake.hset(keysHashKey(), { [moved]: JSON.stringify(raw) });
-    await expect(decrypt(await handBuilt(moved, K1_RAW, 'x'))).rejects.toBeInstanceOf(MasterKeyError);
+    await expect(decrypt(TEST_CTX, await handBuilt(moved, K1_RAW, 'x'))).rejects.toBeInstanceOf(MasterKeyError);
   });
 });
 
@@ -350,11 +350,11 @@ describe('master rotation', () => {
 
     test('interrupted, it leaves no record, every key openable, and runs again cleanly', async () => {
       const NEW = master(23);
-      // Fails on the second key's write, after the first key was prepared.
+      // Fails writing the keys (a page at a time: test/container-keys.test.ts
+      // stops one between two pages).
       const realHset = fake.hset.bind(fake);
-      let n = 0;
       fake.hset = (async (key: string, fields: Record<string, string>) => {
-        if (++n === 2) throw new Error('upstash hiccup');
+        if (key === keysHashKey()) throw new Error('upstash hiccup');
         return realHset(key, fields);
       }) as typeof fake.hset;
       try {
@@ -485,7 +485,7 @@ describe('master rotation', () => {
         expect((await stored(id)).created_at).toBe('2026-01-01T00:00:00.000Z');
       }
       expect(await rotationPending()).toBe(false);
-      expect(await decrypt(value)).toBe('balance 100');
+      expect(await decrypt(TEST_CTX, value)).toBe('balance 100');
     });
 
     test('keeps every other field of a stored key', async () => {
@@ -538,9 +538,8 @@ describe('master rotation', () => {
       // anyway. With no record, finish must leave every lock in place.
       const NEW = master(39);
       const realHset = fake.hset.bind(fake);
-      let n = 0;
       fake.hset = (async (key: string, fields: Record<string, string>) => {
-        if (++n === 2) throw new Error('killed');
+        if (key === keysHashKey()) throw new Error('killed');
         return realHset(key, fields);
       }) as typeof fake.hset;
       await prepareMasterRotation(NEW, T0).catch(() => {});
@@ -578,7 +577,7 @@ describe('master rotation', () => {
       const s = await stored(id);
       await fake.hset(keysHashKey(), { [id]: JSON.stringify({ ...s, next: await fpOf(NEW) }) });
 
-      expect(await decrypt(await handBuilt(id, raw, 'x'))).toBe('x');
+      expect(await decrypt(TEST_CTX, await handBuilt(id, raw, 'x'))).toBe('x');
       await autoFinishSettled();
       expect(await opens(MASTER, K1)).toBe(false);
       expect(await opens(NEW, K1)).toBe(true);
@@ -597,10 +596,10 @@ describe('master rotation', () => {
       console.error = (...a: unknown[]) => errors.push(a.join(' '));
       try {
         const value = await handBuilt(id, raw, 'x');
-        await decrypt(value);
+        await decrypt(TEST_CTX, value);
         await autoFinishSettled();
         const ops = fake.ops;
-        for (let i = 0; i < 20; i++) await decrypt(value);
+        for (let i = 0; i < 20; i++) await decrypt(TEST_CTX, value);
         await autoFinishSettled();
         expect(fake.ops).toBe(ops); // throttled: no repeated attempts
         expect(errors.join('\n')).toContain('was not prepared for this master');
@@ -628,19 +627,19 @@ describe('7b: writes go to the active data key', () => {
   });
 
   test('the first write with a master creates k1, makes it active, and uses it', async () => {
-    const out = await encrypt('balance 100');
+    const out = await encrypt(TEST_CTX, 'balance 100');
     const id = await activeId();
 
     expect(id).toMatch(/^k1-[0-9a-f]{8}$/);
     expect(await keyIds()).toEqual([id]);
     expect(formatOf(out)).toEqual({ version: 2, keyId: id, flags: '-' });
-    expect(await decrypt(out)).toBe('balance 100');
+    expect(await decrypt(TEST_CTX, out)).toBe('balance 100');
   });
 
   test('later writes reuse it; no second key appears', async () => {
-    await encrypt('a');
+    await encrypt(TEST_CTX, 'a');
     forgetActiveKey(); // even after the process forgets, the stored pointer wins
-    await encrypt('b');
+    await encrypt(TEST_CTX, 'b');
     expect(await keyIds()).toHaveLength(1);
   });
 
@@ -653,7 +652,7 @@ describe('7b: writes go to the active data key', () => {
     }) as typeof fake.hset;
     let outs: string[];
     try {
-      outs = await Promise.all(Array.from({ length: 8 }, (_, i) => encrypt(`v${i}`)));
+      outs = await Promise.all(Array.from({ length: 8 }, (_, i) => encrypt(TEST_CTX, `v${i}`)));
     } finally {
       fake.hset = realHset as typeof fake.hset;
     }
@@ -662,7 +661,7 @@ describe('7b: writes go to the active data key', () => {
     expect(await keyIds()).toEqual([id]);
     for (const [i, out] of outs.entries()) {
       expect(formatOf(out).keyId).toBe(id);
-      expect(await decrypt(out)).toBe(`v${i}`);
+      expect(await decrypt(TEST_CTX, out)).toBe(`v${i}`);
     }
   });
 
@@ -672,7 +671,7 @@ describe('7b: writes go to the active data key', () => {
     const orig = console.error;
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
     try {
-      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+      expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe('k0');
     } finally {
       console.error = orig;
     }
@@ -680,7 +679,7 @@ describe('7b: writes go to the active data key', () => {
     expect(logged).toEqual([]); // expected and brief, not a fault
 
     await fake.del('test:crypto:rotation-lock');
-    expect(formatOf(await encrypt('y')).version).toBe(2);
+    expect(formatOf(await encrypt(TEST_CTX, 'y')).version).toBe(2);
   });
 
   test('a rotation cannot be prepared while the first key is being created', async () => {
@@ -691,7 +690,7 @@ describe('7b: writes go to the active data key', () => {
       refused ??= await prepareMasterRotation(Buffer.alloc(32, 75).toString('base64')).catch((e) => e);
     }) as typeof fake.hset;
     try {
-      await encrypt('x');
+      await encrypt(TEST_CTX, 'x');
     } finally {
       fake.hset = realHset as typeof fake.hset;
     }
@@ -709,7 +708,7 @@ describe('7b: writes go to the active data key', () => {
     }) as typeof fake.hset;
     let out: string;
     try {
-      out = await encrypt('x');
+      out = await encrypt(TEST_CTX, 'x');
     } finally {
       fake.hset = realHset as typeof fake.hset;
     }
@@ -727,7 +726,7 @@ describe('7b: writes go to the active data key', () => {
     }) as typeof fake.hset;
     let out: string;
     try {
-      out = await encrypt('x');
+      out = await encrypt(TEST_CTX, 'x');
     } finally {
       fake.hset = realHset as typeof fake.hset;
     }
@@ -738,28 +737,28 @@ describe('7b: writes go to the active data key', () => {
   test('an existing active key is used as is', async () => {
     const id = await storeKey(5, new Uint8Array(32).fill(96));
     await fake.set(activeKeyName(), id);
-    expect(formatOf(await encrypt('x')).keyId).toBe(id);
+    expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe(id);
     expect(await keyIds()).toEqual([id]);
   });
 
   test('while a master rotation is pending and no key exists, writes stay on k0', async () => {
     await prepareMasterRotation(Buffer.alloc(32, 71).toString('base64'));
-    const out = await encrypt('x');
+    const out = await encrypt(TEST_CTX, 'x');
     expect(formatOf(out).keyId).toBe('k0');
     expect(await keyIds()).toEqual([]);
     expect(await activeId()).toBeNull();
   });
 
   test('a pending rotation does not stop an existing active key being used', async () => {
-    await encrypt('first');
+    await encrypt(TEST_CTX, 'first');
     const id = await activeId();
     await prepareMasterRotation(Buffer.alloc(32, 72).toString('base64'));
     forgetActiveKey();
-    expect(formatOf(await encrypt('x')).keyId).toBe(id);
+    expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe(id);
   });
 
   test('values written under the data key survive a full master rotation', async () => {
-    const out = await encrypt('balance 100');
+    const out = await encrypt(TEST_CTX, 'balance 100');
     const NEW = Buffer.alloc(32, 73).toString('base64');
     await prepareMasterRotation(NEW, Date.now() - ROTATION_GRACE_MS - 1000);
     process.env.MASTER_KEY = NEW;
@@ -769,13 +768,13 @@ describe('7b: writes go to the active data key', () => {
     expect(await opens(MASTER, id)).toBe(false); // the old lock is gone
     expect(await opens(NEW, id)).toBe(true);
 
-    expect(await decrypt(out)).toBe('balance 100');
+    expect(await decrypt(TEST_CTX, out)).toBe('balance 100');
     // And new writes still use the same data key, now under the new master.
-    expect(formatOf(await encrypt('y')).keyId).toBe(formatOf(out).keyId);
+    expect(formatOf(await encrypt(TEST_CTX, 'y')).keyId).toBe(formatOf(out).keyId);
   });
 
   test('the first key records which master is current', async () => {
-    await encrypt('x');
+    await encrypt(TEST_CTX, 'x');
     expect(await fake.get<unknown>(currentMasterKeyName())).toEqual({ fingerprint: (await importMasterKey(MASTER)).fingerprint });
   });
 
@@ -794,7 +793,7 @@ describe('7b: writes go to the active data key', () => {
     const logged: string[] = [];
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
     try {
-      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+      expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe('k0');
     } finally {
       console.error = orig;
     }
@@ -804,7 +803,7 @@ describe('7b: writes go to the active data key', () => {
     // The current master creates it as usual.
     process.env.MASTER_KEY = NEW;
     forgetActiveKey();
-    const out = await encrypt('y');
+    const out = await encrypt(TEST_CTX, 'y');
     expect(formatOf(out).version).toBe(2);
     expect(await opens(NEW, formatOf(out).keyId)).toBe(true);
   });
@@ -825,19 +824,19 @@ describe('7b: writes go to the active data key', () => {
     test('a key that has gone from the store stops being written', async () => {
       const t0 = Date.now();
       setSystemTime(t0);
-      const first = await encrypt('x');
+      const first = await encrypt(TEST_CTX, 'x');
       const id = formatOf(first).keyId;
       // A restore replaces the key store with one that has no such key.
       await fake.hdel(keysHashKey(), id);
 
       setSystemTime(t0 + 30 * 1000);
-      expect(formatOf(await encrypt('y')).keyId).toBe(id); // still within the minute
+      expect(formatOf(await encrypt(TEST_CTX, 'y')).keyId).toBe(id); // still within the minute
 
       setSystemTime(t0 + 61 * 1000);
       const orig = console.error;
       console.error = () => {};
       try {
-        expect(formatOf(await encrypt('z')).keyId).toBe('k0');
+        expect(formatOf(await encrypt(TEST_CTX, 'z')).keyId).toBe('k0');
       } finally {
         console.error = orig;
       }
@@ -846,12 +845,12 @@ describe('7b: writes go to the active data key', () => {
     test('a changed active key is picked up', async () => {
       const t0 = Date.now();
       setSystemTime(t0);
-      await encrypt('x');
+      await encrypt(TEST_CTX, 'x');
       const next = await storeKey(8, new Uint8Array(32).fill(99));
       await fake.set(activeKeyName(), next);
 
       setSystemTime(t0 + 61 * 1000);
-      expect(formatOf(await encrypt('y')).keyId).toBe(next);
+      expect(formatOf(await encrypt(TEST_CTX, 'y')).keyId).toBe(next);
     });
 
     test('an ongoing fallback is logged again every hour', async () => {
@@ -862,11 +861,11 @@ describe('7b: writes go to the active data key', () => {
       console.error = (...a: unknown[]) => logged.push(a.join(' '));
       try {
         setSystemTime(t0);
-        await encrypt('a');
+        await encrypt(TEST_CTX, 'a');
         setSystemTime(t0 + 30 * 60 * 1000);
-        await encrypt('b');
+        await encrypt(TEST_CTX, 'b');
         setSystemTime(t0 + 61 * 60 * 1000);
-        await encrypt('c');
+        await encrypt(TEST_CTX, 'c');
       } finally {
         console.error = orig;
       }
@@ -881,7 +880,7 @@ describe('7b: writes go to the active data key', () => {
     });
 
     test('reports a usable active key', async () => {
-      await encrypt('x');
+      await encrypt(TEST_CTX, 'x');
       expect(await activeKeyStatus()).toEqual({ active_key: await activeId() });
     });
 
@@ -908,14 +907,14 @@ describe('7b: writes go to the active data key', () => {
       const orig = console.error;
       console.error = () => {};
       try {
-        await encrypt('x');
+        await encrypt(TEST_CTX, 'x');
       } finally {
         console.error = orig;
       }
       expect((await activeKeyStatus()).this_instance_fallback_since).toBeString();
 
       await fake.del(activeKeyName());
-      await encrypt('y'); // creates a key and writes v2 again
+      await encrypt(TEST_CTX, 'y'); // creates a key and writes v2 again
       expect((await activeKeyStatus()).this_instance_fallback_since).toBeUndefined();
     });
   });
@@ -926,7 +925,7 @@ describe('7b: writes go to the active data key', () => {
     const orig = console.error;
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
     try {
-      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+      expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe('k0');
     } finally {
       console.error = orig;
     }
@@ -936,7 +935,7 @@ describe('7b: writes go to the active data key', () => {
 
   test('a new key is numbered after the keys that exist', async () => {
     await storeKey(5, new Uint8Array(32).fill(95));
-    await encrypt('x');
+    await encrypt(TEST_CTX, 'x');
     expect(await activeId()).toMatch(/^k6-/);
   });
 
@@ -946,7 +945,7 @@ describe('7b: writes go to the active data key', () => {
     const orig = console.error;
     console.error = () => {};
     try {
-      expect(formatOf(await encrypt('x')).keyId).toBe('k0');
+      expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe('k0');
     } finally {
       fake.hset = realHset as typeof fake.hset;
       console.error = orig;
@@ -959,7 +958,7 @@ describe('7b: writes go to the active data key', () => {
     const orig = console.error;
     console.error = () => {};
     try {
-      expect(formatOf(await encrypt('x')).version).toBe(1);
+      expect(formatOf(await encrypt(TEST_CTX, 'x')).version).toBe(1);
     } finally {
       console.error = orig;
     }
@@ -970,12 +969,12 @@ describe('7b: writes go to the active data key', () => {
     const B = Buffer.alloc(32, 74).toString('base64');
     const id1 = await storeKey(1, new Uint8Array(32).fill(81), A);
     await fake.set(activeKeyName(), id1);
-    expect(formatOf(await encrypt('x')).keyId).toBe(id1); // cached under A
+    expect(formatOf(await encrypt(TEST_CTX, 'x')).keyId).toBe(id1); // cached under A
 
     const id2 = await storeKey(2, new Uint8Array(32).fill(82), B);
     await fake.set(activeKeyName(), id2);
     process.env.MASTER_KEY = B;
-    expect(formatOf(await encrypt('y')).keyId).toBe(id2);
+    expect(formatOf(await encrypt(TEST_CTX, 'y')).keyId).toBe(id2);
   });
 
   describe('falls back to k0 rather than failing a write', () => {
@@ -992,32 +991,32 @@ describe('7b: writes go to the active data key', () => {
 
     test('when Redis fails, and it retries next time', async () => {
       fake.failNext('get');
-      const { result, logged } = await quiet(() => encrypt('x'));
+      const { result, logged } = await quiet(() => encrypt(TEST_CTX, 'x'));
       expect(formatOf(result).keyId).toBe('k0');
-      expect(await decrypt(result)).toBe('x');
+      expect(await decrypt(TEST_CTX, result)).toBe('x');
       expect(logged.join(' ')).toContain('Writing with the legacy key');
 
-      expect(formatOf(await encrypt('y')).version).toBe(2);
+      expect(formatOf(await encrypt(TEST_CTX, 'y')).version).toBe(2);
     });
 
     test('when the active record is not a key id', async () => {
       await fake.set(activeKeyName(), 'nonsense');
-      const { result } = await quiet(() => encrypt('x'));
+      const { result } = await quiet(() => encrypt(TEST_CTX, 'x'));
       expect(formatOf(result).keyId).toBe('k0');
     });
 
     test('when the active key cannot be opened with this master', async () => {
       const id = await storeKey(6, new Uint8Array(32).fill(97), OTHER_MASTER);
       await fake.set(activeKeyName(), id);
-      const { result } = await quiet(() => encrypt('x'));
+      const { result } = await quiet(() => encrypt(TEST_CTX, 'x'));
       expect(formatOf(result).keyId).toBe('k0');
-      expect(await decrypt(result)).toBe('x');
+      expect(await decrypt(TEST_CTX, result)).toBe('x');
     });
 
     test('logs once, not on every write', async () => {
       await fake.set(activeKeyName(), 'nonsense');
       const { logged } = await quiet(async () => {
-        for (let i = 0; i < 5; i++) await encrypt('x');
+        for (let i = 0; i < 5; i++) await encrypt(TEST_CTX, 'x');
       });
       expect(logged).toHaveLength(1);
     });
@@ -1026,14 +1025,14 @@ describe('7b: writes go to the active data key', () => {
 
 describe('malformed values fail loudly and specifically', () => {
   test('a newer format is named as such, not mistaken for damaged v1', async () => {
-    const err = await decrypt('v3.k1.-.' + Buffer.alloc(40).toString('base64')).catch((e) => e);
+    const err = await decrypt(TEST_CTX, 'v3.k1.-.' + Buffer.alloc(40).toString('base64')).catch((e) => e);
     expect(err).toBeInstanceOf(MalformedCiphertextError);
     expect(err.message).toContain('Unsupported encryption format "v3"');
   });
 
   test('anything that is not a version tag is never quoted back', async () => {
     // A mis-stored plaintext would otherwise land in the logs.
-    const err = await decrypt('secret@example.com').catch((e) => e);
+    const err = await decrypt(TEST_CTX, 'secret@example.com').catch((e) => e);
     expect(err).toBeInstanceOf(MalformedCiphertextError);
     expect(err.message).not.toContain('secret');
   });
@@ -1058,7 +1057,7 @@ describe('malformed values fail loudly and specifically', () => {
     ['v1 one byte too short', body27, /too short/],
   ] as const) {
     test(name, async () => {
-      const err = await decrypt(payload).catch((e) => e);
+      const err = await decrypt(TEST_CTX, payload).catch((e) => e);
       expect(err).toBeInstanceOf(MalformedCiphertextError);
       expect(err.message).toMatch(pattern);
     });
@@ -1072,16 +1071,22 @@ describe('malformed values fail loudly and specifically', () => {
 describe('the legacy key', () => {
   test('a missing PLAID_ENCRYPTION_KEY is not remembered once it is set again', async () => {
     const saved = process.env.PLAID_ENCRYPTION_KEY;
+    // A v1 value, read without Redis: a write first reads the container's
+    // map entry, which needs it.
+    const key = await crypto.subtle.importKey('raw', Buffer.from(saved!, 'base64'), 'AES-GCM', false, ['encrypt']);
+    const iv = new Uint8Array(12).fill(5);
+    const v1 = Buffer.concat([iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('back')))]).toString('base64');
     const res = Bun.spawnSync(
       [
         process.execPath,
         '-e',
         `delete process.env.PLAID_ENCRYPTION_KEY;
          const c = await import('./lib/crypto.ts');
+         const ctx = { container: ${JSON.stringify(TEST_CTX.container)} };
          let first = 'none';
-         try { await c.encrypt('x'); } catch (e) { first = e.message; }
+         try { await c.decrypt(ctx, ${JSON.stringify(v1)}); } catch (e) { first = e.message; }
          process.env.PLAID_ENCRYPTION_KEY = ${JSON.stringify(saved)};
-         const out = await c.decrypt(await c.encrypt('back'));
+         const out = await c.decrypt(ctx, ${JSON.stringify(v1)});
          console.log(first.includes('is not set') && out === 'back' ? 'ok' : 'bad:' + first);`,
       ],
       { cwd: `${import.meta.dir}/..`, env: { ...process.env, REDIS_PREFIX: 'test' } }

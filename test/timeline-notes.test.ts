@@ -123,7 +123,7 @@ describe('reading', () => {
     await addUserNote(ctx, { date: '2026-01-01', text: 'Earlier' }, NOW);
     await fake.hset(ctxKey('timeline-notes'), {
       broken: 'damaged-bytes-damaged-bytes-damaged',
-      future: await encrypt(JSON.stringify({ date: '2026-03-01', text: 'x', kind: 'user', created_at: '2026-03-01T00:00:00Z', mood: 'happy' })),
+      future: await encrypt(TEST_CTX, JSON.stringify({ date: '2026-03-01', text: 'x', kind: 'user', created_at: '2026-03-01T00:00:00Z', mood: 'happy' })),
     });
     const { notes, unreadable, unrecognised } = await readNotes(ctx);
     expect(notes.map((n) => n.text)).toEqual(['Earlier', 'Later']);

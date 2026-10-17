@@ -63,7 +63,7 @@ const account = (id: string, current = 100) => ({
 async function link(item_id: string, institution_name = 'Chase') {
   const token = `token-${item_id}`;
   await fake.hset(ctxKey('plaid:items'), {
-    [item_id]: JSON.stringify({ item_id, institution_name, encrypted_access_token: await encrypt(token) }),
+    [item_id]: JSON.stringify({ item_id, institution_name, encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   return token;
 }
@@ -146,7 +146,7 @@ describe("Plaid's early warnings, from the webhook", () => {
   test('a stored warning this version cannot use is never written over: unreadable or unrecognised, it is left as it is', async () => {
     await link('item_chase');
     await link('item_amex', 'Amex');
-    const later = await encrypt(JSON.stringify({ kind: 'consent_renewal', received_at: at(-1), ends_at: at(12), ends_estimated: false, reason: null, extra: 1 }));
+    const later = await encrypt(TEST_CTX, JSON.stringify({ kind: 'consent_renewal', received_at: at(-1), ends_at: at(12), ends_estimated: false, reason: null, extra: 1 }));
     await fake.hset(ctxKey('connection-warnings'), { item_chase: 'damaged', item_amex: later });
     const before = await warningsStore.getAllReport(ctx);
     expect([before.unreadable, before.unrecognised]).toEqual([['item_chase'], ['item_amex']]);
@@ -298,7 +298,7 @@ describe('what the dashboard is sent', () => {
   test('a warning it cannot read is left out, and its connection says a warning may be missing', async () => {
     await recordWarning(ctx, 'item_a', { webhook_code: 'PENDING_DISCONNECT' }, NOW);
     await fake.hset(ctxKey('connection-warnings'), { item_b: 'damaged' });
-    await fake.hset(ctxKey('connection-syncs'), { item_c: await encrypt(JSON.stringify({ at: 'not a time' })) });
+    await fake.hset(ctxKey('connection-syncs'), { item_c: await encrypt(TEST_CTX, JSON.stringify({ at: 'not a time' })) });
     const reads = await readHealthForDisplay(ctx);
     expect([...reads!.warnings.keys()]).toEqual(['item_a']);
     expect([...reads!.unread].sort()).toEqual(['item_b', 'item_c']);
@@ -320,34 +320,34 @@ describe('what the dashboard is sent', () => {
 });
 
 describe('a fetch that fails says why (lib/networth.ts)', () => {
-  const stored = async (item_id: string) => ({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(`token-${item_id}`) });
+  const stored = async (item_id: string) => ({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, `token-${item_id}`) });
 
   test('every code that means signing in again gets the Reconnect button, and the cause behind it', async () => {
     for (const code of ['ITEM_LOGIN_REQUIRED', 'ITEM_LOCKED', 'ACCESS_NOT_GRANTED', 'USER_SETUP_REQUIRED']) {
       fails('token-item_x', code);
-      const inst = await fetchInstitution(await stored('item_x'));
+      const inst = await fetchInstitution(TEST_CTX, await stored('item_x'));
       expect([code, inst.needs_reauth, inst.error, inst.failure?.code]).toEqual([code, true, 'This account needs to be reconnected', code]);
     }
     for (const code of ['INSTITUTION_DOWN', 'NO_ACCOUNTS', 'ITEM_NOT_FOUND']) {
       fails('token-item_x', code);
-      const inst = await fetchInstitution(await stored('item_x'));
+      const inst = await fetchInstitution(TEST_CTX, await stored('item_x'));
       expect([code, inst.needs_reauth, inst.error]).toEqual([code, false, 'Could not fetch balances']);
     }
   });
 
   test("Plaid's warning, as a code, is a warning on a call that answered and a reconnect on one that failed", async () => {
     plaid['token-item_x'] = () => ({ data: { item: { error: { error_code: 'PENDING_EXPIRATION', error_type: 'ITEM_ERROR' } }, accounts: [account('a1')] } });
-    const answered = await fetchInstitution(await stored('item_x'));
+    const answered = await fetchInstitution(TEST_CTX, await stored('item_x'));
     expect(answered).toMatchObject({ error: null, needs_reauth: false });
     expect(answered.accounts).toHaveLength(1);
     fails('token-item_x', 'PENDING_EXPIRATION');
-    const failedCall = await fetchInstitution(await stored('item_x'));
+    const failedCall = await fetchInstitution(TEST_CTX, await stored('item_x'));
     expect(failedCall).toMatchObject({ needs_reauth: true, error: 'This account needs to be reconnected' });
   });
 
   test('a 200 that carries a sign-in error on the Item is that failure', async () => {
     plaid['token-item_x'] = () => ({ data: { item: { error: { error_code: 'ITEM_LOCKED', error_type: 'ITEM_ERROR' } }, accounts: [account('a1')] } });
-    const inst = await fetchInstitution(await stored('item_x'));
+    const inst = await fetchInstitution(TEST_CTX, await stored('item_x'));
     expect(inst).toMatchObject({ needs_reauth: true, accounts: [], failure: { cause: 'locked', side: 'bank', code: 'ITEM_LOCKED' } });
   });
 
@@ -363,7 +363,7 @@ describe('a fetch that fails says why (lib/networth.ts)', () => {
       plaid['token-item_x'] = () => {
         throw { response: { data: { error_code, error_type } } };
       };
-      const inst = await fetchInstitution(await stored('item_x'));
+      const inst = await fetchInstitution(TEST_CTX, await stored('item_x'));
       expect([error_code, inst.needs_reauth, inst.error, inst.failure]).toEqual([error_code, false, 'Could not fetch balances', { cause, side: 'nya', code: error_code }]);
     }
   });
@@ -372,16 +372,16 @@ describe('a fetch that fails says why (lib/networth.ts)', () => {
     plaid['token-item_x'] = () => {
       throw new TypeError('socket hang up');
     };
-    expect((await fetchInstitution(await stored('item_x'))).failure).toEqual({ cause: 'unreachable', side: 'unknown', code: null });
+    expect((await fetchInstitution(TEST_CTX, await stored('item_x'))).failure).toEqual({ cause: 'unreachable', side: 'unknown', code: null });
     const broken = { item_id: 'item_y', institution_name: 'Chase', encrypted_access_token: 'not-ciphertext' };
-    expect((await fetchInstitution(broken)).failure).toEqual({ cause: 'credentials', side: 'nya', code: null });
+    expect((await fetchInstitution(TEST_CTX, broken)).failure).toEqual({ cause: 'credentials', side: 'nya', code: null });
   });
 
   test('a good answer carries the consent expiry Plaid reports, or null', async () => {
     answers('token-item_x', { consent_expiration_time: '2026-11-01T00:00:00Z' });
-    expect((await fetchInstitution(await stored('item_x'))).consent_expires_at).toBe('2026-11-01T00:00:00.000Z');
+    expect((await fetchInstitution(TEST_CTX, await stored('item_x'))).consent_expires_at).toBe('2026-11-01T00:00:00.000Z');
     answers('token-item_x');
-    expect((await fetchInstitution(await stored('item_x'))).consent_expires_at).toBeNull();
+    expect((await fetchInstitution(TEST_CTX, await stored('item_x'))).consent_expires_at).toBeNull();
   });
 });
 

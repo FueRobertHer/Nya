@@ -47,6 +47,7 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `OPS_SECRET`, `OPS_ENABLED` | optional | Backups and other operations, only while you run one. |
 | `BLOB_READ_WRITE_TOKEN` | optional | Set for you when a private Blob store is connected; turns on nightly backups. |
 | `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The deletion receipt and the public Security and Privacy pages read it (and whether a Blob store is connected), so what they say follows it. |
+| `DATABASE_BACKUP_DAYS` | optional | The days the database host's own backups keep a copy (Upstash's Daily Backup keeps each for 1 or 3 days); `0`, the default, means they are off. Each holds the whole database, keys included, so the deletion receipt and the public pages add it to how long a deleted account's copies stay readable. See [operations.md](operations.md#per-container-data-keys). |
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |
 | `PLAID_UNUSED_DAYS` | optional | Days before an unused connection is flagged (default 60, minimum 14). |
 | `PLAID_BROKERAGE_LINK` | optional | `1` offers **Connect a brokerage or retirement account** beside the bank option. Off by default, and turned on only after this release has run for a while. See [Brokerage and retirement connections](#brokerage-and-retirement-connections). |

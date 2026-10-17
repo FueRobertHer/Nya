@@ -146,10 +146,19 @@
 // would stop a seam value being moved onto another id or store, though not an
 // unbound value being swapped in until decrypt() refuses those. If that is
 // wanted, it is one change here: bind to the store name and id (never the
-// environment prefix, so a restore into another namespace still reads, and
-// never the container, so a container's data can still be copied byte for
-// byte), and teach the pass the same context; classify() already maps a key to
-// its declaration.
+// environment prefix, so a restore into another namespace still reads), and
+// teach the pass the same context; classify() already maps a key to its
+// declaration.
+//
+// ENCRYPTED FOR ITS CONTAINER. Every value is encrypted and decrypted with the
+// Ctx its method was given, the container its key is in (lib/crypto.ts, "A
+// data key per container"), so a container's values are under that
+// container's own key once it has one. A byte-for-byte copy of them into
+// another container no longer reads there, by design: moving data between
+// containers means decrypting under one and encrypting under the other. A
+// value found under another container's key is unrecognised (never offered
+// for removal), and a container whose own key can't be used throws
+// ContainerKeyError, a ContainerError (503).
 //
 // AN OPERATION THE SEAM LACKS is added here as a named method with its own
 // contract test (and its Lua, if it must be atomic), never as raw key access.
@@ -157,7 +166,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import { isEnvWide, type Ctx } from './containers';
-import { encrypt, formatOf, DecryptFailedError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
+import { encrypt, formatOf, DecryptFailedError, KeyNotForContainerError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
 import { StoredDataUnreadableError } from './stored-json';
 import { decryptJsonText, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
 import { listedKind } from './key-families';
@@ -693,7 +702,7 @@ const flawed = (flaw: 'unreadable' | 'unrecognised', cause: unknown): Flaw => ({
  * other value can settle which (values written under a new k0 decrypt beside
  * old ones that cannot), so it is always thrown.
  */
-async function openText(stored: unknown): Promise<Opened> {
+async function openText(ctx: Ctx, stored: unknown): Promise<Opened> {
   // The client JSON-parses what it can on the way out, so anything but
   // non-empty text was never written by the seam, nor by a store before it.
   if (typeof stored !== 'string' || stored === '') return flawed('unreadable', new Error('stored value is not encrypted text'));
@@ -709,8 +718,11 @@ async function openText(stored: unknown): Promise<Opened> {
     throw err;
   }
   try {
-    return { ok: true, text: await decryptJsonText(stored) }; // compressed or not
+    return { ok: true, text: await decryptJsonText(ctx, stored) }; // compressed or not
   } catch (err) {
+    // Under another container's key: intact as far as anything can tell, and
+    // not this container's to remove (lib/crypto.ts KeyNotForContainerError).
+    if (err instanceof KeyNotForContainerError) return flawed('unrecognised', err);
     if (err instanceof MalformedCiphertextError) return flawed('unreadable', err); // not base64, or too short
     if (err instanceof DecryptFailedError && err.keyId !== 'k0') return flawed('unreadable', err);
     throw err;
@@ -726,8 +738,8 @@ async function openText(stored: unknown): Promise<Opened> {
  * has is the reader's to understand: text it does not (not JSON, not the
  * shape it keeps) is unrecognised, as here. Reads nothing from storage.
  */
-export function openStored(stored: unknown): Promise<Opened> {
-  return openText(stored);
+export function openStored(ctx: Ctx, stored: unknown): Promise<Opened> {
+  return openText(ctx, stored);
 }
 
 /**
@@ -737,14 +749,14 @@ export function openStored(stored: unknown): Promise<Opened> {
  * JSON, or JSON `isValid` rejects, is unrecognised. Reads nothing from
  * storage.
  */
-export function openStoredJson<T>(stored: unknown, isValid: (v: unknown) => v is T): Promise<Decoded<T>> {
-  return decode({ what: 'a stored value', isValid }, stored);
+export function openStoredJson<T>(ctx: Ctx, stored: unknown, isValid: (v: unknown) => v is T): Promise<Decoded<T>> {
+  return decode(ctx, { what: 'a stored value', isValid }, stored);
 }
 
 /** Reads a stored value back, as openText does, then parses and checks it.
  *  Also throws an upgrade that throws (a bug, never the data's doing). */
-async function decode<T>(c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
-  const opened = await openText(stored);
+async function decode<T>(ctx: Ctx, c: Codec<T>, stored: unknown): Promise<Decoded<T>> {
+  const opened = await openText(ctx, stored);
   if (!opened.ok) return opened;
   let parsed: unknown;
   try {
@@ -766,9 +778,10 @@ function serialize<T>(c: Codec<T>, value: T): string {
   return json;
 }
 
-/** Exactly the checked JSON, encrypted, and compressed first if asked. */
-function encode<T>(c: Codec<T>, json: string): Promise<string> {
-  return c.compress ? encodeJsonText(json) : encrypt(json);
+/** Exactly the checked JSON, encrypted for the container, and compressed
+ *  first if asked. */
+function encode<T>(ctx: Ctx, c: Codec<T>, json: string): Promise<string> {
+  return c.compress ? encodeJsonText(ctx, json) : encrypt(ctx, json);
 }
 
 /** Refuses a write whose request would cross the ceiling in lib/blob.ts, loudly
@@ -800,7 +813,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     // client parses) is never saved, as in lib/stored-json.ts. The seam writes
     // neither, and replacing one loses nothing.
     if (stored === null || stored === undefined || stored === '') return null;
-    return decode(codec, stored);
+    return decode(ctx, codec, stored);
   };
 
   const read = async (ctx: Ctx): Promise<T | null> => {
@@ -820,7 +833,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       // Text that reads as nothing, as get() reads it (the client parses "null"
       // and '""' to nothing there), is never saved: replacing it loses nothing.
       if (stored !== null && stored !== '' && stored !== 'null' && stored !== '""') {
-        const d = await decode(codec, stored);
+        const d = await decode(ctx, codec, stored);
         if (!d.ok) throw new UnreadableValueError(what, d.flaw === 'unrecognised', d.cause);
         current = d.value;
       }
@@ -832,7 +845,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       if (next === current) return current;
       let written = ''; // deletes it
       if (next !== null) {
-        written = await encode(codec, serialize(codec, next));
+        written = await encode(ctx, codec, serialize(codec, next));
         checkSize(name, what, ctx, SHA1_HEX + written.length);
       }
       const seen = stored === null ? '' : sha1(stored);
@@ -858,7 +871,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
     async set(ctx, value) {
       const json = serialize(codec, value);
       await read(ctx); // throws, so nothing is written, if what is there cannot be read
-      const encoded = await encode(codec, json);
+      const encoded = await encode(ctx, codec, json);
       checkSize(name, what, ctx, encoded.length);
       await redis().set(key(ctx), encoded);
     },
@@ -898,8 +911,8 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
   /** Entries decoded, in the order given: the usable ones, and the ids of the
    *  unreadable and the unrecognised. A deployment problem is thrown: it says
    *  nothing about the entries, so none is reported or left out for it. */
-  const decodeAll = async (entries: (readonly [string, unknown])[]) => {
-    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, d: await decode(codec, stored) })));
+  const decodeAll = async (ctx: Ctx, entries: (readonly [string, unknown])[]) => {
+    const results = await Promise.all(entries.map(async ([id, stored]) => ({ id, d: await decode(ctx, codec, stored) })));
     const values = new Map<string, T>();
     const unreadable: string[] = [];
     const unrecognised: string[] = [];
@@ -925,6 +938,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     // Uncaught: a failure to reach storage is never an empty map.
     const stored = (await redis().hgetall<Record<string, unknown>>(key(ctx))) ?? {};
     return decodeAll(
+      ctx,
       Object.keys(stored)
         .sort()
         .map((id) => [id, stored[id]] as const)
@@ -936,14 +950,14 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     if (wanted.length === 0) return new Map();
     const stored = await readFields(ctx, wanted);
     const present = wanted.flatMap((id, i) => (stored[i] === null ? [] : [[id, stored[i]] as const]));
-    return strict(await decodeAll(present));
+    return strict(await decodeAll(ctx, present));
   };
 
   const setMany = async (ctx: Ctx, entries: Iterable<readonly [string, T]>): Promise<void> => {
     // Everything is checked before anything is written.
     const checked = [...entries].map(([id, value]) => [checkId(what, id), serialize(codec, value)] as const);
     if (checked.length === 0) return;
-    const fields = Object.fromEntries(await Promise.all(checked.map(async ([id, json]) => [id, await encode(codec, json)] as const)));
+    const fields = Object.fromEntries(await Promise.all(checked.map(async ([id, json]) => [id, await encode(ctx, codec, json)] as const)));
     checkSize(name, what, ctx, Object.entries(fields).reduce((n, [id, v]) => n + id.length + v.length, 0));
     await redis().hset(key(ctx), fields);
   };
@@ -954,7 +968,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       const [stored] = await readFields(ctx, [id]);
       let current: T | null = null;
       if (stored !== null) {
-        const d = await decode(codec, stored);
+        const d = await decode(ctx, codec, stored);
         if (!d.ok) {
           throw new UnreadableEntriesError(what, d.flaw === 'unreadable' ? [id] : [], d.flaw === 'unrecognised' ? [id] : [], d.cause);
         }
@@ -964,7 +978,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       if (next === null && stored === null) return null; // nothing there, nothing to write
       let written = ''; // deletes it
       if (next !== null) {
-        written = await encode(codec, serialize(codec, next));
+        written = await encode(ctx, codec, serialize(codec, next));
         checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
       }
       const seen = stored === null ? '' : sha1(stored);
@@ -984,7 +998,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     if (wanted.length === 0) return new Map();
     for (let attempt = 1; ; attempt++) {
       const stored = await readFields(ctx, wanted);
-      const read = await decodeAll(wanted.flatMap((id, i) => (stored[i] === null ? [] : [[id, stored[i]] as const])));
+      const read = await decodeAll(ctx, wanted.flatMap((id, i) => (stored[i] === null ? [] : [[id, stored[i]] as const])));
       if (read.unreadable.length > 0 || read.unrecognised.length > 0) {
         throw new UnreadableEntriesError(what, read.unreadable, read.unrecognised, read.cause);
       }
@@ -1002,7 +1016,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
         let written = '=';
         if (next.has(id)) {
           const value = next.get(id) ?? null;
-          if (value !== null) written = await encode(codec, serialize(codec, value));
+          if (value !== null) written = await encode(ctx, codec, serialize(codec, value));
           else if (stored[i] !== null) written = '';
         }
         if (written !== '=') writes++;
@@ -1058,7 +1072,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     },
     async replaceUnreadable(ctx, id, value) {
       checkId(what, id);
-      const written = await encode(codec, serialize(codec, value));
+      const written = await encode(ctx, codec, serialize(codec, value));
       checkSize(name, what, ctx, id.length + SHA1_HEX + written.length);
       const answer = await redis().eval(READ_ENTRY_HASHED, [key(ctx)], [id]);
       if (!Array.isArray(answer) || answer.length !== 2 || !answer.every((v) => typeof v === 'string')) {
@@ -1068,7 +1082,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       if (stored === '') return false;
       // Thrown as it is when this deployment can't read it (a failed decrypt
       // under k0 among them): that says nothing about the bytes.
-      const d = await decode(codec, stored.slice(1));
+      const d = await decode(ctx, codec, stored.slice(1));
       if (d.ok || d.flaw !== 'unreadable') return false;
       // The same compare-and-set as update(), only over the bytes just read,
       // as Redis hashes them: what the client read may not be those bytes.

@@ -141,7 +141,7 @@ describe('with the shared password', () => {
 
   test('a store that can’t be read: a 500 naming it, no file, and a log that names no bank', async () => {
     await fake.hset(ctxKey('plaid:items'), {
-      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Secret Credit Union', institution_id: null, encrypted_access_token: await encrypt('t') }),
+      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Secret Credit Union', institution_id: null, encrypted_access_token: await encrypt(TEST_CTX, 't') }),
     });
     await fake.set(ctxKey('txns:item_a'), 'garbage-ciphertext');
     const { result: res, said } = await quietly(() => post({ format: 'json', password: 'hunter2' }));
@@ -214,13 +214,13 @@ describe('with the shared password', () => {
 
   test('a stored value of a shape the file can’t be written from: the route’s own 500, nothing sent, a log naming only the error’s class', async () => {
     await fake.hset(ctxKey('plaid:items'), {
-      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt('t') }),
+      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt(TEST_CTX, 't') }),
     });
     // Counterparties that aren't a list: the CSV writer can't flatten them,
     // which the counting pass finds before the first byte.
     await fake.set(
       ctxKey('txns:item_a'),
-      await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: { t1: { transaction_id: 't1', account_id: 'a1', date: '2026-01-02', amount: 5, name: 'X', pending: false, counterparties: { name: 'SECRET-PAYEE' }, account_name: 'Checking', institution_name: 'Chase' } } })
+      await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: { t1: { transaction_id: 't1', account_id: 'a1', date: '2026-01-02', amount: 5, name: 'X', pending: false, counterparties: { name: 'SECRET-PAYEE' }, account_name: 'Checking', institution_name: 'Chase' } } })
     );
     const { result: res, said } = await quietly(() => post({ format: 'transactions-csv', password: 'hunter2' }));
     expect(res.status).toBe(500);
@@ -233,11 +233,11 @@ describe('with the shared password', () => {
 
   test('the CSVs, and a caveat about the data travelling with them', async () => {
     await fake.hset(ctxKey('plaid:items'), {
-      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt('t') }),
+      item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: null, encrypted_access_token: await encrypt(TEST_CTX, 't') }),
     });
     await fake.set(
       ctxKey('txns:item_a'),
-      await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: { t1: { transaction_id: 't1', account_id: 'a1', date: '2026-01-02', amount: 5, name: 'X', pending: false, counterparties: [], account_name: 'Checking', institution_name: 'Chase' } } })
+      await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: { t1: { transaction_id: 't1', account_id: 'a1', date: '2026-01-02', amount: 5, name: 'X', pending: false, counterparties: [], account_name: 'Checking', institution_name: 'Chase' } } })
     );
     await fake.set(ctxKey('txns-unsaved:item_a'), '2026-10-01T00:00:00.000Z');
     const { result: res } = await quietly(() => post({ format: 'transactions-csv', password: 'hunter2' }));

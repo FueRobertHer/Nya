@@ -85,7 +85,7 @@ async function addItem(item_id: string, account_id: string, txns: any[], seenOn 
   plaidTxns[token] = txns;
   plaidAccounts[token] = [account(account_id)];
   await fake.hset(ctxKey('plaid:items'), {
-    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   const inst = { item_id, institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account(account_id), balance: 100 }] };
   await rememberAccounts(ctx, [inst as any]);

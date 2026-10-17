@@ -175,7 +175,7 @@ describe('the route', () => {
   const cached = async () => (await readCache(ctx, CacheKey.NetWorth)) !== null;
 
   beforeEach(async () => {
-    await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt('tok') });
+    await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
     await writeCache(ctx, CacheKey.NetWorth, { netWorth: 1 });
   });
 

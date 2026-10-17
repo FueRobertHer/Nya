@@ -13,8 +13,15 @@
 //    financial data in plaintext in function memory and possibly logs, and make
 //    a restore re-encrypt rather than reproduce. The cost is that the archive is
 //    useless without the keys: PLAID_ENCRYPTION_KEY for values still under k0,
-//    and MASTER_KEY for everything under a data key (the data keys travel in the
-//    archive, wrapped). Keep those somewhere the database is not.
+//    and MASTER_KEY with a key archive for everything under a data key. Keep
+//    those somewhere the database is not.
+//
+//    THE KEY STORE IS KEPT APART (format 2). The wrapped data keys, their
+//    tombstones and the records beside them (KEY_STORE_KEYS) are left out of
+//    this archive and go in key archives (lib/key-archive.ts), so a deletion
+//    can take a destroyed key out of every copy without rewriting this one.
+//    The map of container keys stays here, with the data it describes.
+//    Format 1, which the release before writes, carries the key store inside.
 //
 // 2. EXACT BYTES. Values are read through rawRedis(), not redis(): the default
 //    client JSON-parses on the way out, so a stored "1" would be archived as the
@@ -32,7 +39,7 @@
 // around 13:00 UTC, when the snapshot cron writes.
 //
 // Format:
-//   {"nya_export":1,"schema_era":"unscoped","env_prefix":"production",...}
+//   {"nya_export":2,"schema_era":"containers","env_prefix":"production",...,"keys_apart":["crypto:active",...]}
 //   {"key":"budgets","type":"string","ttl":null,"value":"<ciphertext>"}
 //   {"key":"history:net-worth","type":"hash","ttl":null,"value":{"2026-01-01":"<ciphertext>",...}}
 //   {"end":true,"keys":2,"sha256":"<hex>","unsupported":[]}
@@ -50,7 +57,26 @@ import { createHash } from 'node:crypto';
 import { envPrefix } from './storage';
 import { splitScoped } from './containers';
 
-export const EXPORT_FORMAT_VERSION = 1;
+export const EXPORT_FORMAT_VERSION = 2;
+
+/** The formats a restore reads: 1, the release before's, which carries the
+ *  key store inside, and 2, which keeps it apart. */
+export const READABLE_FORMATS = [1, 2] as const;
+
+/**
+ * The key store, left out of a data archive of format 2 and kept in key
+ * archives instead (lib/key-archive.ts): the wrapped keys, the tombstones of
+ * destroyed ones, the active key, the current master, a rotation's record and
+ * the key counter. The rotation lock describes a step running now, so it is
+ * in neither kind of file. Relative to the environment prefix; environment-
+ * wide, so never inside a container.
+ */
+export const KEY_STORE_KEYS = ['crypto:active', 'crypto:destroyed', 'crypto:key-seq', 'crypto:keys', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock'] as const;
+
+/** Whether a key (relative to the environment prefix) is the key store's. */
+export function isKeyStore(relative: string): boolean {
+  return (KEY_STORE_KEYS as readonly string[]).includes(relative);
+}
 
 /**
  * Which key layout the archive was taken under. "containers": stored data is
@@ -128,7 +154,7 @@ const BATCH = 100;
 const PIPELINE_BYTES = 8 * 1024 * 1024;
 
 export type ExportHeader = {
-  nya_export: typeof EXPORT_FORMAT_VERSION;
+  nya_export: (typeof READABLE_FORMATS)[number];
   schema_era: string;
   env_prefix: string;
   /** Always null; present so the field need not be added to a format that
@@ -136,6 +162,8 @@ export type ExportHeader = {
   container_id: string | null;
   taken_at: string;
   excluded: string[];
+  /** Format 2: the key store's keys, left out and kept in key archives. */
+  keys_apart?: string[];
 };
 
 export type ExportRecord =
@@ -361,6 +389,7 @@ export async function* exportLines(
     taken_at: now.toISOString(),
     // Inside a container too (isExcluded).
     excluded: EXCLUDED_PREFIXES.flatMap((p) => [`${p}*`, `c:*:${p}*`]),
+    keys_apart: [...KEY_STORE_KEYS],
   };
   const hash = createHash('sha256');
   const headerLine = JSON.stringify(header) + '\n';
@@ -371,7 +400,7 @@ export async function* exportLines(
   const unsupported: ExportFooter['unsupported'] = [];
   let count = 0;
 
-  const keys = (await listKeys(client, prefix)).filter((full) => !isExcluded(full.slice(prefix.length)));
+  const keys = (await listKeys(client, prefix)).filter((full) => !isExcluded(full.slice(prefix.length)) && !isKeyStore(full.slice(prefix.length)));
   for (let i = 0; i < keys.length; i += BATCH) {
     for (const record of await readBatch(client, prefix, keys.slice(i, i + BATCH), unsupported)) {
       const line = JSON.stringify(record) + '\n';

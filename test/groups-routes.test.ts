@@ -107,7 +107,7 @@ beforeEach(async () => {
   next = { added: [], modified: [], removed: [] };
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('token-a') }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'token-a') }) });
   await rememberAccounts(ctx, [
     { item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account('acct_a', 'Card', 'credit'), balance: 100 }, { ...account('acct_b', 'Checking', 'depository'), balance: 100 }] } as any,
   ]);

@@ -171,4 +171,46 @@ describe.skipIf(!hasRedis && !process.env.CI)('the owner claim, on a real Redis'
     await expect(run('user_b', 'c1', 'c9')).rejects.toThrow('NOCLAIM'); // cleared with several: no claim
     expect(await r.send('EXISTS', ['owners'])).toBe(0);
   });
+
+  // The birth key (lib/container-key-lua.ts): written in the step that
+  // registers the container, or not at all, leaving it to the migration pass.
+  test('a new account gets its data key in the same step, unless one cannot be claimed', async () => {
+    real ??= await startRedis();
+    const r = real.client;
+    await r.send('FLUSHALL', []);
+    const { CLAIM_OR_CREATE } = await import('@/lib/owners');
+    const keys = ['owners', 'registry', 'map', 'keys', 'rotation', 'lock', 'master'];
+    const run = (user: string, fresh: string, id: string, master = 'M') =>
+      r.send('EVAL', [CLAIM_OR_CREATE, String(keys.length), ...keys, user, 'c1', fresh, '{"new":true}', id, `{"rec":"${id}"}`, `{"key":"${id}"}`, master]);
+    await r.send('HSET', ['owners', 'first', 'c1']);
+    await r.send('HSET', ['registry', 'c1', '{}']);
+    expect(await run('user_a', 'c2', 'k2-aaaaaaaa')).toBe('c2');
+    expect(await r.send('HGET', ['keys', 'k2-aaaaaaaa'])).toBe('{"rec":"k2-aaaaaaaa"}');
+    expect(await r.send('HGET', ['map', 'c2'])).toBe('{"key":"k2-aaaaaaaa"}');
+    expect(await r.send('GET', ['master'])).toBe('M'); // recorded, as none was
+    // Another master recorded: the container is registered, without a key.
+    expect(await run('user_b', 'c3', 'k3-bbbbbbbb', 'OTHER')).toBe('c3');
+    expect(await r.send('HGET', ['owners', 'user_b'])).toBe('c3');
+    expect(await r.send('HEXISTS', ['keys', 'k3-bbbbbbbb'])).toBe(0);
+    expect(await r.send('HEXISTS', ['map', 'c3'])).toBe(0);
+    // A master rotation prepared, or a rotation step holding the lock: the same.
+    await r.send('SET', ['rotation', '{}']);
+    expect(await run('user_c', 'c4', 'k4-cccccccc')).toBe('c4');
+    expect(await r.send('HEXISTS', ['map', 'c4'])).toBe(0);
+    await r.send('DEL', ['rotation']);
+    await r.send('SET', ['lock', 'x']);
+    expect(await run('user_d', 'c5', 'k5-dddddddd')).toBe('c5');
+    expect(await r.send('HEXISTS', ['map', 'c5'])).toBe(0);
+    await r.send('DEL', ['lock']);
+    // A key id already taken is never overwritten.
+    expect(await run('user_e', 'c6', 'k2-aaaaaaaa')).toBe('c6');
+    expect(await r.send('HGET', ['keys', 'k2-aaaaaaaa'])).toBe('{"rec":"k2-aaaaaaaa"}');
+    expect(await r.send('HEXISTS', ['map', 'c6'])).toBe(0);
+    // Claiming the data already here makes no key: that container is the pass's.
+    await r.send('DEL', ['owners', 'registry']);
+    await r.send('HSET', ['registry', 'c1', '{}']);
+    expect(await run('user_f', 'c7', 'k7-ffffffff')).toBe('c1');
+    expect(await r.send('HEXISTS', ['map', 'c1'])).toBe(0);
+    expect(await r.send('HEXISTS', ['keys', 'k7-ffffffff'])).toBe(0);
+  });
 });

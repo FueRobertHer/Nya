@@ -38,7 +38,7 @@ const { encrypt } = await import('@/lib/crypto');
 /** Writes a real per-account snapshot for a specific date. recordSnapshot only
  *  ever writes today, so backdating has to go through the hash directly. */
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 }
 
 type Hidden = Map<string, { type: string; hidden_at: string }>;
@@ -761,7 +761,7 @@ describe('the partial per-account layer', () => {
   // account is hidden: reading the partial map as that breakdown would
   // subtract a number the total was never built from.
   test('never reaches the totals series', async () => {
-    await fake.hset(ctxKey('history:net-worth'), { [today()]: await encrypt('1000') });
+    await fake.hset(ctxKey('history:net-worth'), { [today()]: await encrypt(TEST_CTX, '1000') });
     await recordPartialAccounts(ctx, { ira: 500 });
 
     expect(await getHistory(ctx)).toEqual([{ date: today(), value: 1000 }]);
@@ -861,7 +861,7 @@ describe('bridgeInteriorEstimates', () => {
   // between the values the chart actually shows at each end.
   test('getHistory bridges between the visible real values', async () => {
     const realTotal = async (date: string, value: number, balances: Record<string, number>) => {
-      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(String(value)) });
+      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(TEST_CTX, String(value)) });
       await writeAccountSnapshot(date, balances);
     };
     await realTotal('2026-09-01', 1000, { cash: 600, ira: 400 });

@@ -10,13 +10,13 @@ const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
 describe('the session gate', () => {
   test('skips exactly the routes that authenticate themselves', () => {
-    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/login', '/api/weekly-summary/unsubscribe']) {
+    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/ops/container-keys', '/api/login', '/api/weekly-summary/unsubscribe']) {
       expect(gated(path)).toBe(false);
     }
   });
 
   test('still covers anything that merely starts with one of them', () => {
-    for (const path of ['/api/v1', '/api/v1/accounts/x', '/api/v1/other', '/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other', '/api/weekly-summary', '/api/weekly-summary/send', '/api/weekly-summary/unsubscribe/x', '/api/weekly-summary/unsubscribes']) {
+    for (const path of ['/api/v1', '/api/v1/accounts/x', '/api/v1/other', '/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/container-keys/x', '/api/ops/container-key', '/api/ops/other', '/api/weekly-summary', '/api/weekly-summary/send', '/api/weekly-summary/unsubscribe/x', '/api/weekly-summary/unsubscribes']) {
       expect(gated(path)).toBe(true);
     }
   });

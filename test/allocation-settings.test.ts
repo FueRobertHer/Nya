@@ -70,7 +70,7 @@ describe('the store', () => {
     const raw = await fake.get<string>(KEY);
     expect(typeof raw).toBe('string');
     expect(raw).not.toContain('VFIFX');
-    expect(JSON.parse(await decrypt(raw as string))).toEqual(saved);
+    expect(JSON.parse(await decrypt(TEST_CTX, raw as string))).toEqual(saved);
     expect(await allocationSettingsStore.get(TEST_CTX)).toEqual(saved);
   });
 
@@ -80,7 +80,7 @@ describe('the store', () => {
     expect(damaged).toBeInstanceOf(UnreadableValueError);
     expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
     for (const later of [{ ...saved, v: 2 }, { ...saved, rebalance: 'yearly' }, { ...saved, target: { gold: 100 } }]) {
-      await fake.set(KEY, await encrypt(JSON.stringify(later)));
+      await fake.set(KEY, await encrypt(TEST_CTX, JSON.stringify(later)));
       const e = await allocationSettingsStore.get(TEST_CTX).catch((err: unknown) => err);
       expect(e).toBeInstanceOf(StoredDataUnreadableError);
       expect((e as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
@@ -144,7 +144,7 @@ describe('the route', () => {
   });
 
   test('settings a later release saved are a flagged 409 too, and are not replaced', async () => {
-    const later = await encrypt(JSON.stringify({ ...saved, v: 2 }));
+    const later = await encrypt(TEST_CTX, JSON.stringify({ ...saved, v: 2 }));
     await fake.set(KEY, later);
     expect((await quiet(() => get())).status).toBe(409);
     expect((await quiet(() => put({ settings: saved }))).status).toBe(409);

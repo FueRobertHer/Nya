@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Redis } from '@upstash/redis';
-import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys, type FakeCommand } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys, registerTestContainer, type FakeCommand } from './fake-redis';
 import { startRedis, upstashOn, type RealRedis } from './real-redis';
 
 // The storage seam (lib/repo.ts). One contract, run twice: against the test
@@ -70,12 +70,16 @@ const {
   MasterKeyError,
   UnknownKeyError,
   DecryptFailedError,
+  readContainerEntry,
+  checkContainerKey,
 } = await import('@/lib/crypto');
 
 const saved = { ...process.env };
 beforeEach(() => {
-  // k0 only, unless a test sets a master: encryption then never touches
-  // storage, so every command a test sees is the seam's own.
+  // k0 only, unless a test sets a master: encryption then touches storage only
+  // to look up the container's key (once a minute; a test that counts
+  // commands looks it up first), so every other command a test sees is the
+  // seam's own.
   delete process.env.MASTER_KEY;
   forgetActiveKey();
 });
@@ -128,8 +132,8 @@ const FLAWED: [string, 'unreadable' | 'unrecognised', () => Promise<string>][] =
   ['plaintext JSON, never encrypted', 'unreadable', async () => '{"text":"plain","amount":1}'],
   ['a bare number', 'unreadable', async () => '12345'],
   ['a header that is no format at all', 'unreadable', async () => `x2.k9-0badc0de.-.${BODY}`],
-  ['not JSON once decrypted', 'unrecognised', () => encrypt('not json')],
-  ['the wrong shape once decrypted', 'unrecognised', () => encrypt('{"not":"the shape"}')],
+  ['not JSON once decrypted', 'unrecognised', () => encrypt(TEST_CTX, 'not json')],
+  ['the wrong shape once decrypted', 'unrecognised', () => encrypt(TEST_CTX, '{"not":"the shape"}')],
   // What a later version may write: after a rollback, never offered for removal.
   ['a later format version', 'unrecognised', async () => `v3.k9-0badc0de.-.${BODY}`],
   ['a flag this version does not know', 'unrecognised', async () => `v2.k9-0badc0de.z.${BODY}`],
@@ -541,6 +545,8 @@ function contract(b: Backend) {
     });
 
     test('setMany writes every entry in one HSET, a repeated id keeping its last value', async () => {
+      // The container's key is looked up once a minute, outside what is counted.
+      await checkContainerKey(A);
       const sent = await sentBy(() =>
         notes.setMany(
           A,
@@ -648,7 +654,7 @@ function contract(b: Backend) {
       ]);
       await b.raw.hset(notesKey(), 'n4', 'damaged');
       await b.raw.hset(notesKey(), 'n6', '12345');
-      await b.raw.hset(notesKey(), 'n2', await encrypt('{"not":"the shape"}')); // intact, a shape this code lacks
+      await b.raw.hset(notesKey(), 'n2', await encrypt(TEST_CTX, '{"not":"the shape"}')); // intact, a shape this code lacks
       const err = await notes.getAll(A).catch((e) => e);
       expect([err.unreadable, err.unrecognised]).toEqual([['n4', 'n6'], ['n2']]);
       const report = await notes.getAllReport(A);
@@ -1295,18 +1301,18 @@ function contract(b: Backend) {
       expect(await notes.get(A, 'n3')).toEqual(NOTE);
       // A tampered k0 value looks exactly the same, so it is thrown too.
       await notes.remove(A, 'n1', 'n2');
-      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
+      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(TEST_CTX, JSON.stringify(RENT))));
       expect(await notBlamed(() => notes.getAllReport(A))).toBeInstanceOf(DecryptFailedError);
 
       // Under a data key, whose id commits to the key, it can only be damage.
       await notes.remove(A, 'n2', 'n3');
       process.env.MASTER_KEY = MASTER;
       forgetActiveKey();
-      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(JSON.stringify(RENT))));
+      await b.raw.hset(notesKey(), 'n2', tampered(await encrypt(TEST_CTX, JSON.stringify(RENT))));
       expect(await b.raw.hget(notesKey(), 'n2')).toStartWith('v2.k1-');
       expect((await notes.getAllReport(A)).unreadable).toEqual(['n2']);
       expect((await notes.get(A, 'n2').catch((e) => e)).unreadable).toEqual(['n2']);
-      await b.raw.set(listKey(), tampered(await encrypt(JSON.stringify([RENT]))));
+      await b.raw.set(listKey(), tampered(await encrypt(TEST_CTX, JSON.stringify([RENT]))));
       expect(await list.getReport(A)).toEqual({ value: null, unreadable: true, unrecognised: false });
     });
   });
@@ -1508,7 +1514,7 @@ function contract(b: Backend) {
       // ...and a write is always the current shape, even one upgrade would fix.
       await expect(tags2.set(A, 't3', { name: 'c' } as V2)).rejects.toBeInstanceOf(TypeError);
       // Neither shape is unrecognised: intact, so never offered for removal.
-      await b.raw.hset(ctxKey('seam-contract-tags'), 't9', await encrypt('{"other":1}'));
+      await b.raw.hset(ctxKey('seam-contract-tags'), 't9', await encrypt(TEST_CTX, '{"other":1}'));
       const report = await tags2.getAllReport(A);
       expect([report.unreadable, report.unrecognised]).toEqual([[], ['t9']]);
     });
@@ -1572,9 +1578,12 @@ describe('the seam, on the test double', () => {
   // what it can't read by these same rules, so the line between damage, a
   // later version's format and the deployment's own problem is drawn once.
   test('openStored tells what a value outside the seam is by the seam’s own rules, reading nothing', async () => {
+    // Encrypting looks the container's key up once a minute: done first, so
+    // what is counted is the reads alone.
+    await checkContainerKey(TEST_CTX);
     const sent = fakeSent.length;
     for (const [how, flaw, make] of FLAWED) {
-      const opened = await openStored(await make());
+      const opened = await openStored(TEST_CTX, await make());
       // Not JSON, or the wrong shape, is text it has: whether the reader
       // understands it is the reader's to say.
       if (how === 'not JSON once decrypted') expect(opened).toEqual({ ok: true, text: 'not json' });
@@ -1583,33 +1592,34 @@ describe('the seam, on the test double', () => {
     }
     // As the client hands values back: a number or an object it parsed, or nothing.
     for (const parsed of [12345, { text: 'plain' }, null, '']) {
-      expect(await openStored(parsed)).toMatchObject({ ok: false, flaw: 'unreadable' });
+      expect(await openStored(TEST_CTX, parsed)).toMatchObject({ ok: false, flaw: 'unreadable' });
     }
-    expect(await openStored(await encrypt('1000.5'))).toEqual({ ok: true, text: '1000.5' });
-    expect(await openStored(await encodeJsonText('{"a":1}'))).toEqual({ ok: true, text: '{"a":1}' }); // compressed
+    expect(await openStored(TEST_CTX, await encrypt(TEST_CTX, '1000.5'))).toEqual({ ok: true, text: '1000.5' });
+    expect(await openStored(TEST_CTX, await encodeJsonText(TEST_CTX, '{"a":1}'))).toEqual({ ok: true, text: '{"a":1}' }); // compressed
     // Under k0 a failed decrypt is the deployment's, as for every read here.
-    expect(await openStored(await underAnotherK0('1000')).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
-    expect(await openStored(tampered(await encrypt('1000'))).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(await openStored(TEST_CTX, await underAnotherK0('1000')).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(await openStored(TEST_CTX, tampered(await encrypt(TEST_CTX, '1000'))).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
     expect(fakeSent.length).toBe(sent);
     // Under a data key, only damage.
     process.env.MASTER_KEY = MASTER;
     forgetActiveKey();
-    const sealed = await encrypt('1000');
+    const sealed = await encrypt(TEST_CTX, '1000');
     expect(sealed).toStartWith('v2.k1-');
-    expect(await openStored(tampered(sealed))).toMatchObject({ ok: false, flaw: 'unreadable' });
-    expect(await openStored(sealed)).toEqual({ ok: true, text: '1000' });
+    expect(await openStored(TEST_CTX, tampered(sealed))).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStored(TEST_CTX, sealed)).toEqual({ ok: true, text: '1000' });
   });
 
   // For a value outside the seam whose shape is one check (budgets, goals):
   // the JSON and the shape, as a store's own read checks them.
   test('openStoredJson adds the JSON and the shape: what it doesn’t understand is unrecognised', async () => {
     const isList = (v: unknown): v is unknown[] => Array.isArray(v);
+    await checkContainerKey(TEST_CTX);
     const sent = fakeSent.length;
-    expect(await openStoredJson(await encrypt('[1,2]'), isList)).toEqual({ ok: true, value: [1, 2] });
-    expect(await openStoredJson(await encrypt('{"not":"a list"}'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
-    expect(await openStoredJson(await encrypt('not json'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
-    expect(await openStoredJson('not-ciphertext-but-long-enough-to-be-tried', isList)).toMatchObject({ ok: false, flaw: 'unreadable' });
-    expect(await openStoredJson(await underAnotherK0('[]'), isList).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
+    expect(await openStoredJson(TEST_CTX, await encrypt(TEST_CTX, '[1,2]'), isList)).toEqual({ ok: true, value: [1, 2] });
+    expect(await openStoredJson(TEST_CTX, await encrypt(TEST_CTX, '{"not":"a list"}'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson(TEST_CTX, await encrypt(TEST_CTX, 'not json'), isList)).toMatchObject({ ok: false, flaw: 'unrecognised' });
+    expect(await openStoredJson(TEST_CTX, 'not-ciphertext-but-long-enough-to-be-tried', isList)).toMatchObject({ ok: false, flaw: 'unreadable' });
+    expect(await openStoredJson(TEST_CTX, await underAnotherK0('[]'), isList).catch((e) => e)).toBeInstanceOf(DecryptFailedError);
     expect(fakeSent.length).toBe(sent);
   });
 
@@ -1627,7 +1637,7 @@ describe('the seam, on the test double', () => {
     });
     const fresh = await dataKeyId(92, raw);
     const underFresh = async (plain: string) => (await encryptV2(plain, id)).replace(`v2.${id}.`, `v2.${fresh}.`);
-    await fake.hset(notesKey(), { n1: await encrypt(JSON.stringify(RENT)), n2: await underFresh(JSON.stringify(NOTE)) });
+    await fake.hset(notesKey(), { n1: await encrypt(TEST_CTX, JSON.stringify(RENT)), n2: await underFresh(JSON.stringify(NOTE)) });
     await fake.set(listKey(), await underFresh(JSON.stringify([NOTE])));
 
     client = new Proxy(fake, {
@@ -1668,9 +1678,16 @@ describe('the seam, on the test double', () => {
     await bigNotes.set(A, 'n1', NOTE);
     process.env.MASTER_KEY = Buffer.alloc(32, 104).toString('base64');
     forgetActiveKey();
+    await registerTestContainer(fake);
+    // The first run gives the container its key and moves every value to it;
+    // the next, once instances have had the minute to pick the key up, finds
+    // nothing left and records it moved.
     const report = await reencrypt({ dryRun: false, budgetMs: 60_000 });
-    expect(report).toMatchObject({ walked_all: true, moved: 4, unclassified: [], unreadable_count: 0, complete: true });
-    expect(fake.strings.get(listKey())).toStartWith(`v2.${report.active_key}.`);
+    expect(report).toMatchObject({ walked_all: true, moved: 4, keys_made: [A.container], unclassified: [], unreadable_count: 0, complete: false });
+    const later = Date.now() + 61_000;
+    expect(await reencrypt({ dryRun: false, budgetMs: 60_000, now: () => later })).toMatchObject({ moved: 0, marked_moved: [A.container], complete: true });
+    const own = (await readContainerEntry(A.container)) as { key: string };
+    expect(fake.strings.get(listKey())).toStartWith(`v2.${own.key}.`);
     expect(await list.get(A)).toEqual([NOTE]);
     expect([...(await notes.getAll(A))]).toEqual([
       ['n1', NOTE],

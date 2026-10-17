@@ -117,7 +117,7 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   const accounts = await Promise.all(
     Object.entries(map).map(async ([id, blob]) => {
       try {
-        return parseStoredAccount(id, await decrypt(blob));
+        return parseStoredAccount(id, await decrypt(ctx, blob));
       } catch (err) {
         throw new Error(`Manual account ${id} could not be read`, { cause: err });
       }
@@ -167,7 +167,7 @@ export async function getManualAccountsReport(ctx: Ctx): Promise<ManualAccountsR
     Object.entries(map).map(async ([id, blob]) => {
       let opened: Opened;
       try {
-        opened = await openStored(blob);
+        opened = await openStored(ctx, blob);
       } catch (err) {
         // The seam throws these rather than call them damage (see the type).
         if ((err instanceof DecryptFailedError && err.keyId === 'k0') || err instanceof UnknownKeyError) {
@@ -215,7 +215,7 @@ export async function getManualAccount(ctx: Ctx, account_id: string): Promise<Ma
   const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), account_id);
   if (!blob) return null;
   try {
-    return parseStoredAccount(account_id, await decrypt(blob));
+    return parseStoredAccount(account_id, await decrypt(ctx, blob));
   } catch (err) {
     throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
   }
@@ -224,7 +224,7 @@ export async function getManualAccount(ctx: Ctx, account_id: string): Promise<Ma
 /** Creates or replaces one account. Single-field HSET, so concurrent writes to
  *  *different* accounts can't clobber each other. */
 export async function saveManualAccount(ctx: Ctx, account: ManualAccount): Promise<void> {
-  await redis().hset(ACCOUNTS_HASH(ctx), { [account.account_id]: await encrypt(JSON.stringify(account)) });
+  await redis().hset(ACCOUNTS_HASH(ctx), { [account.account_id]: await encrypt(ctx, JSON.stringify(account)) });
 }
 
 export async function removeManualAccount(ctx: Ctx, account_id: string): Promise<void> {
@@ -279,7 +279,7 @@ export async function moveManualBalance(
     let account: ManualAccount;
     let movedBy: unknown;
     try {
-      const plaintext = await decrypt(stored);
+      const plaintext = await decrypt(ctx, stored);
       account = parseStoredAccount(account_id, plaintext);
       movedBy = (JSON.parse(plaintext) as { balance_moved_by?: unknown }).balance_moved_by;
     } catch (err) {
@@ -287,7 +287,7 @@ export async function moveManualBalance(
     }
     if (cents(account.balance) === cents(to) && movedBy === mover) return 'already';
     if (cents(account.balance) !== cents(from)) return 'changed';
-    const next = await encrypt(JSON.stringify({ ...account, balance: to, updated_at: now.toISOString(), balance_moved_by: mover }));
+    const next = await encrypt(ctx, JSON.stringify({ ...account, balance: to, updated_at: now.toISOString(), balance_moved_by: mover }));
     const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
     if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return 'moved';
   }
