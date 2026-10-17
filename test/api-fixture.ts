@@ -8,6 +8,14 @@
 // Import it with `await import('./api-fixture')` AFTER the test file's
 // mock.module calls: it loads the modules it seeds through, which must load
 // against the mocked storage.
+//
+// TIMES FOLLOW THE CLOCK AT SEEDING. Every day and time it writes is worked
+// out when seedPerson runs, from the clock as the test set it (Bun's
+// setSystemTime included), never when this module was imported: test files
+// share one copy of it, so a value fixed at import would be the clock of
+// whichever file imported it first, and drift from the clock of a test that
+// moved it. seedPerson answers with what it wrote (`syncedAt`, `chaseTxns`)
+// for a test to read back.
 
 import type { FakeRedis } from './fake-redis';
 import { testKey, ctxKey, TEST_CTX } from './fake-redis';
@@ -70,7 +78,9 @@ export function txn(id: string, account_id: string, daysBack: number, amount: nu
   };
 }
 
-export const CHASE_TXNS = [
+/** Chase's transactions, dated from now: made when asked for (see TIMES
+ *  FOLLOW THE CLOCK AT SEEDING). */
+export const chaseTxns = () => [
   txn('t_coffee', 'acc_chk', 2, 5.5, { name: 'BLUE BOTTLE 123', merchant_name: 'Blue Bottle', merchant_entity_id: 'm_bb', category: 'food and drink' }),
   txn('t_rent', 'acc_chk', 3, 1200, { category: 'rent and utilities' }),
   txn('t_pay', 'acc_chk', 4, -3000, { category: 'income' }),
@@ -91,9 +101,18 @@ export const CHASE_TXNS = [
   ...[26, 57, 88].map((d, i) => txn(`t_flix${i}`, 'acc_chk', d, 15.99, { name: 'NETFLIX.COM', merchant_name: 'Netflix', category: 'entertainment' })),
 ];
 
-export const SYNCED_AT = new Date(Date.now() - 2 * 3600_000).toISOString();
+/** When Chase last synced, as seeded: two hours before `now`. */
+export const syncedAt = (now: number = Date.now()) => new Date(now - 2 * 3600_000).toISOString();
 
-export async function seedPerson(fake: FakeRedis) {
+/** What seedPerson wrote that a test may compare with. */
+export type Seeded = { syncedAt: string; chaseTxns: ReturnType<typeof chaseTxns> };
+
+/** The person, as of now on the clock the test set (see TIMES FOLLOW THE
+ *  CLOCK AT SEEDING). */
+export async function seedPerson(fake: FakeRedis): Promise<Seeded> {
+  const now = Date.now();
+  const seeded: Seeded = { syncedAt: syncedAt(now), chaseTxns: chaseTxns() };
+  const { syncedAt: SYNCED_AT, chaseTxns: CHASE_TXNS } = seeded;
   await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret') });
   await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret-2') });
   await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret-3') });
@@ -138,14 +157,14 @@ export async function seedPerson(fake: FakeRedis) {
   await setRename(ctx, vendorKey({ merchant_entity_id: 'm_bb', merchant_name: 'Blue Bottle', name: 'BLUE BOTTLE 123', institution_name: 'Chase' }), 'Coffee place');
   await setExcluded(ctx, 't_big', true);
 
-  const updated = new Date(Date.now() - 5 * 3600_000).toISOString();
+  const updated = new Date(now - 5 * 3600_000).toISOString();
   await saveManualAccount(ctx, { account_id: 'manual_house', name: 'House', institution_name: 'Property', type: 'other', subtype: null, balance: 300000, updated_at: updated });
   await saveManualAccount(ctx, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: updated });
-  const now = new Date().toISOString();
+  const entered = new Date(now).toISOString();
   await manualTxnStore.set(ctx, 'manual_wallet', {
     version: 1,
     rows: [
-      { id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_wallet', date: daysAgo(1), amount: 25, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: 'apples', source: 'manual', source_id: null, created_at: now, updated_at: now },
+      { id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_wallet', date: daysAgo(1), amount: 25, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: 'apples', source: 'manual', source_id: null, created_at: entered, updated_at: entered },
     ],
   });
 
@@ -156,7 +175,7 @@ export async function seedPerson(fake: FakeRedis) {
   await warningsStore.set(ctx, 'item_chase', {
     kind: 'pending_expiration',
     received_at: SYNCED_AT,
-    ends_at: new Date(Date.now() + 5 * DAY).toISOString(),
+    ends_at: new Date(now + 5 * DAY).toISOString(),
     ends_estimated: false,
     reason: null,
   });
@@ -173,6 +192,7 @@ export async function seedPerson(fake: FakeRedis) {
       })!,
     },
   ]);
+  return seeded;
 }
 
 /**
