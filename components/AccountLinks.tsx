@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
 type Suggestion = {
   old: string;
@@ -262,9 +263,11 @@ export function AccountLinksView({
           </p>
           <p className="chart-note">
             {s.evidence.persistent_match ? 'Plaid identifies them as the same account. ' : ''}
-            {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
-              ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
-              : ''}
+            <Masked>
+              {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
+                ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
+                : ''}
+            </Masked>
           </p>
           <div className="manual-row-actions">
             {previewButton(s.old, s.to)}
@@ -288,7 +291,7 @@ export function AccountLinksView({
             <p>
               {u.old_label ? <strong>{u.old_label}</strong> : 'Balance history'} from {fmtDay(u.first)} to{' '}
               {fmtDay(u.last)}
-              {u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''} isn&apos;t
+              <Masked>{u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''}</Masked> isn&apos;t
               attached to any current account. It may be one you reconnected.
             </p>
             <p className="chart-note">
@@ -478,7 +481,8 @@ export function AccountLinksView({
       {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
-        matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
+        matching transactions. Splits and groups don&apos;t carry across: split or group those transactions again.
+        Nothing stored is changed, and Unlink puts it back as it was.
       </p>
     </div>
   );

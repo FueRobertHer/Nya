@@ -268,7 +268,7 @@ export async function GET(req: Request) {
     if (undo !== null) return NextResponse.json({ undo: await historyUndoPlan(ctx, sameAccountIds(account.account_id, links), undo) });
     const context = await contextOf(ctx, account, links);
     if (context instanceof NextResponse) return context;
-    const settled = countedRows(context.held, context.banks, context.order, { bankFrom: context.bank_from, covers: context.covers });
+    const settled = countedRows(context.held, context.banks, context.order, { bankFrom: context.bank_from, covers: context.covers, twins: context.twins });
     const [imports, settings, drawn] = await Promise.all([listHistoryImports(ctx, context.ids, settled), readSettings(ctx, account.account_id), readDrawState(ctx)]);
     const reach = drawn?.accounts.find((a) => a.account_id === account.account_id) ?? null;
     return NextResponse.json({
@@ -486,6 +486,7 @@ export async function POST(req: Request) {
       banks: context.banks,
       order: context.order,
       bankFrom: context.bank_from,
+      twins: context.twins,
       covers: covered,
       imports,
       choices: meta.choices,
@@ -549,6 +550,7 @@ export async function POST(req: Request) {
         order: context.order,
         imports,
         bank_from: context.bank_from,
+        twins: context.twins,
         choices: meta.choices,
         reviewed: meta.review!,
       });

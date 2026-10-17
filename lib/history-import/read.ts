@@ -11,11 +11,18 @@
 // transaction already there, and that one still is) or a bank row now
 // supersedes it (lib/history-import/match.ts settle): the bank's rows are the
 // authority wherever they reach. Worked out on every read, against the bank's
-// rows as stored (lib/transactions.ts), never by a write, so nothing a sync,
-// an undo or a re-link does can leave it stale: a duplicate whose bank row a
-// re-link no longer brings counts again. What the person said about a row
-// (its category, an exclusion or an include, tags, a note) carries to the
-// bank's row that stands for it (importedForActivity's `represents`).
+// rows as stored (lib/transactions.ts), so nothing an undo or a re-link does
+// can leave it stale: a duplicate whose bank row a re-link no longer brings
+// counts again. One thing is kept: which bank row stood for which imported
+// row, by the sync that changes that bank row, before it saves the change
+// (lib/history-import/twins.ts), so a bank row the bank modifies keeps
+// standing for the row it stood for, whatever its amount becomes (settle's
+// `twins`, read here with the bank's rows: a connection's that can't be read
+// keeps its accounts' imported rows out, said), and carried across a re-link
+// by the content its bank row had. What the person said about a
+// row (its category, an exclusion or an include, tags, a note) carries to the
+// bank's row that stands for it (importedForActivity's `represents`), and so
+// do its split and its place in a group (lib/split-rows.ts).
 //
 // WHOSE ROWS. A book is filed under the account id its rows were imported
 // into, and an account's rows are those of every id it has had, by the links
@@ -47,9 +54,10 @@ import { liveAccountIds } from '../links';
 import { readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
 import { endDays, endOf, lifecycleStore, type LifecycleView } from '../lifecycle';
+import { UnreadableEntriesError, type MapStore } from '../repo';
 import { settle, type BankRow, type Settled } from './match';
 import type { CoveredAccount, DayRange } from './coverage';
-import { historyImportSummaryStore, importedTxnStore, type HistoryImportSummary, type ImportedTxn } from './store';
+import { historyImportSummaryStore, importedTwinsStore, importedTxnStore, type HistoryImportSummary, type ImportedTwins, type ImportedTxn } from './store';
 
 /** A linked account, as importing and reading name it. */
 export type LinkedAccount = {
@@ -155,18 +163,25 @@ export function coversOf(summaries: ReadonlyMap<string, HistoryImportSummary>): 
 
 /** Which rows count (see the header), and what each one that doesn't is.
  *  `pending` for what is shown: a pending bank row stands in for a row like
- *  it until it posts, which the estimated history never takes. */
+ *  it until it posts, which the estimated history never takes. `twins`, the
+ *  pairs kept once made at the account's connection (twinsOf), which every
+ *  reader passes, so they all count the same rows. */
 export function countedRows(
   held: readonly ImportedTxn[],
   banks: readonly BankRow[],
   order: readonly string[],
-  opts: { bankFrom: string | null; covers?: ReadonlyMap<string, { from: string; to: string }>; pending?: boolean }
+  opts: { bankFrom: string | null; covers?: ReadonlyMap<string, { from: string; to: string }>; pending?: boolean; twins: ReadonlyMap<string, string> }
 ): Settled<ImportedTxn> {
   return settle(held, banks, order, opts);
 }
 
+/** A connection's pairs kept once made (lib/history-import/store.ts
+ *  ImportedTwins), as settle reads them. */
+export const twinsOf = (entry: ImportedTwins | null | undefined): Map<string, string> => new Map(Object.entries(entry?.twins ?? {}));
+
 /** What every account with imported rows needs read, once: its rows under
- *  every id, its connection's bank rows, and where those begin. */
+ *  every id, its connection's bank rows, where those begin, and which of
+ *  them were kept as standing for which of its rows. */
 export type ImportedAccountRead = {
   account: LinkedAccount;
   /** Every id it has had, the current first. */
@@ -174,6 +189,7 @@ export type ImportedAccountRead = {
   held: ImportedTxn[];
   banks: BankRow[];
   bank_from: string | null;
+  twins: Map<string, string>;
 };
 
 export type ImportedRead = {
@@ -194,6 +210,20 @@ export type ImportedRead = {
   summariesUnreadable: string[];
 };
 
+/** Some entries of a map store, named as getAllReport names every one: the
+ *  readable ones in id order, and the ids of those that can't be used,
+ *  rather than thrown. A deployment problem is thrown, as by every read. */
+async function entriesReport<T>(store: MapStore<T>, ctx: Ctx, ids: Iterable<string>): Promise<{ entries: Map<string, T>; unreadable: string[]; unrecognised: string[] }> {
+  const wanted = [...new Set(ids)].sort();
+  try {
+    return { entries: await store.getMany(ctx, wanted), unreadable: [], unrecognised: [] };
+  } catch (err) {
+    if (!(err instanceof UnreadableEntriesError)) throw err;
+    const bad = new Set([...err.unreadable, ...err.unrecognised]);
+    return { entries: await store.getMany(ctx, wanted.filter((id) => !bad.has(id))), unreadable: err.unreadable, unrecognised: err.unrecognised };
+  }
+}
+
 /**
  * Every live account's imported rows, with what is needed to tell which
  * count (see the header). `links` are the links that apply now (null when
@@ -202,6 +232,13 @@ export type ImportedRead = {
  * read (hidden accounts, each of their ids). `only` narrows it to accounts
  * with these current ids. Reads only the books and the connections that
  * matter: nothing more than one read of the books when nothing was imported.
+ * `bookIds` reads only the books under those ids (every id of the accounts
+ * wanted, lib/link-core.ts sameAccountIds), and with them only the summaries
+ * of the imports their rows came from and the pairs kept at the connections
+ * they are matched at: for a reader of a few accounts, whose rows nothing
+ * else changes (the sync keeping its connection's pairs,
+ * lib/history-import/twins.ts). What can't be read among them is named as
+ * when every one is read; nothing else is read to be named.
  */
 export async function readImported(
   ctx: Ctx,
@@ -213,14 +250,20 @@ export async function readImported(
     /** Each connection's stored rows, already read (by the sync that wrote
      *  them, say), so they aren't read twice; null for one that couldn't be. */
     bankStates?: ReadonlyMap<string, Record<string, StoredTxn> | null>;
+    bookIds?: Iterable<string>;
   } = { links: null }
 ): Promise<ImportedRead> {
-  const books = await importedTxnStore.getAllReport(ctx);
+  const books = opts.bookIds ? await entriesReport(importedTxnStore, ctx, opts.bookIds) : await importedTxnStore.getAllReport(ctx);
   const empty: ImportedRead = { accounts: [], order: [], summaries: new Map(), covers: new Map(), notes: [], flawed: new Set(), unresolved: false, summariesUnreadable: [] };
   if (books.entries.size === 0 && books.unreadable.length === 0 && books.unrecognised.length === 0) return empty;
   const items = opts.items ?? (await getItems(ctx));
   const links = opts.links ?? new Map<string, Link>();
-  const [{ accounts: live, unreadable: unknownItems, endsUnread }, summaries] = await Promise.all([liveLinkedAccounts(ctx, items), historyImportSummaryStore.getAllReport(ctx)]);
+  const [{ accounts: live, unreadable: unknownItems, endsUnread }, summaries] = await Promise.all([
+    liveLinkedAccounts(ctx, items),
+    opts.bookIds
+      ? entriesReport(historyImportSummaryStore, ctx, [...books.entries.values()].flatMap((b) => b.rows.map((r) => r.import_id)))
+      : historyImportSummaryStore.getAllReport(ctx),
+  ]);
   const unreadEnds = new Set([...endsUnread.unreadable, ...endsUnread.unrecognised]);
   const leftOut = opts.leftOut ?? new Set<string>();
   const summariesUnreadable = [...summaries.unreadable, ...summaries.unrecognised];
@@ -285,7 +328,10 @@ export async function readImported(
   if (byAccount.size === 0) return { ...empty, notes, flawed, unresolved, summariesUnreadable };
 
   // The bank's rows of the connections holding these accounts, read once each
-  // (or as the caller already read them).
+  // (or as the caller already read them), and which of them were kept as
+  // standing for which imported rows: a connection's whose pairs can't be
+  // read keeps its accounts' imported rows out, said, as when its own rows
+  // can't be, never counted as if none were kept.
   const itemIds = new Set([...byAccount.keys()].map((id) => live.get(id)!.item_id));
   const bankByItem = new Map<string, { rows: BankRow[]; from: string | null }>();
   const unreadableItems = new Set<string>();
@@ -293,21 +339,25 @@ export async function readImported(
     const all = Object.values(txns);
     bankByItem.set(item_id, { rows: bankRowsOf(all, links), from: earliestPosted(all) });
   };
-  await Promise.all(
-    items
-      .filter((i) => itemIds.has(i.item_id))
-      .map(async (item) => {
-        const given = opts.bankStates?.get(item.item_id);
-        if (given === null) return void unreadableItems.add(item.item_id);
-        if (given) return use(item.item_id, given);
-        try {
-          use(item.item_id, (await readStoredItem(ctx, item.item_id)).txns);
-        } catch (err) {
-          if (!(err instanceof StateUnreadableError)) throw err;
-          unreadableItems.add(item.item_id);
-        }
-      })
-  );
+  const [, twins] = await Promise.all([
+    Promise.all(
+      items
+        .filter((i) => itemIds.has(i.item_id))
+        .map(async (item) => {
+          const given = opts.bankStates?.get(item.item_id);
+          if (given === null) return void unreadableItems.add(item.item_id);
+          if (given) return use(item.item_id, given);
+          try {
+            use(item.item_id, (await readStoredItem(ctx, item.item_id)).txns);
+          } catch (err) {
+            if (!(err instanceof StateUnreadableError)) throw err;
+            unreadableItems.add(item.item_id);
+          }
+        })
+    ),
+    opts.bookIds ? entriesReport(importedTwinsStore, ctx, itemIds) : importedTwinsStore.getAllReport(ctx),
+  ]);
+  const twinsUnread = new Set([...twins.unreadable, ...twins.unrecognised]);
 
   const accounts: ImportedAccountRead[] = [];
   for (const [id, held] of byAccount) {
@@ -317,9 +367,14 @@ export async function readImported(
       notes.push(`${account.institution_name}: transactions imported for ${account.name} aren't shown while the bank's own can't be read`);
       continue;
     }
+    if (twinsUnread.has(account.item_id)) {
+      flawed.add(id);
+      notes.push(`${account.institution_name}: transactions imported for ${account.name} aren't shown while which of the bank's own stand for them can't be read`);
+      continue;
+    }
     const bank = bankByItem.get(account.item_id) ?? { rows: [], from: null };
     const ids = sameAccountIds(id, links);
-    accounts.push({ account, ids, held, banks: bank.rows.filter((b) => b.account_id === id), bank_from: bank.from });
+    accounts.push({ account, ids, held, banks: bank.rows.filter((b) => b.account_id === id), bank_from: bank.from, twins: twinsOf(twins.entries.get(account.item_id)) });
   }
   return { accounts, order: importOrder(summaries), summaries: summaries.entries, covers: coversOf(summaries.entries), notes, flawed, unresolved, summariesUnreadable };
 }
@@ -388,6 +443,10 @@ export function toDisplay(row: ImportedTxn, account: LinkedAccount, withAccountI
  * `first` is the day of the earliest of these rows, of any date (before
  * `since` too): where the transactions in Nya begin for budget rollover
  * (lib/budget-month.ts), as the bank's own oldest stored row is.
+ * `changed` names, by the bank row's id, the amount of the imported row it
+ * stands for when the two differ: a pair kept once made whose bank row the
+ * bank changed since (lib/history-import/match.ts KEPT ONCE MADE), which
+ * the Activity tab says.
  */
 export async function importedForActivity(
   ctx: Ctx,
@@ -400,20 +459,29 @@ export async function importedForActivity(
     since?: string;
     endedFrom?: ReadonlyMap<string, string>;
   }
-): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]>; first: string | null }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]>; first: string | null; changed: Map<string, number> }> {
   const read = await readImported(ctx, { items: opts.items, links: opts.links, leftOut: opts.leftOut, bankStates: opts.bankStates });
   let first: string | null = null;
+  const changed = new Map<string, number>();
   const cutoff = opts.since ?? daysAgo(LOOKBACK_DAYS);
   const since = opts.since ?? daysAgo(RECURRING_LOOKBACK_DAYS);
   const txns: Txn[] = [];
   const older: OlderTxn[] = [];
   const represents = new Map<string, string[]>();
   for (const a of read.accounts) {
-    const settled = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, pending: true });
+    const settled = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, pending: true, twins: a.twins });
     for (const [rowId, stand] of standsFor(settled)) {
       const list = represents.get(stand) ?? [];
       list.push(rowId);
       represents.set(stand, list);
+    }
+    // A pair whose bank row says another amount now than the imported row
+    // (only a pair kept once made can: the rule pairs equal amounts).
+    const amountOf = new Map(a.held.map((r) => [r.id, r.amount]));
+    const paired = [...settled.superseded, ...[...settled.standing].flatMap(([id, st]) => ('bank' in st ? [[id, st.bank] as const] : []))];
+    for (const [rowId, bank] of paired) {
+      const was = amountOf.get(rowId);
+      if (was !== undefined && Math.round(was * 1000) !== Math.round(bank.amount * 1000) && !changed.has(bank.transaction_id)) changed.set(bank.transaction_id, was);
     }
     const end = opts.endedFrom?.get(a.account.account_id);
     for (const row of settled.counted) {
@@ -449,7 +517,7 @@ export async function importedForActivity(
   const importOf = new Map(read.accounts.flatMap((a) => a.held.map((r) => [r.id, r.import_id] as const)));
   const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
   for (const list of represents.values()) list.sort((x, y) => at(x) - at(y));
-  return { txns, older, notes: read.notes, represents, first };
+  return { txns, older, notes: read.notes, represents, first, changed };
 }
 
 /**
@@ -533,13 +601,15 @@ export function standsFor(settled: Settled<ImportedTxn>): Map<string, string> {
 }
 
 /** What importing into one account reads first: every id it has had, its kept
- *  rows under them, its connection's bank rows and where they begin, and the
- *  imports in order, with their summaries. */
+ *  rows under them, its connection's bank rows and where they begin, which of
+ *  those were kept as standing for which kept row, and the imports in order,
+ *  with their summaries. */
 export type AccountContext = {
   ids: string[];
   held: ImportedTxn[];
   banks: BankRow[];
   bank_from: string | null;
+  twins: Map<string, string>;
   /** The connection's older transactions may still be arriving: Plaid said
    *  its first pull is done and its full history isn't yet. */
   history_pending: boolean;
@@ -552,15 +622,17 @@ export type AccountContext = {
  * The context of an import into `account` (see AccountContext), read
  * strictly: a book of the account that can't be read throws
  * (UnreadableEntriesError), and so does its connection's bank store
- * (StateUnreadableError), since a file matched against either read as empty
- * would duplicate what is there. `links` are the links that apply now.
+ * (StateUnreadableError) or its pairs kept once made, since a file matched
+ * against any of them read as empty would duplicate what is there. `links`
+ * are the links that apply now.
  */
 export async function readAccountContext(ctx: Ctx, account: LinkedAccount, links: Map<string, Link>): Promise<AccountContext> {
   const ids = sameAccountIds(account.account_id, links);
-  const [books, summaries, item] = await Promise.all([
+  const [books, summaries, item, twins] = await Promise.all([
     importedTxnStore.getMany(ctx, ids),
     historyImportSummaryStore.getAllReport(ctx),
     readStoredItem(ctx, account.item_id),
+    importedTwinsStore.get(ctx, account.item_id),
   ]);
   const all = Object.values(item.txns);
   const mine = new Set(ids);
@@ -569,6 +641,7 @@ export async function readAccountContext(ctx: Ctx, account: LinkedAccount, links
     held: [...books.values()].flatMap((b) => b.rows),
     banks: bankRowsOf(all, links).filter((b) => b.account_id === account.account_id || mine.has(b.account_id)),
     bank_from: earliestPosted(all),
+    twins: twinsOf(twins),
     history_pending: item.history_pending === true,
     order: importOrder(summaries),
     summaries: summaries.entries,
@@ -590,7 +663,7 @@ export async function importedForShare(ctx: Ctx, accountIds: ReadonlySet<string>
   const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
   const read = await readImported(ctx, { links: effectiveLinks(links, live), only: accountIds });
   for (const a of read.accounts) {
-    const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, pending: true });
+    const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, pending: true, twins: a.twins });
     rows.set(a.account.account_id, counted.filter((r) => r.date >= since));
   }
   return { rows, unreadable: read.flawed };

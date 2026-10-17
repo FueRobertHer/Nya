@@ -122,8 +122,8 @@ export function amountUnitsError(amount: number, currency: string): string | nul
 }
 
 /**
- * An amount as typed, rounded to the currency's minor unit, or null if it
- * isn't one. No sign: the form asks whether money went out or came in, since a
+ * An amount as typed, as plain decimal text ("1234.56"), or null if it isn't
+ * one (parseAmountInput rounds it to a currency's minor unit). No sign: the form asks whether money went out or came in, since a
  * phone's decimal keypad has no minus key. That keypad shows the locale's
  * decimal separator, so "12,50" is twelve and a half.
  *
@@ -138,10 +138,9 @@ export function amountUnitsError(amount: number, currency: string): string | nul
  *     comma before exactly three digits, after one to three that don't start
  *     with 0: "1,234" is 1234, as typed in the US, since money is rarely
  *     written to three decimal places.
- * Zero, and anything that rounds to it, is not an amount. The form shows what
- * it read before anything is saved.
+ * The form shows what it read before anything is saved.
  */
-export function parseAmountInput(text: string, currency: string = DEFAULT_CURRENCY): number | null {
+export function normalizedAmountText(text: string): string | null {
   const s = text.replace(/[\s  ]/g, '');
   if (!/^[0-9.,]+$/.test(s) || !/\d/.test(s)) return null;
   const dots = s.split('.').length - 1;
@@ -164,7 +163,15 @@ export function parseAmountInput(text: string, currency: string = DEFAULT_CURREN
   } else {
     normal = s.replace(',', '.');
   }
-  if (normal === null || !/^(\d+\.?\d*|\.\d+)$/.test(normal)) return null;
+  return normal !== null && /^(\d+\.?\d*|\.\d+)$/.test(normal) ? normal : null;
+}
+
+/** An amount as typed, read as normalizedAmountText reads it and rounded to
+ *  the currency's minor unit: a positive number, or null (zero, and anything
+ *  that rounds to it, is not an amount). */
+export function parseAmountInput(text: string, currency: string = DEFAULT_CURRENCY): number | null {
+  const normal = normalizedAmountText(text);
+  if (normal === null) return null;
   const n = toMinorUnits(Number(normal), currency);
   return Number.isFinite(n) && n > 0 ? n : null;
 }

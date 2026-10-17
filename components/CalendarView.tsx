@@ -15,8 +15,9 @@ import type { Txn } from './MonthBreakdown';
 import { addMonths, calendarMonth, duePayments, type CalendarEntry } from '@/lib/calendar';
 import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurring';
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
-import { compactMoney, formatMoney, signedMoney } from '@/lib/format';
+import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
+import { Masked } from './HideAmounts';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -30,6 +31,8 @@ const MONTHS_AHEAD = 12;
 function cellFigure(n: number, currency: string | null): string {
   const abs = Math.abs(n);
   const sign = Math.round(abs) === 0 ? '' : n < 0 ? '-' : '+';
+  // Hidden amounts (lib/format.ts): the sign and the currency, never a size.
+  if (amountsHidden()) return `${sign}${hiddenMoney(abs, currency)}`;
   if (abs >= 1000) return `${sign}${compactMoney(abs, currency)}`;
   if (currency) {
     try {
@@ -147,6 +150,13 @@ export default function CalendarView({
   const postedTags = (e: CalendarEntry) =>
     [
       e.pending ? 'pending' : null,
+      // One charge, split (#39): what of it the day's figure counts when a part is left out.
+      e.parts ? `split into ${e.parts}` : null,
+      e.counted !== undefined ? `${signedMoney(e.counted, e.currency ?? currency)} of it in the day's figure` : null,
+      // Counted through its group, on the group's earlier day (#39).
+      e.group
+        ? `in the group “${e.group.name}”, counted on ${new Date(`${e.group.date}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' })}, not in the day's figure`
+        : null,
       e.excluded ? "excluded, not in the day's figure" : null,
       !e.excluded && e.uncounted && e.currency ? `in ${e.currency}, not in the day's figure` : null,
     ]
@@ -213,11 +223,11 @@ export default function CalendarView({
               className={`cal-day${date === today ? ' today' : ''}${date === selected ? ' selected' : ''}${past ? ' past' : ''}`}
               onClick={() => setSelected(date)}
               aria-pressed={date === selected}
-              aria-label={label}
+              aria-label={spoken(label)}
             >
               <span className="cal-num">{Number(date.slice(8))}</span>
               <span className={`cal-fig${figure === null ? '' : figure > 0 ? ' in' : figure < 0 ? ' out' : ''}${estimated ? ' estimated' : ''}`}>
-                {figure === null ? '' : cellFigure(figure, currency)}
+                <Masked>{figure === null ? '' : cellFigure(figure, currency)}</Masked>
               </span>
               <span className="cal-dots" aria-hidden="true">
                 {dots.map((k) => (
@@ -258,7 +268,7 @@ export default function CalendarView({
           {posted.length > 0 && (
             <>
               <div className="recurring-section">
-                Posted{day.posted !== null && <span> · {signedMoney(day.posted, currency)}</span>}
+                Posted{day.posted !== null && <span> · <Masked>{signedMoney(day.posted, currency)}</Masked></span>}
               </div>
               <table>
                 <tbody>
@@ -268,7 +278,7 @@ export default function CalendarView({
                         {e.name}
                         {postedTags(e) && <div className="type-tag">{postedTags(e)}</div>}
                       </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
+                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
                     </tr>
                   ))}
                 </tbody>
@@ -278,7 +288,7 @@ export default function CalendarView({
           {expected.length > 0 && (
             <>
               <div className="recurring-section">
-                Expected{day.expected !== null && <span> · {signedMoney(day.expected, currency)}</span>}
+                Expected{day.expected !== null && <span> · <Masked>{signedMoney(day.expected, currency)}</Masked></span>}
               </div>
               <table>
                 <tbody>
@@ -292,7 +302,7 @@ export default function CalendarView({
                           {offText(e) ? ` · ${offText(e)}` : ''}
                         </div>
                       </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
+                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
                     </tr>
                   ))}
                 </tbody>
@@ -310,7 +320,9 @@ export default function CalendarView({
                         {e.name}
                         <div className="type-tag">{e.amount === null ? 'due, minimum not reported' : 'minimum due, not in the figures'}</div>
                       </td>
-                      <td className="num">{e.amount === null ? '' : formatMoney(Math.abs(e.amount), e.currency ?? currency)}</td>
+                      <td className="num">
+                        <Masked>{e.amount === null ? '' : formatMoney(Math.abs(e.amount), e.currency ?? currency)}</Masked>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

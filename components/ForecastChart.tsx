@@ -14,7 +14,8 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { Forecast } from '@/lib/forecast';
-import { compactMoney, formatMoney, signedMoney } from '@/lib/format';
+import { compactMoney, formatMoney, signedMoney, spoken } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
 const W = 340;
 const H = 150;
@@ -146,15 +147,19 @@ export default function ForecastChart({
         {value !== null ? (
           <>
             <span className="chart-readout-value" style={{ color: tone(altValue ?? value) }}>
-              {formatMoney(altValue ?? value, currency)}
+              <Masked>{formatMoney(altValue ?? value, currency)}</Masked>
             </span>
-            {altValue !== null && altValue !== value && <span className="chart-readout-date">without it {formatMoney(value, currency)}</span>}
+            {altValue !== null && altValue !== value && (
+              <span className="chart-readout-date">
+                <Masked>{`without it ${formatMoney(value, currency)}`}</Masked>
+              </span>
+            )}
             <span className="chart-readout-date">{i === 0 ? 'now' : `${i === 1 ? 'end of today' : `end of ${fmtDay(day!.date)}`}, estimated`}</span>
           </>
         ) : (
           <>
             <span className="chart-readout-value" style={{ color: tone(shownLow.balance) }}>
-              {formatMoney(shownLow.balance, currency)}
+              <Masked>{formatMoney(shownLow.balance, currency)}</Masked>
             </span>
             <span className="chart-readout-date">
               lowest, {lowWhen}
@@ -169,7 +174,7 @@ export default function ForecastChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`}
+        aria-label={spoken(`Estimated cash balance from ${formatMoney(forecast.start, currency)} now to ${formatMoney(last.balance, currency)} on ${fmtDay(last.date)}, lowest ${formatMoney(shownLow.balance, currency)} ${lowWhen}.`)}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -211,17 +216,19 @@ export default function ForecastChart({
 
       {/* What moves the scrubbed day, so a step in the line can be read. */}
       <div className="chart-readout-split">
-        {day
-          ? moves.length > 0
-            ? `${moves.map((e) => `${e.name} ${signedMoney(e.amount, currency)}`).join(' · ')}${
-                (altDay ?? day).low < (altDay ?? day).balance && moves.some((e) => e.amount < 0)
-                  ? ` · as low as ${formatMoney((altDay ?? day).low, currency)} before the money in`
-                  : ''
-              }`
-            : 'Nothing expected that day'
-          : i === 0
-            ? 'The balance now, before anything expected today'
-            : 'Slide along the line to read a day'}
+        <Masked>
+          {day
+            ? moves.length > 0
+              ? `${moves.map((e) => `${e.name} ${signedMoney(e.amount, currency)}`).join(' · ')}${
+                  (altDay ?? day).low < (altDay ?? day).balance && moves.some((e) => e.amount < 0)
+                    ? ` · as low as ${formatMoney((altDay ?? day).low, currency)} before the money in`
+                    : ''
+                }`
+              : 'Nothing expected that day'
+            : i === 0
+              ? 'The balance now, before anything expected today'
+              : 'Slide along the line to read a day'}
+        </Masked>
       </div>
     </div>
   );

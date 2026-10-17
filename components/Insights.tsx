@@ -14,6 +14,8 @@ import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '
 import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
 import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
+import { useAmountsHidden } from './hide-amounts';
+import { Masked } from './HideAmounts';
 import { isCashOnHand } from '@/lib/balance';
 import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
 import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -22,6 +24,7 @@ import { spendingByCategory } from '@/lib/totals';
 import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { withCarry, type Carries } from '@/lib/rollover';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { bankRows } from '@/lib/split-rows';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -164,6 +167,9 @@ export default function Insights({
    *  that tab's meters do. Null meanwhile: each budget's amount alone. */
   budgetCarries?: Carries | null;
 }) {
+  // The texts name amounts, so they are written again when hiding amounts is
+  // turned on or off (components/hide-amounts.ts).
+  const hidden = useAmountsHidden();
   const { insights, leftOut, missing } = useMemo(() => {
     const out: Insight[] = [];
     const now = new Date();
@@ -375,8 +381,13 @@ export default function Insights({
       }
 
       // --- biggest purchase this month ---
-      const purchases = txns.filter(
-        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && countsInTotals(t, displayCurrency)
+      // A split transaction is one purchase, whole, as the bank charged it,
+      // when any of its parts counts; a group, its net (#39, lib/split-rows.ts).
+      const purchases = bankRows(txns, { groups: 'keep' }).filter(
+        (t) =>
+          t.date.slice(0, 7) === thisMonth &&
+          t.amount > 0 &&
+          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, displayCurrency)) : countsInTotals(t, displayCurrency))
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
@@ -398,7 +409,9 @@ export default function Insights({
         ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
         : [],
     };
-  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries]);
+    // `hidden` isn't read inside: it changes what formatMoney writes there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries, hidden]);
 
   if (insights.length === 0) return null;
 
@@ -410,7 +423,7 @@ export default function Insights({
       <ul className="insight-list">
         {insights.map((i) => (
           <li key={i.key} className={`insight insight-${i.tone}`}>
-            {i.text}
+            <Masked>{i.text}</Masked>
           </li>
         ))}
       </ul>

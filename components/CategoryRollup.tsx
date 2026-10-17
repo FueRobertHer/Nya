@@ -8,9 +8,10 @@
 // by category id.
 
 import { useMemo, useState } from 'react';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, spoken } from '@/lib/format';
 import { spendingByGroup } from '@/lib/budget-set';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { Masked } from './HideAmounts';
 
 export default function CategoryRollup({
   taxonomy,
@@ -53,7 +54,7 @@ export default function CategoryRollup({
               className="cat-row rollup-toggle"
               onClick={() => toggle(group.id)}
               aria-expanded={expanded}
-              aria-label={`${group.name}: ${formatMoney(total, currency)}. ${expanded ? 'Hide' : 'Show'} its categories`}
+              aria-label={spoken(`${group.name}: ${formatMoney(total, currency)}. ${expanded ? 'Hide' : 'Show'} its categories`)}
             >
               <span className="cat-name rollup-name">
                 <span className="rollup-caret" aria-hidden="true">
@@ -64,7 +65,7 @@ export default function CategoryRollup({
               <div className="cat-track">
                 <div className="cat-bar" style={{ width: `${(total / max) * 100}%` }} />
               </div>
-              <span className="cat-val">{formatMoney(total, currency)}</span>
+              <span className="cat-val"><Masked>{formatMoney(total, currency)}</Masked></span>
             </button>
             {expanded &&
               categories.map(({ category, total: sum }) => (
@@ -76,7 +77,7 @@ export default function CategoryRollup({
                   <div className="cat-track">
                     <div className="cat-bar rollup-child-bar" style={{ width: `${(sum / max) * 100}%` }} />
                   </div>
-                  <span className="cat-val">{formatMoney(sum, currency)}</span>
+                  <span className="cat-val"><Masked>{formatMoney(sum, currency)}</Masked></span>
                 </div>
               ))}
           </div>

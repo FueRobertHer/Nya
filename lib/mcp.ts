@@ -49,7 +49,7 @@ export const LATEST_PROTOCOL = PROTOCOL_VERSIONS[0];
 export const SERVER_INFO = { name: 'nya', title: 'Nya', version: '1.0.0' };
 
 export const INSTRUCTIONS = [
-  'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, budgets, recurring bills and investment holdings.',
+  'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, where money came from and went (cash flow), budgets, recurring bills and investment holdings.',
   'Everything is what Nya has stored, never fetched live: each result says what it is as of. Amounts use Plaid’s sign: a transaction’s positive amount is money out, and what a credit card or a loan owes is a positive balance.',
   'Totals are in one currency each, and say what they left out; nothing is converted between currencies. Hidden accounts are left out unless include_hidden is true.',
   'Some connections bring in no transactions (a 401(k) or a brokerage account; or a bank account or card whose transactions Plaid doesn’t provide, or the person didn’t allow): sources[].no_transactions says which and why, and the notes what that leaves out, so an empty list or a zero total is not, by itself, no spending.',
@@ -160,6 +160,10 @@ const SUMMARIES: Record<string, Tool['summary']> = {
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
   spending_by_category: (r) =>
     `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
+  get_cash_flow: (r) =>
+    `From ${r.from} to ${r.to}: money in ${money(r.money_in, r.currency)} from ${plural(r.payers.length, 'payer')}, money out ${money(r.money_out, r.currency)} in ${plural(r.groups.length, 'group')}, ${
+      r.from_savings_or_debt > 0 ? `${money(r.from_savings_or_debt, r.currency)} from savings or debt` : `${money(r.left_over, r.currency)} left over`
+    }.${withoutTransactions(r)}`,
   get_budgets: (r) =>
     `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available === r.total.budget ? '' : r.total.available > 0 ? `, ${money(r.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${r.total.available < 0 ? `: it began the month ${money(-r.total.available, r.currency)} over` : ''}`}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`,
   list_recurring_bills: (r) => {

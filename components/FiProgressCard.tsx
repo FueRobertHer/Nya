@@ -32,10 +32,12 @@ import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/
 import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
+import { Masked } from './HideAmounts';
 
 export type FiProgressProps = {
   txns: Txn[] | null;
   txnsLoading: boolean;
+  /** The notes that say transactions couldn't all be read (PlanTab's). */
   txnNotes: string[];
   /** The connections that bring in no transactions, as the Plan tab gets
    *  them (lib/no-transactions.ts). */
@@ -153,7 +155,9 @@ export function FiProgressView({
         </button>
       </div>
       <div className="fi-lead">
-        <span className="fi-lead-value">{money(view.fiNumber)}</span>
+        <span className="fi-lead-value">
+          <Masked>{money(view.fiNumber)}</Masked>
+        </span>
         <span className="plan-stat-label">FI number</span>
       </div>
       <div className="fi-stats">
@@ -174,7 +178,7 @@ export function FiProgressView({
             <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
           </div>
           <div className="as-of">
-            {money(view.assets.value ?? 0)} invested · {progressText(view.progress)} of the way
+            <Masked>{money(view.assets.value ?? 0)}</Masked> invested · {progressText(view.progress)} of the way
           </div>
         </>
       )}
@@ -188,11 +192,19 @@ export function FiProgressView({
       {/* What the year's figures leave out, in the Plan's own words: the
           savings rate is always from the year's transactions, so these are
           said whenever there are any. */}
-      {inputs.flows && leftOut.excluded && <p className="panel-note">{leftOut.excluded}</p>}
+      {inputs.flows && leftOut.excluded && (
+        <p className="panel-note">
+          <Masked>{leftOut.excluded}</Masked>
+        </p>
+      )}
       {/* Transactions entered by hand only: the connections that bring in
           none are named, as the Plan names them beside its figures. */}
       {inputs.flows && inputs.coverage.named && <p className="panel-note">{inputs.coverage.named}</p>}
-      {inputs.flows && leftOut.otherCurrencies && <div className="as-of stale">{leftOut.otherCurrencies}</div>}
+      {inputs.flows && leftOut.otherCurrencies && (
+        <div className="as-of stale">
+          <Masked>{leftOut.otherCurrencies}</Masked>
+        </div>
+      )}
       {view.assets.source === 'measured' && otherAccounts && <div className="as-of stale">{otherAccounts}</div>}
       {spendingShort ? (
         <div className="as-of stale">{`May be low: spending is missing ${missing}${rateShort ? ', so the savings rate may be off too' : ''}. The Plan tab says which.`}</div>

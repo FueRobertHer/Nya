@@ -25,6 +25,11 @@
 // nothing here edits until they have loaded; a save that fails puts back what
 // is stored. A budget on a category or group since deleted is shown, and can
 // be removed. A past month is shown as it was, and not edited.
+//
+// SUGGESTIONS (lib/budget-suggestions.ts, components/BudgetSuggestion.tsx).
+// The editor, and a category or group chosen to add a budget to, show what
+// was spent there on average over the last three complete months, rounded
+// up, with one tap to save it as the budget.
 
 import { useMemo, useState } from 'react';
 import { formatMoney } from '@/lib/format';
@@ -33,6 +38,9 @@ import { categoriesIn, displayName, indexTaxonomy, sortedGroups, type Taxonomy }
 import { carryText, monthName, sinceText, startChoices, withCarry, type Carries, type Carry } from '@/lib/rollover';
 import { localMonth } from '@/lib/local-date';
 import { Sheet } from './Sheet';
+import { Masked, spokenLabel } from './HideAmounts';
+import BudgetSuggestion from './BudgetSuggestion';
+import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
   if (ratio >= 1) return ' over';
@@ -59,7 +67,7 @@ function Amounts({ spent, limit, money }: { spent: number; limit: number; money:
   const over = limit > 0 ? spent >= limit : spent > 0 || limit < 0;
   return (
     <>
-      {limit > 0 ? `${money(spent)} of ${money(limit)}` : `${money(spent)} spent, nothing left`}
+      <Masked>{limit > 0 ? `${money(spent)} of ${money(limit)}` : `${money(spent)} spent, nothing left`}</Masked>
       {over && <span className="over-tag"> · over</span>}
     </>
   );
@@ -68,7 +76,11 @@ function Amounts({ spent, limit, money }: { spent: number; limit: number; money:
 /** Beneath a meter whose month began over (an overspent carry deeper than
  *  the budget): by how much, rather than a limit below zero. */
 function BeganOver({ limit, money }: { limit: number; money: (n: number) => string }) {
-  return limit < 0 ? <div className="budget-carry negative">Began the month {money(-limit)} over.</div> : null;
+  return limit < 0 ? (
+    <div className="budget-carry negative">
+      <Masked>{`Began the month ${money(-limit)} over.`}</Masked>
+    </div>
+  ) : null;
 }
 
 /** In the reset's confirmation: when a reset is what a carry needs. */
@@ -108,6 +120,7 @@ export default function BudgetsCard({
   past = false,
   rollover = null,
   onRollover,
+  suggestions = null,
 }: {
   taxonomy: Taxonomy;
   budgets: Budgets;
@@ -136,6 +149,10 @@ export default function BudgetsCard({
   rollover?: RolloverSettings | null;
   /** Resolves true once the change is saved. */
   onRollover?: (target: Target, change: RolloverChange) => Promise<boolean>;
+  /** What was spent on average in the last three complete months, by
+   *  category and group (lib/budget-suggestions.ts), for the editor and for
+   *  a budget about to be added; null when not known. */
+  suggestions?: BudgetSuggestions | null;
 }) {
   const [open, setOpen] = useState<Set<string>>(() => new Set(opened));
   const [editing, setEditing] = useState<string | null>(edit && !past ? keyOf(edit) : null);
@@ -179,15 +196,23 @@ export default function BudgetsCard({
   async function remove(t: Target) {
     if (await onSave(withAmount(t, null))) setEditing(null);
   }
-  async function add() {
-    const value = Number(addAmount);
+  /** A suggestion used in the editor: saved at once, one tap. */
+  async function applyAmount(t: Target, amount: number) {
+    if (await onSave(withAmount(t, amount))) setEditing(null);
+  }
+  /** The category or group chosen to add a budget to. */
+  const addingTarget = (): Target | null => {
     const [kind, id] = adding.split(':') as ['category' | 'group', string];
-    if (!id || !Number.isFinite(value) || value <= 0) return;
-    if (await onSave(withAmount({ kind, id }, value))) {
+    return id ? { kind, id } : null;
+  };
+  async function add(amount: number = Number(addAmount)) {
+    const target = addingTarget();
+    if (!target || !Number.isFinite(amount) || amount <= 0) return;
+    if (await onSave(withAmount(target, amount))) {
       setAdding('');
       setAddAmount('');
       // Opened, so the budget just set is in view.
-      const group = kind === 'group' ? id : ix.byId.get(id)?.group;
+      const group = target.kind === 'group' ? target.id : ix.byId.get(target.id)?.group;
       if (group) setOpen((prev) => new Set(prev).add(group));
     }
   }
@@ -279,6 +304,15 @@ export default function BudgetsCard({
         onChange={(e) => setEditAmount(e.target.value)}
         aria-label={`Monthly budget for ${name}`}
       />
+      <BudgetSuggestion
+        suggestions={suggestions}
+        target={t}
+        currency={currency}
+        rolling={rollingSince(t) !== null}
+        busy={!editable}
+        verb="Use"
+        onUse={(amount) => void applyAmount(t, amount)}
+      />
       <div className="card-actions">
         <button onClick={() => saveEdit(t)} disabled={!editable}>
           Save
@@ -320,7 +354,11 @@ export default function BudgetsCard({
   const carryLine = (t: Target) => {
     const c = carryOf(t);
     if (!c) return null;
-    return <div className={`budget-carry${c.carry < 0 ? ' negative' : ''}`}>{carryText(c, money, shownMonth)}</div>;
+    return (
+      <div className={`budget-carry${c.carry < 0 ? ' negative' : ''}`}>
+        <Masked>{carryText(c, money, shownMonth)}</Masked>
+      </div>
+    );
   };
 
   // What can still be budgeted: spending groups without one of their own,
@@ -363,7 +401,7 @@ export default function BudgetsCard({
                   {m.group.name}
                 </span>
                 <span className="budget-amounts">
-                  {noSpending ? (m.limit! > 0 ? `${money(m.limit!)} limit` : 'Nothing left') : <Amounts spent={m.spent} limit={m.limit!} money={money} />}
+                  {noSpending ? <Masked>{m.limit! > 0 ? `${money(m.limit!)} limit` : 'Nothing left'}</Masked> : <Amounts spent={m.spent} limit={m.limit!} money={money} />}
                 </span>
               </div>
               {!noSpending && <Meter spent={m.spent} limit={m.limit!} />}
@@ -380,14 +418,20 @@ export default function BudgetsCard({
                     against a budget here. Move a category into a spending group to budget it.
                   </p>
                 )}
-                {m.reconcile && <p className="panel-note budget-note">{reconcileText(m)}</p>}
+                {m.reconcile && (
+                  <p className="panel-note budget-note">
+                    <Masked>{reconcileText(m)}</Masked>
+                  </p>
+                )}
                 {editing === keyOf(groupTarget) ? (
                   editor(groupTarget, `${m.group.name} as a whole`)
                 ) : (
                   <button className="budget-summary budget-own" onClick={() => startEdit(groupTarget)} disabled={!editable || past}>
                     <div className="budget-line">
                       <span className="budget-label">For {m.group.name} as a whole</span>
-                      <span className="budget-amounts">{own !== null ? money(own) : 'Not set'}</span>
+                      <span className="budget-amounts">
+                        <Masked>{own !== null ? money(own) : 'Not set'}</Masked>
+                      </span>
                     </div>
                     {carryLine(groupTarget)}
                   </button>
@@ -409,9 +453,9 @@ export default function BudgetsCard({
                             </span>
                             <span className="budget-amounts">
                               {budget === null ? (
-                                `${money(s)}, no budget`
+                                <Masked>{`${money(s)}, no budget`}</Masked>
                               ) : noSpending ? (
-                                budget > 0 ? `${money(budget)} limit` : 'Nothing left'
+                                <Masked>{budget > 0 ? `${money(budget)} limit` : 'Nothing left'}</Masked>
                               ) : (
                                 <Amounts spent={s} limit={budget} money={money} />
                               )}
@@ -436,7 +480,9 @@ export default function BudgetsCard({
           <div className="budget-row" key={`${o.kind}:${o.id}`}>
             <div className="budget-line">
               <span className="budget-label">A {o.kind} since deleted</span>
-              <span className="budget-amounts">{money(o.amount)}</span>
+              <span className="budget-amounts">
+                <Masked>{money(o.amount)}</Masked>
+              </span>
             </div>
             <div className="card-actions">
               <button className="secondary" onClick={() => remove({ kind: o.kind, id: o.id })} disabled={!editable}>
@@ -453,23 +499,27 @@ export default function BudgetsCard({
             <optgroup label="A whole group">
               {choices
                 .filter((c) => c.free)
-                .map(({ group }) => (
-                  <option key={group.id} value={`group:${group.id}`}>
-                    {group.name}
-                    {hint(meters.groups.find((m) => m.group.id === group.id)?.spent_all)}
-                  </option>
-                ))}
+                .map(({ group }) => {
+                  const text = `${group.name}${hint(meters.groups.find((m) => m.group.id === group.id)?.spent_all)}`;
+                  return (
+                    <option key={group.id} value={`group:${group.id}`} aria-label={spokenLabel(text)}>
+                      {text}
+                    </option>
+                  );
+                })}
             </optgroup>
             {choices
               .filter((c) => c.categories.length > 0)
               .map(({ group, categories }) => (
                 <optgroup key={group.id} label={group.name}>
-                  {categories.map((c) => (
-                    <option key={c.id} value={`category:${c.id}`}>
-                      {displayName(c.name)}
-                      {hint(spent[c.id])}
-                    </option>
-                  ))}
+                  {categories.map((c) => {
+                    const text = `${displayName(c.name)}${hint(spent[c.id])}`;
+                    return (
+                      <option key={c.id} value={`category:${c.id}`} aria-label={spokenLabel(text)}>
+                        {text}
+                      </option>
+                    );
+                  })}
                 </optgroup>
               ))}
           </select>
@@ -484,9 +534,19 @@ export default function BudgetsCard({
             aria-label="Monthly limit"
             disabled={!editable}
           />
-          <button onClick={add} disabled={!editable || !adding || !addAmount}>
+          <button onClick={() => void add()} disabled={!editable || !adding || !addAmount}>
             Add Budget
           </button>
+          {addingTarget() && (
+            <BudgetSuggestion
+              suggestions={suggestions}
+              target={addingTarget()!}
+              currency={currency}
+              busy={!editable}
+              verb="Add at"
+              onUse={(amount) => void add(amount)}
+            />
+          )}
         </div>
       )}
 
@@ -496,7 +556,7 @@ export default function BudgetsCard({
             <div className="sheet-form">
               <p className="panel-note">
                 {resetting.name}’s carryover goes to zero from {monthName(shownMonth)}: this month starts from its budget alone
-                {carryOf(resetting.target) ? `, and what is carried now (${carryText(carryOf(resetting.target)!, money, shownMonth)}) is set aside` : ''}. Earlier
+                <Masked>{carryOf(resetting.target) ? `, and what is carried now (${carryText(carryOf(resetting.target)!, money, shownMonth)}) is set aside` : ''}</Masked>. Earlier
                 months keep theirs.
               </p>
               <p className="panel-note">{REFUND_NOTE}</p>

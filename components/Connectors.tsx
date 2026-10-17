@@ -25,6 +25,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import { formatMoney } from '@/lib/format';
 import { instantDay } from '@/lib/local-date';
 import type { ConnectionView, OfferView, AccountView } from '@/lib/connectors/view';
@@ -159,7 +160,7 @@ export function ConnectorCardView({
       {f && f.missing.length > 0 && <p className="stale-note">Not in {conn.label}’s latest answer: {f.missing.join(', ')}.</p>}
       {unsure.length > 0 && (
         <p className="stale-note">
-          {conn.label} reports {names(unsure.map((a) => `${a.name} (+${formatMoney(a.reported ?? 0, a.currency)})`))} as money held. Say which way{' '}
+          {conn.label} reports <Masked>{names(unsure.map((a) => `${a.name} (+${formatMoney(a.reported ?? 0, a.currency)})`))}</Masked> as money held. Say which way{' '}
           {unsure.length === 1 ? 'it goes: until you do, it isn’t' : 'they go: until you do, they aren’t'} counted.
         </p>
       )}
@@ -310,7 +311,7 @@ export function ChooseView({
             <div className="peer-row" key={a.account_id}>
               <div>
                 {a.name} · {a.institution_name}
-                {a.reported !== null && <div className="type-tag">{reportedWords(a.reported, a.currency)}</div>}
+                {a.reported !== null && <div className="type-tag"><Masked>{reportedWords(a.reported, a.currency)}</Masked></div>}
               </div>
               <select value={choices[a.account_id] ?? a.type} disabled={busy} onChange={(e) => onChoose(a.account_id, e.target.value as Choice)} aria-label={`What ${a.name} is`}>
                 {KINDS.map((k) => (
@@ -362,7 +363,7 @@ export function ChooseView({
                     {o.name}
                     {o.balance !== undefined && o.currency && (
                       <div className="type-tag">
-                        {reportedWords(o.balance, o.currency)}
+                        <Masked>{reportedWords(o.balance, o.currency)}</Masked>
                         {o.balance_at ? ` on ${dayOf(o.balance_at)}` : ''}
                       </div>
                     )}
@@ -484,7 +485,7 @@ export function SignView({
         return (
           <fieldset className="download-formats" disabled={busy} key={a.account_id}>
             <legend className="section-label">
-              {a.name} · {a.institution_name}: {reportedWords(a.reported ?? 0, a.currency)}
+              {a.name} · {a.institution_name}: <Masked>{reportedWords(a.reported ?? 0, a.currency)}</Masked>
             </legend>
             <label className="download-format">
               <input type="radio" name={`connector-sign-${a.account_id}`} checked={signs[a.account_id] === 'owed_positive'} onChange={() => onSign(a.account_id, 'owed_positive')} />

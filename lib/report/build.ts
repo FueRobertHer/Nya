@@ -140,7 +140,8 @@ import type { HealthState } from '../connection-state';
 import { TRANSACTIONS_DAYS_REQUESTED, type NoTransactionsReason } from '../item-products';
 import { noSpending, type NoSpending } from '../no-transactions';
 import { isInvestmentType } from '../balance';
-import { currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '../spending';
+import { countTransactions, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
+import { bankRows } from '../split-rows';
 import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../totals';
 import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
 import { categoryKey } from './settings';
@@ -410,19 +411,32 @@ export type AppendixRow = {
   pending: boolean;
   /** Why it isn't in the totals (the person excluded it; a rule hides it; a
    *  transfer or loan payment; another currency), or null when it is. */
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | null;
+  /** Why the totals don't count it: 'group' for one of a group counted on a
+   *  day before the period (lib/split-rows.ts group_outside). */
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
+  /** A part of a split transaction (#39, lib/split-rows.ts), listed as the
+   *  Activity tab lists it: its place, how many parts there are, the whole
+   *  transaction's amount, and whether it holds what the bank changed the
+   *  amount by since the split. Absent on a transaction listed whole. */
+  split?: { part: number; parts: number; whole: number; remainder: boolean };
+  /** A group's net: how many of its transactions it counts, and how many
+   *  aren't here. Absent on anything else. */
+  group?: { transactions: number; missing: number };
 };
 
 export type ReportAppendix = {
   rows: AppendixRow[];
-  /** Rows in the marked categories, before the limit. */
+  /** Transactions in the marked categories, before the limit, and those of
+   *  them `rows` lists: a split one's parts are one transaction, a group's
+   *  net as many as it holds (lib/spending.ts transactionCounter). */
   total: number;
+  shown: number;
   limit: number;
-  /** Rows among them the person excluded or a rule hides: listed, not
-   *  counted. */
+  /** Transactions among them the person excluded or a rule hides: listed,
+   *  not counted. */
   excluded: number;
 };
 
@@ -702,14 +716,16 @@ export function buildReport(input: ReportInput): Report {
   endedFacts.forEach((e, i) => {
     for (const id of e.ids) endedOf.set(id, i);
   });
-  const notCounted = endedFacts.map(() => 0);
+  // Transactions, never rows: a split one is one (lib/spending.ts transactionCounter).
+  const notCountedOf = endedFacts.map(() => transactionCounter());
   const rows = input.rows.filter((t) => {
     if (!inPeriod(t.date)) return false;
     const i = t.account_id === undefined ? undefined : endedOf.get(t.account_id);
     if (i === undefined || t.date < endedFacts[i].end) return true;
-    notCounted[i]++;
+    notCountedOf[i].add(t);
     return false;
   });
+  const notCounted = notCountedOf.map((c) => c.n);
   // The ended accounts the period has something to say of: their end is in
   // it, or before it and they are only assumed closed, still the person's,
   // or hold rows in it.
@@ -726,11 +742,16 @@ export function buildReport(input: ReportInput): Report {
 
   // One currency: the one asked for, if the period has any of it, else the
   // one most of its transactions are in (lib/spending.ts totalsCurrency).
-  const counts = new Map<string, number>();
+  // Transactions in each, never rows (lib/spending.ts transactionCounter).
+  const counters = new Map<string, ReturnType<typeof transactionCounter>>();
   for (const t of rows) {
     const c = currencyOf(t);
-    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+    if (!c) continue;
+    const counter = counters.get(c) ?? transactionCounter();
+    counter.add(t);
+    counters.set(c, counter);
   }
+  const counts = new Map([...counters].map(([c, counter]) => [c, counter.n] as const));
   const currency = input.currency !== null && counts.has(input.currency) ? input.currency : totalsCurrency(rows);
   const currencies = [...counts]
     .map(([c, transactions]) => ({ currency: c, transactions }))
@@ -910,13 +931,18 @@ export function buildReport(input: ReportInput): Report {
         institution: t.institution_name,
         source: t.source ?? 'plaid',
         pending: t.pending,
-        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
+        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : t.group_outside ? 'group' : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
         exclusion_unknown: t.excluded === null,
         note: t.note ?? null,
+        ...(t.split_of !== undefined
+          ? { split: { part: (t.split_index ?? 0) + 1, parts: t.split_count ?? 1, whole: t.split_parent?.amount ?? t.amount, remainder: t.split_remainder !== undefined } }
+          : {}),
+        ...(t.group_members ? { group: { transactions: t.group_members.length, missing: (t.group_missing ?? 0) + (t.group_removed ?? 0) } } : {}),
       })),
-      total: listed.length,
+      total: countTransactions(listed),
+      shown: countTransactions(listed.slice(0, limit)),
       limit,
-      excluded: listed.filter((t) => isExcluded(t)).length,
+      excluded: countTransactions(listed.filter((t) => isExcluded(t))),
     };
   }
 
@@ -933,8 +959,10 @@ export function buildReport(input: ReportInput): Report {
 
   // Each manual account's transactions in the period, unless they couldn't be read.
   const manualRead = (id: string) => input.manualUnread !== 'all' && !input.manualUnread.includes(id);
+  // Each transaction once, on its own account (a split one whole, a group's
+  // each on its own: lib/split-rows.ts bankRows).
   const manualCounts = new Map<string, number>();
-  for (const t of rows) if (t.account_id && t.source) manualCounts.set(t.account_id, (manualCounts.get(t.account_id) ?? 0) + 1);
+  for (const t of bankRows(rows)) if (t.account_id && t.source) manualCounts.set(t.account_id, (manualCounts.get(t.account_id) ?? 0) + 1);
 
   const view = {
     without: input.sources.flatMap((s) => (s.no_transactions ? [{ item_id: s.item_id, institution_name: s.institution_name, reason: s.no_transactions }] : [])),
@@ -959,7 +987,7 @@ export function buildReport(input: ReportInput): Report {
       counted: summary.counted,
       transfers: summary.transfers,
       excluded: summary.excluded,
-      hidden_by_rule: rows.filter((t) => isExcluded(t) && t.excluded_by_rule === true).length,
+      hidden_by_rule: countTransactions(rows.filter((t) => isExcluded(t) && t.excluded_by_rule === true)),
       exclusion_unknown: summary.exclusion_unknown,
       left_out: summary.left_out,
       left_out_text: summary.left_out_text,

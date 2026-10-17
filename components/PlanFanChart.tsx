@@ -12,8 +12,9 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { Bands } from '@/lib/fire/simulate';
-import { compactMoney } from '@/lib/format';
+import { compactMoney, spoken } from '@/lib/format';
 import { wholeMoney } from './plan-text';
+import { Masked } from './HideAmounts';
 
 const W = 340;
 const H = 160;
@@ -119,9 +120,11 @@ export default function PlanFanChart({
   return (
     <div>
       <div className="chart-readout chart-readout-stable">
-        <span className="chart-readout-value">Median {wholeMoney(bands.p50[i], currency)}</span>
+        <span className="chart-readout-value">
+          <Masked>{`Median ${wholeMoney(bands.p50[i], currency)}`}</Masked>
+        </span>
         <span className="chart-readout-date">
-          {whenLong(i)} · middle 80%: {wholeMoney(bands.p10[i], currency)} to {wholeMoney(bands.p90[i], currency)}
+          <Masked>{`${whenLong(i)} · middle 80%: ${wholeMoney(bands.p10[i], currency)} to ${wholeMoney(bands.p90[i], currency)}`}</Masked>
         </span>
       </div>
 
@@ -130,7 +133,9 @@ export default function PlanFanChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Balance over ${years} years in today's dollars. At the end: median ${wholeMoney(bands.p50[years], currency)}, middle 80% ${wholeMoney(bands.p10[years], currency)} to ${wholeMoney(bands.p90[years], currency)}.`}
+        aria-label={spoken(
+          `Balance over ${years} years in today's dollars. At the end: median ${wholeMoney(bands.p50[years], currency)}, middle 80% ${wholeMoney(bands.p10[years], currency)} to ${wholeMoney(bands.p90[years], currency)}.`
+        )}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}
@@ -188,9 +193,9 @@ export default function PlanFanChart({
             {tableYears.map((y) => (
               <tr key={y}>
                 <td>{startAge !== null ? startAge + y : y}</td>
-                <td className="num">{wholeMoney(bands.p10[y], currency)}</td>
-                <td className="num">{wholeMoney(bands.p50[y], currency)}</td>
-                <td className="num">{wholeMoney(bands.p90[y], currency)}</td>
+                <td className="num"><Masked>{wholeMoney(bands.p10[y], currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(bands.p50[y], currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(bands.p90[y], currency)}</Masked></td>
               </tr>
             ))}
           </tbody>

@@ -15,6 +15,7 @@
 import { useState } from 'react';
 import { formatMoney } from '@/lib/format';
 import { addMonths, monthName, monthsText, startChoices, type IncomeCarryover, type IncomePool } from '@/lib/rollover';
+import { Masked } from './HideAmounts';
 
 /** The "available to allocate" header, with the pool's history. */
 export function IncomePoolHeader({ pool, currency, month, today }: { pool: IncomePool; currency: string | null; month: string; today: string }) {
@@ -41,11 +42,13 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
     <div className="pool-header">
       <div className="pool-line">
         <span className="pool-label">{running ? 'Available to allocate' : `Left to allocate at the end of ${name(month)}`}</span>
-        <span className={`pool-amount${pool.available < 0 ? ' negative' : ''}`}>{money(pool.available)}</span>
+        <span className={`pool-amount${pool.available < 0 ? ' negative' : ''}`}>
+          <Masked>{money(pool.available)}</Masked>
+        </span>
       </div>
       <div className="pool-breakdown">
-        {month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}, plus {money(pool.income)} income{running ? ' so far' : ''}, less{' '}
-        {money(pool.spending)} spent
+        <Masked>{month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}</Masked>, plus <Masked>{money(pool.income)}</Masked> income
+        {running ? ' so far' : ''}, less <Masked>{money(pool.spending)}</Masked> spent
       </div>
       {pool.uncertain.length > 0 && (
         <div className="stale-note">
@@ -80,9 +83,9 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
                     {monthName(m.month, today, 'short')}
                     {m.uncertain && <span className="pool-uncertain" title="Its transactions may be incomplete"> *</span>}
                   </th>
-                  <td>{money(m.income)}</td>
-                  <td>{money(m.spending)}</td>
-                  <td>{money(m.carried_out)}</td>
+                  <td><Masked>{money(m.income)}</Masked></td>
+                  <td><Masked>{money(m.spending)}</Masked></td>
+                  <td><Masked>{money(m.carried_out)}</Masked></td>
                 </tr>
               ))}
             </tbody>

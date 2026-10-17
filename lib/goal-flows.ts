@@ -179,9 +179,17 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
   for (const [item, list] of Object.entries(remembered?.byItem ?? {})) for (const a of list) itemOf.set(a.account_id, item);
   const sources = new Map(bank.sources.map((s) => [s.item_id, s]));
   const rowsOf = new Map<string, FlowRow[]>();
-  for (const t of activity.transactions) {
+  // What moved on each account (#39, lib/split-rows.ts): a group's
+  // transactions each on its own account at its own amount, never the
+  // group's net on one of them (a dinner on a card, its payback into
+  // checking); a split transaction's parts, which add up to it, each filed
+  // as the person filed it (a part's category is theirs; the difference the
+  // bank made since is filed as the transaction is).
+  const moved = activity.transactions.flatMap((t) => t.group_members ?? [t]);
+  for (const t of moved) {
     if (!t.account_id) continue;
     const list = rowsOf.get(t.account_id) ?? [];
+    const own = t.split_of !== undefined && !t.split_remainder;
     list.push({
       date: t.date,
       amount: t.amount,
@@ -189,7 +197,7 @@ export async function readGoalFlows(ctx: Ctx, opts: { month: string; accounts: r
       account_id: t.account_id,
       subcategory: t.subcategory,
       category: t.category,
-      ...(chosen.has(t.transaction_id) || t.category_by_rule ? { chosen: true } : {}),
+      ...(own || chosen.has(t.split_of ?? t.transaction_id) || t.category_by_rule ? { chosen: true } : {}),
     });
     rowsOf.set(t.account_id, list);
   }

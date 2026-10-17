@@ -10,6 +10,7 @@ import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type 
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
+import { Masked, spokenLabel } from './HideAmounts';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -229,7 +230,10 @@ export function FigureForm(
             'Nya has nothing to measure this from yet, so the plan leaves it out until you type your own.'
           ) : (
             <>
-              <strong>{wholeMoney(measured, props.currency)}</strong> {measuredText}
+              <strong>
+                <Masked>{wholeMoney(measured, props.currency)}</Masked>
+              </strong>{' '}
+              {measuredText}
             </>
           )}
         </p>
@@ -254,7 +258,9 @@ export function FigureForm(
                   <span>
                     {a.name} <span className="plan-muted">· {a.institution}</span>
                   </span>
-                  <span className="num">{wholeMoney(a.balance, props.currency)}</span>
+                  <span className="num">
+                    <Masked>{wholeMoney(a.balance, props.currency)}</Masked>
+                  </span>
                 </li>
               ))}
             </ul>
@@ -328,15 +334,15 @@ export function AssumptionsForm(props: SaveProps) {
       <div className="sheet-form">
         <label className="field">
           Withdrawal rate (% a year)
-          <input type="number" inputMode="decimal" step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.1" value={rate} onChange={(e) => setRate(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Real return until FI (% a year, after inflation)
-          <input type="number" inputMode="decimal" step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.5" value={ret} onChange={(e) => setRet(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Tax on withdrawals (% of each withdrawal)
-          <input type="number" inputMode="decimal" step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="1" value={tax} onChange={(e) => setTax(e.target.value)} disabled={s.saving} />
         </label>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
@@ -478,13 +484,19 @@ export function SimulationForm(
         <label className="field">
           Start with
           <select value={start} onChange={(e) => setStart(e.target.value as FirePlan['start'])} disabled={s.saving}>
-            <option value="fi-number">FI number{props.fiNumber !== null ? ` (${wholeMoney(props.fiNumber, props.currency)})` : ''}</option>
-            <option value="assets">Invested assets{props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}</option>
+            {[
+              ['fi-number', `FI number${props.fiNumber !== null ? ` (${wholeMoney(props.fiNumber, props.currency)})` : ''}`],
+              ['assets', `Invested assets${props.assets !== null ? ` (${wholeMoney(props.assets, props.currency)})` : ''}`],
+            ].map(([value, text]) => (
+              <option key={value} value={value} aria-label={spokenLabel(text)}>
+                {text}
+              </option>
+            ))}
             <option value="custom">A balance I type</option>
           </select>
         </label>
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-          {startConsequence(start, plan, props, Number(balance))}
+          <Masked>{startConsequence(start, plan, props, Number(balance))}</Masked>
         </p>
         {start === 'custom' && (
           <label className="field">
@@ -509,14 +521,16 @@ export function SimulationForm(
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
           {cash >= 0 ? `Cash: ${cash}%, which keeps up with inflation and earns nothing more.` : 'Stocks and bonds add up to more than 100%.'} Stocks are{' '}
           {DATA_STOCKS}, bonds {DATA_BONDS}.{' '}
-          {props.allocationMix
-            ? `${mixBasisText(props.allocationMix, props.currency)}: ${mixText(props.allocationMix)}.`
-            : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
+          <Masked>
+            {props.allocationMix
+              ? `${mixBasisText(props.allocationMix, props.currency)}: ${mixText(props.allocationMix)}.`
+              : "Nya doesn't look inside funds it doesn't know, so set the mix you hold, or classify them under Allocation."}
+          </Masked>
         </p>
         {/* What the mix leaves out, beside the button that fills it in. */}
         {props.allocationMix && mixLeftOutText(props.allocationMix, props.currency) && (
           <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
-            {mixLeftOutText(props.allocationMix, props.currency)}
+            <Masked>{mixLeftOutText(props.allocationMix, props.currency)}</Masked>
           </p>
         )}
         {props.allocationMix && (props.allocationMix.stocksPct !== Number(stocks) || props.allocationMix.bondsPct !== Number(bonds)) && (
@@ -543,7 +557,7 @@ export function SimulationForm(
         </label>
         <label className="field">
           Fund fees (% a year)
-          <input type="number" inputMode="decimal" step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" data-percent step="0.01" value={fee} onChange={(e) => setFee(e.target.value)} disabled={s.saving} />
         </label>
       </div>
       {s.error && <div className="error">{s.error}</div>}

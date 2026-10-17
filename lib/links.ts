@@ -37,6 +37,7 @@ import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, d
 import { forgetAccountHoldings, forgetRecentHoldings } from './holdings-history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
 import { forgetCarriedAnnotations, pruneOrphanAnnotations } from './txn-annotations';
+import { pruneSplitsAndGroups } from './split-gone';
 import { storedAccountIds, storedTransactionIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType, isInvestmentType } from './balance';
@@ -779,11 +780,13 @@ export async function forgetEarlierAccount(
   await redis().hdel(directoryKey(ctx), id);
   // Categories of its transactions that nothing can show any more (a failed
   // disconnect-time cleanup would otherwise leave them for good), and what
-  // was said about them, the same way. Each checked against the Items stored
+  // was said about them, their splits and their places in groups, the same
+  // way. Each checked against the Items stored
   // when it runs, never the list read when the forget started: a bank linked
   // meanwhile (linking takes no lock) has rows, and records on them, too.
   await pruneOrphanOverrides(ctx).catch(() => 0);
   await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx)).catch(() => 0);
+  await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx)).catch(() => undefined);
   return { ...result, holdingsDamaged: holdings.damaged };
 }
 

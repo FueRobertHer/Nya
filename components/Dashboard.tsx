@@ -24,10 +24,12 @@ import ConnectButtons from './ConnectButtons';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { unreadNotesOf } from '@/lib/fire/inputs';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
@@ -70,7 +72,9 @@ import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import { HideAmountsToggle, Masked } from './HideAmounts';
+import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
 import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
@@ -287,10 +291,12 @@ function fmtGain(value: number, cost: number): string {
   const gain = value - cost;
   const sign = gain >= 0 ? '+' : '-';
   const pct = cost !== 0 ? ` · ${((Math.abs(gain) / Math.abs(cost)) * 100).toFixed(1)}%` : '';
-  return `${sign}$${Math.abs(gain).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}${pct}`;
+  return `${sign}$${hiddenFigure(
+    Math.abs(gain).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  )}${pct}`;
 }
 
 // "Mar 4" from a YYYY-MM-DD. Parsed at local midnight, not UTC, so a due date
@@ -459,6 +465,9 @@ export default function Dashboard({
   brokerageLink?: boolean;
 }) {
   const cacheKey = cacheKeyFor(viewer);
+  // Hiding amounts (components/hide-amounts.ts) changes what every formatter
+  // writes, so the whole dashboard draws again when the switch changes.
+  useAmountsHidden();
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
@@ -506,6 +515,10 @@ export default function Dashboard({
   // Your rules (components/rules-state.ts), and the rule drawer.
   const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // Of those, the ones that say transactions couldn't all be read, which the
+  // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
+  // that says how a rule, a category, a split or a group applies.
+  const [txnUnread, setTxnUnread] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
   // Connections that bring in no transactions, so the spending views say why.
@@ -742,6 +755,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnUnread(['Could not load transactions.']);
         setTxnsFailed(true);
         return;
       }
@@ -751,12 +765,14 @@ export default function Dashboard({
       acceptCategories(data.categories);
       acceptTags(data.tags);
       setTxnNotes(data.notes ?? []);
+      setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
       setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnUnread(['Could not load transactions.']);
       setTxnsFailed(true);
     } finally {
       setTxnsLoading(false);
@@ -881,7 +897,7 @@ export default function Dashboard({
       if (!r) return null;
       const ix = categories.taxonomy ? indexTaxonomy(categories.taxonomy) : null;
       const account = (a: string) => ruleAccounts.find((x) => x.id === a)?.label ?? null;
-      return ruleSentence(r, { ix, tags: { version: 1, tags: tagList.tags }, account, money: (n) => n.toLocaleString(undefined, { maximumFractionDigits: 8 }) });
+      return ruleSentence(r, { ix, tags: { version: 1, tags: tagList.tags }, account, money: (n) => hiddenFigure(n.toLocaleString(undefined, { maximumFractionDigits: 8 })) });
     },
     [rules.set, categories.taxonomy, tagList.tags, ruleAccounts]
   );
@@ -897,6 +913,7 @@ export default function Dashboard({
     txns,
     setTxns,
     setTxnNotes,
+    setTxnUnread,
     setTxnIncomplete,
     setTxnWithout,
     loadTransactions,
@@ -1710,6 +1727,7 @@ export default function Dashboard({
             <p className="sub">{subtitle}</p>
           </div>
           <div className="top-actions">
+            <HideAmountsToggle />
             {connected && !loading && (
               <button
                 className="secondary icon-btn"
@@ -1790,11 +1808,11 @@ export default function Dashboard({
                 <div className="card">
                   <div className="total-label">Net Worth</div>
                   <div className={`total-value${netWorth < 0 ? ' negative' : ''}`}>
-                    {fmt(netWorth, accountCurrency)}
+                    <Masked>{fmt(netWorth, accountCurrency)}</Masked>
                   </div>
                   {heroDelta && (
                     <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
-                      {heroDelta.value >= 0 ? '▲' : '▼'} {fmt(Math.abs(heroDelta.value), accountCurrency)} (
+                      {heroDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(heroDelta.value), accountCurrency)}</Masked> (
                       {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
                       {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
                     </div>
@@ -1885,7 +1903,7 @@ export default function Dashboard({
                 <FiProgressLoader
                   txns={txns}
                   txnsLoading={txnsLoading}
-                  txnNotes={txnNotes}
+                  txnNotes={txnUnread}
                   txnWithout={txnWithout}
                   institutions={planInstitutions}
                   currency={accountCurrency}
@@ -2014,7 +2032,9 @@ export default function Dashboard({
                           {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
-                          <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
+                          <div className="inst-total">
+                            <Masked>{fmt(instTotal, instCurrency)}</Masked>
+                          </div>
                           {/* Manual groupings aren't Plaid Items, so there's
                               nothing to disconnect; they're removed per account. */}
                           {manageMode && !inst.manual && (
@@ -2095,7 +2115,7 @@ export default function Dashboard({
                                           />
                                         </div>
                                         <span className="util-label">
-                                          {Math.round(util * 100)}% of {fmt(a.limit, a.currency)} limit
+                                          {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit
                                         </span>
                                       </div>
                                     )}
@@ -2119,7 +2139,7 @@ export default function Dashboard({
                                         {cash.flagged && (
                                           <span className="cash-dot" aria-hidden="true" />
                                         )}
-                                        {fmt(cash.cash, a.currency)}
+                                        <Masked>{fmt(cash.cash, a.currency)}</Masked>
                                         {cash.flagged ? ' uninvested' : ' in cash'}
                                         {/* "of holdings", not "of this
                                             account": the denominator is the
@@ -2136,7 +2156,7 @@ export default function Dashboard({
                                     )}
                                   </td>
                                   <td className="num">
-                                    {a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}
+                                    <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
                                     {((inst.manual && !inst.connector) || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
@@ -2317,14 +2337,11 @@ export default function Dashboard({
                                   Cash label in the list below. */}
                               {instCash.cash > 0 && (
                                 <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                                  {fmt(instCash.cash, instCurrency)}{' '}
+                                  <Masked>{fmt(instCash.cash, instCurrency)}</Masked>{' '}
                                   {instCash.flagged ? 'uninvested' : 'cash'}
                                 </span>
                               )}
-                              {fmt(
-                                inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0),
-                                instCurrency
-                              )}
+                              <Masked>{fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
                               <svg
                                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
                                 viewBox="0 0 24 24"
@@ -2371,9 +2388,9 @@ export default function Dashboard({
                                       </span>
                                     )}
                                   </td>
-                                  <td className="num">{h.quantity?.toFixed(3) ?? '--'}</td>
+                                  <td className="num">{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</td>
                                   <td className="num">
-                                    {fmt(h.value)}
+                                    <Masked>{fmt(h.value)}</Masked>
                                     {/* No gain/loss on a cash line: a money
                                         market fund holds its $1 NAV, so the
                                         figure is a permanent "+$0.00 · 0.0%"
@@ -2383,7 +2400,7 @@ export default function Dashboard({
                                       <div
                                         className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
                                       >
-                                        {fmtGain(h.value, h.cost_basis)}
+                                        <Masked>{fmtGain(h.value, h.cost_basis)}</Masked>
                                       </div>
                                     )}
                                   </td>
@@ -2723,6 +2740,9 @@ export default function Dashboard({
                   )
                 }
                 ruleSentenceOf={ruleSentenceOf}
+                // Splits and groups (#39): applied after the server's cache,
+                // so the list is read again quietly after a change.
+                onSplitsChanged={txnEdits.refresh}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
@@ -2782,6 +2802,11 @@ export default function Dashboard({
                 plannedSaveError={plannedState.saveError}
                 onSavePlanned={plannedItemsStore.save}
                 budgetMonth={budgetMonth}
+                onCategories={(t) => {
+                  categories.accept(t);
+                  loadTransactions();
+                  budgetsStore.load();
+                }}
               />
             )}
 
@@ -2789,7 +2814,7 @@ export default function Dashboard({
               <PlanTabLoader
                 txns={txns}
                 txnsLoading={txnsLoading}
-                txnNotes={txnNotes}
+                txnNotes={txnUnread}
                 txnWithout={txnWithout}
                 institutions={planInstitutions}
                 holdings={planHoldings}
@@ -3043,6 +3068,8 @@ export default function Dashboard({
               connection at Plaid. You can reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
+            {/* What adding it back doesn't bring back (#39). */}
+            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
             {/* Disconnecting is about the connection; closing is about an
                 account (#50). Only the person knows which happened. */}
             {endedOffer !== shownDisconnectTarget.item_id && (

@@ -47,6 +47,8 @@ import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
+import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
+import { pruneSplitsAndGroups } from './split-gone';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -152,15 +154,61 @@ export type Txn = {
   // earlier account's row besides an exclusion; and on an imported or
   // SimpleFIN row, that its name is one the person gave it in the app
   // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
-  // And on a posted bank row standing for rows imported into its account
-  // (#52, lib/history-import/read.ts importedForActivity's `represents`),
-  // those rows' ids, earlier imports first: what was said about them carries
-  // to it.
+  // And on a bank row standing for rows imported into its account (#52,
+  // lib/history-import/read.ts importedForActivity's `represents`), those
+  // rows' ids, earlier imports first: what was said about them carries to it
+  // once it has posted (a pending one stands in for them until it posts).
   account_ref?: string;
   renamed_from?: string;
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // Sent: on a posted bank row standing for a row imported from the bank's
+  // file whose amount it no longer says (the bank changed its own after the
+  // two were paired, and the pair was kept: lib/history-import/match.ts KEPT
+  // ONCE MADE), that row's amount, in Plaid's sign, for the Activity tab to
+  // say. The bank's row is the one that counts.
+  imported_amount?: number;
+
+  // Splits and groups (#39), applied last on read (lib/split-rows.ts),
+  // absent on every other row. A part of a split transaction, in its place:
+  // the transaction's id, the part's place among its parts (from 0) and how
+  // many there are, whether the part alone is left out of budgets and
+  // reports, on the part that holds what the bank changed since the split the
+  // amount it was split from, and the whole transaction's own values. A
+  // transaction whose split couldn't be read, or no longer fits (its
+  // currency changed), is shown whole and marked. A group's row, in its
+  // transactions' place: the group's id, its transactions as they are, and
+  // how many of them aren't here or were taken out when they went. A part
+  // carries when its split was saved (split_updated_at), so an edit says
+  // what it saw; a transaction of a group that no longer applies (its
+  // transactions' currencies differ now) says which (group_unapplied), and
+  // one of a group counted on a day before what was read says which, and
+  // counts in no total (group_outside). A bank row standing for a row
+  // imported from a file (#52) takes that row's split, its parts naming the
+  // row it is kept under (split_carried_from), and its place in a group, its
+  // row there naming it the same way (group_carried_from), where an edit of
+  // them is made. A group's row says why its transactions that aren't
+  // counted in it aren't, where that is known (group_away: in another group,
+  // or a bank row standing for one still pending).
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_updated_at?: string;
+  split_carried_from?: string;
+  split_unread?: true;
+  split_unapplied?: 'currency';
+  group_id?: string;
+  group_members?: Txn[];
+  group_carried_from?: string;
+  group_away?: GroupAway[];
+  group_missing?: number;
+  group_removed?: number;
+  group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -706,13 +754,19 @@ export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null
  * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
  * transactions' records, and the stores are read only when one has one.
  * Never fails the sync: a record left is pruned by the next disconnect or
- * forget, and is never shown meanwhile, its transaction being gone.
+ * forget, and is never shown meanwhile, its transaction being gone. A split
+ * of one goes the same way, and one in a group leaves it (lib/split-gone.ts).
  */
 async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
   try {
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the splits and groups of transactions the bank removed', err instanceof Error ? err.name : err);
   }
 }
 
@@ -1096,6 +1150,14 @@ async function syncItem(ctx: Ctx,
     else delete state.importing;
     if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
     else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
+    // Before the rows change: which of them stood for rows imported from the
+    // bank's files, kept when this sync changes one (a new amount, a
+    // corrected name, a removal), so that a row it modifies keeps standing
+    // for the one it stood for and never lets it count beside it, and the
+    // pairs carried across a re-link made again (lib/history-import/twins.ts).
+    // Best effort: it never fails the sync. Imported here, when needed, as it
+    // reads this module's rows itself.
+    await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.

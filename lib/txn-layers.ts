@@ -57,7 +57,9 @@
 //     row starts from.
 //
 // The facts the assembly keeps for this (account_ref, renamed_from, carried,
-// own_name, stands_for) go once applied: they are never sent.
+// own_name, stands_for) go once applied: they are never sent. The read layer
+// reads `stands_for` first: the splits and places in groups of the imported
+// rows it names are the bank row's too (lib/split-rows.ts).
 
 import type { Txn, OlderTxn } from './transactions';
 import type { TxnAnnotation, CarriedRowFacts } from './txn-annotations';
