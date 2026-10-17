@@ -366,6 +366,30 @@ export type GroupOutside = { id: string; name: string; date: string; category_id
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
 /**
+ * The split that applies to a transaction: its own, else the first of those
+ * of the rows imported from files it stands for (`stands`, earlier imports
+ * first), with that row's id (`from`); 'unread' when the one that would apply
+ * couldn't be read, so it shows whole; null for none. For a posted row (a
+ * pending one is never split), by the read layer's own rule
+ * (expandSplitsAndGroups), which a download's note counts by too.
+ */
+export function splitFor(
+  inputs: Pick<SplitInputs, 'splits' | 'splitsUnknown'>,
+  id: string,
+  stands: readonly string[] = []
+): { record: SplitRecord; from?: string } | 'unread' | null {
+  const own = inputs.splits.get(id);
+  if (own) return { record: own };
+  if (inputs.splitsUnknown.has(id)) return 'unread';
+  for (const from of stands) {
+    const record = inputs.splits.get(from);
+    if (record) return { record, from };
+    if (inputs.splitsUnknown.has(from)) return 'unread';
+  }
+  return null;
+}
+
+/**
  * The rows with each group's transactions replaced by its row, and each
  * split transaction by its parts, newest first, and what to say of what
  * couldn't be applied (see the header). `rows` are filed, as the read layer
@@ -399,20 +423,9 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
     standsFor.set(bankId, away);
     for (const id of away) if (!standIn.has(id)) standIn.set(id, bank);
   }
-  // The split that applies to a row: its own, else the first of those of the
-  // imported rows it stands for, with that row's id (`from`); 'unread' when
-  // the one that would apply couldn't be read.
-  const splitOf = (t: Txn): { record: SplitRecord; from?: string } | 'unread' | null => {
-    const own = inputs.splits.get(t.transaction_id);
-    if (own) return { record: own };
-    if (inputs.splitsUnknown.has(t.transaction_id)) return 'unread';
-    for (const id of standsFor.get(t.transaction_id) ?? []) {
-      const record = inputs.splits.get(id);
-      if (record) return { record, from: id };
-      if (inputs.splitsUnknown.has(id)) return 'unread';
-    }
-    return null;
-  };
+  // The split that applies to a row (splitFor), over the imported rows a
+  // posted one here stands for.
+  const splitOf = (t: Txn) => splitFor(inputs, t.transaction_id, standsFor.get(t.transaction_id));
   const isSplit = (t: Txn) => {
     const split = splitOf(t);
     return split !== null && split !== 'unread';

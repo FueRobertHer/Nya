@@ -698,6 +698,24 @@ describe('the download', () => {
     expect(records.get('b_corner')!.note).toContain('Split in Nya: Food and drink 45.00; Home improvement 15.00');
   });
 
+  test('an OFX statement says when the split a bank row would show, an imported row’s, can’t be read, and calls itself incomplete', async () => {
+    const { ids } = await importStatement();
+    await splitPut(ids['CORNER SHOP'], [
+      { amount: 45, category_id: catId('food and drink') },
+      { amount: 15, category_id: catId('home improvement') },
+    ]);
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    await fake.hset(ctxKey('transaction-splits'), { [ids['CORNER SHOP']]: DAMAGED });
+    const data = await quietly(() => collectUserData({ ctx, userId: null }));
+    const made = ofxFile(data, buildUserExport(data, new Date()), 'acc_chk', new Date());
+    if (!('file' in made)) throw new Error(made.refused);
+    expect(made.file.notes.find((n) => n.startsWith('How 1 of these transactions is split couldn’t be read'))).toBeDefined();
+    expect(made.file.incomplete).toContain('transaction-splits');
+    // As the app shows it: whole, marked, with its note.
+    const row = (await rowsOf()).find((t) => t.transaction_id === 'b_corner')!;
+    expect([row.amount, row.split_unread]).toEqual([60, true]);
+  });
+
   test('an OFX statement names the group an imported row is in, and the bank’s row that takes its place', async () => {
     const { ids } = await importStatement();
     await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: catId('food and drink'), members: [ids['CORNER SHOP'], 'b_payback'] });
