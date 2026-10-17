@@ -63,15 +63,18 @@ export function cannotSend(): string | null {
  * same choice again changes nothing, so the day it was chosen stays (the job's
  * catch-up reads it, week.ts). Turned on after being off, or for the first
  * time, the key the links are signed with is made anew, so a link from before
- * never turns off a summary turned on since. Strict: a setting or record that
+ * never turns off a summary turned on since; the rest of the record is kept,
+ * so a goal told of isn't told of again. Strict: a setting or record that
  * can't be read throws, and is left as it is.
  */
 export async function saveSetting(ctx: Ctx, choice: WeeklyChoice, now: number = Date.now()): Promise<WeeklySetting> {
   const current = await weeklySettingStore.get(ctx);
   if (current && current.enabled === choice.enabled && current.weekday === choice.weekday && current.time_zone === choice.time_zone) return current;
   if (choice.enabled && !current?.enabled) {
-    // Only computes, as update() asks: it may run again on a conflict.
-    await weeklyStateStore.update(ctx, (state): WeeklyState => ({ v: 1, key: newLinkKey(), sent: state?.sent ?? null, sent_at: state?.sent_at ?? null }));
+    // A new key, and only that: the weeks sent, one that got no answer and
+    // the goals told of stay as they were. Only computes, as update() asks:
+    // it may run again on a conflict.
+    await weeklyStateStore.update(ctx, (state): WeeklyState => ({ ...(state ?? { v: 1, sent: null, sent_at: null }), key: newLinkKey() }));
   }
   const next: WeeklySetting = { v: WEEKLY_SETTING_VERSION, ...choice, updated_at: new Date(now).toISOString() };
   await weeklySettingStore.set(ctx, next);

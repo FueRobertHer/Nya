@@ -323,8 +323,9 @@ export function WeeklySummarySheetBody(props: {
             What the summary would say if it went now, for the day and time zone above, with the summary on. The one that goes is worked out when it
             goes, after your transactions are brought up to date, so it can say more, and its link to turn the summary off is made for each email. Your
             email provider can read it, as it can any email: it names your budgets, goals, bills, planned expenses and banks. A name of yours with a
-            digit, a currency or percent sign, a number or a currency written as an English word, or a letter outside the Latin alphabet in it is
-            counted instead of named; a bank’s, only for a digit or a currency or percent sign.
+            digit, a currency or percent sign, a number or a currency written as an English word, a number written as a Spanish, Portuguese, French,
+            Italian or German word, or a letter outside the Latin alphabet in it is counted instead of named; a bank’s, only for a digit or a
+            currency or percent sign.
           </p>
         </>
       )}

@@ -128,6 +128,17 @@ describe('the setting', () => {
     expect((await weeklyStateStore.get(TEST_CTX))!.key).not.toBe(key);
   });
 
+  test('turned on again, only the key is new: the weeks sent, one with no answer and the goals told of stay', async () => {
+    await put(ON);
+    const before = { ...(await weeklyStateStore.get(TEST_CTX))!, sent: '2026-10-12', sent_at: '2026-10-12T13:01:00.000Z', unanswered: '2026-10-19', goals_told: ['g-fund'] };
+    await weeklyStateStore.set(TEST_CTX, before);
+    await put({ ...ON, enabled: false });
+    await put(ON);
+    const after = (await weeklyStateStore.get(TEST_CTX))!;
+    expect(after.key).not.toBe(before.key);
+    expect({ ...after, key: before.key }).toEqual(before);
+  });
+
   test('saved but unreadable: a 409, flagged, never read as off, and never written over', async () => {
     await fake.set(ctxKey('weekly-summary'), 'damaged-but-maybe-recoverable-ciphertext-xx');
     const res = await getSetting();

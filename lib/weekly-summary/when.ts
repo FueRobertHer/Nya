@@ -12,8 +12,11 @@
 // in Brisbane, and in Sydney's summer, in Auckland and in Kiritimati, in the
 // first hours of the day, as it begins (the run of the UTC day before).
 // Where a change of clocks takes away the day's run, it comes with the next
-// day's (week.ts CATCH_UP_DAYS). With the catch-up run, two hours later, when
-// the day's update was held up.
+// day's (week.ts CATCH_UP_DAYS). The catch-up run, two hours later, sends
+// only what its day's run should have, when that run was held up: the job
+// judges "today" at the day's run, not at the catch-up's own hour, which from
+// UTC+9 to UTC+11 is already the next day (lib/weekly-summary/job.ts WHO IS
+// DUE).
 
 import { dayIn } from '../report/period';
 import { WEEKDAY_NAMES, type Weekday } from './settings';

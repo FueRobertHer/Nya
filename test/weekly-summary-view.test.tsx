@@ -100,7 +100,9 @@ describe('the sheet', () => {
     expect(html).toContain('its link to turn the summary off is made for each email');
     expect(html).not.toContain('Exactly what the email says');
     // Exactly what is counted instead of named.
-    expect(html).toContain('A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word, or a letter outside the Latin alphabet in it is counted instead of named');
+    expect(html).toContain(
+      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word, a number written as a Spanish, Portuguese, French, Italian or German word, or a letter outside the Latin alphabet in it is counted instead of named'
+    );
     // When it comes, truthfully for the zone shown.
     expect(html).toContain('It comes with Nya’s daily update, which runs once a day for everyone, at 1 p.m. UTC');
     expect(html).toContain('In America/New York, that is Mondays at about 9 a.m.</p>');

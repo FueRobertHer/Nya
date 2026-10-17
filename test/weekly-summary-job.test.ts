@@ -31,6 +31,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
 const { sendWeeklySummaries, weekKey, SYNC_TIMEOUT_MS, GATHER_TIMEOUT_MS, STRAGGLERS_MS } = await import('@/lib/weekly-summary/job');
+const { nextDelivery } = await import('@/lib/weekly-summary/when');
 const { weeklySettingStore, weeklyStateStore } = await import('@/lib/weekly-summary/store');
 const { figuresIn } = await import('@/lib/weekly-summary/compose');
 const { parseLinkToken } = await import('@/lib/weekly-summary/unsubscribe');
@@ -474,6 +475,74 @@ describe('through the daily job', () => {
     // A container recorded already, run again: nothing more.
     await runSnapshots(reg, { scheduledFor: '2026-10-12', startedAt: MONDAY + 3 * HOUR, clock: () => MONDAY + 3 * HOUR, work: async () => ({ status: 'recorded' }), weekly });
     expect(delivered).toHaveLength(1);
+  });
+
+  test('in Tokyo, the catch-up two hours after Sunday’s run, just after midnight there on Monday, sends nothing: Monday’s run does', async () => {
+    await turnOn(TEST_CTX, { time_zone: 'Asia/Tokyo' });
+    const weekly = { fetch: resend, recipients: async () => ['me@example.com'], sync: async () => {}, gather: gather as never, sleep: async () => {} };
+    const reg = registry(TEST_CONTAINER);
+    const SUNDAY = Date.parse('2026-10-11T13:00:00.000Z');
+    const at = (t: number) => ({ scheduledFor: new Date(t).toISOString().slice(0, 10), startedAt: t, clock: () => t, work: async () => ({ status: 'recorded' as const }), weekly });
+    await runSnapshots(reg, at(SUNDAY));
+    await runSnapshots(reg, at(SUNDAY + 2 * HOUR));
+    expect(delivered).toEqual([]);
+    // 10 p.m. on Monday in Tokyo, the run that brings its SimpleFIN banks in too.
+    await runSnapshots(reg, at(SUNDAY + DAY));
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].key).toBe(weekKey(ME, '2026-10-12'));
+    await runSnapshots(reg, at(SUNDAY + DAY + 2 * HOUR));
+    expect(delivered).toHaveLength(1);
+  });
+
+  test('in every band of zones, summer and winter, one a week, at the run and the hour the card says, with the record carried', async () => {
+    const zones = [
+      'Pacific/Honolulu',
+      'America/Los_Angeles',
+      'America/New_York',
+      'Europe/London',
+      'Asia/Kolkata',
+      'Asia/Tokyo',
+      'Asia/Seoul',
+      'Australia/Darwin',
+      'Australia/Adelaide',
+      'Australia/Brisbane',
+      'Pacific/Guam',
+      'Australia/Sydney',
+      'Pacific/Auckland',
+      'Pacific/Kiritimati',
+    ];
+    // From a Tuesday, with Monday's already sent, through the Wednesday after next.
+    for (const [from, lastMonday, nextMonday] of [
+      ['2026-10-06', '2026-10-05', '2026-10-12'],
+      ['2026-07-07', '2026-07-06', '2026-07-13'],
+    ]) {
+      for (const zone of zones) {
+        fake.reset();
+        await registerTestContainer(fake);
+        delivered = [];
+        byKey = new Map();
+        await turnOn(TEST_CTX, { time_zone: zone });
+        await weeklyStateStore.set(TEST_CTX, { v: 1, key: Buffer.alloc(32, 5).toString('base64url'), sent: lastMonday, sent_at: null });
+        const sends: number[] = [];
+        for (let day = 0; day < 9; day++) {
+          for (const hour of [13, 15]) {
+            const t = Date.parse(`${from}T00:00:00.000Z`) + day * DAY + hour * HOUR;
+            const before = delivered.length;
+            await run(t, { scheduledFor: new Date(t).toISOString().slice(0, 10) });
+            if (delivered.length > before) sends.push(t);
+          }
+        }
+        expect([zone, from, sends.length]).toEqual([zone, from, 1]);
+        expect([zone, delivered[0].key]).toEqual([zone, weekKey(ME, nextMonday)]);
+        // At the day's run, never its catch-up, at the hour the card says.
+        expect([zone, new Date(sends[0]).getUTCHours()]).toEqual([zone, 13]);
+        const said = nextDelivery(1, zone, Date.parse(`${from}T12:00:00.000Z`))!;
+        const local = new Intl.DateTimeFormat('en-US', { timeZone: zone, hour: 'numeric', minute: 'numeric', hourCycle: 'h23' }).formatToParts(sends[0]);
+        const part = (type: string) => Number(local.find((p) => p.type === type)!.value);
+        expect([zone, part('hour') % 24, part('minute')]).toEqual([zone, said.hour, said.minute]);
+        expect([zone, said.day]).toEqual([zone, nextMonday]);
+      }
+    }
   });
 });
 

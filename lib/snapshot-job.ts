@@ -58,8 +58,9 @@
 //
 // The weekly summaries go after them, within what is left of the same
 // deadline, for each container whose snapshot is done for the day and whose
-// summary is due (lib/weekly-summary/job.ts). The catch-up run sends those
-// that didn't fit, or whose snapshot was done only then.
+// summary is due (lib/weekly-summary/job.ts), judged at the day's run. The
+// catch-up run sends those that didn't fit, or whose snapshot was done only
+// then.
 //
 // Deferred: spreading the runs across a window. The job takes the date it is
 // for (scheduledFor), which is the seam that needs.
@@ -356,7 +357,7 @@ export type RunOptions = {
   /** For tests: how the emails reach Resend and whom they go to. */
   mail?: Omit<SendOptions, 'clock' | 'deadline'>;
   /** For tests: the same for the weekly summaries. */
-  weekly?: Omit<WeeklyRunOptions, 'clock' | 'deadline'>;
+  weekly?: Omit<WeeklyRunOptions, 'clock' | 'deadline' | 'scheduledFor'>;
 };
 
 /** The outcomes after which a container's day is done enough for its weekly
@@ -437,7 +438,7 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
   // Then the weekly summaries, within what is left of the same deadline.
   const done = new Map(results.map((r) => [r.container, r.status]));
   const weekly = Math.min(started + MAIL_DEADLINE_MS, clock() + WEEKLY_BUDGET_MS);
-  await sendWeeklySummaries(registry, { ...opts.weekly, clock, deadline: weekly, ready: (c) => SUMMARY_READY.has(done.get(c) ?? '') }).catch((err) =>
+  await sendWeeklySummaries(registry, { ...opts.weekly, clock, deadline: weekly, scheduledFor: date, ready: (c) => SUMMARY_READY.has(done.get(c) ?? '') }).catch((err) =>
     console.error('Weekly summary: the summaries could not be sent.', reasonOf(err))
   );
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };

@@ -15,6 +15,17 @@
 // is summed. Each container's setting and record are read a few at a time;
 // one that can't be read is left out, and logged.
 //
+// "Today" on the person's calendar is judged at the day's own run
+// (`scheduledFor`, at DAILY_RUN_UTC_HOUR, lib/weekly-summary/when.ts), or now
+// if that is earlier: so the catch-up run, two hours later, only catches up
+// what its day's run should have sent. Judged at its own hour, it would be
+// the first run of the day from UTC+9 to UTC+11 (Tokyo, Brisbane, Sydney in
+// winter), and send each summary there just after midnight, from a run that
+// syncs no SimpleFIN bank (the catch-up reruns no snapshot that was
+// recorded), so every one would say spending isn't compared. A run made
+// before its day's hour judges at its own, so no week is summed before it
+// ends.
+//
 // ONE A WEEK, NEVER TWICE. The week's send day is recorded once the email
 // service accepted the summary (weekly-summary-state), and a week recorded is
 // never sent again by any run, nor, after a move of the day, one that would
@@ -80,6 +91,7 @@ import { gatherWeekly } from './gather';
 import { isUnread, type WeeklyFacts } from './content';
 import { checkedSummary, composeWeekly, FigureError } from './compose';
 import { linkExpiry, linkToken, newLinkKey, oneClickUrl, pageUrl } from './unsubscribe';
+import { DAILY_RUN_UTC_HOUR } from './when';
 
 /** How long the summaries of one run may take in all. */
 export const WEEKLY_BUDGET_MS = 120_000;
@@ -103,6 +115,9 @@ export type WeeklyRunOptions = {
   /** By `clock`: when every call must have ended. Unset, WEEKLY_BUDGET_MS from now. */
   deadline?: number;
   clock?: () => number;
+  /** The UTC day the run is for (lib/snapshot-job.ts scheduledFor): "today"
+   *  is judged at that day's run (see WHO IS DUE). Unset, at `clock`. */
+  scheduledFor?: string;
   /** For tests: the pause between sends and before a retry. */
   sleep?: (ms: number) => Promise<void>;
   /** For tests: what reaches Resend, whom to write to, how transactions are
@@ -218,6 +233,9 @@ export async function sendWeeklySummaries(
   const sendTimeout = opts.sendTimeoutMs ?? MAIL_TIMEOUT_MS;
   const lookupTimeout = opts.recipientsTimeoutMs ?? RECIPIENTS_TIMEOUT_MS;
   const now = clock();
+  // When "today" is judged, on each person's calendar (see WHO IS DUE).
+  const dayRun = opts.scheduledFor && /^\d{4}-\d{2}-\d{2}$/.test(opts.scheduledFor) ? Date.parse(`${opts.scheduledFor}T${String(DAILY_RUN_UTC_HOUR).padStart(2, '0')}:00:00.000Z`) : NaN;
+  const judgedAt = Number.isFinite(dayRun) ? Math.min(now, dayRun) : now;
 
   // Who is due, each container's setting and record read strictly, a few at
   // once, then put back in the registry's order: which read ends first never
@@ -230,7 +248,7 @@ export async function sendWeeklySummaries(
       const setting = await weeklySettingStore.get(ctx);
       if (!setting?.enabled) return;
       const zone = canonicalTimeZone(setting.time_zone);
-      const today = zone ? todayIn(now, zone) : null;
+      const today = zone ? todayIn(judgedAt, zone) : null;
       if (!zone || !today) {
         console.error(`Weekly summary: the time zone set for container ${c.id} is not one this runtime knows, so its summary waits.`);
         outcomes.set(c.id, 'failed');

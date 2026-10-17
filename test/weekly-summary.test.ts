@@ -553,7 +553,8 @@ const LINK = 'https://nya.example.com';
 const STOP = `${LINK}/unsubscribe?t=0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b.20270110.${'A'.repeat(43)}`;
 const opts = (over: Partial<ComposeOptions> = {}): ComposeOptions => ({ link: LINK, unsubscribe: STOP, requested: false, schedule: 1, now: NOW, ...over });
 /** The check, as the senders run it on a composed summary. */
-const figures = (s: { subject: string; text: string; send_day?: string; banks?: string[] }) => figuresIn([s.subject, s.text], { sendDay: s.send_day ?? '2026-10-12', banks: s.banks });
+const figures = (s: { subject: string; text: string; send_day?: string; banks?: string[]; codes?: string[] }) =>
+  figuresIn([s.subject, s.text], { sendDay: s.send_day ?? '2026-10-12', banks: s.banks, codes: s.codes });
 /** The check over one bit of text, in a week of October 2026. */
 const figuresOf = (text: string) => figuresIn([text], { sendDay: '2026-10-12' });
 
@@ -603,6 +604,34 @@ describe('names', () => {
     }
     expect(spellsFigure('the next seven days')).toBe(true);
     expect(spellsFigure('Groceries and Dining out')).toBe(false);
+  });
+
+  test('never one that spells out a number in Spanish, Portuguese, French, Italian or German', () => {
+    for (const bad of [
+      'Diez mil para el coche',
+      'Quinientos al mes',
+      'Veinticinco',
+      'Veintiuno',
+      'Cinquenta e cinco',
+      'Dois mil',
+      'Cinq cents',
+      'Trente mille',
+      'Soixante-dix',
+      'Cinquemila',
+      'Duemila',
+      'Zehntausend',
+      'Fünfhundert',
+      'Einhundert',
+      'Fünfundzwanzig',
+      'Zwei Millionen',
+    ]) {
+      expect([bad, safeName(bad)]).toEqual([bad, null]);
+    }
+    // Their words for one, which are their word for "a" too, and those that
+    // are English words as well, are left as they are.
+    for (const fine of ['Membership dues', 'Bills due', 'Once a year', 'Sept rent', 'Seize the day', 'Elf costume', 'Null and void', 'Une soirée', 'Uno pizza', 'Un viaje', 'Air miles', 'Einstein', 'Tree fund', 'Trend']) {
+      expect([fine, safeName(fine)]).toEqual([fine, fine]);
+    }
   });
 
   test('never one with letters outside the Latin alphabet: no list of words can read them', () => {
@@ -687,6 +716,19 @@ describe('the summary’s words', () => {
     }
   });
 
+  test('a week with a currency left out that is also a money word is sent: the codes it writes are its own', () => {
+    // Plaid's code for bitcoin is BTC, which is on the money words for names.
+    const s = composeWeekly(quietFacts({ spending: { kind: 'compared', level: 'same', left_out: ['BTC', 'EUR'] } }), opts());
+    expect(s.text).toContain("Transactions in BTC and EUR aren't counted in that.");
+    expect(s.codes).toEqual(['BTC', 'EUR']);
+    expect(figures({ ...s, codes: s.codes } as never)).toEqual([]);
+    expect(checkedSummary(s).text).toBe(s.text);
+    // Only as it writes them: a code anywhere else is still a word to refuse,
+    // and one beside a number is still a number.
+    expect(figuresIn(['Spent in btc'], { sendDay: '2026-10-12', codes: ['BTC'] })).toEqual(['a number or a currency written as a word']);
+    expect(figuresIn(['Transactions in BTC 40'], { sendDay: '2026-10-12', codes: ['BTC'] }).length).toBeGreaterThan(0);
+  });
+
   test('a name that spells out an amount is counted, in the body and in the subject', () => {
     const one = composeWeekly(
       quietFacts({
@@ -725,7 +767,7 @@ describe('the summary’s words', () => {
       ['Spent ٣ times', 'a digit that is not ASCII'],
     ];
     for (const [text, kind] of cases) expect([text, figuresOf(text)]).toEqual([text, expect.arrayContaining([kind])]);
-    expect(() => checkedSummary({ subject: 'Your week', text: 'Spent $5', send_day: '2026-10-12', banks: [] })).toThrow(FigureError);
+    expect(() => checkedSummary({ subject: 'Your week', text: 'Spent $5', send_day: '2026-10-12', banks: [], codes: [] })).toThrow(FigureError);
   });
 
   test('anything but its own days and counts is refused: every figure a blocklist missed', () => {

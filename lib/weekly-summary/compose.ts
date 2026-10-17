@@ -24,6 +24,11 @@
 //     "fivehundred" or "tenk"). Widely: refusing a name only means it is
 //     counted. "Real" and "won" are left out of the list, as common words
 //     that say no amount on their own ("Real estate"); "reais" is in it;
+//   - a number written as a word in Spanish, Portuguese, French, Italian or
+//     German (OTHER_NUMBER_WORDS: "Diez mil", "Zehntausend", run together
+//     as those languages join them), but for their words for one, which are
+//     their word for "a" too, and the few that are English words as well
+//     (due, once, sept, seize, elf, null);
 //   - a letter outside the Latin alphabet, since no list of words can tell
 //     whether "五百元" or "пятьдесят рублей" spells an amount.
 // A bank's name (safeBankName) comes from Plaid or SimpleFIN, never from the
@@ -38,7 +43,8 @@
 // dates as it writes them (a weekday that is that date's, and a year only
 // near the send day's), its counts (a number before one of its own nouns),
 // the week in the subject, its one phrase with a number word ("the next seven
-// days") and the banks' names it wrote. Anything left that is a digit, a
+// days"), and the banks' names and currency codes it wrote ("Transactions in
+// BTC aren't counted in that"). Anything left that is a digit, a
 // currency or percent sign, a number or currency word, or a letter outside
 // the Latin alphabet is a figure, and the senders refuse a summary with one
 // (job.ts, send-now.ts): a bug that let a figure through stops the email
@@ -88,7 +94,39 @@ export const MONEY_WORDS: readonly string[] = [
   'dinar', 'dirham', 'riyal', 'rial', 'naira', 'cedi', 'paise', 'bitcoin', 'btc',
 ];
 
-const FIGURE_WORDS = new Set([...NUMBER_WORDS, ...MONEY_WORDS]);
+/** Numbers written as words in Spanish, Portuguese, French, Italian and
+ *  German, accents aside (see NAMES): not their words for one, which are
+ *  their word for "a" too, nor those that are English words as well (due,
+ *  once, sept, seize, elf, null). */
+export const OTHER_NUMBER_WORDS: readonly string[] = [
+  // Spanish
+  'cero', 'dos', 'tres', 'cuatro', 'cinco', 'seis', 'siete', 'ocho', 'nueve', 'diez', 'doce', 'trece', 'catorce', 'quince',
+  'dieciseis', 'diecisiete', 'dieciocho', 'diecinueve', 'veinte', 'veinti', 'treinta', 'cuarenta', 'cincuenta', 'sesenta', 'setenta', 'ochenta', 'noventa',
+  'cien', 'ciento', 'doscientos', 'trescientos', 'cuatrocientos', 'quinientos', 'seiscientos', 'setecientos', 'ochocientos', 'novecientos',
+  'mil', 'millon', 'millones',
+  // Portuguese
+  'dois', 'duas', 'quatro', 'sete', 'oito', 'nove', 'dez', 'onze', 'doze', 'treze', 'catorze', 'quatorze', 'dezesseis', 'dezessete', 'dezoito', 'dezenove',
+  'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta', 'oitenta', 'cem', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos',
+  'seiscentos', 'setecentos', 'oitocentos', 'novecentos', 'milhao', 'milhoes',
+  // French
+  'deux', 'trois', 'quatre', 'cinq', 'huit', 'neuf', 'dix', 'douze', 'treize', 'quinze', 'vingt', 'trente', 'quarante', 'cinquante', 'soixante',
+  'mille', 'millier', 'milliard',
+  // Italian
+  'tre', 'quattro', 'cinque', 'sei', 'sette', 'otto', 'dieci', 'undici', 'dodici', 'tredici', 'quattordici', 'quindici', 'sedici', 'diciassette',
+  'diciotto', 'diciannove', 'venti', 'trenta', 'quaranta', 'sessanta', 'settanta', 'ottanta', 'novanta', 'mila', 'milione', 'milioni', 'miliardo',
+  // German
+  'zwei', 'drei', 'vier', 'funf', 'sechs', 'sieben', 'acht', 'neun', 'zehn', 'zwolf', 'zwanzig', 'dreissig', 'dreißig', 'vierzig', 'funfzig',
+  'sechzig', 'siebzig', 'achtzig', 'neunzig', 'hundert', 'tausend', 'millionen', 'milliarde', 'milliarden',
+];
+
+/** What those languages join number words with, counted only inside a word
+ *  made of them ("einhundert", "fünfundzwanzig", "veintiuno", "duemila"). */
+const JOINING_PIECES = new Set(['ein', 'eine', 'und', 'due', 'un', 'uno', 'una']);
+
+/** English words a plural would make a number word of: "miles" isn't "mil". */
+const NOT_FIGURES = new Set(['miles']);
+
+const FIGURE_WORDS = new Set([...NUMBER_WORDS, ...MONEY_WORDS, ...OTHER_NUMBER_WORDS]);
 
 /** A digit of any script, a currency sign, or a percent sign of any form. */
 const FIGURE_CHARS = /[\p{N}\p{Sc}%‰‱٪﹪％]/u;
@@ -98,23 +136,32 @@ const NOT_LATIN = /[^\P{L}\p{sc=Latin}]/u;
 /** One of the words, or its plural ("tens", "twenties", "pennies"). */
 function isFigureWord(w: string): boolean {
   if (FIGURE_WORDS.has(w)) return true;
+  if (NOT_FIGURES.has(w)) return false;
   if (w.endsWith('ies') && FIGURE_WORDS.has(`${w.slice(0, -3)}y`)) return true;
   if (w.endsWith('es') && FIGURE_WORDS.has(w.slice(0, -2))) return true;
   return w.endsWith('s') && FIGURE_WORDS.has(w.slice(0, -1));
 }
 
-/** A word made of them run together ("fivehundred", "fiftybucks"), or of them
- *  and a "k" for thousand ("tenk"). */
+/** A word made of them run together ("fivehundred", "fiftybucks",
+ *  "zehntausend"), with the pieces other languages join them with
+ *  ("einhundert"), or with a "k" for thousand ("tenk"): at least one of the
+ *  words in it. */
 function runTogether(w: string): boolean {
   const pieces = (s: string): boolean => {
     if (s.length === 0 || s.length > NAME_CHARS) return false;
-    const reach = new Array<boolean>(s.length + 1).fill(false);
-    reach[0] = true;
+    // reach[i]: how s.slice(0, i) can be made, 0 not at all, 1 of joining
+    // pieces only, 2 with a number or currency word in it.
+    const reach = new Array<number>(s.length + 1).fill(0);
+    reach[0] = 1;
     for (let i = 0; i < s.length; i++) {
-      if (!reach[i]) continue;
-      for (let j = i + 3; j <= s.length; j++) if (!reach[j] && isFigureWord(s.slice(i, j))) reach[j] = true;
+      if (reach[i] === 0) continue;
+      for (let j = i + 2; j <= s.length; j++) {
+        const piece = s.slice(i, j);
+        const next = isFigureWord(piece) ? 2 : JOINING_PIECES.has(piece) ? reach[i] : 0;
+        if (next > reach[j]) reach[j] = next;
+      }
     }
-    return reach[s.length];
+    return reach[s.length] === 2;
   };
   return pieces(w) || (w.endsWith('k') && pieces(w.slice(0, -1)));
 }
@@ -228,7 +275,7 @@ const LEVEL_TEXT: Record<Level, string> = {
 /** The names a summary writes, each as it may be carried, or what to call it
  *  instead; and the banks' names it wrote, which the check leaves to their
  *  own rule (see THE CHECK). */
-type Namer = { name: (raw: string, instead: string) => string; bank: (raw: string, instead: string) => string; banks: Set<string> };
+type Namer = { name: (raw: string, instead: string) => string; bank: (raw: string, instead: string) => string; banks: Set<string>; codes: Set<string> };
 
 function namer(): Namer {
   const banks = new Set<string>();
@@ -240,6 +287,7 @@ function namer(): Namer {
       return n ?? instead;
     },
     banks,
+    codes: new Set<string>(),
   };
 }
 
@@ -249,6 +297,7 @@ function spendingText(s: SpendingFact, year: string, n: Namer): string {
       if (s.left_out.length === 0) return LEVEL_TEXT[s.level];
       const codes = s.left_out.map((c) => (/^[A-Z]{3,5}$/.test(c) ? c : null));
       const named = codes.filter((c): c is string => c !== null);
+      for (const c of named) n.codes.add(c);
       const which = named.length === codes.length ? joined(named) : 'other currencies';
       return `${LEVEL_TEXT[s.level]} Transactions in ${which} aren't counted in that.`;
     }
@@ -339,8 +388,9 @@ export type ComposeOptions = {
 };
 
 /** A summary as composed: what the email says, the day it is for, and the
- *  banks' names in it, which the check reads by their own rule. */
-export type ComposedSummary = { subject: string; text: string; send_day: string; banks: string[] };
+ *  banks' names and currency codes in it, which the check reads by their own
+ *  rule. */
+export type ComposedSummary = { subject: string; text: string; send_day: string; banks: string[]; codes: string[] };
 
 /** "reconnect Chase soon" after a colon; a name keeps its capital. */
 const lowerFirst = (s: string) => (s.startsWith('Reconnect ') ? `r${s.slice(1)}` : s);
@@ -469,7 +519,7 @@ export function composeWeekly(f: WeeklyFacts, o: ComposeOptions): ComposedSummar
 
   paragraphs.push(o.link ? `Open Nya to see the figures: ${o.link}/` : 'Open Nya to see the figures.');
   paragraphs.push(footer(o));
-  return { subject, text: paragraphs.join('\n\n') + '\n', send_day: f.send_day, banks: [...n.banks] };
+  return { subject, text: paragraphs.join('\n\n') + '\n', send_day: f.send_day, banks: [...n.banks], codes: [...n.codes] };
 }
 
 /** Why it came and how to stop it, and when the next comes: from the
@@ -526,15 +576,18 @@ function isDate(weekday: string, month: string, day: string, year: number): bool
  * against the day it is for and the banks' names it wrote: empty when there
  * is none. A summary with any is never sent.
  */
-export function figuresIn(texts: readonly string[], context: { sendDay: string; banks?: readonly string[] }): string[] {
+export function figuresIn(texts: readonly string[], context: { sendDay: string; banks?: readonly string[]; codes?: readonly string[] }): string[] {
   const year = Number(context.sendDay.slice(0, 4));
   const { first, last } = weekBefore(context.sendDay);
   const week = shortWeek(first, last);
   const banks = [...(context.banks ?? [])].filter((b) => b.length > 0).sort((a, b) => b.length - a.length);
+  // Only codes as the summary writes them: three to five capitals, a word of their own.
+  const codes = (context.codes ?? []).filter((c) => /^[A-Z]{3,5}$/.test(c)).map((c) => new RegExp(`\\b${c}\\b`, 'g'));
   const found = new Set<string>();
   for (const t of texts) {
     let rest = t.replace(LINKS, ' ');
     for (const bank of banks) rest = rest.split(bank).join(' ');
+    for (const code of codes) rest = rest.replace(code, ' ');
     rest = rest.replace(FULL_DATE, (match, weekday: string, month: string, day: string, y?: string) => {
       // Written with its year only when that year isn't the send day's; a
       // week within one year is written without, so it may be the year before.
@@ -562,7 +615,7 @@ export class FigureError extends Error {
 
 /** The summary, checked: throws FigureError when figuresIn finds a figure. */
 export function checkedSummary(summary: ComposedSummary): { subject: string; text: string } {
-  const kinds = figuresIn([summary.subject, summary.text], { sendDay: summary.send_day, banks: summary.banks });
+  const kinds = figuresIn([summary.subject, summary.text], { sendDay: summary.send_day, banks: summary.banks, codes: summary.codes });
   if (kinds.length > 0) throw new FigureError(kinds);
   return { subject: summary.subject, text: summary.text };
 }

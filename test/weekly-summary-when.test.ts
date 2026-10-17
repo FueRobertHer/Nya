@@ -7,7 +7,10 @@ import type { Weekday } from '@/lib/weekly-summary/settings';
 // When a weekly summary comes, in the person's own time (lib/weekly-summary/
 // when.ts): the hour the card and the sheet say is the hour the daily job's
 // run falls at in the zone, and in every zone that run falls on the day
-// chosen, so a summary is never a day late, east of UTC included.
+// chosen, so a summary is never a day late, east of UTC included. That the
+// job sends it at that run, and its catch-up two hours later never sooner,
+// with the record carried from run to run in every band of zones, is
+// test/weekly-summary-job.test.ts ("through the daily job").
 
 const crons = (JSON.parse(readFileSync(new URL('../vercel.json', import.meta.url), 'utf8')) as { crons: { path: string; schedule: string }[] }).crons;
 
