@@ -220,9 +220,14 @@ function utcDay(at: string): string {
 export type DueNotice = { institution_name: string; health: ConnectionHealth; since: string; kind: NoticeKind };
 
 /** Whether the end Plaid warned of has already come. */
-const ended = (h: ConnectionHealth, now: number) => !!h.ends_at && Date.parse(h.ends_at) <= now;
+const ended = (h: Pick<ConnectionHealth, 'ends_at'>, now: number) => !!h.ends_at && Date.parse(h.ends_at) <= now;
 
-function subjectFor(name: string, h: ConnectionHealth, now: number): string {
+/** A connection's problem in a few words, as the subject of a notice about it
+ *  alone says it: also how the weekly summary names a connection that needs
+ *  the person (lib/weekly-summary/compose.ts), so the two word one alike, but
+ *  for one that can't be repaired: the summary reads no cause, so it says
+ *  only what is true of both of this one's. */
+export function subjectFor(name: string, h: Pick<ConnectionHealth, 'state' | 'cause' | 'ends_at'>, now: number): string {
   switch (h.state) {
     case 'reconnect_soon':
       return ended(h, now) ? `Reconnect ${name} now` : `Reconnect ${name} soon`;

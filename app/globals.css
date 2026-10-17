@@ -5222,6 +5222,63 @@ button.cash-flow-show {
   font-size: 14px;
 }
 
+/* The weekly summary (components/WeeklySummaryCard.tsx, app/unsubscribe):
+   its state beside the card's name, and the summary as it goes, in plain
+   text, wrapped to the sheet's width. */
+.weekly-summary-status {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.weekly-summary-card > button,
+.unsubscribe-card > button {
+  margin-top: 12px;
+}
+
+.weekly-summary-sheet > button:not(.link-btn) {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.weekly-summary-sheet > .quick-add-check {
+  margin-bottom: 14px;
+}
+
+.weekly-summary-sheet > .link-btn {
+  display: block;
+  margin: -4px 0 10px;
+  text-align: left;
+}
+
+.weekly-preview-title {
+  margin: 20px 0 6px;
+}
+
+.weekly-preview-subject {
+  font-size: 14px;
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.weekly-preview {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: inherit;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+/* Weekly summary: the unsubscribe page's live region takes no room while
+   it is empty, and stays in place, so its words are announced when they come. */
+.unsubscribe-card > p[role='status']:empty {
+  margin: 0;
+}
+
 /* --- sharing's other kinds: net worth, spending, holdings, budgets, goals
    (components/SharedViews.tsx on a "Shared by" card, components/ShareKinds.tsx
    in the drawer). Class names avoid "share" (components/Sharing.tsx). --- */

@@ -14,6 +14,7 @@ import DownloadMyData from './DownloadMyData';
 import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
+import WeeklySummaryCard from './WeeklySummaryCard';
 import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
@@ -2680,6 +2681,10 @@ export default function Dashboard({
                 {/* API tokens for the read-only API and the MCP server, with
                     the rest of the account upkeep (components/ApiTokens.tsx). */}
                 {manageMode && <ApiTokens clerk={clerk} />}
+
+                {/* The weekly summary email, off until turned on, with what
+                    this week's would say (components/WeeklySummaryCard.tsx). */}
+                {manageMode && <WeeklySummaryCard clerk={clerk} />}
 
                 {/* Your categories and their groups (components/CategoriesCard.tsx):
                     a change shows on the next read of the transactions and budgets. */}
