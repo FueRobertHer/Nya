@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, ctxKey, testKey, TEST_CTX, TEST_CONTAINER, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { NextRequest } from 'next/server';
@@ -61,6 +61,7 @@ beforeEach(async () => {
 afterEach(() => {
   process.env = { ...saved };
   Object.assign(console, quiet);
+  setSystemTime();
 });
 
 /** Signed in with Clerk as `user`, who owns `container`. */
@@ -274,6 +275,10 @@ describe('send me one now', () => {
     const { saveManualAccount } = await import('@/lib/manual');
     const { manualTxnStore } = await import('@/lib/manual-txns');
     const at = '2026-10-12T08:00:00.000Z';
+    const monday = Date.parse('2026-10-12T09:00:00.000Z');
+    // The readers read their year back from the clock: set to the week's
+    // Monday, so the row below is in it whatever the real date.
+    setSystemTime(new Date(monday));
     await saveManualAccount(TEST_CTX, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: at });
     // One transaction this week and none before: too few weeks to compare.
     await manualTxnStore.set(TEST_CTX, 'manual_wallet', {
@@ -282,7 +287,6 @@ describe('send me one now', () => {
     });
     await put({ enabled: true, weekday: 1, time_zone: 'UTC' });
     await weeklySettingStore.set(TEST_CTX, { ...(await weeklySettingStore.get(TEST_CTX))!, updated_at: '2026-09-01T00:00:00.000Z' });
-    const monday = Date.parse('2026-10-12T09:00:00.000Z');
     expect(await sendNow(TEST_CTX, { weekday: 1, time_zone: 'UTC' }, { now: monday, fetch: resend, sleep: async () => {} })).toMatchObject({ kind: 'sent' });
     expect(sent[0].text).toContain("Nya doesn't have enough weeks of transactions yet");
     expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBeNull();
@@ -403,8 +407,11 @@ describe('the link that turns it off', () => {
     const good = await onWithLink(TEST_CTX);
     await registerTestContainer(fake, 'restoring');
     expect((await post(good)).status).toBe(503);
+    // Its first character changed: all six of its bits are the mac's. The
+    // last one's lowest two are padding, so changing only those, as some days'
+    // macs would, leaves the same mac.
     const [container, expires, mac] = good.split('.');
-    expect((await post(`${container}.${expires}.${mac.slice(0, -1)}${mac.endsWith('A') ? 'B' : 'A'}`)).status).toBe(400);
+    expect((await post(`${container}.${expires}.${mac[0] === 'A' ? 'B' : 'A'}${mac.slice(1)}`)).status).toBe(400);
   });
 
   test('a link whose container’s data key can’t be used is refused, or, once it checked out, told its data can’t be reached', async () => {

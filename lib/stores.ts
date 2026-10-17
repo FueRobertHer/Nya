@@ -37,11 +37,13 @@ import './migration/store';
 import './planned-store';
 import './rate-limit';
 import './report/store';
+import './review-store';
 import './rules';
 import './splits';
 import './tags';
 import './timeline-notes';
 import './txn-annotations';
+import './vendor-default-store';
 import './weekly-summary/store';
 
 import { storesDeclaredSoFar, type Store } from './repo';

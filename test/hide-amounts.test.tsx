@@ -34,6 +34,9 @@ import { MappingStep, ReviewStep, type Question as MigrationQuestion, type Revie
 import CashFlowSankey from '@/components/CashFlowSankey';
 import SplitSheet from '@/components/SplitSheet';
 import GroupSheet from '@/components/GroupSheet';
+import CardMode from '@/components/CardMode';
+import ReviewNote from '@/components/ReviewNote';
+import type { ReviewControls } from '@/components/review-state';
 import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { readImport, type ImportOptions } from '@/lib/import/read';
@@ -719,6 +722,29 @@ const sapphire = {
   liability: { kind: 'credit' as const, apr: 21.24, apr_label: 'Purchase APR', minimum_payment: 120 },
 };
 
+/** The review queue's controls as its views see them: on, doing nothing. */
+const REVIEW = {
+  view: { on: true, since: day(1), unread: false, unknown: 0 },
+  accept: () => {},
+  turn: async () => true,
+  approve: async () => null,
+  undo: async () => true,
+  unapprove: async () => true,
+  recategorizeAndApprove: async () => null,
+  undoRecategorize: async () => true,
+  error: null,
+  setError: () => {},
+  saving: false,
+} as unknown as ReviewControls;
+
+/** A bank row standing for one imported from the bank's file (#52), which
+ *  was approved at the file's amount before the bank changed its own. */
+const TWIN = txn({ transaction_id: 'b_costco', date: day(3), name: 'Costco', amount: 160.5, needs_review: true, review_changed: { amount: 150, currency: 'USD' }, imported_amount: 150 } as Partial<Txn>);
+/** Transactions waiting for review, the twin among them. */
+const TO_REVIEW: Txn[] = [...ROWS.map((t) => ({ ...t, needs_review: true as const })), TWIN];
+/** The split Costco run, approved at another amount than the bank's now. */
+const changedSplit = () => splitRows().map((t) => (t.split_of === 'Costco' ? { ...t, needs_review: true as const, review_changed: { amount: 140, currency: 'USD' } } : t));
+
 const SCREENS: Record<string, () => React.ReactElement> = {
   'Home: the net worth chart': () => (
     <NetWorthChart
@@ -838,6 +864,18 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       onImport={() => {}}
       onBack={() => {}}
     />
+  ),
+  'Activity: the review queue’s bar, and transactions to review, one standing for an imported one the bank changed since': () => (
+    <MonthBreakdown txns={TO_REVIEW} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} review={REVIEW} />
+  ),
+  'Activity: a transaction’s review, the bank having changed its amount since it was approved': () => (
+    <ReviewNote t={txn({ needs_review: true, review_changed: { amount: 84.12, currency: 'USD' } } as Partial<Txn>)} taxonomy={taxonomy} review={REVIEW} onChanged={() => {}} />
+  ),
+  'Card Mode: a split transaction to review, its parts, and the amount it was approved at': () => (
+    <CardMode open txns={changedSplit()} taxonomy={splitSet} tags={[]} currency="USD" review={REVIEW} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />
+  ),
+  'Card Mode: a transaction standing for one imported from the bank’s file, approved at the file’s amount': () => (
+    <CardMode open txns={[TWIN]} taxonomy={taxonomy} tags={[]} currency="USD" review={REVIEW} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />
   ),
 };
 

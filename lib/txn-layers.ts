@@ -10,7 +10,10 @@
 //
 // THE LAYERS, each over the one before, the person's own last:
 //   1. the bank's data, or a manual or imported row's own;
-//   2. the rules (lib/rules.ts), in priority order;
+//   2. the rules (lib/rules.ts), in priority order, and for a category,
+//      under them a merchant's default (lib/vendor-defaults.ts) and over
+//      them what the person approved the transaction as (lib/review-store.ts,
+//      applied by lib/review-layer.ts, which also marks what needs review);
 //   3. what the person said on an earlier account's row, carried across a
 //      re-link (lib/txn-annotations.ts carriedAnnotations), and over it, on a
 //      bank row standing for rows imported into its account from files
@@ -68,6 +71,7 @@ import { categoryById, choiceText, ownCategory, resolveCategory, type CategoryIn
 import { evaluateRules, matchText, sourceKind, type CompiledRules, type RuleOutcome, type RuleSubject } from './rules';
 import { isConnectorKind } from './connectors/types';
 import { IMPORTED_TXN_PREFIX } from './history-import/view';
+import { applyReview, type ReviewLayer } from './review-layer';
 
 /** One side of a pair worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers): its category is the pair's. */
@@ -92,6 +96,9 @@ export type LayerInputs = {
   /** When given, each row's subject (what rules read of it) is put here by
    *  id, for a rule's preview (app/api/rules/preview). */
   subjects?: Map<string, RuleSubject>;
+  /** The review queue's approvals and the merchants' defaults
+   *  (lib/review-layer.ts); none applied when absent. */
+  review?: ReviewLayer;
 };
 
 type Row = Txn | OlderTxn;
@@ -193,11 +200,14 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     // A rule's category, unless the person chose one for the row (or wrote
     // one on a row they entered or imported): filed by id, and carrying its
     // words, as a category chosen does, for the rules that read words.
-    if (outcome.category && ix && !isPaired(t) && !ownCategory(ix, t)) {
+    const mine = ix ? ownCategory(ix, t) : null;
+    let ruleId: string | null = null;
+    if (outcome.category && ix && !isPaired(t) && !mine) {
       const c = categoryById(ix, outcome.category.id);
       if (c) {
         t.rule_category = c.id;
         t.category = choiceText(c);
+        ruleId = outcome.category.rule;
         if (listed) t.category_by_rule = true;
       }
     }
@@ -206,6 +216,9 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
       if (listed) t.name_before_rules = t.name;
       t.name = outcome.name.value;
     }
+    // A merchant's default, under the person's own and a rule's, and what the
+    // person approved, which nothing but the person moves (lib/review-layer.ts).
+    if (inputs.review) applyReview(t, inputs.review, { ix, own: mine, ruleId, listed, paired: isPaired(t) });
 
     // Excluded. A carried exclusion is already on the cached row, and what
     // was said about the imported rows a bank row stands for is over it; a
@@ -254,5 +267,6 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     delete t.renamed_from;
     delete t.own_name;
     delete t.stands_for;
+    if ('pending_from' in t) delete t.pending_from;
   }
 }

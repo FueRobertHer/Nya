@@ -5279,6 +5279,399 @@ button.cash-flow-show {
   margin: 0;
 }
 
+/* --- review queue and Card Mode (components/ReviewBar.tsx,
+   components/ReviewNote.tsx, components/CardMode.tsx), merchants' default
+   categories (components/VendorDefaultsCard.tsx) --- */
+
+/* The Activity tab's bar, under the filters: count, Card Mode, the filter. */
+.review-bar {
+  margin: 4px 0 8px;
+}
+
+.review-bar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.review-bar-row button {
+  width: auto;
+  flex: 0 1 auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.review-bar-row button[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.review-count {
+  flex: 1 0 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* The shortcuts, for a keyboard: shown only where there is a pointer. */
+button.review-keys-toggle {
+  display: none;
+  width: auto;
+  background: none;
+  border: none;
+  padding: 4px 0;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 400;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  button.review-keys-toggle {
+    display: inline-block;
+  }
+}
+
+.review-keys {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.review-keys > div,
+.review-keys dl > div {
+  display: flex;
+  gap: 10px;
+}
+
+.review-keys dl {
+  margin: 0;
+}
+
+.review-keys dt {
+  min-width: 64px;
+  color: var(--text);
+}
+
+.review-keys dd {
+  margin: 0;
+}
+
+/* The switch that turns the Activity tab's keys off (WCAG 2.1.4). */
+.review-keys-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text);
+}
+
+.review-keys-switch input {
+  width: auto;
+  margin: 0;
+}
+
+/* On a row of the list: it waits for review. */
+.review-tag {
+  color: var(--warn);
+  font-size: 11px;
+}
+
+/* In a transaction's detail: its review, and what can be done about it. */
+.review-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.review-note span {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.review-note button {
+  flex: 0 0 auto;
+  width: auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+/* Card Mode: full screen, above the page and its tab bar, under the sheets
+   (Split, Group), which open over it. */
+.card-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 35;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--bg);
+  padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
+}
+
+/* Not the live region: .visually-hidden keeps it one pixel, off the page.
+   :where() keeps this as weak as `.card-mode > *`, which it replaces. */
+.card-mode > :where(:not(.visually-hidden)) {
+  width: 100%;
+  max-width: 480px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.card-mode-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.card-mode-header h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.card-mode-position {
+  flex: 1 1 auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.card-mode-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.card-mode-card {
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  padding: 28px 20px 22px;
+  min-height: 260px;
+  /* Up and down still scroll the page; sideways is the card's. */
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+  transition:
+    transform 0.18s ease,
+    opacity 0.18s ease;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+
+.card-mode-card.dragging {
+  transition: none;
+}
+
+.card-mode-card:focus-visible {
+  outline-offset: 4px;
+}
+
+/* What a swipe will do, once it leans far enough. */
+.card-mode-lean {
+  position: absolute;
+  top: 14px;
+  padding: 4px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+
+.card-mode-lean.approve {
+  left: 14px;
+  color: var(--up);
+  border: 1px solid var(--up);
+}
+
+.card-mode-lean.recategorize {
+  right: 14px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.card-mode-card.leaning-right .card-mode-lean.approve,
+.card-mode-card.leaning-left .card-mode-lean.recategorize {
+  opacity: 1;
+}
+
+.card-mode-merchant {
+  font-size: 20px;
+  font-weight: 600;
+  margin-top: 10px;
+}
+
+.card-mode-amount {
+  font-size: 32px;
+  font-weight: 700;
+  margin-top: 6px;
+  font-variant-numeric: tabular-nums;
+}
+
+.card-mode-amount.inflow {
+  color: var(--up);
+}
+
+.card-mode-meta {
+  color: var(--muted);
+  font-size: 13px;
+  margin-top: 6px;
+}
+
+.card-mode-category {
+  display: inline-block;
+  margin-top: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--raised);
+  font-size: 14px;
+}
+
+.card-mode-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 14px;
+}
+
+/* The list on its own line, "Use" and Cancel under it. */
+.card-mode-picker select {
+  flex: 1 1 100%;
+  min-width: 0;
+}
+
+.card-mode-picker button {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
+.card-mode-hint {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+}
+
+.card-mode-parts {
+  list-style: none;
+  padding: 0;
+  margin: 12px 0 0;
+  font-size: 13px;
+}
+
+.card-mode-parts li {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 4px 0;
+  border-top: 1px solid var(--line);
+}
+
+.card-mode-note {
+  margin-top: 10px;
+  font-size: 14px;
+  white-space: pre-wrap;
+}
+
+.card-mode-actions,
+.card-mode-more {
+  display: flex;
+  gap: 8px;
+}
+
+.card-mode-actions > button,
+.card-mode-more > button {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  padding: 12px 8px;
+}
+
+.card-mode-more > button {
+  padding: 10px 8px;
+  font-size: 13px;
+}
+
+.card-mode-end {
+  text-align: center;
+  padding: 48px 8px 24px;
+  outline: none;
+}
+
+.card-mode-end h3 {
+  font-size: 22px;
+  margin: 0 0 8px;
+}
+
+.card-mode-end p {
+  color: var(--muted);
+  margin: 0 0 20px;
+}
+
+.card-mode-error {
+  margin-top: 12px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .card-mode-card,
+  .card-mode-lean {
+    transition: none;
+  }
+}
+
+/* Turning the queue on: where it starts from. */
+.review-start {
+  border: none;
+  padding: 0;
+  margin: 0 0 12px;
+}
+
+.review-start-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 0;
+  font-size: 14px;
+}
+
+/* The Defaults list under Manage. */
+.vendor-defaults {
+  list-style: none;
+  padding: 0;
+  margin: 8px 0 0;
+}
+
+.vendor-defaults li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.vendor-defaults li > div {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.vendor-defaults li button {
+  width: auto;
+  flex: 0 0 auto;
+  padding: 8px 12px;
+  font-size: 13px;
+}
+
 /* --- switching from another app (components/MigrationSheet.tsx) --- */
 
 /* The way in: a line under the account buttons, its link wrapping on a

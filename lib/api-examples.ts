@@ -321,6 +321,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           excluded_by_rule: false,
           splits: null,
           transaction_group: null,
+          needs_review: false,
+          reviewed_at: '2026-10-08T18:03:44.000Z',
         },
         {
           id: 'eQ9dWk2mT7BEp6pkoHRj5FqNp5mMOpTsArEkf',
@@ -376,6 +378,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
             },
           ],
           transaction_group: null,
+          needs_review: true,
+          reviewed_at: null,
         },
         {
           id: 'aR7cVj3oS8DFq7qlpISk6GrOq6nNPqUtBsFlg',
@@ -420,6 +424,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
             transactions: 2,
             missing: 0,
           },
+          needs_review: false,
+          reviewed_at: null,
         },
       ],
       has_more: true,
@@ -519,6 +525,14 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].transaction_group.category_group', 'That category group’s name.'],
       ['transactions[].transaction_group.transactions', 'How many of its transactions are here.'],
       ['transactions[].transaction_group.missing', 'How many of its transactions aren’t here: the bank removed one, its account is hidden, or it couldn’t be read this time. The net is of those here.'],
+      [
+        'transactions[].needs_review',
+        'True when it waits for you to approve it in the app’s review queue: the queue is on, and it came from your bank, SimpleFIN or a file on or after the day the queue started, with no approval that still holds. False when it doesn’t (the queue is off, you approved it, or you entered it by hand); null when whether it does couldn’t be read. A split transaction is approved whole, and each of a group’s transactions on its own.',
+      ],
+      [
+        'transactions[].reviewed_at',
+        'When you approved it, as it is now; null when you haven’t, or the bank changed its amount since (which puts it back in the queue). An approved transaction stays in the category you approved it under, whatever a rule or a default added later would say.',
+      ],
       ['has_more', 'There are more after this page.'],
       ['next_cursor', 'Pass it as cursor, with the same other parameters, for the next page; null on the last.'],
       ...SOURCES,

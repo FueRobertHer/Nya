@@ -43,6 +43,11 @@ import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
 import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
+import { needsReview, type ReviewMarks } from "@/lib/review-layer";
+import type { ReviewControls } from "./review-state";
+import ReviewBar from "./ReviewBar";
+import ReviewNote from "./ReviewNote";
+import CardMode from "./CardMode";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -149,7 +154,10 @@ export type Txn = {
   group_carried_from?: string;
   // Why its transactions that aren't counted in it aren't, where known.
   group_away?: GroupAway[];
-};
+  // And, as in lib/transactions.ts, the review queue's marks
+  // (lib/review-layer.ts ReviewMarks): whether it needs review, when it was
+  // approved, what changed since, and the merchant's default that filed it.
+} & ReviewMarks;
 
 /** The name rules match a row by: the one it had before any rule named it. */
 export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
@@ -342,6 +350,7 @@ export default function MonthBreakdown({
   onCreateRule,
   ruleSentenceOf,
   onSplitsChanged,
+  review,
 }: {
   txns: Txn[] | null;
   notes: string[];
@@ -389,6 +398,9 @@ export default function MonthBreakdown({
    *  components/GroupSheet.tsx): the list read again. Without it, nothing is
    *  offered to split or group. */
   onSplitsChanged?: () => void;
+  /** The review queue (components/review-state.ts): what needs review, its
+   *  filter, Card Mode and approving. Without it, none is shown. */
+  review?: ReviewControls;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
@@ -411,6 +423,10 @@ export default function MonthBreakdown({
   const [splitting, setSplitting] = useState<Txn | null>(null);
   const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
   const [splitError, setSplitError] = useState<string | null>(null);
+  // The review queue: the Needs review filter, and Card Mode, open.
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [cardsOpen, setCardsOpen] = useState(false);
+  const reviewing = reviewOnly && !!review?.view?.on;
 
   const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
@@ -550,7 +566,7 @@ export default function MonthBreakdown({
   const listed = picked ?? monthTxns;
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
-  const visible = useMemo(() => searchEntries(listed, { query, tag: filterTag }, tags), [listed, query, filterTag, tags]);
+  const visible = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags), [listed, query, filterTag, reviewing, tags]);
   // Once a pick has filled the list: the list into view, and focus on the
   // line saying what it shows, so a pick made from the chart's table by
   // keyboard goes on from the list rather than from the button left above.
@@ -874,7 +890,7 @@ export default function MonthBreakdown({
           <div className="inst-total">
             {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
             {countTransactions(visible)}
-            {query || filterTag ? ` of ${countTransactions(listed)}` : ""}
+            {query || filterTag || reviewing ? ` of ${countTransactions(listed)}` : ""}
           </div>
         </div>
         {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
@@ -887,6 +903,8 @@ export default function MonthBreakdown({
           onChange={(e) => setQuery(e.target.value)}
         />
         <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
+        {/* The review queue, while it is on: its count, filter, Card Mode and approving what's listed. */}
+        {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
 
         {actionError && <div className="error">{actionError}</div>}
         {splitError && <div className="error">{splitError}</div>}
@@ -916,7 +934,9 @@ export default function MonthBreakdown({
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {query || filterTag
+            {reviewing && !query && !filterTag
+              ? "Nothing listed needs review."
+              : query || filterTag
               ? "No transactions match your search."
               : flowPick
                 ? "Nothing to list."
@@ -979,6 +999,7 @@ export default function MonthBreakdown({
                               {t.note && (
                                 <span className="note-tag" title={t.note}> · note</span>
                               )}
+                              {review?.view?.on && needsReview(t) && <span className="review-tag"> · to review</span>}
                               <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
@@ -1006,7 +1027,7 @@ export default function MonthBreakdown({
                             {/* A bank row standing for a row imported from
                                 its file, which the bank changed since (#52). */}
                             {t.imported_amount !== undefined && (
-                              <div className="excluded-tag">{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</div>
+                              <div className="excluded-tag"><Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</Masked></div>
                             )}
                           </div>
                         </div>
@@ -1015,6 +1036,8 @@ export default function MonthBreakdown({
                             className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
                           >
+                            {/* Its review and its merchant's default (components/ReviewNote.tsx). */}
+                            {review && <ReviewNote t={whole(t)} taxonomy={taxonomy} review={review} onChanged={() => onSplitsChanged?.()} />}
                             {/* Filed as its parts are, or as its group is (#39). */}
                             {t.split_parts || t.group_outside ? null : taxonomy ? (
                               <CategoryPicker
@@ -1226,6 +1249,24 @@ export default function MonthBreakdown({
           </div>
         ))}
       </div>
+
+      {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}
+      {review && (
+        <CardMode
+          open={cardsOpen}
+          txns={txns}
+          taxonomy={taxonomy}
+          tags={tags}
+          currency={currency}
+          review={review}
+          onClose={() => {
+            setCardsOpen(false);
+            onSplitsChanged?.();
+          }}
+          onSplit={(x) => (onSplitsChanged ? setSplitting(whole(x)) : undefined)}
+          onGroup={(x) => (onSplitsChanged ? setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null }) : undefined)}
+        />
+      )}
 
       {taxonomy && onSplitsChanged && (
         <>

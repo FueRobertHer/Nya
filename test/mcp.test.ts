@@ -27,7 +27,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, daysAgo, seedPerson, txn, CHASE_TXNS, connectWithoutTransactions } = await import('./api-fixture');
+const { ctx, daysAgo, seedPerson, txn, connectWithoutTransactions } = await import('./api-fixture');
 const { createToken, REQUESTS_PER_MINUTE } = await import('@/lib/api-tokens');
 const { TOOLS, PROTOCOL_VERSIONS, LATEST_PROTOCOL, SERVER_INFO, RPC } = await import('@/lib/mcp');
 const { operation } = await import('@/lib/api-ops');
@@ -37,6 +37,8 @@ const { config } = await import('@/proxy');
 const route = await import('@/app/api/mcp/route');
 
 let token = '';
+/** Chase's transactions, as this test's seeding wrote them. */
+let CHASE_TXNS: Awaited<ReturnType<typeof seedPerson>>['chaseTxns'] = [];
 const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
@@ -45,7 +47,7 @@ beforeEach(async () => {
   delete process.env.CLERK_SECRET_KEY;
   delete process.env.CONTAINER_ID;
   await registerTestContainer(fake);
-  await seedPerson(fake);
+  ({ chaseTxns: CHASE_TXNS } = await seedPerson(fake));
   token = (await createToken(ctx, 'Claude')).token;
   plaidTouched.length = 0;
 });
