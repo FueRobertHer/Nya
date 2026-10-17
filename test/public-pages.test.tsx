@@ -14,6 +14,8 @@ import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
+import { SENDS_NOW_WINDOW_SECONDS, UNSUBSCRIBE_WINDOW_SECONDS } from '@/lib/weekly-summary/store';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -411,9 +413,11 @@ describe('the privacy page', () => {
   test('says a download is emailed only where this copy sends email', () => {
     mailIs(true);
     expect(privacy()).toContain('Each download is emailed to you: when it happened and which format, never what is in it.');
-    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made.');
+    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on.');
     expect(security()).toContain('Each download is emailed to you, so one you didn’t make shows.');
-    expect(security()).toContain('and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.');
+    expect(security()).toContain(
+      'each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or whether you spent more or less than in a usual week and the names of your budgets and categories, your goals, your banks and the merchants your bills are from, never a balance, an amount or an account number.'
+    );
     mailIs(false);
     for (const page of [privacy(), security()]) {
       expect(page).toContain('This copy of Nya sends no email, so a download isn’t emailed to you.');
@@ -537,6 +541,30 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     expect(sec).toContain('never a balance, an amount or an account number');
   });
 
+  // The weekly summary (lib/weekly-summary/): what the email service sees of
+  // it, named for the owner to sign off on, how long its setting and its
+  // links last, and the section on its link, only where this copy sends email.
+  test('says what the weekly summary carries, how long its links work, and never an amount', () => {
+    mailIs(true);
+    const priv = privacy();
+    expect(priv).toContain(
+      'or, in the weekly summary, whether you spent more or less than in a usual week, and the names of your budgets and categories, your goals, your banks and the merchants your bills are from (a name with a number in it is left out), never a balance, an amount or an account number'
+    );
+    expect(priv).toContain(
+      `The weekly summary Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on, and the last week a summary went for. Each link works for ${LINK_DAYS} days.`
+    );
+    expect(priv).toContain('Weekly summaries you asked for now, and uses of a link to turn one off Counted for a day, and for an hour.');
+    // "a day" and "an hour" are the counters' windows (lib/weekly-summary/store.ts).
+    expect(SENDS_NOW_WINDOW_SECONDS).toBe(24 * 60 * 60);
+    expect(UNSUBSCRIBE_WINDOW_SECONDS).toBe(60 * 60);
+    const sec = security();
+    expect(sec).toContain('If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a balance, an amount, a percentage or an account number.');
+    expect(sec).toContain(`Each one has a link that turns it off without signing in. It works for ${LINK_DAYS} days, can do nothing but turn off that summary`);
+    mailIs(false);
+    expect(security()).not.toContain('The weekly summary');
+    expect(privacy()).not.toContain('in the weekly summary, whether you spent');
+  });
+
   test('half a setting is no setting: the pages follow lib/mail.ts', () => {
     mailIs(false);
     process.env.RESEND_API_KEY = 're_placeholder';
@@ -591,9 +619,9 @@ describe('API tokens, on both pages', () => {
     const page = security();
     expect(page).toContain('and of your API tokens (random, and not enough to use one);');
     expect(page).toContain(
-      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
+      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many times a link to turn it off was used, kept for an hour.`
     );
-    expect(page).toContain(`of a device that sent API tokens that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
+    expect(page).toContain(`of a device that sent API tokens, or links to turn off a weekly summary, that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
   });
 
   test('the privacy page: what an assistant connected to the MCP server reads, how long tokens and their counts are kept, and what the download holds of them', () => {
@@ -608,7 +636,7 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain(
       'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
     );
-    expect(page).toContain(`Requests with API tokens that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
+    expect(page).toContain(`Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
     expect(page).toContain(
       `Requests counted for each API token Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
     );

@@ -7,6 +7,7 @@ import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -136,7 +137,7 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded, or, in the weekly summary, whether you spent more or less than in a usual week, and the names of your budgets and categories, your goals, your banks and the merchants your bills are from (a name with a number in it is left out), never a balance, an amount or an account number, and keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -195,10 +196,15 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
     'Requests counted for each API token',
     `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`,
   ],
+  [
+    'The weekly summary',
+    `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on, and the last week a summary went for. Each link works for ${LINK_DAYS} days.`,
+  ],
+  ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],
-  ['Requests with API tokens that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
+  ['Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
   [
     'What your device keeps',
     'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',
