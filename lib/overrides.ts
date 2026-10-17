@@ -67,6 +67,14 @@ export async function setOverride(ctx: Ctx, transaction_id: string, category: st
   await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(ctx, category) });
 }
 
+/** One transaction's override, or null when it has none: what a
+ *  recategorization replaces, which its undo puts back (app/api/recategorize,
+ *  Card Mode). Strict: one that can't be read throws, never reads as none. */
+export async function getOverride(ctx: Ctx, transaction_id: string): Promise<string | null> {
+  const blob = await redis().hget<unknown>(OVERRIDES_HASH(ctx), transaction_id);
+  return blob === null || blob === undefined ? null : decrypt(ctx, String(blob));
+}
+
 /** Deletes the overrides of rows that are gone (an undone import's rows into
  *  a linked account, lib/history-import/commit.ts), readable or not. */
 export async function forgetOverrides(ctx: Ctx, transaction_ids: string[]): Promise<void> {

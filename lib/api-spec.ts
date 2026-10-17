@@ -416,7 +416,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'search_transactions',
     'transactions',
     'Search transactions',
-    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own. Each transaction is listed once, whole: splits holds the parts of one the person split, and transaction_group the group one is in, whose net is what totals count.`,
+    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own; needs_review one waiting for the person to approve it in the app’s review queue, and reviewed_at when they approved one. Each transaction is listed once, whole: splits holds the parts of one the person split, and transaction_group the group one is in, whose net is what totals count.`,
     'Ask for fewer at a time with limit, and page with cursor.',
     { limit: MCP_DEFAULT_PAGE_SIZE },
     {

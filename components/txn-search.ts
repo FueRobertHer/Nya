@@ -1,12 +1,15 @@
 // What the Activity tab's search and its filter by tag keep of a month's
 // rows (#40): a row whose merchant, category, account, institution, note or
 // tag names hold the text typed, in any case, among those carrying the tag
-// chosen. A part of a split transaction is found by its transaction's note
-// too, and a group's row by its transactions' names and notes (#39). Pure,
-// so the views and the tests share it.
+// chosen, and, with the Needs review filter on, among those that need review
+// (lib/review-layer.ts needsReview: a part of a transaction that does, a
+// group's row holding one). A part of a split transaction is found by its
+// transaction's note too, and a group's row by its transactions' names and
+// notes (#39). Pure, so the views and the tests share it.
 
 import { displayName } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
+import { needsReview } from '@/lib/review-layer';
 import { tagNames } from './tags-state';
 
 /** What the search reads of a row. */
@@ -19,7 +22,8 @@ export type Searchable = {
   note?: string | null;
   tags?: string[];
   split_parent?: { note?: string | null };
-  group_members?: readonly { name: string; note?: string | null }[];
+  group_members?: readonly { name: string; note?: string | null; needs_review?: true }[];
+  needs_review?: true;
 };
 
 /**
@@ -28,7 +32,7 @@ export type Searchable = {
  * the transaction is listed whole, all its parts under it, and editing its
  * split starts from all of them. In the rows' order.
  */
-export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: { query: string; tag: string }, tags: readonly Tag[]): readonly T[] {
+export function searchEntries<T extends Searchable & { split_of?: string }>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean }, tags: readonly Tag[]): readonly T[] {
   const kept = searchRows(rows, opts, tags);
   const split = new Set(kept.flatMap((t) => (t.split_of !== undefined ? [t.split_of] : [])));
   if (split.size === 0) return kept;
@@ -36,11 +40,12 @@ export function searchEntries<T extends Searchable & { split_of?: string }>(rows
   return rows.filter((t) => keep.has(t) || (t.split_of !== undefined && split.has(t.split_of)));
 }
 
-/** The rows the search and the filter keep, in their order. `tag` is a
- *  tag's id, or "" for every row. */
-export function searchRows<T extends Searchable>(rows: readonly T[], opts: { query: string; tag: string }, tags: readonly Tag[]): readonly T[] {
+/** The rows the search and the filters keep, in their order. `tag` is a
+ *  tag's id, or "" for every row; `review`, only those that need review. */
+export function searchRows<T extends Searchable>(rows: readonly T[], opts: { query: string; tag: string; review?: boolean }, tags: readonly Tag[]): readonly T[] {
   const q = opts.query.trim().toLowerCase();
-  const tagged = opts.tag ? rows.filter((t) => t.tags?.includes(opts.tag)) : rows;
+  const waiting = opts.review ? rows.filter(needsReview) : rows;
+  const tagged = opts.tag ? waiting.filter((t) => t.tags?.includes(opts.tag)) : waiting;
   if (!q) return tagged;
   return tagged.filter((t) => {
     const category = t.category_name !== undefined ? t.category_name : t.category;
