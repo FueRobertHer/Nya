@@ -59,11 +59,40 @@ export function entryNotice(t: Txn): string | null {
   if (t.split_unread) return 'How you split this couldn’t be read, so it shows whole.';
   if (t.split_unapplied) return 'Its split no longer fits (its currency changed), so it shows whole: split it again.';
   if (t.split_parts?.some((p) => p.split_remainder)) return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
+  return t.group_members ? groupGoneText(t, 'row') : null;
+}
+
+/**
+ * What is said of a group's transactions that aren't counted in it: first
+ * those whose reason the read layer knows (lib/split-rows.ts group_away:
+ * pending at the bank, or counted in another group), then the rest, which
+ * the bank removed, are on an account hidden or ended, or couldn't be
+ * loaded. On the group's row in the list (`row`), or in its sheet, which
+ * lists the ones counted (`sheet`). Null when every one is counted.
+ */
+export function groupGoneText(t: Pick<Txn, 'group_missing' | 'group_removed' | 'group_away'>, where: 'row' | 'sheet'): string | null {
   const gone = (t.group_missing ?? 0) + (t.group_removed ?? 0);
-  if (t.group_members && gone > 0) {
-    return `${gone} of its transactions ${gone === 1 ? 'isn’t' : 'aren’t'} here (the bank removed ${gone === 1 ? 'it' : 'them'}, ${gone === 1 ? 'its' : 'their'} account is hidden or ended, or ${gone === 1 ? 'it' : 'they'} couldn’t be loaded), so ${gone === 1 ? 'it isn’t' : 'they aren’t'} counted.`;
+  if (gone === 0) return null;
+  const away = t.group_away ?? [];
+  const pending = away.filter((a) => a.why === 'pending').length;
+  const elsewhere = new Map<string, number>();
+  for (const a of away) if (a.why === 'grouped') elsewhere.set(a.group, (elsewhere.get(a.group) ?? 0) + 1);
+  const rest = gone - pending - [...elsewhere.values()].reduce((n, c) => n + c, 0);
+  const one = (n: number) => n === 1;
+  // "1 of its transactions is" on the row; "1 more transaction is in it" in the sheet.
+  const lead = (n: number, verb: [string, string]) =>
+    where === 'row' ? `${n} of its transactions ${one(n) ? verb[0] : verb[1]}` : `${n} more ${one(n) ? 'transaction is' : 'transactions are'} in it, and ${one(n) ? verb[0] : verb[1]}`;
+  const said: string[] = [];
+  if (pending > 0) {
+    said.push(`${lead(pending, ['is', 'are'])} pending at the bank, so ${one(pending) ? 'it counts on its own until it posts' : 'they count on their own until they post'}.`);
   }
-  return null;
+  for (const [group, n] of elsewhere) said.push(`${lead(n, ['counts', 'count'])} in the group “${group}” instead.`);
+  if (rest > 0) {
+    const why = `the bank removed ${one(rest) ? 'it' : 'them'}, ${one(rest) ? 'its' : 'their'} account is hidden or ended, or ${one(rest) ? 'it' : 'they'} couldn’t be loaded`;
+    if (where === 'sheet') said.push(`${rest} more ${one(rest) ? 'transaction was' : 'transactions were'} in it and ${one(rest) ? 'isn’t' : 'aren’t'} here: ${why}.`);
+    else said.push(`${said.length > 0 ? `${rest} more` : `${rest} of its transactions`} ${one(rest) ? 'isn’t' : 'aren’t'} here (${why}), so ${one(rest) ? 'it isn’t' : 'they aren’t'} counted.`);
+  }
+  return said.join(' ');
 }
 
 /** The actions a transaction's detail gains: Split and Group with others on

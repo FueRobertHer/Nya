@@ -36,7 +36,7 @@ import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
-import { bankRows, type GroupOutside, type SplitParent } from "@/lib/split-rows";
+import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
 import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions } from "./SplitRows";
@@ -141,6 +141,8 @@ export type Txn = {
   group_unapplied?: { id: string; name: string };
   group_outside?: GroupOutside;
   group_carried_from?: string;
+  // Why its transactions that aren't counted in it aren't, where known.
+  group_away?: GroupAway[];
 };
 
 /** The name rules match a row by: the one it had before any rule named it. */

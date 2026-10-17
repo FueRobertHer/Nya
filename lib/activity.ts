@@ -344,11 +344,13 @@ export async function assembleBankRows(
   const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
   const older = [...results.flatMap((r) => r.older), ...imported.older];
   // A bank row standing for imported rows the person chose a category for
-  // takes it, unless they chose one for the bank row itself. A posted one
-  // names those rows (`stands_for`), so what else was said about them (an
-  // exclusion or an include, tags, a note) carries to it in finishActivity,
-  // read with every record on each request: under what is said on the bank
-  // row itself (lib/txn-layers.ts).
+  // takes it, unless they chose one for the bank row itself. It names those
+  // rows (`stands_for`), so, once it has posted, what else was said about
+  // them (an exclusion or an include, tags, a note) carries to it in
+  // finishActivity, read with every record on each request: under what is
+  // said on the bank row itself (lib/txn-layers.ts); and so do their splits
+  // and places in groups, of which a pending one takes none, a group saying
+  // it is pending (lib/split-rows.ts).
   const fromImports = categoriesFromImports(imported.represents, overrides.overrides);
   for (const t of [...transactions, ...older]) {
     const manual = overrides.overrides[t.transaction_id] ?? fromImports.get(t.transaction_id);
@@ -362,7 +364,7 @@ export async function assembleBankRows(
       t.name = renamed;
     }
     const stands = imported.represents.get(t.transaction_id);
-    if (stands && !('pending' in t && t.pending)) t.stands_for = stands;
+    if (stands) t.stands_for = stands;
   }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
@@ -528,12 +530,13 @@ export async function finishActivity(
         ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
-  // What each posted bank row standing for rows imported from files stands
-  // for (#52), which the layers take off the row once they have laid what
-  // was said about those rows on it: their splits and their places in groups
-  // are its too (lib/split-rows.ts).
+  // What each bank row standing for rows imported from files stands for
+  // (#52), which the layers take off the row once they have laid what was
+  // said about those rows on it: their splits and their places in groups are
+  // a posted one's too, and a pending one's group says why it isn't counted
+  // there yet (lib/split-rows.ts).
   const stands = new Map<string, readonly string[]>();
-  for (const t of transactions) if (t.stands_for?.length && !t.pending) stands.set(t.transaction_id, t.stands_for);
+  for (const t of transactions) if (t.stands_for?.length) stands.set(t.transaction_id, t.stands_for);
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.

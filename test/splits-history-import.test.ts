@@ -584,6 +584,20 @@ describe('when the bank sends the same transaction', () => {
     expect(rows.find((t) => t.transaction_id === 'b_corner')!.amount).toBe(60);
   });
 
+  test('while the bank’s row is pending, the imported row’s group nets the rest and says it is pending at the bank; posted, it counts there', async () => {
+    const { ids } = await importStatement();
+    const lunch = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: catId('food and drink'), members: [ids['CORNER SHOP'], 'b_payback', 'b_tip'] });
+    await storeBank([...BANK, corner({ pending: true })]);
+    let rows = await rowsOf();
+    let group = rows.find((t) => t.group_id === lunch.body.id && t.group_members)!;
+    expect([group.amount, group.group_missing, group.group_away]).toEqual([-15, 1, [{ why: 'pending' }]]);
+    expect(rows.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ amount: 60, pending: true });
+    await storeBank([...BANK, corner()]);
+    rows = await rowsOf();
+    group = rows.find((t) => t.group_id === lunch.body.id && t.group_members)!;
+    expect([group.amount, group.group_missing, group.group_away]).toEqual([45, undefined, undefined]);
+  });
+
   test('a group or a split of the bank’s row itself is refused while it counts in the imported row’s group; one it has already comes first, and nothing counts twice', async () => {
     const { ids } = await importStatement();
     const food = catId('food and drink');
@@ -613,6 +627,8 @@ describe('when the bank sends the same transaction', () => {
     const rows = await rowsOf();
     const of = (id: string) => rows.find((t) => t.group_members && t.group_id === id)!;
     expect([of(lunch.body.id).amount, of(lunch.body.id).group_missing, of(lunch.body.id).group_members!.map((m) => m.transaction_id)]).toEqual([-20, 1, ['b_payback']]);
+    // And where it counts.
+    expect(of(lunch.body.id).group_away).toEqual([{ why: 'grouped', group: 'Errand' }]);
     expect([of('errand-1').amount, of('errand-1').group_members!.map((m) => [m.transaction_id, m.group_carried_from])]).toEqual([
       65,
       [

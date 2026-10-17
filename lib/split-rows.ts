@@ -59,7 +59,11 @@
 //   - one that isn't here (the bank removed it, its account is hidden, its
 //     institution couldn't be read this time) is left out of the net, and the
 //     group says how many (group_missing, and group_removed for those taken
-//     out of it when they went);
+//     out of it when they went), and why, where that is known (group_away):
+//     it counts in another group (one made before it holds it, two devices
+//     at once, or the bank row standing for it is in one in its own right),
+//     or it is a row imported from a file that a bank row still pending
+//     stands in for, counted on its own until it posts;
 //   - transactions now in more than one currency count on their own, with a
 //     note: a net of two currencies is no amount;
 //   - one that is split as well (only two devices at once can do that: the
@@ -261,8 +265,15 @@ function newestFirst(a: Txn, b: Txn): number {
   return at < bt ? 1 : at > bt ? -1 : 0;
 }
 
-/** A group's row: its net, in its category, with its transactions inside. */
-function groupRow(id: string, g: TxnGroup, members: Txn[], missing: number, inputs: SplitInputs): Txn {
+/** Why one of a group's transactions isn't counted in it, where the read
+ *  layer knows: a row imported from a file that a bank row still pending
+ *  stands in for (it counts on its own until it posts, and in the group
+ *  then), or one that counts in another group, by that group's name. */
+export type GroupAway = { why: 'pending' } | { why: 'grouped'; group: string };
+
+/** A group's row: its net, in its category, with its transactions inside,
+ *  and why those that aren't there aren't, where that is known (`away`). */
+function groupRow(id: string, g: TxnGroup, members: Txn[], missing: number, inputs: SplitInputs, away: GroupAway[] = []): Txn {
   // Oldest first, as they happened; the first is the one the group counts on.
   const sorted = [...members].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const anchor = sorted[0];
@@ -306,6 +317,7 @@ function groupRow(id: string, g: TxnGroup, members: Txn[], missing: number, inpu
     group_members: sorted.map((t) => ({ ...t, group_id: id })),
     ...(missing > 0 ? { group_missing: missing } : {}),
     ...(g.removed ? { group_removed: g.removed } : {}),
+    ...(away.length > 0 ? { group_away: away } : {}),
   };
 }
 
@@ -341,7 +353,8 @@ export type SplitInputs = {
    *  `represents`, which the read layer carries on the row as `stands_for`),
    *  those rows' ids, earlier imports first. A split made on one of them, or
    *  its place in a group, is the bank row's while it stands for it, if the
-   *  bank row is posted and has none of its own (see the header). */
+   *  bank row is posted and has none of its own (see the header); a group
+   *  one of them is in, whose bank row is still pending, says so. */
   stands?: ReadonlyMap<string, readonly string[]>;
 };
 
@@ -370,13 +383,19 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   // The rows imported from files that a posted bank row here stands for
   // (SplitInputs.stands): by each bank row, those of them not here
   // themselves, earlier imports first, and by each of them, the bank row.
+  // And those a pending one stands in for, until it posts.
   const standsFor = new Map<string, string[]>();
   const standIn = new Map<string, Txn>();
+  const pendingFor = new Set<string>();
   for (const [bankId, ids] of inputs.stands ?? []) {
     const bank = byId.get(bankId);
-    if (!bank || bank.pending) continue;
+    if (!bank) continue;
     const away = ids.filter((id) => !byId.has(id));
     if (away.length === 0) continue;
+    if (bank.pending) {
+      for (const id of away) pendingFor.add(id);
+      continue;
+    }
     standsFor.set(bankId, away);
     for (const id of away) if (!standIn.has(id)) standIn.set(id, bank);
   }
@@ -398,15 +417,17 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
     const split = splitOf(t);
     return split !== null && split !== 'unread';
   };
-  // Every transaction in a group in its own right: that place comes before
-  // one a bank row takes from an imported row it stands for.
-  const ownPlace = new Set([...inputs.groups.values()].flatMap((g) => g.members));
-
   // Groups first, oldest made first: a transaction in two (two devices at
   // once) counts in the first, and the other says it isn't there.
-  // Taken by a group made earlier (a transaction counts in one), and of
-  // those, the ones in a group's row rather than on their own.
-  const claimed = new Set<string>();
+  const ordered = [...inputs.groups].sort(([a, x], [b, y]) => (x.created_at !== y.created_at ? (x.created_at < y.created_at ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0));
+  // Every transaction in a group in its own right, with that group's name
+  // (the first made): that place comes before one a bank row takes from an
+  // imported row it stands for.
+  const ownGroup = new Map<string, string>();
+  for (const [, g] of ordered) for (const m of g.members) if (!ownGroup.has(m)) ownGroup.set(m, g.name);
+  // Taken by a group made earlier (a transaction counts in one), with its
+  // name, and of those, the ones in a group's row rather than on their own.
+  const claimed = new Map<string, string>();
   const inGroup = new Set<string>();
   // Those of a group counted on a day before what was read.
   const outside = new Map<string, GroupOutside>();
@@ -416,15 +437,29 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
   const unapplied = new Map<string, { id: string; name: string }>();
   let mixed = 0;
   let splitAndGrouped = 0;
-  const ordered = [...inputs.groups].sort(([a, x], [b, y]) => (x.created_at !== y.created_at ? (x.created_at < y.created_at ? -1 : 1) : a < b ? -1 : a > b ? 1 : 0));
   for (const [id, g] of ordered) {
-    // Each of its transactions here, or the bank row standing for it.
+    // Each of its transactions here, or the bank row standing for it, and
+    // why one that isn't counted here isn't, where that is known.
     const here: Txn[] = [];
+    const away: GroupAway[] = [];
     for (const m of g.members) {
       const own = byId.get(m);
       const t = own ?? standIn.get(m);
-      if (!t || claimed.has(t.transaction_id) || here.some((x) => x.transaction_id === t.transaction_id)) continue;
-      if (!own && ownPlace.has(t.transaction_id)) continue;
+      if (!t) {
+        if (pendingFor.has(m)) away.push({ why: 'pending' });
+        continue;
+      }
+      if (here.some((x) => x.transaction_id === t.transaction_id)) continue;
+      const taken = claimed.get(t.transaction_id);
+      if (taken !== undefined) {
+        away.push({ why: 'grouped', group: taken });
+        continue;
+      }
+      if (!own && ownGroup.has(t.transaction_id)) {
+        // Its own place: here too, when it is this group's own.
+        if (!g.members.includes(t.transaction_id)) away.push({ why: 'grouped', group: ownGroup.get(t.transaction_id)! });
+        continue;
+      }
       here.push(own ?? { ...t, group_carried_from: m });
     }
     if (here.length === 0) continue;
@@ -438,18 +473,18 @@ export function expandSplitsAndGroups(rows: readonly Txn[], inputs: SplitInputs)
       // listed, marked, and counted nowhere in what was read.
       const marked: GroupOutside = { id, name: g.name, date: g.date, category_id: g.category_id, here: here.length, missing: g.members.length - here.length + (g.removed ?? 0) };
       for (const t of here) {
-        claimed.add(t.transaction_id);
+        claimed.set(t.transaction_id, g.name);
         outside.set(t.transaction_id, marked);
         if (isSplit(t)) splitAndGrouped++;
       }
       continue;
     }
     for (const t of here) {
-      claimed.add(t.transaction_id);
+      claimed.set(t.transaction_id, g.name);
       inGroup.add(t.transaction_id);
       if (isSplit(t)) splitAndGrouped++;
     }
-    groupRows.push(groupRow(id, g, here, g.members.length - here.length, inputs));
+    groupRows.push(groupRow(id, g, here, g.members.length - here.length, inputs, away));
   }
 
   // Then each split transaction, as its parts, in its place.

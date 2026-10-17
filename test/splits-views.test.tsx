@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import SplitSheet, { leftToSplit, partUnits, startingParts } from '@/components/SplitSheet';
 import GroupSheet, { groupCandidates, groupCategoryFor, groupStatus } from '@/components/GroupSheet';
-import { entryLabel, entryNotice, heldInGroupAs, splitKeptUnder, SplitActions } from '@/components/SplitRows';
+import { entryLabel, entryNotice, groupGoneText, heldInGroupAs, splitKeptUnder, SplitActions } from '@/components/SplitRows';
 import { disconnectSplitsText } from '@/components/DisconnectSplitsNote';
 import { pastPayeeRows } from '@/components/ManualTxnSheet';
 import { splitChangedText } from '@/components/SplitChangedNote';
@@ -184,6 +184,30 @@ describe('the Activity tab’s list', () => {
     expect(entryNotice(stale)).toBe('It is in the group “Trip”, whose transactions are in more than one currency now, so it counts on its own. Ungroup it to split this or group it again.');
     expect(text(renderToStaticMarkup(<SplitActions t={stale} onSplit={() => {}} onGroup={() => {}} onUngroup={() => {}} />))).toBe('Ungroup “Trip”');
     expect(entryNotice(txn('x', { group_members: [txn('a')], group_removed: 1 }))).toContain('1 of its transactions isn’t here');
+  });
+
+  test('a group says why one of its transactions isn’t counted in it, where Nya knows: pending at the bank, or in another group', () => {
+    const group = (over: Partial<Txn>) => txn('group:g1', { group_members: [txn('a'), txn('b')], ...over });
+    expect(entryNotice(group({ group_missing: 1, group_away: [{ why: 'pending' }] }))).toBe('1 of its transactions is pending at the bank, so it counts on its own until it posts.');
+    expect(entryNotice(group({ group_missing: 1, group_away: [{ why: 'grouped', group: 'Errand' }] }))).toBe('1 of its transactions counts in the group “Errand” instead.');
+    // With others gone for a reason it can't tell, it says those after.
+    expect(entryNotice(group({ group_missing: 3, group_removed: 1, group_away: [{ why: 'pending' }, { why: 'pending' }, { why: 'grouped', group: 'Errand' }] }))).toBe(
+      '2 of its transactions are pending at the bank, so they count on their own until they post. 1 of its transactions counts in the group “Errand” instead. 1 more isn’t here (the bank removed it, its account is hidden or ended, or it couldn’t be loaded), so it isn’t counted.'
+    );
+    // Without a reason it knows, as it always said.
+    expect(entryNotice(group({ group_missing: 2 }))).toBe('2 of its transactions aren’t here (the bank removed them, their account is hidden or ended, or they couldn’t be loaded), so they aren’t counted.');
+
+    // The group sheet, which lists the ones counted, says it of the rest.
+    expect(groupGoneText({ group_missing: 2, group_away: [{ why: 'pending' }, { why: 'grouped', group: 'Errand' }] }, 'sheet')).toBe(
+      '1 more transaction is in it, and is pending at the bank, so it counts on its own until it posts. 1 more transaction is in it, and counts in the group “Errand” instead.'
+    );
+    const sheet = text(
+      renderToStaticMarkup(<GroupSheet start={null} group={group({ group_missing: 2, group_away: [{ why: 'pending' }] })} txns={[]} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />)
+    );
+    expect(sheet).toContain(
+      '1 more transaction is in it, and is pending at the bank, so it counts on its own until it posts. 1 more transaction was in it and isn’t here: the bank removed it, its account is hidden or ended, or it couldn’t be loaded.'
+    );
+    expect(groupGoneText({}, 'sheet')).toBeNull();
   });
 
   test('a transaction of a group counted before the year shown is listed, saying so, and counted nowhere here', () => {
