@@ -86,6 +86,9 @@ export type FlowRow = TotalsRow & {
   excluded_by_rule?: true;
   /** Where it came from: SimpleFIN's rows come without categories. */
   source?: string | null;
+  /** On a group's row (#39, lib/split-rows.ts): its transactions, rows like
+   *  this one. */
+  group_members?: readonly FlowRow[];
 };
 
 /** One payer's counted money in. `key` is its name as compared. */

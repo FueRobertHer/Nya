@@ -8,6 +8,7 @@ import { assembleBankRows, finishActivity } from '@/lib/activity';
 import { EARLIEST_DATE } from '@/lib/manual-txn-input';
 import { checkRuleInput, compileRules, RuleError, RULES_VERSION, type RuleSubject } from '@/lib/rules';
 import { currencyOf } from '@/lib/spending';
+import { bankRows } from '@/lib/split-rows';
 
 // What a rule being made or edited would match, before it is saved
 // (components/RuleSheet.tsx): "matches 43 transactions", over every stored
@@ -55,7 +56,11 @@ export async function POST(req: Request) {
     const subjects = new Map<string, RuleSubject>();
     const onAccount = input.conditions.some((c) => c.field === 'account');
     const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: EARLIEST_DATE });
-    const { transactions, accountOf } = await finishActivity(ctx, bank.payload, bank.hidden, { since: EARLIEST_DATE, subjects, followLinks: onAccount });
+    const read = await finishActivity(ctx, bank.payload, bank.hidden, { since: EARLIEST_DATE, subjects, followLinks: onAccount });
+    const accountOf = read.accountOf;
+    // Each transaction once, as rules read it: a split one whole, a group's
+    // each on its own (lib/split-rows.ts).
+    const transactions = bankRows(read.transactions);
     // The draft's conditions alone: its actions don't decide what it matches.
     const compiled = compileRules({ version: RULES_VERSION, rules: [{ ...draft, actions: { hide: true } }] }, { ix, liveTags: liveTagIds(tags), account: accountOf });
     const test = compiled.rules[0]?.test;

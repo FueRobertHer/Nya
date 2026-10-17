@@ -28,6 +28,7 @@ import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
@@ -2723,6 +2724,9 @@ export default function Dashboard({
                   )
                 }
                 ruleSentenceOf={ruleSentenceOf}
+                // Splits and groups (#39): applied after the server's cache,
+                // so the list is read again quietly after a change.
+                onSplitsChanged={txnEdits.refresh}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
@@ -3043,6 +3047,8 @@ export default function Dashboard({
               connection at Plaid. You can reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
+            {/* What adding it back doesn't bring back (#39). */}
+            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
             {/* Disconnecting is about the connection; closing is about an
                 account (#50). Only the person knows which happened. */}
             {endedOffer !== shownDisconnectTarget.item_id && (

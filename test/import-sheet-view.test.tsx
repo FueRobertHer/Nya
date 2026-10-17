@@ -203,7 +203,7 @@ describe('the list of past imports', () => {
     const html = confirming({ plan: plan(), error: '' });
     const t = text(html);
     expect(t).toContain('Remove the 8 transactions this import added? 2 of them were changed since, and go too. 1 is on another account now, and goes too.');
-    expect(t).toContain('Your exclusions, tags and notes on them are forgotten with them. The balance stays as it is.');
+    expect(t).toContain('Your exclusions, tags, notes and splits on them are forgotten with them, and they leave any group they’re in. The balance stays as it is.');
     expect(t).toContain('Keep it');
     expect(undoButton(html)[0]).not.toContain('disabled');
     // Until the plan is known, or when it can't be, nothing to confirm.

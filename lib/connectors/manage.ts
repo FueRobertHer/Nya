@@ -75,6 +75,7 @@ import { CLAIM_TIMEOUT_MS } from './simplefin';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
 import { removeAccountTxns } from '../manual-txns';
 import { forgetAnnotations } from '../txn-annotations';
+import { forgetSplitsAndGroups } from '../split-gone';
 import { MANY_AT_ONCE, UnreadableEntriesError } from '../repo';
 import { clearCaches } from '../cache';
 import { clearBackfillDone } from '../history';
@@ -429,6 +430,7 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
     } else {
       const rows = await removeAccountTxns(ctx, a.account_id);
       await forgetAnnotations(ctx, rows).catch((err) => console.warn('connectors: exclusions were left behind', loggable(err)));
+      await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('connectors: splits or groups were left behind', loggable(err)));
       out.removed.push(a.account_id);
       if (keep) out.nothing_to_keep.push(a.name);
     }
@@ -439,6 +441,7 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
   for (const id of out.removed) {
     const late = await removeAccountTxns(ctx, id);
     if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('connectors: exclusions were left behind', loggable(err)));
+    if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('connectors: splits or groups were left behind', loggable(err)));
   }
   // Off each connection's list, so a later answer offers them again.
   const byConnection = new Map<string, Set<string>>();
