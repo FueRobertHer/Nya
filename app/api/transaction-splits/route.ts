@@ -5,9 +5,10 @@ import { categoryById, indexTaxonomy, type CategoryIndex } from '@/lib/categorie
 import { ensureTaxonomy } from '@/lib/category-store';
 import { isTransactionId } from '@/lib/txn-annotations';
 import { isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-txns';
-import { changePart, checkPartNote, checkParts, removeSplit, saveSplit, SplitError, type PartChange } from '@/lib/splits';
-import { groupStore, memberIndex } from '@/lib/groups';
-import { findTransactions, LookupUnreadableError, splitsAndGroupsOn } from '@/lib/txn-lookup';
+import type { Ctx } from '@/lib/containers';
+import { changePart, checkPartNote, checkParts, removeSplit, saveSplit, SplitError, splitStore, type PartChange } from '@/lib/splits';
+import { groupStore, memberIndex, type TxnGroup } from '@/lib/groups';
+import { findTransactions, importedStoodFor, LookupUnreadableError, splitsAndGroupsOn, type FoundTxn } from '@/lib/txn-lookup';
 import { isSplitOrGroupId } from '@/lib/split-rows';
 
 // Splitting one transaction into parts (#39, lib/splits.ts), applied on read
@@ -20,7 +21,10 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //   currency's minor units, each under one of the person's categories (by
 //   id, kept as the category it is now, following a merge). Refused for a
 //   transaction still pending (409: it gets a new id when it posts), one in a
-//   group (409: the group counts it whole), one that isn't stored (404).
+//   group (409: the group counts it whole), one that isn't stored (404), and
+//   a bank row standing for a row imported from a file that is split or in a
+//   group (409: the bank row shows that split, or counts in that group, and a
+//   split of its own would hide it; change that one instead).
 //   `updated_at` is the split the edit was opened on (null: none): one
 //   changed since, on another device, is refused (409), nothing lost.
 // PATCH { transaction_id, part_id, category_id?, note?, excluded? }
@@ -84,6 +88,31 @@ function categoryOf(ix: CategoryIndex, id: string): string {
   return c.id;
 }
 
+/**
+ * Refuses a split of its own on a bank row that stands for a row imported
+ * from a file (lib/txn-lookup.ts importedStoodFor) which is split, or in a
+ * group: the bank row shows that split, or counts in that group in its place
+ * (lib/split-rows.ts), and its own split would hide them. Read strictly. One
+ * the bank row already has is its own to change.
+ */
+async function refuseHiding(ctx: Ctx, found: FoundTxn, groups: ReadonlyMap<string, TxnGroup>): Promise<void> {
+  if (await splitStore.has(ctx, found.transaction_id)) return;
+  const stood = (await importedStoodFor(ctx, [found])).get(found.transaction_id) ?? [];
+  if (stood.length === 0) return;
+  const splits = await splitStore.getMany(ctx, stood);
+  if (stood.some((id) => splits.has(id))) {
+    throw new SplitError('This transaction is split as you split the row you imported for it from your bank’s file: change that split instead, with Edit split.', 409);
+  }
+  const index = memberIndex(groups);
+  const group = stood.map((id) => index.get(id)).find((id) => id !== undefined);
+  if (group) {
+    throw new SplitError(
+      `This transaction counts in the group “${groups.get(group)!.name}”, in place of the row you imported for it from your bank’s file, and the group counts it whole: take it out of the group to split it.`,
+      409
+    );
+  }
+}
+
 /** What a failure answers (see the header). */
 function failure(err: unknown, fallback: string): NextResponse {
   if (err instanceof SplitError) return NextResponse.json({ error: err.message }, { status: err.status });
@@ -110,6 +139,7 @@ export async function PUT(req: Request) {
     const found = (await findTransactions(ctx, [transaction_id])).get(transaction_id);
     if (!found) throw new SplitError('That transaction is no longer stored. Reload to see your transactions as they are.', 404);
     const parts = checkParts(body.parts, found);
+    await refuseHiding(ctx, found, groups);
     const ix = indexTaxonomy(await ensureTaxonomy(ctx));
     for (const p of parts) p.category_id = categoryOf(ix, p.category_id);
     const split = await saveSplit(ctx, transaction_id, found, parts, new Date(), seenOf(body));
