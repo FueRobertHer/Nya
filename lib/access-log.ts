@@ -47,7 +47,7 @@
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES, LEVELS, isLevel, widerLevel, type Level, type ShownDay } from './share-rules';
-import { isViewsRead, mergeViewsRead, type ViewsRead } from './share-kinds';
+import { dayViewsOf, isViewsRead, mergeViewsRead, type ViewsRead } from './share-kinds';
 
 /** One quarter hour of a record. */
 export type Showing = {
@@ -58,10 +58,11 @@ export type Showing = {
   /** What was shown: each account's id, at the widest level it was shown at
    *  in that quarter hour. */
   read: Record<string, Level>;
-  /** And of the other kinds of share (lib/share-kinds.ts), each shown in that
-   *  quarter hour at the widest detail it was shown at. Absent when none was
-   *  (and on every row written before there were any): a release from before
-   *  them reads the row without it. */
+  /** And of the other kinds of share (lib/share-kinds.ts), each as widely as
+   *  it was shown in that quarter hour: its level, what else it showed (the
+   *  accounts in a net worth, the categories, the positions) and the goals
+   *  shown, by id. Absent when none was (and on every row written before
+   *  there were any): a release from before them reads the row without it. */
   views?: ViewsRead;
 };
 
@@ -123,8 +124,8 @@ export function keptShowings(log: AccessLog, now: number): Showing[] {
 /**
  * The record with one more showing at `now`, of `read` (and `views`, the
  * other kinds it showed): counted in its quarter hour, with each account at
- * the widest level shown in it and each kind at the widest detail, and what
- * is no longer kept dropped (keptShowings). Computes only, without changing
+ * the widest level shown in it and each kind as widely as it was shown
+ * (mergeViewsRead), and what is no longer kept dropped (keptShowings). Computes only, without changing
  * `current`, since update() may run it more than once.
  */
 export function withShowing(current: AccessLog | null, now: number, read: Record<string, Level>, views: ViewsRead = {}): AccessLog {
@@ -158,7 +159,8 @@ export function timeZoneOf(raw: unknown): string | null {
  * A record's quarter hours as days in `timeZone` (timeZoneOf), newest first:
  * for each day, how many times it was shown, how many accounts at each level,
  * each account once, at the widest level shown that day, and, when any other
- * kind was shown, each kind at the widest detail shown that day. Every time
+ * kind was shown, each kind as widely as it was shown that day, with how
+ * many goals (DayViews). Every time
  * zone in use is a whole number of quarter hours from UTC, so a quarter hour
  * never straddles two days.
  */
@@ -180,7 +182,7 @@ export function shownByDay(shown: Showing[], timeZone: string): ShownDay[] {
     .map(([day, d]) => {
       const levels = Object.fromEntries(LEVELS.map((l) => [l, 0])) as Record<Level, number>;
       for (const level of Object.values(d.read)) levels[level]++;
-      return { day, times: d.times, levels, ...(Object.keys(d.views).length > 0 ? { views: d.views } : {}) };
+      return { day, times: d.times, levels, ...(Object.keys(d.views).length > 0 ? { views: dayViewsOf(d.views) } : {}) };
     });
 }
 

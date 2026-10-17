@@ -37,8 +37,8 @@ describe('nothing to warn about', () => {
     expect(ids(facts({ holdings: { detail: 'shares', positions: false } }, [checking, savings, at(ira, 'exists')]))).toEqual([]);
   });
 
-  test('a net worth with its accounts already shows every balance: nothing more to work out from it', () => {
-    expect(ids(facts(NET_WITH_ACCOUNTS, [at(checking, 'balance'), savings, ira]))).toEqual([]);
+  test('a net worth with its accounts lists only the balances already shared: on its own, it gives nothing more', () => {
+    expect(ids(facts(NET_WITH_ACCOUNTS))).toEqual([]);
   });
 
   test('a net worth beside every balance adds nothing: it is their sum', () => {
@@ -64,10 +64,40 @@ describe('a net worth beside the balances of some accounts', () => {
     );
   });
 
+  test('with its accounts, the same: they are only those shared at a balance', () => {
+    expect(textOf(facts(NET_WITH_ACCOUNTS, [at(checking, 'balance'), savings, ira]), 'net_worth_rest')).toBe(
+      'They see your net worth and the balance of Chase Checking ••1111, so they can work out what your other accounts add up to.'
+    );
+  });
+
   test('many balances are counted rather than listed', () => {
     const many = ['a', 'b', 'c', 'd'].map((id) => ({ id, label: `Account ${id}`, level: 'balance' as const, investment: false }));
     const f = facts(NET_TOTAL, [...many, savings, ira]);
     expect(textOf(f, 'net_worth_rest')).toContain('the balances of 4 of your accounts');
+  });
+});
+
+describe('a net worth beside holdings in amounts gives what the other accounts hold', () => {
+  test('holdings in amounts are what the investment accounts hold together', () => {
+    const f = facts({ ...NET_TOTAL, holdings: { detail: 'amounts', positions: false } }, [checking, ira]);
+    expect(ids(f)).toEqual(['net_worth_rest']);
+    expect(textOf(f, 'net_worth_rest')).toBe(
+      'They see your net worth and your holdings in amounts, so they can work out about the balance of Chase Checking ••1111, the one account besides your investments whose balance you don’t share.'
+    );
+  });
+
+  test('beside balances too, what the rest add up to', () => {
+    const f = facts({ ...NET_HISTORY, holdings: { detail: 'amounts', positions: true } }, [at(checking, 'balance'), savings, { ...savings, id: 'sav2', label: 'Ally Savings 2' }, ira]);
+    expect(textOf(f, 'net_worth_rest')).toBe(
+      'They see your net worth, the balance of Chase Checking ••1111 and your holdings in amounts, so they can work out about what your other accounts besides your investments add up to.'
+    );
+  });
+
+  test('nothing more when every investment account’s balance is shown already, or every other account is', () => {
+    expect(ids(facts({ ...NET_TOTAL, holdings: { detail: 'amounts', positions: false } }, [at(checking, 'balance'), at(ira, 'balance')]))).toEqual([]);
+    expect(ids(facts({ ...NET_TOTAL, holdings: { detail: 'amounts', positions: false } }, [at(checking, 'balance'), ira]))).toEqual([]);
+    // Holdings alone, in amounts, beside no net worth: nothing.
+    expect(ids(facts({ holdings: { detail: 'amounts', positions: false } }, [checking, ira]))).toEqual([]);
   });
 });
 
@@ -116,6 +146,12 @@ describe('a goal’s projection gives its monthly contribution', () => {
     expect(ids(facts({ goals: { detail: 'amounts', goals: ['g3'] } }, [checking], [someday]))).toEqual([]);
   });
 
+  test('as progress, beside a net worth with its accounts: the same as beside the balance, which is only listed when it is shared', () => {
+    const goal: ShareViews = { goals: { detail: 'progress', goals: ['g1'] } };
+    expect(ids(facts({ ...NET_WITH_ACCOUNTS, ...goal }, [checking, at(savings, 'balance')], [holiday]))).toContain('goal_target');
+    expect(ids(facts({ ...NET_WITH_ACCOUNTS, ...goal }, [checking, savings], [holiday]))).not.toContain('goal_target');
+  });
+
   test('as progress, beside its account’s balance, may give its target', () => {
     const f = facts({ goals: { detail: 'progress', goals: ['g1'] } }, [checking, at(savings, 'balance')], [holiday]);
     expect(ids(f)).toEqual(['goal_contribution', 'goal_target']);
@@ -134,11 +170,19 @@ describe('holdings as percentages, beside an amount of the same money, give the 
     expect(textOf(f, 'holdings_total')).toBe('With your holdings as percentages and the balance of Fidelity IRA, they can estimate how much is in each part of your holdings, and in all.');
   });
 
-  test('a net worth listing its accounts, an investment one among them', () => {
-    const f = facts({ ...NET_WITH_ACCOUNTS, holdings: { detail: 'shares', positions: true } });
-    expect(textOf(f, 'holdings_total')).toContain('the balances of your investment accounts in your net worth');
-    // With no investment account to list, nothing.
-    expect(ids(facts({ ...NET_WITH_ACCOUNTS, holdings: { detail: 'shares', positions: true } }, [checking, savings]))).toEqual([]);
+  test('a net worth with its accounts lists no balance that isn’t shared: an investment account not shared gives nothing', () => {
+    expect(ids(facts({ ...NET_WITH_ACCOUNTS, holdings: { detail: 'shares', positions: true } }))).toEqual([]);
+  });
+
+  test('a net worth beside every other balance leaves what the investment accounts hold, which scales them', () => {
+    const f = facts({ ...NET_TOTAL, holdings: { detail: 'shares', positions: false } }, [at(checking, 'balance'), at(savings, 'transactions'), ira]);
+    expect(ids(f)).toEqual(['net_worth_rest', 'holdings_total']);
+    expect(textOf(f, 'net_worth_rest')).toContain('they can work out the balance of Fidelity IRA');
+    expect(textOf(f, 'holdings_total')).toBe(
+      'With your holdings as percentages and your net worth less the balances they see, they can estimate how much is in each part of your holdings, and in all.'
+    );
+    // With nothing but investment accounts, the net worth is what they hold.
+    expect(textOf(facts({ ...NET_HISTORY, holdings: { detail: 'shares', positions: false } }, [ira]), 'holdings_total')).toContain('your net worth, which is what your investment accounts hold');
   });
 
   test('a bank account’s balance is no part of them, and amounts show the whole already', () => {

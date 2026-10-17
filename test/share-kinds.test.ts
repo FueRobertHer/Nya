@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test';
 import {
+  dayViewsOf,
   isViewsRead,
+  MAX_RECORDED_GOALS,
   MAX_SHARED_GOALS,
   mergeViewsRead,
   parseViews,
@@ -12,6 +14,7 @@ import {
   viewsReadOf,
   widerDetail,
   VIEW_KINDS,
+  type ShareViews,
 } from '@/lib/share-kinds';
 
 // The other kinds of share's settings (lib/share-kinds.ts): read closed, so
@@ -102,38 +105,75 @@ describe('a stored share’s kinds, read closed', () => {
 });
 
 describe('what a record of showings keeps', () => {
-  test('known kinds at details of their own ladders', () => {
+  const NW = { detail: 'history', accounts: true } as const;
+  test('each kind as it was shown, closed as a setting is, and of goals which, by id', () => {
     expect(isViewsRead({})).toBe(true);
-    expect(isViewsRead({ net_worth: 'history', spending: 'shares', goals: 'progress' })).toBe(true);
-    // Another release's kind or detail is unrecognised, never read as less.
-    expect(isViewsRead({ bills: 'upcoming' })).toBe(false);
-    expect(isViewsRead({ net_worth: 'amounts' })).toBe(false);
-    expect(isViewsRead({ net_worth: 1 })).toBe(false);
+    expect(isViewsRead({ net_worth: NW, spending: { detail: 'shares', by: 'category' }, goals: { detail: 'progress', goals: ['g1', 'g2'] } })).toBe(true);
+    // Another release's kind, level or field is unrecognised, never read as less.
+    expect(isViewsRead({ bills: { detail: 'upcoming' } })).toBe(false);
+    expect(isViewsRead({ net_worth: { detail: 'amounts', accounts: false } })).toBe(false);
+    expect(isViewsRead({ net_worth: { detail: 'total' } })).toBe(false);
+    expect(isViewsRead({ spending: { detail: 'shares', by: 'group', except: [] } })).toBe(false);
+    // The shape before kinds kept their options is not this one.
+    expect(isViewsRead({ net_worth: 'history' })).toBe(false);
     expect(isViewsRead(['net_worth'])).toBe(false);
+    // Goals: by ids that can be ones, each once, as many as a merge keeps.
+    expect(isViewsRead({ goals: { detail: 'amounts', goals: [] } })).toBe(false);
+    expect(isViewsRead({ goals: { detail: 'amounts', goals: ['g1', 'g1'] } })).toBe(false);
+    expect(isViewsRead({ goals: { detail: 'amounts', goals: ['not one'] } })).toBe(false);
+    expect(isViewsRead({ goals: { detail: 'amounts', goals: Array.from({ length: MAX_RECORDED_GOALS }, (_, i) => `g${i}`) } })).toBe(true);
+    expect(isViewsRead({ goals: { detail: 'amounts', goals: Array.from({ length: MAX_RECORDED_GOALS + 1 }, (_, i) => `g${i}`) } })).toBe(false);
   });
 
-  test('the wider of two details, kind by kind', () => {
+  test('merged, each kind as widely as either: the wider detail, an option on if either had it, the goals of both', () => {
     expect(widerDetail('net_worth', 'total', 'history')).toBe('history');
     expect(widerDetail('net_worth', 'history', 'total')).toBe('history');
     expect(widerDetail('spending', 'shares', 'shares')).toBe('shares');
     expect(widerDetail('budgets', 'amounts', 'progress')).toBe('amounts');
-    expect(mergeViewsRead({ net_worth: 'total', spending: 'amounts' }, { net_worth: 'history', goals: 'progress', spending: 'shares' })).toEqual({
-      net_worth: 'history',
-      spending: 'amounts',
-      goals: 'progress',
+    const merged = mergeViewsRead(
+      { net_worth: { detail: 'total', accounts: true }, spending: { detail: 'amounts', by: 'group' }, goals: { detail: 'progress', goals: ['g2'] } },
+      { net_worth: { detail: 'history', accounts: false }, spending: { detail: 'shares', by: 'category' }, holdings: { detail: 'shares', positions: true }, goals: { detail: 'amounts', goals: ['g1', 'g2'] } }
+    );
+    expect(merged).toEqual({
+      net_worth: { detail: 'history', accounts: true },
+      spending: { detail: 'amounts', by: 'category' },
+      holdings: { detail: 'shares', positions: true },
+      goals: { detail: 'amounts', goals: ['g1', 'g2'] },
     });
+    expect(isViewsRead(merged)).toBe(true);
     expect(mergeViewsRead(undefined, undefined)).toEqual({});
+    // Never more goals than a record reads.
+    const many = (from: number) => ({ goals: { detail: 'progress' as const, goals: Array.from({ length: MAX_RECORDED_GOALS }, (_, i) => `g${from + i}`) } });
+    expect(isViewsRead(mergeViewsRead(many(0), many(MAX_RECORDED_GOALS)))).toBe(true);
   });
 
-  test('a kind that couldn’t be read showed nothing, so isn’t in it', () => {
+  test('a day says how many goals, never which', () => {
+    expect(dayViewsOf({ budgets: { detail: 'progress', by: 'group' }, goals: { detail: 'amounts', goals: ['g1', 'g2'] } })).toEqual({
+      budgets: { detail: 'progress', by: 'group' },
+      goals: { detail: 'amounts', count: 2 },
+    });
+  });
+
+  test('a showing keeps each kind as its setting chose it, and the goals shown; a kind that couldn’t be read showed nothing, so isn’t in it', () => {
+    const settings: ShareViews = {
+      net_worth: { detail: 'total', accounts: true },
+      spending: { detail: 'amounts', by: 'category' },
+      holdings: { detail: 'shares', positions: true },
+      goals: { detail: 'progress', goals: ['g1', 'g2', 'g3'] },
+    };
     expect(
-      viewsReadOf({
-        net_worth: { unreadable: true },
-        spending: { detail: 'amounts', by: 'group', currency: 'USD', months: [] },
-        goals: { detail: 'progress', goals: [] },
-      })
-    ).toEqual({ spending: 'amounts', goals: 'progress' });
-    expect(viewsReadOf(undefined)).toEqual({});
+      viewsReadOf(
+        {
+          net_worth: { unreadable: true },
+          spending: { detail: 'amounts', by: 'category', currency: 'USD', months: [] },
+          holdings: { detail: 'shares', currency: 'USD', as_of: null, from: null, classes: [], buckets: [], positions: [], notes: [] },
+          goals: { detail: 'progress', goals: [] },
+        },
+        settings,
+        ['g2', 'g1']
+      )
+    ).toEqual({ spending: { detail: 'amounts', by: 'category' }, holdings: { detail: 'shares', positions: true }, goals: { detail: 'progress', goals: ['g1', 'g2'] } });
+    expect(viewsReadOf(undefined, settings)).toEqual({});
   });
 });
 

@@ -134,7 +134,7 @@ import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
 import { UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
 import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
-import { parseViews, sharedKinds, viewsChangeProblem, viewsOfChange, viewsReadOf, isUnreadable, type ShareViews, type SharedViews } from './share-kinds';
+import { parseViews, sharedKinds, viewsChangeProblem, viewsOfChange, isUnreadable, type ShareViews, type SharedViews, type ViewsRead } from './share-kinds';
 import { inferences, type FactAccount, type FactGoal, type Inference } from './share-inference';
 // dataUnreadable: whether an error says the owner's stored data can't be
 // decoded, as opposed to storage being out of reach; one rule for the
@@ -1112,7 +1112,7 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
     }
     if (!shown) continue;
     out.push({ connection: c.id, label: c.labels[me] ?? 'Someone', ...shown.view });
-    showings.push(recordShowing(shown.theirs, c, shown.view, now));
+    showings.push(recordShowing(shown.theirs, c, shown.view, shown.read, now));
   }
   await Promise.all(showings); // each one is best effort, and never throws
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -1179,9 +1179,10 @@ async function inferencesOf(shown: Projected, share: Share): Promise<Inference[]
 }
 
 /** A projection, and the owner's Ctx it was read from, which recordShowing
- *  needs, and what the preview's warnings go by of the goals shown. Never
- *  returned from this module. */
-type Projected = { view: ShareView; theirs: Ctx; goalFacts: FactGoal[] };
+ *  needs with what was shown of the other kinds (`read`), and what the
+ *  preview's warnings go by of the goals shown. Never returned from this
+ *  module. */
+type Projected = { view: ShareView; theirs: Ctx; goalFacts: FactGoal[]; read: ViewsRead };
 
 /**
  * What the other person on connection `c` is shown of `owner`'s share at
@@ -1202,10 +1203,22 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
-  // The accounts, and the other kinds beside them, read at once.
-  const [accounts, other] = await Promise.all([sharedAccounts(theirs, share, now), projectViews(theirs, share.views, now)]);
+  // The accounts, and the other kinds beside them, read at once. A net worth
+  // with its accounts lists only those whose balances the accounts show
+  // (lib/share-views.ts), so it waits for them once its own reads are done.
+  const shownAccounts = sharedAccounts(theirs, share, now);
+  const balancesShown = shownAccounts.then(
+    (list) => new Set(list.filter((a) => a.level !== 'exists' && a.balance !== null && !a.ended).map((a) => a.id)),
+    () => new Set<string>()
+  );
+  const [accounts, other] = await Promise.all([shownAccounts, projectViews(theirs, share.views, now, { balancesShown })]);
   if (accounts.length === 0 && !other) return null;
-  return { view: { accounts, expires_at: share.expires_at, ...(other ? { views: other.views } : {}) }, theirs, goalFacts: other?.goalFacts ?? [] };
+  return {
+    view: { accounts, expires_at: share.expires_at, ...(other ? { views: other.views } : {}) },
+    theirs,
+    goalFacts: other?.goalFacts ?? [],
+    read: other?.read ?? {},
+  };
 }
 
 /** The accounts `share` shows of what is in `theirs` (see projectShare), or
@@ -1399,8 +1412,9 @@ const newestEntered = (a: ManualTxn, b: ManualTxn) =>
  * `c` was just shown `view`: one of the two writes this module makes in
  * someone else's container. Under the connection's log id, the quarter hour,
  * a count, and the accounts and levels the read returned, with the other
- * kinds it returned at their levels (one that couldn't be read showed
- * nothing, so isn't counted), none of it taken from the request. A connection
+ * kinds it returned as they were shown (`views`: each at its level, with
+ * what else it showed and the goals shown, by id; one that couldn't be read
+ * showed nothing, so isn't counted), none of it taken from the request. A connection
  * from before records gets its log id here, the first time (logFor). Best
  * effort: a failure is logged, and never fails the read.
  *
@@ -1412,7 +1426,7 @@ const newestEntered = (a: ManualTxn, b: ManualTxn) =>
  * left, in every order. While the connection is still this one, nothing is
  * taken back, whatever its log field says.
  */
-async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number): Promise<void> {
+async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, views: ViewsRead, now: number): Promise<void> {
   try {
     const log = await logFor(c, now);
     if (log === 'damaged') {
@@ -1422,7 +1436,6 @@ async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number)
     if (!log) return; // the connection went meanwhile: nothing to record
     // What was shown: an account whose transactions couldn't be read showed its balance only.
     const read = Object.fromEntries(view.accounts.map((a): [string, Level] => [a.id, a.transactions_unreadable ? 'balance' : a.level]));
-    const views = viewsReadOf(view.views);
     await accessLogStore.update(theirs, log.id, (current) => withShowing(current, now, read, views));
     if (!sameConnection(await redis().hget(connectionsKey(), c.id), c)) {
       await accessLogStore.remove(theirs, log.id);

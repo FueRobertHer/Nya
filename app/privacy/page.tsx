@@ -4,7 +4,7 @@ import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { backupRetention } from '@/lib/backup';
 import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
-import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
+import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
@@ -75,7 +75,7 @@ const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
     today:
-      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; before you save, Sharing says what they could work out from all of it together. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
+      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, as an amount, and your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; a net worth lists no account whose balance you don’t share. Before you save, Sharing says what Nya knows they could work out from it all together (what your other accounts add up to beside your net worth, your income from your net worth and spending, what goes into a goal each month, and amounts from percentages beside an amount of the same money), and that this isn’t every way. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
   },
   {
     promise: 'You can see who can read what, including us.',
@@ -201,6 +201,7 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
     `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
   ],
   ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
+  ['Reads of what is shared with you, and of what someone sees of yours', `Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],

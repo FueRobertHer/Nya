@@ -48,14 +48,19 @@ function viewsWithGoals(views: ShareViews | undefined): ShareViews {
 }
 
 /** What someone can see of mine, in words, or null for nothing: "1 of your
- *  accounts", "2 of your accounts and your net worth", "your spending". */
+ *  accounts", "2 of your accounts, your net worth and your spending", "your
+ *  spending". */
 export function seenText(accounts: number, views: ShareViews | undefined): string | null {
-  const kinds = kindsText(views);
-  const counted = accounts === 0 ? '' : accounts === 1 ? '1 of your accounts' : `${accounts} of your accounts`;
-  if (!counted) return kinds || null;
-  return kinds ? `${counted} and ${kinds}` : counted;
+  const kinds = sharedKinds(viewsWithGoals(views)).map((k) => KIND_WORDS[k]);
+  const counted = accounts === 0 ? [] : [accounts === 1 ? '1 of your accounts' : `${accounts} of your accounts`];
+  const all = [...counted, ...kinds];
+  if (all.length === 0) return null;
+  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(', ')} and ${all[all.length - 1]}`;
 }
 
+/** Each kind's levels, as its select offers them. What else a kind can show
+ *  (the accounts in a net worth, the categories, the positions) is a box of
+ *  its own beneath, so a closed select, however narrow, says the level. */
 const CHOICES: Record<ViewKind, [string, string][]> = {
   net_worth: [
     ['none', 'Not shared'],
@@ -64,10 +69,8 @@ const CHOICES: Record<ViewKind, [string, string][]> = {
   ],
   spending: [
     ['none', 'Not shared'],
-    ['shares:group', 'Percentages, by group'],
-    ['shares:category', 'Percentages, by group and category'],
-    ['amounts:group', 'Amounts, by group'],
-    ['amounts:category', 'Amounts, by group and category'],
+    ['shares', 'Percentages'],
+    ['amounts', 'Amounts'],
   ],
   holdings: [
     ['none', 'Not shared'],
@@ -76,10 +79,8 @@ const CHOICES: Record<ViewKind, [string, string][]> = {
   ],
   budgets: [
     ['none', 'Not shared'],
-    ['progress:group', 'How much is spent, by group'],
-    ['progress:category', 'How much is spent, by group and category'],
-    ['amounts:group', 'Amounts, by group'],
-    ['amounts:category', 'Amounts, by group and category'],
+    ['progress', 'How much is spent'],
+    ['amounts', 'Amounts'],
   ],
   goals: [
     ['none', 'Not shared'],
@@ -90,50 +91,38 @@ const CHOICES: Record<ViewKind, [string, string][]> = {
 
 /** What each kind shows, beneath its choice. */
 const WHAT: Record<ViewKind, string> = {
-  net_worth: 'Each account’s newest balance added up, as on your Accounts tab, and with its history, your chart, a point a week.',
+  net_worth: 'Each account’s newest balance added up, as on your Accounts tab, as an amount, and with its history, your chart, a point a week.',
   spending: 'What went out each month for the last six, by your categories. Never money in, or the transactions themselves.',
   holdings: 'Your investments by asset class and by tax bucket. Never an account’s name or number.',
   budgets: 'This month’s and last month’s budgets, with what is spent against each.',
   goals: 'The goals you choose, with their progress and when each is projected to be reached.',
 };
 
-/** A kind's setting as its select's value. */
+/** A kind's level as its select's value. */
 function choiceOf(kind: ViewKind, views: ShareViews): string {
-  switch (kind) {
-    case 'net_worth':
-      return views.net_worth?.detail ?? 'none';
-    case 'spending':
-      return views.spending ? `${views.spending.detail}:${views.spending.by}` : 'none';
-    case 'holdings':
-      return views.holdings?.detail ?? 'none';
-    case 'budgets':
-      return views.budgets ? `${views.budgets.detail}:${views.budgets.by}` : 'none';
-    case 'goals':
-      return views.goals?.detail ?? 'none';
-  }
+  return views[kind]?.detail ?? 'none';
 }
 
-/** The settings with one kind's choice made, keeping what else it had (an
+/** The settings with one kind's level chosen, keeping what else it had (an
  *  option, the goals chosen). */
-function withChoice(views: ShareViews, kind: ViewKind, value: string): ShareViews {
+function withChoice(views: ShareViews, kind: ViewKind, detail: string): ShareViews {
   const next: ShareViews = { ...views };
-  if (value === 'none') {
+  if (detail === 'none') {
     delete next[kind];
     return next;
   }
-  const [detail, by] = value.split(':');
   switch (kind) {
     case 'net_worth':
       next.net_worth = { detail: detail as 'total' | 'history', accounts: views.net_worth?.accounts ?? false };
       break;
     case 'spending':
-      next.spending = { detail: detail as 'shares' | 'amounts', by: by as 'group' | 'category' };
+      next.spending = { detail: detail as 'shares' | 'amounts', by: views.spending?.by ?? 'group' };
       break;
     case 'holdings':
       next.holdings = { detail: detail as 'shares' | 'amounts', positions: views.holdings?.positions ?? false };
       break;
     case 'budgets':
-      next.budgets = { detail: detail as 'progress' | 'amounts', by: by as 'group' | 'category' };
+      next.budgets = { detail: detail as 'progress' | 'amounts', by: views.budgets?.by ?? 'group' };
       break;
     case 'goals':
       next.goals = { detail: detail as 'progress' | 'amounts', goals: views.goals?.goals ?? [] };
@@ -186,6 +175,13 @@ export function KindsEditor({
     onChange({ ...views, goals: { detail: views.goals!.detail, goals: ids } });
   };
   const unlisted = [...chosen].filter((id) => !(goals ?? []).some((g) => g.id === id));
+  // A box under a kind's choice, for what else it shows.
+  const option = (label: string, checked: boolean, set: (on: boolean) => void) => (
+    <label className="plan-check">
+      <input type="checkbox" checked={checked} onChange={(e) => set(e.target.checked)} />
+      {label}
+    </label>
+  );
   return (
     <div className="kinds-editor">
       <p className="section-label" style={{ marginTop: 16 }}>
@@ -193,8 +189,8 @@ export function KindsEditor({
       </p>
       {VIEW_KINDS.map((kind) => (
         <div key={kind} className="kind-row">
-          <div className="peer-row">
-            <span>{KIND_NAME[kind]}</span>
+          <div className="kind-choice">
+            <span className="kind-name">{KIND_NAME[kind]}</span>
             <select value={choiceOf(kind, views)} onChange={(e) => onChange(withChoice(views, kind, e.target.value))} aria-label={`What ${who} sees of ${KIND_WORDS[kind]}`}>
               {CHOICES[kind].map(([value, label]) => (
                 <option key={value} value={value}>
@@ -204,18 +200,20 @@ export function KindsEditor({
             </select>
           </div>
           {views[kind] && <p className="panel-note kind-what">{WHAT[kind]}</p>}
-          {kind === 'net_worth' && views.net_worth && (
-            <label className="plan-check">
-              <input type="checkbox" checked={views.net_worth.accounts} onChange={(e) => onChange({ ...views, net_worth: { ...views.net_worth!, accounts: e.target.checked } })} />
-              With the accounts behind it, each with its balance
-            </label>
-          )}
-          {kind === 'holdings' && views.holdings && (
-            <label className="plan-check">
-              <input type="checkbox" checked={views.holdings.positions} onChange={(e) => onChange({ ...views, holdings: { ...views.holdings!, positions: e.target.checked } })} />
-              With the positions in them
-            </label>
-          )}
+          {kind === 'net_worth' &&
+            views.net_worth &&
+            option('With the accounts in it whose balances you share above, each with its balance', views.net_worth.accounts, (on) =>
+              onChange({ ...views, net_worth: { ...views.net_worth!, accounts: on } })
+            )}
+          {kind === 'spending' &&
+            views.spending &&
+            option('By category too, within each group', views.spending.by === 'category', (on) => onChange({ ...views, spending: { ...views.spending!, by: on ? 'category' : 'group' } }))}
+          {kind === 'holdings' &&
+            views.holdings &&
+            option('With the positions in them', views.holdings.positions, (on) => onChange({ ...views, holdings: { ...views.holdings!, positions: on } }))}
+          {kind === 'budgets' &&
+            views.budgets &&
+            option('By category too, within each group', views.budgets.by === 'category', (on) => onChange({ ...views, budgets: { ...views.budgets!, by: on ? 'category' : 'group' } }))}
           {kind === 'goals' && views.goals && (
             <>
               {goals === null ? (
@@ -231,7 +229,12 @@ export function KindsEditor({
                 ))
               )}
               {goals !== null && unlisted.length > 0 && (
-                <p className="panel-note">{`${unlisted.length === 1 ? 'A goal chosen is' : `${unlisted.length} goals chosen are`} archived or gone, and not shown.`}</p>
+                <p className="panel-note">
+                  {`${unlisted.length === 1 ? 'A goal you chose is' : `${unlisted.length} goals you chose are`} archived or deleted, so not shown; an archived one is shown again if you unarchive it. `}
+                  <button className="link-btn" onClick={() => onChange({ ...views, goals: { detail: views.goals!.detail, goals: [...chosen].filter((id) => !unlisted.includes(id)) } })}>
+                    {unlisted.length === 1 ? 'Stop sharing it' : 'Stop sharing them'}
+                  </button>
+                </p>
               )}
               {views.goals.goals.length === 0 && <p className="panel-note">Choose the goals they see: until you do, none is shared.</p>}
             </>

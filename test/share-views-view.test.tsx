@@ -67,23 +67,33 @@ const VIEWS: SharedViews = {
         month: '2026-10',
         so_far: true,
         total: 1357.5,
-        groups: [{ name: 'Housing', pct: 88, amount: 1200, categories: [{ name: 'Rent', pct: 88, amount: 1200 }] }, { name: 'Food', pct: 12, amount: 157.5, categories: [{ name: 'Coffee', pct: 12, amount: 157.5 }] }],
-        left_out: "1 transaction in EUR isn't in these totals, which are in USD.",
+        groups: [
+          { name: 'Housing', pct: 88, label: '88%', amount: 1200, categories: [{ name: 'Rent', pct: 88, label: '88%', amount: 1200 }] },
+          { name: 'Food', pct: 12, label: '12%', amount: 157.5, categories: [{ name: 'Coffee', pct: 12, label: '12%', amount: 157.5 }] },
+        ],
+        left_out: 'What went out in EUR isn’t in these totals, which are in USD.',
       },
-      { month: '2026-09', so_far: false, total: 15.99, groups: [{ name: 'Fun', pct: 100, amount: 15.99, categories: [{ name: 'Streaming', pct: 100, amount: 15.99 }] }], left_out: null },
+      {
+        month: '2026-09',
+        so_far: false,
+        total: 15.99,
+        groups: [{ name: 'Fun', pct: 100, label: '100%', amount: 15.99, categories: [{ name: 'Streaming', pct: 100, label: '100%', amount: 15.99 }] }],
+        left_out: null,
+      },
     ],
   },
   holdings: {
     detail: 'amounts',
     currency: 'USD',
     as_of: '2026-10-20',
+    from: '2026-10-18',
     total: 20_500,
     classes: [
-      { slot: 'us-stocks', name: 'US stocks', pct: 98, amount: 20_000 },
-      { slot: 'unclassified', name: 'Unclassified', pct: 2, amount: 500 },
+      { slot: 'us-stocks', name: 'US stocks', pct: 98, label: '98%', amount: 20_000 },
+      { slot: 'unclassified', name: 'Unclassified', pct: 2, label: '2%', amount: 500 },
     ],
-    buckets: [{ slot: 'tax-deferred', name: 'Tax-deferred', pct: 100, amount: 20_500 }],
-    positions: [{ ticker: 'VTI', name: 'Vanguard Total Stock Market ETF', class: 'US stocks', pct: 98, amount: 20_000 }],
+    buckets: [{ slot: 'tax-deferred', name: 'Tax-deferred', pct: 100, label: '100%', amount: 20_500 }],
+    positions: [{ ticker: 'VTI', name: 'Vanguard Total Stock Market ETF', class: 'US stocks', pct: 98, label: '98%', amount: 20_000 }],
     notes: ['Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.'],
   },
   budgets: {
@@ -93,12 +103,14 @@ const VIEWS: SharedViews = {
     months: [
       {
         month: '2026-10',
-        total: { name: 'All budgets', pct: 69, over: false, spent: 1242.5, limit: 1800 },
-        groups: [{ name: 'Food', pct: 43, over: false, spent: 42.5, limit: 100, categories: [{ name: 'Food and drink', pct: 43, over: false, spent: 42.5, limit: 100 }] }],
+        total: { name: 'All budgets', pct: 69, label: '69%', over: false, spent: 1242.5, limit: 1800 },
+        groups: [
+          { name: 'Food', pct: 43, label: '43%', over: false, spent: 42.5, limit: 100, categories: [{ name: 'Food and drink', pct: 43, label: '43%', over: false, spent: 42.5, limit: 100 }] },
+        ],
         left_out: null,
         may_be_incomplete: true,
       },
-      { month: '2026-09', total: { name: 'All budgets', pct: 0, over: false, spent: 0, limit: 1800 }, groups: [], left_out: null, may_be_incomplete: false },
+      { month: '2026-09', total: { name: 'All budgets', pct: 0, label: '0%', over: false, spent: 0, limit: 1800 }, groups: [], left_out: null, may_be_incomplete: false },
     ],
   },
   goals: {
@@ -108,6 +120,7 @@ const VIEWS: SharedViews = {
         name: 'Rainy day',
         state: 'tracked',
         pct: 33,
+        label: '33%',
         currency: 'USD',
         saved: 1000,
         target: 3000,
@@ -115,7 +128,7 @@ const VIEWS: SharedViews = {
         outlook: { status: 'on_track', completion: '2028-06', beyond: false, date_passed: false },
         as_of: '2026-10-19',
       },
-      { name: 'Someday', state: 'untracked', pct: null, currency: null, target: 800, target_date: null, outlook: null, as_of: null },
+      { name: 'Someday', state: 'untracked', pct: null, label: null, currency: null, target: 800, target_date: null, outlook: null, as_of: null },
     ],
   },
 };
@@ -126,7 +139,37 @@ const card = (views: SharedViews = VIEWS) =>
 describe('on the card of the one it is shared with', () => {
   test('each kind, with its as-of day, its figures and its words', () => {
     const page = text(card());
-    for (const words of ['Shared by Sam', 'Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals', 'As of Oct 20', '$321,480.00', '1 account in EUR isn’t in this total', '$1,357.50', 'October 2026, so far', 'Housing', 'Rent', 'US stocks', 'Tax-deferred', 'VTI', '$42.50 of $100.00', 'This month, October 2026', 'Last month, September 2026', 'may not all be in', 'Rainy day', '$1,000.00 of $3,000.00', 'On track for June 2028, ahead of January 2030', 'Not tracked against an account', 'Chase Card ••2222', '$310.00 owed']) {
+    for (const words of [
+      'Shared by Sam',
+      'Net worth',
+      'Spending',
+      'Holdings',
+      'Budgets',
+      'Goals',
+      'As of Oct 20',
+      '$321,480.00',
+      '1 account in EUR isn’t in this total',
+      'Only the accounts whose balances are shared are listed.',
+      '$1,357.50',
+      'October 2026, so far',
+      'What went out in EUR isn’t in these totals, which are in USD.',
+      'Housing',
+      'Rent',
+      'US stocks',
+      'Tax-deferred',
+      'positions and balances from Oct 18 on',
+      'VTI',
+      '$42.50 of $100.00',
+      'This month, October 2026',
+      'Last month, September 2026',
+      'What is spent in October 2026 may be off: some of its transactions may not all be in, or couldn’t all be read.',
+      'Rainy day',
+      '$1,000.00 of $3,000.00',
+      'On track for June 2028, ahead of January 2030',
+      'Not tracked against an account',
+      'Chase Card ••2222',
+      '$310.00 owed',
+    ]) {
       expect(page).toContain(words);
     }
   });
@@ -156,8 +199,18 @@ describe('on the card of the one it is shared with', () => {
   test('at the percentage levels, only percentages', () => {
     const page = text(
       card({
-        spending: { detail: 'shares', by: 'group', currency: 'USD', months: [{ month: '2026-10', so_far: true, groups: [{ name: 'Housing', pct: 88 }, { name: 'Food', pct: 0 }], left_out: null }] },
-        budgets: { detail: 'progress', by: 'group', currency: 'USD', months: [{ month: '2026-10', total: { name: 'All budgets', pct: 69, over: false }, groups: [{ name: 'Food', pct: 112, over: true }], left_out: null, may_be_incomplete: false }] },
+        spending: {
+          detail: 'shares',
+          by: 'group',
+          currency: 'USD',
+          months: [{ month: '2026-10', so_far: true, groups: [{ name: 'Housing', pct: 88, label: '88%' }, { name: 'Food', pct: 0, label: '<1%' }], left_out: null }],
+        },
+        budgets: {
+          detail: 'progress',
+          by: 'group',
+          currency: 'USD',
+          months: [{ month: '2026-10', total: { name: 'All budgets', pct: 69, label: '69%', over: false }, groups: [{ name: 'Food', pct: 112, label: '112%', over: true }], left_out: null, may_be_incomplete: false }],
+        },
         goals: { detail: 'progress', goals: [{ ...(VIEWS.goals as GoalsView).goals[0], saved: undefined, target: undefined }] },
       })
     );
@@ -166,6 +219,61 @@ describe('on the card of the one it is shared with', () => {
     expect(page).toContain('<1%');
     expect(page).toContain('112% spent, over');
     expect(page).toContain('33%');
+  });
+
+  test('each percentage in the words the server sent, which knew the amount: never 0% for money that is there, nor 100% short of the whole, nor <1% for nothing', () => {
+    const goal = (VIEWS.goals as GoalsView).goals[0];
+    const page = text(
+      card({
+        // $1 spent of $500, and nothing yet.
+        budgets: {
+          detail: 'progress',
+          by: 'group',
+          currency: 'USD',
+          months: [{ month: '2026-10', total: { name: 'All budgets', pct: 0, label: '<1%', over: false }, groups: [{ name: 'Fun', pct: 0, label: '0%', over: false }], left_out: null, may_be_incomplete: false }],
+        },
+        // A goal with nothing saved yet.
+        goals: { detail: 'progress', goals: [{ ...goal, name: 'New fund', pct: 0, label: '0%', saved: undefined, target: undefined }] },
+        // A little cash beside stocks, and a margin loan's.
+        holdings: {
+          detail: 'shares',
+          currency: 'USD',
+          as_of: '2026-10-20',
+          from: '2026-10-20',
+          classes: [
+            { slot: 'us-stocks', name: 'US stocks', pct: 100, label: '>99%' },
+            { slot: 'cash', name: 'Cash', pct: 0, label: '<1%' },
+            { slot: 'bonds', name: 'Bonds', pct: 0, label: '>-1%' },
+          ],
+          buckets: [],
+          notes: [],
+        },
+      })
+    );
+    expect(page).toContain('All budgets <1% spent');
+    expect(page).toContain('Fun 0% spent');
+    expect(page).toContain('New fund 0%');
+    expect(page).toContain('US stocks >99%');
+    expect(page).toContain('Cash <1%');
+    expect(page).toContain('Bonds >-1%');
+    expect(page).not.toMatch(/US stocks 100%/);
+  });
+
+  test('spending says what it counts that it can’t be sure of, and that a month may be short, with or without a month to show', () => {
+    const sp = VIEWS.spending as any;
+    const unsure = text(card({ spending: { ...sp, months: [{ ...sp.months[0], exclusions_unknown: true }], categories_unread: true } }));
+    expect(unsure).toContain('Whether they left some transactions out of their totals couldn’t be read, so those are counted here.');
+    expect(unsure).toContain('Their own categories couldn’t all be read, so some spending is filed as their bank files it.');
+    const none = text(card({ spending: { ...sp, months: [], may_be_incomplete: true } }));
+    expect(none).toContain('No spending recorded yet.');
+    expect(none).toContain('Some transactions aren’t all in yet, so a month may be short.');
+  });
+
+  test('last month’s budgets say which month may be off', () => {
+    const b = VIEWS.budgets as any;
+    const page = text(card({ budgets: { ...b, months: [{ ...b.months[0], may_be_incomplete: false }, { ...b.months[1], may_be_incomplete: true }] } }));
+    expect(page).toContain('What is spent in September 2026 may be off');
+    expect(page).not.toContain('What is spent in October 2026 may be off');
   });
 
   test('a net worth with one point of history says when it begins, not a chart of one', () => {
@@ -254,8 +362,22 @@ describe('in the drawer', () => {
     for (const kind of ['Net worth', 'Spending', 'Holdings', 'Budgets', 'Goals']) expect(page).toContain(kind);
     expect(page).not.toContain('What they could work out');
     const chosen = text(panel({ net_worth: { detail: 'total', accounts: false } }));
-    expect(chosen).toContain('With the accounts behind it, each with its balance');
+    expect(chosen).toContain('With the accounts in it whose balances you share above, each with its balance');
     expect(chosen).toContain('Each account’s newest balance added up');
+  });
+
+  test('each select says only a level, so a narrow one never hides which; what else a kind shows is a box of its own', () => {
+    const html = panel({ spending: { detail: 'shares', by: 'category' }, budgets: { detail: 'progress', by: 'group' } });
+    // No two levels of one select begin alike for long: the whole label shows at any width.
+    for (const [, options] of html.matchAll(/<select[^>]*>([\s\S]*?)<\/select>/g)) {
+      const labels = [...options.matchAll(/<option[^>]*>([^<]*)<\/option>/g)].map((m) => m[1]);
+      for (const l of labels) expect(l.length).toBeLessThanOrEqual(25);
+    }
+    expect(html).toContain('class="kind-choice"');
+    const page = text(html);
+    expect(page.match(/By category too, within each group/g)).toHaveLength(2);
+    // The box says whether categories are shared.
+    expect(html).toMatch(/<input type="checkbox" checked=""\/>By category too/);
   });
 
   test('says, before anything is saved, what they could work out from all of it together, and never stops a save', () => {
@@ -269,6 +391,11 @@ describe('in the drawer', () => {
     expect(html).toMatch(/<button[^>]*>Save<\/button>/);
   });
 
+  test('says a net worth beside holdings in amounts gives what the other accounts hold', () => {
+    const page = text(panel({ net_worth: { detail: 'total', accounts: false }, holdings: { detail: 'amounts', positions: false } }, { draft: { a: 'none', b: 'none', i: 'none' } }));
+    expect(page).toContain('They see your net worth and your holdings in amounts, so they can work out about what your accounts besides your investments add up to.');
+  });
+
   test('goals: each one chosen by name; none chosen shares none, and says so', () => {
     const page = text(panel({ goals: { detail: 'amounts', goals: [] } }));
     expect(page).toContain('Holiday');
@@ -277,12 +404,16 @@ describe('in the drawer', () => {
     expect(unreadable).toContain('Your goals couldn’t be read just now');
     // The projected goal's warning, from the choice.
     expect(text(panel({ goals: { detail: 'amounts', goals: ['g1'] } }))).toContain('From the progress of Holiday and when it is projected to be reached');
+    // One chosen that is archived (no longer offered) is said, may come back, and can be stopped.
+    const gone = text(panel({ goals: { detail: 'amounts', goals: ['g1', 'g-archived'] } }));
+    expect(gone).toContain('A goal you chose is archived or deleted, so not shown; an archived one is shown again if you unarchive it.');
+    expect(gone).toContain('Stop sharing it');
   });
 
   test('what each person can see, in words, accounts and kinds together', () => {
     const both = { ...pat, views: { net_worth: { detail: 'total', accounts: false }, spending: { detail: 'shares', by: 'group' } } };
     const list = text(panel({}, { current: null, data: { ...data, connections: [both] } }));
-    expect(list).toContain('Sees 1 of your accounts and your net worth and your spending');
+    expect(list).toContain('Sees 1 of your accounts, your net worth and your spending');
     const kindsOnly = { ...pat, sharing: {}, views: { goals: { detail: 'progress', goals: ['g1'] } } };
     expect(text(panel({}, { current: kindsOnly, data: { ...data, connections: [kindsOnly] } }))).toContain('Pat can see your goals, read-only.');
     expect(seenText(0, {})).toBeNull();
@@ -344,10 +475,22 @@ describe('the preview', () => {
   });
 });
 
-test('a record’s day names the kinds shown on it', () => {
-  const day = { day: '2026-10-04', times: 2, levels: { exists: 0, balance: 1, transactions: 0 }, views: { net_worth: 'history', spending: 'shares' } };
-  expect(shownText(day, new Date('2026-10-20T12:00:00'))).toBe('Shown twice on Oct 4, the balance of 1 account, net worth and spending.');
-  expect(shownText({ ...day, levels: { exists: 0, balance: 0, transactions: 0 } }, new Date('2026-10-20T12:00:00'))).toBe('Shown twice on Oct 4, net worth and spending.');
+test('a record’s day names the kinds shown on it, each as widely as it was shown', () => {
+  const day = {
+    day: '2026-10-04',
+    times: 2,
+    levels: { exists: 0, balance: 1, transactions: 0 },
+    views: { net_worth: { detail: 'history', accounts: true }, spending: { detail: 'shares', by: 'group' } },
+  } as const;
+  expect(shownText(day, new Date('2026-10-20T12:00:00'))).toBe('Shown twice on Oct 4, the balance of 1 account, net worth and its history with its accounts and spending as percentages.');
+  expect(shownText({ ...day, levels: { exists: 0, balance: 0, transactions: 0 } }, new Date('2026-10-20T12:00:00'))).toBe(
+    'Shown twice on Oct 4, net worth and its history with its accounts and spending as percentages.'
+  );
+  const others = {
+    ...day,
+    views: { holdings: { detail: 'amounts', positions: true }, budgets: { detail: 'progress', by: 'category' }, goals: { detail: 'progress', count: 2 } },
+  } as const;
+  expect(shownText(others, new Date('2026-10-20T12:00:00'))).toBe('Shown twice on Oct 4, the balance of 1 account, holdings with positions in amounts, budgets by category and 2 goals.');
   expect(shownText({ day: '2026-10-04', times: 1, levels: { exists: 0, balance: 1, transactions: 0 } }, new Date('2026-10-20T12:00:00'))).toBe('Shown once on Oct 4, the balance of 1 account.');
 });
 

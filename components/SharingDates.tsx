@@ -18,7 +18,7 @@
 
 import { useState } from 'react';
 import { ACCESS_LOG_DAYS, RECORD_FIRST_DAYS, type Level, type RecordSummary, type ShownDay } from '@/lib/share-rules';
-import { VIEW_KINDS, type ViewKind } from '@/lib/share-kinds';
+import type { DayViews } from '@/lib/share-kinds';
 
 /** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
  *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
@@ -199,13 +199,25 @@ export function describeLevels(n: Record<Level, number>): string {
   return inWords(levelParts(n));
 }
 
-/** The other kinds of share as a record's day names them (lib/share-kinds.ts). */
-const KIND_SHOWN: Record<ViewKind, string> = { net_worth: 'net worth', spending: 'spending', holdings: 'holdings', budgets: 'budgets', goals: 'goals' };
+/** The other kinds of share as a record's day names them (lib/share-kinds.ts):
+ *  each as widely as it was shown, "net worth with its accounts", "spending
+ *  by category in amounts", "2 goals". */
+export function kindsShown(v: DayViews | undefined): string[] {
+  if (!v) return [];
+  const level = (amounts: boolean) => (amounts ? ' in amounts' : ' as percentages');
+  return [
+    ...(v.net_worth ? [`net worth${v.net_worth.detail === 'history' ? ' and its history' : ''}${v.net_worth.accounts ? ' with its accounts' : ''}`] : []),
+    ...(v.spending ? [`spending${v.spending.by === 'category' ? ' by category' : ''}${level(v.spending.detail === 'amounts')}`] : []),
+    ...(v.holdings ? [`holdings${v.holdings.positions ? ' with positions' : ''}${level(v.holdings.detail === 'amounts')}`] : []),
+    ...(v.budgets ? [`budgets${v.budgets.by === 'category' ? ' by category' : ''}${v.budgets.detail === 'amounts' ? ' in amounts' : ''}`] : []),
+    ...(v.goals ? [`${v.goals.count === 1 ? '1 goal' : `${v.goals.count} goals`}${v.goals.detail === 'amounts' ? ' in amounts' : ''}`] : []),
+  ];
+}
 
-/** "Shown 3 times on Oct 4, balances of 2 accounts, net worth and spending." */
+/** "Shown 3 times on Oct 4, balances of 2 accounts, net worth with its
+ *  accounts and spending as percentages." */
 export function shownText(d: ShownDay, now: Date = new Date()): string {
-  const kinds = VIEW_KINDS.filter((k) => d.views?.[k]).map((k) => KIND_SHOWN[k]);
-  const what = inWords([...levelParts(d.levels), ...kinds]);
+  const what = inWords([...levelParts(d.levels), ...kindsShown(d.views)]);
   return `Shown ${timesText(d.times)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
 }
 

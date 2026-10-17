@@ -7,7 +7,9 @@
 // on the server (lib/share-views.ts); this only draws it. Every amount is
 // written by lib/format.ts as it is drawn, inside <Masked>, so hiding amounts
 // hides it and a screen reader says "hidden"; a percentage stays, as it says
-// no amount. One column, each kind a section of the card.
+// no amount, in the words the server sent with it (`label`: never "0%" for
+// money that is there, nor "100%" short of the whole). One column, each kind
+// a section of the card.
 //
 // Class names avoid "share" (see components/Sharing.tsx).
 
@@ -32,12 +34,6 @@ import {
 import { Masked } from './HideAmounts';
 import NetWorthChart from './NetWorthChart';
 import { shortDate } from './SharingDates';
-
-/** What a percentage reads as: money that is there is never "0%". */
-function pctText(pct: number | null, amount?: number): string {
-  if (pct === null) return '';
-  return pct === 0 && amount !== 0 ? '<1%' : `${pct}%`;
-}
 
 /** A bar as long as a share (capped at the whole), with the meter's colors
  *  for budgets: warn near the limit, over past it. */
@@ -120,6 +116,9 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
         ) : (
           <p className="panel-note">{history.length === 1 ? `Its history begins ${shortDate(history[0].date)}; a point is added each week.` : 'No history recorded yet.'}</p>
         ))}
+      {v.accounts && (
+        <p className="panel-note">Only the accounts whose balances are shared are listed.</p>
+      )}
       {v.accounts && v.accounts.length > 0 && (
         <div className="incoming-kind-lines">
           {v.accounts.map((a, i) => (
@@ -141,9 +140,31 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
 
 // ---- Spending ----
 
+/** What may make a month's spending off, in words: the same for each month
+ *  but whether its exclusions could all be read. */
+function spendingNotes(v: SpendingView, m: SpendingView['months'][number] | undefined): string[] {
+  return [
+    ...(m?.left_out ? [m.left_out] : []),
+    ...(m?.exclusions_unknown || v.exclusions_unread ? ['Whether they left some transactions out of their totals couldn’t be read, so those are counted here.'] : []),
+    ...(v.categories_unread ? ['Their own categories couldn’t all be read, so some spending is filed as their bank files it.'] : []),
+    ...(v.may_be_incomplete ? ['Some transactions aren’t all in yet, so a month may be short.'] : []),
+  ];
+}
+
 function SpendingKind({ v }: { v: SpendingView }) {
   const [at, setAt] = useState(0);
-  if (v.months.length === 0) return <p className="empty-note">No spending recorded yet.</p>;
+  if (v.months.length === 0) {
+    return (
+      <>
+        <p className="empty-note">No spending recorded yet.</p>
+        {spendingNotes(v, undefined).map((n) => (
+          <p key={n} className="panel-note">
+            {n}
+          </p>
+        ))}
+      </>
+    );
+  }
   const m = v.months[Math.min(at, v.months.length - 1)];
   const amounts = v.detail === 'amounts';
   const name = (month: string, soFar: boolean) => `${monthLabel(month)}${soFar ? ', so far' : ''}`;
@@ -171,13 +192,13 @@ function SpendingKind({ v }: { v: SpendingView }) {
             <div key={`${g.name}-${i}`} className="incoming-line">
               <div className="peer-row">
                 <span className="incoming-account-name">{g.name}</span>
-                <span className="incoming-account-value">{amounts && g.amount !== undefined ? <Masked>{`${formatMoney(g.amount, v.currency)} · ${pctText(g.pct, g.amount)}`}</Masked> : pctText(g.pct)}</span>
+                <span className="incoming-account-value">{amounts && g.amount !== undefined ? <Masked>{`${formatMoney(g.amount, v.currency)} · ${g.label ?? ''}`}</Masked> : g.label}</span>
               </div>
               <Bar pct={g.pct} />
               {g.categories?.map((c, j) => (
                 <div key={`${c.name}-${j}`} className="peer-row incoming-sub">
                   <span>{c.name}</span>
-                  <span className="incoming-account-value">{amounts && c.amount !== undefined ? <Masked>{`${formatMoney(c.amount, v.currency)} · ${pctText(c.pct, c.amount)}`}</Masked> : pctText(c.pct)}</span>
+                  <span className="incoming-account-value">{amounts && c.amount !== undefined ? <Masked>{`${formatMoney(c.amount, v.currency)} · ${c.label ?? ''}`}</Masked> : c.label}</span>
                 </div>
               ))}
             </div>
@@ -187,9 +208,12 @@ function SpendingKind({ v }: { v: SpendingView }) {
       <p className="panel-note">
         {amounts ? 'What went out, by their own categories' : 'Each part’s share of what went out, by their own categories'}: never transfers, cash taken out, loan
         payments, or what they left out of their totals, and never the transactions themselves.
-        {m.left_out ? ` ${m.left_out}` : ''}
-        {v.may_be_incomplete ? ' Some transactions aren’t all in yet, so a month may be short.' : ''}
       </p>
+      {spendingNotes(v, m).map((n) => (
+        <p key={n} className="panel-note">
+          {n}
+        </p>
+      ))}
     </>
   );
 }
@@ -205,7 +229,7 @@ function HoldingsTable({ title, lines, currency, amounts }: { title: string; lin
           <div className="peer-row">
             <span className="incoming-account-name">{l.name}</span>
             <span className="incoming-account-value">
-              {amounts && l.amount !== undefined ? <Masked>{`${formatMoney(l.amount, currency)} · ${pctText(l.pct, l.amount)}`}</Masked> : pctText(l.pct, l.amount)}
+              {amounts && l.amount !== undefined ? <Masked>{`${formatMoney(l.amount, currency)} · ${l.label ?? ''}`}</Masked> : l.label}
             </span>
           </div>
           <Bar pct={l.pct} />
@@ -220,7 +244,9 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
   return (
     <>
       <div className="peer-row">
-        <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}` : 'Nothing recorded yet'}</span>
+        <span className="incoming-account-date">
+          {v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, positions and balances from ${shortDate(v.from)} on` : ''}` : 'Nothing recorded yet'}
+        </span>
         {amounts && v.total !== undefined && (
           <span className="incoming-account-value">
             <Masked>{formatMoney(v.total, v.currency)}</Masked>
@@ -238,7 +264,7 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
                 <span className="incoming-account-name">{p.ticker ?? p.name ?? 'A holding'}</span>
                 <span className="incoming-account-date"> · {p.ticker && p.name ? `${p.name}, ` : ''}{p.class}</span>
               </span>
-              <span className="incoming-account-value">{amounts && p.amount !== undefined ? <Masked>{formatMoney(p.amount, v.currency)}</Masked> : pctText(p.pct, p.amount)}</span>
+              <span className="incoming-account-value">{amounts && p.amount !== undefined ? <Masked>{formatMoney(p.amount, v.currency)}</Masked> : p.label}</span>
             </div>
           ))}
         </div>
@@ -261,8 +287,8 @@ function budgetText(b: BudgetLine, currency: string | null): string {
     if (b.limit <= 0) return `${formatMoney(b.spent, currency)} spent, nothing left`;
     return `${formatMoney(b.spent, currency)} of ${formatMoney(b.limit, currency)}`;
   }
-  if (b.pct === null) return b.over ? 'Nothing left, and over' : 'Nothing left';
-  return `${b.pct}% spent${b.over ? ', over' : ''}`;
+  if (b.label === null) return b.over ? 'Nothing left, and over' : 'Nothing left';
+  return `${b.label} spent${b.over ? ', over' : ''}`;
 }
 
 const meterOf = (b: BudgetLine): '' | ' warn' | ' over' => (b.over || (b.pct !== null && b.pct >= 100) ? ' over' : b.pct !== null && b.pct >= 85 ? ' warn' : '');
@@ -303,7 +329,9 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
             </>
           )}
           {m.left_out && <p className="panel-note">{m.left_out}</p>}
-          {m.may_be_incomplete && <p className="stale-note">This month’s transactions may not all be in, so what is spent may be off.</p>}
+          {m.may_be_incomplete && (
+            <p className="stale-note">{`What is spent in ${monthLabel(m.month)} may be off: some of its transactions may not all be in, or couldn’t all be read.`}</p>
+          )}
         </div>
       ))}
       <p className="panel-note">Spent against what is available, with what rolled over, by their own budgets.</p>
@@ -369,12 +397,12 @@ function GoalsKind({ v }: { v: GoalsView }) {
             <div className="peer-row">
               <span className="incoming-account-name">{g.name}</span>
               <span className="incoming-account-value">
-                {amounts ? <Masked>{`${formatMoney(g.saved!, g.currency)} of ${formatMoney(g.target!, g.currency)}`}</Masked> : g.target !== undefined ? <Masked>{`Target ${formatMoney(g.target, g.currency)}`}</Masked> : pctText(g.pct)}
+                {amounts ? <Masked>{`${formatMoney(g.saved!, g.currency)} of ${formatMoney(g.target!, g.currency)}`}</Masked> : g.target !== undefined ? <Masked>{`Target ${formatMoney(g.target, g.currency)}`}</Masked> : g.label}
               </span>
             </div>
             {g.pct !== null && <Bar pct={g.pct} state={g.pct >= 100 ? ' done' : ''} />}
             <div className="incoming-account-date">
-              {[why, outlook, g.pct !== null && amounts ? `${g.pct}% of the way` : null, g.target_date && !outlook ? `Its date: ${dayLabel(g.target_date)}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
+              {[why, outlook, g.label !== null && amounts ? `${g.label} of the way` : null, g.target_date && !outlook ? `Its date: ${dayLabel(g.target_date)}` : null, g.as_of ? `as of ${shortDate(g.as_of)}` : null]
                 .filter(Boolean)
                 .join(' · ')}
             </div>

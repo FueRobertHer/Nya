@@ -5336,6 +5336,25 @@ button.cash-flow-show {
   border-top: 1px solid var(--line);
 }
 
+/* A kind's name, and its level beneath it the whole width, so a closed
+   select shows its level whole however narrow the drawer is. */
+.kind-choice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0 6px;
+}
+
+.kind-name {
+  font-size: 14px;
+}
+
+.kind-choice select {
+  width: 100%;
+  font-size: 14px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
 .kind-row .plan-check {
   margin: 0 0 10px;
 }

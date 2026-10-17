@@ -8,7 +8,7 @@
 // catalogue (lib/stores.ts) loads the access log without loading
 // lib/sharing.ts, and the Plaid client with it.
 
-import type { ViewsRead } from './share-kinds';
+import type { DayViews } from './share-kinds';
 
 /** What an account's share shows, narrowest first: that it exists, its
  *  balance, or its balance and recent transactions. */
@@ -42,9 +42,9 @@ export const ACCESS_LOG_SLOT_MINUTES = 15;
  *  shown that day, and how many accounts were shown at each level, each
  *  account once, at the widest level shown that day. Counts, not ids, so a
  *  day is the same small size however many accounts were shown. `views`:
- *  the other kinds of share shown that day, each at the widest detail
- *  (lib/share-kinds.ts ViewsRead), when any was. */
-export type ShownDay = { day: string; times: number; levels: Record<Level, number>; views?: ViewsRead };
+ *  the other kinds of share shown that day, each as widely as it was shown
+ *  that day, and how many goals (lib/share-kinds.ts DayViews), when any was. */
+export type ShownDay = { day: string; times: number; levels: Record<Level, number>; views?: DayViews };
 
 /** How many of a record's days the drawer shows before "Show all", and so
  *  asks for first. */
@@ -69,3 +69,12 @@ export type RecordSummary = { days: ShownDay[]; total_days: number } | { days: n
  * little ahead of the server's.
  */
 export const SHARE_END_MAX_DAYS = 733;
+
+/** How many times one person's app may ask, in a window, for what is shared
+ *  with them (app/api/shared) and for "What they see" (app/api/connections/
+ *  preview), together (lib/share-limit.ts): each answer is worked out from
+ *  the sharer's own data as it is read, and each showing is counted in the
+ *  sharer's record. Far more than opening the Accounts tab and the drawer by
+ *  hand takes. */
+export const SHARED_READS_PER_WINDOW = 60;
+export const SHARED_READS_WINDOW_SECONDS = 10 * 60;

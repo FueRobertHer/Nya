@@ -61,19 +61,39 @@ export function inferences(f: InferenceFacts): Inference[] {
   const out: Inference[] = [];
   const v = f.views;
   const known = f.accounts.filter(shows);
+  // Holdings in amounts are what the investment accounts hold together: an
+  // amount of the same money as their balances, which nothing else shows
+  // while some of them aren't shared at a balance.
+  const investmentsUnshown = f.accounts.filter((a) => a.investment && !shows(a));
+  const byHoldings = v.holdings?.detail === 'amounts' && investmentsUnshown.length > 0;
 
-  // A net worth without its accounts, beside balances that are shown: the
-  // total less those is what the others hold. With one left over, that is
-  // its balance exactly.
-  if (v.net_worth && !v.net_worth.accounts && known.length > 0) {
-    const rest = f.accounts.filter((a) => !shows(a));
+  // A net worth beside amounts of parts of it that are shown: the balances
+  // of some accounts, and holdings in amounts. The total less those is what
+  // the rest hold; with one account left over, that is its balance. A net
+  // worth with its accounts lists only balances the accounts' own shares show
+  // (lib/share-views.ts), so it gives nothing more than one without them.
+  if (v.net_worth && (known.length > 0 || byHoldings)) {
+    const rest = f.accounts.filter((a) => !shows(a) && !(byHoldings && a.investment));
+    const seen =
+      known.length > 0 && byHoldings
+        ? `your net worth, ${balancesOf(known)} and your holdings in amounts`
+        : known.length > 0
+          ? `your net worth and ${balancesOf(known)}`
+          : 'your net worth and your holdings in amounts';
     if (rest.length === 1) {
       out.push({
         id: 'net_worth_rest',
-        text: `They see your net worth and ${balancesOf(known)}, so they can work out the balance of ${rest[0].label}, the one account whose balance you don’t share.`,
+        text: byHoldings
+          ? `They see ${seen}, so they can work out about the balance of ${rest[0].label}, the one account besides your investments whose balance you don’t share.`
+          : `They see ${seen}, so they can work out the balance of ${rest[0].label}, the one account whose balance you don’t share.`,
       });
     } else if (rest.length > 1) {
-      out.push({ id: 'net_worth_rest', text: `They see your net worth and ${balancesOf(known)}, so they can work out what your other accounts add up to.` });
+      out.push({
+        id: 'net_worth_rest',
+        text: byHoldings
+          ? `They see ${seen}, so they can work out about what your ${known.length > 0 ? 'other accounts' : 'accounts'} besides your investments add up to.`
+          : `They see ${seen}, so they can work out what your other accounts add up to.`,
+      });
     }
   }
 
@@ -120,12 +140,16 @@ export function inferences(f: InferenceFacts): Inference[] {
   }
 
   // Holdings as percentages, beside an amount they know of the same money:
-  // scaled by it, each part, and the whole, follow.
+  // scaled by it, each part, and the whole, follow. The amount is an
+  // investment account's balance, or what a net worth leaves for the
+  // investment accounts once every other account's balance is shown.
   if (v.holdings?.detail === 'shares') {
     const investments = known.filter((a) => a.investment);
-    const listed = v.net_worth?.accounts === true && f.accounts.some((a) => a.investment);
-    if (investments.length > 0 || listed) {
-      const amount = investments.length > 0 ? balancesOf(investments) : 'the balances of your investment accounts in your net worth';
+    const leftForThem = !!v.net_worth && investmentsUnshown.length > 0 && f.accounts.every((a) => shows(a) || a.investment);
+    if (investments.length > 0) {
+      out.push({ id: 'holdings_total', text: `With your holdings as percentages and ${balancesOf(investments)}, they can estimate how much is in each part of your holdings, and in all.` });
+    } else if (leftForThem) {
+      const amount = known.length > 0 ? 'your net worth less the balances they see' : 'your net worth, which is what your investment accounts hold';
       out.push({ id: 'holdings_total', text: `With your holdings as percentages and ${amount}, they can estimate how much is in each part of your holdings, and in all.` });
     }
   }

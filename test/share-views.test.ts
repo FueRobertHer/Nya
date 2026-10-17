@@ -32,7 +32,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, seedPerson, seedOther, daysAgo, DAY, CHASE_TXNS } = await import('./api-fixture');
+const { ctx, seedPerson, seedOther, daysAgo, DAY, CHASE_TXNS, SYNCED_AT, txn } = await import('./api-fixture');
 const { readNetWorth, readNetWorthAndHistory, readSpending, readBudgets } = await import('@/lib/api-read');
 const { tidy } = await import('@/lib/totals');
 
@@ -73,8 +73,14 @@ const { ownerContainer } = await import('@/lib/owners');
 const { markEnded } = await import('@/lib/lifecycle');
 const { allocationSettingsStore } = await import('@/lib/allocation-settings');
 const { accessLogStore } = await import('@/lib/access-log');
+const { weeklySettingStore } = await import('@/lib/weekly-summary/store');
+const { setBudgets } = await import('@/lib/budgets');
+const { encodeJsonBlob } = await import('@/lib/blob');
+const { SHARED_READS_PER_WINDOW } = await import('@/lib/share-rules');
+const { connectWithoutTransactions } = await import('./api-fixture');
 const { encrypt } = await import('@/lib/crypto');
 const { recordDirectory } = await import('@/lib/links');
+const { saveManualAccount } = await import('@/lib/manual');
 
 const route = async (path: string, method: string, body?: unknown, query = '') => {
   const mod: any = await import(`@/app/api/${path}/route`);
@@ -117,6 +123,17 @@ const ownerData = () => {
   for (const [k, h] of (fake as any).hashes) if (k.startsWith(prefix)) for (const [f, v] of h) out[`${k} ${f}`] = v;
   return out;
 };
+
+/** The bank's stored rows as the fixture keeps them, with `extra` beside them. */
+async function chaseTxnsWith(extra: Record<string, unknown>[]) {
+  const accounts = {
+    acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null },
+    acc_card: { name: 'Card', official_name: null, type: 'credit', subtype: 'credit card', mask: '2222', balances: null },
+    acc_save: { name: 'Savings', official_name: null, type: 'depository', subtype: 'savings', mask: '3333', balances: null },
+  };
+  const txns = Object.fromEntries([...CHASE_TXNS, ...extra].map((t: any) => [t.transaction_id, t]));
+  await fake.set(ctxKey('txns:item_chase'), await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns, synced_at: SYNCED_AT }));
+}
 
 /** Ends ahead, as the drawer sends them. */
 const LATER = new Date(NOW.getTime() + 31 * DAY).toISOString();
@@ -183,8 +200,9 @@ afterEach(() => {
 });
 
 describe('net worth', () => {
-  test('each account’s newest measured balance added up, to the cent, as the owner’s own total, with the accounts behind it when chosen', async () => {
-    expect((await shareViews({ net_worth: { detail: 'total', accounts: true } })).status).toBe(200);
+  test('each account’s newest measured balance added up, to the cent, as the owner’s own total, with the accounts in it when chosen', async () => {
+    const every = { acc_chk: 'balance', acc_card: 'balance', acc_ira: 'transactions', manual_house: 'balance', manual_wallet: 'balance' };
+    expect((await shareViews({ net_worth: { detail: 'total', accounts: true } }, every)).status).toBe(200);
     const nw = (await partnerViews()).net_worth;
     // Checking 1,250.00 (its newest, partial, day), the card's 310.00 owed,
     // the IRA's 20,500.00, the house and the wallet; Savings is hidden.
@@ -202,6 +220,21 @@ describe('net worth', () => {
     ]);
     // They add up to the total, a debt taken away.
     expect(nw.accounts.reduce((s: number, a: any) => s + (a.debt ? -a.balance : a.balance), 0)).toBe(nw.total);
+  });
+
+  test('with its accounts, only those whose balances the account rows share: never one set to Not shared or That it exists', async () => {
+    await shareViews({ net_worth: { detail: 'total', accounts: true } }, { acc_chk: 'balance', acc_card: 'exists', acc_ira: 'transactions' });
+    const [seen] = await partnerSees();
+    expect(seen.views.net_worth.accounts.map((a: any) => a.label)).toEqual(['Broker IRA ••4444', 'Chase Checking ••1111']);
+    // The card shows that it exists, and nothing of its balance anywhere; the
+    // house and the wallet, not shared, aren't named at all.
+    expect(seen.accounts.find((a: any) => a.id === 'acc_card')).toMatchObject({ level: 'exists', balance: null });
+    expect(JSON.stringify(seen)).not.toMatch(/House|Wallet|Property|"balance":310|300000|"balance":40\b/);
+    // The total is still the whole net worth.
+    expect(seen.views.net_worth.total).toBe(321_480);
+    // None shared at a balance: none listed.
+    await shareViews({ net_worth: { detail: 'total', accounts: true } }, { acc_chk: 'exists', acc_card: 'none', acc_ira: 'none' });
+    expect((await partnerViews()).net_worth.accounts).toEqual([]);
   });
 
   test('its history is the owner’s chart, hidden accounts subtracted, a point a week', async () => {
@@ -262,10 +295,12 @@ describe('spending', () => {
       expect(categories.sort()).toEqual(own.categories.map((c) => [c.category.toLowerCase(), c.spent]).sort());
       for (const g of m.groups) {
         expect(g.pct).toBe(Math.round((g.amount / m.total) * 100));
+        expect(g.label).toBe(g.pct === 0 ? '<1%' : g.pct === 100 && g.amount < m.total ? '>99%' : `${g.pct}%`);
         expect(g.categories.reduce((s: number, c: any) => s + c.amount, 0)).toBeCloseTo(g.amount, 8);
       }
-      // The euros are named in their month, and added nowhere.
-      expect(m.left_out).toBe(m.month === monthOf(dateOf('t_paris')) ? "1 transaction in EUR isn't in these totals, which are in USD." : null);
+      // The euros are named in their month, by their currency alone, and
+      // added nowhere.
+      expect(m.left_out).toBe(m.month === monthOf(dateOf('t_paris')) ? 'What went out in EUR isn’t in these totals, which are in USD.' : null);
     }
     // Everything, to the cent.
     expect(tidy(sp.months.reduce((s: number, m: any) => s + m.total, 0))).toBe(tidy(5.5 + 1200 + 35 + 80 + 12 + 25 + 3 * 15.99));
@@ -277,10 +312,50 @@ describe('spending', () => {
     for (const m of sp.months) {
       expect(m.total).toBeUndefined();
       for (const g of m.groups) {
-        expect(Object.keys(g).sort()).toEqual(['name', 'pct']);
+        expect(Object.keys(g).sort()).toEqual(['label', 'name', 'pct']);
       }
     }
     expect(JSON.stringify(sp)).not.toMatch(/1357|1200|15\.99/);
+  });
+
+  test('what another currency left out is money out only, named by its currency alone: never money in, nor how many', async () => {
+    // Two paychecks in euros on the coffee's day.
+    const day = dateOf('t_coffee');
+    await chaseTxnsWith([1, 2].map((i) => ({ ...txn(`t_eur_pay${i}`, 'acc_chk', 0, -2000, { iso_currency_code: 'EUR', category: 'income' }), date: day })));
+    await shareViews({ spending: { detail: 'shares', by: 'group' } });
+    const sp = (await partnerViews()).spending;
+    const m = sp.months.find((x: any) => x.month === monthOf(day));
+    expect(m.left_out).toBe(monthOf(day) === monthOf(dateOf('t_paris')) ? 'What went out in EUR isn’t in these totals, which are in USD.' : null);
+    for (const x of sp.months) expect(x.left_out ?? '').not.toMatch(/\d/);
+    // The owner's own totals count the paychecks among what they left out; the share never does.
+    const own = await readSpending(ctx, { from: `${m.month}-01`, to: `${m.month}-31` });
+    expect(own.left_out.find((l) => l.currency === 'EUR')!.count).toBeGreaterThanOrEqual(2);
+  });
+
+  test('a transaction whose exclusion can’t be read is counted, as the owner’s Activity tab counts it, and its month says so', async () => {
+    await shareViews({ spending: { detail: 'amounts', by: 'group' }, budgets: { detail: 'amounts', by: 'group' } });
+    // The excluded $2,000.00 purchase's record damaged.
+    await fake.hset(ctxKey('transaction-annotations'), { t_big: 'garbage' });
+    const v = await quietly(partnerViews);
+    const month = monthOf(dateOf('t_big'));
+    const m = v.spending.months.find((x: any) => x.month === month);
+    expect(m.exclusions_unknown).toBe(true);
+    const own = await quietly(() => readSpending(ctx, { from: `${month}-01`, to: `${month}-31` }));
+    expect(own.exclusion_unknown).toBeGreaterThan(0);
+    expect(m.total).toBe(own.money_out);
+    expect(m.total).toBe(tidy(spentIn(month) + 2000));
+    for (const x of v.spending.months) if (x.month !== month) expect(x.exclusions_unknown).toBeUndefined();
+    // The budgets say that month may be off.
+    expect(v.budgets.months.find((x: any) => x.month === month).may_be_incomplete).toBe(true);
+  });
+
+  test('a bank account whose transactions don’t come in leaves spending that may be short, and says so', async () => {
+    await shareViews({ spending: { detail: 'amounts', by: 'group' } });
+    expect((await partnerViews()).spending.may_be_incomplete).toBeUndefined();
+    await connectWithoutTransactions(fake, { item_id: 'item_refused', name: 'Refused Bank', accounts: [{ account_id: 'acc_ref', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
+    const sp = (await quietly(partnerViews)).spending;
+    expect(sp.unreadable).toBeUndefined();
+    expect(sp.may_be_incomplete).toBe(true);
   });
 
   test('never a transaction, its merchant, note, tags, split parts or group', async () => {
@@ -309,11 +384,13 @@ describe('holdings', () => {
     // The IRA's 20,500.00: its 20,000.00 of VTI, and 500.00 no position explains.
     expect(h).toMatchObject({ detail: 'amounts', currency: 'USD', total: 20_500 });
     expect(h.classes).toEqual([
-      { slot: 'us-stocks', name: 'US stocks', pct: 98, amount: 20_000 },
-      { slot: 'unclassified', name: 'Unclassified', pct: 2, amount: 500 },
+      { slot: 'us-stocks', name: 'US stocks', pct: 98, label: '98%', amount: 20_000 },
+      { slot: 'unclassified', name: 'Unclassified', pct: 2, label: '2%', amount: 500 },
     ]);
-    expect(h.buckets).toEqual([{ slot: 'tax-deferred', name: 'Tax-deferred', pct: 100, amount: 20_500 }]);
-    expect(h.positions).toEqual([{ ticker: 'VTI', name: 'Vanguard Total Stock Market ETF', class: 'US stocks', pct: 98, amount: 20_000 }]);
+    expect(h.buckets).toEqual([{ slot: 'tax-deferred', name: 'Tax-deferred', pct: 100, label: '100%', amount: 20_500 }]);
+    expect(h.positions).toEqual([{ ticker: 'VTI', name: 'Vanguard Total Stock Market ETF', class: 'US stocks', pct: 98, label: '98%', amount: 20_000 }]);
+    // The newest and the oldest day it is from: the positions', and the balance's.
+    expect(h.from <= h.as_of).toBe(true);
     expect(h.notes.join(' ')).toContain('Unclassified');
     const text = JSON.stringify(await partnerSees());
     for (const never of ['acc_ira', 'IRA', 'Broker', '4444', 'sec_vti', '15000', '"quantity"', '"price"', 'cost']) expect(text).not.toContain(never);
@@ -325,12 +402,27 @@ describe('holdings', () => {
     const h = (await partnerViews()).holdings;
     // The unlisted 500.00 is the owner's split's: bonds.
     expect(h.classes).toEqual([
-      { slot: 'us-stocks', name: 'US stocks', pct: 98 },
-      { slot: 'bonds', name: 'Bonds', pct: 2 },
+      { slot: 'us-stocks', name: 'US stocks', pct: 98, label: '98%' },
+      { slot: 'bonds', name: 'Bonds', pct: 2, label: '2%' },
     ]);
-    expect(h.buckets).toEqual([{ slot: 'roth', name: 'Roth', pct: 100 }]);
+    expect(h.buckets).toEqual([{ slot: 'roth', name: 'Roth', pct: 100, label: '100%' }]);
     expect(h.total).toBeUndefined();
     expect(h.positions).toBeUndefined();
+  });
+});
+
+describe('holdings: what isn’t counted is said', () => {
+  test('an investment account with no balance yet and no position, never counted as nothing', async () => {
+    const meta = (a: Record<string, unknown>) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a });
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_broker: await encrypt(
+        JSON.stringify([meta({ account_id: 'acc_ira', name: 'IRA', type: 'investment', subtype: 'ira', mask: '4444' }), meta({ account_id: 'acc_roth', name: 'Roth', type: 'investment', subtype: 'roth', mask: '5555' })])
+      ),
+    });
+    await shareViews({ holdings: { detail: 'shares', positions: false } });
+    const h = (await partnerViews()).holdings;
+    expect(h.notes).toContain('1 investment account has no balance yet and no position, so it isn’t counted.');
+    expect(JSON.stringify(h)).not.toMatch(/Roth|5555|acc_roth/);
   });
 });
 
@@ -343,14 +435,34 @@ describe('budgets', () => {
       // Food and drink (coffee, lunch, the market) against 100.00, housing (the
       // rent) against 1,500.00, travel against 200.00 (its euros left out).
       const spent = budgetSpent(m.month);
-      expect(m.total).toEqual({ name: 'All budgets', spent, limit: 1800, pct: Math.round((spent / 1800) * 100), over: false });
+      const pct = Math.round((spent / 1800) * 100);
+      expect(m.total).toEqual({ name: 'All budgets', spent, limit: 1800, pct, label: spent > 0 && pct === 0 ? '<1%' : `${pct}%`, over: false });
       const own = await readBudgets(ctx, { month: m.month });
       expect(m.total.spent).toBe(own.total.spent);
       const lines = m.groups.flatMap((g: any) => g.categories);
       expect(lines.map((c: any) => [c.name.toLowerCase(), c.spent, c.limit]).sort()).toEqual(own.budgets.map((x) => [x.category.toLowerCase(), x.spent, x.available]).sort());
       const food = spentIn(m.month, ['t_rent', 't_fee', 't_card', 't_flix0', 't_flix1', 't_flix2']);
-      expect(lines.find((c: any) => c.name === 'Food and drink')).toEqual({ name: 'Food and drink', spent: food, limit: 100, pct: Math.round(food), over: false });
-      expect(m.left_out).toBe(own.left_out_text);
+      expect(lines.find((c: any) => c.name === 'Food and drink')).toEqual({
+        name: 'Food and drink',
+        spent: food,
+        limit: 100,
+        pct: Math.round(food),
+        label: food > 0 && Math.round(food) === 0 ? '<1%' : `${Math.round(food)}%`,
+        over: false,
+      });
+      // What the owner's own budgets leave out, by currency alone: never how many.
+      expect(m.left_out).toBe(own.left_out.length > 0 ? `What was spent in ${own.left_out.map((l) => l.currency).join(' and ')} isn’t in these budgets, which are in USD.` : null);
+    }
+  });
+
+  test('as progress, money that is there never reads 0%: a little spent against a large budget is <1%', async () => {
+    await setBudgets(ctx, { 'food and drink': 100_000, housing: 1500, travel: 200 });
+    await shareViews({ budgets: { detail: 'progress', by: 'category' } });
+    const b = (await partnerViews()).budgets;
+    for (const m of b.months) {
+      const food = m.groups.flatMap((g: any) => g.categories).find((c: any) => c.name === 'Food and drink');
+      const spent = spentIn(m.month, ['t_rent', 't_fee', 't_card', 't_flix0', 't_flix1', 't_flix2']);
+      expect(food).toEqual({ name: 'Food and drink', pct: 0, label: spent > 0 ? '<1%' : '0%', over: false });
     }
   });
 
@@ -358,8 +470,8 @@ describe('budgets', () => {
     await shareViews({ budgets: { detail: 'progress', by: 'group' } });
     const b = (await partnerViews()).budgets;
     for (const m of b.months) {
-      expect(Object.keys(m.total).sort()).toEqual(['name', 'over', 'pct']);
-      for (const g of m.groups) expect(Object.keys(g).sort()).toEqual(['name', 'over', 'pct']);
+      expect(Object.keys(m.total).sort()).toEqual(['label', 'name', 'over', 'pct']);
+      for (const g of m.groups) expect(Object.keys(g).sort()).toEqual(['label', 'name', 'over', 'pct']);
     }
   });
 });
@@ -376,6 +488,7 @@ describe('goals', () => {
         name: 'Rainy day',
         state: 'tracked',
         pct: 33,
+        label: '33%',
         currency: 'USD',
         target: 3000,
         saved: 1000,
@@ -383,10 +496,21 @@ describe('goals', () => {
         outlook: { status: rainy.projection!.status, completion: rainy.projection!.completion_month, beyond: false, date_passed: false },
         as_of: daysAgo(1),
       },
-      { name: 'Someday', state: 'untracked', pct: null, currency: null, target: 800, target_date: null, outlook: null, as_of: null },
+      { name: 'Someday', state: 'untracked', pct: null, label: null, currency: null, target: 800, target_date: null, outlook: null, as_of: null },
     ]);
     const text = JSON.stringify(await partnerSees());
     for (const never of ['SECRET', 'monthly_target', 'rate', 'needed', 'short', 'should_have', 'allocation', '"100"', GOAL(1), 'acc_chk']) expect(text).not.toContain(never);
+  });
+
+  test('a goal with nothing saved yet reads 0%, never <1%', async () => {
+    await saveManualAccount(ctx, { account_id: 'manual_jar', name: 'Jar', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 0, updated_at: NOW.toISOString() });
+    const res = await as('user_owner', () =>
+      route('goals', 'PUT', { goals: [{ id: GOAL(7), name: 'New fund', target: 500, account_id: 'manual_jar', plan: { monthly_target: 50 } }] })
+    );
+    expect(res.status).toBe(200);
+    await shareViews({ goals: { detail: 'progress', goals: [GOAL(7)] } });
+    const [fund] = (await partnerViews()).goals.goals;
+    expect(fund).toMatchObject({ name: 'New fund', state: 'tracked', pct: 0, label: '0%' });
   });
 
   test('as progress, no amount', async () => {
@@ -423,10 +547,10 @@ describe('goals', () => {
 describe('what the owner’s screens leave out stays out', () => {
   test('an account that ended counts from its day in nothing, as everywhere in the app', async () => {
     await markEnded(ctx, 'acc_card', { state: 'closed', on: dateOf('t_card') }, { type: 'credit', label: { name: 'Card', institution: 'Chase', mask: '2222' }, item_id: 'item_chase' });
-    await shareViews({ net_worth: { detail: 'total', accounts: true }, spending: { detail: 'amounts', by: 'group' } });
+    await shareViews({ net_worth: { detail: 'total', accounts: true }, spending: { detail: 'amounts', by: 'group' } }, { acc_chk: 'balance', acc_card: 'balance' });
     const v = await partnerViews();
     expect(v.net_worth.total).toBe(1250 + 20_500 + 300_000 + 40);
-    expect(v.net_worth.accounts.map((a: any) => a.label)).not.toContain('Chase Card ••2222');
+    expect(v.net_worth.accounts.map((a: any) => a.label)).toEqual(['Chase Checking ••1111']);
     // The card's purchase on its end day is left out with it.
     for (const m of v.spending.months) expect(m.total).toBe(spentIn(m.month, ['t_card']));
   });
@@ -436,7 +560,7 @@ describe('what the owner’s screens leave out stays out', () => {
     await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(1) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
     await shareViews({ goals: { detail: 'amounts', goals: [GOAL(1)] } });
     expect((await partnerViews()).goals.goals).toEqual([
-      { name: 'Rainy day', state: 'ended', pct: null, currency: 'USD', target: 3000, target_date: '2030-01-31', outlook: null, as_of: null, ended_on: daysAgo(1) },
+      { name: 'Rainy day', state: 'ended', pct: null, label: null, currency: 'USD', target: 3000, target_date: '2030-01-31', outlook: null, as_of: null, ended_on: daysAgo(1) },
     ]);
   });
 });
@@ -478,6 +602,12 @@ describe('what can’t be read', () => {
   test('a manual account’s book that can’t be read: spending and budgets say so', async () => {
     await shareViews(all);
     await fake.hset(ctxKey('manual-transactions'), { manual_wallet: 'garbage' });
+    expect(unreadable(await quietly(partnerViews))).toEqual(['spending', 'budgets']);
+  });
+
+  test('rows imported from files into a linked account that can’t be read: spending and budgets say so', async () => {
+    await shareViews(all);
+    await fake.hset(ctxKey('imported-transactions'), { acc_chk: 'garbage' });
     expect(unreadable(await quietly(partnerViews))).toEqual(['spending', 'budgets']);
   });
 
@@ -526,6 +656,22 @@ describe('the preview', () => {
     expect(JSON.stringify(seen)).not.toContain('inferences');
   });
 
+  test('a net worth beside holdings in amounts gives what the accounts besides the investments add up to; a goal’s account listed in a net worth gives its target', async () => {
+    await saveGoals();
+    await shareViews({ net_worth: { detail: 'total', accounts: false }, holdings: { detail: 'amounts', positions: false } });
+    const said = (await previewOf()).body.inferences;
+    expect(said).toEqual([
+      { id: 'net_worth_rest', text: 'They see your net worth and your holdings in amounts, so they can work out about what your accounts besides your investments add up to.' },
+    ]);
+    // Rainy day, as progress, counts checking, whose balance a net worth with
+    // its accounts lists only because checking's own share shows it.
+    await shareViews({ net_worth: { detail: 'total', accounts: true }, holdings: null, goals: { detail: 'progress', goals: [GOAL(1)] } }, { acc_chk: 'balance' });
+    const preview = (await previewOf()).body;
+    expect(preview.view.views.net_worth.accounts.map((a: any) => a.label)).toEqual(['Chase Checking ••1111']);
+    expect(preview.inferences.map((i: any) => i.id)).toContain('goal_target');
+    expect(preview.inferences.find((i: any) => i.id === 'goal_target').text).toBe('From the progress of Rainy day and the balance of Chase Checking ••1111, they may be able to work out its target.');
+  });
+
   test('when what they could work out can’t be worked out, it says so, and still shows what they see', async () => {
     await saveGoals();
     await shareViews({ goals: { detail: 'progress', goals: [GOAL(1)] } });
@@ -539,13 +685,18 @@ describe('the preview', () => {
     expect(preview.body.view.views).toEqual((await quietly(partnerSees))[0].views);
   });
 
-  test('records nothing, and changes nothing in the owner’s container', async () => {
+  test('records nothing, and changes nothing of the owner’s data: the preview is only counted against their own limit on reads', async () => {
     await saveGoals();
     await shareViews({ net_worth: { detail: 'history', accounts: true }, spending: { detail: 'amounts', by: 'category' }, holdings: { detail: 'amounts', positions: true }, budgets: { detail: 'amounts', by: 'category' }, goals: { detail: 'amounts', goals: [GOAL(1)] } });
-    const before = ownerData();
+    const was = ownerData();
     await previewOf();
-    expect(ownerData()).toEqual(before);
-    // Their own read changes nothing either, but their record of showings.
+    const counted = ctxKey('sharing-reads');
+    const { [counted]: reads, ...rest } = ownerData();
+    expect(reads).toBe('1');
+    expect(rest).toEqual(was);
+    // Their own read changes nothing either, but their record of showings
+    // (their read is counted in their own container).
+    const before = ownerData();
     await partnerSees();
     const after = ownerData();
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
@@ -575,10 +726,42 @@ describe('ends and the record of showings', () => {
     await quietly(partnerSees);
     const logId = (await fake.hget<any>(testKey('connections'), `${pair}|log`)).id;
     const record = await accessLogStore.get(ctx, logId);
-    expect(record!.shown).toEqual([{ at: NOW.toISOString(), times: 2, read: { acc_chk: 'balance' }, views: { net_worth: 'history', spending: 'shares' } }]);
+    expect(record!.shown).toEqual([
+      { at: NOW.toISOString(), times: 2, read: { acc_chk: 'balance' }, views: { net_worth: { detail: 'history', accounts: false }, spending: { detail: 'shares', by: 'group' } } },
+    ]);
     // Both of them see it, by day, with the kinds.
     const records = await as('user_owner', () => route('connections/records', 'GET', undefined, `?id=${pair}&tz=UTC`));
-    expect(records.body.shown_to_them.days).toEqual([{ day: TODAY, times: 2, levels: { exists: 0, balance: 1, transactions: 0 }, views: { net_worth: 'history', spending: 'shares' } }]);
+    expect(records.body.shown_to_them.days).toEqual([
+      { day: TODAY, times: 2, levels: { exists: 0, balance: 1, transactions: 0 }, views: { net_worth: { detail: 'history', accounts: false }, spending: { detail: 'shares', by: 'group' } } },
+    ]);
+  });
+
+  test('a showing keeps what else each kind showed, and which goals: the accounts in a net worth, the categories, the positions', async () => {
+    await saveGoals();
+    await shareViews(
+      {
+        net_worth: { detail: 'total', accounts: true },
+        spending: { detail: 'amounts', by: 'category' },
+        holdings: { detail: 'shares', positions: true },
+        budgets: { detail: 'progress', by: 'category' },
+        // One on a hidden account, shown to nobody: not in the record either.
+        goals: { detail: 'progress', goals: [GOAL(3), GOAL(1), GOAL(2)] },
+      },
+      { acc_chk: 'balance' }
+    );
+    await partnerSees();
+    const logId = (await fake.hget<any>(testKey('connections'), `${pair}|log`)).id;
+    const [row] = (await accessLogStore.get(ctx, logId))!.shown;
+    expect(row.views).toEqual({
+      net_worth: { detail: 'total', accounts: true },
+      spending: { detail: 'amounts', by: 'category' },
+      holdings: { detail: 'shares', positions: true },
+      budgets: { detail: 'progress', by: 'category' },
+      goals: { detail: 'progress', goals: [GOAL(1), GOAL(3)] },
+    });
+    // The drawer's day counts the goals, never names them.
+    const records = await as('user_owner', () => route('connections/records', 'GET', undefined, `?id=${pair}&tz=UTC`));
+    expect(records.body.shown_to_them.days[0].views.goals).toEqual({ detail: 'progress', count: 2 });
   });
 
   test('a record a release from before kinds wrote still reads, and one with a kind this release doesn’t know is unrecognised, never read as less', async () => {
@@ -588,7 +771,7 @@ describe('ends and the record of showings', () => {
     const before = new Date(NOW.getTime() - 15 * 60_000).toISOString();
     await accessLogStore.set(ctx, logId, { shown: [{ at: before, times: 1, read: { acc_chk: 'balance' } }] });
     await partnerSees();
-    expect((await accessLogStore.get(ctx, logId))!.shown.map((s) => s.views ?? null)).toEqual([null, { net_worth: 'total' }]);
+    expect((await accessLogStore.get(ctx, logId))!.shown.map((s) => s.views ?? null)).toEqual([null, { net_worth: { detail: 'total', accounts: false } }]);
     const later = await encrypt(JSON.stringify({ shown: [{ at: before, times: 1, read: {}, views: { bills: 'upcoming' } }] }));
     await fake.hset(ctxKey('sharing-access-log'), { [logId]: later });
     const err = await accessLogStore.get(ctx, logId).catch((e) => e);
@@ -674,13 +857,57 @@ describe('storage, and what a release from before kinds reads', () => {
     const { mySharing } = await import('@/lib/sharing');
     const mine = await mySharing('user_owner', ctx);
     expect(mine!.connections[0].shared_views).toEqual({ spending: { detail: 'amounts', by: 'group' }, goals: { detail: 'progress', goals: [GOAL(1)] } });
-    expect(mine!.connections[0].shown_to_them![0].views).toEqual({ spending: 'amounts', goals: 'progress' });
+    expect(mine!.connections[0].shown_to_them![0].views).toEqual({ spending: { detail: 'amounts', by: 'group' }, goals: { detail: 'progress', goals: [GOAL(1)] } });
     expect(JSON.stringify(mine)).not.toMatch(/1357|Rainy day/);
     const partnerCtx = { container: await ownerContainer('user_partner') } as any;
     const theirs = await mySharing('user_partner', partnerCtx);
     expect(theirs!.connections[0].shared_views).toBeUndefined();
-    // Their record of showings to them is about them: the kinds, by name, never a figure.
-    expect(JSON.stringify(theirs)).not.toMatch(/detail|"by"|1357|Rainy/);
+    // The owner's record of showings to them is about them: the kinds shown,
+    // as they were shown, never a figure, a name or the owner's settings.
+    expect(theirs!.connections[0].shown_to_me![0].views).toEqual({ spending: { detail: 'amounts', by: 'group' }, goals: { detail: 'progress', goals: [GOAL(1)] } });
+    expect(JSON.stringify(theirs)).not.toMatch(/1357|Rainy|Food|Housing/);
+  });
+});
+
+describe('the owner’s own month', () => {
+  test('this month is the owner’s, in the time zone their weekly summary keeps; else by the UTC day', async () => {
+    await shareViews({ spending: { detail: 'shares', by: 'group' }, budgets: { detail: 'progress', by: 'group' } });
+    // The last evening of the month by UTC: in Kiritimati (UTC+14) the next has begun.
+    const [y, mo] = MONTH.split('-').map(Number);
+    const lastDay = new Date(Date.UTC(y, mo, 0)).toISOString().slice(0, 10);
+    setSystemTime(new Date(`${lastDay}T20:00:00.000Z`));
+    expect((await partnerViews()).spending.months[0].month).toBe(MONTH);
+    await weeklySettingStore.set(ctx, { v: 1, enabled: false, weekday: 1, time_zone: 'Pacific/Kiritimati', updated_at: NOW.toISOString() });
+    const v = await partnerViews();
+    expect(v.spending.months[0]).toMatchObject({ month: addMonths(MONTH, 1), so_far: true, groups: [] });
+    expect(v.spending.months[1]).toMatchObject({ month: MONTH, so_far: false });
+    expect(v.budgets.months.map((m: any) => m.month)).toEqual([addMonths(MONTH, 1), MONTH]);
+    // A zone this runtime doesn't know leaves the UTC day.
+    await weeklySettingStore.set(ctx, { v: 1, enabled: false, weekday: 1, time_zone: 'Mars/Olympus_Mons', updated_at: NOW.toISOString() });
+    expect((await partnerViews()).spending.months[0].month).toBe(MONTH);
+  });
+});
+
+describe('the limit on reads', () => {
+  test(`${SHARED_READS_PER_WINDOW} reads in ten minutes, the preview’s with them, then a 429 that says when; a count that can’t be read turns reads away`, async () => {
+    await shareViews({ net_worth: { detail: 'total', accounts: false } });
+    const partnerKey = ctxKey('sharing-reads').replace(ctx.container, (await ownerContainer('user_partner'))!);
+    await fake.set(partnerKey, String(SHARED_READS_PER_WINDOW - 1));
+    expect(await partnerSees()).toHaveLength(1);
+    const refused = await as('user_partner', () => route('shared', 'GET'));
+    expect(refused.status).toBe(429);
+    expect(refused.body.error).toBe(`What is shared can be read ${SHARED_READS_PER_WINDOW} times in 10 minutes. Try again in 10 minutes.`);
+    expect(refused.body.retry_after_seconds).toBeGreaterThan(0);
+    // The one turned away read nothing, and recorded nothing.
+    const logId = (await fake.hget<any>(testKey('connections'), `${pair}|log`)).id;
+    expect((await accessLogStore.get(ctx, logId))!.shown.map((s) => s.times)).toEqual([1]);
+    // The owner's preview counts in the owner's own container.
+    await fake.set(ctxKey('sharing-reads'), String(SHARED_READS_PER_WINDOW));
+    expect((await previewOf()).status).toBe(429);
+    await fake.set(ctxKey('sharing-reads'), 'garbage');
+    const unreadableCount = await quietly(() => previewOf());
+    expect(unreadableCount.status).toBe(503);
+    expect(unreadableCount.body.error).toContain('couldn’t be checked just now');
   });
 });
 

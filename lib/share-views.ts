@@ -16,12 +16,15 @@
 //     measured balance added up as the Accounts tab adds them (in the currency
 //     most accounts are in, the others named and left out), and the history
 //     the owner's chart draws, hidden accounts subtracted and ended ones from
-//     their end day, one point a week; readAccounts for the accounts behind it.
+//     their end day, one point a week (at "total", readNetWorth: the same
+//     total without drawing the chart); readAccounts for the accounts in it
+//     whose balances the share of accounts shows, and only those.
 //   - spending: the Activity tab's own assembly (lib/activity.ts
 //     assembleBankRows and finishActivity, never syncing) and its totals
 //     (lib/totals.ts summarize, by the spending rule of lib/spending.ts): one
-//     currency, what was left out for another named, transfers and what the
-//     owner excluded left out, money out only, by category and its group.
+//     currency, what was left out for another named by its currency alone,
+//     transfers and what the owner excluded left out, money out only, by
+//     category and its group.
 //   - holdings: the allocation the Plan tab draws (lib/allocation/allocation.ts
 //     allocate), over the investment accounts' newest measured balances and
 //     the positions last recorded (readAccounts, readHoldings), with the
@@ -29,7 +32,9 @@
 //   - budgets: the Budgets tab's read of a month (lib/budget-month.ts
 //     readBudgetMonth) and the read-only API's answer from it
 //     (lib/api-read.ts budgetsAnswer): spent against what is available, with
-//     what rolled over, this month and last.
+//     what rolled over, this month and last, both from one read of the
+//     transactions (readBudgetMonths), the income pool left unread as it is
+//     never shown.
 //   - goals: lib/api-goals.ts readGoals, each goal as the Goals card tells it
 //     (lib/goal-view.ts).
 //
@@ -41,6 +46,11 @@
 // in holdings, no monthly rate or amount short behind a goal's projection,
 // and at the percentage levels no amount at all.
 //
+// THE OWNER'S MONTH. "This month" is the owner's own: the month it is in the
+// time zone they keep for their weekly summary (lib/weekly-summary/
+// settings.ts), as their own screens count months on their device; by the
+// UTC day, as the read-only API counts them, when they keep none.
+//
 // HIDDEN AND ENDED ACCOUNTS as the owner's own screens treat them: a hidden
 // account is in none of it, nor a goal on one (left out while it is hidden,
 // as a hidden account's own share is paused); an ended one counts from its
@@ -50,23 +60,28 @@
 // (Unreadable), never a short figure as if whole: a store the seam can't use
 // (budgets, goals, allocation settings, an account's end, holdings history),
 // a bank's stored transactions or a manual account's book that can't be
-// read, an account net worth or holdings would count that couldn't be read or
-// hasn't been loaded. Each kind on its own: one that can't be read leaves the
-// others shown. What only isn't all in yet (a bank still bringing in its
-// older history, one not synced yet) is shown, and says it may be
-// incomplete, as the owner's own Budgets tab says it. Storage out of reach
-// says nothing of the data, and throws (lib/sharing.ts then shows nothing of
-// the share, as for its accounts).
+// read, rows imported from files into a linked account that can't be, an
+// account net worth or holdings would count that couldn't be read or hasn't
+// been loaded. Each kind on its own: one that can't be read leaves the others
+// shown. What only isn't all in yet (a bank still bringing in its older
+// history, one not synced yet, a bank account or card whose transactions
+// don't come in) is shown, and says it may be incomplete, as the owner's own
+// Budgets tab says it; so is spending that counts transactions whose
+// exclusion couldn't be read, or files some by the bank's categories because
+// the owner's couldn't be read, as the owner's Activity tab counts and says
+// them. Storage out of reach says nothing of the data, and throws
+// (lib/sharing.ts then shows nothing of the share, as for its accounts).
 
 import type { Ctx } from './containers';
-import { readAccounts, readHoldings, readNetWorthAndHistory, budgetsAnswer, type ApiAccount } from './api-read';
+import { readAccounts, readHoldings, readNetWorth, readNetWorthAndHistory, budgetsAnswer, type ApiAccount, type ApiAccounts } from './api-read';
 import { readGoals, type ApiGoal } from './api-goals';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
-import { readBudgetMonth } from './budget-month';
+import { readBudgetMonths } from './budget-month';
 import { summarize, tidy, type SummaryCategory } from './totals';
-import { totalsCurrency } from './spending';
+import { leftOutByCurrency, totalsCurrency, type LeftOut } from './spending';
+import { noTransactionsView, spendingUnknown } from './no-transactions';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
-import { allocate, isMoney, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
+import { allocate, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
 import { BUCKET_NAMES, BUCKET_SLOTS } from './allocation/buckets';
 import { allocationSettingsStore } from './allocation-settings';
@@ -77,6 +92,8 @@ import { directoryTypes } from './links';
 import { getKeptAccounts } from './kept-accounts';
 import { rememberedAccountsReport } from './last-known';
 import { readGoalRecords, wireGoal } from './goal-plans';
+import { weeklySettingStore } from './weekly-summary/store';
+import { dayIn } from './report/period';
 import { StoredDataUnreadableError } from './repo';
 import { StateUnreadableError } from './transactions';
 import {
@@ -84,6 +101,7 @@ import {
   sharedKinds,
   SPENDING_MONTHS,
   VIEW_KINDS,
+  viewsReadOf,
   type BudgetGroup,
   type BudgetLine,
   type BudgetsMonth,
@@ -106,6 +124,7 @@ import {
   type SpendingView,
   type Unreadable,
   type ViewKind,
+  type ViewsRead,
 } from './share-kinds';
 import type { FactGoal } from './share-inference';
 
@@ -126,13 +145,29 @@ const countsNow = (a: ApiAccount) => a.lifecycle === null || a.lifecycle.date > 
  *  the institution, its name, and the last digits its bank gives. */
 const labelOf = (a: ApiAccount) => `${a.institution} ${a.name}${a.mask ? ` ••${a.mask}` : ''}`;
 
+/** A percentage in words (lib/share-kinds.ts): the Plan tab's rule, from the
+ *  amount, which is known here at every level. */
+const labelFor = (amount: number, pct: number | null, whole: number): string | null => (pct === null ? null : shareLabel(amount, pct, whole));
+
+/** What more than one kind reads of the owner's, read once for all of them
+ *  in a projection (projectViews): the accounts, as the read-only API lists
+ *  them. */
+type Reads = { accounts: () => Promise<ApiAccounts> };
+
+/** The owner's own day, YYYY-MM-DD (see THE OWNER'S MONTH). LENIENT, for
+ *  this display only, which nothing writes or records on: a setting that
+ *  can't be read, or a zone this runtime doesn't know, leaves the UTC day. */
+async function ownerToday(theirs: Ctx, now: number): Promise<string> {
+  const setting = await weeklySettingStore.get(theirs).catch(() => null);
+  return (setting ? dayIn(now, setting.time_zone) : null) ?? new Date(now).toISOString().slice(0, 10);
+}
+
 // ---- Net worth ----
 
-async function netWorthView(theirs: Ctx, s: NetWorthShare): Promise<NetWorthView | Unreadable> {
-  const [{ now, history }, listed] = await Promise.all([
-    readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }),
-    s.accounts ? readAccounts(theirs) : Promise.resolve(null),
-  ]);
+async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balancesShown: PromiseLike<ReadonlySet<string>> | ReadonlySet<string>): Promise<NetWorthView | Unreadable> {
+  const read =
+    s.detail === 'history' ? readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }) : readNetWorth(theirs).then((now) => ({ now, history: null }));
+  const [{ now, history }, listed] = await Promise.all([read, s.accounts ? reads.accounts() : Promise.resolve(null)]);
   // An account that couldn't be read, or hasn't been loaded, would leave the
   // total short: none is shown rather than a short one.
   if (now.missing_accounts.length > 0 || (listed !== null && listed.missing_accounts.length > 0)) return UNREADABLE;
@@ -146,15 +181,19 @@ async function netWorthView(theirs: Ctx, s: NetWorthShare): Promise<NetWorthView
     other_currencies: others.map((t) => ({ currency: t.currency ?? '', accounts: t.accounts })),
     without_balance: now.accounts_without_balance,
   };
-  if (s.detail === 'history') {
+  if (history) {
     view.history = history.points.map((p) => ({ date: p.date, value: p.value, ...(p.estimated ? { estimated: true as const } : {}) }));
     if (history.mixed_currencies) view.history_mixed = true;
   }
   if (listed) {
-    // The accounts counted now, each with its newest measured balance: those
-    // without one count in no total, and are said by without_balance.
+    // The accounts counted now whose balances the share of accounts shows
+    // (`balancesShown`), each with its newest measured balance: never one it
+    // doesn't, so a net worth with its accounts shows no balance the account
+    // rows above it don't. Those without one count in no total, and are said
+    // by without_balance.
+    const shown = await balancesShown;
     view.accounts = listed.accounts
-      .filter((a) => countsNow(a) && a.balance !== null)
+      .filter((a) => countsNow(a) && a.balance !== null && shown.has(a.id))
       .map((a) => ({ label: labelOf(a), balance: a.balance!, currency: a.currency, debt: a.is_debt, as_of: a.as_of }));
   }
   return view;
@@ -178,12 +217,21 @@ function transactionsDamaged(sources: readonly BankSource[], manualUnread: reado
   return unread !== undefined && unread > sources.filter((s) => s.coverage !== 'complete').length;
 }
 
-/** YYYY-MM, by the UTC day, as transactions' dates are kept. */
-const monthOf = (ms: number) => new Date(ms).toISOString().slice(0, 7);
 function addMonths(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number);
   const d = new Date(Date.UTC(y, m - 1 + n, 1));
   return d.toISOString().slice(0, 7);
+}
+
+/** What another currency left out, by its currency alone, never how many:
+ *  "What went out in EUR isn’t in these totals, which are in USD." In the
+ *  currencies' own order, so neither says which had more. Null when nothing
+ *  was. */
+function leftOutWords(leftOut: LeftOut, currency: string | null, what: string, where: string): string | null {
+  if (leftOut.length === 0) return null;
+  const names = leftOut.map((l) => l.currency).sort();
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return `${what} in ${list} isn’t in ${where}${currency ? `, which are in ${currency}` : ''}.`;
 }
 
 /** A category's and its group's names, as the owner's own screens show them. */
@@ -212,14 +260,17 @@ function spendingMonth(categories: readonly SummaryCategory[], total: number, s:
     g.categories.push({ name: c.category, amount: c.spent });
     groups.set(key, g);
   }
-  const line = (name: string, amount: number): SpendingLine => ({ name, pct: pctOf(amount, total), ...(s.detail === 'amounts' ? { amount: tidy(amount) } : {}) });
+  const line = (name: string, amount: number): SpendingLine => {
+    const pct = pctOf(amount, total);
+    return { name, pct, label: labelFor(amount, pct, total), ...(s.detail === 'amounts' ? { amount: tidy(amount) } : {}) };
+  };
   return [...groups.values()].sort(byAmount).map((g) => ({
     ...line(g.name, g.amount),
     ...(s.by === 'category' ? { categories: g.categories.sort(byAmount).map((c) => line(c.name, c.amount)) } : {}),
   }));
 }
 
-async function spendingView(theirs: Ctx, s: SpendingShare, now: number): Promise<SpendingView | Unreadable> {
+async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promise<SpendingView | Unreadable> {
   const bank = await assembleBankRows(theirs, { sync: false, readOnly: true });
   const finished = await finishActivity(theirs, bank.payload, bank.hidden);
   if (transactionsDamaged(bank.sources, finished.manual_unread, finished.unread_notes.length)) return UNREADABLE;
@@ -227,7 +278,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, now: number): Promise
   // The currency the Activity tab's totals are in: the one most rows are in.
   const currency = totalsCurrency(rows);
   const describe = describer(indexTaxonomy(finished.taxonomy));
-  const thisMonth = monthOf(now);
+  const thisMonth = today.slice(0, 7);
   // No month before the first with any transaction: before it, nothing is
   // known, which is not the same as nothing spent.
   const first = rows.reduce<string | null>((m, t) => (m === null || t.date.slice(0, 7) < m ? t.date.slice(0, 7) : m), null);
@@ -235,21 +286,31 @@ async function spendingView(theirs: Ctx, s: SpendingShare, now: number): Promise
   for (let i = 0; i < SPENDING_MONTHS; i++) {
     const month = addMonths(thisMonth, -i);
     if (first === null || month < first) break;
-    const sum = summarize(rows, (d) => d.slice(0, 7) === month, currency, describe);
+    const inMonth = (d: string) => d.slice(0, 7) === month;
+    const sum = summarize(rows, inMonth, currency, describe);
+    // What another currency left out of money out, as the budgets count it:
+    // never money in, which this never shows, nor how many.
+    const leftOut = leftOutByCurrency(rows.filter((t) => t.amount > 0 && inMonth(t.date)), currency);
     months.push({
       month,
       so_far: month === thisMonth,
       ...(s.detail === 'amounts' ? { total: sum.money_out } : {}),
       groups: spendingMonth(sum.categories, sum.money_out, s),
-      left_out: sum.left_out_text,
+      left_out: leftOutWords(leftOut, currency, 'What went out', 'these totals'),
+      // Counted although whether they were excluded couldn't be read, as the
+      // Activity tab counts them; said, never how many.
+      ...(sum.exclusion_unknown > 0 ? { exclusions_unknown: true as const } : {}),
     });
   }
+  const incomplete = finished.incomplete.length > 0 || bank.sources.some((x) => x.coverage !== 'complete') || spendingUnknown(noTransactionsView(bank.payload));
   return {
     detail: s.detail,
     by: s.by,
     currency,
     months,
-    ...(finished.incomplete.length > 0 || bank.sources.some((x) => x.coverage !== 'complete') ? { may_be_incomplete: true as const } : {}),
+    ...(incomplete ? { may_be_incomplete: true as const } : {}),
+    ...(bank.own_read.exclusions ? {} : { exclusions_unread: true as const }),
+    ...(bank.own_read.categories ? {} : { categories_unread: true as const }),
   };
 }
 
@@ -259,19 +320,26 @@ async function spendingView(theirs: Ctx, s: SpendingShare, now: number): Promise
  *  overspent carry as deep as the budget) has no percentage; any spending
  *  then is over. */
 function budgetLine(name: string, spent: number, limit: number, s: BudgetsShare): BudgetLine {
+  const pct = pctOf(spent, limit);
   return {
     name,
-    pct: pctOf(spent, limit),
+    pct,
+    label: labelFor(spent, pct, limit),
     over: limit > 0 ? spent > limit : spent > 0,
     ...(s.detail === 'amounts' ? { spent, limit } : {}),
   };
 }
 
-async function budgetsView(theirs: Ctx, s: BudgetsShare, now: number): Promise<BudgetsView | Unreadable> {
-  // Months as the read-only API takes them: by the UTC day.
-  const today = monthOf(now);
-  const reads = await Promise.all([today, addMonths(today, -1)].map((month) => readBudgetMonth(theirs, { month, today })));
-  if (reads.some((r) => transactionsDamaged(r.activity.bank.sources, r.activity.manual_unread))) return UNREADABLE;
+async function budgetsView(theirs: Ctx, s: BudgetsShare, today: string): Promise<BudgetsView | Unreadable> {
+  const thisMonth = today.slice(0, 7);
+  // Both months from one read of the transactions, as the Budgets tab reads
+  // a month, the income pool left unread: it is never shown, and its setting
+  // changes no budget's carry.
+  const reads = await readBudgetMonths(theirs, { months: [thisMonth, addMonths(thisMonth, -1)], today: thisMonth, pool: false });
+  const { activity } = reads[0];
+  // The notes too, as spending's: rows imported from files that can't be
+  // read leave a month short.
+  if (transactionsDamaged(activity.bank.sources, activity.manual_unread, activity.unread_notes.length)) return UNREADABLE;
   const months: BudgetsMonth[] = reads.map((read) => {
     const answer = budgetsAnswer(read, { month: read.month });
     // A group by its id, or by its name (no two groups share one) where the
@@ -291,7 +359,7 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, now: number): Promise<B
       month: read.month,
       total: budgetLine('All budgets', answer.total.spent, answer.total.available, s),
       groups,
-      left_out: answer.left_out_text,
+      left_out: leftOutWords(answer.left_out, read.currency, 'What was spent', 'these budgets'),
       may_be_incomplete:
         answer.incomplete_months.some((m) => m.month === read.month) || (read.earliest !== null && read.month < read.earliest) || carriesUncertain,
     };
@@ -301,8 +369,8 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, now: number): Promise<B
 
 // ---- Holdings ----
 
-async function holdingsView(theirs: Ctx, s: HoldingsShare): Promise<HoldingsView | Unreadable> {
-  const [listed, held, settings] = await Promise.all([readAccounts(theirs), readHoldings(theirs), allocationSettingsStore.get(theirs)]);
+async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promise<HoldingsView | Unreadable> {
+  const [listed, held, settings] = await Promise.all([reads.accounts(), readHoldings(theirs), allocationSettingsStore.get(theirs)]);
   // An account that couldn't be read could be an investment one: no
   // allocation is shown rather than one short of it.
   if (listed.missing_accounts.length > 0 || !held.complete) return UNREADABLE;
@@ -328,18 +396,26 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare): Promise<HoldingsView
   const alloc = allocate({ institutions: [...institutions.values()], holdings, settings, currency });
   const amounts = s.detail === 'amounts';
   const lines = <K extends string>(totals: Record<K, number>, order: readonly K[], names: Record<K, string>): HoldingsLine[] =>
-    shares(totals, order).map((x) => ({ slot: x.slot, name: names[x.slot], pct: x.pct, ...(amounts ? { amount: tidy(x.amount) } : {}) }));
+    shares(totals, order).map((x) => ({ slot: x.slot, name: names[x.slot], pct: x.pct, label: x.label, ...(amounts ? { amount: tidy(x.amount) } : {}) }));
   const notes: string[] = [];
   if (counted.length === 0) notes.push('No investment accounts to show.');
   if ((alloc.classes.unclassified ?? 0) !== 0) notes.push('Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.');
   for (const o of alloc.otherCurrencies) notes.push(`What is held in ${o.currency} isn’t counted here: nothing is converted.`);
   if (alloc.unpriced > 0) notes.push(`${alloc.unpriced === 1 ? 'A position' : `${alloc.unpriced} positions`} with no value ${alloc.unpriced === 1 ? 'isn’t' : 'aren’t'} counted.`);
-  // The days the figures are from: the positions last recorded, and the balances.
+  // As net worth says an account with no balance yet: never counted as nothing.
+  if (alloc.noBalance > 0) {
+    const one = alloc.noBalance === 1;
+    notes.push(`${one ? '1 investment account has' : `${alloc.noBalance} investment accounts have`} no balance yet and no position, so ${one ? 'it isn’t' : 'they aren’t'} counted.`);
+  }
+  // The days the figures are from, newest and oldest: the positions last
+  // recorded, and the balances. Positions from long before a balance are
+  // said by their day.
   const days = [...held.accounts.filter((h) => countedIds.has(h.account_id)).map((h) => h.as_of), ...counted.map((a) => a.as_of)].filter((d): d is string => !!d).sort();
   return {
     detail: s.detail,
     currency,
     as_of: days[days.length - 1] ?? null,
+    from: days[0] ?? null,
     ...(amounts ? { total: tidy(alloc.total) } : {}),
     classes: lines(alloc.classes as Record<Slot, number>, SLOTS, CLASS_NAMES),
     buckets: lines(alloc.buckets, BUCKET_SLOTS, BUCKET_NAMES),
@@ -350,11 +426,13 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare): Promise<HoldingsView
             .map((r) => {
               const split = r.classified.split;
               const classes = split ? ASSET_CLASSES.filter((c) => (split[c] ?? 0) > 0) : [];
+              const pct = pctOf(r.amount, alloc.total);
               return {
                 ticker: r.ticker,
                 name: r.name,
                 class: classes.length === 1 ? CLASS_NAMES[classes[0]] : classes.length > 1 ? 'Mixed' : CLASS_NAMES.unclassified,
-                pct: pctOf(r.amount, alloc.total),
+                pct,
+                label: labelFor(r.amount, pct, alloc.total),
                 ...(amounts ? { amount: tidy(r.amount) } : {}),
               };
             }),
@@ -371,10 +449,13 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare): Promise<HoldingsView
 function goalLine(g: ApiGoal, s: GoalsShare): GoalLine {
   const tracked = g.state === 'tracked' && g.saved !== null;
   const p = g.projection;
+  const pct = tracked ? pctOf(g.saved!, g.target) : null;
   return {
     name: g.name,
     state: g.state as GoalLine['state'],
-    pct: tracked ? pctOf(g.saved!, g.target) : null,
+    pct,
+    // Nothing saved reads 0%, a little <1%: from the amount, at every level.
+    label: tracked ? labelFor(g.saved!, pct, g.target) : null,
     currency: g.currency,
     ...(s.detail === 'amounts' ? { target: g.target, ...(tracked ? { saved: g.saved! } : {}) } : {}),
     target_date: g.target_date,
@@ -392,11 +473,12 @@ function goalLine(g: ApiGoal, s: GoalsShare): GoalLine {
   };
 }
 
-/** The goals as shared, and what the preview's warnings go by of each
- *  (never sent to the one they are shared with); null when none of those
- *  chosen is shown, so the share says nothing of goals, as one whose
- *  accounts are all hidden says nothing of accounts. */
-async function goalsView(theirs: Ctx, s: GoalsShare): Promise<{ view: GoalsView; facts: FactGoal[] } | null> {
+/** The goals as shared, and, never sent to the one they are shared with,
+ *  what the preview's warnings go by of each and which were shown (their ids,
+ *  for the record of showings); null when none of those chosen is shown, so
+ *  the share says nothing of goals, as one whose accounts are all hidden says
+ *  nothing of accounts. */
+async function goalsView(theirs: Ctx, s: GoalsShare): Promise<{ view: GoalsView; facts: FactGoal[]; shown: string[] } | null> {
   const read = await readGoals(theirs);
   const chosen = new Set(s.goals);
   // A goal deleted since is gone; an archived one counts nothing and is left
@@ -407,47 +489,65 @@ async function goalsView(theirs: Ctx, s: GoalsShare): Promise<{ view: GoalsView;
   return {
     view: { detail: s.detail, goals: lines },
     facts: goals.map((g, i) => ({ name: g.name, projected: lines[i].outlook?.completion != null, account_id: g.account_id })),
+    shown: goals.map((g) => g.id),
   };
 }
 
 // ---- All of them ----
 
-/** What a share's kinds show (SharedViews), in the order kinds are listed,
- *  and, for the preview's warnings only, the goals behind them. */
-export type ProjectedViews = { views: SharedViews; goalFacts: FactGoal[] };
+/** What a share's kinds show (SharedViews), in the order kinds are listed;
+ *  for the preview's warnings only, the goals behind them; and for the record
+ *  of showings, what was shown of each (`read`: each kind that could be read,
+ *  as its setting chose it, and the goals shown). */
+export type ProjectedViews = { views: SharedViews; goalFacts: FactGoal[]; read: ViewsRead };
 
 /**
  * Each kind `views` shares, projected from the owner's data (see the
- * header), all at once. Undefined when it shares none, or none shows
- * anything (goals whose every one chosen is archived, gone or on a hidden
- * account). A kind whose data can't be read is Unreadable, and the rest are
- * shown; anything else (storage out of reach) throws.
+ * header), all at once. `balancesShown` is the accounts whose balances the
+ * share of accounts shows (lib/sharing.ts, as it is read beside these),
+ * which alone a net worth with its accounts lists.
+ * Undefined when it shares none, or none shows anything (goals whose every
+ * one chosen is archived, gone or on a hidden account). A kind whose data
+ * can't be read is Unreadable, and the rest are shown; anything else
+ * (storage out of reach) throws.
  */
-export async function projectViews(theirs: Ctx, views: ShareViews, now: number): Promise<ProjectedViews | undefined> {
+export async function projectViews(
+  theirs: Ctx,
+  views: ShareViews,
+  now: number,
+  opts: { balancesShown?: PromiseLike<ReadonlySet<string>> | ReadonlySet<string> } = {}
+): Promise<ProjectedViews | undefined> {
   const kinds = sharedKinds(views);
   if (kinds.length === 0) return undefined;
   const out: SharedViews = {};
   let goalFacts: FactGoal[] = [];
+  let goalsShown: string[] = [];
+  // Read once for the kinds that both need them: the accounts, for a net
+  // worth with its accounts and for holdings.
+  let accounts: Promise<ApiAccounts> | null = null;
+  const reads: Reads = { accounts: () => (accounts ??= readAccounts(theirs)) };
+  const today = views.spending || views.budgets ? await ownerToday(theirs, now) : '';
   const read = async (kind: ViewKind): Promise<void> => {
     try {
       switch (kind) {
         case 'net_worth':
-          out.net_worth = await netWorthView(theirs, views.net_worth!);
+          out.net_worth = await netWorthView(theirs, views.net_worth!, reads, opts.balancesShown ?? new Set());
           break;
         case 'spending':
-          out.spending = await spendingView(theirs, views.spending!, now);
+          out.spending = await spendingView(theirs, views.spending!, today);
           break;
         case 'holdings':
-          out.holdings = await holdingsView(theirs, views.holdings!);
+          out.holdings = await holdingsView(theirs, views.holdings!, reads);
           break;
         case 'budgets':
-          out.budgets = await budgetsView(theirs, views.budgets!, now);
+          out.budgets = await budgetsView(theirs, views.budgets!, today);
           break;
         case 'goals': {
           const goals = await goalsView(theirs, views.goals!);
           if (goals) {
             out.goals = goals.view;
             goalFacts = goals.facts;
+            goalsShown = goals.shown;
           }
           break;
         }
@@ -461,7 +561,8 @@ export async function projectViews(theirs: Ctx, views: ShareViews, now: number):
   await Promise.all(kinds.map(read));
   const ordered: SharedViews = {};
   for (const kind of VIEW_KINDS) if (out[kind]) (ordered as Record<string, unknown>)[kind] = out[kind];
-  return Object.keys(ordered).length > 0 ? { views: ordered, goalFacts } : undefined;
+  if (Object.keys(ordered).length === 0) return undefined;
+  return { views: ordered, goalFacts, read: viewsReadOf(ordered, views, goalsShown) };
 }
 
 // ---- For the owner's own settings ----

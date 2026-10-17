@@ -10,12 +10,14 @@
 //
 // THE KINDS AND THEIR LEVELS, narrowest first in each ladder:
 //   - net_worth: the total now ("total"), or the total and its history
-//     ("history", one point a week); with or without the accounts behind it,
-//     each with its balance (`accounts`).
+//     ("history", one point a week), always as amounts; with or without the
+//     accounts in it whose balances are shared (`accounts`): an account's
+//     balance is shown only where its own share shows it, never through this.
 //   - spending: money out by category group, or by group and category (`by`),
 //     for this month so far and the five before, as percentages of each
 //     month's spending ("shares") or amounts ("amounts"). Never money in, the
-//     transactions behind it, or how many there were.
+//     transactions behind it, or how many there were (what another currency
+//     left out is named by its currency alone).
 //   - holdings: allocation by asset class and by tax bucket, as percentages
 //     or amounts, with or without the positions behind it (`positions`), never
 //     an account's name or number.
@@ -177,15 +179,33 @@ export const KIND_WORDS: Record<ViewKind, string> = {
 
 // ---- What a record of showings keeps of them ----
 
-/** What a showing showed of the other kinds: each kind, at the detail it was
- *  shown at (the widest in a quarter hour, or a day). */
-export type ViewsRead = Partial<Record<ViewKind, string>>;
+/** What a showing showed of the other kinds: each kind as it was shown, its
+ *  level and what else it showed (the accounts in a net worth, the
+ *  categories, the positions), and of goals, which ones, by id (the widest in
+ *  a quarter hour: each detail the wider, each option on if it was on once,
+ *  every goal shown). The same shape as the settings, so a record answers
+ *  exactly what a setting chose. */
+export type ViewsRead = ShareViews;
 
-/** Whether `v` is one: known kinds, each at a detail of its ladder. A kind or
- *  a detail this release doesn't know makes the record unrecognised, never
+/** The most goal ids a record's quarter hour keeps: far past the goals
+ *  anyone can have (MAX_SHARED_GOALS), for goals deleted and made again in
+ *  one quarter hour. A merge never keeps more, so every record this release
+ *  writes is one it reads. */
+export const MAX_RECORDED_GOALS = 200;
+
+/** Whether `v` is one: known kinds, each closed as a setting is, at a level
+ *  of its ladder; goals by ids that can be ones, each once. A kind, a level
+ *  or a field this release doesn't know makes the record unrecognised, never
  *  read as less than it says (lib/access-log.ts). */
 export function isViewsRead(v: unknown): v is ViewsRead {
-  return isPlain(v) && Object.entries(v).every(([kind, detail]) => oneOf(kind, VIEW_KINDS) && oneOf(detail, VIEW_DETAILS[kind]));
+  if (!isPlain(v)) return false;
+  return Object.entries(v).every(([kind, read]) => {
+    if (!oneOf(kind, VIEW_KINDS)) return false;
+    if (kind !== 'goals') return viewProblem(kind, read) === null;
+    if (!isPlain(read) || !hasKeys(read, ['detail', 'goals']) || !oneOf(read.detail, VIEW_DETAILS.goals)) return false;
+    const ids = read.goals;
+    return Array.isArray(ids) && ids.length > 0 && ids.length <= MAX_RECORDED_GOALS && ids.every((id) => typeof id === 'string' && SHARED_GOAL_ID.test(id)) && new Set(ids).size === ids.length;
+  });
 }
 
 /** The wider of two details of one kind: the one that shows more. */
@@ -194,11 +214,46 @@ export function widerDetail(kind: ViewKind, a: string, b: string): string {
   return ladder.indexOf(a) >= ladder.indexOf(b) ? a : b;
 }
 
-/** `a` with `b` merged in, each kind at the wider of the two. */
+const widerBy = (a: 'group' | 'category', b: 'group' | 'category') => (a === 'category' || b === 'category' ? 'category' : 'group');
+
+/** `a` with `b` merged in, each kind as the wider of the two: the wider
+ *  detail, each option on if either had it, and the goals of both. */
 export function mergeViewsRead(a: ViewsRead | undefined, b: ViewsRead | undefined): ViewsRead {
   const out: ViewsRead = { ...a };
-  for (const [kind, detail] of Object.entries(b ?? {}) as [ViewKind, string][]) out[kind] = out[kind] ? widerDetail(kind, out[kind]!, detail) : detail;
+  const x = b ?? {};
+  if (x.net_worth) {
+    const o = out.net_worth;
+    out.net_worth = o ? { detail: widerDetail('net_worth', o.detail, x.net_worth.detail) as NetWorthShare['detail'], accounts: o.accounts || x.net_worth.accounts } : { ...x.net_worth };
+  }
+  if (x.spending) {
+    const o = out.spending;
+    out.spending = o ? { detail: widerDetail('spending', o.detail, x.spending.detail) as SpendingShare['detail'], by: widerBy(o.by, x.spending.by) } : { ...x.spending };
+  }
+  if (x.holdings) {
+    const o = out.holdings;
+    out.holdings = o ? { detail: widerDetail('holdings', o.detail, x.holdings.detail) as HoldingsShare['detail'], positions: o.positions || x.holdings.positions } : { ...x.holdings };
+  }
+  if (x.budgets) {
+    const o = out.budgets;
+    out.budgets = o ? { detail: widerDetail('budgets', o.detail, x.budgets.detail) as BudgetsShare['detail'], by: widerBy(o.by, x.budgets.by) } : { ...x.budgets };
+  }
+  if (x.goals) {
+    const o = out.goals;
+    const ids = [...new Set([...(o?.goals ?? []), ...x.goals.goals])].sort().slice(0, MAX_RECORDED_GOALS);
+    out.goals = { detail: (o ? widerDetail('goals', o.detail, x.goals.detail) : x.goals.detail) as GoalsShare['detail'], goals: ids };
+  }
   return out;
+}
+
+/** The kinds shown on a day of a record, as the drawer is sent them
+ *  (lib/share-rules.ts ShownDay): as ViewsRead, but how many goals rather
+ *  than which, as a day counts accounts rather than naming them. */
+export type DayViews = Omit<ViewsRead, 'goals'> & { goals?: { detail: GoalsShare['detail']; count: number } };
+
+/** A day's ViewsRead as DayViews. */
+export function dayViewsOf(read: ViewsRead): DayViews {
+  const { goals, ...rest } = read;
+  return goals ? { ...rest, goals: { detail: goals.detail, count: goals.goals.length } } : rest;
 }
 
 // ---- What the viewer is shown of each (lib/share-views.ts) ----
@@ -233,13 +288,20 @@ export type NetWorthView = {
   /** The history adds accounts in other currencies as they are, as the
    *  owner's own chart does. */
   history_mixed?: true;
-  /** With the accounts behind it: each one counted now. */
+  /** With its accounts: each one counted now whose balance the share of
+   *  accounts shows (at Balance, or Balance and transactions). */
   accounts?: NetWorthAccount[];
 };
 
+// Every percentage is sent with `label`, the words it is shown in, worked
+// out on the server, which knows the amount at every level: money that is
+// there never reads 0% ("<1%"), and a share short of the whole never reads
+// 100% (">99%"), the rule the Plan tab's allocation follows
+// (lib/allocation/allocation.ts shareLabel). `pct` is the bar's length.
+
 /** A line of spending: its share of the month's spending (a whole percent),
  *  and, at "amounts", the amount. */
-export type SpendingLine = { name: string; pct: number | null; amount?: number };
+export type SpendingLine = { name: string; pct: number | null; label: string | null; amount?: number };
 export type SpendingGroup = SpendingLine & { categories?: SpendingLine[] };
 export type SpendingMonth = {
   /** YYYY-MM. */
@@ -249,8 +311,13 @@ export type SpendingMonth = {
   /** At "amounts": the month's spending. */
   total?: number;
   groups: SpendingGroup[];
-  /** What was left out of it for being in another currency, in words. */
+  /** What was left out of it for being in another currency, by currency
+   *  alone, in words: never how many, nor any money in. */
   left_out: string | null;
+  /** Whether the owner left some of the month's transactions out of their
+   *  totals couldn't be read: those are counted, as the owner's own Activity
+   *  tab counts them, and it says so. */
+  exclusions_unknown?: true;
 };
 export type SpendingView = {
   detail: SpendingShare['detail'];
@@ -259,17 +326,26 @@ export type SpendingView = {
   /** Newest first. */
   months: SpendingMonth[];
   /** Some transactions aren't all in yet (a bank still bringing in its older
-   *  history, or one not synced yet), so a month may be short. */
+   *  history, one not synced yet, or a bank account or card whose
+   *  transactions don't come in), so a month may be short. */
   may_be_incomplete?: true;
+  /** The exclusions the owner carried across a reconnected account couldn't
+   *  be read: the transactions may count. */
+  exclusions_unread?: true;
+  /** The owner's own categories couldn't all be read: some spending is filed
+   *  as the bank files it. */
+  categories_unread?: true;
 };
 
-export type HoldingsLine = { slot: string; name: string; pct: number | null; amount?: number };
-export type HoldingsPosition = { ticker: string | null; name: string | null; class: string; pct: number | null; amount?: number };
+export type HoldingsLine = { slot: string; name: string; pct: number | null; label: string | null; amount?: number };
+export type HoldingsPosition = { ticker: string | null; name: string | null; class: string; pct: number | null; label: string | null; amount?: number };
 export type HoldingsView = {
   detail: HoldingsShare['detail'];
   currency: string | null;
-  /** The newest day positions were recorded on, and the newest balance. */
+  /** The newest and the oldest day among the positions last recorded and the
+   *  balances counted. */
   as_of: string | null;
+  from: string | null;
   /** At "amounts": everything counted. */
   total?: number;
   classes: HoldingsLine[];
@@ -282,14 +358,17 @@ export type HoldingsView = {
 
 /** A budget: how much of what is available is spent (a whole percent; null
  *  when nothing is available), whether it is over, and at "amounts" the two. */
-export type BudgetLine = { name: string; pct: number | null; over: boolean; spent?: number; limit?: number };
+export type BudgetLine = { name: string; pct: number | null; label: string | null; over: boolean; spent?: number; limit?: number };
 export type BudgetGroup = BudgetLine & { categories?: BudgetLine[] };
 export type BudgetsMonth = {
   month: string;
   total: BudgetLine;
   groups: BudgetGroup[];
+  /** As spending's: by currency alone. */
   left_out: string | null;
-  /** The month's transactions may be incomplete, as the Budgets tab says. */
+  /** What is spent in the month may be off, as the Budgets tab says: some of
+   *  its transactions may not all be in, or what was said of some couldn't
+   *  be read. */
   may_be_incomplete: boolean;
 };
 export type BudgetsView = {
@@ -307,6 +386,7 @@ export type GoalLine = {
   state: 'tracked' | 'untracked' | 'ended' | 'owed' | 'no_balance' | 'disconnected' | 'unavailable';
   /** Saved as a whole percent of the target; null unless tracked. */
   pct: number | null;
+  label: string | null;
   currency: string | null;
   /** At "amounts". */
   saved?: number;
@@ -331,15 +411,20 @@ export type SharedViews = {
   goals?: GoalsView | Unreadable;
 };
 
-/** What a showing of these showed (ViewsRead): each kind that was read, at
- *  its detail. One that couldn't be read showed nothing, so isn't in it. */
-export function viewsReadOf(views: SharedViews | undefined): ViewsRead {
-  const out: ViewsRead = {};
+/** What a showing of these showed (ViewsRead): each kind that was read, as
+ *  its setting chose it, and of goals the ones shown (`goalsShown`, by id).
+ *  One that couldn't be read showed nothing, so isn't in it. */
+export function viewsReadOf(views: SharedViews | undefined, settings: ShareViews, goalsShown: readonly string[] = []): ViewsRead {
+  const out: Record<string, unknown> = {};
   for (const kind of VIEW_KINDS) {
     const v = views?.[kind];
-    if (v && !isUnreadable(v)) out[kind] = v.detail;
+    const s = settings[kind];
+    if (!v || isUnreadable(v) || !s) continue;
+    if (kind === 'goals') {
+      if (goalsShown.length > 0) out.goals = { detail: (s as GoalsShare).detail, goals: [...new Set(goalsShown)].sort() };
+    } else out[kind] = { ...s };
   }
-  return out;
+  return out as ViewsRead;
 }
 
 /** A whole percent of `part` in `whole`, or null when the whole is nothing
