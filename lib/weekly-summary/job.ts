@@ -83,6 +83,7 @@ import { noticeRecipients, type RecipientDeps } from '../notice-recipients';
 import { ownersByContainer } from '../owners';
 import { RECIPIENTS_TIMEOUT_MS, RETRY_AFTER_MAX_MS, SEND_INTERVAL_MS } from '../connection-notices';
 import { StoredDataUnreadableError } from '../repo';
+import { checkContainerKey, ContainerKeyError } from '../crypto';
 import { canonicalTimeZone } from '../report/period';
 import { weeklySettingStore, weeklyStateStore, type WeeklyState } from './store';
 import type { WeeklySetting } from './settings';
@@ -247,6 +248,9 @@ export async function sendWeeklySummaries(
     try {
       const setting = await weeklySettingStore.get(ctx);
       if (!setting?.enabled) return;
+      // Its data key opened first, as the snapshot does: a key that can't be
+      // used stops it here, before anything that reads leniently runs.
+      await checkContainerKey(ctx);
       const zone = canonicalTimeZone(setting.time_zone);
       const today = zone ? todayIn(judgedAt, zone) : null;
       if (!zone || !today) {
@@ -259,7 +263,12 @@ export async function sendWeeklySummaries(
       if (sendDay) found.push({ ctx, setting, zone, sendDay, state });
     } catch (err) {
       const unreadable = err instanceof StoredDataUnreadableError;
-      console.error(`Weekly summary: the setting or record of container ${c.id} could not be read, so no summary goes for it.`, nameOf(err));
+      console.error(
+        err instanceof ContainerKeyError
+          ? `Weekly summary: the data key of container ${c.id} can't be used, so no summary goes for it.`
+          : `Weekly summary: the setting or record of container ${c.id} could not be read, so no summary goes for it.`,
+        nameOf(err)
+      );
       outcomes.set(c.id, unreadable ? 'unreadable' : 'failed');
     }
   });

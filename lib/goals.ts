@@ -29,7 +29,7 @@ const isGoals = (v: unknown): v is Goal[] => Array.isArray(v);
 
 /** Throws StoredDataUnreadableError if goals were saved but cannot be read. */
 export async function getGoals(ctx: Ctx): Promise<Goal[]> {
-  return (await readEncryptedJson(GOALS_KEY(ctx), 'goals', isGoals)) ?? [];
+  return (await readEncryptedJson(ctx, GOALS_KEY(ctx), 'goals', isGoals)) ?? [];
 }
 
 /**
@@ -42,11 +42,11 @@ export async function getGoals(ctx: Ctx): Promise<Goal[]> {
 export async function getGoalsReport(ctx: Ctx): Promise<{ goals: Goal[] | null; problem: 'unreadable' | 'unrecognised' | null }> {
   const stored = await readStoredValue(GOALS_KEY(ctx));
   if (stored === null) return { goals: [], problem: null };
-  const opened = await openStoredJson(stored, isGoals);
+  const opened = await openStoredJson(ctx, stored, isGoals);
   return opened.ok ? { goals: opened.value, problem: null } : { goals: null, problem: opened.flaw };
 }
 
 /** Refuses (StoredDataUnreadableError) to replace goals it cannot read. */
 export async function setGoals(ctx: Ctx, goals: Goal[]): Promise<void> {
-  await writeEncryptedJson(GOALS_KEY(ctx), 'goals', goals, isGoals);
+  await writeEncryptedJson(ctx, GOALS_KEY(ctx), 'goals', goals, isGoals);
 }

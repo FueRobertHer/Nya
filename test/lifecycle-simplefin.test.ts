@@ -263,8 +263,8 @@ describe('no question about an account SimpleFIN keeps up to date', () => {
     // Measured at zero every day for six weeks, as the snapshot records it.
     for (let i = 42; i >= 1; i--) {
       const date = dayOf(NOW - i * DAY);
-      await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify({ [checking]: 0 })) });
-      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt('0') });
+      await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify({ [checking]: 0 })) });
+      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(TEST_CTX, '0') });
     }
     const { body } = await load();
     const row = body.institutions.flatMap((i: any) => i.accounts).find((a: any) => a.account_id === checking);

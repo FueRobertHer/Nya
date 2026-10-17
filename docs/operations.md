@@ -26,7 +26,7 @@ These are the operator's copies of the whole environment, for recovery, with eve
 
 ### Nightly backups
 
-Every night at 16:00 UTC (after the daily snapshot and its catch-up), a cron (`/api/backup`) takes the same archive as the manual export below and saves it to Vercel Blob under `backups/<environment>/`. It reads each copy back to check it before anything old is deleted. Copies older than 30 days are deleted, but the newest 7 are always kept.
+Every night at 16:00 UTC (after the daily snapshot and its catch-up), a cron (`/api/backup`) takes the same archive as the manual export below and saves it to Vercel Blob under `backups/<environment>/`, named `nya-<time>.f2.ndjson`. It leaves the key store out: that goes in a key archive of its own, written right after it under `keys/<environment>/` ([Per-container data keys](#per-container-data-keys)). It reads each copy back to check it before anything old is deleted. Data archives older than 30 days are deleted, but the newest 7 are always kept; key archives, seven nights' of them.
 
 To turn it on:
 
@@ -35,25 +35,26 @@ To turn it on:
 3. Optionally set `BACKUP_KEEP_DAYS` to keep more or fewer days (a whole number, 1 or more).
 4. Redeploy. Crons run only on the production deployment.
 
-Check it worked the next day: the cron's log in Vercel says "Backup written", and the file is in the store's browser. Before that line, it logs how long each step took (export, upload, read-back, list, prune). A failed night shows as a failed cron run with the reason, and the older copies are left alone. Each step has a time limit, so a storage call that doesn't finish in time fails the run naming that step (for example "The backup's read-back step took longer than 45s") instead of running into Vercel's 300-second limit with no reason given. "Took longer" can mean the call never answered or that Vercel Blob kept retrying it (it retries server and network errors up to 10 times); to tell which, set `DEBUG=blob` on Production for a night, and the log shows each retry. A copy whose upload or read-back ran out of time may still be in the store, unchecked. Vercel doesn't send an alert for it, so the dashboard shows a note when the last backup failed or none has been saved for two days.
+Check it worked the next day: the cron's log in Vercel says "Backup written", with the key archive's name, and both files are in the store's browser. Before that line, it logs how long each step took (export, upload, read-back, count, list, keys, prune). A failed night shows as a failed cron run with the reason, and the older copies are left alone. Each step has a time limit, so a storage call that doesn't finish in time fails the run naming that step (for example "The backup's read-back step took longer than 45s") instead of running into Vercel's 300-second limit with no reason given. "Took longer" can mean the call never answered or that Vercel Blob kept retrying it (it retries server and network errors up to 10 times); to tell which, set `DEBUG=blob` on Production for a night, and the log shows each retry. A copy whose upload or read-back ran out of time may still be in the store, unchecked. Vercel doesn't send an alert for it, so the dashboard shows a note when the last backup failed or none has been saved for two days.
 
-To restore from one, download it from the store's browser in Vercel and follow [Restoring a backup](#restoring-a-backup).
+To restore from one, download it and the newest key archive from the store's browser in Vercel and follow [Restoring a backup](#restoring-a-backup).
 
 The copies live in Vercel, like the database. They protect against losing or damaging the data, not against losing the Vercel account: download one now and then and keep it somewhere else too.
 
 ### Taking a backup by hand
 
 1. In Vercel, set `OPS_SECRET` and `OPS_ENABLED=1` on the environment you want to back up, then redeploy.
-2. Download it:
+2. Download both files, the data and then its keys:
 
    ```bash
    curl -X POST https://your-app.vercel.app/api/ops/export -H "Authorization: Bearer $OPS_SECRET" -o nya-export.ndjson
+   curl -X POST https://your-app.vercel.app/api/ops/export -H "Authorization: Bearer $OPS_SECRET" -d '{"keys": true}' -o nya-keys.ndjson
    ```
 
-3. Check the last line of the file is a footer (`{"end":true,...}`). If it is missing, the download was cut short; take it again.
+3. Check the last line of each file is a footer (`{"end":true,...}`). If it is missing, the download was cut short; take it again.
 4. Remove `OPS_ENABLED` and redeploy. While it is unset the route answers 404.
 
-Balances, transactions, budgets, goals and access tokens stay **encrypted** in the archive and cannot be read without `PLAID_ENCRYPTION_KEY` (and, once data keys are in use, `MASTER_KEY`; the data keys themselves are in the archive, encrypted with it). Keep a copy of those keys somewhere separate from both the archive and Vercel (a password manager, or on paper). Lose them and the backup cannot be read.
+Balances, transactions, budgets, goals and access tokens stay **encrypted** in the archive and cannot be read without `PLAID_ENCRYPTION_KEY` and, once data keys are in use, `MASTER_KEY` with the key archive: the data keys are in the key archive, each encrypted with the master, and never in the data archive. Keep a copy of those two settings somewhere separate from the archives and Vercel (a password manager, or on paper). Lose them and the backup cannot be read. A key archive keeps every key in it for as long as you keep it, those of accounts deleted later included: keep it for the restore you took it for, and replace the two files as a pair.
 
 SimpleFIN Access URLs are never in the archive. Unlike a Plaid access token, which is of no use without the Plaid secret, an Access URL works on its own: it holds the credentials that read a person's accounts there ([Bring your own sync](features.md#bring-your-own-sync)). So it is kept out of every backup, with the counts of requests made to SimpleFIN, and a restore ends each person's SimpleFIN access: they connect again with a new Setup Token, and their accounts, history and transactions carry on.
 
@@ -71,9 +72,11 @@ Restore runs on your own machine, not as a web route: a real backup can be bigge
 2. Try it on a scratch namespace first, and check the file without writing:
 
    ```bash
-   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --target restore-test --dry-run
-   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --target restore-test
+   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --keys nya-keys.ndjson --target restore-test --dry-run
+   REDIS_PREFIX=restore-test bun run restore nya-export.ndjson --keys nya-keys.ndjson --target restore-test
    ```
+
+   A data archive of format 2 (every one this release takes) needs its key archive with `--keys`: one taken at the same time or later (the nightly run's newest is always fine). A format-1 archive, which the release before takes, carries its keys inside and is restored without `--keys`.
 
    To look at the result, point a preview deployment at it by setting `REDIS_PREFIX=restore-test` on that preview.
 
@@ -84,9 +87,12 @@ The command refuses, and writes nothing, when:
 - the target already holds data and `--overwrite` is not given;
 - the target is `production` and `--confirm-production` is not given;
 - it would replace data with an archive holding no keys (`--allow-empty` overrides), or with one taken from a different environment (`--allow-different-source` overrides). Restoring into an **empty** target from anywhere, like production into `restore-test`, needs neither;
-- the target has containers (see [Containers](#containers)) and the archive's are not the same, for example an archive from before containers existed: restoring it would leave `CONTAINER_ID` naming a container that no longer exists. `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or create a container, if the archive has none). A dry run reports this too.
+- the target has containers (see [Containers](#containers)) and the archive's are not the same, for example an archive from before containers existed: restoring it would leave `CONTAINER_ID` naming a container that no longer exists. `--replace-registry` overrides; afterwards set `CONTAINER_ID` again (or create a container, if the archive has none). A dry run reports this too;
+- a value in the data archive is under a key the key archive neither holds nor marks destroyed (use a newer key archive), or a format-2 archive's values need a key archive and none was given.
 
-With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents to a `nya-pre-restore-<target>-<time>.ndjson` file, and checks that file holds every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. API tokens are in no backup, so afterwards every token is gone: tell the people who use the deployment to make new ones under **Manage**, **API tokens**. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back and comparing it with the archive, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
+A deleted account is never brought back: the containers named by the tombstones of the key archive and of the target are left out, with their owners' entries and the sharing connections their accounts were in, and the dry run names them ([Per-container data keys](#per-container-data-keys)).
+
+With `--overwrite`, it prints how many keys it is about to replace, saves the target's current contents as a pair, `nya-pre-restore-<target>-<time>.f2.ndjson` and its keys in `nya-pre-restore-<target>-<time>.keys.ndjson`, and checks they hold every key it is about to delete. Then it **replaces** the target entirely (login rate-limit counters aside), so nothing newer than the archive survives. API tokens are in no backup, so afterwards every token is gone: tell the people who use the deployment to make new ones under **Manage**, **API tokens**. If the target changes while this is going on, it stops before deleting anything. It finishes by reading everything back, the key store included, and comparing it with what it restored, and reports success only if they match exactly. If a restore stops part way, run it again with `--overwrite`.
 
 File paths are resolved from the repo root, since `bun run` runs there, and that is also where the pre-restore file is written.
 
@@ -96,7 +102,7 @@ Don't use the app while a restore is running, and avoid 13:00 UTC: anything writ
 
 ## Encryption keys
 
-Data is encrypted with **data keys** that the app generates and stores in Redis, each locked with one **master key**, `MASTER_KEY` (envelope encryption, `lib/crypto.ts`). `PLAID_ENCRYPTION_KEY` is the original key, `k0`: everything written before data keys existed is under it.
+Data is encrypted with **data keys** that the app generates and stores in Redis, each locked with one **master key**, `MASTER_KEY` (envelope encryption, `lib/crypto.ts`). `PLAID_ENCRYPTION_KEY` is the original key, `k0`: everything written before data keys existed is under it. Each container has a data key of its own once it is born with one or the migration pass gives it one ([below](#per-container-data-keys)); until then its values are under the environment's data keys.
 
 **Keep `MASTER_KEY` in your password manager.** Without it, nothing encrypted with a data key can be read, from the database or from any backup. Keep `PLAID_ENCRYPTION_KEY` and `SESSION_SECRET` safe too: losing the encryption key makes values still under `k0` permanently undecryptable (you would have to reconnect every account), and losing or leaking the session secret would let someone forge a login cookie.
 
@@ -104,43 +110,50 @@ Data is encrypted with **data keys** that the app generates and stores in Redis,
 
 Generate a master key (`openssl rand -base64 32`), save it in your password manager, and add it in Vercel as `MASTER_KEY` (Production, marked Sensitive). The next write creates the first data key, and from then on new data is written under it. Existing data stays under `k0` until the re-encryption pass below moves it.
 
-- **Without `MASTER_KEY`** the app keeps writing under `k0`, exactly as before. If the data key can't be used for any reason, writes fall back to `k0` and the log says so ("Writing with the legacy key", repeated hourly while it lasts), so a problem with the master can never block a save.
+- **Without `MASTER_KEY`** the app keeps writing under `k0`, exactly as before. If the environment's data key can't be used for any reason, writes fall back to `k0` and the log says so ("Writing with the legacy key", repeated hourly while it lasts), so a problem with the master can never block a save there. A container with a key of its own never falls back: if its key can't be used, its requests answer 503 and nothing is written until it can.
+- **Containers made from then on** are born with a key of their own, made in the step that registers them; those made before get theirs from the migration pass.
 - Only a deployment with the **current** master creates a data key, never while a master rotation is being prepared or is pending, and one at a time. An old deployment still running after a rotation writes under `k0` instead.
 - **Never remove `PLAID_ENCRYPTION_KEY`** while any value still uses `k0`.
 - **Status:** an empty POST to `/api/ops/rotate-master` (with `OPS_ENABLED=1`) reports `active_key`, the data key new writes use (`null` means still `k0`), `active_key_problem` if this deployment cannot use it, and `this_instance_fallback_since` if the instance that answered has been writing under `k0` instead.
 
-### Moving existing data to the data key
+### Moving existing data to keys of its own: the migration pass
 
-Everything written before `MASTER_KEY` was set is still under `k0`. The re-encryption pass moves every value that is not under the active data key to it, safely while the app is running: a value is only written back if it has not changed since it was read, and readers see exactly the same data either way.
+Everything written before `MASTER_KEY` was set is under `k0`, and every container made before this release keeps its values under the environment's keys (`k0` and the environment's data keys, which every container can read). The migration pass gives each container a data key of its own and moves its values to it, safely while the app is running: a value is only written back if it has not changed since it was read, and only while its container's map entry still names that key; readers see exactly the same data either way. **It is a required step of this release** ([below](#per-container-data-keys)).
 
-1. Take a backup first (see [Backups](#taking-a-backup-by-hand)). Don't run the pass while a restore is running.
-2. With `OPS_ENABLED=1`, check what is left. This changes none of your data and creates no key (like any read, it can finish a master rotation that is already due):
+1. Take a backup first, both files (see [Backups](#taking-a-backup-by-hand)). Don't run the pass while a restore is running, nor during a data move.
+2. With `OPS_ENABLED=1`, check what is left. This changes nothing and makes no key (like any read, it can finish a master rotation that is already due):
 
    ```bash
    curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
      -H "Authorization: Bearer $OPS_SECRET"
    ```
 
-   `to_move` counts values by the key they are under (`k0` is the old one). `active_key` is `null` until the first data key exists; the first run creates it.
-3. Move them, repeating until it answers `"complete": true` (each call stops after about 40 seconds and carries on next time):
+   `to_move` counts the values still under another key than their container's, by key (`k0` is the original one), and `not_moved` lists the containers walked that aren't moved yet.
+3. Run it, a call at a time, each starting after the last container the one before finished, until a call answers `"walked_all": true`; then start again from the beginning, until a call from the beginning answers `"complete": true`. Each call stops after about 40 seconds:
 
    ```bash
    curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
      -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' -d '{"run":true}'
+   # then, with the next_after it answered:
+   curl -sS -X POST https://your-app.vercel.app/api/ops/reencrypt \
+     -H "Authorization: Bearer $OPS_SECRET" -H 'Content-Type: application/json' -d '{"run":true,"after":"<next_after>"}'
    ```
 
+   A container is recorded as moved only by a walk that begins at least a minute after its key was made (instances pick a new key up within a minute), so the first run gives keys and moves values, and a run a minute later records them as moved.
 4. Remove `OPS_ENABLED` and redeploy.
 
-It never shows values, only key and field names, counts and reasons. What the fields mean:
+It never shows values, only container ids, key and field names, counts and reasons. What the fields mean:
 
+- `keys_made`, `maps_restored`, `marked_moved`: containers given a key, given back a map entry their key's record names, or recorded as moved by this call.
+- `damaged`: a container left alone because something says its key was lost: a value under a key the store doesn't hold, a value under another container's key while it has none, several keys naming it, or a map entry that can't be read. It gets no key until that is looked at.
+- `skipped`: not walked: being restored or archived, its key destroyed, deleted mid-walk, a master rotation pending, or key numbers at their cap.
+- `outside_containers`: values the data move left at the root, counted on a call from the beginning and never written.
 - `unclassified`: a store the pass does not know about. Left alone; a bug to report.
-- `unreadable`: a value it cannot move, left exactly as it was, with the reason: it cannot be decrypted, the key has an unexpected type, it is bound to a context, it is listed as plaintext but is encrypted, and so on.
+- `unreadable`: a value it cannot move, left exactly as it was, with the reason: it cannot be decrypted, the key has an unexpected type, it is bound to a context, it is under another container's key, it is listed as plaintext but is encrypted, and so on.
 - `changed_meanwhile`: saved by the app while being moved; picked up next call.
 - `deleted_meanwhile`: deleted by the app while being moved; nothing to do.
 
-If a call stops with "the active data key changed", something replaced the key store mid-pass (a restore, most likely): nothing was written under a key that no longer exists. Call it again once that is finished.
-
-**Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It costs nothing, the app still falls back to it if the data key is ever unavailable, and if it is marked Sensitive in Vercel (so it cannot be read back out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write) could never be read again.
+**Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It costs nothing, values outside the containers and archives taken before the pass still need it, and if it is marked Sensitive in Vercel (so it cannot be read back out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write) could never be read again. The environment's data keys stay too, for the same reasons.
 
 ### Rotating the master key
 
@@ -171,8 +184,105 @@ That's all. Twenty-four hours later the app removes the old locks by itself; unt
 - **Checking progress:** POST an empty body to the same URL (with `OPS_ENABLED=1`). It answers `none`, `prepared` (the new key isn't deployed yet), or `grace` with the time the old locks go.
 - **If something went wrong** (the new deployment can't read its data, you sent a key you didn't save, or you never did step 4): roll back or keep the current deployment, then send a new key. A new request replaces an unfinished one.
 - **Preview** has its own key store (it is a separate database). If it shares the master key, rotate it separately, or scope `MASTER_KEY` to Production only.
-- **Backups** taken before a rotation still need the old key.
+- **Backups** taken before a rotation still need the old key: the key archives until they are pruned, seven nights later.
+- **Container keys** are re-locked with the rest, a page of keys per request, and a finish that stops part way is completed by the next attempt. While a rotation is prepared or pending no container key can be made, so a container born meanwhile writes under the environment's key: run the migration pass once it has finished. How many keys fit in the route's minute is under [Per-container data keys](#per-container-data-keys).
 - **What this does not do:** someone who already has a copy of the database or a backup *and* the old key can still read that copy, and the data keys in it don't change. After a real leak, the data keys need replacing too, which comes with the re-encryption pass.
+
+### Per-container data keys
+
+Each container's values are encrypted under a data key of its own: one made in the step that registers a container, or, for a container made before this release, by the migration pass. Deleting an account destroys its key, and the key backups are rewritten without it. How it works is in [architecture.md](architecture.md#per-container-data-keys); this is what it changes for you.
+
+**This release's runbook.** Once it is deployed:
+
+1. Let the nightly backup run once (or take both files by hand, [above](#taking-a-backup-by-hand)) and check its log names a key archive.
+2. Run the migration pass until a call from the beginning answers `"complete": true` ([above](#moving-existing-data-to-keys-of-its-own-the-migration-pass)). Until it has, accounts made before this release are under the shared key, and the receipt says so for each of them. Run it again after a master rotation finishes and after rolling forward.
+3. If Upstash's Daily Backup is on for the database (its Backups tab), set `DATABASE_BACKUP_DAYS` to the days it keeps each copy (1 or 3), so the receipt and the pages add them to the window. Never keep a backup made there by hand (Backup & Export): it holds the whole database, key store included, until it is deleted.
+4. Check the status (below) now and then: containers without a key or not yet moved, keys left behind by an account deleted while rolled back, and a deletion's rewrite of the key archives left for the nightly run.
+
+**Backups are two kinds of file.** The nightly data archive (format 2, named `nya-<time>.f2.ndjson`, so a format-1 archive the release before writes is told apart by its name) leaves the key store out: `crypto:keys`, `crypto:active`, `crypto:master`, `crypto:rotation`, `crypto:key-seq` and the tombstones, `crypto:destroyed` (the rotation lock is in neither kind of file). They go in key archives, named `keys/<environment>/nya-keys-<taken>--<written>--<tombstones>.ndjson` (the last part a digest of the tombstones the file holds), in the same private Blob store, outside the folder the data archives are pruned from:
+
+- **Seven generations are kept**, a new one written each night after the data archive, built from the newest before it, the oldest beyond seven deleted only once the new one is checked. Never pruned on a night that fails.
+- **No key is ever dropped without a tombstone.** Each generation holds every key in the live store and every key of the generation before it that hasn't been tombstoned. A key that has left the live store without a tombstone (removed by hand, a bug, a restore of an older point) is carried forward, with when it was first missed (`missing_since`) and when a data archive last named it (`named_last`), until the oldest data archive still in the folder was taken after both, and never sooner than `backupRetention().max_days` after the later. So it stays as long as any kept copy can need it, however long a value kept naming it, and however long nights that fail keep old copies (nothing is pruned on one, and the newest seven are always kept). A night that wrote its data archive but no key archive counts as naming every key carried, since nothing recorded what its values named. The nightly log names a carried key, and so does the status. So the backups never lose a key overnight because the live store did.
+- **Checked, before anything older is deleted**: the file reads back byte for byte; it is exactly what the live store and the generation before make it (every key and tombstone of the store, every key and tombstone of the generation before but the keys tombstoned since or let go by the rule above, each carried line's times, and nothing else), or it is deleted, as a file that doesn't read back is, so no night builds on it; every key from the live store in it unwraps with the current master and is the key its id names (and, while a rotation is prepared, still carries the next master's lock); and it holds every key id that a value in the same night's data archive names, or a tombstone for that id. A file that fails only these last two checks is the store as it stands, so it is kept, and the run fails. A key carried forward was checked when it was last in the store. Without `MASTER_KEY` a key archive holds the tombstones alone; one with keys in it can't be checked, and the run fails.
+- **Rewritten at every deletion.** The last step of an account deletion rewrites every kept generation without the destroyed keys, and so does each nightly run for any generation still lacking a tombstone. A rewrite is a pure filter of the file before it (the destroyed keys' lines dropped, and every tombstone it lacks added), named after the file it replaces and checked line by line as exactly that before that file is deleted. A run reads a file only when its name says it lacks a tombstone, so a night with no deletion since the last reads just the generation it builds on.
+- **One writer at a time.** Reading the store, writing, checking and deleting older files happen under a lock (`backups:keys-lock`: a token, an expiry of two minutes, released only by its holder, like the snapshot's). After writing, the writer reads the tombstones again and rewrites any generation still holding a tombstoned key before it deletes anything. The nightly run waits up to 30 seconds for the lock, then fails. A deletion waits 5 seconds and takes 20 at most; if it can't, it leaves a marker (`backups:keys-pending`) that the next nightly run honours and clears, and its receipt says "by the next nightly backup".
+- **A short cache lifetime.** Key archives are written with Vercel Blob's shortest cache lifetime, 60 seconds, since a deleted blob can still be served from its cache that long.
+- **How many keys fit.** Measured on a local Redis through the same client calls, with an in-memory blob store: at 30,000 keys a night with nothing to rewrite took 2.7 s of CPU, 159 Redis requests and 7 blob calls moving 23 MB (about 8 s at 25 ms a request, 100 ms a blob call and 50 MB/s), and one rewriting all seven generations (a deletion's rewrite the nightly run caught up on) 5.4 s, the same requests and 35 blob calls moving 186 MB (about 17 s). So inside the key step's 40 seconds, a night that rewrites everything fits about 50,000 keys, and a quiet one well over twice that; a deletion's rewrite fits its 20 seconds up to about 40,000, and past that is left for the nightly run, which its receipt says.
+
+The map, `crypto:container-keys`, stays in the data archive, with the data it describes. Once the data archive reads back, and before the key archive, the nightly run counts, from the headers of the values it already holds, which containers have a value under `k0` or an environment key, and notes the archive's time in each one's map entry (`shared_in`), clearing its `moved` if set, so the pass walks it again. It notes too, from the folder's listing, the time of the newest format-1 archive taken after a container's key was made (`key_in`: a rollback's, which holds the whole key store, this key included), clearing `moved` the same way, since the release before may have written the container's values under a shared key. A run that can't write and check its key archive fails, and the dashboard says so, though its data archive is kept (with what it counted) and nothing is pruned. A data archive alone can't be read even with `MASTER_KEY` (values under `k0` aside): it needs a key archive.
+
+**A key archive that doesn't read back.** A run reads the newest generation, to build on, twice before it gives up on it; then it fails, naming the file, and writes nothing, rather than build tonight's on less. Download that file from the store's browser and look: if it is damaged, delete it there, and the next run builds from the generation before it. A key only it carried (one that had left the live store) is then gone from the archives, unless you put its line's record back in `crypto:keys` by hand. An older generation that doesn't read back is deleted by the run that finds it, which logs it: the generation after it was built from it, so holds everything it held but the keys destroyed since. A deletion that finds the newest damaged leaves its rewrite for the nightly run, and its receipt says so.
+
+**A value under a key nothing holds.** The nightly run fails with "A value in tonight's data archive is under k<n>-<hex>, which the key archive neither holds nor marks destroyed", and nothing is pruned until it is fixed. A check of the migration pass (`POST /api/ops/reencrypt` without `run`) names the value under `unreadable`, by key and field, with `UnknownKeyError` as the reason. If a kept key archive holds the key (a restore that lost it, a key removed by hand), put its record back in `crypto:keys` exactly as that archive's line holds it. If none does, nothing can read the value: delete that key or hash field in the Upstash console (it is lost either way), and the next run succeeds.
+
+The night after a deletion, the run first sweeps the deleted container's prefix once more, for a write that came later still, and notes it (`swept`).
+
+**Restoring needs both.** `bun run restore <data.f2.ndjson> --keys <keys.ndjson> --target <prefix>` checks each file, then, before writing anything:
+
+- takes as tombstones those of the key archive and those already in the target, together, and leaves out every container tombstoned in either (a deleted account): its registry entry, its owners' entries, every key in it, and the sharing connections its account was in, as a deletion ends them; its map entry says its key was destroyed. It never writes back a tombstoned key. The same applies to a format-1 archive, which restores alone, as before, with the tombstones it carries and the target's. A restore never brings a deleted account back, and the dry run names the containers it leaves out;
+- reads the header of every value in the data archive (`classify()` says where the ciphertext is) and refuses if one names a key the key archive neither holds nor marks destroyed: use a newer key archive;
+- restores a container whose map entry names a key the key archive lacks, with nothing under that key (made just before the data archive), without its map entry, so it writes under the shared key until the pass gives it one, rather than failing every write; and says so;
+- leaves out of the live store the keys of containers the data archive doesn't have (made after it was taken). The kept key archives still carry them, as above, for as long as a data archive may need them.
+
+The copy of the target saved before an overwrite is a pair too. Keys, the map and the tombstones name containers, never the environment prefix, so a restore into another namespace (`restore-test`) reads with the source's `MASTER_KEY`, as before. Redeploy after a restore: an instance also remembers a container's key for up to a minute.
+
+**The migration pass** is described [above](#moving-existing-data-to-keys-of-its-own-the-migration-pass). In short:
+
+- **Per container, in id order, from a cursor.** Each call carries `"after": "<container id>"` (the last container the one before finished) and answers `next_after`, so it reaches every container however many there are. Only active containers are walked; one being restored or archived is named and skipped. A check (no `run`) reports, per container, whether it has a key, whether it is moved, and how many of its values are still under other keys (by key); the values outside any container, counted and left alone; and the problems below.
+- **Keys first.** A run gives a key to each active container that has none, in `nya:container-key-create`, but only to one whose values are all under `k0` or the environment's keys. A container with a value under a container key the store doesn't hold is reported as damage and gets no key. A container whose map entry is missing while its key's record names it gets its entry back from that record. While a master rotation is prepared or pending, or a rotation step holds its lock, a call makes no key and uses up no key number: it says so for each container.
+- **Then values.** Each value under another key moves to its container's key with a compare-and-set, guarded in the same step by the map entry still naming that key and the key still being stored. Each is read back once written and decrypted under its container's `Ctx` with the key loaded fresh from the store. A container whose map entry changes mid-walk (deleted meanwhile) ends its walk, and the pass goes on to the next.
+- **Moved.** A container is recorded as moved (`moved` in its map entry: the time its own walk began) only when one call walked the whole of it, the walk began at least a minute after its key was made (instances pick a new key up within a minute), and it found nothing left under another key and nothing unreadable, unclassified or changed meanwhile. A run skips moved containers. A value that still lands under the shared key in a moved container (an instance of the release before still draining after a deploy, an old deployment's own URL, a rollback) is found by the nightly count, which clears `moved`, so the next run walks the container again.
+- **Complete** means every active container has a key and is moved, from a call that walked to the last container with nothing damaged, unreadable or unclassified. A second complete run writes nothing.
+- **`"after_rollback": true`** is only for data archives taken by hand while rolled back, which the backups can't see: it clears every container's `moved` and dates `shared_in` now.
+- It never writes a key outside the containers, so the copies the data move left at the root are never rewritten. Still don't run it during a data move (steps 4 to 8 of [Moving the data into containers](#moving-the-data-into-containers)).
+
+**Status, and destroying a key by hand.** `POST /api/ops/container-keys` (locked like every ops route) with an empty body reports `with_key` (how many active containers have a key, and how many are moved), `without_key` and `not_moved` (the containers, up to 200 of each, with the count), `orphaned_keys` (keys whose container is no longer in the registry, and those containers), `entries_missing_key` (map entries naming a key the store lacks), `unreadable_entries`, `carried_forward` (keys the newest key archive carries forward; null when none could be read), `tombstones`, `key_numbers` (the next one, and how many are left before the cap) and `key_archives_pending` (a deletion's rewrite left for the nightly run). With `{"destroy_keys_of": ["<container id>"]}` it destroys the keys of the containers named (up to 50), each only if the registry no longer lists it, the way a deletion does, and rewrites the key archives. Nothing ever destroys a key on its own: a registry read wrongly, or restored with `--replace-registry`, must never cost a living container its key.
+
+**The environment's keys stay.** `k0` (`PLAID_ENCRYPTION_KEY`) and the environment's data keys are not retired in this change: values outside the containers, archives taken before the pass, and anything written while rolled back still need them. A later change can retire an environment data key once the pass reports nothing under it and every archive still kept was taken after that.
+
+**Rotating the master** works as before and re-locks container keys too, a page of keys per request, and an interrupted finish is completed by the next attempt instead of refusing for good. Measured on a local Redis through the same client calls, prepare costs about 0.36 ms of CPU a key and finish about 0.08 ms, each with one request per 50 keys: 30,000 keys took 11 s to prepare and 2.4 s to finish locally, 26 s and 18 s once each request costs 25 ms. So inside the route's minute, prepare fits about 50,000 keys (leaving room for a slower server) and finish about twice that. Prepare is still one pass that writes every key again; past that size it needs to resume key by key, as finish does. While a rotation is pending no container key can be made, so a container born meanwhile writes under the environment's key: run the pass once the rotation has finished. Key archives taken before a rotation still need the old master until they are pruned, seven nights later; data archives never carry a lock again. A key carried forward (one that had left the live store) isn't in the store for a rotation to re-lock, so it keeps only the lock it had: until it is let go, restoring a data archive that needs it takes the old master too, so keep that until then.
+
+**Deleting an account destroys its key.** In this order:
+
+1. the container is archived;
+2. what it holds is counted, and its map entry read, for the receipt (below);
+3. its banks are disconnected;
+4. every key in it is deleted;
+5. it leaves the registry;
+6. **its key is destroyed**, in one Lua step that only acts on a container no longer in the registry: every key whose record names the container (found by `HSCAN` of the store as well as through the map, since a damaged map entry must not let a key survive) goes, a tombstone is written for each, and the map entry becomes `{"destroyed": "<day>"}`. The deletion then checks that no key naming the container is left. Repeating the step does nothing more, and answers the same keys;
+7. the account's owners entry becomes a marker, `deleted:<container id>`, which `owned()` refuses, so a request from another tab can't get the account a new container;
+8. sharing ends;
+9. the sign-in is deleted, and then the owners marker;
+10. the container is swept once more for late writes;
+11. every kept key archive is rewritten without the key (above).
+
+The key goes once nothing needs it any more (counting reads through it, and disconnecting decrypts each bank's token with it) and before the owners entry is replaced, which is how a deletion that stopped part way finds its container again, so a retry never loses track of a key it still has to destroy. A request already in flight (a sync, the snapshot cron) that writes after step 6 fails on the destroyed map entry if its instance doesn't have the key in memory, and writes under a key that exists nowhere if it does (for up to a minute). Anything written there in plain text (a count, a snapshot's outcome) is under the container's prefix, and the nightly run sweeps every destroyed container's prefix once more the night after its deletion, so nothing late stays.
+
+**How long a deleted account's copies stay readable.** For an account deleted now:
+
+- **The database**: its data at once, its key seconds later.
+- **Nightly backups, what is under its own key**: unreadable once every kept key archive has been rewritten without the key: within minutes, as part of the deletion, or by the next nightly backup that succeeds if that failed; the receipt says which. A deleted blob can still be served from Vercel's cache for up to 60 seconds after. The copies stay in the backups, unreadable, until they are pruned.
+- **A backup taken while an older version ran** (a rollback's format-1 archive, taken after the account's key was made) holds the key itself, so until it is pruned, `backupDaysAtMost` after it was taken, every copy of the account's data can be decrypted with `MASTER_KEY`. The deletion lists the backup folder for one, as the nightly run does, and the receipt dates it, or says it couldn't check when the folder couldn't be listed.
+- **Nightly backups, what is under a shared key**: readable with `MASTER_KEY` until the newest kept copy that holds the account readably is pruned. The receipt dates it from the map entry: for an account born with its key, from the newest archive that found one of its values under a shared key (`shared_in`), or never; for one the pass gave its key, from when the pass found nothing left to move (`moved`), or the deletion if it never did, or a later `shared_in`; for one with no key of its own, from the deletion. A copy is gone `backupDaysAtMost` after it was taken (32 days with the default `BACKUP_KEEP_DAYS`).
+- **Nightly backups, plain text**: dates, ids, bank names, the original names of renamed merchants and sharing's names stay readable until the copies are pruned, within the same 32 days of the deletion. Per-container keys don't change this; encrypting that metadata (the master plan's Gap 1) would.
+- **The database host's own backups**: Upstash's Daily Backup, a switch on each database's Backups tab, keeps each copy for 1 or 3 days, and a backup made there by hand (Backup & Export) is kept until it is deleted. Each holds the whole database, key store included, so while one exists the account's encrypted copies can be read with it and `MASTER_KEY`. Set `DATABASE_BACKUP_DAYS` to the days Daily Backup keeps (0, the default, means it is off): the pages and the receipt add it to the window. Never keep a manual one.
+- **A key archive downloaded by hand** before the deletion opens the account's encrypted copies for as long as it is kept.
+- **Instances running at the time** may hold the key in memory until they end. They read only the live database, where nothing of the account is left.
+- **What is kept for good**: the tombstone, that a container id existed and the day its key was destroyed.
+
+**What a rollback sees.** The release before reads everything this one writes, so rolling back is safe at any time, with no switch to turn off first. `test/release-before.test.ts` holds this release to that with the release before's own code (`test/fixtures/release-before`, byte for byte): its decrypt, its key store reader, its export and verifier, its rotation, its pass's plain-text check and its first key, against what this release writes. When the release before changes, copy its files there and change their hashes in the test.
+
+- every value reads as before: container keys are ordinary entries of the key store to it. The isolation check is off while it runs: its `decrypt` takes no `Ctx`, so a value copied from one container into another reads there;
+- it writes under the environment's active key, containers with a key of their own included. Rolling forward, those still read (the environment's keys are accepted in every container), the nightly count finds them, and the next pass moves them back;
+- containers it creates get no key until the next pass;
+- an account it deletes keeps its key, since it doesn't know to destroy it. Rolling forward, the status lists those keys (their container is gone from the registry), and `destroy_keys_of` destroys them;
+- its nightly backups are format-1 archives that put the whole key store, container keys included, in the data archive. Rolling forward, this release notices them by name: each container whose key was made before such an archive was taken is dated by it (`key_in`) and walked again by the pass, and a deletion lists the folder itself, so a receipt says the archive holds the key, and until when, even before a nightly run has noted it;
+- it writes no key archive and deletes none, so the generations taken before the rollback stay as they were;
+- **don't run its re-encryption pass**: it moves every container's values back to the environment's key and answers `complete: true` without a word about it;
+- **restore from a checkout of this release**, even while rolled back: its `bun run restore` refuses format 2 rather than restoring a data archive without its keys, and a restore runs locally, so a checkout of this release always works;
+- don't rotate the master while rolled back: its finish has the interrupted-finish trap this release fixes. A rotation it does complete re-locks container keys like any other.
+
+**What the pages and the receipt say.** The public pages read no stored data, so they say it conditionally, and only where a master key is set (`keyDeletionText` in `lib/deletion-receipt.ts`, the same words on both): accounts made on this version are normally under a key of their own from the start, and older ones (or one made while a key couldn't be: during a rotation, past the key-number cap) once whoever runs this copy has moved them; until then, under a key shared by everyone on this copy. Deleting an account destroys its key, so nothing encrypted under it can be decrypted from any copy Nya keeps, normally within minutes of the deletion and at the latest after the next nightly backup that succeeds. The encrypted copies stay in backups, unreadable, until they age out; the plain text in them stays readable until then. What that doesn't reach: a key backup whoever runs Nya downloaded by hand, the database provider's own backups when they are on (`DATABASE_BACKUP_DAYS`), and a backup taken while an older version ran. The tombstone is kept. The receipt and the signed-in account's page state the person's own case from the map: whether their data is under a key of its own, when the key backups were rewritten (or "by the next nightly backup"), until when copies under the shared key exist (or that none do), and, when a backup taken while an older version ran holds the key, that every copy of their data can be decrypted with the master key until that backup goes (or that it couldn't be checked, when the folder couldn't be listed). Its "what stays" names a key backup downloaded by hand. The wording is the owner's to sign off.
 
 ## Plaid secrets in older logs
 

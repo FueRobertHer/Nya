@@ -124,7 +124,7 @@ const COSTCO = (amount: number) => bankTxn('b_costco', 39, amount);
 async function storeBank(rows: ReturnType<typeof bankTxn>[], item = 'item_chase', accounts = ['acc_chk']) {
   await fake.set(
     ctxKey(`txns:${item}`),
-    await encodeJsonBlob({
+    await encodeJsonBlob(ctx, {
       schema_version: 2,
       cursor: 'c1',
       accounts: Object.fromEntries(accounts.map((a) => [a, { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null }])),
@@ -136,9 +136,9 @@ async function storeBank(rows: ReturnType<typeof bankTxn>[], item = 'item_chase'
 
 /** Another connection, as the loads remember it, with its accounts. */
 async function connect(item: string, institution: string, accounts: string[]) {
-  await saveItem(ctx, { item_id: item, institution_name: institution, encrypted_access_token: await encrypt(`access-sandbox-${item}`) });
+  await saveItem(ctx, { item_id: item, institution_name: institution, encrypted_access_token: await encrypt(ctx, `access-sandbox-${item}`) });
   await fake.hset(ctxKey('accounts:meta'), {
-    [item]: await encrypt(
+    [item]: await encrypt(ctx, 
       JSON.stringify(accounts.map((account_id) => ({ account_id, name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' })))
     ),
   });
@@ -152,9 +152,9 @@ beforeEach(async () => {
   plaid.removed = [];
   others.clear();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta'), {
-    item_chase: await encrypt(
+    item_chase: await encrypt(ctx, 
       JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])
     ),
   });

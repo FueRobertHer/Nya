@@ -32,7 +32,7 @@ export async function disconnectItem(
 ): Promise<void> {
   if (item) {
     try {
-      const access_token = await decrypt(item.encrypted_access_token);
+      const access_token = await decrypt(ctx, item.encrypted_access_token);
       await plaidClient.itemRemove({ access_token });
     } catch (err) {
       // If Plaid-side removal fails (e.g. already revoked), still remove

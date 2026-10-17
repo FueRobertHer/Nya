@@ -9,6 +9,7 @@ import {
   listContainers,
   resolveCtx,
 } from '@/lib/containers';
+import { birthKey } from '@/lib/crypto';
 
 // The container registry (see lib/containers.ts). Two bodies:
 //
@@ -58,7 +59,8 @@ export async function POST(req: Request) {
 
   try {
     if (create) {
-      const id = await createFirstContainer();
+      // Born with its data key, where there is a master (lib/crypto.ts).
+      const id = await createFirstContainer(Date.now(), (fresh) => birthKey(fresh));
       return NextResponse.json({
         created: id,
         environment: envPrefix().replace(/:$/, ''),

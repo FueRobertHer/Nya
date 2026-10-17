@@ -40,7 +40,7 @@ const MANUAL = { account_id: 'manual_6a3c1f0e-1111-4222-8333-944455556666', name
 
 /** A Plaid connection as a load leaves it: stored, remembered, in the directory. */
 async function connect(item_id: string, institution_name: string, accounts: { account_id: string; type: string; name: string }[]) {
-  await saveItem(ctx, { item_id, institution_name, encrypted_access_token: await encrypt('tok') });
+  await saveItem(ctx, { item_id, institution_name, encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
   const inst = { item_id, institution_name, error: null, accounts: accounts.map((a) => ({ ...a, mask: '1111', official_name: null, subtype: null, balance: 10, currency: 'USD' })) };
   await rememberAccounts(ctx, [inst as any]);
   await recordDirectory(ctx, [inst as any]);
@@ -194,7 +194,7 @@ describe('account lifecycle: errors by the seam’s rules', () => {
   test('the repair removes only damaged entries, once confirmed', async () => {
     await fake.hset(ctxKey('account-lifecycle'), {
       broken: 'damaged-bytes-damaged-bytes-damaged',
-      later: await encrypt(JSON.stringify({ lifecycle: { state: 'sold', on: '2026-03-01' }, type: null, label: { name: 'x', institution: 'y', mask: null }, item_id: null, set_at: '2026-03-01T00:00:00Z' })),
+      later: await encrypt(TEST_CTX, JSON.stringify({ lifecycle: { state: 'sold', on: '2026-03-01' }, type: null, label: { name: 'x', institution: 'y', mask: null }, item_id: null, set_at: '2026-03-01T00:00:00Z' })),
     });
     const { status, body } = await lifecycle({ action: 'repair', confirm: true });
     expect(status).toBe(200);

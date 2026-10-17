@@ -32,8 +32,8 @@ export const DAY = 86_400_000;
  *  app reads (the last 365 days) whenever the tests run. */
 export const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
 
-const remembered = (accounts: Record<string, unknown>[]) =>
-  encrypt(JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
+const remembered = (accounts: Record<string, unknown>[], where: { container: any } = TEST_CTX) =>
+  encrypt(where, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
 
 export function txn(id: string, account_id: string, daysBack: number, amount: number, over: Record<string, unknown> = {}) {
   return {
@@ -94,9 +94,9 @@ export const CHASE_TXNS = [
 export const SYNCED_AT = new Date(Date.now() - 2 * 3600_000).toISOString();
 
 export async function seedPerson(fake: FakeRedis) {
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-secret') });
-  await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt('access-sandbox-secret-2') });
-  await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt('access-sandbox-secret-3') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret') });
+  await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret-2') });
+  await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret-3') });
   await fake.hset(ctxKey('accounts:meta'), {
     item_chase: await remembered([
       { account_id: 'acc_chk', name: 'Checking', type: 'depository', subtype: 'checking', mask: '1111' },
@@ -107,17 +107,17 @@ export async function seedPerson(fake: FakeRedis) {
   });
   // Balances as recorded: two full days, and a newer partial one for checking
   // (the broker failed that day).
-  const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
+  const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
   await fake.hset(ctxKey('history:accounts'), {
     [daysAgo(3)]: await map({ acc_chk: 1000, acc_card: 250, acc_save: 5000, acc_ira: 20000, manual_house: 300000 }),
     [daysAgo(2)]: await map({ acc_chk: 1200, acc_card: 300, acc_save: 5000, acc_ira: 20500, manual_house: 300000 }),
   });
   await fake.hset(ctxKey('history:accounts:partial'), { [daysAgo(1)]: await map({ acc_chk: 1250, acc_card: 310 }) });
   await fake.hset(ctxKey('history:net-worth'), {
-    [daysAgo(3)]: await encrypt(String(1000 - 250 + 5000 + 20000 + 300000)),
-    [daysAgo(2)]: await encrypt(String(1200 - 300 + 5000 + 20500 + 300000)),
+    [daysAgo(3)]: await encrypt(TEST_CTX, String(1000 - 250 + 5000 + 20000 + 300000)),
+    [daysAgo(2)]: await encrypt(TEST_CTX, String(1200 - 300 + 5000 + 20500 + 300000)),
   });
-  await fake.hset(ctxKey('history:net-worth:est'), { [daysAgo(10)]: await encrypt('320000') });
+  await fake.hset(ctxKey('history:net-worth:est'), { [daysAgo(10)]: await encrypt(TEST_CTX, '320000') });
   await fake.hset(ctxKey('history:accounts:est'), { [daysAgo(10)]: await map({ acc_chk: 900 }) });
   await fake.hset(ctxKey('snapshot:taken'), { [daysAgo(2)]: `${daysAgo(2)}T13:00:41.000Z` });
 
@@ -128,10 +128,10 @@ export async function seedPerson(fake: FakeRedis) {
   };
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(CHASE_TXNS.map((t) => [t.transaction_id, t])), synced_at: SYNCED_AT })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(CHASE_TXNS.map((t) => [t.transaction_id, t])), synced_at: SYNCED_AT })
   );
   // The broker's store was last saved before sync times were kept.
-  await fake.set(ctxKey('txns:item_broker'), await encodeJsonBlob({ schema_version: 2, cursor: 'c2', accounts: {}, txns: {} }));
+  await fake.set(ctxKey('txns:item_broker'), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c2', accounts: {}, txns: {} }));
 
   await setAccountHidden(ctx, 'acc_save', 'depository', true);
   await setOverride(ctx, 't_rent', 'housing');
@@ -185,13 +185,13 @@ export async function connectWithoutTransactions(
   fake: FakeRedis,
   opts: { item_id: string; name: string; accounts: { account_id: string; type: string }[]; refused?: { code: string; at?: string } }
 ) {
-  await saveItem(ctx, { item_id: opts.item_id, institution_name: opts.name, encrypted_access_token: await encrypt(`access-sandbox-${opts.item_id}`), transactions_billed: false });
+  await saveItem(ctx, { item_id: opts.item_id, institution_name: opts.name, encrypted_access_token: await encrypt(TEST_CTX, `access-sandbox-${opts.item_id}`), transactions_billed: false });
   await fake.hset(ctxKey('accounts:meta'), { [opts.item_id]: await remembered(opts.accounts.map((a) => ({ ...a, name: a.account_id }))) });
   if (opts.refused) {
     const cash = opts.accounts.filter((a) => a.type === 'depository' || a.type === 'credit').map((a) => a.account_id).sort();
     await fake.set(
       ctxKey(`txns:${opts.item_id}`),
-      await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: opts.refused.at ?? new Date().toISOString(), code: opts.refused.code, accounts: cash } })
+      await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: opts.refused.at ?? new Date().toISOString(), code: opts.refused.code, accounts: cash } })
     );
   }
 }
@@ -199,11 +199,13 @@ export async function connectWithoutTransactions(
 /** Someone else's container: none of it may ever show for the first one's token. */
 export async function seedOther(fake: FakeRedis) {
   await fake.hset(testKey('containers'), { [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-02-01T00:00:00.000Z' }) });
-  await saveItem(OTHER, { item_id: 'item_other', institution_name: 'OtherBank', encrypted_access_token: await encrypt('access-sandbox-other') });
-  await fake.hset(ctxKey('accounts:meta', OTHER), { item_other: await remembered([{ account_id: 'acc_other', name: 'OTHER-SECRET-ACCOUNT', type: 'depository' }]) });
+  // Encrypted for the container they are stored in, as the app does: with a
+  // key per container, OTHER's values are under OTHER's key.
+  await saveItem(OTHER, { item_id: 'item_other', institution_name: 'OtherBank', encrypted_access_token: await encrypt(OTHER, 'access-sandbox-other') });
+  await fake.hset(ctxKey('accounts:meta', OTHER), { item_other: await remembered([{ account_id: 'acc_other', name: 'OTHER-SECRET-ACCOUNT', type: 'depository' }], OTHER) });
   await fake.set(
     ctxKey('txns:item_other', OTHER),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns: { t_o: txn('t_o', 'acc_other', 1, 77, { name: 'OTHER-SECRET-TXN', institution_name: 'OtherBank' }) } })
+    await encodeJsonBlob(OTHER, { schema_version: 2, cursor: 'c', accounts: {}, txns: { t_o: txn('t_o', 'acc_other', 1, 77, { name: 'OTHER-SECRET-TXN', institution_name: 'OtherBank' }) } })
   );
   await setBudgets(OTHER, { 'OTHER-SECRET-BUDGET': 5 });
 }

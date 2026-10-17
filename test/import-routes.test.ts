@@ -729,8 +729,8 @@ describe('the list of imports, and undo', () => {
     expect((await undo({ account_id: CHECKING.account_id, import_id: third, confirm: true })).body).toMatchObject({ removed: 8 });
 
     const second = (await importFile(CHECKING.account_id, fixture('checking-ofx102.ofx'))).body.import_id as string;
-    await fake.hset(ctxKey('imports'), { [second]: await encrypt(JSON.stringify({ version: 2, from: 'a later release' })) });
-    await fake.hset(ctxKey('import-summaries'), { [second]: await encrypt(JSON.stringify({ version: 2, from: 'a later release' })) });
+    await fake.hset(ctxKey('imports'), { [second]: await encrypt(TEST_CTX, JSON.stringify({ version: 2, from: 'a later release' })) });
+    await fake.hset(ctxKey('import-summaries'), { [second]: await encrypt(TEST_CTX, JSON.stringify({ version: 2, from: 'a later release' })) });
     expect((await list(CHECKING.account_id)).body.imports).toEqual([expect.objectContaining({ id: second, record: 'unrecognised' })]);
     const { result } = await quietly(() => undo({ account_id: CHECKING.account_id, import_id: second, confirm: true }));
     expect(result.status).toBe(409);

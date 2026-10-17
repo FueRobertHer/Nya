@@ -3,8 +3,9 @@ import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
-import { backupRetention } from '@/lib/backup';
-import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
+import { backupRetention, databaseBackupDays } from '@/lib/backup';
+import { KEY_GENERATIONS } from '@/lib/key-archive';
+import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
@@ -22,7 +23,8 @@ export const metadata: Metadata = {
 // things never to promise. Reads no stored data. From the environment it reads
 // only how the Content-Security-Policy is sent, whether a master key is set
 // (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
-// rule the deletion receipt uses too) and whether this copy sends email
+// rule the deletion receipt uses too, and DATABASE_BACKUP_DAYS) and whether
+// this copy sends email
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
 // write to, which also decides whether a download is emailed), since each
 // changes what is true of this copy.
@@ -98,11 +100,18 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
             environment settings, never in the database. Changing the master key locks the data keys again under the new
             one and leaves the data itself untouched, so a key change cannot damage it.
           </p>
+          <p>
+            Each account made on this version of Nya normally has a data key of its own from the start, used for its data
+            alone. An account made before it, or one made at a moment its key couldn’t be (while the master key is being
+            changed, say), is under a set of data keys shared by everyone on this copy of Nya until whoever runs it moves
+            the account to a key of its own. A value under one account’s key can’t be read as another’s, even copied into
+            its place; values still under a shared key can, until they are moved.
+          </p>
           <p className="info-aside">
             Values written before the master key was set up stay under Nya’s original single key (also AES-256-GCM, also
-            kept only in the environment) until they are moved to a data key, and if a data key ever cannot be used, a
-            value is written under that original key and the server’s log says so. One set of data keys covers everyone
-            on a copy of Nya; a key per person is planned.
+            kept only in the environment) until they are moved to a data key. If a shared data key ever cannot be used, a
+            value is written under that original key and the server’s log says so. An account with a key of its own
+            never falls back: if its key can’t be used, its data can’t be read or written on that server until it can.
           </p>
         </>
       ) : (
@@ -144,11 +153,19 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
       </p>
       <p>
         A backup holds the same kinds of data as the database, apart from API tokens: the encrypted values and the plain
-        text listed above{envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read
+        text listed above{envelope ? ', and, in a file of their own kept beside it, the data keys in their locked form' : ''}. Its encrypted parts cannot be read
         without the keys kept in the server’s environment. API tokens are never backed up, so restoring a backup ends every
         token, and none revoked before it can work again. It never holds the access a SimpleFIN account gives Nya, which
         works on its own: restoring a backup ends that access, and you connect again with a new Setup Token.
       </p>
+      {envelope && (
+        <p>
+          The backups of the data keys are kept apart so that deleting an account can take its key out of every one of
+          them without rewriting the data: the last {KEY_GENERATIONS} nights’ are kept, each checked before an older one is
+          deleted. A key leaves them when the account it belongs to is deleted, or, for one that has gone from the
+          database without that, once no backup still kept can need it.
+        </p>
+      )}
     </>
   );
 }
@@ -176,6 +193,7 @@ export default function SecurityPage() {
   const envelope = masterKeyConfigured();
   const backups = backupRetention();
   const mail = sendsEmail();
+  const keys = keyDeletionText({ envelope, backups, databaseDays: databaseBackupDays() });
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -265,9 +283,15 @@ export default function SecurityPage() {
           ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and
           what stays and why.
         </p>
+        {keys.key.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
         <p>What it does not reach:</p>
         <ul>
           <DeletedInBackups backups={backups} />
+          {keys.notReached.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
           <li>
             Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on
             its own within 72 hours.

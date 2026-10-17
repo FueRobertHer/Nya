@@ -133,7 +133,7 @@ const IMPORTED_NOW = ['CORNER SHOP', 'OLD DEPOSIT', 'OLD STORE'];
 async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: 'c1',
       accounts: {
@@ -147,9 +147,9 @@ async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
 }
 
 async function seed() {
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta'), {
-    item_chase: await encrypt(
+    item_chase: await encrypt(TEST_CTX, 
       JSON.stringify([
         { account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
         { account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },

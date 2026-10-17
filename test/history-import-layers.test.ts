@@ -116,7 +116,7 @@ const STATEMENT = (() => {
 async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: 'c1',
       accounts: { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -187,7 +187,7 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   await rememberAccounts(ctx, [
     {
       item_id: 'item_chase',
@@ -460,7 +460,7 @@ describe('parts the files are made from that can’t be read', () => {
 
   test('an imported row’s book, or what was carried from an earlier account: transactions.csv and an OFX statement say what they are missing', async () => {
     await importStatement();
-    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
+    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(TEST_CTX, JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
     await fake.hset(ctxKey('carried-annotations'), { acc_old: DAMAGED });
     await fake.hset(ctxKey('imported-transactions'), { acc_chk: DAMAGED });
     const csv = exportFile(await download(), 'transactions-csv');

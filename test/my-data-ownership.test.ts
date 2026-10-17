@@ -165,10 +165,10 @@ const CASH_ROWS: ManualTxn[] = [
 
 async function seed() {
   await fake.hset(ctxKey('plaid:items'), {
-    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('access-sandbox-SECRET') }),
+    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-SECRET') }),
   });
   await fake.hset(ctxKey('accounts:meta'), {
-    item_a: await encrypt(
+    item_a: await encrypt(TEST_CTX, 
       JSON.stringify([
         { account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
         { account_id: 'acc_card', name: 'Sapphire', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
@@ -179,7 +179,7 @@ async function seed() {
   });
   await fake.set(
     ctxKey('txns:item_a'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: '',
       accounts: {
@@ -189,10 +189,10 @@ async function seed() {
       txns: TXNS,
     })
   );
-  await fake.hset(ctxKey('txn-vendor-renames'), { 'mid:ent_bb': await encrypt('BB Coffee') });
+  await fake.hset(ctxKey('txn-vendor-renames'), { 'mid:ent_bb': await encrypt(TEST_CTX, 'BB Coffee') });
   await fake.hset(ctxKey('history:accounts'), {
-    '2026-10-07': await encrypt(JSON.stringify({ acc_chk: 1500, acc_card: 480 })),
-    '2026-10-08': await encrypt(JSON.stringify({ acc_chk: 1550.25, acc_card: 500, acc_mortgage: 250000 })),
+    '2026-10-07': await encrypt(TEST_CTX, JSON.stringify({ acc_chk: 1500, acc_card: 480 })),
+    '2026-10-08': await encrypt(TEST_CTX, JSON.stringify({ acc_chk: 1550.25, acc_card: 500, acc_mortgage: 250000 })),
   });
   for (const a of [MANUAL_CASH, MANUAL_LOAN, TARGET]) await saveManualAccount(ctx, a as any);
   await manualTxnStore.set(ctx, 'manual_cash', { version: 1, rows: CASH_ROWS });
@@ -404,7 +404,7 @@ describe('one account as an OFX statement', () => {
     await fake.hset(ctxKey('snapshot:taken'), { '2026-10-08': '2026-10-08T02:30:00.000Z' });
     // Measured again later that day, while another bank failed: the moment
     // above is that day's snapshot's, not this balance's.
-    await fake.hset(ctxKey('history:accounts:partial'), { '2026-10-08': await encrypt(JSON.stringify({ acc_chk: 1600 })) });
+    await fake.hset(ctxKey('history:accounts:partial'), { '2026-10-08': await encrypt(TEST_CTX, JSON.stringify({ acc_chk: 1600 })) });
     expect(await ledgerOf({ account_id: 'acc_chk', time_zone: 'America/Los_Angeles' })).toEqual({ amount: 1600, as_of: '2026-10-08' });
     // A restored copy keeps this deployment's own moments: one from another
     // day isn't the balance's.
@@ -415,7 +415,7 @@ describe('one account as an OFX statement', () => {
 
   // A bank reconnected: the account's earlier id linked to the one it has now.
   const linkEarlier = async () =>
-    fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
+    fake.hset(ctxKey('account-links'), { acc_old: await encrypt(TEST_CTX, JSON.stringify({ to: 'acc_chk', linked_at: '2026-09-15T00:00:00.000Z', evidence: {} })) });
 
   test('after a re-link: the ACCTID the earlier account’s files had, and its exclusions marked, the account’s own record first', async () => {
     let read = statementsOf((await download({ format: 'ofx', account_id: 'acc_chk' })).bytes);

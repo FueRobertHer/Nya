@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, unscopedDataKeys, TEST_CTX } from './fake-redis';
 
 // The flag /api/net-worth sends when an investment account's positions didn't
 // come (lib/networth.ts markUnanswered): the holdings call failed this time,
@@ -51,7 +51,7 @@ beforeEach(() => {
   plaid.fail = null;
 });
 
-const fetchIt = async () => fetchInstitution({ item_id: 'item_v', institution_name: 'Vanguard', encrypted_access_token: await encrypt('tok') } as any);
+const fetchIt = async () => fetchInstitution(TEST_CTX, { item_id: 'item_v', institution_name: 'Vanguard', encrypted_access_token: await encrypt(TEST_CTX, 'tok') } as any);
 const flags = (inst: Awaited<ReturnType<typeof fetchIt>>) => inst.accounts.map((a: any) => [a.account_id, a.holdings_unanswered === true]);
 
 describe('the holdings call’s flag on each account', () => {

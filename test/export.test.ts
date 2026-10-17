@@ -25,7 +25,7 @@ describe('the archive', () => {
     const [header] = parse(await collect());
 
     expect(header).toEqual({
-      nya_export: 1,
+      nya_export: 2,
       schema_era: 'containers',
       env_prefix: 'test',
       container_id: null,
@@ -63,7 +63,18 @@ describe('the archive', () => {
         'connector-claims*',
         'c:*:connector-claims*',
       ],
+      // Format 2: the key store goes in key archives (lib/key-archive.ts).
+      keys_apart: ['crypto:active', 'crypto:destroyed', 'crypto:key-seq', 'crypto:keys', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock'],
     });
+  });
+
+  test('leaves the key store out, and keeps the map of container keys', async () => {
+    for (const name of ['crypto:active', 'crypto:key-seq', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock']) await fake.set(testKey(name), 'x');
+    await fake.hset(testKey('crypto:keys'), { 'k1-0123abcd': '{}' });
+    await fake.hset(testKey('crypto:destroyed'), { 'k2-0123abcd': '{}' });
+    await fake.hset(testKey('crypto:container-keys'), { '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b': '{"key":"k3-0123abcd","since":"2026-01-01T00:00:00.000Z"}' });
+    const keys = parse(await collect()).slice(1, -1).map((r: any) => r.key);
+    expect(keys).toEqual(['crypto:container-keys']);
   });
 
   test('carries strings and hashes exactly, with the prefix stripped', async () => {

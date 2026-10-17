@@ -38,7 +38,7 @@ const { saveItem } = await import('@/lib/storage');
 beforeEach(async () => {
   fake.reset();
   plaid.calls = 0;
-  await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt('tok') } as any);
+  await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt(TEST_CTX, 'tok') } as any);
 });
 
 describe('a rate-limited balance call', () => {

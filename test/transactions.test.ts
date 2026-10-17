@@ -72,7 +72,7 @@ const {
 const ITEM = {
   item_id: 'item_a',
   institution_name: 'Test Bank',
-  encrypted_access_token: await encrypt('access-token'),
+  encrypted_access_token: await encrypt(TEST_CTX, 'access-token'),
 };
 
 function acct(over: Record<string, unknown> = {}) {
@@ -117,12 +117,12 @@ async function seedState(item_id: string, state: unknown): Promise<void> {
   const bytes = new Uint8Array(await new Response(gz).arrayBuffer());
   let binary = '';
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(btoa(binary)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(TEST_CTX, btoa(binary)));
 }
 
 /** Writes a blob in the pre-compression encoding: JSON straight into encrypt. */
 async function seedUncompressedState(item_id: string, state: unknown): Promise<void> {
-  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(JSON.stringify(state)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(TEST_CTX, JSON.stringify(state)));
 }
 
 beforeEach(() => {
@@ -524,7 +524,7 @@ describe('what was said about a transaction the bank removed', () => {
     pages = [{ added: ['t1', 't2', 't3', 't4', 't6'].map((transaction_id) => txn({ transaction_id })) }];
     await syncItemTransactions(ctx, ITEM);
     for (const id of ['t1', 't2', MANUAL]) await setExcluded(ctx, id, true);
-    await fake.hset(ctxKey('transaction-annotations'), { t3: await encrypt('{"excluded":"a later version’s"}'), t4: 'damaged' });
+    await fake.hset(ctxKey('transaction-annotations'), { t3: await encrypt(TEST_CTX, '{"excluded":"a later version’s"}'), t4: 'damaged' });
     calls = [];
   };
   const removing = (...ids: string[]) => {

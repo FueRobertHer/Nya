@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { clerkEnabled } from '@/lib/auth-mode';
-import { deleteAccount, deletionCheck, DeletionRefused, DeletionIncomplete } from '@/lib/account-deletion';
-import { backupProblem, backupRetention } from '@/lib/backup';
+import { deleteAccount, deletionCheck, ownKeyOf, DeletionRefused, DeletionIncomplete } from '@/lib/account-deletion';
+import { backupProblem, backupRetention, databaseBackupDays, vercelBlobStore } from '@/lib/backup';
 import { buildDeletionReceipt, BACKUP_DATE_MARGIN_DAYS } from '@/lib/deletion-receipt';
 import { plaidClient } from '@/lib/plaid';
 
@@ -11,9 +11,14 @@ import { plaidClient } from '@/lib/plaid';
 // so a deletion that stopped part way can be run again.
 //
 // A finished deletion answers with its receipt (lib/deletion-receipt.ts): what
-// was deleted, when the last backup holding it expires, and what stays. One
-// that stopped part way, after counting, answers with what it had done
-// (deleted_so_far), so the receipt the retry ends with counts it.
+// was deleted, when the last backup holding it expires, what became of its
+// data key, and what stays. One that stopped part way, after counting,
+// answers with what it had done (deleted_so_far), so the receipt the retry
+// ends with counts it.
+//
+// GET also says whether the account's data is under a key of its own
+// (`own_key`, from its container's map entry; null when that can't be read),
+// so the page can say what deleting it does to the backups.
 
 // Each bank is a call to Plaid and the whole container is swept: the same
 // allowance as the other routes that walk a lot of data, and no less than the
@@ -42,6 +47,7 @@ function backupDays(): number | null {
   return r?.kept ? r.max_days + BACKUP_DATE_MARGIN_DAYS : null;
 }
 
+
 export async function GET() {
   if (!clerkEnabled()) return NextResponse.json({ enabled: false });
   const userId = await signedIn();
@@ -50,7 +56,7 @@ export async function GET() {
   return NextResponse.json({
     enabled: true,
     can_delete: check.allowed,
-    ...(check.allowed ? { backup_days: backupDays() } : { reason: check.reason }),
+    ...(check.allowed ? { backup_days: backupDays(), own_key: await ownKeyOf(userId), database_days: databaseBackupDays() } : { reason: check.reason }),
   });
 }
 
@@ -72,6 +78,7 @@ export async function DELETE(req: Request) {
         }
       },
       deleteUser: async (id) => (await import('@/lib/clerk-users')).deleteClerkUser(id),
+      keyArchives: await vercelBlobStore(),
     });
     const now = new Date();
     const receipt = buildDeletionReceipt({
@@ -81,6 +88,8 @@ export async function DELETE(req: Request) {
       deleted_at: now,
       retention: backupRetention(),
       stopped: (await backupProblem(now)) !== null,
+      keys: result.keys,
+      database_days: databaseBackupDays(),
     });
     return NextResponse.json({ deleted: true, disconnected: result.disconnected, deletedKeys: result.deletedKeys, receipt });
   } catch (err) {

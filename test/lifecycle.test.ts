@@ -52,8 +52,8 @@ const NOW = Date.parse('2026-06-15T12:00:00.000Z');
 /** A recorded day: its total and the per-account map recorded beside it. */
 async function recordDay(date: string, balances: Record<string, number>, types: Record<string, string>) {
   const total = Object.entries(balances).reduce((n, [id, b]) => n + (types[id] === 'credit' ? -b : b), 0);
-  await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(String(total)) });
-  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(TEST_CTX, String(total)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 }
 
 const byDate = (points: { date: string; value: number }[]) => Object.fromEntries(points.map((p) => [p.date, p.value]));
@@ -157,7 +157,7 @@ describe('the store', () => {
 
   test('an entry a later release wrote is unrecognised, and is never offered for removal', async () => {
     await fake.hset(ctxKey('account-lifecycle'), {
-      sav: await encrypt(JSON.stringify({ lifecycle: { state: 'transferred', on: '2026-03-12' }, type: 'depository', label: ABOUT.label, item_id: null, set_at: '2026-03-12T00:00:00Z' })),
+      sav: await encrypt(TEST_CTX, JSON.stringify({ lifecycle: { state: 'transferred', on: '2026-03-12' }, type: 'depository', label: ABOUT.label, item_id: null, set_at: '2026-03-12T00:00:00Z' })),
       chk: 'damaged-bytes-damaged-bytes-damaged-bytes',
     });
     const err = await getEffectiveLifecycle(ctx, new Map()).catch((e) => e);

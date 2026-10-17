@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { TEST_CTX } from './fake-redis';
 import { accountMismatch, planImport, statementBalance } from '@/lib/import/commit';
 import { isImportEntry, isImportId, isImportSettings, isImportSummary, newImportId, summaryOf, type ImportEntry } from '@/lib/import/store';
 import { normalizeRecords } from '@/lib/import/normalize';
@@ -310,6 +311,6 @@ describe('the largest records a file can make', () => {
     // As the entry keeps them: every record's raw cells, with its row id.
     const json = JSON.stringify({ version: 1, records: rows.map((x) => ({ line: x.line, outcome: 'imported', row_id: `manual-txn:${crypto.randomUUID()}`, raw: x.record.raw })) });
     expect(json.length).toBeGreaterThan(15_000_000);
-    expect((await encodeJsonText(json)).length).toBeLessThan(maxBlobChars());
+    expect((await encodeJsonText(TEST_CTX, json)).length).toBeLessThan(maxBlobChars());
   });
 });

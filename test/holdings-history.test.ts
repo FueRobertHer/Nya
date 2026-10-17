@@ -132,14 +132,14 @@ const span = (first: string | null, last: string | null, first_at: string | null
 /** The stored month entries, by their (random) ids, as raw text. */
 const storedMonths = () => [...((fake as any).hashes.get(HISTORY)?.entries() ?? [])] as [string, string][];
 /** The index as stored, decrypted. */
-const storedIndex = async () => JSON.parse(await decrypt((await fake.hget<string>(INDEX, 'index'))!));
+const storedIndex = async () => JSON.parse(await decrypt(TEST_CTX, (await fake.hget<string>(INDEX, 'index'))!));
 /** Whether any stored month names the account, read past the seam. */
 const anyMonthNames = async (account: string) => {
-  for (const [, stored] of storedMonths()) if ((await decryptJsonText(stored)).includes(account)) return true;
+  for (const [, stored] of storedMonths()) if ((await decryptJsonText(TEST_CTX, stored)).includes(account)) return true;
   return false;
 };
 /** A value this version does not recognise, as a later version might write. */
-const later = (value: unknown) => encodeJsonText(JSON.stringify(value));
+const later = (value: unknown) => encodeJsonText(TEST_CTX, JSON.stringify(value));
 
 const errors: unknown[][] = [];
 const warnings: unknown[][] = [];
@@ -725,7 +725,7 @@ describe('a month that would not fit', () => {
         });
         value = withObservation(value, '2026-10', date, `${date}T13:00:05.123Z`, observeHoldings({ accounts: accts, holdings, securities })!);
       }
-      return (await encodeJsonText(JSON.stringify(value))).length;
+      return (await encodeJsonText(TEST_CTX, JSON.stringify(value))).length;
     };
     // The numbers lib/holdings-history.ts and docs/architecture.md give.
     const ceiling = 8 * 1024 * 1024;
@@ -772,7 +772,7 @@ describe('strict reads', () => {
       observeHoldings({ accounts: [investment('acct_1')], holdings: [hold('acct_1', 'vti')] })!
     );
     expect(other).not.toBeNull();
-    await fake.hset(HISTORY, { [id]: await encodeJsonText(JSON.stringify(other)) });
+    await fake.hset(HISTORY, { [id]: await encodeJsonText(TEST_CTX, JSON.stringify(other)) });
     const err = await readHoldingsRange(ctx, '2026-09-01', '2026-10-31').catch((e) => e);
     expect(err).toBeInstanceOf(UnreadableEntriesError);
     expect(err.unrecognised).toEqual([id]);
@@ -780,7 +780,7 @@ describe('strict reads', () => {
 
   test('an unreadable index fails every read, the span included, and stops recording', async () => {
     await recorded();
-    const unknown = await encrypt('{"v":1}');
+    const unknown = await encrypt(TEST_CTX, '{"v":1}');
     await fake.hset(INDEX, { index: unknown });
     for (const read of [() => readHoldingsRange(ctx, '2026-10-01', '2026-10-31'), () => readHoldingsSpan(ctx)]) {
       expect(await read().catch((e) => e)).toBeInstanceOf(StoredDataUnreadableError);
@@ -950,10 +950,10 @@ describe('forgetting an account', () => {
       observeHoldings({ accounts: [investment('acct_gone'), investment('acct_kept')], holdings: [hold('acct_gone', 'vti'), hold('acct_kept', 'vti')], securities: [sec('vti')] })!
     );
     expect(orphan).not.toBeNull();
-    await fake.hset(HISTORY, { 'orphan-month': await encodeJsonText(JSON.stringify(orphan)) });
+    await fake.hset(HISTORY, { 'orphan-month': await encodeJsonText(TEST_CTX, JSON.stringify(orphan)) });
     expect(await forgetAccountHoldings(ctx, 'acct_gone')).toEqual({ changed: 4, damaged: false });
     expect(await anyMonthNames('acct_gone')).toBe(false);
-    expect(await decryptJsonText((await fake.hget<string>(HISTORY, 'orphan-month'))!)).toContain('acct_kept');
+    expect(await decryptJsonText(TEST_CTX, (await fake.hget<string>(HISTORY, 'orphan-month'))!)).toContain('acct_kept');
   });
 
   test('a record this version does not recognise holds back only an account that could be in it', async () => {
@@ -978,9 +978,9 @@ describe('forgetting an account', () => {
     const september = (await storedIndex()).months['2026-09'];
     // September, which only the account to forget is in, as a later version
     // wrote it; then the index is lost.
-    const plain = JSON.parse(await decryptJsonText((await fake.hget<string>(HISTORY, september))!));
+    const plain = JSON.parse(await decryptJsonText(TEST_CTX, (await fake.hget<string>(HISTORY, september))!));
     plain.days['2026-09-07'].acct_gone.positions[0].vested_quantity = 1;
-    const unknown = await encodeJsonText(JSON.stringify(plain));
+    const unknown = await encodeJsonText(TEST_CTX, JSON.stringify(plain));
     await fake.hset(HISTORY, { [september]: unknown });
     await fake.hdel(INDEX, 'index');
     const before = storedMonths();
@@ -1210,7 +1210,7 @@ describe('beside the net-worth snapshot', () => {
   // One investment Item, linked and answering.
   async function linked() {
     await registerTestContainer(fake);
-    await saveItem(ctx, { item_id: 'item_b', institution_name: 'Broker', encrypted_access_token: await encrypt('tok') });
+    await saveItem(ctx, { item_id: 'item_b', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
     plaid.accounts = [ira];
     plaid.holdings = [hold('acct_ira', 'vti')];
     plaid.securities = [sec('vti')];
@@ -1531,7 +1531,7 @@ describe('a live load of the dashboard', () => {
   test('records the positions it fetched, and never sends the raw holdings answer', async () => {
     forgetEpochs();
     await registerTestContainer(fake);
-    await saveItem(ctx, { item_id: 'item_b', institution_name: 'Broker', encrypted_access_token: await encrypt('tok') });
+    await saveItem(ctx, { item_id: 'item_b', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
     plaid.accounts = [{ account_id: 'acct_ira', name: 'IRA', type: 'investment', subtype: 'ira', balances: { current: 1000, iso_currency_code: 'USD' } }];
     plaid.holdings = [hold('acct_ira', 'vti')];
     plaid.securities = [sec('vti')];
