@@ -470,6 +470,14 @@ export async function finishActivity(
 ): Promise<{
   transactions: Txn[];
   notes: string[];
+  /** Of `notes`, those that say transactions couldn't all be read or aren't
+   *  all in: an institution's (one that failed to sync, needs reconnecting,
+   *  or is still bringing its history in), the rows imported into a linked
+   *  account that can't be shown, a manual account's that can't be read.
+   *  What the Plan weighs its figures by; the others (how rules, categories,
+   *  splits and groups apply when something of theirs can't be read) never
+   *  mean a transaction is missing. */
+  unread_notes: string[];
   /** When the tags couldn't be read, the note that says so: for a reader that
    *  shows tags (the app, the read-only API), not one that doesn't (reports). */
   tags_note: string | null;
@@ -581,6 +589,7 @@ export async function finishActivity(
   return {
     transactions: expanded.rows,
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...expanded.notes],
+    unread_notes: [...plaid.notes, ...manual.notes],
     tags_note: tagRead.note,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
