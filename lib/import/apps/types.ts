@@ -22,6 +22,13 @@
 // which details could not be confirmed, as the SimpleFIN connector does; the
 // mapping step (the person says which column is which) is the fallback when a
 // header isn't one this code knows.
+//
+// FILES, NOT THE APPS' APIs. YNAB's and Lunch Money's APIs are left out: each
+// takes the person's personal access token (full access to their budget
+// there, to change as well as read), and nothing here could be tested against
+// either without real credentials, while the exports carry the same
+// transactions, categories, tags, notes and splits (docs/features.md,
+// "What isn't brought over").
 
 import type { CategoryKind } from '../../categories';
 import type { CsvSign } from '../csv';

@@ -645,7 +645,7 @@ export function ReviewStep({
       </p>
       <ul className="import-rows import-conflicts">
         {r.accounts.map((a) => (
-          <AccountRow key={a.key} a={a} answer={accounts[a.key] ?? null} offered={r.offered} appName={r.app_name} busy={busy} onAnswer={(x) => setAccount(a.key, x)} />
+          <AccountRow key={a.key} a={a} answer={accounts[a.key] ?? null} offered={r.offered} appName={r.app_name} currency={r.currency.chosen} busy={busy} onAnswer={(x) => setAccount(a.key, x)} />
         ))}
       </ul>
 
@@ -765,6 +765,7 @@ function AccountRow({
   answer,
   offered,
   appName,
+  currency,
   busy,
   onAnswer,
 }: {
@@ -772,6 +773,8 @@ function AccountRow({
   answer: AccountAnswer | null;
   offered: Offered[];
   appName: string;
+  /** The currency chosen for the file's amounts, if one was. */
+  currency: string | null;
   busy: boolean;
   onAnswer: (a: AccountAnswer | null) => void;
 }) {
@@ -863,7 +866,7 @@ function AccountRow({
               <input inputMode="decimal" value={answer.balance} placeholder="0.00" disabled={busy} onChange={(e) => onAnswer({ ...answer, balance: e.target.value })} />
             </label>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              Its transactions in this file come to {formatMoney(hint, a.currencies[0] ?? null)} ({appName}’s balance if the file holds all of its history).{' '}
+              Its transactions in this file come to {formatMoney(hint, a.currencies[0] ?? currency)} ({appName}’s balance if the file holds all of its history).{' '}
               <button className="link-btn" disabled={busy} onClick={() => onAnswer({ ...answer, balance: String(Math.round(hint * 100) / 100) })}>
                 Use it
               </button>
@@ -1044,7 +1047,13 @@ export function PastMigrations({ items, error, onUndo }: { items: Listed[] | nul
                 <div className="import-row-meta">
                   {[
                     new Date(e.started_at).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }),
-                    e.status === 'done' ? (e.counts ? plural(e.counts.imported, 'transaction') : null) : 'stopped part way: Undo takes out what it made',
+                    e.status === 'done'
+                      ? e.counts
+                        ? plural(e.counts.imported, 'transaction')
+                        : null
+                      : e.status === 'undoing'
+                        ? 'being undone, or stopped part way: Undo finishes it'
+                        : 'being made, or stopped part way: Undo takes out what it made',
                     listWords(e.imports.map((i) => i.name)),
                   ]
                     .filter(Boolean)

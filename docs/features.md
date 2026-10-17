@@ -18,6 +18,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Bring your own sync](#bring-your-own-sync)
 - [Importing files](#importing-files)
 - [Importing history into a linked account](#importing-history-into-a-linked-account)
+- [Switching from another app](#switching-from-another-app)
 - [Excluding a transaction](#excluding-a-transaction)
 - [Categories and groups](#categories-and-groups)
 - [Tags and notes](#tags-and-notes)
@@ -493,6 +494,96 @@ The account's imports are listed under the file picker, each with its file, when
 ### What an import keeps
 
 Each import keeps the file's records as the bank had them, always (an OFX transaction's fields, a CSV line's cells, a QIF record's lines), and what became of each: the row it became, the transaction it was kept as (the bank's row, or a row an earlier file brought in, with the proposal you answered, how sure it was, and why it was only possibly the same), the row it was found already imported as, or why it couldn't be read. With them, the file's name, the format, the period it covers, the day the bank's own transactions began when it was reviewed, how the file was read, and the counts. Each row carries its source, the source's own id (an OFX file's FITID) and its import. The rows are kept per account, apart from the bank's transactions, which every sync rewrites and a disconnect deletes. All of it is encrypted, in your [download](data-export.md#history-imports), never shared but for the rows themselves at **Balance and transactions**, and goes with the import's undo, or with the account when you forget it.
+
+## Switching from another app
+
+Bring your history from Monarch, YNAB, Lunch Money, Actual Budget or ZeroSum: its accounts, categories, tags, notes, transfers and split transactions, in one review. Under the Accounts tab's buttons (and on the first screen, before anything is connected), **Switching from another app?** has the way in: choose **Bring your history from Monarch, YNAB, Lunch Money, Actual Budget or ZeroSum** and pick the app's export, its CSV or the zip it gives you. Nothing is stored until you have said where each of its accounts goes and checked the review, and one **Undo** takes all of it out again.
+
+### Exporting from each app
+
+- **Monarch**: Settings, Data, **Download transactions**, for every account at once (or one account: Accounts, the account, Edit, **Download transactions**).
+- **YNAB**: in the web app, the menu under your plan's name, **Export plan** (in older versions **Export budget data**). It downloads a zip of two CSV files, the register and the plan: import the zip, or the Register file in it. YNAB 4's register export is read too.
+- **Lunch Money**: Transactions, with the view set to every transaction you want (it exports what is in view, as filtered), then the **Export to CSV** icon above the table.
+- **Actual Budget**: **All accounts** (so both sides of each transfer are in the file), the menu at the top right of the transactions, **Export**. That is the CSV; Settings, **Export data** gives a zip of Actual's database instead, which Nya can't read ([below](#what-isnt-brought-over)), and the sheet says so if you choose it.
+- **ZeroSum**: **Export CSV** above the transactions (every transaction in the view), or the budget menu's data export, a zip of `transactions.csv` and `budget.csv`: import the zip, or `transactions.csv`.
+
+The app is told from the file's row of column names. A file Nya doesn't recognise (an app that changed its export, or a file saved again from a spreadsheet) shows its columns and first rows and asks which app it is from and which column is which.
+
+### How it is read
+
+- **Dates** as the app writes them. When every date in the file fits both month first and day first (a short European YNAB file), the sheet asks which.
+- **Amounts** in the file's own decimal mark and sign ("$21.05", "1.250,00 €"). Lunch Money's export doesn't settle which way money out is written: the review shows the direction it read (from the file's income rows when it has them, else Lunch Money's own way, money out positive), with a box to turn it round, and the first rows to check it by.
+- **Currency**: Lunch Money's rows say theirs. Other files don't, so their amounts are read in the currency of the account they go into (US dollars for a new one), and **Change** in the review reads every row in the one you give. A new account takes that currency when it isn't US dollars, as an account a connector fed in another currency is kept; nothing is converted, and totals count it as they count any account in another currency.
+- **Payees and notes**: the app's payee (Monarch's Merchant, not its Original Statement, which stays in the import's record) and its notes or memo.
+- **Opening balances**: YNAB's, ZeroSum's and Actual's Starting Balance, and YNAB's Reconciliation Balance Adjustment, are filed under **Starting balances**, a transfer category: they count as neither income nor spending.
+- **YNAB's flags** become tags ("Red flag").
+
+### Where each account goes
+
+Each of the file's accounts waits for an answer, with how many transactions it has, the dates, its splits and how many have no category, and nothing goes anywhere by itself: **A new manual account** (its name, institution, kind and balance today; the review says what its transactions in the file come to, with **Use it**, since that is the app's balance only if the file holds all of its history), one of **your manual accounts**, one of **your linked accounts**, or **Leave it out**. Several of the file's accounts can go into one.
+
+- **Into a manual account**, its rows are matched exactly against what the account holds, as a file's are ([Matching what is already there](#matching-what-is-already-there)): importing the same export again adds nothing.
+- **Into a linked account**, they go through the review of [Importing history into a linked account](#importing-history-into-a-linked-account): each row the bank already has is shown beside the bank's own, very likely or likely ones answered **The same** for you to change, possibly the same ones waiting for **The same** or **Its own**. One that is the same is kept as the bank's and never counted twice, and the app's category, note, tags and split on it show on the bank's row, so the years the bank also reaches keep your own categorizing. The rows before the bank's own take the chart's estimate further back, as a file's do.
+
+### Categories
+
+Each of the app's categories, with its group, goes to one of yours of the same name (in any case, or the same words), or is offered as a new one, in a group of the app's group name (yours, or a new one). The review lists them, most used first, each with where it goes and how it counts, and you can send any to one of yours or make it new as spending, income or a transfer. What the app says a category is comes with it:
+
+- YNAB's **Inflow: Ready to Assign** (To be Budgeted in older files) and ZeroSum's Ready to Budget go to your **Income**, and the categories of a group YNAB, ZeroSum, Actual or Lunch Money calls Income (YNAB's Inflow) are made as income.
+- Monarch's transfer categories (Transfer, Credit Card Payment and Balance Adjustments, and Buy and Sell) are made as transfers, and its income ones (Paychecks, Interest, Business Income, Other Income, Dividends & Capital Gains) as income. Monarch's file has no groups, so this goes by its default categories' names: one you made in Monarch can't be told from the file, is proposed as spending, and is yours to change.
+- Lunch Money's export doesn't carry a category's **Treat as income** or **Exclude from totals** settings, and the review says so: a group named Income is proposed as income and a category whose name says transfer or payment ("Payment, Transfer", "Credit Card Payment") as a transfer, for you to check.
+- One sent to a category of another kind than the app's is said ("The app counts it as income; Food and Drink counts as spending").
+
+New categories keep to what Nya allows: names unique in any case ("Misc" from two groups becomes "Misc" and "Misc (Fun)") and up to 60 characters, at most 500 categories (a file that would pass that is refused in the review until you send some to yours) and 50 groups (past that, a new category goes in its kind's own group).
+
+### Transfers and rows with no category
+
+Money moved between your own accounts isn't spending. A transfer the app marks (YNAB's "Transfer : Savings" payee; a payee naming another of the file's accounts in Actual and ZeroSum; Monarch's and Lunch Money's transfer categories) is filed as Nya files a bank's, "transfer out" or "transfer in", and left out of spending and income on both sides. YNAB gives a transfer to an account it tracks off budget a category, since it leaves the budget there; both accounts are yours, so here it is a transfer, and the review says how many had one. Export every account for both sides of each transfer to be in the file.
+
+A row with no category counts as spending or income until you categorize it, as a bank's does. The review counts them, for the file and for each account: an account YNAB tracks off budget has none on any of its rows.
+
+### Tags, notes and splits
+
+Tags and notes are kept as those you add in Nya ([Tags and notes](#tags-and-notes)). Tags are matched to yours by name, or made. Nya keeps at most 250, so a file with more new ones than you have room for is refused in the review: delete some of yours, or untick **Bring the tags** to import without them. A longer name is cut to 40 characters, and a transaction with more than 20 tags keeps its first 20, which the review counts.
+
+A split transaction comes in as one transaction with its parts ([Splitting a transaction](#splitting-a-transaction)), adding up exactly to it, each under its category:
+
+- **YNAB**: the lines one after another whose memos start "Split (1/3)", "Split (2/3)" and on (YNAB 4's "(Split 1/3)"), the memo after the mark kept as the part's note.
+- **Lunch Money**: the parts naming their transaction's id (Parent ID). Its own row gives the payee and note, and isn't counted beside them.
+- **Actual**: the transaction's own row, "(SPLIT INTO 3)", then its parts, "(SPLIT 1 OF 3)", from Actual 24.8 on. Older exports leave the transaction's own row out, so each part comes in as a transaction of its own, with the transaction's payee.
+- **Monarch and ZeroSum** write nothing that says which rows were one transaction, so each part comes in as a transaction of its own under its own category, which counts the same in every total. The review says so.
+
+A split that can't be rebuilt comes in as its lines, each a transaction of its own, and the review says how many lines and why: for instance, its lines aren't together in the file, are money out and money in at once, are in two currencies, don't add up to it or are more than 20 parts, or it is past the 5,000 split transactions Nya keeps.
+
+### The review
+
+Before anything is stored, the sheet shows how many transactions in how many accounts, the dates, how the file was read and from which file in a zip; each of the file's accounts and where it goes; the categories; the transfers, opening balances and rows with no category; the tags; the split transactions rebuilt and those coming in as lines; then for each Nya account, how many transactions are new, already there and (for a linked account) the bank's, the money in and out of the new ones, and the lines that can't be read, each with its line number and why. **Import** stays off while an answer is missing or something blocks the import, which is said: too many categories or tags, a new account's balance it can't have, too many manual accounts.
+
+**Import** stores it all or none of it, only as reviewed: if anything changed since you saw it (another import into a linked account, a category made), nothing is stored and the review is read again for you to check. Sent twice (a phone that lost the answer), it is made once.
+
+### Undoing it
+
+Every import from another app is listed under the file picker (**Imported before**), with its file, when, how many transactions it brought and the accounts they went into. **Undo** takes all of it out in one action: each account's import, as that account's own Undo would, then what it made that nothing uses now: a new manual account with no other transactions, a tag no transaction or rule holds, a category no transaction, budget or rule uses, and a group left with no category. What something uses now is kept, and the answer says what. Each account's import is also listed on that account, with an Undo of its own. An import that fails part way is taken out again at once; one the server stopped in the middle is listed, and Undo finishes taking it out.
+
+Nothing is written to your balance history: a new account's balance is the one you typed, and a linked account's estimated history is drawn back through its new rows as a file's are, as an estimate.
+
+### What isn't brought over
+
+- **YNAB's and Lunch Money's APIs.** Either would need your personal access token, a key to everything in that app's budget, to change as well as to read, and Nya couldn't be tested against either without real credentials. The exports carry the same transactions, categories, tags, notes and splits, so the importer reads those. What an API would add is Lunch Money's category settings, and YNAB's splits as its own structure rather than the marks in their memos.
+- **Actual's full export** (Settings, Export data), a zip of its SQLite database. Reading it would take an SQLite reader, which Nya doesn't have without a new dependency, and Actual's schema followed from release to release. Its CSV holds the same transactions.
+- **Budgets and goals** (YNAB's plan file, ZeroSum's `budget.csv`): they aren't transactions. Set yours in Nya ([Budgets on categories and groups](#budgets-on-categories-and-groups)).
+- The apps' balances over time, investment holdings, recurring items and rules. Lunch Money's transaction groups come in as one row at their net, as its export writes them.
+
+### Limits, and what isn't confirmed
+
+- A file of up to 3 MB (a zip's files at most 64, and 6 MB each unpacked) and 30,000 transactions, at most 10,000 of them into one account and 100 accounts in a file. A larger one is refused whole: export a shorter period, or some accounts at a time.
+- At most 50 manual accounts in all.
+- The 100 previews, imports and undos an hour are shared with the other imports.
+- None of these apps publishes a specification of its export. The columns come from each app's help pages, Actual's own source and files people have published, and each reader in `lib/import/apps/` names its sources and what they don't settle. Not confirmed against a real file: how Monarch, Lunch Money and ZeroSum separate tags (read as commas), the exact header of Lunch Money's file (its two spellings are both read) and its sign (shown and asked), YNAB's "Split (1/3)" marks and whether a flag you named is written by its color or its name, ZeroSum's dates (settled from the file, else asked) and how it writes a transfer's payee, and how Monarch and ZeroSum write split transactions. A line that can't be read is listed with its line number and why, never dropped silently.
+
+### What the import keeps
+
+Each account's import is kept as a file's is (the file's records and what became of each: [What is kept](#what-is-kept), [What an import keeps](#what-an-import-keeps)), and the import itself as one entry: the app, the file, each account's import and the app's accounts that went into it, what it made and the counts. All of it is in your [download](data-export.md#app-imports).
 
 ## Excluding a transaction
 
