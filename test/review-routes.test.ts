@@ -273,6 +273,94 @@ describe('approving', () => {
     expect([tipped.needs_review, tipped.review_changed]).toEqual([true, { amount: 30, currency: 'USD' }]);
   });
 
+  test('a new amount never takes the category it was approved under: one held against a rule, and a dinner recategorized while pending that posts with a tip', async () => {
+    await start(daysAgo(7));
+    // Held against a rule made later; then the bank adds a dollar.
+    expect((await approveShown(['t_costco'])).status).toBe(200);
+    const made = await route('rules', 'POST', { action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'costco' }], actions: { set_category: catId('travel') } } });
+    expect(made.status).toBe(200);
+    next = { added: [], modified: [plaidRow('t_costco', { amount: 151 })], removed: [] };
+    const costco = find((await resync()).transactions, 't_costco');
+    expect([costco.category_name, costco.category_by_rule, costco.needs_review, costco.review_changed, costco.review_suggestion]).toEqual([
+      'general merchandise',
+      undefined,
+      true,
+      { amount: 150, currency: 'USD' },
+      { category_id: catId('travel'), by: 'rule', rule_id: made.body.rules.rules[0].id },
+    ]);
+    // Card Mode on a pending charge: its category chosen, then approved as
+    // filed now; it posts at 60 with its new id, in one sync.
+    next = { added: [plaidRow('p_dinner', { name: 'SQ *NOPALITO', merchant_name: 'Nopalito', amount: 50, pending: true, date: daysAgo(1), personal_finance_category: { primary: 'GENERAL_MERCHANDISE', detailed: null } })], modified: [], removed: [] };
+    await resync();
+    expect((await route('recategorize', 'POST', { transaction_id: 'p_dinner', category_id: catId('food and drink') })).status).toBe(200);
+    expect((await approveShown(['p_dinner'])).status).toBe(200);
+    next = {
+      added: [plaidRow('t_dinner', { name: 'SQ *NOPALITO', merchant_name: 'Nopalito', amount: 60, date: daysAgo(0), pending_transaction_id: 'p_dinner', personal_finance_category: { primary: 'GENERAL_MERCHANDISE', detailed: null } })],
+      modified: [],
+      removed: [{ transaction_id: 'p_dinner' }],
+    };
+    const dinner = find((await resync()).transactions, 't_dinner');
+    expect([dinner.category_name, dinner.needs_review, dinner.review_changed, dinner.review_suggestion]).toEqual([
+      'food and drink',
+      true,
+      { amount: 50, currency: 'USD' },
+      { category_id: catId('general merchandise'), by: 'bank' },
+    ]);
+  });
+
+  test('a rule’s preview counts only the approved ones it would really leave: not those under its own category, nor one approved with none', async () => {
+    await start(daysAgo(7));
+    const coffee = wholeById((await listed()).transactions).get('t_coffee');
+    expect((await approveShown(['t_coffee'])).status).toBe(200);
+    const rule = (set_category: string) => ({ conditions: [{ field: 'name', op: 'contains', value: 'blue bottle' }], actions: { set_category } });
+    expect((await route('rules/preview', 'POST', { rule: rule(coffee.category_id) })).body).toMatchObject({ matches: 1, keep_approved: 0 });
+    expect((await route('rules/preview', 'POST', { rule: rule(catId('travel')) })).body).toMatchObject({ matches: 1, keep_approved: 1 });
+    // Approved with no category, the rule fills it: nothing is left.
+    expect((await route('review', 'POST', { action: 'approve', items: [{ ...approvalInputOf(coffee), category_id: categories.uncategorized }] })).status).toBe(200);
+    expect((await route('rules/preview', 'POST', { rule: rule(catId('travel')) })).body).toMatchObject({ matches: 1, keep_approved: 0 });
+  });
+
+  test('a recategorize updates the approval a row holds through another: its pending one’s, carried on to it', async () => {
+    await start(daysAgo(7));
+    expect((await approveShown(['t_pending'])).status).toBe(200);
+    // Posted, the pending one still stored (a later sync removes it).
+    next = { added: [plaidRow('t_post', { name: 'GAS STATION', merchant_name: 'Shell', amount: 40, date: daysAgo(1), pending_transaction_id: 't_pending', personal_finance_category: { primary: 'TRANSPORTATION', detailed: null } })], modified: [], removed: [] };
+    const posted = find((await resync()).transactions, 't_post');
+    expect([posted.review_via, typeof posted.reviewed_at]).toEqual(['t_pending', 'string']);
+    expect((await route('recategorize', 'POST', { transaction_id: 't_post', category_id: catId('travel'), review_via: 't_pending' })).status).toBe(200);
+    expect((await approvalStore.get(ctx, 't_pending'))!.category_id).toBe(catId('travel'));
+    next = { added: [], modified: [], removed: [{ transaction_id: 't_pending' }] };
+    await resync();
+    expect((await approvalStore.get(ctx, 't_post'))!.category_id).toBe(catId('travel'));
+    // Checked: an approval's id, never a part's, and never beside a restore.
+    expect((await route('recategorize', 'POST', { transaction_id: 't_post', category_id: catId('travel'), review_via: 'split:x' })).status).toBe(400);
+    expect((await route('recategorize', 'POST', { transaction_id: 't_post', restore: { category: null }, review_via: 't_pending' })).status).toBe(400);
+  });
+
+  test('the person’s own edit of a row from a file carries its approval: never back in the queue as if the bank had changed it', async () => {
+    await start(daysAgo(7));
+    expect((await approveShown([imported])).status).toBe(200);
+    const edit = await route('manual-transactions', 'PATCH', { id: imported, account_id: MANUAL, amount: 46.5 });
+    expect(edit.status).toBe(200);
+    const row = wholeById((await listed()).transactions).get(imported);
+    expect([row.amount, row.needs_review, row.review_changed, typeof row.reviewed_at]).toEqual([46.5, undefined, undefined, 'string']);
+    expect(await approvalStore.get(ctx, imported)).toMatchObject({ amount: 46.5, currency: 'USD' });
+  });
+
+  test('approvals near the most kept: the queue says how many, and making room forgets the oldest, once confirmed', async () => {
+    await start(daysAgo(7));
+    expect((await route('review', 'GET')).body).toEqual({ review: { on: true, since: daysAgo(7) }, approvals: { kept: 0, max: 50_000, room: 10_000 } });
+    expect((await approveShown(['t_costco'])).status).toBe(200);
+    expect((await approveShown(['t_coffee'])).status).toBe(200);
+    expect((await route('review', 'GET')).body.approvals.kept).toBe(2);
+    expect((await route('review', 'POST', { action: 'make-room' })).status).toBe(400);
+    const made = await route('review', 'POST', { action: 'make-room', confirm: true });
+    expect([made.status, made.body.removed, typeof made.body.through]).toEqual([200, 2, 'string']);
+    expect((await route('review', 'GET')).body.approvals.kept).toBe(0);
+    // Their transactions stay, back in the queue.
+    expect(find((await listed()).transactions, 't_coffee').needs_review).toBe(true);
+  });
+
   test('a group’s transactions are approved each; the bank removing one takes its approval with it', async () => {
     await start(daysAgo(7));
     await listed();

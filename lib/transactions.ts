@@ -186,7 +186,7 @@ export type Txn = {
   review_via?: string;
   review_suggestion?: ReviewSuggestion;
   approved_name?: string;
-  filed_by_default?: { id: string; agree: number };
+  filed_by_default?: { id: string; agree: number; earlier?: true };
 
   // Sent: on a posted bank row standing for a row imported from the bank's
   // file whose amount it no longer says (the bank changed its own after the

@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { isValidElement, type ReactElement, type ReactNode } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import type { Txn } from '@/components/MonthBreakdown';
-import CardMode, { cardsToDeal } from '@/components/CardMode';
-import ReviewBar, { listedToReview } from '@/components/ReviewBar';
+import CardMode, { CardCategoryPicker, cardsToDeal } from '@/components/CardMode';
+import CategoryPicker from '@/components/CategoryPicker';
+import ReviewBar, { ActivityKeysHelp, barAction, listedToReview } from '@/components/ReviewBar';
 import ReviewNote from '@/components/ReviewNote';
-import ReviewSettingsCard, { startChoices } from '@/components/ReviewSettingsCard';
-import { swipeEnd, swipeMove, swipeOffset, swipeStart, SLOP, type Point } from '@/components/swipe';
-import { activityKey, cardKey, isTyping } from '@/components/review-keys';
+import ReviewSettingsCard, { nearFull, startChoices } from '@/components/ReviewSettingsCard';
+import { FLING, SPEED_WINDOW, STOPPED, swipeEnd, swipeMove, swipeOffset, swipeRelease, swipeSpeed, swipeStart, SLOP, type Point } from '@/components/swipe';
+import { activityKey, cardKey, isTyping, pickerKey } from '@/components/review-keys';
+import { ACTIVITY_KEYS_KEY, readActivityKeys, writeActivityKeys } from '@/components/activity-keys';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep } from '@/components/card-mode-state';
 import { withApproved, withUndone, reviewViewOf, type ReviewControls } from '@/components/review-state';
 import { approvedAsImported, changedSinceWords, changedWords, defaultListWords, defaultWords, doneWords, endWords, suggestionWords, toReviewWords } from '@/components/review-text';
@@ -30,6 +35,14 @@ const text = (html: string) =>
     .replace(/&quot;/g, '"')
     .replace(/\s+/g, ' ')
     .trim();
+
+/** Every element in a tree a component without hooks returns, to read how
+ *  its parts are wired (no DOM here to click them). */
+function elementsIn(node: ReactNode): ReactElement[] {
+  if (Array.isArray(node)) return node.flatMap(elementsIn);
+  if (!isValidElement(node)) return [];
+  return [node, ...elementsIn((node.props as { children?: ReactNode }).children)];
+}
 
 const { taxonomy } = categoriesFor({}, { words: ['groceries', 'household'] });
 const cat = (name: string) => taxonomy.categories.find((c) => c.name === name)!.id;
@@ -83,13 +96,14 @@ const controls = (on = true): ReviewControls =>
     saving: false,
   }) as unknown as ReviewControls;
 
-/** A drag, as pointer events give it, every 16 ms. */
+/** A drag, as pointer events give it, every 16 ms, released as a browser's
+ *  pointerup is: where the last move was, a moment later. */
 function drag(points: [number, number][], width = 360): 'right' | 'left' | null {
   let s = swipeStart({ x: points[0][0], y: points[0][1], t: 0 });
   points.slice(1).forEach(([x, y], i) => {
     s = swipeMove(s, { x, y, t: (i + 1) * 16 });
   });
-  return swipeEnd(s, width);
+  return swipeRelease(s, { ...s.last, t: s.last.t + 8 }, width);
 }
 
 describe('the swipe, by pointer', () => {
@@ -105,6 +119,28 @@ describe('the swipe, by pointer', () => {
   test('a quick flick decides on its own; one that turns back doesn’t', () => {
     expect(drag([[100, 300], [112, 300], [140, 301]])).toBe('right');
     expect(drag([[100, 300], [140, 300], [120, 300]])).toBeNull();
+  });
+
+  test('a flick released where its last move was, as a browser’s pointerup is, still decides by the speed of its last moves', () => {
+    // By touch: 60 px in 96 ms on a 358 px card (short of the 107 px a drag needs).
+    let s = swipeStart({ x: 100, y: 300, t: 0 });
+    for (let i = 1; i <= 6; i++) s = swipeMove(s, { x: 100 + i * 10, y: 300, t: i * 16 });
+    expect(swipeRelease(s, { x: 160, y: 300, t: 104 }, 358)).toBe('right');
+    // Released later still (events slow to come, as in a driven browser): the same flick.
+    expect(swipeRelease(s, { x: 160, y: 300, t: 96 + 49 }, 358)).toBe('right');
+    // The speed is the moves' over the last SPEED_WINDOW ms, never the last
+    // step alone, which the repeated release point would make one of nothing.
+    expect(swipeSpeed(s)).toBeCloseTo(60 / 96, 6);
+    expect(swipeSpeed(s)).toBeGreaterThan(FLING);
+    // By mouse: 50 px left in 80 ms, released at the same point and time.
+    let m = swipeStart({ x: 300, y: 300, t: 0 });
+    for (let i = 1; i <= 5; i++) m = swipeMove(m, { x: 300 - i * 10, y: 300, t: i * 16 });
+    expect(swipeRelease(m, { x: 250, y: 300, t: 80 }, 358)).toBe('left');
+    // Held still before letting go: no flick, so it springs back.
+    expect(swipeRelease(s, { x: 160, y: 300, t: 96 + STOPPED + 1 }, 358)).toBeNull();
+    // A release where the pointer moved on is one more point of the drag.
+    expect(swipeRelease(s, { x: 200, y: 300, t: 112 }, 358)).toBe('right');
+    expect([SPEED_WINDOW, STOPPED]).toEqual([100, 100]);
   });
 
   test('up or down first is the page’s scroll, never a swipe, however far it then goes sideways', () => {
@@ -166,6 +202,47 @@ describe('the keys', () => {
     expect(activityKey(key('n', { target: { tagName: 'TEXTAREA' } }))).toBeNull();
     expect(activityKey(key('n', { target: { isContentEditable: true } }))).toBeNull();
     expect(isTyping({ tagName: 'BUTTON' })).toBe(false);
+  });
+
+  test('in Card Mode’s category list: Enter uses the one shown; its arrows only move through it', () => {
+    const list = { target: { tagName: 'SELECT' } };
+    expect(pickerKey(key('Enter', list))).toBe('choose');
+    expect(pickerKey(key('ArrowDown', list))).toBeNull();
+    expect(pickerKey(key('Enter', { target: { tagName: 'BUTTON' } }))).toBeNull();
+    expect(pickerKey(key('Enter', { ...list, ctrlKey: true }))).toBeNull();
+    expect(pickerKey(key('Enter', { ...list, repeat: true }))).toBeNull();
+    // Card Mode's own keys leave the list's to it.
+    expect(cardKey(key('ArrowDown', list), false)).toBeNull();
+  });
+
+  test('on the Activity tab the keys can be turned off, and Shift+A only ever asks first', () => {
+    const bar = { keysOn: true, total: 3, waiting: 2, filtering: false };
+    expect(barAction('approve-listed', bar)).toBe('confirm');
+    expect(barAction('approve-listed', { ...bar, waiting: 0 })).toBeNull();
+    expect(barAction('review', bar)).toBe('review');
+    expect(barAction('review', { ...bar, total: 0 })).toBeNull();
+    expect(barAction('filter', bar)).toBe('filter-on');
+    expect(barAction('filter', { ...bar, filtering: true })).toBe('filter-off');
+    expect(barAction('undo', bar)).toBe('undo');
+    for (const k of ['approve-listed', 'review', 'filter', 'undo', 'help'] as const) expect(barAction(k, { ...bar, keysOn: false })).toBeNull();
+    // Kept on this device, read leniently: on unless it says off.
+    const kept = new Map<string, string>();
+    const storage = { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) };
+    expect(readActivityKeys(storage)).toBe(true);
+    writeActivityKeys(false, storage);
+    expect([kept.get(ACTIVITY_KEYS_KEY), readActivityKeys(storage)]).toEqual(['off', false]);
+    writeActivityKeys(true, storage);
+    expect([kept.has(ACTIVITY_KEYS_KEY), readActivityKeys(storage)]).toEqual([false, true]);
+    const broken = { getItem: () => { throw new Error('blocked'); }, setItem: () => { throw new Error('blocked'); }, removeItem: () => {} };
+    expect(readActivityKeys(broken)).toBe(true);
+    expect(() => writeActivityKeys(false, broken)).not.toThrow();
+    expect(readActivityKeys(null)).toBe(true);
+    // The switch, in their help.
+    const on = renderToStaticMarkup(<ActivityKeysHelp on onChange={() => {}} />);
+    expect(text(on)).toContain('Use these keys on this device');
+    expect(on).toMatch(/<input type="checkbox" checked=""/);
+    expect(renderToStaticMarkup(<ActivityKeysHelp on={false} onChange={() => {}} />)).not.toContain('checked');
+    expect(text(on)).toContain('Approve what is listed (it asks first)');
   });
 });
 
@@ -246,6 +323,41 @@ describe('Card Mode’s cards', () => {
     expect(html).toContain('aria-roledescription="card"');
     expect(html).toContain('aria-live="polite"');
     expect(html).toContain('tabindex="0"');
+    // What Enter approves, said before it is: the merchant, the amount and the category.
+    expect(html).toContain('aria-label="Costco, -$54.20, General merchandise. Transaction 1 of 1. Enter approves it."');
+  });
+
+  test('its category list chooses only on Use: moving through it changes what it shows, never what is saved', () => {
+    const drafts: string[] = [];
+    let used = 0;
+    const el = CardCategoryPicker({ taxonomy, merchant: 'Costco', value: cat('groceries'), useLabel: 'Groceries', onDraft: (c) => drafts.push(c), onUse: () => used++, onCancel: () => {} });
+    const all = elementsIn(el);
+    const list = all.find((e) => e.type === CategoryPicker)!;
+    (list.props as { onChange: (id: string) => void }).onChange(cat('household'));
+    expect([drafts, used]).toEqual([[cat('household')], 0]);
+    const use = all.find((e) => e.type === 'button' && text(renderToStaticMarkup(e)) === 'Use Groceries')!;
+    (use.props as { onClick: () => void }).onClick();
+    expect(used).toBe(1);
+    expect(text(renderToStaticMarkup(el))).toContain('Use Groceries');
+  });
+
+  test('a group’s transaction is grouped, never split, from its card; a split one shows no offer that files nothing', () => {
+    const group = txn('group:g1', { group_id: 'g1', name: 'Dinner', group_members: [txn('t_a', { group_id: 'g1', needs_review: true })] });
+    const grouped = renderToStaticMarkup(<CardMode open txns={[group]} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />);
+    expect(grouped).toMatch(/<button[^>]*disabled=""[^>]*>Split<\/button>/);
+    expect(grouped).toContain('Edit group');
+    const offers = { filed_by_default: { id: 'v1', agree: 2 }, review_suggestion: { category_id: cat('household'), by: 'rule' as const, rule_id: 'r1' }, needs_review: true as const };
+    const parts = [
+      txn('split:p1', { split_of: 't_split', split_index: 0, split_count: 2, split_parent: { amount: 100 }, amount: 60, category_id: cat('groceries'), category_name: 'groceries', ...offers }),
+      txn('split:p2', { split_of: 't_split', split_index: 1, split_count: 2, split_parent: { amount: 100 }, amount: 40, category_id: cat('household'), category_name: 'household', ...offers }),
+    ];
+    const split = text(renderToStaticMarkup(<CardMode open txns={parts} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />));
+    expect(split).not.toContain('Filed by your default');
+    expect(split).not.toContain('Your rule would file it');
+    // Unsplit, both are said.
+    const whole = text(renderToStaticMarkup(<CardMode open txns={[txn('t1', offers)]} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />));
+    expect(whole).toContain('Filed by your default for Costco (two of your last three)');
+    expect(whole).toContain('Your rule would file it under Household.');
   });
 
   test('a pending one can’t be split or grouped yet; a split one is recategorized by its parts', () => {
@@ -280,6 +392,21 @@ describe('the Activity tab', () => {
     expect(text(html)).toContain('Approve the 1 listed');
     expect(renderToStaticMarkup(<ReviewBar review={controls(false)} all={rows} listed={rows} filtering={false} onFilter={() => {}} onReview={() => {}} />)).toBe('');
     expect(toReviewWords(0)).toBe('Nothing to review');
+    // Where focus comes back when Card Mode closes with nothing left (its way in disabled).
+    expect(html).toMatch(/<span class="review-count"[^>]*tabindex="-1"[^>]*data-review-return=""/);
+  });
+
+  test('approvals near the most kept: the Review queue card offers to make room, before approving is refused', () => {
+    expect(nearFull(null)).toBe(false);
+    expect(nearFull({ kept: 39_999, max: 50_000, room: 10_000 })).toBe(false);
+    expect(nearFull({ kept: 40_000, max: 50_000, room: 10_000 })).toBe(true);
+    expect(nearFull({ kept: 50_000, max: 50_000, room: 10_000 })).toBe(true);
+  });
+
+  test('Card Mode’s live region is left at one pixel, so the page never scrolls sideways', () => {
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8');
+    expect(css).toContain('.card-mode > :where(:not(.visually-hidden)) {');
+    expect(css).not.toMatch(/\.card-mode > \* \{/);
   });
 
   test('the Needs review filter is one more filter of the list: a split transaction whole, a group by its transactions', () => {
@@ -304,6 +431,18 @@ describe('the Activity tab', () => {
     expect(approved).toContain('Your rule would file it under Household. It stays where you approved it until you choose. Use Household');
     expect(say(txn('t1', { filed_by_default: { id: 'v1', agree: 3 } }))).toBe('Filed by your default for Costco (three of your last three). Clear default');
     expect(say(txn('t1', { review_unknown: true }))).toContain('Whether you approved this couldn\'t be read');
+    // Back in the queue since the bank changed its amount: still offered what would file it elsewhere.
+    const waiting = say(txn('t1', { needs_review: true, review_changed: { amount: 50, currency: 'USD' }, review_suggestion: { category_id: cat('household'), by: 'rule', rule_id: 'r1' } }));
+    expect(waiting).toContain('The bank changed the amount since you approved it at $50.00 out. Approve');
+    expect(waiting).toContain('Your rule would file it under Household. It stays where you approved it until you choose. Use Household');
+    // A split one: what would file the whole files nothing that counts, so it isn't offered.
+    const parts = [txn('split:p1', { split_of: 't_s', split_index: 0, split_count: 1, split_parent: { amount: 54.2 } })];
+    expect(say({ ...txn('t_s', { reviewed_at: '2026-10-11T09:00:00.000Z', filed_by_default: { id: 'v1', agree: 2 }, review_suggestion: { category_id: cat('household'), by: 'rule', rule_id: 'r1' } }), split_parts: parts } as Txn)).not.toMatch(/Use Household|Filed by/);
+    // A default that moved since filed this day under the category it had then.
+    expect(say(txn('t1', { filed_by_default: { id: 'v1', agree: 2, earlier: true } }))).toBe('Filed by your default for Costco, in the category it had on this day (it has moved since). Clear default');
+    // A row from a file changed by an edit that couldn't carry its approval: never put on the bank.
+    expect(changedSinceWords({ amount: 64.5, currency: 'USD' }, { source: 'import:ofx' }, true)).toBe('The amount changed since you approved it at $64.50 out.');
+    expect(changedSinceWords({ amount: 64.5, currency: 'USD' }, { source: 'simplefin' }, true)).toBe('The bank changed the amount since you approved it at $64.50 out.');
     expect(say(txn('group:g', { group_members: [txn('t_a', { needs_review: true }), txn('t_b', { needs_review: true })] }))).toBe('2 of its transactions need review. Approve them');
     expect(say(txn('t1'))).toBe('');
   });

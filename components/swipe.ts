@@ -20,6 +20,9 @@ export type Swipe = { start: Point; recent: Point[]; last: Point; axis: 'x' | 'y
  *  it, never only the last step, which a browser's pointerup makes one of
  *  nothing (it repeats the last move's position). */
 export const SPEED_WINDOW = 100;
+/** A release this long after the last move is of a pointer that stopped
+ *  first: no flick, however fast it went before. */
+export const STOPPED = 100;
 
 /** How far a pointer moves before the drag picks its axis: a tap or a
  *  trembling finger moves nothing. */
@@ -66,18 +69,22 @@ export function swipeOffset(s: Swipe | null): number {
 }
 
 /** What releasing the pointer at `p` decides, for a card `width` wide:
- *  'right', 'left', or null (it springs back). The release is the drag's last
- *  point, wherever the browser puts it (a pointerup repeats the last move's
- *  position), and the speed is its last moves' (swipeSpeed). */
+ *  'right', 'left', or null (it springs back). A release where the pointer
+ *  moved on is one more point; one that repeats the last move's position (a
+ *  browser's pointerup does, a few ms later, or later still when events are
+ *  slow) adds only its time, which says just whether the pointer stopped
+ *  first (STOPPED): the speed is the moves' own (swipeSpeed). */
 export function swipeRelease(s: Swipe, p: Point, width: number): 'right' | 'left' | null {
-  return swipeEnd(swipeMove(s, p), width);
+  if (p.x !== s.last.x || p.y !== s.last.y) return swipeEnd(swipeMove(s, p), width);
+  return swipeEnd(s, width, p.t - s.last.t > STOPPED ? 0 : swipeSpeed(s));
 }
 
-/** What a drag that ends where it is now decides (swipeRelease). */
-export function swipeEnd(s: Swipe, width: number): 'right' | 'left' | null {
+/** What a drag that ends where it is now decides (swipeRelease), at the
+ *  speed it ends at. */
+export function swipeEnd(s: Swipe, width: number, speed: number = swipeSpeed(s)): 'right' | 'left' | null {
   if (s.axis !== 'x') return null;
   const dx = s.last.x - s.start.x;
-  const v = swipeSpeed(s);
+  const v = speed;
   const far = Math.abs(dx) >= Math.max(MIN_DISTANCE, width * DISTANCE);
   const flung = Math.abs(v) >= FLING && Math.abs(dx) >= FLING_MIN && Math.sign(v) === Math.sign(dx);
   if (!far && !flung) return null;

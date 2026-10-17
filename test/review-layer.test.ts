@@ -207,6 +207,57 @@ describe('an approval', () => {
     const [t] = read([row('t_posted', { pending_from: 't_pend', amount: 64.2 })], layer({ approvals: new Map([['t_pend', approval({ pending: true })]]) }));
     expect([t.needs_review, t.review_changed]).toEqual([true, { amount: 54.2, currency: 'USD' }]);
   });
+
+  test('a new amount from the bank never takes the category it was approved under: back in the queue, still there, the other still offered', () => {
+    // Held against a rule made later, then the bank adds a dollar.
+    const [held] = read([row('t1', { amount: 55.2 })], layer({ approvals: new Map([['t1', approval()]]) }), ruleSet(cat('household')));
+    expect([held.category_name, held.category_by_rule, held.needs_review, held.review_changed, held.review_suggestion]).toEqual([
+      'general merchandise',
+      undefined,
+      true,
+      { amount: 54.2, currency: 'USD' },
+      { category_id: cat('household'), by: 'rule', rule_id: 'rule-1' },
+    ]);
+    expect(held.reviewed_at).toBeUndefined();
+    // A pending dinner recategorized and approved, posted with a tip: the
+    // category chosen stays, though the bank still says general merchandise.
+    const [dinner] = read(
+      [row('t_dinner', { pending_from: 'p_dinner', amount: 60, name: 'SQ *NOPALITO' })],
+      layer({ approvals: new Map([['p_dinner', approval({ amount: 50, category_id: cat('groceries'), pending: true, name: 'SQ *NOPALITO' })]]) })
+    );
+    expect([dinner.category_name, dinner.needs_review, dinner.review_changed, dinner.review_via, dinner.review_suggestion]).toEqual([
+      'groceries',
+      true,
+      { amount: 50, currency: 'USD' },
+      'p_dinner',
+      { category_id: cat('general merchandise'), by: 'bank' },
+    ]);
+    // A split one's difference, a part of its own, is filed where it was approved too.
+    const [split] = read([row('t_split', { amount: 110 })], layer({ approvals: new Map([['t_split', approval({ amount: 100, category_id: cat('auto') })]]) }));
+    const { rows } = expandSplitsAndGroups([split], {
+      splits: new Map([
+        ['t_split', { version: 1, amount: 100, currency: 'USD', parts: [{ id: 'p1', amount: 60, category_id: cat('groceries') }, { id: 'p2', amount: 40, category_id: cat('household') }], updated_at: '2026-10-11T00:00:00.000Z' }],
+      ]),
+      splitsUnknown: new Set(),
+      groups: new Map(),
+      groupsUnknown: 0,
+      ix,
+    });
+    const rest = rows.find((t) => t.split_remainder)!;
+    expect([rest.amount, rest.category_id]).toEqual([10, cat('auto')]);
+  });
+
+  test('approved with no category, it takes the one a rule or a default gives it later: that fills an empty place', () => {
+    const none = { ...row('t1'), category: null, pfc_primary: null } as unknown as Txn;
+    const uncategorized = approval({ category_id: taxonomy.uncategorized });
+    const [ruled] = read([none], layer({ approvals: new Map([['t1', uncategorized]]) }), ruleSet(cat('household')));
+    expect([ruled.category_name, ruled.category_by_rule, ruled.review_suggestion, ruled.reviewed_at]).toEqual(['household', true, undefined, '2026-10-11T09:00:00.000Z']);
+    const [byDefault] = read(
+      [{ ...none, transaction_id: 't2' } as Txn],
+      layer({ approvals: new Map([['t2', uncategorized]]), defaults: new Map([['nm:chase::costco', { id: 'v1', category_id: cat('groceries'), since: SINCE, agree: 2 }]]) })
+    );
+    expect([byDefault.category_name, byDefault.filed_by_default]).toEqual(['groceries', { id: 'v1', agree: 2 }]);
+  });
 });
 
 describe('what can’t be read is never taken for "needs review"', () => {
@@ -253,6 +304,22 @@ describe('a merchant’s default, in its place', () => {
     const [paired, none] = read([row('t1', { paired: 'transfer', source: 'simplefin' }), row('t2', { vendor_key: '' })], layer({ defaults: new Map([...defaults, ['', defaults.get('nm:chase::costco')!]]) }));
     expect(paired.filed_by_default).toBeUndefined();
     expect(none.filed_by_default).toBeUndefined();
+  });
+
+  test('a default that moved files each row by the category it had on its day: the move re-files nothing before it', () => {
+    // Formed on Nov 10, 2025 under groceries, moved to household on Oct 15, 2026.
+    const moved = new Map([
+      ['nm:chase::costco', { id: 'v1', category_id: cat('household'), since: '2026-10-15', agree: 2, previous: [{ category_id: cat('groceries'), since: '2025-11-10', until: '2026-10-15' }] }],
+    ]);
+    const [jan, oct16, oct14, early] = read(
+      [row('t_jan', { date: '2026-01-15' }), row('t_oct16', { date: '2026-10-16' }), row('t_oct14', { date: '2026-10-14' }), row('t_early', { date: '2025-11-09' })],
+      layer({ defaults: moved })
+    );
+    expect([jan.category_name, jan.filed_by_default]).toEqual(['groceries', { id: 'v1', agree: 2, earlier: true }]);
+    expect([oct14.category_name, oct14.filed_by_default]).toEqual(['groceries', { id: 'v1', agree: 2, earlier: true }]);
+    expect([oct16.category_name, oct16.filed_by_default]).toEqual(['household', { id: 'v1', agree: 2 }]);
+    // Before it first formed: never filed by it.
+    expect([early.category_name, early.filed_by_default]).toEqual(['general merchandise', undefined]);
   });
 
   test('an approved transaction stays where it was approved, the default offered', () => {

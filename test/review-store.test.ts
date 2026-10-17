@@ -117,6 +117,33 @@ describe('approvals', () => {
     await expect(store.approve(ctx, [input('t_new')])).rejects.toMatchObject({ status: 409 });
     expect(await approvalStore.has(ctx, 't_new')).toBe(false);
   });
+
+  test('the refusal says truly what makes room, and making room forgets the oldest, by when they were made', async () => {
+    const day = (n: number) => new Date(Date.UTC(2026, 9, n, 12));
+    await store.approve(ctx, [input('t_old')], day(1));
+    await store.approve(ctx, [input('t_mid')], day(2));
+    await store.approve(ctx, [input('t_new')], day(3));
+    // Changing one already kept is never refused; a new one past the bound is.
+    await store.approve(ctx, [input('t_mid', { category_id: 'c-household' })], day(4), 3);
+    const refused = await store.approve(ctx, [input('t_more')], day(4), 3).catch((e) => e);
+    expect(refused).toMatchObject({ status: 409 });
+    expect(refused.message).toContain('To make room, forget your 10,000 oldest on the Review queue card under Manage: those transactions stay, filed as ones you never approved are');
+    expect(refused.message).not.toContain('off and on');
+    // The oldest by when they were made: t_mid was made again on day 4.
+    expect(await store.makeRoom(ctx, 2)).toEqual({ removed: 2, through: day(3).toISOString() });
+    expect([...fake.hashes.get(ctxKey('transaction-approvals'))!.keys()]).toEqual(['t_mid']);
+    expect(await store.makeRoom(ctx)).toEqual({ removed: 1, through: day(4).toISOString() });
+    expect(await store.makeRoom(ctx)).toEqual({ removed: 0, through: null });
+  });
+
+  test('the person’s own edit of a row’s amount or currency is what its approval holds; nothing for one not approved', async () => {
+    const id = 'manual-txn:6b1f3e2a-1c4d-4e5f-8a9b-0c1d2e3f4a5b';
+    await store.approve(ctx, [input(id, { amount: 64.5 })], NOW);
+    await store.followEdit(ctx, id, { amount: 46.5, currency: 'USD' });
+    expect(await approvalStore.get(ctx, id)).toMatchObject({ amount: 46.5, currency: 'USD', approved_at: NOW.toISOString() });
+    await store.followEdit(ctx, 'manual-txn:00000000-0000-4000-8000-000000000000', { amount: 1, currency: 'USD' });
+    expect(await approvalStore.count(ctx)).toBe(1);
+  });
 });
 
 describe('gone with the transaction', () => {

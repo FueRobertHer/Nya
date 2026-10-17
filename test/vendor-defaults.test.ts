@@ -14,7 +14,7 @@ const fake = new FakeRedis();
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { agreedCategory, defaultsByVendor, defaultUses, isVendorDefaults, isVendorKey, MAX_VENDORS, withVote } = await import('@/lib/vendor-defaults');
+const { agreedCategory, defaultOn, defaultsByVendor, defaultUses, isVendorDefaults, isVendorKey, MAX_PERIODS, MAX_VENDORS, withVote } = await import('@/lib/vendor-defaults');
 const { clearDefault, readVendorDefaults, recordCategorization, repairDefaults, restoreVendorEntry, vendorDefaultsStore } = await import('@/lib/vendor-default-store');
 const { encrypt } = await import('@/lib/crypto');
 const { UnreadableValueError } = await import('@/lib/repo');
@@ -104,6 +104,44 @@ describe('two of the last three', () => {
     expect(defaultsByVendor(state, same).get('nm:chase::costco')).toEqual({ id: 'v1', category_id: 'groceries', since: '2026-10-02', agree: 2 });
     expect(defaultUses(state, (id) => id === 'groceries')).toBe(1);
     expect(defaultUses(state, (id) => id === 'household')).toBe(0);
+  });
+
+  test('a move never re-files the past: each day is filed by the category the default had then, its earlier ones kept up to a bound', () => {
+    // Formed in November 2025 under groceries, moved by two in October 2026.
+    const at2 = (day: string) => ({ at: new Date(`${day}T12:00:00Z`), today: day, resolve: same, newId: () => 'v1' });
+    let s = withVote(null, vote('groceries'), at2('2025-11-03'))!.next;
+    s = withVote(s, vote('groceries'), at2('2025-11-10'))!.next;
+    s = withVote(s, vote('household'), at2('2026-10-15'))!.next;
+    s = withVote(s, vote('household'), at2('2026-10-16'))!.next;
+    const d = defaultsByVendor(s, same).get('nm:chase::costco')!;
+    expect(d).toMatchObject({ category_id: 'household', since: '2026-10-16', previous: [{ category_id: 'groceries', since: '2025-11-10', until: '2026-10-16' }] });
+    expect(defaultOn(d, '2026-01-15')).toEqual({ category_id: 'groceries', earlier: true });
+    expect(defaultOn(d, '2026-10-15')).toEqual({ category_id: 'groceries', earlier: true });
+    expect(defaultOn(d, '2026-10-16')).toEqual({ category_id: 'household', earlier: false });
+    expect(defaultOn(d, '2025-11-09')).toBeNull();
+    // Its earlier category still counts as used: deleting it would re-file those days.
+    expect(defaultUses(s, (id) => id === 'groceries')).toBe(1);
+    // Saved as it is read, and checked: an earlier category's days are a span.
+    expect(isVendorDefaults(s)).toBe(true);
+    const bad = (previous: unknown) => isVendorDefaults({ ...s, vendors: [{ ...s.vendors[0], default: { ...s.vendors[0].default, previous } }] });
+    expect(bad([{ category_id: 'groceries', since: '2026-10-16', until: '2026-10-16' }])).toBe(false);
+    expect(bad([{ category_id: 'groceries', since: '2025-11-10', until: '2026-10-16', extra: 1 }])).toBe(false);
+    expect(bad('groceries')).toBe(false);
+    // A default saved before earlier categories were kept still reads (seam rule 7).
+    expect(isVendorDefaults({ ...s, vendors: [{ ...s.vendors[0], default: { category_id: 'household', since: '2026-10-16', set_at: at(0).toISOString() } }] })).toBe(true);
+    // Many moves: the last MAX_PERIODS earlier categories are kept, the oldest filing nothing more.
+    let many = s;
+    for (let i = 0; i < MAX_PERIODS + 3; i++) {
+      const day = `2027-01-${String(1 + 2 * i).padStart(2, '0')}`;
+      const next = `2027-01-${String(2 + 2 * i).padStart(2, '0')}`;
+      const c = i % 2 === 0 ? 'auto' : 'household';
+      many = withVote(many, vote(c), at2(day))!.next;
+      many = withVote(many, vote(c), at2(next))!.next;
+    }
+    const kept = many.vendors[0].default!.previous!;
+    expect(kept).toHaveLength(MAX_PERIODS);
+    expect(kept[0].since > '2025-11-10').toBe(true);
+    expect(isVendorDefaults(many)).toBe(true);
   });
 
   test('merchants are kept up to a bound; room is made by one without a default, never one with', () => {
