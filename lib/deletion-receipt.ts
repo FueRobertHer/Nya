@@ -74,6 +74,38 @@ export function backupDaysAtMost(retention: { max_days: number }): number {
   return retention.max_days + BACKUP_DATE_MARGIN_DAYS;
 }
 
+/**
+ * What the public pages say of a data key per account and a deletion
+ * (app/security, app/privacy), the same on both. They read no stored data,
+ * so they say it conditionally: accounts made on this version have a key of
+ * their own, older ones once whoever runs the copy has moved them. Empty
+ * without a master key, where there are no data keys at all. Wording the
+ * owner signs off (docs/operations.md, "Per-container data keys").
+ */
+export function keyDeletionText(input: { envelope: boolean; backups: BackupRetention; databaseDays: number | null }): { key: string[]; notReached: string[] } {
+  if (!input.envelope) return { key: [], notReached: [] };
+  const own =
+    'Each account made on this version of Nya has a data key of its own, and an account made before it has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
+  const key = input.backups?.kept
+    ? [
+        own,
+        'Deleting an account destroys its own key, so nothing encrypted under it can be decrypted from any copy Nya keeps, normally within minutes of the deletion and at the latest after the next nightly backup that succeeds. The encrypted copies stay in backups, unreadable, until they are deleted, and the plain text in them stays readable until then. Copies under a shared key stay readable with it until they are deleted. The receipt says which applies to the account.',
+      ]
+    : [own, 'Deleting an account destroys its own key with the rest of its data.'];
+  const days = input.databaseDays;
+  const notReached = [
+    ...(input.backups?.kept ? ['A backup of the keys that whoever runs this copy of Nya downloaded by hand, for as long as they keep it.'] : []),
+    ...(days === null
+      ? ['The database host’s own backups, which hold the whole database, keys included, for as long as its setting keeps them: how long couldn’t be worked out on this copy of Nya.']
+      : days > 0
+        ? [`The database host’s own backups, which hold the whole database, keys included, for ${days === 1 ? '1 day' : `${days} days`}.`]
+        : []),
+    ...(input.backups?.kept ? ['A backup taken while an older version of Nya ran, which holds every key.'] : []),
+    'A record that the account existed: its random id and the day its key was destroyed, kept for good, so that a restored backup never brings the account back.',
+  ];
+  return { key, notReached };
+}
+
 export type DeletionReceipt = {
   /** When it finished: an ISO time. */
   deleted_at: string;
