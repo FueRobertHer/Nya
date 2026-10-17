@@ -6,8 +6,10 @@
 //
 // ALL OF IT, OR NONE. The commit writes the entry first (lib/migration/
 // store.ts), naming everything it will make, by ids minted now: the manual
-// accounts, the categories and groups, the tags, each account's import and
-// every row. Then, in order: the new manual accounts; the categories and
+// accounts, the categories and groups, the tags, and each account's import
+// (whose own entry names its rows, minted now too, which is how Undo finds
+// them however far it got). Then, in order: the new manual accounts (the
+// person's room for them counted again first); the categories and
 // groups, in one compare-and-set that works the mapping out again on the set
 // as it is and refuses unless it is the one reviewed (lib/migration/
 // categories.ts applyCategoryPlan); the tags, in one; each Nya account's
@@ -18,7 +20,8 @@
 // tags (and, on a linked account's row the bank already has, the app's note)
 // in what is said about each transaction, split transactions' parts, and on
 // such a row the app's category, so the bank's row shows the person's own
-// categorizing. If any step fails the import is undone, as Undo would undo
+// categorizing (unless the person said not to: MigrationAnswers.carry). If
+// any step fails the import is undone, as Undo would undo
 // it, and the failure answered: a file is never half imported. An entry left
 // part way (the server stopped) is listed, and Undo finishes taking it out.
 //
@@ -32,36 +35,43 @@
 // UNDO, in one action: every account's import undone (its rows, with what was
 // said about them, their splits and places in groups, and their categories
 // on a linked account's: lib/import/commit.ts undoImport, lib/history-import/
-// commit.ts undoHistoryImport; rows a later import relied on are handed to
-// it, as those undo); then what it made, where nothing else now uses it: a
-// manual account it made that holds no rows, a tag no transaction or rule
-// holds, a category no transaction, budget or rule uses (lib/category-
-// usage.ts), a group left with no category. What something else uses now is
-// kept, and the answer says so.
+// commit.ts undoHistoryImport, given every id a linked account has had, as
+// its own Undo is, so rows a later import made after a re-link relied on are
+// handed to it); then what it made, where nothing else now uses it: a manual
+// account it made that holds no rows, that the person hasn't changed since
+// and no goal tracks, a tag no transaction or rule holds, a category no
+// transaction, budget or rule uses (lib/category-usage.ts), a group left with
+// no category and no budget, this month's or a past one's. What something
+// else uses now is kept, and the answer says so.
 
 import type { Ctx } from '../containers';
 import { loggable } from '../log-safe';
 import { StoredDataUnreadableError } from '../repo';
-import { manualAccountExists, newManualId, saveManualAccount, type ManualAccount } from '../manual';
+import { getManualAccount, getManualAccounts, MAX_MANUAL_ACCOUNTS, newManualId, saveManualAccount, type ManualAccount } from '../manual';
+import { getGoals } from '../goals';
 import { manualTxnStore } from '../manual-txns';
 import { newManualTxnId } from '../manual-txn-input';
 import { deleteManualAccount } from '../manual-account-delete';
 import { changeTaxonomy, newCategoryId, readTaxonomy, ensureTaxonomy } from '../category-store';
-import { categoryForKey, deleteCategory, deleteGroup, indexTaxonomy, TEXT, CategoryError } from '../categories';
-import { categoryUsage } from '../category-usage';
+import { categoryForKey, deleteCategory, deleteGroup, indexTaxonomy, TEXT, CategoryError, type CategoryUsage } from '../categories';
+import { categoryUsages } from '../category-usage';
 import { loadBudgets } from '../budget-store';
-import { addTag, changeTagSet, newTagId, readTagSet, tagByName, TagError } from '../tags';
-import { deleteTag } from '../tag-delete';
+import { budgetMonthsStore } from '../budget-months-store';
+import { groupsWithBudgets } from '../category-templates';
+import { addTag, changeTagSet, markDeleted, newTagId, readTagSet, tagByName } from '../tags';
+import { finishDeleting } from '../tag-delete';
+import { readLinks, effectiveLinks, sameAccountIds, type Link } from '../link-core';
+import { liveAccountIds } from '../links';
 import { readRuleSet } from '../rules';
 import { carriedAnnotationStore, txnAnnotationStore, type TxnAnnotation } from '../txn-annotations';
 import { checkParts, splitStore, SPLITS_VERSION, type SplitRecord } from '../splits';
 import { setOverrides } from '../overrides';
-import { commitImport, ImportNotFoundError, undoImport } from '../import/commit';
+import { commitImport, ImportNotFoundError, undoImport, undoPlan } from '../import/commit';
 import { newImportId } from '../import/store';
-import { commitHistoryImport, HistoryImportNotFoundError, reviewDigest, undoHistoryImport } from '../history-import/commit';
+import { commitHistoryImport, historyUndoPlan, HistoryImportNotFoundError, reviewDigest, undoHistoryImport } from '../history-import/commit';
 import { newHistoryImportId, newImportedTxnId } from '../history-import/store';
 import type { Period } from '../history-import/plan';
-import { applyCategoryPlan } from './categories';
+import { applyCategoryPlan, CategoriesChangedError } from './categories';
 import { migrationStore, type MigrationCounts, type MigrationEntry } from './store';
 import type { MigrationAnswers, MigrationPlan, MigrationState } from './plan';
 
@@ -144,7 +154,9 @@ export async function commitMigration(
 
   const linked: MigrationCommitResult['linked'] = [];
   try {
-    // The manual accounts it makes, as the Add form saves them.
+    // The manual accounts it makes, as the Add form saves them, within the
+    // room counted again now (another device may have added some since).
+    if (accountIds.size > 0 && (await getManualAccounts(ctx)).length + accountIds.size > MAX_MANUAL_ACCOUNTS) throw new MigrationRoomError();
     for (const t of plan.targets) {
       if (!t.create) continue;
       const account: ManualAccount = { ...t.create, account_id: accountIds.get(t.key)!, updated_at: at };
@@ -178,8 +190,7 @@ export async function commitMigration(
     let imported = 0;
     let duplicates = 0;
     let present = 0;
-    let unreadable = 0;
-    for (const t of plan.targets) {
+      for (const t of plan.targets) {
       const ids = minted.get(t.key)!;
       const account_id = accountOf(t);
       const read = { app: plan.read.app, variant: plan.read.parsed.variant, migration: input.id, accounts: t.sources, ...plan.read.read };
@@ -203,7 +214,6 @@ export async function commitMigration(
         const c = result.plan.counts;
         imported += c.new;
         present += c.present;
-        unreadable += c.unreadable;
         if (result.import_id) kept = result.plan.actions.flatMap((a, i): { i: number; duplicate: boolean }[] => (a === 'add' ? [{ i, duplicate: false }] : []));
       } else {
         const context = state.contexts.get(account_id)!;
@@ -235,7 +245,6 @@ export async function commitMigration(
         imported += c.new;
         duplicates += c.duplicates + c.already;
         present += c.present;
-        unreadable += c.unreadable;
         if (result.import_id) {
           kept = result.plan.actions.flatMap((a, i): { i: number; duplicate: boolean }[] => (a === 'add' ? [{ i, duplicate: false }] : a === 'duplicate' ? [{ i, duplicate: true }] : []));
           const type = state.linked.get(account_id)?.type ?? 'other';
@@ -243,6 +252,9 @@ export async function commitMigration(
         }
       }
       for (const { i, duplicate } of kept) {
+        // A row its bank has: what the app said of it shows on the bank's
+        // row only when the person keeps that on.
+        if (duplicate && !answers.carry) continue;
         const id = ids.rows[i];
         const row = t.rows[i].row;
         const tags = (t.tags.get(i) ?? []).map((n) => tagOf.get(n.toLowerCase())).filter((x): x is string => !!x);
@@ -255,8 +267,9 @@ export async function commitMigration(
         if (parts) {
           const checked = checkParts(
             parts.map((p) => {
+              // Gone since the review (deleted on another device): reviewed again.
               const c = categoryForKey(ix, TEXT, p.text);
-              if (!c) throw new Error('A split part’s category was not made');
+              if (!c) throw new CategoriesChangedError();
               return { amount: p.amount, category_id: c.id, ...(p.note ? { note: p.note } : {}) };
             }),
             { amount: row.amount, currency: row.currency, pending: false }
@@ -274,7 +287,9 @@ export async function commitMigration(
       imported,
       duplicates,
       present,
-      unreadable: unreadable,
+      // The file's lines that couldn't be read, each once: those of no
+      // account are in every account's import.
+      unreadable: plan.problems.length + plan.targets.reduce((n, t) => n + t.own_problems.length, 0),
       splits: splits.length,
       tagged: annotations.filter(([, a]) => (a.tags?.length ?? 0) > 0).length,
     };
@@ -302,6 +317,15 @@ export class MigrationNotFoundError extends Error {
  *  (app/api/migration maxDuration), so one older than this stopped. */
 export const STILL_IMPORTING_MS = 5 * 60 * 1000;
 
+/** The manual accounts the import would make are more than the person has
+ *  room for now (another device added some since the review). */
+export class MigrationRoomError extends Error {
+  constructor() {
+    super(`You have no room for the manual accounts this import would make (Nya keeps at most ${MAX_MANUAL_ACCOUNTS}), so nothing was imported. Review it again.`);
+    this.name = 'MigrationRoomError';
+  }
+}
+
 /** The import is still being made: undo it once it is done. */
 export class MigrationBusyError extends Error {
   constructor() {
@@ -317,19 +341,41 @@ export type MigrationUndoResult = {
   duplicates: number;
   kept: number;
   /** What it made, taken out or kept because something uses it now. */
-  accounts: { removed: string[]; kept: string[] };
+  accounts: { removed: string[]; kept: { name: string; why: KeptWhy }[] };
   categories: { removed: number; kept: number };
   tags: { removed: number; kept: number };
   /** The days of the rows each linked account lost. */
   linked: { account_id: string; type: string; dates: string[] }[];
 };
 
+/** The links that apply now, read strictly, for undoing a linked account's
+ *  import with every id it has had (lib/link-core.ts sameAccountIds). */
+async function linksNow(ctx: Ctx): Promise<Map<string, Link>> {
+  const [read, live] = await Promise.all([readLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+  if (read.unreadable.size > 0) throw new MigrationLinksUnreadableError();
+  return effectiveLinks(read.links, live);
+}
+
+/** A saved account link can't be read, so a linked account's earlier ids,
+ *  and the later imports that relied on its rows, can't be told: refused
+ *  rather than undone without them. */
+export class MigrationLinksUnreadableError extends Error {
+  constructor() {
+    super('A saved account link can’t be read, so the imports that rely on this one’s transactions can’t all be found. Remove it on the Accounts tab first, then undo.');
+    this.name = 'MigrationLinksUnreadableError';
+  }
+}
+
+/** Why a manual account the import made stays when it is undone. */
+export type KeptWhy = 'transactions' | 'changed' | 'goal';
+
 /**
  * Takes an import from another app out (see the header). Undoing again after
  * an undo that stopped part way finishes it. Throws MigrationNotFoundError
  * when there is no such import, UnreadableEntriesError when its entry can't
  * be read (each account's import is still listed with Undo on that account),
- * and what an account's undo throws.
+ * MigrationLinksUnreadableError when a linked account's links can't be, and
+ * what an account's undo throws.
  */
 export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boolean; now?: number } = {}): Promise<MigrationUndoResult> {
   const entry = await migrationStore.get(ctx, id);
@@ -338,6 +384,7 @@ export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boole
   // fails: `failed`), unless it has gone quiet for longer than any import
   // takes, so it stopped part way.
   if (!opts.failed && entry.status === 'importing' && (opts.now ?? Date.now()) - Date.parse(entry.started_at) < STILL_IMPORTING_MS) throw new MigrationBusyError();
+  const links = entry.imports.some((i) => i.kind === 'linked') ? await linksNow(ctx) : new Map<string, Link>();
   if (entry.status !== 'undoing') await migrationStore.update(ctx, id, (cur) => (cur ? { ...cur, status: 'undoing' } : cur));
   const result: MigrationUndoResult = { removed: 0, duplicates: 0, kept: 0, accounts: { removed: [], kept: [] }, categories: { removed: 0, kept: 0 }, tags: { removed: 0, kept: 0 }, linked: [] };
 
@@ -348,7 +395,9 @@ export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boole
         result.removed += u.removed;
         result.kept += u.kept;
       } else {
-        const u = await undoHistoryImport(ctx, [imp.account_id], imp.import_id);
+        // Every id the account has had, as its own Undo passes them: a later
+        // import made under its new id after a re-link may rely on these rows.
+        const u = await undoHistoryImport(ctx, sameAccountIds(imp.account_id, links), imp.import_id);
         result.removed += u.removed;
         result.duplicates += u.duplicates;
         result.kept += u.kept;
@@ -361,20 +410,38 @@ export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boole
     }
   }
 
-  // The manual accounts it made, when they hold nothing now.
-  for (const a of entry.made.accounts) {
-    if (!(await manualAccountExists(ctx, a.id))) continue;
-    const book = await manualTxnStore.get(ctx, a.id);
-    if (book && book.rows.length > 0) {
-      result.accounts.kept.push(a.name);
-      continue;
+  // The manual accounts it made, when they hold nothing now, the person
+  // hasn't changed them since (a balance typed, a name) and no goal tracks
+  // them. Goals that can't be read could track any: those stay.
+  if (entry.made.accounts.length > 0) {
+    const goals = await getGoals(ctx).then(
+      (g) => g,
+      (err) => {
+        if (err instanceof StoredDataUnreadableError) return null;
+        throw err;
+      }
+    );
+    for (const a of entry.made.accounts) {
+      const account = await getManualAccount(ctx, a.id);
+      if (!account) continue;
+      const book = await manualTxnStore.get(ctx, a.id);
+      // The import saved it stamped with its own start: another stamp is a
+      // change the person made since.
+      const why: KeptWhy | null =
+        book && book.rows.length > 0 ? 'transactions' : account.updated_at !== entry.started_at ? 'changed' : !goals || goals.some((g) => g.account_id === a.id) ? 'goal' : null;
+      if (why) {
+        result.accounts.kept.push({ name: a.name, why });
+        continue;
+      }
+      await deleteManualAccount(ctx, a.id);
+      result.accounts.removed.push(a.name);
     }
-    await deleteManualAccount(ctx, a.id);
-    result.accounts.removed.push(a.name);
   }
 
   // The tags it made, when nothing holds them now: no transaction's record,
   // carried record or rule. One that can't be read could hold any: they stay.
+  // The rest are deleted together, as one deletion (lib/tag-delete.ts): one
+  // sweep of what is said about transactions, however many there are.
   if (entry.made.tags.length > 0) {
     const set = await readTagSet(ctx);
     const there = entry.made.tags.filter((t) => set?.tags.some((x) => x.id === t));
@@ -385,47 +452,64 @@ export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boole
       for (const r of records.entries.values()) for (const t of [...(r.tags ?? []), ...(r.untagged ?? [])]) held.add(t);
       for (const c of carried.entries.values()) for (const r of Object.values(c.rows)) for (const t of [...(r?.tags ?? []), ...(r?.untagged ?? [])]) held.add(t);
       for (const r of rules?.rules ?? []) for (const t of r.actions.add_tags ?? []) held.add(t);
-      for (const t of there) {
-        if (!sure || held.has(t)) result.tags.kept++;
-        else {
-          try {
-            await deleteTag(ctx, t);
-          } catch (err) {
-            // Deleted meanwhile (another undo, the Tags screen): gone either way.
-            if (!(err instanceof TagError)) throw err;
-          }
-          result.tags.removed++;
-        }
+      const doomed = there.filter((t) => sure && !held.has(t));
+      result.tags.kept += there.length - doomed.length;
+      if (doomed.length > 0) {
+        // Deleted meanwhile (another undo, the Tags screen): gone either way.
+        const marked = await changeTagSet(ctx, (s) => doomed.reduce((acc, t) => (acc.tags.some((x) => x.id === t) ? markDeleted(acc, t) : acc), s));
+        await finishDeleting(ctx, marked);
+        result.tags.removed += doomed.length;
       }
     }
   }
 
   // The categories it made, when nothing uses them now (lib/category-usage.ts,
-  // which reads strictly: one it can't be sure of stays), then its groups
-  // left empty.
-  for (const c of entry.made.categories) {
-    const t = await readTaxonomy(ctx);
-    if (!t?.categories.some((x) => x.id === c)) continue;
+  // read once for them all, strictly: one it can't be sure of stays), then
+  // its groups left empty, with no budget now or in a past month.
+  const t0 = entry.made.categories.length > 0 ? await readTaxonomy(ctx) : null;
+  const present = t0 ? entry.made.categories.filter((c) => t0.categories.some((x) => x.id === c)) : [];
+  if (t0 && present.length > 0) {
+    let usages: Map<string, CategoryUsage> | null = null;
     try {
-      const usage = await categoryUsage(ctx, t, c);
-      await changeTaxonomy(ctx, (cur) => deleteCategory(cur, c, usage));
-      result.categories.removed++;
+      usages = await categoryUsages(ctx, t0, present);
     } catch (err) {
-      // In use now, changed meanwhile, or something it would need to be sure
-      // of can't be read: kept. Anything else stops the undo, which can be
-      // run again, rather than leave a category nothing says was made here.
-      if (!(err instanceof CategoryError) && !(err instanceof StoredDataUnreadableError)) throw err;
-      result.categories.kept++;
+      if (!(err instanceof StoredDataUnreadableError)) throw err;
+    }
+    for (const c of present) {
+      const usage = usages?.get(c);
+      if (!usage) {
+        result.categories.kept++;
+        continue;
+      }
+      try {
+        await changeTaxonomy(ctx, (cur) => deleteCategory(cur, c, usage));
+        result.categories.removed++;
+      } catch (err) {
+        // In use now, changed meanwhile, or the set can't be read: kept.
+        // Anything else stops the undo, which can be run again, rather than
+        // leave a category nothing says was made here.
+        if (!(err instanceof CategoryError) && !(err instanceof StoredDataUnreadableError)) throw err;
+        result.categories.kept++;
+      }
     }
   }
   if (entry.made.groups.length > 0) {
     const t = await readTaxonomy(ctx);
-    const { budgets } = await loadBudgets(ctx).catch(() => ({ budgets: null }));
+    const [{ budgets }, months] = await Promise.all([
+      loadBudgets(ctx).catch(() => ({ budgets: null })),
+      budgetMonthsStore.get(ctx).then(
+        (m) => ({ ok: true as const, m }),
+        () => ({ ok: false as const, m: null })
+      ),
+    ]);
+    // A past month's budget for a group can't be told from nothing when the
+    // record of them can't be read: then every group stays.
+    const budgeted = months.ok ? groupsWithBudgets(months.m) : null;
     for (const g of entry.made.groups) {
       if (!t?.groups.some((x) => x.id === g) || t.categories.some((x) => x.group === g)) continue;
-      if (!budgets) continue;
+      if (!budgets || !budgeted) continue;
       try {
-        await changeTaxonomy(ctx, (cur) => deleteGroup(cur, g, budgets.groups[g] !== undefined));
+        await changeTaxonomy(ctx, (cur) => deleteGroup(cur, g, budgets.groups[g] !== undefined || budgeted.has(g)));
       } catch (err) {
         if (!(err instanceof CategoryError)) throw err;
       }
@@ -436,11 +520,55 @@ export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boole
   return result;
 }
 
-/** What undoing it would do, for the confirmation: the entry, read strictly. */
-export async function migrationUndoPlan(ctx: Ctx, id: string): Promise<{ entry: MigrationEntry }> {
+/** What Undo would take out, for its confirmation: each account's import as
+ *  that account's own Undo would say it (lib/import/commit.ts undoPlan,
+ *  lib/history-import/commit.ts historyUndoPlan), added up. */
+export type MigrationUndoPreview = {
+  entry: MigrationEntry;
+  /** Rows that go, how many of them were changed since or are on another
+   *  account now (a manual account's), the duplicates of a linked account's
+   *  bank rows that go with them, and rows a later import relied on, kept
+   *  for it, by that import's file. */
+  remove: number;
+  edited: number;
+  moved: number;
+  duplicates: number;
+  restore: number;
+  kept: { file_name: string | null; count: number }[];
+  /** Some account's transactions can't be read: any of its there stay. */
+  incomplete: boolean;
+};
+
+/** What undoing it would do, changing nothing: the entry, read strictly,
+ *  and what each account's import would lose. */
+export async function migrationUndoPlan(ctx: Ctx, id: string): Promise<MigrationUndoPreview> {
   const entry = await migrationStore.get(ctx, id);
   if (!entry) throw new MigrationNotFoundError();
-  return { entry };
+  const links = entry.imports.some((i) => i.kind === 'linked') ? await linksNow(ctx) : new Map<string, Link>();
+  const out: MigrationUndoPreview = { entry, remove: 0, edited: 0, moved: 0, duplicates: 0, restore: 0, kept: [], incomplete: false };
+  for (const imp of entry.imports) {
+    try {
+      if (imp.kind === 'manual') {
+        const p = await undoPlan(ctx, imp.account_id, imp.import_id);
+        out.remove += p.remove;
+        out.edited += p.edited;
+        out.moved += p.moved;
+        out.restore += p.restore;
+        out.kept.push(...p.kept.map((k) => ({ file_name: k.file_name, count: k.count })));
+        out.incomplete ||= p.incomplete;
+      } else {
+        const p = await historyUndoPlan(ctx, sameAccountIds(imp.account_id, links), imp.import_id);
+        out.remove += p.remove;
+        out.duplicates += p.duplicates;
+        out.kept.push(...p.kept.map((k) => ({ file_name: k.file_name, count: k.count })));
+        out.incomplete ||= p.incomplete;
+      }
+    } catch (err) {
+      if (err instanceof ImportNotFoundError || err instanceof HistoryImportNotFoundError) continue;
+      throw err;
+    }
+  }
+  return out;
 }
 
 // ---- Listing ----

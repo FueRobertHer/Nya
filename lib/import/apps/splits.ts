@@ -25,7 +25,7 @@
 // that fails it the same way (explode).
 
 import { MAX_PARTS, MIN_PARTS } from '../../split-rows';
-import type { AppPart, AppTxn, SplitReport } from './types';
+import type { AppPart, AppTxn, SplitReport, SplitWhole } from './types';
 
 /** Lines' amounts compared at a millionth: more than any currency's minor
  *  unit, and past the float error of adding decimals. */
@@ -46,6 +46,22 @@ export function keepLines(report: SplitReport, reason: string, lines: readonly n
   const found = report.kept.find((k) => k.reason === reason);
   if (found) found.lines.push(...lines);
   else report.kept.push({ reason, lines: [...lines] });
+}
+
+/** The lines of a split that wasn't rebuilt, each marked as a line of it
+ *  (AppTxn.split_of: `key` and the whole transaction where the file gives
+ *  it), for a linked account, whose bank has the whole as one row. */
+export function linesOf(lines: readonly AppTxn[], key: string, whole: SplitWhole | null): AppTxn[] {
+  return lines.map((l) => ({ ...l, split_of: { key, whole } }));
+}
+
+/** A split's whole from all of its lines (a complete run of them): their
+ *  total, when they are one account's, on one day, in one currency; else
+ *  null, since no one bank row would be them. */
+export function wholeOfLines(lines: readonly AppTxn[], head: { payee: string; note: string | null }): SplitWhole | null {
+  const first = lines[0];
+  if (!first || lines.some((l) => l.account !== first.account || l.date !== first.date || (l.currency ?? '') !== (first.currency ?? ''))) return null;
+  return { date: first.date, amount: lines.reduce((n, l) => n + micro(l.amount), 0) / 1e6, payee: head.payee, note: head.note, currency: first.currency };
 }
 
 /** The reasons, in the person's words. */
@@ -79,7 +95,7 @@ export function fromLines(
   if (moving.some((l) => Math.sign(l.amount) !== sign)) return { reason: WHY.signs };
   const sum = moving.reduce((n, l) => n + micro(l.amount), 0);
   if (head.total !== undefined && head.total !== null && micro(head.total) !== sum) return { reason: WHY.total };
-  const parts: AppPart[] = moving.map((l) => ({ amount: l.amount, category: l.category, transfer: l.transfer, note: l.note, payee: l.payee, line: l.line }));
+  const parts: AppPart[] = moving.map((l) => ({ amount: l.amount, category: l.category, transfer: l.transfer, note: l.note, payee: l.payee, line: l.line, raw: l.raw }));
   const txn: AppTxn = {
     line: Math.min(...lines.map((l) => l.line)),
     lines: lines.map((l) => l.line).sort((a, b) => a - b),
@@ -123,7 +139,8 @@ export function explode(txn: AppTxn): AppTxn[] {
     note: p.note,
     tags: txn.tags,
     parts: null,
-    raw: { line: p.line, of: txn.raw },
+    // The part's own line, as the file had it.
+    raw: p.raw ?? { line: p.line },
   }));
 }
 
@@ -177,7 +194,8 @@ export function rebuildMarked(txns: readonly (AppTxn & { mark: ReturnType<typeof
       // looking again.
       const broken = run.length > 0 ? run : [t];
       keepLines(report, WHY.together, broken.map((l) => l.line));
-      for (const l of broken) out.push(plain(l));
+      // The file doesn't hold the whole transaction: a line of it is missing.
+      out.push(...linesOf(broken.map(plain), `split:${broken[0].line}`, null));
       i += broken.length;
       continue;
     }
@@ -189,7 +207,8 @@ export function rebuildMarked(txns: readonly (AppTxn & { mark: ReturnType<typeof
     const built = fromLines({ account: t.account, date: t.date, currency: t.currency, payee, note: null, tags, raw: run.map((l) => l.raw) }, lines);
     if ('reason' in built) {
       keepLines(report, built.reason, lines.map((l) => l.line));
-      out.push(...run.map(plain));
+      // Every line is there, so their total is the transaction.
+      out.push(...linesOf(run.map(plain), `split:${run[0].line}`, wholeOfLines(run, { payee, note: null })));
     } else {
       noteRebuilt(report, built, lines);
       out.push(built.txn);

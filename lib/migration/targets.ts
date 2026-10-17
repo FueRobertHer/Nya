@@ -30,6 +30,8 @@ import { liveAccountIds } from '../links';
 import { liveLinkedAccounts, readAccountContext, type AccountContext, type LinkedAccount } from '../history-import/read';
 import { StateUnreadableError } from '../transactions';
 import { StoredDataUnreadableError } from '../repo';
+import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore } from '../lifecycle';
+import { loggable } from '../log-safe';
 import type { MigrationState, TargetAccount } from './plan';
 
 /** What the route hands the plan, and the accounts it offers. */
@@ -86,6 +88,22 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
 
   const contexts = new Map<string, AccountContext>();
   const unavailable = new Map<string, string>();
+  // The chosen linked accounts that ended, for the review's words only: read
+  // leniently, as the history import's route reads them (whatever counts the
+  // rows reads the ends strictly, and leaves out those from an end on).
+  const ends = new Map<string, { state: string; day: string }>();
+  if (links && opts.linkedIds.length > 0) {
+    try {
+      const view = effectiveLifecycle((await lifecycleStore.getAllReport(ctx)).entries, links);
+      for (const id of opts.linkedIds) {
+        const l = lifecycleOf(view, id)?.lifecycle;
+        const day = l && l.state !== 'active' ? endOf(l) : null;
+        if (l && day) ends.set(id, { state: l.state, day });
+      }
+    } catch (err) {
+      console.warn('migration: the accounts’ ends could not be read for the review', loggable(err));
+    }
+  }
   for (const id of opts.linkedIds) {
     const account = linked.get(id);
     if (!account || !links) continue;
@@ -116,6 +134,7 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     books,
     contexts,
     unavailable,
+    ends,
     counts: { annotations, splits, manual: manualList.length },
     offered,
     notes,

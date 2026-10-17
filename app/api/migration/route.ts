@@ -21,7 +21,8 @@ import { planMigration, type MigrationPlan } from '@/lib/migration/plan';
 import { readTargets, type ReadTargets } from '@/lib/migration/targets';
 import { readMigrationMeta } from '@/lib/migration/request';
 import { CategoriesChangedError } from '@/lib/migration/categories';
-import { commitMigration, listMigrations, MigrationBusyError, migrationUndoPlan, MigrationNotFoundError, undoMigration } from '@/lib/migration/commit';
+import { commitMigration, listMigrations, MigrationBusyError, MigrationLinksUnreadableError, MigrationNotFoundError, MigrationRoomError, migrationUndoPlan, undoMigration } from '@/lib/migration/commit';
+import { MAX_SOURCE_CATEGORIES } from '@/lib/migration/plan';
 import { isMigrationId, migrationStore } from '@/lib/migration/store';
 
 // Importing another app's export (M2, "Migration importers"; lib/import/apps/
@@ -63,12 +64,16 @@ import { isMigrationId, migrationStore } from '@/lib/migration/store';
 
 export const maxDuration = 120;
 
-const MAX_REQUEST_BYTES = MAX_FILE_BYTES + 64 * 1024;
 const MAX_META_CHARS = 256 * 1024;
+/** The file, the answers (a character of them up to three bytes) and the
+ *  form around them: under Vercel's 4.5 MB limit on a request's body. */
+const MAX_REQUEST_BYTES = MAX_FILE_BYTES + MAX_META_CHARS * 3 + 64 * 1024;
 const LISTED_PROBLEMS = 200;
 const LISTED_PROPOSALS = 500;
 const LISTED_TAGS = 300;
 const LISTED_LINES = 20;
+/** Every one of the app's categories the person can answer for. */
+const LISTED_CATEGORIES = MAX_SOURCE_CATEGORIES;
 const PREVIEW_ROWS = 6;
 
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -109,10 +114,11 @@ export async function GET(req: Request) {
     if (undo !== null && !isMigrationId(undo)) return bad('Invalid import');
     const over = await overReadLimit(ctx);
     if (over) return over;
-    if (undo !== null) return NextResponse.json({ undo: (await migrationUndoPlan(ctx, undo)).entry });
+    if (undo !== null) return NextResponse.json({ undo: await migrationUndoPlan(ctx, undo) });
     return NextResponse.json({ imports: await listMigrations(ctx), limits: { max_bytes: MAX_FILE_BYTES, max_rows: MAX_APP_ROWS } });
   } catch (err) {
     if (err instanceof MigrationNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
+    if (err instanceof MigrationLinksUnreadableError) return NextResponse.json({ error: err.message }, { status: 409 });
     return storeFailure(err, 'Failed to load the imports');
   }
 }
@@ -128,11 +134,12 @@ async function formOf(body: ArrayBuffer, contentType: string | null): Promise<Fo
 }
 
 /** The review, bounded whatever the file (see LIMITS). */
-function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: string | null; encoding: string }, currency: string | null) {
+function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: string | null; encoding: string }, answers: { currency: string | null; carry: boolean }) {
   const r = plan.read;
   const listed = <T>(list: readonly T[], max: number) => ({ list: list.slice(0, max), more: Math.max(0, list.length - max) });
   const problems = listed(plan.problems, LISTED_PROBLEMS);
   const tags = listed(plan.tags.names, LISTED_TAGS);
+  const mappings = listed(plan.categories.mappings, LISTED_CATEGORIES);
   return {
     app: r.app,
     app_name: APP_NAMES[r.app],
@@ -144,12 +151,15 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
     read: r.read,
     // The currency the person chose for the amounts that don't say theirs,
     // and whether the file has a column that says (Lunch Money's).
-    currency: { chosen: currency, in_file: r.columns.currency !== undefined },
+    currency: { chosen: answers.currency, in_file: r.columns.currency !== undefined },
+    // Whether a linked account's rows its bank has take the app's category,
+    // tags, note and split (MigrationAnswers.carry).
+    carry: answers.carry,
     rows: r.parsed.txns.length,
     notes: [...r.parsed.notes, ...targets.notes],
     accounts: plan.accounts,
     offered: targets.offered,
-    categories: plan.categories,
+    categories: { ...plan.categories, mappings: mappings.list, more: mappings.more },
     counts: plan.counts,
     tags: { on: plan.tags.on, names: tags.list, more: tags.more, added: plan.tags.added, room: plan.tags.room },
     splits: {
@@ -164,7 +174,9 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
     targets: plan.targets.map((t) => {
       const p = t.manual ?? t.linked!;
       const proposals = t.linked ? listed(t.linked.proposals, LISTED_PROPOSALS) : { list: [], more: 0 };
-      const tp = listed(t.problems, LISTED_PROBLEMS);
+      // Its own lines that can't be read: the file's whose account couldn't
+      // be told are listed once, above, though each account's import keeps them.
+      const tp = listed(t.own_problems, LISTED_PROBLEMS);
       return {
         key: t.key,
         kind: t.kind,
@@ -173,7 +185,7 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
         new: !!t.create,
         sources: t.sources,
         currency: t.currency,
-        counts: p.counts,
+        counts: { ...p.counts, unreadable: t.own_problems.length },
         first_date: p.first_date,
         last_date: p.last_date,
         totals: p.totals,
@@ -193,6 +205,10 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
         covers: t.covers,
         splits: t.parts.size,
         exploded: t.exploded.map((e) => ({ reason: e.reason, count: e.lines.length })),
+        whole: t.whole.map((e) => ({ reason: e.reason, count: e.lines.length })),
+        left_out: { opening: t.left_out.opening.length, groups: t.left_out.groups.length, lines: t.left_out.lines.length },
+        combined: { transactions: t.combined.transactions, lines: t.combined.lines.length },
+        ended: t.ended,
         tags_cut: t.tags_cut,
       };
     }),
@@ -265,7 +281,7 @@ export async function POST(req: Request) {
       today,
     });
     const plan = planMigration(read, answers, targets);
-    if (meta.action === 'preview') return NextResponse.json({ preview: reviewOf(plan, targets, content, meta.answers.currency) });
+    if (meta.action === 'preview') return NextResponse.json({ preview: reviewOf(plan, targets, content, meta.answers) });
 
     // The same import sent again (its answer lost on the way) is the one
     // already made: said so before anything is compared, since what it made
@@ -286,7 +302,7 @@ export async function POST(req: Request) {
     try {
       result = await commitMigration(ctx, { id: meta.migration_id!, plan, answers, state: targets, file: { name: meta.file_name, entry: content.entry, bytes: bytes.length, encoding: content.encoding } });
     } catch (err) {
-      if (err instanceof ReviewChangedError || err instanceof CategoriesChangedError) return NextResponse.json({ error: err.message, needs: 'review' }, { status: 409 });
+      if (err instanceof ReviewChangedError || err instanceof CategoriesChangedError || err instanceof MigrationRoomError) return NextResponse.json({ error: err.message, needs: 'review' }, { status: 409 });
       if (err instanceof UnansweredError) return NextResponse.json({ error: err.message, needs: 'answers', count: err.count }, { status: 409 });
       if (err instanceof ConflictsUnresolvedError) return NextResponse.json({ error: err.message, needs: 'review' }, { status: 409 });
       if (err instanceof CategoryError || err instanceof TagError || err instanceof SplitError) return NextResponse.json({ error: err.message, needs: 'review' }, { status: 409 });
@@ -344,7 +360,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ ...undone, history });
   } catch (err) {
     if (err instanceof MigrationNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
-    if (err instanceof MigrationBusyError) return NextResponse.json({ error: err.message }, { status: 409 });
+    if (err instanceof MigrationBusyError || err instanceof MigrationLinksUnreadableError) return NextResponse.json({ error: err.message }, { status: 409 });
     return storeFailure(err, 'Failed to undo the import');
   }
 }

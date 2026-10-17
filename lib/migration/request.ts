@@ -23,8 +23,12 @@ const only = (v: Record<string, unknown>, keys: readonly string[]) => Object.key
 const ACCOUNT_ID = /^[A-Za-z0-9_.:-]{1,100}$/;
 /** A category's id as the store keeps one. */
 const CATEGORY_ID = /^[A-Za-z0-9_-]{1,64}$/;
-/** The most of the app's categories one answer may name. */
+/** The most of the app's categories one answer may name: as many as one
+ *  import maps (lib/migration/plan.ts MAX_SOURCE_CATEGORIES). */
 const MAX_CATEGORY_ANSWERS = 1_000;
+/** A record keyed by what the file wrote: no key is inherited, so an account
+ *  the file calls "constructor" or "__proto__" is only ever its own. */
+const keyed = <T,>(): Record<string, T> => Object.create(null) as Record<string, T>;
 
 export type MigrationMeta = {
   action: 'preview' | 'import';
@@ -109,7 +113,7 @@ function readChoiceSet<T extends string>(v: unknown, allowed: readonly T[]): Cho
     if (!isRecord(v.each)) return 'Invalid choices';
     const entries = Object.entries(v.each);
     if (entries.length > MAX_CHOICES) return 'Too many choices';
-    const each: Record<string, T> = {};
+    const each = keyed<T>();
     for (const [index, choice] of entries) {
       // Keyed by the line of the file a row starts on (lib/migration/plan.ts
       // MigrationAnswers).
@@ -123,13 +127,13 @@ function readChoiceSet<T extends string>(v: unknown, allowed: readonly T[]): Cho
 
 /** The request, checked strictly, or why not. */
 export function readMigrationMeta(v: unknown): MigrationMeta | string {
-  if (!isRecord(v) || !only(v, ['action', 'file_name', 'migration_id', 'options', 'accounts', 'categories', 'tags', 'currency', 'choices', 'review'])) return 'Invalid request';
+  if (!isRecord(v) || !only(v, ['action', 'file_name', 'migration_id', 'options', 'accounts', 'categories', 'tags', 'carry', 'currency', 'choices', 'review'])) return 'Invalid request';
   if (v.action !== 'preview' && v.action !== 'import') return 'Invalid request';
   if (v.file_name !== undefined && v.file_name !== null && typeof v.file_name !== 'string') return 'Invalid request';
   const options = readOptions(v.options);
   if (typeof options === 'string') return options;
 
-  const accounts: Record<string, AccountChoice> = {};
+  const accounts = keyed<AccountChoice>();
   if (v.accounts !== undefined && v.accounts !== null) {
     if (!isRecord(v.accounts)) return 'Invalid accounts';
     const entries = Object.entries(v.accounts);
@@ -141,7 +145,7 @@ export function readMigrationMeta(v: unknown): MigrationMeta | string {
       accounts[key] = read;
     }
   }
-  const categories: Record<string, CategoryChoice> = {};
+  const categories = keyed<CategoryChoice>();
   if (v.categories !== undefined && v.categories !== null) {
     if (!isRecord(v.categories)) return 'Invalid categories';
     const entries = Object.entries(v.categories);
@@ -154,13 +158,14 @@ export function readMigrationMeta(v: unknown): MigrationMeta | string {
     }
   }
   if (v.tags !== undefined && typeof v.tags !== 'boolean') return 'Invalid request';
+  if (v.carry !== undefined && typeof v.carry !== 'boolean') return 'Invalid request';
   let currency: string | null = null;
   if (v.currency !== undefined && v.currency !== null) {
     const code = typeof v.currency === 'string' ? v.currency.trim().toUpperCase() : '';
     if (!knownCurrency(code)) return 'Enter a currency as its three-letter code, like USD or EUR';
     currency = code;
   }
-  const choices: Record<string, HistoryChoices> = {};
+  const choices = keyed<HistoryChoices>();
   if (v.choices !== undefined && v.choices !== null) {
     if (!isRecord(v.choices)) return 'Invalid choices';
     const entries = Object.entries(v.choices);
@@ -190,7 +195,7 @@ export function readMigrationMeta(v: unknown): MigrationMeta | string {
     file_name: cleanFileName(v.file_name),
     migration_id,
     options,
-    answers: { accounts, categories, tags: v.tags !== false, currency, choices },
+    answers: { accounts, categories, tags: v.tags !== false, carry: v.carry !== false, currency, choices },
     review,
   };
 }

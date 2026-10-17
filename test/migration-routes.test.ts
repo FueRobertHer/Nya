@@ -45,7 +45,7 @@ const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { assembleBankRows, finishActivity } = await import('@/lib/activity');
 const { spendingByCategory } = await import('@/lib/totals');
-const { getManualAccounts } = await import('@/lib/manual');
+const { getManualAccounts, saveManualAccount } = await import('@/lib/manual');
 const { readTaxonomy, ensureTaxonomy } = await import('@/lib/category-store');
 const { readTagSet } = await import('@/lib/tags');
 const { manualTxnStore } = await import('@/lib/manual-txns');
@@ -385,7 +385,10 @@ for (const c of CASES) {
       const listed = await list();
       expect(listed.body.imports.map((i: any) => i.id)).toEqual([migration_id]);
       const plan = await asRes(await routes.GET(new Request(`http://localhost/api/migration?undo=${migration_id}`)));
-      expect(plan.body.undo.made.accounts.length).toBe(c.accounts.length);
+      expect(plan.body.undo.entry.made.accounts.length).toBe(c.accounts.length);
+      // What it takes out, as each account's own Undo would say it.
+      expect(plan.body.undo.remove).toBe((await manualTxnStore.getAll(ctx)).size > 0 ? [...(await manualTxnStore.getAll(ctx)).values()].reduce((n, b) => n + b.rows.length, 0) : 0);
+      expect(plan.body.undo.edited).toBe(0);
       const undone = await undo({ migration_id, confirm: true });
       expect(undone.status).toBe(200);
       expect(undone.body.accounts.removed.sort()).toEqual([...c.accounts].sort());
@@ -690,7 +693,10 @@ describe('the import', () => {
     expect(again.body).toMatchObject({ migration_id, already: true, status: 'importing' });
     // Quiet for longer than any import takes, it stopped part way: Undo takes
     // out what it made.
-    await migrationStore.set(ctx, migration_id, { ...entry, status: 'importing', finished_at: null, started_at: new Date(Date.now() - 10 * 60_000).toISOString() });
+    const stopped = new Date(Date.now() - 10 * 60_000).toISOString();
+    await migrationStore.set(ctx, migration_id, { ...entry, status: 'importing', finished_at: null, started_at: stopped });
+    // As the import saved its accounts then, stamped with its start.
+    for (const a of await getManualAccounts(ctx)) await saveManualAccount(ctx, { ...a, updated_at: stopped });
     const undone = await undo({ migration_id, confirm: true });
     expect(undone.status).toBe(200);
     expect(await getManualAccounts(ctx)).toEqual([]);
@@ -708,7 +714,7 @@ describe('the import', () => {
     ].join('\n');
     const read = readAppFile(lines, { options: { date_order: 'mdy' }, thisYear: new Date().getUTCFullYear() });
     if (read.status !== 'ready') throw new Error(read.status);
-    const answers = { accounts: { Cash: { to: 'new' as const, name: 'Cash', institution: 'Wallet', type: 'depository' as const, balance: 20 }, Checking: { to: 'linked' as const, id: 'acc_chk' } }, categories: {}, tags: true, currency: null, choices: {} };
+    const answers = { accounts: { Cash: { to: 'new' as const, name: 'Cash', institution: 'Wallet', type: 'depository' as const, balance: 20 }, Checking: { to: 'linked' as const, id: 'acc_chk' } }, categories: {}, tags: true, carry: true, currency: null, choices: {} };
     const state = await readTargets(ctx, { manualIds: [], linkedIds: ['acc_chk'], withTags: true, today: daysAgo(0) });
     const plan = planMigration(read, answers, state);
     expect(plan.blocks).toEqual([]);

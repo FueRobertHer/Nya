@@ -47,7 +47,7 @@
 
 import { cleanText } from '../normalize';
 import { appAmount, cellOf, markTransfersByPayee, NO_PAYEE, problemOf, rawCells, readLine, textOrNull, type AppSpec } from './common';
-import { fromLines, keepLines, newSplitReport, noteRebuilt, WHY } from './splits';
+import { fromLines, keepLines, linesOf, newSplitReport, noteRebuilt, WHY } from './splits';
 import type { AppCategory, AppTxn } from './types';
 
 export function actualCategory(group: string, name: string, combined: boolean): AppCategory | null {
@@ -149,8 +149,12 @@ export const ACTUAL: AppSpec = {
       });
     }
 
+    // Every line, a split's parts too, before splits are rebuilt: a part
+    // whose payee is another account moved money there.
+    markTransfersByPayee(lines);
     // Each split transaction's row, then its parts after it: rebuilt, or the
-    // parts as rows and its own row (0, moving nothing) left out.
+    // parts as rows and its own row (0, moving nothing) left out, each part
+    // marked with the transaction as Actual gives it, its total.
     const splits = newSplitReport();
     const txns: AppTxn[] = [];
     const plain = (l: Line): AppTxn => {
@@ -160,9 +164,12 @@ export const ACTUAL: AppSpec = {
     for (let i = 0; i < lines.length; i++) {
       const l = lines[i];
       if (!l.parent) {
-        // A part with no split row before it stands on its own.
-        if (l.child) keepLines(splits, WHY.together, [l.line]);
-        txns.push(plain(l));
+        // A part with no split row before it stands on its own: the file
+        // doesn't hold its transaction.
+        if (l.child) {
+          keepLines(splits, WHY.together, [l.line]);
+          txns.push(...linesOf([plain(l)], `split:${l.line}`, null));
+        } else txns.push(plain(l));
         continue;
       }
       const run: Line[] = [];
@@ -173,14 +180,15 @@ export const ACTUAL: AppSpec = {
       }
       // A part without a payee of its own has its transaction's.
       const parts = run.map((r) => plain(r.payee === NO_PAYEE ? { ...r, payee: l.payee } : r));
+      const whole = { date: l.date, amount: l.parent.total, payee: l.payee, note: l.note, currency: null };
       if (run.length !== l.parent.n) {
         keepLines(splits, WHY.together, [l.line, ...run.map((r) => r.line)]);
-        txns.push(...parts);
+        txns.push(...linesOf(parts, `split:${l.line}`, whole));
       } else {
         const built = fromLines({ account: l.account, date: l.date, currency: null, payee: l.payee, note: l.note, tags: [], total: l.parent.total, raw: [l.raw, ...run.map((r) => r.raw)] }, parts);
         if ('reason' in built) {
           keepLines(splits, built.reason, [l.line, ...run.map((r) => r.line)]);
-          txns.push(...parts);
+          txns.push(...linesOf(parts, `split:${l.line}`, whole));
         } else {
           noteRebuilt(splits, built, parts);
           // The split's own line is one of its lines too.
@@ -191,11 +199,16 @@ export const ACTUAL: AppSpec = {
       }
       i = j - 1;
     }
-    markTransfersByPayee(txns);
     // A transfer's category is the money moving between the person's own
     // accounts (Actual lets one to an off-budget account carry one).
-    for (const t of txns) if (t.transfer !== null) t.category = null;
+    for (const t of txns) {
+      if (t.transfer !== null) t.category = null;
+      for (const p of t.parts ?? []) if (p.transfer !== null) p.category = null;
+    }
     const variant = columns.group !== undefined ? 'export-2026' : columns.split_amount !== undefined ? 'export-2024' : combined ? 'export-selected' : 'export-early';
+    // Before 24.8 a split's parts are rows of their own, each with its
+    // transaction's payee: what a linked account's plan finds them by.
+    if (variant === 'export-early') for (const t of txns) t.group_key = t.payee;
     const notes =
       variant === 'export-early'
         ? ['This export is from a version of Actual before 24.8, which writes the parts of a split transaction as transactions of their own: they come in that way, each with its own category.']

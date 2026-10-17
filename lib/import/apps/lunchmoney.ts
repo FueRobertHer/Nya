@@ -40,7 +40,7 @@
 
 import { cleanText } from '../normalize';
 import { appAmount, cellOf, NO_PAYEE, problemOf, rawCells, readLine, tagsOf, textOrNull, type AppSpec } from './common';
-import { fromLines, keepLines, newSplitReport, noteRebuilt } from './splits';
+import { fromLines, keepLines, linesOf, newSplitReport, noteRebuilt } from './splits';
 import type { AppCategory, AppTxn } from './types';
 
 export function lunchMoneyCategory(group: string, name: string): AppCategory | null {
@@ -146,7 +146,9 @@ export const LUNCH_MONEY: AppSpec = {
       const built = fromLines(head, lines);
       if ('reason' in built) {
         keepLines(splits, built.reason, lines.map((l) => l.line));
-        txns.push(...lines);
+        // The parent's row is the transaction whole, as its bank has it;
+        // without it the file doesn't say what the whole was.
+        txns.push(...linesOf(lines, `split:${parentId}`, parent ? { date: parent.date, amount: parent.amount, payee: parent.payee, note: parent.note, currency: parent.currency } : null));
       } else {
         noteRebuilt(splits, built, lines);
         txns.push(built.txn);

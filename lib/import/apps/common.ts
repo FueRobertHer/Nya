@@ -262,9 +262,13 @@ export const TRANSFER_DAYS = 4;
  * written like an account ("Amazon" beside an account called "Amazon") is
  * one only when the row has no category of its own, or the account it names
  * holds the other side: the opposite amount within TRANSFER_DAYS. `prefixes`
- * are words an app may put before the account's name ("Transfer : ").
+ * are words an app may put before the account's name ("Transfer : "), and
+ * `explicit` those of them only a transfer is written with, which mark one
+ * even when the account they name isn't in the file (an export of one
+ * account). Run over every line, a split's too, before splits are rebuilt,
+ * so a split's line that moved money to another account is a transfer.
  */
-export function markTransfersByPayee(txns: AppTxn[], prefixes: readonly RegExp[] = []): void {
+export function markTransfersByPayee(txns: AppTxn[], prefixes: readonly RegExp[] = [], explicit: readonly RegExp[] = []): void {
   const accounts = new Map<string, string>();
   for (const t of txns) if (t.account) accounts.set(t.account.toLowerCase(), t.account);
   const byAccount = new Map<string, AppTxn[]>();
@@ -278,6 +282,12 @@ export function markTransfersByPayee(txns: AppTxn[], prefixes: readonly RegExp[]
     let named = t.payee;
     for (const p of prefixes) named = named.replace(p, '');
     const key = named.trim().toLowerCase();
+    // Words only the app's transfers are written with ("Transfer : Savings")
+    // name one whether or not the other account is in the file.
+    if (key && key !== t.account.toLowerCase() && !accounts.has(key) && explicit.some((p) => p.test(t.payee))) {
+      t.transfer = named.trim();
+      continue;
+    }
     if (!key || key === t.account.toLowerCase() || !accounts.has(key)) continue;
     const otherSide = (byAccount.get(key) ?? []).some((o) => Math.abs(o.amount + t.amount) < 1e-9 && Math.abs(dayNumber(o.date) - dayNumber(t.date)) <= TRANSFER_DAYS);
     if (t.category && !otherSide) continue;

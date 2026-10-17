@@ -46,6 +46,9 @@ export function zeroSumCategory(group: string, name: string): AppCategory | null
 }
 
 const TRANSFER_WORDS = [/^transfer\s*:\s*/i, /^transfer (?:to|from)\s+/i, /^payment (?:to|from)\s+/i];
+/** The one of them only a transfer is written with (YNAB's way, which
+ *  ZeroSum follows). */
+const TRANSFER_MARK = [/^transfer\s*:\s*/i];
 
 export const ZEROSUM: AppSpec = {
   app: 'zerosum',
@@ -106,12 +109,18 @@ export const ZEROSUM: AppSpec = {
     }
     const splits = newSplitReport();
     const marked = lines.some((l) => l.mark);
+    // Every line, a split's too, before splits are rebuilt.
+    markTransfersByPayee(lines, TRANSFER_WORDS, TRANSFER_MARK);
     const txns = rebuildMarked(lines, splits);
-    markTransfersByPayee(txns, TRANSFER_WORDS);
     // A transfer's category is the money moving between the person's own
     // accounts, whatever ZeroSum filed it under.
-    for (const t of txns) if (t.transfer !== null) t.category = null;
+    for (const t of txns) {
+      if (t.transfer !== null) t.category = null;
+      for (const p of t.parts ?? []) if (p.transfer !== null) p.category = null;
+    }
     if (!marked) {
+      // What one transaction's lines share, for a linked account's plan.
+      for (const t of txns) t.group_key = t.payee;
       splits.unmarked =
         'ZeroSum’s export writes each line of a split transaction as a row of its own, and nothing in it says which rows were one transaction, so each line comes in as a transaction of its own, with its own category. They count the same in every total.';
     }

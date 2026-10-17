@@ -50,27 +50,27 @@ import { normalizeDescription, normalizeRecords, type NormalizedRecord } from '.
 import { planImport, type ImportPlan } from '../import/commit';
 import type { RawRecord } from '../import/record';
 import { MAX_IMPORT_ROWS } from '../import/record';
-import { explode, WHY } from '../import/apps/splits';
+import { explode, fromLines, WHY } from '../import/apps/splits';
 import type { AppRead } from '../import/apps/read';
-import type { AppPart, AppTxn } from '../import/apps/types';
+import type { AppTxn, SplitWhole } from '../import/apps/types';
 import type { AppProblem } from '../import/apps/common';
 import { APP_NAMES } from '../import/apps/types';
 import { planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from '../history-import/plan';
+import { couldBe, type Matchable } from '../history-import/match';
 import { coveredPeriod } from '../history-import/commit';
 import type { Covers } from '../history-import/store';
 import type { AccountContext, LinkedAccount } from '../history-import/read';
 import type { ManualTxnBook } from '../manual-txns';
-import { MANUAL_TYPES, MAX_BALANCE, type ManualAccount, type ManualType } from '../manual';
+import { MANUAL_TYPES, MAX_BALANCE, MAX_MANUAL_ACCOUNTS, type ManualAccount, type ManualType } from '../manual';
 import { isOwedType } from '../balance';
 import { checkParts, MAX_SPLITS, SplitError } from '../splits';
 import { MAX_ANNOTATIONS } from '../txn-annotations';
 import { cleanTagName, MAX_TAGS, MAX_TAGS_PER_TRANSACTION, TAG_NAME_MAX, tagByName, type TagSet } from '../tags';
-import type { Taxonomy } from '../categories';
+import { categoryForKey, indexTaxonomy, MAX_CATEGORIES, TEXT, type Taxonomy } from '../categories';
 import { DEFAULT_CURRENCY, toMinorUnits } from '../manual-txn-input';
 import { mapCategories, OPENING, sourceKey, type CategoryChoice, type CategoryPlan, type SourceCategory } from './categories';
 
-/** Manual accounts one person may have (app/api/manual-accounts). */
-export const MAX_MANUAL_ACCOUNTS = 50;
+export { MAX_MANUAL_ACCOUNTS };
 /** The most of the file's accounts one import takes. */
 export const MAX_SOURCE_ACCOUNTS = 100;
 
@@ -123,7 +123,11 @@ export type TargetPlan = {
   rows: NormalizedRecord[];
   /** The transaction each row is (rows[i] is txns[i]). */
   txns: AppTxn[];
+  /** Its lines that couldn't be read, with the file's whose account
+   *  couldn't be told (they may be its own), as its import keeps them; and
+   *  its own alone, as the review lists them under it. */
   problems: Problem[];
+  own_problems: Problem[];
   manual: ImportPlan | null;
   linked: HistoryPlan | null;
   /** A linked account's answers, by each row's place (byIndex). */
@@ -133,8 +137,20 @@ export type TargetPlan = {
    *  account's row the bank already has, the category and note to say on it. */
   tags: Map<number, string[]>;
   parts: Map<number, { amount: number; text: string; note: string | null }[]>;
-  /** Splits that came in as their lines here, with why. */
+  /** Splits that came in as their lines here (a manual account), with why. */
   exploded: { reason: string; lines: number[] }[];
+  /** A linked account's (see the header): splits brought in whole, as its
+   *  bank has them, without their parts, with why; what isn't brought in at
+   *  all, by the file's lines (the app's opening balances and balance
+   *  adjustments, Lunch Money's groups, a split's lines without its whole);
+   *  and the rows of a split the export doesn't mark, taken together as one
+   *  of its bank's transactions. */
+  whole: { reason: string; lines: number[] }[];
+  left_out: { opening: number[]; groups: number[]; lines: number[] };
+  combined: { transactions: number; lines: number[] };
+  /** A linked account that ended (lib/lifecycle.ts): how, from when, and the
+   *  rows the import adds dated from then, which count in nothing. */
+  ended: { state: string; day: string; rows: number } | null;
   /** Tags cut to what a transaction can carry. */
   tags_cut: number;
 };
@@ -149,6 +165,11 @@ export type MigrationAnswers = {
   categories: Readonly<Record<string, CategoryChoice>>;
   tags: boolean;
   currency: string | null;
+  /** On a linked account's row its bank has already, the app's category,
+   *  tags, note and split, said on it so the bank's row shows them (the
+   *  person's own choice for it, ahead of rules): on unless the person says
+   *  otherwise in the review. */
+  carry: boolean;
   choices: Readonly<Record<string, HistoryChoices>>;
 };
 
@@ -188,6 +209,9 @@ export type MigrationState = {
   contexts: ReadonlyMap<string, AccountContext>;
   /** Linked accounts chosen whose context couldn't be read, with why. */
   unavailable: ReadonlyMap<string, string>;
+  /** Linked accounts chosen that ended, how and from which day (read
+   *  leniently: only the review's words). */
+  ends?: ReadonlyMap<string, { state: string; day: string }>;
   counts: { annotations: number; splits: number; manual: number };
 };
 
@@ -247,7 +271,7 @@ export function sourceAccounts(txns: readonly AppTxn[], answers: Readonly<Record
     const key = accountKey(t);
     let a = out.get(key);
     if (!a) {
-      a = { key, name: key || 'This file’s account', rows: 0, first: null, last: null, currencies: [], net: 0, transfers: 0, opening: 0, splits: 0, uncategorized: 0, choice: answers[key] ?? null, byCurrency: new Map() };
+      a = { key, name: key || 'This file’s account', rows: 0, first: null, last: null, currencies: [], net: 0, transfers: 0, opening: 0, splits: 0, uncategorized: 0, choice: (Object.hasOwn(answers, key) ? answers[key] : null) ?? null, byCurrency: new Map() };
       out.set(key, a);
     }
     a.rows++;
@@ -275,23 +299,28 @@ function textFor(t: { transfer: string | null; category: AppTxn['category']; amo
   return t.category ? (texts.get(sourceKey(t.category)) ?? null) : null;
 }
 
-/** A split's parts in the account's currency, or why it can't be held: the
- *  rule a split made in the app meets (lib/splits.ts checkParts). */
-function partsFor(t: AppTxn, currency: string, texts: ReadonlyMap<string, string>): { amount: number; text: string; note: string | null }[] | { reason: string } {
-  const parts = t.parts!.map((p: AppPart) => ({ amount: p.amount, text: textFor(p, false, texts), note: p.note }));
+/** Why a rebuilt split can't be held as one in Nya, in the account's
+ *  currency, or null: the rule a split made in the app meets
+ *  (lib/splits.ts checkParts). Every category of the app's maps to one of
+ *  the person's (lib/migration/categories.ts), so only a line with none, or
+ *  a transfer line with no transfer category to file it under, can't be a
+ *  part. */
+function holdable(t: AppTxn, currency: string, transfersFiled: boolean): string | null {
+  const parts = t.parts!;
   // A part with no category can't be one in Nya: it would need the
   // uncategorized category's id, which a migration doesn't choose for it.
-  if (parts.some((p) => p.text === null)) return { reason: 'A line of it has no category, and every part of a split in Nya has one.' };
+  if (parts.some((p) => p.transfer === null && !p.category)) return 'A line of it has no category, and every part of a split in Nya has one.';
+  if (!transfersFiled && parts.some((p) => p.transfer !== null)) return 'A line of it moved money to another of your accounts, and your categories have no transfer category to file that part under.';
   try {
     checkParts(
       parts.map((p) => ({ amount: p.amount, category_id: 'migration-part', ...(p.note ? { note: p.note } : {}) })),
       { amount: t.amount, currency, pending: false }
     );
   } catch (err) {
-    if (err instanceof SplitError) return { reason: WHY.rules };
+    if (err instanceof SplitError) return WHY.rules;
     throw err;
   }
-  return parts.map((p) => ({ amount: p.amount, text: p.text!, note: p.note }));
+  return null;
 }
 
 /** A target's key. */
@@ -309,6 +338,113 @@ export function newAccountProblem(c: Extract<AccountChoice, { to: 'new' }>): str
   return null;
 }
 
+/** One transaction as a target brings it: `split` when it goes in with its
+ *  parts (held: holdable), else whole. */
+type Entry = { txn: AppTxn; split: boolean };
+
+/** The parts of a split as one taken whole: its shared category, else none. */
+const sharedCategory = (cats: readonly (AppTxn['category'] | null)[]): AppTxn['category'] =>
+  cats.length > 0 && cats.every((c) => c !== null && cats[0] !== null && sourceKey(c) === sourceKey(cats[0])) ? cats[0] : null;
+
+/** A split's lines as the one transaction the file gives whole (a linked
+ *  account's bank has it so): no parts. */
+function wholeTxn(whole: SplitWhole, lines: readonly AppTxn[]): AppTxn {
+  return {
+    line: Math.min(...lines.map((l) => l.line)),
+    lines: lines.flatMap((l) => l.lines).sort((a, b) => a - b),
+    account: lines[0].account,
+    date: whole.date,
+    amount: whole.amount,
+    currency: whole.currency ?? lines[0].currency,
+    payee: whole.payee,
+    category: sharedCategory(lines.map((l) => (l.transfer === null ? l.category : null))),
+    transfer: null,
+    starting: false,
+    note: whole.note,
+    tags: [...new Set(lines.flatMap((l) => l.tags))],
+    parts: null,
+    raw: lines.map((l) => l.raw),
+  };
+}
+
+/** A rebuilt split taken whole, without its parts (one Nya can't hold as a
+ *  split, into a linked account, whose bank has it as one row). */
+const withoutParts = (t: AppTxn): AppTxn => ({ ...t, category: sharedCategory((t.parts ?? []).map((p) => (p.transfer === null ? p.category : null))), parts: null });
+
+/**
+ * In a linked account, the rows of an export that doesn't mark a split's
+ * lines (AppTxn.group_key) of one of the file's accounts, one day and one
+ * group key, that add up exactly to one of the account's own transactions
+ * (a posted bank row, or a row an earlier file brought), when they aren't
+ * each one by itself: one split transaction's lines, which the bank has as
+ * one row. They go in together, with their categories as its parts where Nya
+ * can hold it (else whole), so they are matched to that row, never counted
+ * beside it.
+ */
+function combineUnmarked(
+  entries: Entry[],
+  known: readonly Matchable[],
+  currencyOf: (t: AppTxn) => string,
+  canHold: (t: AppTxn) => string | null,
+  room: { splits: number }
+): { entries: Entry[]; transactions: number; lines: number[] } {
+  const groups = new Map<string, Entry[]>();
+  for (const e of entries) {
+    const t = e.txn;
+    if (e.split || t.parts || !t.group_key || t.transfer !== null || t.starting || t.grouped || t.split_of) continue;
+    const key = [t.account, t.date, t.group_key.toLowerCase(), currencyOf(t)].join('\u001f');
+    groups.set(key, [...(groups.get(key) ?? []), e]);
+  }
+  const taken = new Set<Entry>();
+  const added: Entry[] = [];
+  let transactions = 0;
+  const lines: number[] = [];
+  const isKnown = (date: string, amount: number, currency: string) => known.some((k) => couldBe({ date, amount, currency }, k));
+  for (const group of groups.values()) {
+    if (group.length < 2) continue;
+    const sign = Math.sign(group[0].txn.amount);
+    if (sign === 0 || group.some((e) => Math.sign(e.txn.amount) !== sign)) continue;
+    const first = group[0].txn;
+    const currency = currencyOf(first);
+    const total = group.reduce((n, e) => n + Math.round(e.txn.amount * 1e6), 0) / 1e6;
+    if (!isKnown(first.date, total, currency)) continue;
+    if (group.every((e) => isKnown(e.txn.date, e.txn.amount, currency))) continue;
+    const parts = group.map((e) => e.txn);
+    const built = fromLines({ account: first.account, date: first.date, currency: first.currency, payee: first.payee, note: null, tags: [...new Set(parts.flatMap((p) => p.tags))], raw: parts.map((p) => p.raw) }, parts);
+    let entry: Entry;
+    if (!('reason' in built) && room.splits > 0 && canHold(built.txn) === null) {
+      room.splits--;
+      entry = { txn: built.txn, split: true };
+    } else {
+      entry = { txn: wholeTxn({ date: first.date, amount: total, payee: first.payee, note: null, currency: first.currency }, parts), split: false };
+    }
+    for (const e of group) taken.add(e);
+    added.push(entry);
+    transactions++;
+    lines.push(...parts.map((p) => p.line));
+  }
+  if (added.length === 0) return { entries, transactions: 0, lines: [] };
+  return { entries: [...entries.filter((e) => !taken.has(e)), ...added].sort((a, b) => a.txn.line - b.txn.line), transactions, lines };
+}
+
+/** The most of the app's categories one import maps (and the most the
+ *  person's answers can name: lib/migration/request.ts). */
+export const MAX_SOURCE_CATEGORIES = 1_000;
+
+/** A name cut to `max` UTF-16 units, never inside a character written as two. */
+function cutUnits(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(cut) ? cut.slice(0, -1) : cut;
+}
+
+/** A tag's name as Nya keeps it (cleaned, within TAG_NAME_MAX). */
+const tagName = (raw: string) => cutUnits(cleanTagName(raw), TAG_NAME_MAX).trimEnd();
+
+/** An answer by a key the file wrote, never one an object inherits
+ *  ("constructor"). */
+const own = <T,>(by: Readonly<Record<string, T>>, key: string): T | undefined => (Object.hasOwn(by, key) ? by[key] : undefined);
+
 /**
  * The plan (see the header). `state` holds what the route read for the
  * accounts chosen; an account answered with one that isn't there now (gone
@@ -317,8 +453,8 @@ export function newAccountProblem(c: Extract<AccountChoice, { to: 'new' }>): str
 export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answers: MigrationAnswers, state: MigrationState): MigrationPlan {
   const blocks: string[] = [];
   // The split room is shared by every account: one past it comes in as its
-  // lines, in the order the file has them.
-  let splitRoom = Math.max(0, MAX_SPLITS - state.counts.splits);
+  // lines (whole, in a linked account), in the order the file has them.
+  const room = { splits: Math.max(0, MAX_SPLITS - state.counts.splits) };
   const txns = read.parsed.txns;
   const accounts = sourceAccounts(txns, answers.accounts);
   if (accounts.length > MAX_SOURCE_ACCOUNTS) blocks.push(`This file holds ${accounts.length} accounts, more than one import takes (${MAX_SOURCE_ACCOUNTS}). Export some of them at a time.`);
@@ -358,10 +494,126 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
   const accountRoom = Math.max(0, MAX_MANUAL_ACCOUNTS - state.counts.manual);
   if (newAccounts > accountRoom) blocks.push(`This import would make ${newAccounts} manual accounts, and you have room for ${accountRoom} more (Nya keeps at most ${MAX_MANUAL_ACCOUNTS}). Send some of the file’s accounts to accounts you have.`);
 
-  // Categories, from the rows that go somewhere.
-  const going = txns.filter((t) => chosen.has(accountKey(t)));
+  // Each Nya account, by the file's accounts that go into it.
+  const byTarget = new Map<string, { choice: Exclude<AccountChoice, { to: 'skip' }>; sources: string[] }>();
+  for (const [source, choice] of chosen) {
+    const key = targetKey(choice, source);
+    const t = byTarget.get(key) ?? { choice, sources: [] };
+    t.sources.push(source);
+    byTarget.set(key, t);
+  }
+
+  // What each brings, before anything is mapped: its transactions, a split
+  // with its parts where Nya can hold them; in a linked account, nothing its
+  // bank's own rows and balance already are, and a split as one row where
+  // the bank has it so.
+  const ix = indexTaxonomy(state.taxonomy);
+  const transfersFiled = !!categoryForKey(ix, TEXT, 'transfer out') && !!categoryForKey(ix, TEXT, 'transfer in');
+  type Built = {
+    key: string;
+    choice: Exclude<AccountChoice, { to: 'skip' }>;
+    from: string[];
+    currency: string;
+    entries: Entry[];
+    exploded: Map<string, number[]>;
+    whole: Map<string, number[]>;
+    left_out: TargetPlan['left_out'];
+    combined: TargetPlan['combined'];
+  };
+  const built: Built[] = [];
+  for (const [key, { choice, sources: from }] of byTarget) {
+    const manualAccount = choice.to === 'manual' ? state.manual.get(choice.id)! : null;
+    const linkedAccount = choice.to === 'linked' ? state.linked.get(choice.id)! : null;
+    // Rows that don't say their currency are in the one the person chose,
+    // else the account's: a linked account's bank's, a manual account's, or
+    // for a new one, the one its rows say (Lunch Money's), else dollars.
+    const sourceCurrency = choice.to === 'new' ? (accounts.find((a) => a.key === from[0])?.currencies[0] ?? null) : null;
+    const currency = (answers.currency ?? linkedAccount?.currency ?? manualAccount?.currency ?? sourceCurrency ?? DEFAULT_CURRENCY).toUpperCase();
+    const currencyOf = (t: AppTxn) => (t.currency ?? currency).toUpperCase();
+    const canHold = (t: AppTxn) => holdable(t, currencyOf(t), transfersFiled);
+    const isLinked = choice.to === 'linked';
+    const sources = new Set(from);
+    const b: Built = {
+      key,
+      choice,
+      from,
+      currency,
+      entries: [],
+      exploded: new Map(),
+      whole: new Map(),
+      left_out: { opening: [], groups: [], lines: [] },
+      combined: { transactions: 0, lines: [] },
+    };
+    const note = (by: Map<string, number[]>, reason: string, lines: readonly number[]) => by.set(reason, [...(by.get(reason) ?? []), ...lines]);
+    const splitLines = new Map<string, AppTxn[]>();
+    for (const t of txns) {
+      if (!sources.has(accountKey(t))) continue;
+      if (isLinked) {
+        // The app's opening balance or balance adjustment: the account's
+        // balance is its bank's, and nothing its bank moved.
+        if (t.starting) {
+          b.left_out.opening.push(...t.lines);
+          continue;
+        }
+        // Lunch Money's group: the net of transactions the bank has one by one.
+        if (t.grouped) {
+          b.left_out.groups.push(...t.lines);
+          continue;
+        }
+        // A split's line: the bank has its transaction as one row.
+        if (t.split_of) {
+          splitLines.set(t.split_of.key, [...(splitLines.get(t.split_of.key) ?? []), t]);
+          continue;
+        }
+      }
+      if (!t.parts) {
+        b.entries.push({ txn: t, split: false });
+        continue;
+      }
+      const why = room.splits > 0 ? canHold(t) : WHY.room;
+      if (why === null) {
+        room.splits--;
+        b.entries.push({ txn: t, split: true });
+      } else if (isLinked) {
+        note(b.whole, why, t.lines);
+        b.entries.push({ txn: withoutParts(t), split: false });
+      } else {
+        note(b.exploded, why, t.parts.map((p) => p.line));
+        for (const e of explode(t)) b.entries.push({ txn: e, split: false });
+      }
+    }
+    if (isLinked) {
+      // Each split's lines as the whole the file gives, or left out when it
+      // doesn't hold it (a line is missing): never beside the bank's row.
+      for (const lines of splitLines.values()) {
+        const whole = lines[0].split_of!.whole;
+        if (!whole) {
+          b.left_out.lines.push(...lines.flatMap((l) => l.lines));
+          continue;
+        }
+        note(b.whole, 'Nya can’t hold it as a split, so it comes in as one transaction, as the bank has it.', lines.flatMap((l) => l.lines));
+        b.entries.push({ txn: wholeTxn(whole, lines), split: false });
+      }
+      b.entries.sort((x, y) => x.txn.line - y.txn.line);
+      const context = state.contexts.get(choice.id)!;
+      const known: Matchable[] = [...context.banks.filter((r) => !r.pending), ...context.held];
+      const c = combineUnmarked(b.entries, known, currencyOf, canHold, room);
+      b.entries = c.entries;
+      b.combined = { transactions: c.transactions, lines: c.lines };
+    }
+    built.push(b);
+  }
+
+  // Categories, from what goes in.
+  const going = built.flatMap((b) => b.entries.map((e) => e.txn));
   const sources = sourceCategories(going);
-  const categories = mapCategories(sources, state.taxonomy, answers.categories);
+  let categories: CategoryPlan;
+  if (sources.length > MAX_SOURCE_CATEGORIES) {
+    categories = { mappings: [], groups: [], added: 0, room: Math.max(0, MAX_CATEGORIES - state.taxonomy.categories.length), problem: null };
+    blocks.push(`This file has ${sources.length.toLocaleString('en-US')} of the app’s categories, more than one import maps (${MAX_SOURCE_CATEGORIES.toLocaleString('en-US')}). Export fewer accounts or a shorter period at a time.`);
+  } else {
+    categories = mapCategories(sources, state.taxonomy, answers.categories);
+  }
   if (categories.problem) blocks.push(categories.problem);
   const texts = new Map(categories.mappings.map((m) => [m.key, m.target.text]));
 
@@ -370,7 +622,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
   if (answers.tags) {
     for (const t of going) {
       for (const raw of t.tags) {
-        const name = cleanTagName(raw).slice(0, TAG_NAME_MAX).trimEnd();
+        const name = tagName(raw);
         if (!name) continue;
         const key = name.toLowerCase();
         const found = tagRows.get(key);
@@ -385,81 +637,77 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
   const tagRoom = Math.max(0, MAX_TAGS - (state.tags?.tags.length ?? 0));
   if (tagsAdded > tagRoom) blocks.push(`This file has ${tagsAdded} tags you don’t have, and you have room for ${tagRoom} more (Nya keeps at most ${MAX_TAGS}). Delete some tags first, or import without tags.`);
 
-  // Each Nya account's rows, by the file's accounts that go into it.
-  const byTarget = new Map<string, { choice: Exclude<AccountChoice, { to: 'skip' }>; sources: string[] }>();
-  for (const [source, choice] of chosen) {
-    const key = targetKey(choice, source);
-    const t = byTarget.get(key) ?? { choice, sources: [] };
-    t.sources.push(source);
-    byTarget.set(key, t);
-  }
+  // Each Nya account's rows, read and planned as its own import plans them.
   const unattributed = read.parsed.problems.filter((p) => p.account === null || !accounts.some((a) => a.key === p.account));
   const targets: TargetPlan[] = [];
-  for (const [key, { choice, sources: from }] of byTarget) {
+  for (const b of built) {
+    const { key, choice, from, currency, entries } = b;
     const manualAccount = choice.to === 'manual' ? state.manual.get(choice.id)! : null;
     const linkedAccount = choice.to === 'linked' ? state.linked.get(choice.id)! : null;
-    const currency = (answers.currency ?? manualAccount?.currency ?? linkedAccount?.currency ?? DEFAULT_CURRENCY).toUpperCase();
-    const own = new Set(from);
-    const exploded = new Map<string, number[]>();
+    const sources = new Set(from);
     const tagsOf = new Map<number, string[]>();
     const partsOf = new Map<number, { amount: number; text: string; note: string | null }[]>();
     let tags_cut = 0;
-    // The transactions, a split that can't be held as its lines.
-    const list: { txn: AppTxn; parts: { amount: number; text: string; note: string | null }[] | null }[] = [];
-    for (const t of txns) {
-      if (!own.has(accountKey(t))) continue;
-      if (!t.parts) {
-        list.push({ txn: t, parts: null });
-        continue;
-      }
-      const parts = splitRoom > 0 ? partsFor(t, (t.currency ?? currency).toUpperCase(), texts) : { reason: WHY.room };
-      if ('reason' in parts) {
-        exploded.set(parts.reason, [...(exploded.get(parts.reason) ?? []), ...t.parts.map((p) => p.line)]);
-        for (const e of explode(t)) list.push({ txn: e, parts: null });
-      } else {
-        splitRoom--;
-        list.push({ txn: t, parts });
-      }
-    }
-    const records: RawRecord[] = list.map(({ txn: t, parts }) => ({
-      source: 'csv',
-      date: t.date,
-      amount: t.amount,
-      description: t.payee,
-      raw: t.raw,
-      ...(t.currency ? { currency: t.currency } : {}),
-      // A split's own category: the one its parts share, else none (it
-      // shows as its parts while split).
-      category: parts ? (parts.every((p) => p.text === parts[0].text) ? parts[0].text : null) : textFor(t, t.starting, texts),
-      note: t.note,
-      line: t.line,
-    }));
+    const partsWith = (t: AppTxn) => t.parts!.map((p) => ({ amount: p.amount, text: textFor(p, false, texts) ?? '', note: p.note }));
+    const records: RawRecord[] = entries.map(({ txn: t, split }) => {
+      const parts = split ? partsWith(t) : null;
+      return {
+        source: 'csv',
+        date: t.date,
+        amount: t.amount,
+        description: t.payee,
+        raw: t.raw,
+        ...(t.currency ? { currency: t.currency } : {}),
+        // A split's own category: the one its parts share, else none (it
+        // shows as its parts while split).
+        category: parts ? (parts.every((p) => p.text === parts[0].text) ? parts[0].text : null) : textFor(t, t.starting, texts),
+        note: t.note,
+        line: t.line,
+      };
+    });
     const normalized = normalizeRecords(records, { today: state.today, currency });
     const rows = normalized.rows;
-    const rowTxns = rows.map((r) => list[r.index].txn);
+    const rowTxns = rows.map((r) => entries[r.index].txn);
     rows.forEach((r, i) => {
-      const { txn, parts } = list[r.index];
-      if (parts) partsOf.set(i, parts);
+      const { txn, split } = entries[r.index];
+      if (split) partsOf.set(i, partsWith(txn));
       if (answers.tags && txn.tags.length > 0) {
-        const names = [...new Set(txn.tags.map((n) => cleanTagName(n).slice(0, TAG_NAME_MAX).trimEnd()).filter((n) => !!n))];
+        const names = [...new Set(txn.tags.map(tagName).filter((n) => !!n))];
         if (names.length > MAX_TAGS_PER_TRANSACTION) tags_cut++;
         tagsOf.set(i, names.slice(0, MAX_TAGS_PER_TRANSACTION));
       }
     });
     // Its lines that couldn't be read, and the file's whose account couldn't
-    // be told (they may be this account's).
-    const problems: Problem[] = [
-      ...read.parsed.problems.filter((p) => p.account !== null && own.has(p.account)),
-      ...unattributed,
-      ...normalized.problems,
-    ].map(({ line, reason, raw }) => ({ line, reason, raw }));
+    // be told: they may be this account's, so its period isn't taken as
+    // whole while they stand (the walk, lib/history-import/extend.ts). The
+    // review lists those once, for the file.
+    const ownProblems: Problem[] = [...read.parsed.problems.filter((p) => p.account !== null && sources.has(p.account)), ...normalized.problems].map(({ line, reason, raw }) => ({ line, reason, raw }));
+    const problems: Problem[] = [...ownProblems, ...unattributed.map(({ line, reason, raw }) => ({ line, reason, raw }))];
+    const name = linkedAccount?.name ?? manualAccount?.name ?? (choice.to === 'new' ? choice.name.trim() : key);
     if (rows.length > MAX_IMPORT_ROWS) {
-      blocks.push(`${linkedAccount?.name ?? manualAccount?.name ?? (choice.to === 'new' ? choice.name : key)} would take ${rows.length.toLocaleString('en-US')} transactions from this file, more than one account’s import takes (${MAX_IMPORT_ROWS.toLocaleString('en-US')}). Export a shorter period and import it in parts.`);
+      blocks.push(`${name} would take ${rows.length.toLocaleString('en-US')} transactions from this file, more than one account’s import takes (${MAX_IMPORT_ROWS.toLocaleString('en-US')}). Export a shorter period and import it in parts.`);
     }
+    // A linked account's rows in another currency than its bank's could
+    // never be found as the bank's own: each would count beside them.
+    if (linkedAccount?.currency) {
+      const off = new Map<string, number>();
+      for (const { row } of rows) if (row.currency !== linkedAccount.currency) off.set(row.currency, (off.get(row.currency) ?? 0) + 1);
+      if (off.size > 0) {
+        const n = [...off.values()].reduce((x, y) => x + y, 0);
+        blocks.push(
+          `${linkedAccount.institution_name} keeps ${linkedAccount.name} in ${linkedAccount.currency}, and ${n === 1 ? 'one of this file’s rows for it is' : `${n.toLocaleString('en-US')} of this file’s rows for it are`} in ${[...off.keys()].join(' and ')}: ${n === 1 ? 'it' : 'they'} could never be found as its bank’s own, so ${n === 1 ? 'it' : 'each'} would count beside them. ${answers.currency && answers.currency !== linkedAccount.currency ? `Read the file in ${linkedAccount.currency}, or send` : 'Send'} ${from.length === 1 ? from[0] || 'this file’s account' : 'these accounts'} somewhere else.`
+        );
+      }
+    }
+    // A new account is in the currency most of its rows are in.
+    const byCurrency = new Map<string, number>();
+    for (const { row } of rows) byCurrency.set(row.currency, (byCurrency.get(row.currency) ?? 0) + 1);
+    const accountCurrency = choice.to === 'new' ? ([...byCurrency].sort((x, y) => y[1] - x[1])[0]?.[0] ?? currency) : currency;
     let manual: ImportPlan | null = null;
     let linked: HistoryPlan | null = null;
     let covers: Covers | null = null;
-    const chosenAnswers = choice.to === 'linked' ? byIndex(answers.choices[key], rows) : {};
+    const chosenAnswers = choice.to === 'linked' ? byIndex(own(answers.choices, key), rows) : {};
+    let ended: TargetPlan['ended'] = null;
     if (choice.to === 'linked') {
       const context = state.contexts.get(choice.id)!;
       let first: string | null = null;
@@ -482,6 +730,10 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         imports,
         choices: chosenAnswers,
       });
+      // An account that ended counts nothing dated from its end: said, as
+      // its own import says it (app/api/history-import).
+      const end = state.ends?.get(choice.id);
+      if (end) ended = { state: end.state, day: end.day, rows: rows.filter((r, i) => r.row.date >= end.day && linked!.actions[i] !== 'none').length };
     } else {
       manual = planImport(rows, problems, choice.to === 'manual' ? (state.books.get(choice.id) ?? null) : null);
     }
@@ -489,7 +741,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       key,
       kind: choice.to === 'linked' ? 'linked' : 'manual',
       account_id: manualAccount?.account_id ?? linkedAccount?.account_id ?? null,
-      name: manualAccount?.name ?? linkedAccount?.name ?? (choice.to === 'new' ? choice.name.trim() : key),
+      name,
       create:
         choice.to === 'new'
           ? {
@@ -497,38 +749,49 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
               institution_name: choice.institution.replace(/\s+/g, ' ').trim().slice(0, 60),
               type: choice.type,
               subtype: null,
-              balance: toMinorUnits(choice.balance, currency),
-              ...(currency !== 'USD' ? { currency } : {}),
+              balance: toMinorUnits(choice.balance, accountCurrency),
+              ...(accountCurrency !== 'USD' ? { currency: accountCurrency } : {}),
             }
           : null,
       sources: from,
-      currency,
+      currency: accountCurrency,
       rows,
       txns: rowTxns,
       problems,
+      own_problems: ownProblems,
       manual,
       linked,
       choices: chosenAnswers,
       covers,
       tags: tagsOf,
       parts: partsOf,
-      exploded: [...exploded].map(([reason, lines]) => ({ reason, lines })),
+      exploded: [...b.exploded].map(([reason, lines]) => ({ reason, lines })),
+      whole: [...b.whole].map(([reason, lines]) => ({ reason, lines })),
+      left_out: b.left_out,
+      combined: b.combined,
+      ended,
       tags_cut,
     });
   }
 
-  // What the rows that go in would need said beside them.
+  // What the rows that go in could need said beside them, whatever the
+  // answers to a linked account's proposals turn out to be: a row with a
+  // proposal may come in as its own or stand for its twin.
   let annotations = 0;
   let splits = 0;
   let proposals = 0;
   for (const t of targets) {
     proposals += t.linked ? t.linked.counts.unanswered + t.linked.counts.conflicts : 0;
-    t.rows.forEach((_, i) => {
+    const proposed = new Set(t.linked?.proposals.map((p) => p.index) ?? []);
+    t.rows.forEach((r, i) => {
       const action = t.manual ? t.manual.actions[i] : t.linked!.actions[i];
-      if (action !== 'add' && action !== 'duplicate') return;
-      const duplicate = action === 'duplicate';
-      if ((t.tags.get(i)?.length ?? 0) > 0 || (duplicate && t.txns[i].note)) annotations++;
-      if (t.parts.has(i)) splits++;
+      const asked = proposed.has(r.index) || action === 'ask';
+      const mayAdd = action === 'add' || asked;
+      const mayStand = action === 'duplicate' || asked;
+      if (!mayAdd && !mayStand) return;
+      const carried = mayStand && answers.carry;
+      if (((t.tags.get(i)?.length ?? 0) > 0 && (mayAdd || carried)) || (carried && t.txns[i].note)) annotations++;
+      if (t.parts.has(i) && (mayAdd || carried)) splits++;
     });
   }
   const annotationRoom = Math.max(0, MAX_ANNOTATIONS - state.counts.annotations);
@@ -536,13 +799,17 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     blocks.push(`This import would tag or note ${annotations.toLocaleString('en-US')} transactions, and you have room for ${annotationRoom.toLocaleString('en-US')} more (Nya keeps what is said about at most ${MAX_ANNOTATIONS.toLocaleString('en-US')}). Import without tags, or clear some first.`);
   }
 
+  // What goes in, by kind: what the review says of transfers, opening
+  // balances and rows with no category.
   let uncategorized = 0;
   let transfers = 0;
   let opening = 0;
-  for (const t of going) {
-    if (t.starting) opening++;
-    else if (t.transfer !== null) transfers++;
-    else if (!t.parts && !t.category) uncategorized++;
+  for (const t of targets) {
+    for (const x of t.txns) {
+      if (x.starting) opening++;
+      else if (x.transfer !== null) transfers++;
+      else if (!x.parts && !x.category) uncategorized++;
+    }
   }
 
   const plan: Omit<MigrationPlan, 'digest'> = {
@@ -566,24 +833,27 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
  * The fingerprint of a plan: the app and how its file was read, where each
  * of its accounts goes, where each category goes, the tags, and each
  * account's rows as read (day, amount, currency, payee, category, note, tags,
- * a split's parts) with what becomes of each (a linked account's whole review,
- * lib/history-import/plan.ts review). Equal fingerprints are the same import:
- * the commit refuses one whose plan, worked out again, has another.
+ * a split's parts) with what becomes of each: a manual account's outcome, a
+ * linked account's whole review (lib/history-import/plan.ts review), which is
+ * what the person answers and never those answers, so answering a proposal
+ * keeps the review (the history import's own is the same). Equal
+ * fingerprints are the same import: the commit refuses one whose plan,
+ * worked out again, has another.
  */
 export function planDigest(plan: Omit<MigrationPlan, 'digest'>, answers: MigrationAnswers): string {
   const h = createHash('sha256');
   const r = plan.read;
-  h.update(JSON.stringify([r.app, r.parsed.variant, r.read, answers.currency, answers.tags, plan.blocks]));
+  h.update(JSON.stringify([r.app, r.parsed.variant, r.read, answers.currency, answers.tags, answers.carry, plan.blocks]));
   h.update(JSON.stringify(plan.accounts.map((a) => [a.key, a.rows, a.choice])));
   h.update(JSON.stringify(plan.categories.mappings.map((m) => [m.key, m.target])));
   h.update(JSON.stringify(plan.tags.names));
   for (const t of plan.targets) {
     h.update(`\n${t.key}|${t.currency}|${t.covers ? `${t.covers.from}..${t.covers.to}` : '-'}|${t.linked ? t.linked.review : ''}\n`);
     t.rows.forEach((n, i) => {
-      const action = t.manual ? `${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}` : t.linked!.actions[i];
+      const action = t.manual ? `=${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}` : '';
       const row = n.row;
       h.update(
-        `${n.index}[${row.date}|${Math.round(row.amount * 1000)}|${row.currency}|${normalizeDescription(row.name)}|${row.category ?? ''}|${row.note ?? ''}|${(t.tags.get(i) ?? []).join(',')}|${JSON.stringify(t.parts.get(i) ?? null)}]=${action}\n`
+        `${n.index}[${row.date}|${Math.round(row.amount * 1000)}|${row.currency}|${normalizeDescription(row.name)}|${row.category ?? ''}|${row.note ?? ''}|${(t.tags.get(i) ?? []).join(',')}|${JSON.stringify(t.parts.get(i) ?? null)}]${action}\n`
       );
     });
     h.update(JSON.stringify(t.problems.map((p) => [p.line, p.reason])));

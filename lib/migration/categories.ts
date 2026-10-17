@@ -161,7 +161,7 @@ export function mapCategories(sources: readonly SourceCategory[], t: Taxonomy, c
   const ordered = [...sources].sort((a, b) => b.rows - a.rows || a.key.localeCompare(b.key));
   let added = 0;
   const mappings = ordered.map((s): CategoryMapping => {
-    const choice = choices[s.key];
+    const choice = Object.hasOwn(choices, s.key) ? choices[s.key] : undefined;
     let target: CategoryTarget | null = null;
     let by: CategoryMapping['by'] = 'choice';
     if (choice?.to === 'existing') {
@@ -188,7 +188,12 @@ export function mapCategories(sources: readonly SourceCategory[], t: Taxonomy, c
       // A name no category has, in any case.
       let name = cutName(cleanName(s.name)) || 'Category';
       if (names.has(name.toLowerCase()) && s.group) name = cutName(`${cleanName(s.name)} (${cleanName(s.group)})`);
-      for (let n = 2; names.has(name.toLowerCase()); n++) name = cutName(`${cutName(cleanName(s.name), NAME_MAX - 5)} (${n})`);
+      // " (2)" and on, the name cut by the suffix's own length, so every
+      // number is a name of its own however many share the first.
+      for (let n = 2; names.has(name.toLowerCase()); n++) {
+        const suffix = ` (${n})`;
+        name = `${cutName(cleanName(s.name), NAME_MAX - suffix.length)}${suffix}`;
+      }
       names.add(name.toLowerCase());
       const text = freeText(texts, name);
       texts.add(text);

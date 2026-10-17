@@ -97,7 +97,9 @@ export const MONARCH: AppSpec = {
         problems.push(problemOf(row, columns, text ? `Its amount (${text.slice(0, 40)}) can’t be read.` : 'It has no amount.'));
         continue;
       }
-      const payee = cleanText(cellOf(row, columns, 'payee')) || cleanText(cellOf(row, columns, 'original')) || NO_PAYEE;
+      const original = cleanText(cellOf(row, columns, 'original'));
+      const payee = cleanText(cellOf(row, columns, 'payee')) || original || NO_PAYEE;
+      const category = monarchCategory(cellOf(row, columns, 'category'));
       txns.push({
         line: row.line,
         lines: [row.line],
@@ -107,13 +109,16 @@ export const MONARCH: AppSpec = {
         amount: -value,
         currency: null,
         payee,
-        category: monarchCategory(cellOf(row, columns, 'category')),
+        category,
         transfer: null,
-        starting: false,
+        // Monarch's own balance adjustment: nothing the bank moved.
+        starting: category?.name.toLowerCase() === 'balance adjustments',
         note: textOrNull(cellOf(row, columns, 'notes')),
         tags: tagsOf(cellOf(row, columns, 'tags')),
         parts: null,
         raw: rawCells(row),
+        // A split's rows share the bank's own words for the transaction.
+        group_key: original || payee,
       });
     }
     const splits = newSplitReport();

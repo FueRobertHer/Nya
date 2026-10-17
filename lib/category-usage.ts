@@ -35,10 +35,16 @@ import { bankRows, GROUP_PREFIX, PART_PREFIX } from './split-rows';
  *  left out of every total, they are still stored, filed under it, and back
  *  if the account is reopened. */
 export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): Promise<CategoryUsage> {
-  const c = taxonomy.categories.find((x) => x.id === id);
-  if (!c) return { transactions: 0, budget: false };
-  const words = new Set(c.provider_keys.filter((k) => k.provider === TEXT).map((k) => k.key));
-  const uses = (text: string | null | undefined) => !!text && words.has(textKey(text));
+  return (await categoryUsages(ctx, taxonomy, [id])).get(id)!;
+}
+
+/** categoryUsage of several categories, every store read once: for deleting
+ *  many (an undone import's, lib/migration/commit.ts). */
+export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly string[]): Promise<Map<string, CategoryUsage>> {
+  const out = new Map<string, CategoryUsage>();
+  const wanted = ids.filter((id) => taxonomy.categories.some((x) => x.id === id));
+  for (const id of ids) if (!wanted.includes(id)) out.set(id, { transactions: 0, budget: false });
+  if (wanted.length === 0) return out;
 
   const [bank, overrides, carried, books, imported, budgets, rules, splits, groups] = await Promise.all([
     assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, keepEnded: true }),
@@ -53,23 +59,29 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   ]);
   const shown = await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true });
   const ix = indexTaxonomy(taxonomy);
-  const isIt = (ref: string) => categoryById(ix, ref)?.id === id;
-  // Rows in the window, as filed: a split's parts and a group's net among
-  // them, and each transaction whole too (one in a group is inside its row).
-  // Then what keeps words or ids outside it.
-  const counted = new Set<string>();
-  for (const t of [...shown.transactions, ...bankRows(shown.transactions), ...shown.history]) if (t.category_id === id) counted.add(t.transaction_id);
-  for (const [tid, text] of overrides) if (uses(text)) counted.add(tid);
-  let carriedRows = 0;
-  for (const rows of carried.values()) for (const text of Object.values(rows)) if (uses(text)) carriedRows++;
-  for (const book of books.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
-  // Every part and every group, of any date, under the ids their rows have.
-  for (const record of splits.values()) for (const p of record.parts) if (isIt(p.category_id)) counted.add(`${PART_PREFIX}${p.id}`);
-  for (const [gid, g] of groups) if (isIt(g.category_id)) counted.add(`${GROUP_PREFIX}${gid}`);
-  for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
   const placed = placeBudgets(budgets.budgets, indexTaxonomy(budgets.taxonomy));
-  // A rule naming it, or a category merged into it.
-  const ruleUses = (rules?.rules ?? []).filter((r) => ruleCategories(r).some(isIt)).length;
-  // The keys counted for: the delete refuses if they change before it lands.
-  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), rules: ruleUses, keys: c.provider_keys };
+  for (const id of wanted) {
+    const c = taxonomy.categories.find((x) => x.id === id)!;
+    const words = new Set(c.provider_keys.filter((k) => k.provider === TEXT).map((k) => k.key));
+    const uses = (text: string | null | undefined) => !!text && words.has(textKey(text));
+    const isIt = (ref: string) => categoryById(ix, ref)?.id === id;
+    // Rows in the window, as filed: a split's parts and a group's net among
+    // them, and each transaction whole too (one in a group is inside its row).
+    // Then what keeps words or ids outside it.
+    const counted = new Set<string>();
+    for (const t of [...shown.transactions, ...bankRows(shown.transactions), ...shown.history]) if (t.category_id === id) counted.add(t.transaction_id);
+    for (const [tid, text] of overrides) if (uses(text)) counted.add(tid);
+    let carriedRows = 0;
+    for (const rows of carried.values()) for (const text of Object.values(rows)) if (uses(text)) carriedRows++;
+    for (const book of books.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
+    // Every part and every group, of any date, under the ids their rows have.
+    for (const record of splits.values()) for (const p of record.parts) if (isIt(p.category_id)) counted.add(`${PART_PREFIX}${p.id}`);
+    for (const [gid, g] of groups) if (isIt(g.category_id)) counted.add(`${GROUP_PREFIX}${gid}`);
+    for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
+    // A rule naming it, or a category merged into it.
+    const ruleUses = (rules?.rules ?? []).filter((r) => ruleCategories(r).some(isIt)).length;
+    // The keys counted for: the delete refuses if they change before it lands.
+    out.set(id, { transactions: counted.size + carriedRows, budget: placed.categories.has(id), rules: ruleUses, keys: c.provider_keys });
+  }
+  return out;
 }

@@ -115,10 +115,17 @@ export type AppPart = {
   transfer: string | null;
   note: string | null;
   /** The line's own payee, for the transaction of its own it becomes when
-   *  the split can't be held (lib/import/apps/splits.ts explode). */
+   *  the split can't be held (lib/import/apps/splits.ts explode), and the
+   *  line as the file had it. */
   payee: string;
   line: number;
+  raw?: unknown;
 };
+
+/** A split transaction as the file gives it whole, for the lines of one that
+ *  wasn't rebuilt (AppTxn.split_of): its day, total, payee, note and
+ *  currency. */
+export type SplitWhole = { date: string; amount: number; payee: string; note: string | null; currency: string | null };
 
 /** One transaction as the app had it, in Nya's terms: Plaid's sign (positive
  *  is money out), a day, the app's own account and category names. */
@@ -148,6 +155,18 @@ export type AppTxn = {
   /** A row the app groups several of its own into (Lunch Money's
    *  transaction groups), kept at its net. */
   grouped?: boolean;
+  /** A line of a split transaction the app wrote that wasn't rebuilt
+   *  (lib/import/apps/splits.ts): `key`, shared by the split's lines, and
+   *  the whole transaction where the file gives it (Lunch Money's parent row,
+   *  Actual's own row with its total, a complete run of YNAB's lines), else
+   *  null (a run with a line missing). A linked account's bank has the whole
+   *  as one row (lib/migration/plan.ts). */
+  split_of?: { key: string; whole: SplitWhole | null };
+  /** For an export that doesn't mark a split's lines at all (Monarch's,
+   *  ZeroSum's, Actual's before 24.8): what one transaction's lines share
+   *  besides their account and day (Monarch's Original Statement, else the
+   *  payee), which a linked account's plan finds them by. */
+  group_key?: string;
   /** As the file had it: the line's cells, or every line's for a split. */
   raw: unknown;
 };

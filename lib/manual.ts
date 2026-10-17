@@ -39,6 +39,11 @@ export type ManualType = (typeof MANUAL_TYPES)[number];
  *  every write path so the UI, the PUT and the ingest route agree. */
 export const MAX_BALANCE = 1e12;
 
+/** Manual accounts one person may have: the Add form's limit
+ *  (app/api/manual-accounts), and an import's that makes them
+ *  (lib/migration/plan.ts). */
+export const MAX_MANUAL_ACCOUNTS = 50;
+
 /** The one currency manual balances are kept in, for now (toInstitutions). */
 export const MANUAL_CURRENCY = 'USD';
 

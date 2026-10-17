@@ -10,6 +10,7 @@ import {
   newManualId,
   MANUAL_TYPES,
   MAX_BALANCE,
+  MAX_MANUAL_ACCOUNTS,
   type ManualAccount,
   type ManualType,
 } from '@/lib/manual';
@@ -33,8 +34,6 @@ import { loggable } from '@/lib/log-safe';
 // Per-account operations remove the class: a request can only affect the account
 // it names. It also means a scheduled push to /api/ingest/balance can't be
 // reverted by an unrelated edit made in a stale tab.
-
-const MAX_ACCOUNTS = 50;
 
 type DraftInput = {
   name?: unknown;
@@ -109,9 +108,9 @@ export async function POST(req: Request) {
 
     // Throws (and 500s) rather than treating an unreadable hash as empty.
     const existing = await getManualAccounts(ctx);
-    if (existing.length >= MAX_ACCOUNTS) {
+    if (existing.length >= MAX_MANUAL_ACCOUNTS) {
       return NextResponse.json(
-        { error: `At most ${MAX_ACCOUNTS} manual accounts` },
+        { error: `At most ${MAX_MANUAL_ACCOUNTS} manual accounts` },
         { status: 400 }
       );
     }
