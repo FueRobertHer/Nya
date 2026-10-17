@@ -53,6 +53,12 @@ const { importedTxnStore, importedTwinsStore } = await import('@/lib/history-imp
 const { splitStore } = await import('@/lib/splits');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { migrationStore } = await import('@/lib/migration/store');
+const { importedFlowsForBackfill } = await import('@/lib/history-import/extend');
+const { getItems, removeItem } = await import('@/lib/storage');
+const { linkAccounts } = await import('@/lib/links');
+const { loadBudgets, saveBudgets } = await import('@/lib/budget-store');
+const { budgetMonthsStore } = await import('@/lib/budget-months-store');
+const { setOverride } = await import('@/lib/overrides');
 const { commitMigration } = await import('@/lib/migration/commit');
 const { planMigration } = await import('@/lib/migration/plan');
 const { readTargets } = await import('@/lib/migration/targets');
@@ -110,7 +116,7 @@ const BANK = [
   bankTxn('b_recent', 'acc_chk', 3, 20, { name: 'GROCER' }),
 ];
 
-async function seed(c = ctx) {
+async function seed(c = ctx, rows: ReturnType<typeof bankTxn>[] = BANK) {
   await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta', c), {
     item_chase: await encrypt(JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
@@ -118,7 +124,7 @@ async function seed(c = ctx) {
   const accounts = { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } };
   await fake.set(
     ctxKey('txns:item_chase', c),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(BANK.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
 }
 
@@ -820,6 +826,21 @@ describe('into a linked account whose bank rows stand for an earlier import’s'
     expect(await spentOnRent()).toBe(1875);
   });
 
+  test('the app’s row at the bank’s new amount, after the bank changed its row: the pair kept makes it that transaction, counted once', async () => {
+    await seed();
+    const [earlier] = await historyImport([`${daysAgo(55)},ZELLE PAYMENT TO LANDLORD,-1850.00`]);
+    plaid.modified.push({ ...RENT, amount: 1875 });
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [earlier.id]: 'b_rent' } });
+    // Without the pair the bank's row would stand for the earlier file's row
+    // and nothing else, and the app's row at 1,875 would count beside it.
+    const { preview, done } = await importReviewed(file(1875), answers);
+    expect(preview.targets[0].proposals.map((p: any) => [p.twin.kind, p.twin.amount, p.choice])).toEqual([['bank', 1875, 'same']]);
+    expect(done.status).toBe(200);
+    expect((await rent()).map((t) => [t.transaction_id, t.amount])).toEqual([['b_rent', 1875]]);
+    expect(await spentOnRent()).toBe(1875);
+  });
+
   test('pairs that can’t be read: the account isn’t matched against, said, and nothing is imported into it', async () => {
     await seed();
     await historyImport([`${daysAgo(55)},ZELLE PAYMENT TO LANDLORD,-1850.00`]);
@@ -834,6 +855,290 @@ describe('into a linked account whose bank rows stand for an earlier import’s'
 
   /** The review of a file into the linked account, with the answers above. */
   const preview_ = async (f: string) => (await preview(f, answers)).body.preview;
+});
+
+// ---- What a linked account's bank already is ----
+
+describe('into a linked account, nothing its bank has is brought beside it', () => {
+  const COSTCO = bankTxn('b_costco', 'acc_chk', 20, 120, { name: 'COSTCO WHSE #0012', merchant_name: 'Costco' });
+  const linkedTo = { accounts: { Checking: { to: 'linked', id: 'acc_chk' } } };
+  const ynabHeader = '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"';
+  const ynabRow = (days: number, payee: string, group: string, category: string, memo: string, out: number, inn = 0) =>
+    `"Checking","","${mdy(daysAgo(days))}","${payee}","${group ? `${group}: ${category}` : ''}","${group}","${category}","${memo}",$${out.toFixed(2)},$${inn.toFixed(2)},"Cleared"`;
+  /** What counts of Costco, as every total reads it: the bank's whole row
+   *  (or its parts, split as the app had it), never the file's lines beside it. */
+  async function costco() {
+    const read = (await activity()).transactions as any[];
+    const rows = read.filter((t) => /costco/i.test(`${t.name} ${t.merchant_name ?? ''}`));
+    return { rows, out: spending(rows, 'USD') };
+  }
+  const cases: { name: string; file: string; options?: Record<string, unknown>; expect: { new: number; duplicates: number }; left?: Record<string, number>; whole?: number; combined?: number; parts?: number }[] = [
+    {
+      name: 'Monarch’s rows of one split, which its export doesn’t mark: taken together as the bank’s transaction, with their categories as its parts',
+      file: ['Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags', `${daysAgo(20)},Costco,Groceries,Checking,COSTCO WHSE #0012,,-80.00,`, `${daysAgo(20)},Costco,Household,Checking,COSTCO WHSE #0012,,-40.00,`].join('\n'),
+      expect: { new: 0, duplicates: 1 },
+      combined: 1,
+      parts: 2,
+    },
+    {
+      name: 'ZeroSum’s unmarked lines of one split, the same way',
+      file: ['Date,Account,Payee,Category Group,Category,Memo,Tags,Outflow,Inflow,Cleared', `${mdy(daysAgo(20))},Checking,Costco,Food,Groceries,,,80.00,,Cleared`, `${mdy(daysAgo(20))},Checking,Costco,Home,Household,,,40.00,,Cleared`].join('\n'),
+      options: { options: { date_order: 'mdy' } },
+      expect: { new: 0, duplicates: 1 },
+      combined: 1,
+      parts: 2,
+    },
+    {
+      name: 'Actual’s parts from before 24.8, each with the transaction’s payee, the same way',
+      file: ['Account,Date,Payee,Notes,Category,Amount,Cleared', `Checking,${daysAgo(20)},Costco,,Groceries,-80.00,Cleared`, `Checking,${daysAgo(20)},Costco,,Household,-40.00,Cleared`].join('\n'),
+      expect: { new: 0, duplicates: 1 },
+      combined: 1,
+      parts: 2,
+    },
+    {
+      name: 'a YNAB split with a line of no category, which Nya can’t hold as one: whole, as the bank has it',
+      file: [ynabHeader, ynabRow(20, 'Costco', 'Food', 'Groceries', 'Split (1/2) ', 80), ynabRow(20, 'Costco', '', '', 'Split (2/2) ', 40)].join('\n'),
+      options: { options: { date_order: 'mdy' } },
+      expect: { new: 0, duplicates: 1 },
+      whole: 2,
+    },
+    {
+      name: 'a YNAB split with a line missing: the file doesn’t hold the transaction, so its lines are left out',
+      file: [ynabHeader, ynabRow(20, 'Costco', 'Food', 'Groceries', 'Split (1/3) ', 80), ynabRow(20, 'Costco', 'Home', 'Household', 'Split (3/3) ', 40)].join('\n'),
+      options: { options: { date_order: 'mdy' } },
+      expect: { new: 0, duplicates: 0 },
+      left: { lines: 2 },
+    },
+    {
+      name: 'Lunch Money’s parts on other days than their transaction: its parent row whole, as the bank has it',
+      file: [
+        'date,payee,amount,currency,category,category_group,notes,tags,account,original_name,type,parent_id,id,recurring_id,created_at',
+        `${daysAgo(20)},Costco,120.00,usd,,,,,Checking,COSTCO WHSE #0012,split,,900,,`,
+        `${daysAgo(20)},Costco,80.00,usd,Groceries,Food,,,Checking,COSTCO WHSE #0012,,900,901,,`,
+        `${daysAgo(19)},Costco,40.00,usd,Household,Home,,,Checking,COSTCO WHSE #0012,,900,902,,`,
+      ].join('\n'),
+      expect: { new: 0, duplicates: 1 },
+      whole: 2,
+    },
+    {
+      name: 'Actual’s split whose parts don’t add up to it: its own row’s total, whole',
+      file: [
+        'Account,Date,Payee,Notes,Category_Group,Category,Amount,Split_Amount,Cleared',
+        `Checking,${daysAgo(20)},Costco,(SPLIT INTO 2),,,0,-120.00,Cleared`,
+        `Checking,${daysAgo(20)},Costco,(SPLIT 1 OF 2),Food,Groceries,-80.00,0,Cleared`,
+        `Checking,${daysAgo(20)},Costco,(SPLIT 2 OF 2),Home,Household,-30.00,0,Cleared`,
+      ].join('\n'),
+      expect: { new: 0, duplicates: 1 },
+      whole: 2,
+    },
+    {
+      name: 'Lunch Money’s group, the net of transactions the bank has one by one: left out',
+      file: [
+        'date,payee,amount,currency,category,category_group,notes,tags,account,original_name,type,parent_id,id,recurring_id,created_at',
+        `${daysAgo(30)},Dinner with Sam,40.00,usd,Restaurants,Food,,,Checking,,group,,800,,`,
+      ].join('\n'),
+      expect: { new: 0, duplicates: 0 },
+      left: { groups: 1 },
+    },
+  ];
+  for (const c of cases) {
+    test(c.name, async () => {
+      await seed(ctx, [...BANK, COSTCO]);
+      const before = await costco();
+      const { preview, done } = await importReviewed(c.file, { ...linkedTo, ...(c.options ?? {}) });
+      const [target] = preview.targets;
+      expect({ new: target.counts.new ?? 0, duplicates: target.counts.duplicates ?? 0 }).toEqual(c.expect);
+      if (c.left) for (const [k, n] of Object.entries(c.left)) expect(target.left_out[k]).toBe(n);
+      if (c.whole) expect(target.whole.reduce((n: number, w: any) => n + w.count, 0)).toBe(c.whole);
+      if (c.combined) expect(target.combined.transactions).toBe(c.combined);
+      expect(done.status).toBe(200);
+      const after = await costco();
+      // Never beside the bank's row: Costco counts what the bank says, once,
+      // as it did before the import, and nothing of the file counts beside it.
+      const total = (o: Record<string, number>) => Math.round(Object.values(o).reduce((n, x) => n + x, 0) * 100) / 100;
+      expect(total(before.out)).toBe(120);
+      expect(total(after.out)).toBe(120);
+      expect(((await activity()).transactions as any[]).filter((t) => t.source === 'import:csv')).toEqual([]);
+      // The app's parts carried onto the bank's row, as its split.
+      if (c.parts) expect(after.rows.filter((t) => t.split_of).map((t) => t.amount).sort()).toEqual([40, 80]);
+    });
+  }
+
+  test('opening balances and balance adjustments aren’t brought in, so they are never walked as money that moved', async () => {
+    const FIRST = bankTxn('b_first', 'acc_chk', 300, 10, { name: 'FIRST ROW' });
+    await seed(ctx, [FIRST, ...BANK.slice(1)]);
+    const file = [
+      ynabHeader,
+      `"Checking","","${mdy(daysAgo(100))}","Starting Balance","Inflow: Ready to Assign","Inflow","Ready to Assign","",$0.00,$4000.00,"Reconciled"`,
+      `"Checking","","${mdy(daysAgo(60))}","Reconciliation Balance Adjustment","Inflow: Ready to Assign","Inflow","Ready to Assign","Entered automatically by YNAB",$0.00,$1.25,"Reconciled"`,
+      ynabRow(30, 'Corner Shop', 'Fun', 'Treats', '', 60),
+    ].join('\n');
+    const { preview, done } = await importReviewed(file, { ...linkedTo, options: { date_order: 'mdy' } });
+    expect(preview.targets[0].left_out.opening).toBe(2);
+    expect(preview.counts.opening).toBe(0);
+    // No Starting balances category is made for rows that don't come in.
+    expect(preview.categories.mappings.map((m: any) => m.name)).not.toContain('Starting balances');
+    expect(done.status).toBe(200);
+    const { flows } = await importedFlowsForBackfill(ctx, { items: await getItems(ctx), walked: new Map([['acc_chk', 'USD']]), since: daysAgo(730), today: daysAgo(0) });
+    expect((flows as any[]).map((f) => f.amount).sort()).toEqual([60]);
+  });
+
+  test('a file read in another currency than the linked account’s bank keeps it in is refused, never doubled', async () => {
+    await seed();
+    const file = [ynabHeader, ynabRow(55, 'Landlord', 'Bills', 'Rent', '', 1850)].join('\n');
+    const answers = { ...linkedTo, options: { date_order: 'mdy' }, currency: 'EUR' };
+    const p = await preview(file, answers);
+    expect(p.body.preview.blocks.join(' ')).toContain('Chase keeps Checking in USD');
+    const refused = await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...answers }, file);
+    expect(refused.status).toBe(409);
+    expect(await importedTxnStore.get(ctx, 'acc_chk')).toBeNull();
+  });
+
+  test('the bank’s rows keep their own categories when the person says so', async () => {
+    await seed();
+    const file = [ynabHeader, ynabRow(55, 'Landlord', 'Bills', 'Rent', 'September', 1850)].join('\n');
+    const { preview, done } = await importReviewed(file, { ...linkedTo, options: { date_order: 'mdy' }, carry: false });
+    expect(preview.carry).toBe(false);
+    expect(done.status).toBe(200);
+    const rent = ((await activity()).transactions as any[]).find((t) => t.transaction_id === 'b_rent');
+    expect(rent.category_name).toBe('rent and utilities');
+    expect(rent.note ?? null).toBeNull();
+  });
+
+  test('a linked account that ended is said: the rows the file adds from its end count in nothing', async () => {
+    await seed();
+    const { lifecycleStore } = await import('@/lib/lifecycle');
+    await lifecycleStore.set(ctx, 'acc_chk', {
+      lifecycle: { state: 'closed', on: daysAgo(10) },
+      type: 'depository',
+      label: { name: 'Checking', institution: 'Chase', mask: '1111' },
+      item_id: 'item_chase',
+      set_at: new Date().toISOString(),
+    } as any);
+    const file = [ynabHeader, ynabRow(30, 'Corner Shop', 'Fun', 'Treats', '', 60), ynabRow(5, 'Late Shop', 'Fun', 'Treats', '', 9)].join('\n');
+    const p = await preview(file, { ...linkedTo, options: { date_order: 'mdy' } });
+    expect(p.status).toBe(200);
+    expect(p.body.preview.targets[0].ended).toEqual({ state: 'closed', day: daysAgo(10), rows: 1 });
+  });
+
+  test('undone after a re-link, the rows a later import made under the account’s new id relied on stay with it', async () => {
+    await seed(ctx, [bankTxn('b_first', 'acc_chk', 60, 10, { name: 'FIRST ROW' })]);
+    const { done, migration_id } = await importReviewed([ynabHeader, ynabRow(400, 'Old Store', 'Fun', 'Shopping', '', 100)].join('\n'), { ...linkedTo, options: { date_order: 'mdy' } });
+    expect(done.status).toBe(200);
+    // The institution added back: a new connection, a new id for the account, linked to the old.
+    await removeItem(ctx, 'item_chase');
+    await fake.del(ctxKey('txns:item_chase'));
+    await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase2') });
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+    });
+    await fake.set(
+      ctxKey('txns:item_chase2'),
+      await encodeJsonBlob({
+        schema_version: 2,
+        cursor: 'c1',
+        accounts: { acc_chk_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
+        txns: { n_first: bankTxn('n_first', 'acc_chk_new', 60, 10, { name: 'FIRST ROW' }) },
+        synced_at: new Date().toISOString(),
+      })
+    );
+    await linkAccounts(ctx, 'acc_chk', 'acc_chk_new', { basis: 'by_hand' });
+    // The bank's own file of that period, into the new id: the app's row is found there.
+    const form = (meta: object) => {
+      const f = new FormData();
+      f.set('file', new Blob([new TextEncoder().encode(['Date,Description,Amount', `${daysAgo(400)},Old Store,-100.00`, `${daysAgo(500)},Older Store,-7.00`].join('\n')) as Uint8Array<ArrayBuffer>]), 'bank.csv');
+      f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk_new', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+    };
+    const hp = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
+    const hi = await asRes(await historyRoutes.POST(form({ action: 'import', review: hp.body.preview.review })));
+    expect(hi.status).toBe(200);
+    expect(hp.body.preview.counts).toMatchObject({ new: 1, present: 1 });
+    // What Undo would take, said before: the row stays, for that import.
+    const plan = await asRes(await routes.GET(new Request(`http://localhost/api/migration?undo=${migration_id}`)));
+    expect(plan.body.undo.kept.map((k: any) => k.count)).toEqual([1]);
+    const undone = await undo({ migration_id, confirm: true });
+    expect(undone.body).toMatchObject({ removed: 0, kept: 1 });
+    expect(((await activity()).transactions as any[]).filter((t) => t.name === 'Old Store').length).toBe(1);
+  });
+});
+
+describe('undo keeps what is the person’s own since', () => {
+  test('a made account with their own transactions, or changed by them; a tag, a category and a group with a budget they use', async () => {
+    const accounts = newAccounts(['Checking', 'Savings', 'Visa', 'Brokerage']);
+    const { done, migration_id } = await importReviewed(fixture('ynab-register.csv'), { accounts });
+    expect(done.status).toBe(200);
+    const made = await getManualAccounts(ctx);
+    const checking = made.find((a) => a.name === 'Checking')!;
+    const savings = made.find((a) => a.name === 'Savings')!;
+    const visa = made.find((a) => a.name === 'Visa')!;
+    // A transaction of their own in Checking; Savings' balance typed since.
+    const { newManualTxnId } = await import('@/lib/manual-txn-input');
+    await manualTxnStore.update(ctx, checking.account_id, (b) => {
+      const { import_id: _i, source_key: _k, ...base } = b!.rows[0] as any;
+      return { ...b!, rows: [...b!.rows, { ...base, id: newManualTxnId(), source: 'manual', source_id: null, name: 'Typed by hand' }] };
+    });
+    await saveManualAccount(ctx, { ...savings, balance: 12_345, updated_at: new Date(Date.now() + 1000).toISOString() });
+    // A made tag on a transaction, a made category chosen for one, and a
+    // budget on a made group whose categories nothing else uses.
+    const set = (await readTagSet(ctx))!;
+    const red = set.tags.find((t) => t.name === 'Red flag')!;
+    await txnAnnotationStore.set(ctx, 'b_somewhere', { tags: [red.id], updated_at: new Date().toISOString() });
+    await setOverride(ctx, 'b_somewhere', 'dining out');
+    const t = (await readTaxonomy(ctx))!;
+    const gifts = t.groups.find((g) => g.name === 'Gifts')!;
+    await saveBudgets(ctx, { ...(await loadBudgets(ctx)).budgets, groups: { [gifts.id]: { amount: 50 } } }, t);
+    const undone = await undo({ migration_id, confirm: true });
+    expect(undone.status).toBe(200);
+    expect(undone.body.accounts.kept).toEqual(expect.arrayContaining([{ name: 'Checking', why: 'transactions' }, { name: 'Savings', why: 'changed' }]));
+    expect(undone.body.accounts.removed).toContain('Visa');
+    expect((await getManualAccounts(ctx)).map((a) => a.name).sort()).toEqual(['Checking', 'Savings']);
+    expect((await readTagSet(ctx))!.tags.map((x) => x.name)).toEqual(['Red flag']);
+    const after = (await readTaxonomy(ctx))!;
+    expect(after.categories.map((c) => c.name)).toContain('Dining Out');
+    expect(after.categories.map((c) => c.name)).not.toContain('Groceries');
+    expect(after.groups.map((g) => g.name)).toContain('Gifts');
+    expect(visa).toBeDefined();
+  });
+
+  test('a made group with a past month’s budget stays', async () => {
+    const { done, migration_id } = await importReviewed(fixture('ynab-register.csv'), { accounts: newAccounts(['Checking', 'Savings', 'Visa', 'Brokerage']) });
+    expect(done.status).toBe(200);
+    const t = (await readTaxonomy(ctx))!;
+    const gifts = t.groups.find((g) => g.name === 'Gifts')!;
+    await budgetMonthsStore.set(ctx, { version: 1, since: daysAgo(90).slice(0, 7), categories: {}, groups: { [gifts.id]: { seen: 50 } } });
+    expect((await undo({ migration_id, confirm: true })).status).toBe(200);
+    expect((await readTaxonomy(ctx))!.groups.map((g) => g.name)).toContain('Gifts');
+  });
+
+  test('what Undo would take is said first: rows changed since go too', async () => {
+    const { done, migration_id } = await importReviewed(fixture('actual-export.csv'), { accounts: newAccounts(['Checking', 'Savings']) });
+    expect(done.status).toBe(200);
+    const [id, book] = [...(await manualTxnStore.getAll(ctx))][0];
+    await manualTxnStore.update(ctx, id, (b) => ({ ...b!, rows: b!.rows.map((r, i) => (i === 0 ? { ...r, note: 'mine now', updated_at: new Date(Date.now() + 1000).toISOString() } : r)) }));
+    const plan = await asRes(await routes.GET(new Request(`http://localhost/api/migration?undo=${migration_id}`)));
+    expect(plan.status).toBe(200);
+    expect(plan.body.undo.edited).toBe(1);
+    expect(plan.body.undo.remove).toBeGreaterThanOrEqual(book.rows.length);
+  });
+});
+
+describe('a linked account’s answers', () => {
+  test('go with the import, not one request each: the review they were given after is still the one the person saw', async () => {
+    await seed();
+    const file = [
+      '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"',
+      `"Checking","","${mdy(daysAgo(50))}","Mystery Payee","Bills: Rent","Bills","Rent","",$1850.00,$0.00,"Cleared"`,
+    ].join('\n');
+    const answers = { accounts: { Checking: { to: 'linked', id: 'acc_chk' } }, options: { date_order: 'mdy' } };
+    const p = await preview(file, answers);
+    expect(p.body.preview.waiting.proposals).toBe(1);
+    // Answered in the sheet, sent only with the import.
+    const done = await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...answers, choices: { 'linked:acc_chk': { proposals: { each: { '2': 'new' } } } } }, file);
+    expect(done.status).toBe(200);
+    expect(((await activity()).transactions as any[]).filter((t) => t.amount === 1850).length).toBe(2);
+  });
 });
 
 describe('the download of my data', () => {
@@ -902,6 +1207,53 @@ describe('validation', () => {
     const refused = await quietly(() => undo({ migration_id, confirm: true }));
     expect(refused.status).toBe(409);
     expect(refused.body.unreadable).toBe(true);
+  });
+});
+
+describe('limits and records', () => {
+  test('more of the app’s categories than one import maps are refused in the review, quickly', async () => {
+    const rows = Array.from({ length: 1001 }, (_, k) => `Checking,2026-09-01,Shop ${k},,Group ${k},Category ${k},-1.00,0,Cleared`);
+    const file = ['Account,Date,Payee,Notes,Category_Group,Category,Amount,Split_Amount,Cleared', ...rows].join('\n');
+    const p = await preview(file, { accounts: newAccounts(['Checking']) });
+    expect(p.status).toBe(200);
+    expect(p.body.preview.blocks.join(' ')).toContain('more than one import maps (1,000)');
+    expect(p.body.preview.categories.mappings).toEqual([]);
+  });
+
+  test('a tag cut to what Nya keeps never splits a character in two', async () => {
+    const name = `${'x'.repeat(39)}\u{1F600}`;
+    const file = ['Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags', `2026-09-01,Shop,Groceries,Checking,SHOP,,-5.00,${name}`].join('\n');
+    const { done } = await importReviewed(file, { accounts: newAccounts(['Checking']) });
+    expect(done.status).toBe(200);
+    const [tag] = (await readTagSet(ctx))!.tags;
+    expect(tag.name).toBe('x'.repeat(39));
+  });
+
+  test('an account’s import given ids that don’t name every row is refused: its record would name other rows', async () => {
+    const { commitImport } = await import('@/lib/import/commit');
+    const read = readAppFile(['Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags', '2026-09-01,Shop,Groceries,Checking,SHOP,,-5.00,'].join('\n'), { options: {}, thisYear: 2026 });
+    if (read.status !== 'ready') throw new Error(read.status);
+    const state = await readTargets(ctx, { manualIds: [], linkedIds: [], withTags: false, today: daysAgo(0) });
+    const plan = planMigration(read, { accounts: newAccounts(['Checking']) as any, categories: {}, tags: false, carry: true, currency: null, choices: {} }, state);
+    const t = plan.targets[0];
+    const account = { ...t.create!, account_id: 'manual_00000000-0000-4000-8000-000000000009', updated_at: new Date().toISOString() };
+    await expect(
+      commitImport(ctx, { account, format: 'csv', file_name: 'x.csv', file_bytes: 1, encoding: 'utf-8', rows: t.rows, problems: [], read: {}, statement: null, columns: null, ids: { import_id: 'import:00000000-0000-4000-8000-000000000001', rows: [] } } as any)
+    ).rejects.toThrow('an id for every row');
+  });
+
+  test('an import record a later release wrote more into is listed, never undone without what it added', async () => {
+    const { done, migration_id } = await importReviewed(fixture('actual-export.csv'), { accounts: newAccounts(['Checking', 'Savings']) });
+    expect(done.status).toBe(200);
+    const entry = (await migrationStore.get(ctx, migration_id))!;
+    // As a later release would write it: one more kind of thing it made.
+    const later = { ...entry, made: { ...entry.made, rules: ['rule-1'] } };
+    await fake.hset(ctxKey('app-imports'), { [migration_id]: await encrypt(JSON.stringify(later)) });
+    const listed = await quietly(() => list());
+    expect(listed.body.imports.find((i: any) => i.id === migration_id)?.record).toBe('unrecognised');
+    const refused = await quietly(() => undo({ migration_id, confirm: true }));
+    expect(refused.status).toBe(409);
+    expect((await getManualAccounts(ctx)).length).toBe(2);
   });
 });
 

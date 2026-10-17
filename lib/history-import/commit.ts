@@ -298,10 +298,13 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
   const first = checked(planFor(new Map<string, ImportedBook | null>(await importedTxnStore.getMany(ctx, ids))), input.reviewed);
   if (!changes(first)) return { import_id: null, plan: first, entry: null };
 
+  // A caller's ids name every row, or the caller is wrong: its record would
+  // name rows that aren't these.
+  if (input.ids_minted && input.ids_minted.rows.length !== input.rows.length) throw new Error('commitHistoryImport: an id for every row');
   const import_id = input.ids_minted?.import_id ?? newHistoryImportId();
   // One id per row, made once, so a retried compare-and-set writes the rows
   // the entry names.
-  const rowIds = input.ids_minted && input.ids_minted.rows.length === input.rows.length ? [...input.ids_minted.rows] : input.rows.map(() => newImportedTxnId());
+  const rowIds = input.ids_minted ? [...input.ids_minted.rows] : input.rows.map(() => newImportedTxnId());
   const entry = entryOf(input, first, rowIds, at);
   await historyImportStore.set(ctx, import_id, entry);
   try {

@@ -455,10 +455,13 @@ export async function commitImport(ctx: Ctx, input: CommitInput): Promise<Commit
   if (first.counts.conflicts > 0) throw new ConflictsUnresolvedError(first.counts.conflicts);
   if (!changes(first)) return { import_id: null, plan: first, entry: null };
 
+  // A caller's ids name every row, or the caller is wrong: its record would
+  // name rows that aren't these.
+  if (input.ids && input.ids.rows.length !== input.rows.length) throw new Error('commitImport: an id for every row');
   const import_id = input.ids?.import_id ?? newImportId();
   // One id per row, made once, so a retried compare-and-set writes the same
   // rows the entry names.
-  const rowIds = input.ids && input.ids.rows.length === input.rows.length ? [...input.ids.rows] : input.rows.map(() => newManualTxnId());
+  const rowIds = input.ids ? [...input.ids.rows] : input.rows.map(() => newManualTxnId());
   const entry = entryOf(input, first, rowIds, at, before);
   // The records first, refused whole when too large; then the summary the
   // list reads, without which the records go again.

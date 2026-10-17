@@ -546,3 +546,75 @@ describe('the file a person brings', () => {
     expect('error' in got).toBe(false);
   });
 });
+
+describe('what a linked account needs told (lib/migration/plan.ts)', () => {
+  test('a split’s lines that aren’t rebuilt say which split they are of, and its whole where the file gives it', () => {
+    // YNAB: a complete run that can't be one (a line of money in) has its total; a broken one has none.
+    const ynab = [
+      '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"',
+      '"Checking","","09/12/2026","Costco","Food: Groceries","Food","Groceries","Split (1/2) ",$80.00,$0.00,"Cleared"',
+      '"Checking","","09/12/2026","Costco","Home: Refund","Home","Refund","Split (2/2) ",$0.00,$5.00,"Cleared"',
+      '"Checking","","09/13/2026","Target","Food: Groceries","Food","Groceries","Split (1/3) ",$10.00,$0.00,"Cleared"',
+      '"Checking","","09/13/2026","Target","Home: Supplies","Home","Supplies","Split (3/3) ",$12.00,$0.00,"Cleared"',
+    ].join('\n');
+    const got = readAppFile(ynab, { options: { date_order: 'mdy' }, thisYear: 2026 });
+    if (got.status !== 'ready') throw new Error(got.status);
+    const costco = got.parsed.txns.filter((t) => t.payee === 'Costco');
+    expect(costco.map((t) => t.split_of?.whole?.amount)).toEqual([75, 75]);
+    expect(new Set(costco.map((t) => t.split_of?.key)).size).toBe(1);
+    expect(got.parsed.txns.filter((t) => t.payee === 'Target').map((t) => t.split_of?.whole ?? null)).toEqual([null, null]);
+    // Actual: its own row's total, whatever its parts add up to.
+    const actual = readAppFile(
+      ['Account,Date,Payee,Notes,Category,Amount,Split_Amount,Cleared', 'Checking,2026-09-12,Costco,(SPLIT INTO 2) ,,0,-130,Cleared', 'Checking,2026-09-12,Costco,(SPLIT 1 OF 2) ,Food,-80,0,Cleared', 'Checking,2026-09-12,Costco,(SPLIT 2 OF 2) ,General,-40,0,Cleared'].join('\n'),
+      { options: {}, thisYear: 2026 }
+    );
+    if (actual.status !== 'ready') throw new Error(actual.status);
+    expect(actual.parsed.txns.map((t) => t.split_of?.whole?.amount)).toEqual([130, 130]);
+  });
+
+  test('an export that doesn’t mark splits says what one transaction’s rows share; Monarch’s balance adjustments are its own', () => {
+    const monarch = ready('monarch-transactions.csv');
+    expect(one(monarch.parsed.txns, 'Whole Foods').group_key).toBe('WHOLEFDS MKT 10234 SEATTLE WA');
+    const adjusted = readAppFile(['Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags', '2026-09-01,Balance Adjustment,Balance Adjustments,Checking,,,25.00,'].join('\n'), { options: {}, thisYear: 2026 });
+    if (adjusted.status !== 'ready') throw new Error(adjusted.status);
+    expect(adjusted.parsed.txns[0].starting).toBe(true);
+    expect(ready('zerosum-transactions.csv').parsed.txns.every((t) => t.group_key === t.payee)).toBe(true);
+    expect(ready('actual-export-early.csv').parsed.txns.every((t) => t.group_key === t.payee)).toBe(true);
+    expect(ready('ynab-register.csv').parsed.txns.some((t) => t.group_key)).toBe(false);
+  });
+
+  test('a split’s line that moved money to another account is a transfer; ZeroSum’s "Transfer : X" is one when X isn’t in the file', () => {
+    const actual = readAppFile(
+      [
+        'Account,Date,Payee,Notes,Category,Amount,Split_Amount,Cleared',
+        'Checking,2026-09-15,Employer,(SPLIT INTO 2) ,,0,2500,Cleared',
+        'Checking,2026-09-15,Employer,(SPLIT 1 OF 2) ,Income,2000,0,Cleared',
+        'Checking,2026-09-15,Savings,(SPLIT 2 OF 2) ,,500,0,Cleared',
+        'Savings,2026-09-15,Checking,,,-500,0,Cleared',
+      ].join('\n'),
+      { options: {}, thisYear: 2026 }
+    );
+    if (actual.status !== 'ready') throw new Error(actual.status);
+    const pay = actual.parsed.txns.find((t) => t.parts)!;
+    expect(pay.parts!.map((p) => p.transfer)).toEqual([null, 'Savings']);
+    const zs = readAppFile(['Date,Account,Payee,Category Group,Category,Memo,Tags,Outflow,Inflow,Cleared', '09/01/2026,Checking,Transfer : Brokerage,Savings,Retirement,,,300.00,,Cleared'].join('\n'), { options: { date_order: 'mdy' }, thisYear: 2026 });
+    if (zs.status !== 'ready') throw new Error(zs.status);
+    expect(zs.parsed.txns[0]).toMatchObject({ transfer: 'Brokerage', category: null });
+  });
+
+  test('a split taken apart keeps each line as the file had it', () => {
+    const ynab = ready('ynab-register.csv');
+    const costco = ynab.parsed.txns.find((t) => t.parts)!;
+    const parts = explode(costco);
+    expect(parts.map((p) => (p.raw as string[])[3])).toEqual(['Costco', 'Costco', 'Costco']);
+    expect(parts.map((p) => (p.raw as string[])[7])).toEqual(['Split (1/3) food', 'Split (2/3) ', 'Split (3/3) gift card']);
+  });
+
+  test('a zip entry’s name is kept as text: no marks that turn what follows round, and only so long', () => {
+    const long = `${'‮'}${'R'.repeat(300)}\u0007 - Register.csv`;
+    const entries = listZip(zip({ [long]: 'x' }));
+    if ('error' in entries) throw new Error(entries.error);
+    expect(entries[0].name).not.toMatch(/[‮\u0007]/);
+    expect(entries[0].name.length).toBeLessThanOrEqual(200);
+  });
+});

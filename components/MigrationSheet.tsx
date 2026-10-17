@@ -121,6 +121,8 @@ export type Review = {
    *  tags, notes and splits. */
   carry?: boolean;
   rows: number;
+  /** The file's first rows as read: what its sign is checked by. */
+  sample?: { line: number; date: string; name: string; amount: number; currency: string | null; account: string }[];
   notes: string[];
   accounts: (SourceAccount & { choice: unknown })[];
   offered: Offered[];
@@ -707,9 +709,28 @@ export function ReviewStep({
           />
           <span>
             Money out is written as negative in this file
-            {r.read.sign_from === 'file' ? ' (its income rows say so)' : r.read.sign_from === 'app' ? ` (${r.app_name}’s own way is positive: check each account’s first rows below)` : ''}
+            {r.read.sign_from === 'file' ? ' (its income rows say so)' : r.read.sign_from === 'app' ? ` (${r.app_name}’s own way is positive: check its first rows)` : ''}
           </span>
         </label>
+      )}
+      {r.read.sign && (r.sample ?? []).length > 0 && (
+        <ul className="import-rows">
+          {(r.sample ?? []).map((x) => (
+            <li key={x.line}>
+              <div className="import-row-text">
+                <div className="import-row-name">{x.name}</div>
+                <div className="import-row-meta">
+                  {fmtDay(x.date)}
+                  {x.account ? ` · ${x.account}` : ''}
+                  {` · read as ${x.amount > 0 ? 'money out' : 'money in'}`}
+                </div>
+              </div>
+              <div className={`import-row-amount${x.amount < 0 ? ' inflow' : ''}`}>
+                <Masked>{fmtAmount(x.amount, x.currency)}</Masked>
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
       {currencyText === null ? (
         <p className="panel-note">

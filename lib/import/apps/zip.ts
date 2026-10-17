@@ -15,10 +15,14 @@
 // app's export is any of those.
 
 import { inflateRawSync } from 'node:zlib';
+import { cleanText } from '../normalize';
 
 /** The most entries an export may hold, and the largest one read. */
 export const MAX_ENTRIES = 64;
 export const MAX_ENTRY_BYTES = 6 * 1024 * 1024;
+/** The longest entry name kept: a file's name, as an app writes one, is far
+ *  shorter. Its name is shown, and kept with the import. */
+const MAX_NAME = 200;
 
 export type ZipEntry = { name: string; method: number; flags: number; compressed: number; size: number; offset: number };
 
@@ -65,7 +69,10 @@ export function listZip(bytes: Uint8Array): ZipEntry[] | { error: string } {
     const comment = view.getUint16(at + 32, true);
     const offset = view.getUint32(at + 42, true);
     if (at + 46 + nameLength > bytes.length) return bad;
-    const name = new TextDecoder('utf-8').decode(bytes.subarray(at + 46, at + 46 + nameLength));
+    // Shown and kept as text is: no control characters or marks that turn
+    // what follows round, and only so long.
+    const full = cleanText(new TextDecoder('utf-8').decode(bytes.subarray(at + 46, at + 46 + nameLength)));
+    const name = full.length <= MAX_NAME ? full : full.slice(0, /[\uD800-\uDBFF]/.test(full[MAX_NAME - 1]) ? MAX_NAME - 1 : MAX_NAME);
     entries.push({ name, method, flags, compressed, size: uncompressed, offset });
     at += 46 + nameLength + extra + comment;
   }

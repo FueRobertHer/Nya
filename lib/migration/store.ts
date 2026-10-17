@@ -84,10 +84,14 @@ const isCount = (v: unknown) => typeof v === 'number' && Number.isInteger(v) && 
 const isText = (v: unknown, max = 200) => typeof v === 'string' && v.length <= max;
 const isTextOrNull = (v: unknown, max = 200) => v === null || isText(v, max);
 const isIds = (v: unknown) => Array.isArray(v) && v.length <= 1000 && v.every((x) => isText(x, 200));
+/** Only these keys: an undo record a later release adds to (another kind of
+ *  thing made, say) is refused here rather than undone without it. */
+const only = (v: Record<string, unknown>, keys: readonly string[]) => Object.keys(v).every((k) => keys.includes(k));
 
 function isImport(v: unknown): v is MigrationImport {
   return (
     isRecord(v) &&
+    only(v, ['account_id', 'kind', 'type', 'import_id', 'name', 'sources']) &&
     isText(v.account_id) &&
     (v.kind === 'manual' || v.kind === 'linked') &&
     isText(v.type, 40) &&
@@ -99,14 +103,19 @@ function isImport(v: unknown): v is MigrationImport {
   );
 }
 
+const COUNTS = ['rows', 'imported', 'duplicates', 'present', 'unreadable', 'splits', 'tagged'];
 function isCounts(v: unknown): v is MigrationCounts {
-  return isRecord(v) && ['rows', 'imported', 'duplicates', 'present', 'unreadable', 'splits', 'tagged'].every((k) => isCount(v[k]));
+  return isRecord(v) && only(v, COUNTS) && COUNTS.every((k) => isCount(v[k]));
 }
 
-/** One entry: its shape and types, with fields a later release adds kept as
- *  they are, so a rollback still reads (and undoes) a newer entry. */
+/** One entry: its shape and types, and nothing else. It is a record of what
+ *  to undo, so an entry a later release wrote with more in it (another kind
+ *  of thing it made) is unrecognised here, listed as from a later version and
+ *  never undone, rather than undone leaving that behind; each account's
+ *  import is still listed with Undo on that account. */
 export function isMigrationEntry(v: unknown): v is MigrationEntry {
   if (!isRecord(v) || v.version !== 1) return false;
+  if (!only(v, ['version', 'app', 'variant', 'file_name', 'entry', 'file_bytes', 'started_at', 'status', 'finished_at', 'imports', 'made', 'counts'])) return false;
   const made = v.made;
   return (
     (APPS as readonly unknown[]).includes(v.app) &&
@@ -121,9 +130,10 @@ export function isMigrationEntry(v: unknown): v is MigrationEntry {
     v.imports.length <= 200 &&
     v.imports.every(isImport) &&
     isRecord(made) &&
+    only(made, ['accounts', 'categories', 'groups', 'tags']) &&
     Array.isArray(made.accounts) &&
     made.accounts.length <= 200 &&
-    made.accounts.every((a) => isRecord(a) && isText(a.id) && isText(a.name, 500)) &&
+    made.accounts.every((a) => isRecord(a) && only(a, ['id', 'name']) && isText(a.id) && isText(a.name, 500)) &&
     isIds(made.categories) &&
     isIds(made.groups) &&
     isIds(made.tags) &&

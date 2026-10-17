@@ -156,6 +156,9 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
     // tags, note and split (MigrationAnswers.carry).
     carry: answers.carry,
     rows: r.parsed.txns.length,
+    // The file's first rows as read, money out and money in: what the sign
+    // it was read with is checked by before any account is answered.
+    sample: r.parsed.txns.slice(0, PREVIEW_ROWS).map((t) => ({ line: t.line, date: t.date, name: t.payee, amount: t.amount, currency: t.currency, account: t.account })),
     notes: [...r.parsed.notes, ...targets.notes],
     accounts: plan.accounts,
     offered: targets.offered,

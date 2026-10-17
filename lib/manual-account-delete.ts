@@ -30,12 +30,12 @@ import { loggable } from './log-safe';
 export async function deleteManualAccount(ctx: Ctx, account_id: string): Promise<void> {
   await forgetAccountImports(ctx, account_id);
   const rows = await removeAccountTxns(ctx, account_id);
-  await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
-  await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
+  await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual account delete: exclusions were left behind', loggable(err)));
+  await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('manual account delete: splits or groups were left behind', loggable(err)));
   await removeManualAccount(ctx, account_id);
   const late = await removeAccountTxns(ctx, account_id);
-  if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
-  if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
+  if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual account delete: exclusions were left behind', loggable(err)));
+  if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('manual account delete: splits or groups were left behind', loggable(err)));
   // The account is gone, so a hidden entry naming it would linger forever.
   await pruneHidden(ctx, [account_id]);
 }

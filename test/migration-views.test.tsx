@@ -16,7 +16,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { forgetEpochs } = await import('@/lib/sessions');
-const { ReviewStep, MappingStep, PastMigrations, UndoConfirm } = await import('@/components/MigrationSheet');
+const { ReviewStep, MappingStep, PastMigrations, UndoConfirm, countsNow } = await import('@/components/MigrationSheet');
 const routes = await import('@/app/api/migration/route');
 
 const FIXTURES = join(import.meta.dir, 'fixtures', 'apps');
@@ -99,6 +99,10 @@ describe('the review', () => {
     const words = text(review(preview));
     expect(words).toContain('Money out is written as negative in this file');
     expect(words).toContain('Lunch Money’s own way is positive');
+    // Its first rows as read, to check that by, before any account is answered.
+    expect(preview.targets).toEqual([]);
+    expect(words).toContain('read as money out');
+    expect(words).toContain('read as money in');
     expect(words).toContain('treat as income');
     // Its rows say their currency.
     expect(words).not.toContain('doesn’t say its currency');
@@ -139,5 +143,45 @@ describe('the other steps', () => {
     const undo = text(renderToStaticMarkup(<UndoConfirm item={{ id: 'app-import:1', record: 'ok', entry }} busy={false} error="" onConfirm={noop} onCancel={noop} />));
     expect(undo).toContain('The 1 account it made (Checking) goes too');
     expect(undo).toContain('The categories and tags it made go when nothing else uses them');
+    expect(undo).toContain('Counting what it takes out');
+    // What each account's Undo says it would take, added up.
+    const preview = { remove: 8, edited: 2, moved: 1, duplicates: 2, restore: 0, kept: [{ file_name: 'bank.csv', count: 1 }], incomplete: false };
+    const counted = text(renderToStaticMarkup(<UndoConfirm item={{ id: 'app-import:1', record: 'ok', entry }} preview={preview} busy={false} error="" onConfirm={noop} onCancel={noop} />));
+    expect(counted).toContain('8 transactions go, with 2 kept as your banks’ own.');
+    expect(counted).toContain('2 of them were changed since, and go too.');
+    expect(counted).toContain('1 is on another account now, and goes too.');
+    expect(counted).toContain('1 more transaction stays: bank.csv found it already there, so it is kept for that import.');
+    // Each Undo is named by its import, for a screen reader.
+    expect(renderToStaticMarkup(<PastMigrations items={[{ id: 'app-import:1', record: 'ok', entry }]} error="" onUndo={noop} />)).toContain('aria-label="Undo the import from YNAB, Budget.zip"');
+  });
+});
+
+describe('answers kept in the sheet until they are sent', () => {
+  test('a new account’s fields are never disabled while the review is read, and each account’s first rows show its money out and in', async () => {
+    const accounts = { Checking: { to: 'new', name: 'Checking', institution: 'YNAB', type: 'depository', balance: 0 }, Savings: { to: 'skip' }, Visa: { to: 'skip' }, Brokerage: { to: 'skip' } };
+    const { preview } = await previewOf('ynab-register.csv', { accounts });
+    const html = review(preview, { accounts: { ...accounts, Checking: { ...accounts.Checking, balance: '0' } }, busy: true });
+    expect(html).toMatch(/<input maxLength="60" value="Checking"\/>/);
+    expect(html).not.toMatch(/<input[^>]*disabled=""[^>]*value="Checking"/);
+    const words = text(html);
+    expect(words).toContain('Landlord');
+    expect(words).toContain('money out');
+    expect(words).toContain('money in');
+  });
+
+  test('a linked account’s answers count where they are given, and every one can be answered at once', () => {
+    const proposal = (line: number, confidence: 'high' | 'low') => ({
+      index: line,
+      line,
+      file: { date: '2026-09-05', name: `Row ${line}`, amount: 10, currency: 'USD' },
+      twin: { date: '2026-09-06', name: `BANK ${line}`, amount: 10, currency: 'USD', kind: 'bank' as const, descriptor: null },
+      days: 1,
+      confidence,
+      similar: false,
+      choice: confidence === 'low' ? null : ('same' as const),
+    });
+    const t = { counts: { new: 0, duplicates: 1, unanswered: 1 }, proposals: [proposal(2, 'high'), proposal(3, 'low')] };
+    expect(countsNow(t as any, { each: {} }, { each: { '3': 'new' } })).toMatchObject({ new: 1, duplicates: 1, unanswered: 0 });
+    expect(countsNow(t as any, { each: {} }, { all: 'new', each: {} })).toMatchObject({ new: 2, duplicates: 0, unanswered: 0 });
   });
 });
