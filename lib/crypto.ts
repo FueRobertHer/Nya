@@ -130,8 +130,8 @@ const FLAGS = /^(-|[a-z]{1,8})$/;
 const KNOWN_FLAGS = new Set(['c']);
 /** Fields read per HSCAN of the key store, and keys written per HSET. A key's
  *  record is about 300 characters, so a page of writes is about 30 KB. */
-const SCAN_PAGE = 200;
-const WRITE_PAGE = 100;
+export const SCAN_PAGE = 200;
+export const WRITE_PAGE = 100;
 
 /** A stored value names a key this deployment does not have. Never answered
  *  by trying another key: that would hide a missing key until it mattered. */
@@ -1342,6 +1342,21 @@ export async function prepareContainerKey(
   return { container, id, record: JSON.stringify(stored), entry: JSON.stringify(entry), master: masterRecord(master.fingerprint) };
 }
 
+/**
+ * Why no container's key can be claimed just now, or null: a master rotation
+ * is prepared or pending, a rotation step holds its lock ('rotation'), or this
+ * deployment's master is not the current one ('master'). Read once by a call
+ * of the migration pass, so a long wait doesn't use up key numbers; the claim
+ * checks the same again in its own step.
+ */
+export async function containerKeysBlocked(): Promise<'rotation' | 'master' | null> {
+  const [rotation, lock] = await Promise.all([redis().get(rotationKey()), redis().get(rotationLockKey())]);
+  if ((rotation !== null && rotation !== undefined) || (lock !== null && lock !== undefined)) return 'rotation';
+  const recorded = await readCurrentMaster();
+  if (recorded !== null && recorded !== (await masterKey()).fingerprint) return 'master';
+  return null;
+}
+
 /** The keys a step claiming a container's key reads and writes, in order: the
  *  map, the key store, the rotation record and lock, the current master. */
 export function containerKeyScriptKeys(): string[] {
@@ -1410,32 +1425,45 @@ export async function claimContainerKey(p: PreparedContainerKey): Promise<{ outc
 
 /**
  * Destroys a container's keys, in one step, and only for a container no
- * longer in the registry (answers -1 otherwise, changing nothing): each key
- * named whose record names the container (or is gone already) is deleted,
- * with a tombstone for it, and the map entry becomes a marker that the key
- * was destroyed, so a write that comes too late fails. Repeating it does
- * nothing more. Answers how many keys it tombstoned.
+ * longer in the registry (answers -1 otherwise, changing nothing). Of the key
+ * ids named: one whose record names the container is deleted, with a
+ * tombstone for it; one already gone from the store is tombstoned for the
+ * container unless a tombstone stands (the map entry named it, so a copy of
+ * it in a key archive is the container's); one whose record or tombstone
+ * names another container is left alone, whatever named it. The map entry
+ * becomes a marker that the key was destroyed, so a write that comes too late
+ * fails. Repeating it does nothing more. Answers the ids that are now the
+ * container's tombstones, destroyed now or before.
  * KEYS: the map, the key store, the registry, the tombstones.
  * ARGV: the container, the day, then the key ids.
  */
 export const CONTAINER_KEY_DESTROY = `-- nya:container-key-destroy
 if redis.call('HEXISTS', KEYS[3], ARGV[1]) == 1 then return -1 end
-local n = 0
+local mark = '"container":"' .. ARGV[1] .. '"'
+local stone = '{"container":"' .. ARGV[1] .. '","on":"' .. ARGV[2] .. '"}'
+local out = {}
 for i = 3, #ARGV do
-  local rec = redis.call('HGET', KEYS[2], ARGV[i])
-  if not rec or string.find(rec, '"container":"' .. ARGV[1] .. '"', 1, true) then
-    if rec then redis.call('HDEL', KEYS[2], ARGV[i]) end
-    if redis.call('HEXISTS', KEYS[4], ARGV[i]) == 0 then
-      redis.call('HSET', KEYS[4], ARGV[i], '{"container":"' .. ARGV[1] .. '","on":"' .. ARGV[2] .. '"}')
+  local id = ARGV[i]
+  local rec = redis.call('HGET', KEYS[2], id)
+  local tomb = redis.call('HGET', KEYS[4], id)
+  if rec then
+    if string.find(rec, mark, 1, true) then
+      redis.call('HDEL', KEYS[2], id)
+      if not tomb then redis.call('HSET', KEYS[4], id, stone) end
+      out[#out + 1] = id
     end
-    n = n + 1
+  elseif not tomb then
+    redis.call('HSET', KEYS[4], id, stone)
+    out[#out + 1] = id
+  elseif string.find(tomb, mark, 1, true) then
+    out[#out + 1] = id
   end
 end
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if not cur or not string.find(cur, '"destroyed"', 1, true) then
   redis.call('HSET', KEYS[1], ARGV[1], '{"destroyed":"' .. ARGV[2] .. '"}')
 end
-return n`;
+return out`;
 
 /** The container a stored key record names, from the record as the client
  *  hands it over, or null. */
@@ -1457,12 +1485,14 @@ async function keysOfContainer(container: string): Promise<string[]> {
 
 /**
  * Destroys every key of a container that has left the registry: the one its
- * map entry names and any other whose record names it (a damaged map entry
- * must not let a key survive). Then checks none is left. Repeating it does
- * nothing more. Answers the key ids destroyed now or before.
+ * map entry names, any other whose record names it (a damaged map entry must
+ * not let a key survive), and those already tombstoned for it, so a retry
+ * answers the same. Then checks none is left. Repeating it does nothing more.
+ * Answers the key ids destroyed, now or before.
  */
 export async function destroyContainerKeys(ctx: Ctx, now: number = Date.now()): Promise<{ destroyed: string[] }> {
   const ids = new Set<string>(await keysOfContainer(ctx.container));
+  for (const [id, stone] of await readTombstones()) if (stone.container === ctx.container) ids.add(id);
   const raw = await redis().hget(containerKeysKey(), ctx.container);
   if (raw !== null && raw !== undefined) {
     try {
@@ -1473,15 +1503,18 @@ export async function destroyContainerKeys(ctx: Ctx, now: number = Date.now()): 
     }
   }
   const day = new Date(now).toISOString().slice(0, 10);
-  const answer = Number(
-    await redis().eval(CONTAINER_KEY_DESTROY, [containerKeysKey(), keysHashKey(), registryKey(), tombstonesKey()], [ctx.container, day, ...[...ids].sort()])
+  const answer = await redis().eval(
+    CONTAINER_KEY_DESTROY,
+    [containerKeysKey(), keysHashKey(), registryKey(), tombstonesKey()],
+    [ctx.container, day, ...[...ids].sort()]
   );
-  if (answer === -1) throw new ContainerError(`Container ${ctx.container} is still in the registry, so its key was not destroyed.`);
+  if (answer === -1 || answer === '-1') throw new ContainerError(`Container ${ctx.container} is still in the registry, so its key was not destroyed.`);
+  if (!Array.isArray(answer)) throw new Error('crypto: unexpected answer destroying a container key');
   forgetContainerKey(ctx.container);
   for (const id of ids) forgetDataKey(id);
   const left = await keysOfContainer(ctx.container);
   if (left.length > 0) throw new ContainerError(`Keys of container ${ctx.container} are still in the key store after it was destroyed (${left.join(', ')}).`);
-  return { destroyed: [...ids].sort() };
+  return { destroyed: answer.map(String).sort() };
 }
 
 /** The tombstones, as stored: key id -> its container and day. */

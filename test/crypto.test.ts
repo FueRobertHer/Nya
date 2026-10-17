@@ -350,11 +350,11 @@ describe('master rotation', () => {
 
     test('interrupted, it leaves no record, every key openable, and runs again cleanly', async () => {
       const NEW = master(23);
-      // Fails on the second key's write, after the first key was prepared.
+      // Fails writing the keys (a page at a time: test/container-keys.test.ts
+      // stops one between two pages).
       const realHset = fake.hset.bind(fake);
-      let n = 0;
       fake.hset = (async (key: string, fields: Record<string, string>) => {
-        if (++n === 2) throw new Error('upstash hiccup');
+        if (key === keysHashKey()) throw new Error('upstash hiccup');
         return realHset(key, fields);
       }) as typeof fake.hset;
       try {
@@ -538,9 +538,8 @@ describe('master rotation', () => {
       // anyway. With no record, finish must leave every lock in place.
       const NEW = master(39);
       const realHset = fake.hset.bind(fake);
-      let n = 0;
       fake.hset = (async (key: string, fields: Record<string, string>) => {
-        if (++n === 2) throw new Error('killed');
+        if (key === keysHashKey()) throw new Error('killed');
         return realHset(key, fields);
       }) as typeof fake.hset;
       await prepareMasterRotation(NEW, T0).catch(() => {});
@@ -1072,16 +1071,22 @@ describe('malformed values fail loudly and specifically', () => {
 describe('the legacy key', () => {
   test('a missing PLAID_ENCRYPTION_KEY is not remembered once it is set again', async () => {
     const saved = process.env.PLAID_ENCRYPTION_KEY;
+    // A v1 value, read without Redis: a write first reads the container's
+    // map entry, which needs it.
+    const key = await crypto.subtle.importKey('raw', Buffer.from(saved!, 'base64'), 'AES-GCM', false, ['encrypt']);
+    const iv = new Uint8Array(12).fill(5);
+    const v1 = Buffer.concat([iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode('back')))]).toString('base64');
     const res = Bun.spawnSync(
       [
         process.execPath,
         '-e',
         `delete process.env.PLAID_ENCRYPTION_KEY;
          const c = await import('./lib/crypto.ts');
+         const ctx = { container: ${JSON.stringify(TEST_CTX.container)} };
          let first = 'none';
-         try { await c.encrypt('x'); } catch (e) { first = e.message; }
+         try { await c.decrypt(ctx, ${JSON.stringify(v1)}); } catch (e) { first = e.message; }
          process.env.PLAID_ENCRYPTION_KEY = ${JSON.stringify(saved)};
-         const out = await c.decrypt(await c.encrypt('back'));
+         const out = await c.decrypt(ctx, ${JSON.stringify(v1)});
          console.log(first.includes('is not set') && out === 'back' ? 'ok' : 'bad:' + first);`,
       ],
       { cwd: `${import.meta.dir}/..`, env: { ...process.env, REDIS_PREFIX: 'test' } }

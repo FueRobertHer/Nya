@@ -23,10 +23,11 @@
  * id), while a master rotation is prepared or pending or a rotation step holds
  * the lock, when the current master is another, when the key's id is taken or
  * the container is in the map already: the container is then registered
- * without a key, and the migration pass makes it one.
+ * without a key, and the migration pass makes it one. A caller that sends no
+ * key arguments at all (fewer ARGV) is read as sending none.
  */
 export function birthKeyLua(k: number, a: number, c: number): string {
-  return `if ARGV[${a}] ~= '' and redis.call('EXISTS', KEYS[${k + 2}]) == 0 and redis.call('EXISTS', KEYS[${k + 3}]) == 0
+  return `if (ARGV[${a}] or '') ~= '' and redis.call('EXISTS', KEYS[${k + 2}]) == 0 and redis.call('EXISTS', KEYS[${k + 3}]) == 0
   and redis.call('HEXISTS', KEYS[${k + 1}], ARGV[${a}]) == 0 and redis.call('HEXISTS', KEYS[${k}], ARGV[${c}]) == 0 then
   local master = redis.call('GET', KEYS[${k + 4}])
   if not master or master == ARGV[${a + 3}] then

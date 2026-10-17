@@ -148,7 +148,12 @@ const FROZEN_PREFIXES = [
  * on tokens that don't work, counted before any container is known, which the
  * seam (containers only) can't hold. It is the login's own pattern, beside it,
  * under the family already listed, and test/rate-limit-keys.test.ts holds it
- * to the environment's.
+ * to the environment's. The key store's own records for a data key per
+ * container ("crypto:container-keys", "crypto:destroyed", "crypto:key-seq")
+ * were approved with that design's review (docs/architecture.md,
+ * "Per-container data keys"): environment-wide by nature, beside the key
+ * store under the family already listed, holding no data, which the seam
+ * (containers only) can't hold.
  */
 const FROZEN_KEY_NAMES = [
   'account-links in lib/link-core.ts',
@@ -166,6 +171,9 @@ const FROZEN_KEY_NAMES = [
   'containers in lib/containers.ts',
   'containers in lib/restore.ts',
   'crypto:active in lib/crypto.ts',
+  'crypto:container-keys in lib/crypto.ts',
+  'crypto:destroyed in lib/crypto.ts',
+  'crypto:key-seq in lib/crypto.ts',
   'crypto:keys in lib/crypto.ts',
   'crypto:master in lib/crypto.ts',
   'crypto:rotation in lib/crypto.ts',

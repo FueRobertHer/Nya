@@ -182,10 +182,12 @@ describe('the rotation', () => {
   });
 
   test('an unexpected failure is a 500 that repeats nothing from the error', async () => {
-    const realHgetall = fake.hgetall.bind(fake);
-    fake.hgetall = (async () => {
-      throw new Error('command was: ["hgetall","secret-looking-content"]');
-    }) as typeof fake.hgetall;
+    // The key store is read a page at a time (HSCAN), so that is where the
+    // unexpected failure is armed.
+    const realHscan = fake.hscan.bind(fake);
+    fake.hscan = (async () => {
+      throw new Error('command was: ["hscan","secret-looking-content"]');
+    }) as typeof fake.hscan;
     const logged: string[] = [];
     const origError = console.error;
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
@@ -195,7 +197,7 @@ describe('the rotation', () => {
       expect(await res.text()).not.toContain('secret-looking-content');
       expect(logged.join(' ')).not.toContain('secret-looking-content');
     } finally {
-      fake.hgetall = realHgetall as typeof fake.hgetall;
+      fake.hscan = realHscan as typeof fake.hscan;
       console.error = origError;
     }
   });

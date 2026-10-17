@@ -68,13 +68,38 @@ function keyIdsIn(value: string): string[] {
  */
 class Watched extends Map<string, string> {
   private onSet: ((field: string, value: string) => void) | null = null;
-  watch(onSet: (field: string, value: string) => void): this {
+  /** The key a hash is watched as, so one moved to another key is watched
+   *  again under it. */
+  owner: string | undefined;
+  watch(onSet: (field: string, value: string) => void, owner?: string): this {
     this.onSet = onSet;
+    this.owner = owner;
     return this;
   }
   override set(field: string, value: string): this {
     this.onSet?.(field, value);
     return super.set(field, value);
+  }
+}
+
+/**
+ * The fake's hashes. A hash put in from outside (a test planting a Map, a
+ * rename) is copied into a watched one, its fields checked as they go in, so
+ * no way of writing escapes the rule. Keep the stored hash, `get(key)`, to
+ * change it later: the Map handed in is not kept.
+ */
+class Hashes extends Map<string, Map<string, string>> {
+  private check: ((key: string, field: string, value: string) => void) | null = null;
+  watch(check: (key: string, field: string, value: string) => void): this {
+    this.check = check;
+    return this;
+  }
+  override set(key: string, h: Map<string, string>): this {
+    if (h instanceof Watched && h.owner === key) return super.set(key, h);
+    const check = this.check;
+    const w = new Watched().watch((field, value) => check?.(key, field, value), key);
+    for (const [field, value] of h) w.set(field, value);
+    return super.set(key, w);
   }
 }
 
@@ -126,7 +151,7 @@ export class FakeRedis {
   }
 
   strings: Map<string, string> = new Watched().watch((key, value) => this.checkWrite(key, undefined, value));
-  hashes = new Map<string, Hash>();
+  hashes: Map<string, Hash> = new Hashes().watch((key, field, value) => this.checkWrite(key, field, value));
   ttls = new Map<string, number>();
   /** Hash fields planted as raw bytes (hsetBytes): the bytes Redis would hold,
    *  beside the text the client reads, while the field still holds that text. */
@@ -139,9 +164,8 @@ export class FakeRedis {
   private failing = new Map<FakeCommand, number>();
 
   private hash(key: string): Hash {
-    let h = this.hashes.get(key);
-    if (!h) this.hashes.set(key, (h = new Watched().watch((field, value) => this.checkWrite(key, field, value))));
-    return h;
+    if (!this.hashes.has(key)) this.hashes.set(key, new Map());
+    return this.hashes.get(key)!;
   }
 
   /**
@@ -546,18 +570,27 @@ export class FakeRedis {
     // lib/crypto.ts destroyContainerKeys.
     if (name === '-- nya:container-key-destroy') {
       if (this.hashes.get(keys[2])?.has(args[0])) return -1;
-      let n = 0;
+      const mark = `"container":"${args[0]}"`;
+      const stone = `{"container":"${args[0]}","on":"${args[1]}"}`;
+      const out: string[] = [];
       for (const id of args.slice(2)) {
         const record = this.hashes.get(keys[1])?.get(id);
-        if (record === undefined || record.includes(`"container":"${args[0]}"`)) {
-          if (record !== undefined) this.hdelNow(keys[1], [id]);
-          if (!this.hashes.get(keys[3])?.has(id)) this.hash(keys[3]).set(id, `{"container":"${args[0]}","on":"${args[1]}"}`);
-          n++;
+        const tomb = this.hashes.get(keys[3])?.get(id);
+        if (record !== undefined) {
+          if (!record.includes(mark)) continue;
+          this.hdelNow(keys[1], [id]);
+          if (tomb === undefined) this.hash(keys[3]).set(id, stone);
+          out.push(id);
+        } else if (tomb === undefined) {
+          this.hash(keys[3]).set(id, stone);
+          out.push(id);
+        } else if (tomb.includes(mark)) {
+          out.push(id);
         }
       }
       const cur = this.hashes.get(keys[0])?.get(args[0]);
       if (cur === undefined || !cur.includes('"destroyed"')) this.hash(keys[0]).set(args[0], `{"destroyed":"${args[1]}"}`);
-      return n;
+      return out;
     }
     if (name === '-- nya:container-entry-read') {
       const v = this.hashes.get(keys[0])?.get(args[0]);
