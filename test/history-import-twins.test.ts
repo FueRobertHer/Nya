@@ -53,6 +53,8 @@ const { importedChangedNote } = await import('@/lib/history-import/view');
 const routes = await import('@/app/api/history-import/route');
 const splitsRoute = await import('@/app/api/transaction-splits/route');
 const transactionsRoute = await import('@/app/api/transactions/route');
+const groupsRoute = await import('@/app/api/transaction-groups/route');
+const { ofxFile } = await import('@/lib/ofx-export');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
@@ -296,6 +298,23 @@ describe('through the read layer, and a total', () => {
     expect(await importedTwinsStore.get(ctx, 'item_chase')).toBeNull();
   });
 
+  test('undone, its pair goes with the connection’s next sync, and pairs nothing meanwhile', async () => {
+    const id = await importStatement();
+    plaid.added.push(COSTCO(150));
+    await sync();
+    plaid.modified.push(COSTCO(160.5));
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [id]: 'b_costco' } });
+    const import_id = (await importedTxnStore.get(ctx, 'acc_chk'))!.rows[0].import_id;
+    const undone = await routes.DELETE(
+      new Request('http://localhost/api/history-import', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: 'acc_chk', import_id, confirm: true }) })
+    );
+    expect(undone.status).toBe(200);
+    expect((await rows()).map((t) => t.transaction_id).sort()).toEqual(['b_costco', 'b_first']);
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toBeNull();
+  });
+
   test('pairs that can’t be read keep the account’s imported rows out, said, rather than count them beside the bank’s; a sync goes on', async () => {
     await importStatement();
     plaid.added.push(COSTCO(150));
@@ -338,6 +357,11 @@ describe('a split carried from the imported row', () => {
       [10.5, { was: 150 }, id],
     ]);
     expect(await moneyOut()).toBe(10 + 160.5);
+    // Its pairs unreadable, the amount an edit adds up to isn't known: 409.
+    const kept = await fake.hget<string>(ctxKey('imported-twins'), 'item_chase');
+    await fake.hset(ctxKey('imported-twins'), { item_chase: 'not ciphertext' });
+    expect((await put(id, [{ amount: 110.5, category_id: food }, { amount: 50, category_id: home }], (await (await import('@/lib/splits')).splitStore.get(ctx, id))!.updated_at)).status).toBe(409);
+    await fake.hset(ctxKey('imported-twins'), { item_chase: kept! });
     // An edit, made on the imported row where the split is kept, places what
     // the bank changed: its parts add up to the bank's amount now.
     const split = (await import('@/lib/splits')).splitStore;
@@ -350,6 +374,29 @@ describe('a split carried from the imported row', () => {
       [50, null],
     ]);
     expect(await moneyOut()).toBe(10 + 160.5);
+  });
+});
+
+describe('a place in a group carried from the imported row', () => {
+  test('the bank row takes it, and the group nets the bank’s amount now: the transaction counted once, in its group', async () => {
+    await storeBank([FIRST, bankTxn('b_payback', 38, -50, { name: 'ZELLE FROM SAM', merchant_name: null })]);
+    const id = await importStatement();
+    const t = (await (await transactionsRoute.GET(new Request('http://localhost/api/transactions?refresh=1'))).json()).categories;
+    const food = t.categories.find((c: { name: string }) => c.name.toLowerCase() === 'food and drink').id;
+    const made = await groupsRoute.POST(new Request('http://x/api/transaction-groups', { method: 'POST', body: JSON.stringify({ name: 'Costco with Sam', category_id: food, members: [id, 'b_payback'] }) }));
+    expect(made.status).toBe(200);
+    expect(await moneyOut()).toBe(10 + 100);
+    plaid.added.push(COSTCO(150));
+    await sync();
+    plaid.modified.push(COSTCO(160.5));
+    await sync();
+    const group = (await rows()).find((r) => r.group_members);
+    expect(group!.group_members!.map((m) => [m.transaction_id, m.amount, m.group_carried_from ?? null]).sort()).toEqual([
+      ['b_costco', 160.5, id],
+      ['b_payback', -50, null],
+    ]);
+    expect(group!.amount).toBe(110.5);
+    expect(await moneyOut()).toBe(10 + 110.5);
   });
 });
 
@@ -370,5 +417,28 @@ describe('the download', () => {
       ['b_costco', '160.5'],
       ['b_first', '10'],
     ]);
+    // The account's statement lists the bank's row once, and not the imported one.
+    const data = await collectUserData({ ctx, userId: null });
+    const statement = ofxFile(data, buildUserExport(data, new Date()), 'acc_chk', new Date());
+    if (!('file' in statement)) throw new Error(statement.refused);
+    const ofx = [...statement.file.pieces()].join('');
+    expect(ofx).toContain('<FITID>b_costco');
+    expect(ofx).not.toContain(`<FITID>${id}`);
+  });
+
+  test('pairs that can’t be read are said, and the file counts those rows by what each says now', async () => {
+    const id = await importStatement();
+    plaid.added.push(COSTCO(150));
+    await sync();
+    plaid.modified.push(COSTCO(160.5));
+    await sync();
+    await fake.hset(ctxKey('imported-twins'), { item_chase: 'not ciphertext' });
+    const doc = buildUserExport(await quietly(() => collectUserData({ ctx, userId: null })), new Date());
+    expect(doc.problems).toContainEqual(expect.objectContaining({ section: 'imported-twins', ids: ['item_chase'] }));
+    const file = exportFile(doc, 'transactions-csv');
+    expect(file.incomplete).toContain('imported-twins');
+    expect(file.notes.join(' ')).toContain('Not all of your pairs of imported and bank transactions could be read');
+    const [, ...csvRows] = parseCsv([...file.pieces()].join(''));
+    expect(csvRows.map((r) => r[TRANSACTION_COLUMNS.indexOf('transaction_id')]).sort()).toEqual(['b_costco', 'b_first', id].sort());
   });
 });
