@@ -2,16 +2,16 @@ import type { ReactNode } from 'react';
 import { TrustLinks } from './TrustLinks';
 
 // The frame of the public pages (app/security, app/privacy, app/developers,
-// app/open-download): the logo back into the app, a title, and the links
-// between the pages. Server-rendered and readable without signing in
-// (proxy.ts), so nothing in it reads stored data.
+// app/open-download, app/unsubscribe): the logo back into the app, a title,
+// and the links between the pages. Server-rendered and readable without
+// signing in (proxy.ts), so nothing in it reads stored data.
 export function InfoPage({
   page,
   title,
   intro,
   children,
 }: {
-  page: 'security' | 'privacy' | 'developers' | 'open-download';
+  page: 'security' | 'privacy' | 'developers' | 'open-download' | 'unsubscribe';
   title: string;
   intro: string;
   children: ReactNode;

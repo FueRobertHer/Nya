@@ -20,7 +20,13 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 //   - the ops routes (export, rotate-master, reencrypt, containers), via
 //     OPS_SECRET, and off entirely unless OPS_ENABLED=1 (lib/ops.ts);
 //   - the demo sign-in (Preview only, and only ever as a listed demo account;
-//     lib/demo.ts).
+//     lib/demo.ts);
+//   - the link that turns a weekly summary off (api/weekly-summary/
+//     unsubscribe), via the signed, expiring token in its own address
+//     (lib/weekly-summary/unsubscribe.ts). It must work from an email, signed
+//     out, and from a mail app's own one-click unsubscribe, which sends no
+//     cookie; it can only ever turn that summary off. Only that path: the rest
+//     of api/weekly-summary is gated as usual.
 //
 // Note the `$` anchors on the API entries: they exclude exactly those paths. A
 // bare prefix like `api/ingest/` would un-gate every future route under it.
@@ -31,7 +37,7 @@ import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-heade
 // here too.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/tags$|api/v1/rules$|api/v1/budgets$|api/v1/spending$|api/v1/cash-flow$|api/v1/recurring$|api/v1/goals$|api/v1/holdings$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/tags$|api/v1/rules$|api/v1/budgets$|api/v1/spending$|api/v1/cash-flow$|api/v1/recurring$|api/v1/goals$|api/v1/holdings$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|api/weekly-summary/unsubscribe$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
@@ -39,13 +45,15 @@ export const config = {
 // say how Nya protects data and who can read it (app/security, app/privacy),
 // which people read before deciding to sign up, the developer page
 // (app/developers), which documents the API for whoever writes a program
-// against it, and the page that opens a protected download in the browser
+// against it, the page that opens a protected download in the browser
 // (app/open-download), which must work after the account it came from is
-// gone. Exact paths.
+// gone, and the page a weekly summary's link opens (app/unsubscribe), which
+// asks before it turns the summary off, signed out, by posting the link's
+// token to the route above. Exact paths.
 // None of them reads stored data or has a server action of its own (Clerk's,
 // on every page, only clears a cache cookie); a page that does must never be
 // listed here.
-const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/privacy', '/developers', '/open-download']);
+const PUBLIC_PAGES: ReadonlySet<string> = new Set(['/login', '/security', '/privacy', '/developers', '/open-download', '/unsubscribe']);
 
 // Request headers a nonce could be read from (by Next.js, and by Clerk for its
 // script tags). Only this proxy sets them: whatever a request brings is dropped.
