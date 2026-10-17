@@ -22,6 +22,8 @@ import { unreadNotesOf } from '@/lib/fire/inputs';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
 import type { TagChange } from './TxnTagsNote';
+import { isVendorKey, MAX_VENDOR_NAME } from '@/lib/vendor-defaults';
+import { localDate } from '@/lib/local-date';
 
 /** A category chosen for a transaction: one of the person's, by id, or, with
  *  no categories loaded, words (as before categories had ids). */
@@ -43,9 +45,27 @@ export function recategorizedRow(t: Pick<Txn, 'paired'> | undefined, choice: Cat
     if (c) shown = { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
   }
   // The person's own now: a rule's category no longer shows (category_by_rule),
-  // so the row's edit form starts from it (components/ManualTxnSheet.tsx).
-  const own = { ...shown, category_by_rule: undefined };
+  // so the row's edit form starts from it (components/ManualTxnSheet.tsx); nor
+  // does a merchant's default, nor a category offered an approved row
+  // (lib/review-layer.ts), which the person's own always beats.
+  const own = { ...shown, category_by_rule: undefined, filed_by_default: undefined, review_suggestion: undefined };
   return t?.paired ? { ...own, paired: undefined, subcategory: null } : own;
+}
+
+/** What a recategorization says of the merchant, for its default
+ *  (lib/vendor-defaults.ts, app/api/recategorize): its vendor key and its
+ *  name as shown, when the row has a merchant (a bank's row, or one imported
+ *  into a linked account), and today, the day a new default files from. */
+export function merchantOf(t: Pick<Txn, 'vendor_key' | 'name'> | undefined): { vendor_key?: string; name?: string; today?: string } {
+  if (!t || !isVendorKey(t.vendor_key)) return {};
+  return { vendor_key: t.vendor_key, name: t.name.slice(0, MAX_VENDOR_NAME), today: localDate() };
+}
+
+/** Where the approval a row holds is kept when it isn't under the row's own
+ *  id (`review_via`: the pending transaction it replaced, or the row imported
+ *  from a file it stands for), so the category chosen is the one it holds. */
+export function approvalViaOf(t: Pick<Txn, 'review_via'> | undefined): { review_via?: string } {
+  return t?.review_via ? { review_via: t.review_via } : {};
 }
 
 /** Newest first, as /api/transactions orders them; the sort is stable. */
@@ -220,7 +240,13 @@ export function useTransactionEdits({
         res = await fetch('/api/recategorize', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ transaction_id, ...choice, ...(t?.source && t.account_id ? { account_id: t.account_id } : {}) }),
+          // With its merchant, a category chosen by id counts toward the merchant's default.
+          body: JSON.stringify({
+            transaction_id,
+            ...choice,
+            ...(t?.source && t.account_id ? { account_id: t.account_id } : {}),
+            ...('category_id' in choice ? { ...merchantOf(t), ...approvalViaOf(t) } : {}),
+          }),
         });
         if (res.ok) {
           // Its other side, a pair no more, as the server now shows it.

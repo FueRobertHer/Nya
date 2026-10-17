@@ -28,7 +28,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, OTHER, DAY, daysAgo, SYNCED_AT, seedPerson, seedOther, connectWithoutTransactions } = await import('./api-fixture');
+const { ctx, OTHER, DAY, daysAgo, seedPerson, seedOther, connectWithoutTransactions } = await import('./api-fixture');
 const { createToken, revokeToken, REQUESTS_PER_MINUTE } = await import('@/lib/api-tokens');
 const { OPERATIONS } = await import('@/lib/api-ops');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -41,6 +41,8 @@ const month = daysAgo(0).slice(0, 7);
 
 let token = '';
 let otherToken = '';
+/** When Chase last synced, as this test's seeding wrote it. */
+let SYNCED_AT = '';
 const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
@@ -49,7 +51,7 @@ beforeEach(async () => {
   delete process.env.CLERK_SECRET_KEY;
   delete process.env.CONTAINER_ID;
   await registerTestContainer(fake);
-  await seedPerson(fake);
+  ({ syncedAt: SYNCED_AT } = await seedPerson(fake));
   token = (await createToken(ctx, 'Tests')).token;
   plaidTouched.length = 0;
 });

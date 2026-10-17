@@ -48,7 +48,7 @@ const SOURCES: [string, string][] = [
   ['simplefin', 'from SimpleFIN'],
 ];
 
-type Preview = { matches: number; keep_category: number; keep_name: number; samples: { transaction_id: string; date: string; name: string; amount: number; currency: string | null; account_name: string }[] };
+type Preview = { matches: number; keep_category: number; keep_name: number; keep_approved?: number; samples: { transaction_id: string; date: string; name: string; amount: number; currency: string | null; account_name: string }[] };
 
 /** How long the form rests before it is previewed. */
 const PREVIEW_MS = 400;
@@ -322,6 +322,12 @@ export default function RuleSheet({
                 <p className="panel-note">
                   {preview.keep_category} keep{preview.keep_category === 1 ? 's' : ''} {preview.keep_category === 1 ? 'its' : 'their'} own category: one you chose (a choice made on
                   one transaction always wins), or a payment between your SimpleFIN accounts, which a rule never splits.
+                </p>
+              )}
+              {(preview.keep_approved ?? 0) > 0 && (
+                <p className="panel-note">
+                  {preview.keep_approved} you approved stay{preview.keep_approved === 1 ? 's' : ''} where you approved {preview.keep_approved === 1 ? 'it' : 'them'}: the rule&apos;s category is
+                  offered on {preview.keep_approved === 1 ? 'it' : 'each'}, never applied unasked.
                 </p>
               )}
               {preview.keep_name > 0 && (

@@ -9,15 +9,22 @@
 // `carried-annotations`, `transaction-annotations` and `tags`. A record the
 // file couldn't read is named under problems, and its transaction is treated
 // as the app treats it: whether it is excluded isn't known (null), and it
-// counts.
+// counts. So are merchants' default categories and what the person approved
+// (lib/review-layer.ts), from `vendor-defaults` and `transaction-approvals`:
+// an approved transaction is filed as it was approved, as in the app, and a
+// default that or an approval the file couldn't read files nothing, as the
+// app files nothing by one it can't read.
 
 import { applyLayers, type LayerInputs } from './txn-layers';
 import { carriedAnnotations, carriedExtras, isCarriedAnnotations, isTxnAnnotation, type CarriedAnnotation, type CarriedAnnotations, type TxnAnnotation } from './txn-annotations';
 import { isTagSet, liveTagIds, type TagSet } from './tags';
 import { compileRules, isRuleSet } from './rules';
-import { contentKey, type StoredTxn, type Txn } from './transactions';
+import { contentKey, vendorKey, type StoredTxn, type Txn } from './transactions';
 import { resolveId, type Link } from './link-core';
 import type { CategoryFacts, CategoryIndex } from './categories';
+import { isApproval, isReviewSettings, type Approval } from './review-store';
+import { isVendorDefaults } from './vendor-defaults';
+import { reviewLayerOf } from './review-layer';
 
 /** What the layers read, gathered from the file's parts. */
 export type ExportLayers = LayerInputs & { carried: Map<string, CarriedAnnotation> };
@@ -44,6 +51,24 @@ export function exportLayers(part: (key: string) => unknown, opts: { links: Map<
   const tags = isTagSet(tagPart) ? (tagPart as TagSet) : null;
   const rulePart = part('rules');
   const account = opts.links.size ? (id: string) => resolveId(id, opts.links) : undefined;
+  // The defaults and the approvals: what files a row and where an approved
+  // one stays. The queue's settings only decide what is marked to review,
+  // which the file's rows don't carry.
+  const approvals = new Map<string, Approval>();
+  for (const [id, value] of entries(part('transaction-approvals'))) if (isApproval(value)) approvals.set(id, value);
+  const settingsPart = part('review-settings');
+  const defaultsPart = part('vendor-defaults');
+  const review = reviewLayerOf(
+    {
+      settings: isReviewSettings(settingsPart) ? { on: settingsPart.on, since: settingsPart.since } : null,
+      settingsUnread: false,
+      defaults: isVendorDefaults(defaultsPart) ? defaultsPart : null,
+      defaultsUnread: false,
+      approvals,
+      approvalsUnknown: new Set(),
+    },
+    opts.ix
+  ).layer;
   return {
     records,
     unknown: new Set(opts.unknown ?? []),
@@ -52,6 +77,7 @@ export function exportLayers(part: (key: string) => unknown, opts: { links: Map<
     ix: opts.ix,
     account,
     carried: carriedAnnotations(carriedRecords, opts.links),
+    review,
   };
 }
 
@@ -68,7 +94,8 @@ export type Layered = {
   excluded_by_rule: boolean;
   /** The rules that match it, in the order they run. */
   rule_ids: string[];
-  /** The category a rule files it under, by id, where one does. */
+  /** The category the layers file it under, by id, where they do: an
+   *  approval's, a rule's or a merchant's default (lib/review-layer.ts). */
   rule_category?: string;
 };
 
@@ -115,6 +142,11 @@ export function layerBankRow(t: StoredTxn, inputs: ExportLayers, facts: Category
     account_ref: t.account_id,
     ...facts,
     iso_currency_code: t.iso_currency_code,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+    // The merchant, for its default, and the pending row a posted one
+    // replaced, whose approval is its own (lib/review-layer.ts).
+    vendor_key: vendorKey(t),
+    ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
     ...(carried?.excluded === true ? { excluded: true } : {}),
     ...(extras ? { carried: extras } : {}),
     ...(standsFor?.length ? { stands_for: [...standsFor] } : {}),
@@ -177,6 +209,8 @@ export function layerImportedRow(
     source: r.source,
     note: r.note,
     iso_currency_code: r.currency,
+    // Its merchant, as the read layer keys it (lib/history-import/read.ts).
+    vendor_key: vendorKey({ merchant_entity_id: null, merchant_name: null, name: r.name, institution_name: opts.institution }),
   } as unknown as Txn;
   return layered(row, inputs);
 }

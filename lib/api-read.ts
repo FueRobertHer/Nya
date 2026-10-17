@@ -885,6 +885,15 @@ export type ApiTransaction = {
    *  of a group's transactions is listed on its own; the group's net is what
    *  spending, budgets and categories count. */
   transaction_group: ApiTransactionGroup | null;
+  /** The review queue (lib/review-layer.ts): true when it waits for the
+   *  person to approve it (the queue is on, and it came from the bank,
+   *  SimpleFIN or a file since the queue's first day, with no approval that
+   *  still holds), false when it doesn't, null when that couldn't be read. */
+  needs_review: boolean | null;
+  /** When the person approved it, as it is now (null when they haven't, or
+   *  the bank changed its amount since). An approved transaction stays in
+   *  the category it was approved under, whatever a later rule says. */
+  reviewed_at: string | null;
 };
 
 /** One part of a split transaction. */
@@ -1046,6 +1055,8 @@ function toApiTransaction(
     excluded_by_rule: t.excluded_by_rule === true,
     splits: t.split_parts ? splitsOf(t.split_parts, ix) : null,
     transaction_group: t.group_outside ? outsideGroupOf(t, ix) : (t.group_id !== undefined && groups.get(t.group_id)) || null,
+    needs_review: t.needs_review === true ? true : t.review_unknown ? null : false,
+    reviewed_at: t.reviewed_at ?? null,
   };
 }
 

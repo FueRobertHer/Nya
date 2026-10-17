@@ -65,6 +65,10 @@ import { useTagList } from './tags-state';
 import TagsCard from './TagsCard';
 import { newDraft, useRules } from './rules-state';
 import RulesCard from './RulesCard';
+import ReviewSettingsCard from './ReviewSettingsCard';
+import VendorDefaultsCard from './VendorDefaultsCard';
+import { useReview } from './review-state';
+import { countToReview } from '@/lib/review-layer';
 import RuleSheet from './RuleSheet';
 import { indexTaxonomy } from '@/lib/categories';
 import { ruleSentence, sortedRules } from '@/lib/rules';
@@ -750,6 +754,11 @@ export default function Dashboard({
     }
   }, [requestBackfill]);
 
+  // The review queue (components/review-state.ts), from each transactions
+  // load; it reads the list again through the edits below.
+  const review = useReview({ setTxns, refresh: () => txnEdits.refresh(), reload: () => loadTransactions() });
+  const acceptReview = review.accept;
+
   const loadTransactions = useCallback(async (force = false) => {
     setTxnsLoading(true);
     try {
@@ -762,9 +771,10 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
-      // The categories the rows were filed by, and the tags they carry.
+      // The categories the rows were filed by, the tags they carry, and the queue.
       acceptCategories(data.categories);
       acceptTags(data.tags);
+      acceptReview(data.review);
       setTxnNotes(data.notes ?? []);
       setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
@@ -778,7 +788,7 @@ export default function Dashboard({
     } finally {
       setTxnsLoading(false);
     }
-  }, [acceptCategories, acceptTags]);
+  }, [acceptCategories, acceptTags, acceptReview]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -2708,6 +2718,12 @@ export default function Dashboard({
                   <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
                 )}
 
+                {/* Merchants' default categories, beside the rules
+                    (components/VendorDefaultsCard.tsx), and the review queue
+                    (components/ReviewSettingsCard.tsx): both applied on read. */}
+                {manageMode && <VendorDefaultsCard taxonomy={categories.taxonomy} onChanged={() => loadTransactions()} />}
+                {manageMode && <ReviewSettingsCard review={review} toReview={countToReview(txns ?? [])} />}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2748,6 +2764,7 @@ export default function Dashboard({
                 // Splits and groups (#39): applied after the server's cache,
                 // so the list is read again quietly after a change.
                 onSplitsChanged={txnEdits.refresh}
+                review={review}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}

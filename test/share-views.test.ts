@@ -32,17 +32,20 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { ctx, seedPerson, seedOther, daysAgo, DAY, CHASE_TXNS, SYNCED_AT, txn } = await import('./api-fixture');
+const { ctx, seedPerson, seedOther, daysAgo, DAY, chaseTxns, syncedAt, txn } = await import('./api-fixture');
 const { readNetWorth, readNetWorthAndHistory, readSpending, readBudgets } = await import('@/lib/api-read');
 const { tidy } = await import('@/lib/totals');
 
-// The fixture dates its bank's transactions when it is first loaded (another
-// test file may have loaded it before this one), and everything else when it
-// seeds: the clock is held at the day it was loaded, at noon, so both count
-// from the same day. Which months they fall in is worked out from their
-// dates, never assumed.
+// The fixture dates everything it seeds from the clock when it seeds, and the
+// clock is held at noon of the day this file loaded, so the bank's rows
+// below are the ones it seeds. Which months they fall in is worked out from
+// their dates, never assumed.
+const NOW = new Date(`${new Date().toISOString().slice(0, 10)}T12:00:00.000Z`);
+setSystemTime(NOW);
+const CHASE_TXNS = chaseTxns();
+const SYNCED_AT = syncedAt();
+setSystemTime();
 const dateOf = (id: string) => CHASE_TXNS.find((t) => t.transaction_id === id)!.date;
-const NOW = new Date(Date.parse(`${dateOf('t_coffee')}T12:00:00.000Z`) + 2 * DAY);
 const TODAY = NOW.toISOString().slice(0, 10);
 const MONTH = TODAY.slice(0, 7);
 const monthOf = (day: string) => day.slice(0, 7);
