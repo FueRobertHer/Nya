@@ -78,7 +78,7 @@ beforeEach(async () => {
     { transaction_id: 't_dinner', account_id: 'acct_joint', amount: 120, iso_currency_code: 'USD', date: daysAgo(4), name: 'BISTRO', merchant_name: 'Bistro', pending: false, counterparties: [] },
     { transaction_id: 't_venmo', account_id: 'acct_joint', amount: -60, iso_currency_code: 'USD', date: daysAgo(2), name: 'VENMO CASHOUT', merchant_name: null, pending: false, counterparties: [] },
   ];
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(token) }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }) });
   const inst = { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account('acct_joint'), balance: 500, currency: 'USD' }] };
   await rememberAccounts(TEST_CTX, [inst as any]);
   await links.recordDirectory(TEST_CTX, [inst as any]);

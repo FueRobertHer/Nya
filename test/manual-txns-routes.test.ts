@@ -662,7 +662,7 @@ describe('excluding a transaction', () => {
 
   test('what a later release says about a transaction survives an edit here', async () => {
     await fake.hset(ctxKey('transaction-annotations'), {
-      plaid_txn_1: await encrypt(JSON.stringify({ excluded: true, note: 'birthday dinner', updated_at: '2026-10-01T00:00:00.000Z' })),
+      plaid_txn_1: await encrypt(TEST_CTX, JSON.stringify({ excluded: true, note: 'birthday dinner', updated_at: '2026-10-01T00:00:00.000Z' })),
     });
     await exclude({ transaction_id: 'plaid_txn_1', excluded: false });
     expect(await txnAnnotationStore.get(ctx, 'plaid_txn_1')).toMatchObject({ note: 'birthday dinner', excluded: false });
@@ -693,7 +693,7 @@ describe('excluding a transaction', () => {
   test('past the limit a new one is refused; one already there can still change', async () => {
     const hash = new Map<string, string>();
     for (let i = 0; i < MAX_ANNOTATIONS; i++) hash.set(`t${i}`, 'x');
-    hash.set('t0', await encrypt(JSON.stringify({ excluded: true, updated_at: '2026-10-01T00:00:00.000Z' })));
+    hash.set('t0', await encrypt(TEST_CTX, JSON.stringify({ excluded: true, updated_at: '2026-10-01T00:00:00.000Z' })));
     (fake as any).hashes.set(ctxKey('transaction-annotations'), hash);
     const r = await exclude({ transaction_id: 'one_more', excluded: true });
     expect(r).toEqual({ status: 400, body: { error: 'At most 20,000 transactions can be excluded, tagged or noted by hand. Clear some first.' } });
@@ -707,7 +707,7 @@ describe('excluding a transaction', () => {
 });
 
 describe('in /api/transactions', () => {
-  const ITEM = async () => ({ item_id: 'item_a', institution_name: 'Big Bank', encrypted_access_token: await encrypt('access-token') });
+  const ITEM = async () => ({ item_id: 'item_a', institution_name: 'Big Bank', encrypted_access_token: await encrypt(TEST_CTX, 'access-token') });
   const plaid = (over: Record<string, unknown>) => ({
     transaction_id: 'p1',
     account_id: 'acct_chk',

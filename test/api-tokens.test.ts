@@ -238,7 +238,7 @@ describe('checking a token', () => {
       expect(await authenticate(bearer(token), NOW)).toBeNull();
       // A field this version doesn't know (scopes, say): never more access than meant.
       const later = { v: 1, label: 'Raycast', hash: sha256(parseToken(token)!.secret), created_at: info.created_at, last_used_at: null, scopes: ['read'] };
-      await fake.hset(ctxKey('api-tokens'), { [info.id]: await encrypt(JSON.stringify(later)) });
+      await fake.hset(ctxKey('api-tokens'), { [info.id]: await encrypt(TEST_CTX, JSON.stringify(later)) });
       expect(await authenticate(bearer(token), NOW)).toBeNull();
     } finally {
       console.error = quiet;
@@ -461,7 +461,7 @@ describe('listing and revoking', () => {
     const damaged = await createToken(ctx, 'Damaged');
     const later = await createToken(ctx, 'Later');
     await fake.hset(ctxKey('api-tokens'), { [damaged.info.id]: 'not-ciphertext-but-long-enough-to-be-tried' });
-    await fake.hset(ctxKey('api-tokens'), { [later.info.id]: await encrypt(JSON.stringify({ v: 2 })) });
+    await fake.hset(ctxKey('api-tokens'), { [later.info.id]: await encrypt(TEST_CTX, JSON.stringify({ v: 2 })) });
     const listed = await listTokens(ctx);
     expect(listed).toEqual({ tokens: [], unreadable: [damaged.info.id], unrecognised: [later.info.id] });
     await expect(revokeToken(ctx, damaged.info.id)).rejects.toThrow('could not be read');

@@ -135,7 +135,7 @@ const STATEMENT = (() => {
 async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(ctx, {
       schema_version: 2,
       cursor: 'c1',
       accounts: { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -219,7 +219,7 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'access-sandbox-chase') });
   await rememberAccounts(ctx, [
     {
       item_id: 'item_chase',

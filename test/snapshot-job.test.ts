@@ -561,3 +561,49 @@ describe('rate limits', () => {
     expect(isRateLimited(undefined)).toBe(false);
   });
 });
+
+// A data key per container (docs/architecture.md, "Per-container data keys"):
+// each container's run opens its own key first, so one that can't be opened
+// fails that container alone, before anything reads leniently.
+describe('each container’s run, under its own key', () => {
+  test('a container whose key can’t be opened fails alone, saying so without the key; the others write under theirs', async () => {
+    const c = await import('@/lib/crypto');
+    const { accessLogStore, slotOf } = await import('@/lib/access-log');
+    process.env.MASTER_KEY = Buffer.alloc(32, 97).toString('base64');
+    c.forgetActiveKey();
+    const registry = await register([[A, 'active'], [B, 'active'], [C, 'active']]);
+    const keyOf: Record<string, string> = {};
+    for (const id of [A, B, C]) {
+      const p = (await c.prepareContainerKey(id, { born: true }))!;
+      await c.claimContainerKey(p);
+      keyOf[id] = p.id;
+    }
+    await fake.hdel(c.keysHashKey(), keyOf[C]);
+    c.forgetActiveKey();
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
+    try {
+      const report = await runSnapshots(registry, {
+        scheduledFor: DATE,
+        work: async (ctx) => {
+          await accessLogStore.set(ctx, 'f'.repeat(32), record);
+          return { status: 'recorded' };
+        },
+      });
+      expect(report.results.map((r) => [r.container, r.status])).toEqual([
+        [A, 'recorded'],
+        [B, 'recorded'],
+        [C, 'failed'],
+      ]);
+      const failed = report.results.find((r) => r.container === C) as any;
+      expect(failed.reason).toBe('The container’s data key can’t be used just now.');
+      expect(JSON.stringify(report)).not.toContain(keyOf[C]);
+      for (const id of [A, B]) {
+        const stored = fake.hashes.get(kc({ container: id }, 'sharing-access-log'))!.get('f'.repeat(32))!;
+        expect(c.formatOf(stored).keyId).toBe(keyOf[id]);
+      }
+      expect(fake.hashes.get(kc({ container: C }, 'sharing-access-log'))).toBeUndefined();
+    } finally {
+      c.forgetActiveKey();
+    }
+  });
+});

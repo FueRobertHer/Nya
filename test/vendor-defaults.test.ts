@@ -220,7 +220,7 @@ describe('the store', () => {
   test('one saved by a later release (a field this one doesn’t know) is unrecognised: never applied, never removed', async () => {
     const later = { version: 1, vendors: [{ id: 'v1', vendor_key: 'nm:chase::costco', name: 'Costco', votes: [{ category_id: 'g', at: at(0).toISOString() }], updated_at: at(0).toISOString(), weight: 2 }] };
     expect(isVendorDefaults(later)).toBe(false);
-    await fake.set(ctxKey('vendor-defaults'), await encrypt(JSON.stringify(later)));
+    await fake.set(ctxKey('vendor-defaults'), await encrypt(ctx, JSON.stringify(later)));
     expect(await readVendorDefaults(ctx)).toEqual({ state: null, unreadable: false, unrecognised: true });
     expect(await repairDefaults(ctx)).toBe(false);
     expect(fake.strings.has(ctxKey('vendor-defaults'))).toBe(true);

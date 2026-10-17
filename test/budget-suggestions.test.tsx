@@ -296,11 +296,11 @@ afterEach(() => {
 
 /** A bank's stored rows, as a sync leaves them. */
 async function seedBank(rows: ReturnType<typeof txn>[]) {
-  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Bank', encrypted_access_token: await encrypt('access-sandbox-x') });
+  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Bank', encrypted_access_token: await encrypt(ctx, 'access-sandbox-x') });
   const accounts = { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } };
   await fake.set(
     ctxKey('txns:item_bank'),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(ctx, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
   await syncsStore.set(ctx, 'item_bank', { at: new Date().toISOString() });
 }

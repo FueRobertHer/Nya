@@ -29,7 +29,7 @@ const { sampleSeries, comparePageKeys } = await import('@/lib/api-read');
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
-const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
+const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
 const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
 
 beforeEach(() => {
@@ -101,7 +101,7 @@ describe('each account’s newest measured balance', () => {
 
 const ITEM = { item_id: 'item_a', institution_name: 'Test Bank', encrypted_access_token: '' };
 const stored = (txns: Record<string, unknown>, over: Record<string, unknown> = {}) =>
-  encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts: { acct_1: { name: 'Checking' }, acct_2: { name: 'Savings' } }, txns, ...over });
+  encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts: { acct_1: { name: 'Checking' }, acct_2: { name: 'Savings' } }, txns, ...over });
 const row = (id: string, account_id: string, daysBack: number, amount: number) => ({
   transaction_id: id,
   pending_transaction_id: null,
@@ -164,9 +164,9 @@ describe('an Item’s rows as stored', () => {
   test('a connection without Transactions is answered as a sync would answer it, from what is stored', async () => {
     const unbilled = { ...ITEM, transactions_billed: false };
     const remember = async (accounts: { account_id: string; type: string }[]) =>
-      fake.hset(ctxKey('accounts:meta'), { item_a: await encrypt(JSON.stringify(accounts.map((a) => ({ ...a, name: a.account_id })))) });
+      fake.hset(ctxKey('accounts:meta'), { item_a: await encrypt(TEST_CTX, JSON.stringify(accounts.map((a) => ({ ...a, name: a.account_id })))) });
     const refusal = async (code: string, accounts: string[], at = new Date().toISOString()) =>
-      fake.set(ctxKey('txns:item_a'), await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at, code, accounts } }));
+      fake.set(ctxKey('txns:item_a'), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at, code, accounts } }));
     type Read = Awaited<ReturnType<typeof storedItemTransactions>>;
     const none = (noTransactions: Read['noTransactions']): Read => ({ txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions });
     const notYet: Read = { txns: [], older: [], note: 'Test Bank: no transactions stored yet; open the app to load them', coverage: 'missing', synced_at: null, first_date: null, never_synced: true };
@@ -207,7 +207,7 @@ describe('an Item’s rows as stored', () => {
       transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
     });
     syncPages = Array.from({ length: 50 }, (_, i) => page(i, true));
-    const item = { ...ITEM, encrypted_access_token: await encrypt('access-sandbox-x') };
+    const item = { ...ITEM, encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-x') };
     const quiet = console.warn;
     console.warn = () => {};
     try {
@@ -227,10 +227,10 @@ describe('an Item’s rows as stored', () => {
   test('a sync that saves stamps when, and the stamp survives the next', async () => {
     syncPages = [{ added: [], modified: [], removed: [], accounts: [], next_cursor: 'c2', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' }];
     await fake.set(ctxKey('txns:item_a'), await stored({ t1: row('t1', 'acct_1', 1, 5) }));
-    const item = { ...ITEM, encrypted_access_token: await encrypt('access-sandbox-x') };
+    const item = { ...ITEM, encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-x') };
     const before = Date.now();
     await syncItemTransactions(ctx, item);
-    const state = await decodeJsonBlob<any>((await fake.get<string>(ctxKey('txns:item_a')))!);
+    const state = await decodeJsonBlob<any>(TEST_CTX, (await fake.get<string>(ctxKey('txns:item_a')))!);
     expect(Date.parse(state.synced_at)).toBeGreaterThanOrEqual(before);
     expect((await storedItemTransactions(ctx, item)).synced_at).toBe(state.synced_at);
   });
@@ -239,7 +239,7 @@ describe('an Item’s rows as stored', () => {
 describe('remembered accounts, for a display that names what it can’t show', () => {
   test('an Item whose record can’t be read is named, the rest read', async () => {
     await fake.hset(ctxKey('accounts:meta'), {
-      item_a: await encrypt(JSON.stringify([{ account_id: 'a1', name: 'Checking', type: 'depository' }])),
+      item_a: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'a1', name: 'Checking', type: 'depository' }])),
       item_b: DAMAGED,
     });
     const report = await rememberedAccountsReport(ctx);
@@ -248,7 +248,7 @@ describe('remembered accounts, for a display that names what it can’t show', (
   });
 
   test('changes nothing (a field in the old shape stays), and storage failing throws', async () => {
-    await fake.hset(ctxKey('accounts:meta'), { a1: await encrypt(JSON.stringify({ account_id: 'a1', name: 'old shape', type: 'depository' })) });
+    await fake.hset(ctxKey('accounts:meta'), { a1: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'a1', name: 'old shape', type: 'depository' })) });
     expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: {}, unreadable: [] });
     expect(fake.hashes.get(ctxKey('accounts:meta'))?.has('a1')).toBe(true);
     fake.failNext('hgetall');

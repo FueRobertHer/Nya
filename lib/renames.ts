@@ -36,7 +36,7 @@ export async function readRenamesReport(ctx: Ctx): Promise<{ renames: Record<str
     await Promise.all(
       Object.entries(map).map(async ([key, blob]) => {
         try {
-          out[key] = await decrypt(blob);
+          out[key] = await decrypt(ctx, blob);
         } catch {
           // undecryptable rename (rotated key) -- drop it
           ok = false;
@@ -58,7 +58,7 @@ export async function readRenamesStrict(ctx: Ctx): Promise<Map<string, string>> 
   const map = (await redis().hgetall<Record<string, string>>(RENAMES_HASH(ctx))) ?? {};
   const out = new Map<string, string>();
   for (const [key, name] of await Promise.all(
-    Object.entries(map).map(async ([key, blob]) => [key, await decrypt(String(blob))] as const)
+    Object.entries(map).map(async ([key, blob]) => [key, await decrypt(ctx, String(blob))] as const)
   )) {
     out.set(key, name);
   }
@@ -66,7 +66,7 @@ export async function readRenamesStrict(ctx: Ctx): Promise<Map<string, string>> 
 }
 
 export async function setRename(ctx: Ctx, vendor_key: string, name: string): Promise<void> {
-  await redis().hset(RENAMES_HASH(ctx), { [vendor_key]: await encrypt(name) });
+  await redis().hset(RENAMES_HASH(ctx), { [vendor_key]: await encrypt(ctx, name) });
 }
 
 /** Remove a rename, reverting the vendor to its Plaid-provided name. */

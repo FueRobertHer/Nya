@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server';
+import { ContainerKeyError } from '@/lib/crypto';
 import { StoredDataUnreadableError, describeUnreadable } from '@/lib/repo';
 import { loggable } from '@/lib/log-safe';
 import { countTokenFailure, tokenFailuresExhausted, API_AUTH_WINDOW_SECONDS } from '@/lib/rate-limit';
@@ -26,11 +27,13 @@ import { checkLink, parseLinkToken, takeUnsubscribe, turnOff, OFF_MESSAGE, REFUS
 // flood of them is turned away (429) for the rest of the window before
 // anything is read. A token that works is counted against its container's
 // limit (lib/weekly-summary/store.ts). Only a working token is told that its
-// data can't be reached just now (503).
+// data can't be reached just now (503): its container being restored, or its
+// data key unusable once the link checked out.
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
 const refused = () => NextResponse.json({ error: REFUSED_MESSAGE }, { status: 400, headers: NO_STORE });
+const unavailable = () => NextResponse.json({ error: 'Your data can’t be reached just now. Try the link again later.' }, { status: 503, headers: NO_STORE });
 
 export async function GET(req: Request) {
   const token = new URL(req.url).searchParams.get('t');
@@ -52,13 +55,19 @@ export async function POST(req: Request) {
       await countTokenFailure(req);
       return refused();
     }
-    if (check.kind === 'unavailable') return NextResponse.json({ error: 'Your data can’t be reached just now. Try the link again later.' }, { status: 503, headers: NO_STORE });
+    if (check.kind === 'unavailable') return unavailable();
     const allowed = await takeUnsubscribe(check.ctx);
     if (!allowed.ok) return NextResponse.json({ error: 'This link was used too often just now. Try again later.' }, { status: 429, headers: { ...NO_STORE, 'Retry-After': String(allowed.retryAfterSeconds) } });
     await turnOff(check.ctx);
     console.log('Weekly summary: turned off from its link.');
     return NextResponse.json({ ok: true, message: OFF_MESSAGE }, { headers: NO_STORE });
   } catch (err) {
+    // Its data key, once the link checked out (a value still under the shared
+    // key read, its own key couldn't be used to write).
+    if (err instanceof ContainerKeyError) {
+      console.error('Weekly summary: a link could not turn it off, as the data key of its container can’t be used just now.');
+      return unavailable();
+    }
     if (err instanceof StoredDataUnreadableError) {
       console.error('Weekly summary: a link could not turn it off, as its setting could not be read.', describeUnreadable(err));
       return NextResponse.json(

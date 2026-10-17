@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
 
 // Budget rollover and income carryover (#37) through the app's routes: the
 // month of budgets read from the stored history (app/api/budgets/month,
@@ -92,11 +92,11 @@ afterEach(() => expect(plaidTouched).toEqual([]));
 async function seedBank(rows: ReturnType<typeof txn>[], opts: { item?: string; name?: string; for?: typeof ctx } = {}) {
   const item = opts.item ?? 'item_bank';
   const who = opts.for ?? ctx;
-  await saveItem(who, { item_id: item, institution_name: opts.name ?? 'Bank', encrypted_access_token: await encrypt('access-sandbox-x') });
+  await saveItem(who, { item_id: item, institution_name: opts.name ?? 'Bank', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-x') });
   const accounts = { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } };
   await fake.set(
     ctxKey(`txns:${item}`, who),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
   await syncsStore.set(who, item, { at: new Date().toISOString() });
 }
@@ -571,7 +571,7 @@ describe('what can’t be read', () => {
     expect((await month()).status).toBe(200);
     const good = (await fake.get<string>(ctxKey('budget-months')))!;
     let amount = 100;
-    for (const bad of ['not-ciphertext-at-all-but-long-enough', await encrypt(JSON.stringify({ version: 1, since: NOW, categories: {}, groups: {}, targets: [] }))]) {
+    for (const bad of ['not-ciphertext-at-all-but-long-enough', await encrypt(TEST_CTX, JSON.stringify({ version: 1, since: NOW, categories: {}, groups: {}, targets: [] }))]) {
       await fake.set(ctxKey('budget-months'), bad);
       const read = await month();
       expect(read.status).toBe(409);
@@ -645,7 +645,7 @@ describe('the stores', () => {
   });
 
   test('a value the seam can’t use is told apart from damage', async () => {
-    await fake.set(ctxKey('budget-months'), await encrypt(JSON.stringify({ version: 2, since: NOW, categories: {}, groups: {} })));
+    await fake.set(ctxKey('budget-months'), await encrypt(TEST_CTX, JSON.stringify({ version: 2, since: NOW, categories: {}, groups: {} })));
     const err = await budgetMonthsStore.get(ctx).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(UnreadableValueError);
     expect((err as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
@@ -827,11 +827,11 @@ describe('accounts that end (#50): their rows leave every month from their day, 
   /** A card at a connection of its own, as a sync leaves it, recorded as the
    *  dashboard records its accounts. */
   async function seedCard(rows: ReturnType<typeof txn>[]) {
-    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt('access-sandbox-y') });
+    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-y') });
     const accounts = { acc_card: { name: 'Card', official_name: null, type: 'credit', subtype: 'credit card', mask: '2222', balances: null } };
     await fake.set(
       ctxKey('txns:item_card'),
-      await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+      await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
     );
     await syncsStore.set(ctx, 'item_card', { at: new Date().toISOString() });
     await rememberAccounts(ctx, [{ item_id: 'item_card', accounts: [{ account_id: 'acc_card', name: 'Card', mask: '2222', type: 'credit' }], error: null }]);

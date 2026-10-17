@@ -50,7 +50,7 @@ const { checkItemUsage, readFlagged, unusedKind, unusedDays, DEFAULT_UNUSED_DAYS
 const cronRoute = await import('@/app/api/plaid/check-items/route');
 
 async function link(item_id: string, token: string, accounts: string[]) {
-  await saveItem(ctx, { item_id, institution_name: `Bank ${item_id}`, encrypted_access_token: await encrypt(token) });
+  await saveItem(ctx, { item_id, institution_name: `Bank ${item_id}`, encrypted_access_token: await encrypt(TEST_CTX, token) });
   plaid.accounts[token] = accounts;
 }
 

@@ -7,6 +7,7 @@
 // fails stays with the store.
 
 import { encrypt, decrypt } from './crypto';
+import type { Ctx } from './containers';
 
 // Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
 // *request-size* ceiling is 10 MB, and a get/set of an Item's blob is one
@@ -84,21 +85,22 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** JSON, gzipped, base64-wrapped and encrypted: what a store writes. */
-export async function encodeJsonBlob(value: unknown): Promise<string> {
-  return encodeJsonText(JSON.stringify(value));
+/** JSON, gzipped, base64-wrapped and encrypted for the container it is
+ *  stored in: what a store writes. */
+export async function encodeJsonBlob(ctx: Ctx, value: unknown): Promise<string> {
+  return encodeJsonText(ctx, JSON.stringify(value));
 }
 
 /** The same for JSON text already serialized, so a writer that checked that
  *  text (lib/repo.ts) stores exactly what it checked. */
-export async function encodeJsonText(json: string): Promise<string> {
-  return encrypt(bytesToBase64(await gzipString(json)));
+export async function encodeJsonText(ctx: Ctx, json: string): Promise<string> {
+  return encrypt(ctx, bytesToBase64(await gzipString(json)));
 }
 
 /** The reverse. Throws on anything it can't decrypt or parse; the caller
  *  decides what an unreadable blob means, and it must never mean "empty". */
-export async function decodeJsonBlob<T>(blob: string): Promise<T> {
-  const inner = await decrypt(blob);
+export async function decodeJsonBlob<T>(ctx: Ctx, blob: string): Promise<T> {
+  const inner = await decrypt(ctx, blob);
   // Legacy blobs (written before compression) stored the JSON string directly.
   // base64-decoding real JSON throws (it starts with '{', not a base64 char),
   // so a failed unwrap means legacy: parse the decrypted string as-is.
@@ -125,7 +127,7 @@ const GZIP_BASE64 = 'H4sI';
  * whatever it cannot decompress as JSON, which would turn such a failure into a
  * parse error that looks like damaged data.
  */
-export async function decryptJsonText(blob: string): Promise<string> {
-  const inner = await decrypt(blob);
+export async function decryptJsonText(ctx: Ctx, blob: string): Promise<string> {
+  const inner = await decrypt(ctx, blob);
   return inner.startsWith(GZIP_BASE64) ? gunzipToString(base64ToBytes(inner)) : inner;
 }

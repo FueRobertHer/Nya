@@ -699,3 +699,54 @@ beforeAll(() => {
   // Each endpoint's route file exists for every operation (imported above).
   expect(Object.keys(routes).sort()).toEqual(OPERATIONS.map((o) => o.name).sort());
 });
+
+// A data key per container (docs/architecture.md, "Per-container data keys"):
+// a token reads its own container, under that container's key, and one whose
+// key can't be opened is unavailable, saying nothing of the key.
+const { prepareContainerKey, claimContainerKey, forgetActiveKey, keysHashKey, containerKeysKey, formatOf } = await import('@/lib/crypto');
+describe('with a data key per container', () => {
+  const giveKey = async (container: any) => {
+    const p = (await prepareContainerKey(container, { born: false }))!;
+    expect((await claimContainerKey(p)).outcome).toBe('made');
+    return p.id;
+  };
+  let keyOf: Record<string, string> = {};
+  beforeEach(async () => {
+    fake.reset();
+    forgetEpochs();
+    process.env.MASTER_KEY = Buffer.alloc(32, 93).toString('base64');
+    forgetActiveKey();
+    await registerTestContainer(fake);
+    await fake.hset('test:containers', { [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-02-01T00:00:00.000Z' }) });
+    keyOf = { [ctx.container]: await giveKey(ctx.container), [OTHER.container]: await giveKey(OTHER.container) };
+    await seedPerson(fake);
+    await seedOther(fake);
+    token = (await createToken(ctx, 'Tests')).token;
+  });
+  // The map entries are kept for a minute: never into the next test.
+  afterEach(() => forgetActiveKey());
+
+  test('every value is under its own container’s key, and a token reads its own', async () => {
+    const own = (container: string) =>
+      [...(fake as any).strings, ...[...(fake as any).hashes].flatMap(([k, h]: [string, Map<string, string>]) => [...h].map(([, v]) => [k, v]))]
+        .filter(([k, v]: [string, string]) => k.startsWith(`test:c:${container}:`) && /^v2\./.test(v))
+        .map(([, v]: [string, string]) => formatOf(v).keyId);
+    expect(new Set(own(ctx.container))).toEqual(new Set([keyOf[ctx.container]]));
+    expect(new Set(own(OTHER.container))).toEqual(new Set([keyOf[OTHER.container]]));
+    const mine = await call('transactions');
+    expect(mine.res.status).toBe(200);
+    expect(JSON.stringify(mine.body)).not.toContain('OTHER-SECRET-TXN');
+    expect(mine.body.transactions.length).toBeGreaterThan(0);
+  });
+
+  test('a container whose key can’t be opened is unavailable, and its answer says nothing of the key', async () => {
+    await fake.hdel(keysHashKey(), keyOf[ctx.container]);
+    forgetActiveKey();
+    const { res, body } = await quietly(() => call('accounts'));
+    expect(res.status).toBe(503);
+    expect(body.error.code).toBe('unavailable');
+    expect(JSON.stringify(body)).not.toContain(keyOf[ctx.container]);
+    // The map still names it: nothing was written under another key meanwhile.
+    expect(fake.hashes.get(containerKeysKey())!.has(ctx.container)).toBe(true);
+  });
+});

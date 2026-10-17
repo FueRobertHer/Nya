@@ -166,7 +166,7 @@ export async function readInvStore(ctx: Ctx, item_id: string): Promise<InvStoreS
   if (!blob) return emptyState();
   let parsed: any;
   try {
-    parsed = await decodeJsonBlob<any>(blob);
+    parsed = await decodeJsonBlob<any>(ctx, blob);
   } catch (err) {
     throw new InvStoreUnreadableError(item_id, err);
   }
@@ -189,7 +189,7 @@ type WriteOutcome = 'written' | 'oversize' | 'error' | 'item-gone';
 
 async function writeInvStore(ctx: Ctx, item_id: string, state: InvStoreState): Promise<WriteOutcome> {
   try {
-    const encoded = await encodeJsonBlob(state);
+    const encoded = await encodeJsonBlob(ctx, state);
     // Refused, never trimmed: dropping the oldest rows would drop exactly the
     // ones no fetch can bring back (the same call as lib/transactions.ts).
     if (encoded.length > maxBlobChars()) {
@@ -655,7 +655,7 @@ export async function syncInvestments(ctx: Ctx,
 
     let access_token: string;
     try {
-      access_token = await decrypt(item.encrypted_access_token);
+      access_token = await decrypt(ctx, item.encrypted_access_token);
     } catch {
       const base = state ? view(state) : { rows: [], coverage: {}, unconfirmed: {}, unconfirmedIds: [] };
       return { ...base, note: 'Could not decrypt stored credentials', pending: false, storeNote, busy: false };

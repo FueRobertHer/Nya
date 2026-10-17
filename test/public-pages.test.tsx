@@ -656,3 +656,68 @@ describe('API tokens, on both pages', () => {
     expect(privacyHtml()).toContain('href="/developers"');
   });
 });
+
+// A data key per account (docs/operations.md, "Per-container data keys"). The
+// pages read no stored data, so they say it conditionally, and never claim a
+// key of its own for an account made before it, until it is moved.
+describe('a data key per account, on both pages', () => {
+  const OWN =
+    'Each account made on this version of Nya normally has a data key of its own from the start, and an account made before it (or one made while a key couldn’t be) has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
+  const DESTROYED =
+    'Deleting an account destroys its own key, so nothing encrypted under it can be decrypted from any copy Nya keeps, normally within minutes of the deletion and at the latest after the next nightly backup that succeeds. The encrypted copies stay in backups, unreadable, until they are deleted, and the plain text in them stays readable until then. Copies under a shared key stay readable with it until they are deleted.';
+
+  test('with a master key and backups: what deleting the key does, when, and what it doesn’t reach', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('kept');
+    for (const page of [security(), privacy()]) {
+      expect(page).toContain(OWN);
+      expect(page).toContain(DESTROYED);
+    }
+    const sec = security();
+    expect(sec).toContain('A backup of the keys that whoever runs this copy of Nya downloaded by hand, for as long as they keep it.');
+    expect(sec).toContain('A backup taken while an older version of Nya ran, which holds every key.');
+    expect(sec).toContain('A record that the account existed: its random id and the day its key was destroyed, kept for good, so that a restored backup never brings the account back.');
+    expect(sec).toContain('in a file of their own kept beside it, the data keys in their locked form');
+    expect(sec).toContain('the last 7 nights’ are kept, each checked before an older one is deleted');
+    // Never more than is so: a key can be born late, and one gone from the database without a deletion is let go in time.
+    expect(sec).toContain('Each account made on this version of Nya normally has a data key of its own from the start');
+    expect(sec).toContain('A key leaves them when the account it belongs to is deleted, or, for one that has gone from the database without that, once no backup still kept can need it.');
+    expect(sec).toContain('A value under one account’s key can’t be read as another’s, even copied into its place; values still under a shared key can, until they are moved.');
+    const priv = privacy();
+    expect(priv).toContain('A record that a deleted account existed Its random id and the day its key was destroyed: kept for good');
+    expect(priv).toContain('What deleting your key doesn’t reach: a backup of the keys that whoever runs this copy of Nya downloaded by hand');
+    expect(priv).toContain('Not built yet Encrypting the details stored as plain text');
+  });
+
+  test('without a master key there is no key per account to speak of, and the pages say nothing of one', () => {
+    delete process.env.MASTER_KEY;
+    backupsAre('kept');
+    for (const page of [security(), privacy()]) {
+      expect(page).not.toContain('a data key of its own');
+      expect(page).not.toContain('its key was destroyed');
+    }
+    expect(privacy()).toContain('A data key per account, which makes your copies in backups unreadable once your account is deleted, needs a master key, which this copy of Nya doesn’t have set.');
+    expect(privacy()).toContain('Not built yet Encrypting the details stored as plain text');
+  });
+
+  test('without backups, the key goes with the rest of the data, and nothing is said of backups of it', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('none');
+    expect(security()).toContain(`${OWN} Deleting an account destroys its own key with the rest of its data.`);
+    expect(security()).not.toContain('A backup of the keys');
+  });
+
+  test('the database host’s own backups, by DATABASE_BACKUP_DAYS', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('kept');
+    process.env.DATABASE_BACKUP_DAYS = '3';
+    expect(security()).toContain('The database host’s own backups, which hold the whole database, keys included, for 3 days.');
+    expect(privacy()).toContain('Its own backups of the database keep a copy for 3 days. Its own internal copies follow its own policy.');
+    process.env.DATABASE_BACKUP_DAYS = 'three';
+    expect(security()).toContain('how long couldn’t be worked out on this copy of Nya');
+    expect(privacy()).toContain('which couldn’t be worked out on this copy of Nya');
+    delete process.env.DATABASE_BACKUP_DAYS;
+    expect(security()).not.toContain('database host');
+    expect(privacy()).toContain('Its own internal copies follow its own policy.');
+  });
+});

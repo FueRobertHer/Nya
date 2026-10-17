@@ -137,7 +137,7 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
       .map(async (inst) => {
         try {
           const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), inst.item_id);
-          const parsed = blob ? (JSON.parse(await decrypt(blob)) as RememberedAccount[]) : [];
+          const parsed = blob ? (JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[]) : [];
           const ids = new Set(inst.missing_ids);
           if (Array.isArray(parsed)) held.set(inst.item_id, parsed.filter((a) => ids.has(a?.account_id) && typeof a?.type === 'string'));
         } catch {
@@ -174,7 +174,7 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
     if (accounts.length === 0) continue;
 
     try {
-      fields[inst.item_id] = await encrypt(JSON.stringify(accounts));
+      fields[inst.item_id] = await encrypt(ctx, JSON.stringify(accounts));
     } catch {
       // Skip this Item rather than lose the whole batch.
     }
@@ -220,7 +220,7 @@ async function recallByItem(ctx: Ctx, strict = false, tidy = true, unreadable?: 
   await Promise.all(
     Object.entries(map).map(async ([item_id, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
         if (!Array.isArray(parsed)) {
           legacy.push(item_id);
           return;
@@ -276,7 +276,7 @@ export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<s
   try {
     const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
     if (!blob) return [];
-    const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+    const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
     if (!Array.isArray(parsed)) return [];
     return parsed.map((a) => a?.account_id).filter((id): id is string => typeof id === 'string');
   } catch {
@@ -298,7 +298,7 @@ export async function rememberedKindsForItem(ctx: Ctx, item_id: string): Promise
   try {
     const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
     if (!blob) return null;
-    const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+    const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
     if (!Array.isArray(parsed)) return null;
     return parsed.flatMap((a) =>
       a && typeof a.type === 'string' ? [{ ...(typeof a.account_id === 'string' ? { account_id: a.account_id } : {}), type: a.type }] : []

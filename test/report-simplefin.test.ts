@@ -316,7 +316,7 @@ describe('where a report’s data comes from', () => {
     const checking = accounts.find((a) => a.name === 'Checking')!.account_id;
     const visa = accounts.find((a) => a.name === 'Visa')!.account_id;
     // A day of its balance in the history, which outlives the account.
-    await fake.hset(ctxKey('history:accounts'), { [dayOf(NOW - 2 * DAY)]: await encrypt(JSON.stringify({ [checking]: 1500.25 })) });
+    await fake.hset(ctxKey('history:accounts'), { [dayOf(NOW - 2 * DAY)]: await encrypt(TEST_CTX, JSON.stringify({ [checking]: 1500.25 })) });
     await disconnect(ctx, id, false, NOW);
 
     const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date());
@@ -350,7 +350,7 @@ describe('where a report’s data comes from', () => {
     // A record that can't be read is listed by id and may be forgotten; one a
     // newer version saved is counted, and never forgotten here.
     const later = 'manual_00000000-0000-4000-8000-0000000000ee';
-    await fake.hset(ctxKey('connector-ended'), { [visa]: 'damaged', [later]: await encrypt(JSON.stringify({ version: 2 })) });
+    await fake.hset(ctxKey('connector-ended'), { [visa]: 'damaged', [later]: await encrypt(TEST_CTX, JSON.stringify({ version: 2 })) });
     expect((await call('GET')).body).toEqual({ accounts: [], unreadable: [visa], unrecognised: 1 });
     expect((await call('DELETE', { account_id: later })).status).toBe(409);
     expect((await call('DELETE', { account_id: visa })).body).toEqual({ forgotten: true });

@@ -111,7 +111,7 @@ export async function recordSnapshot(ctx: Ctx,
   let mapLanded = false;
   if (accountBalances && Object.keys(accountBalances).length > 0) {
     try {
-      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
+      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(ctx, JSON.stringify(accountBalances)) });
       mapLanded = true;
     } catch {
       // The total still goes in. What's lost is subtracting a hidden account
@@ -120,7 +120,7 @@ export async function recordSnapshot(ctx: Ctx,
   }
 
   try {
-    await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
+    await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(ctx, String(netWorth)) });
   } catch {
     // Best-effort: a missed snapshot leaves a gap in the chart.
     return null;
@@ -161,7 +161,7 @@ export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, n
   try {
     const blob = await redis().hget<string>(ACCOUNTS_PARTIAL_HASH(ctx), today);
     if (blob) {
-      const parsed = JSON.parse(await decrypt(blob));
+      const parsed = JSON.parse(await decrypt(ctx, blob));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
       existing = parsed as Record<string, number>;
     }
@@ -171,7 +171,7 @@ export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, n
 
   try {
     await redis().hset(ACCOUNTS_PARTIAL_HASH(ctx), {
-      [today]: await encrypt(JSON.stringify({ ...existing, ...balances })),
+      [today]: await encrypt(ctx, JSON.stringify({ ...existing, ...balances })),
     });
   } catch {
     // Best-effort: the account's chart falls back to the estimate for today.
@@ -219,7 +219,7 @@ async function replaceRange(
 }
 
 export async function replaceEstimated(ctx: Ctx, points: { date: string; value: number }[]): Promise<void> {
-  await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(String(p.value)));
+  await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(ctx, String(p.value)));
 }
 /**
  * Replaces the flat (non-cash) balances backfill folded into `rest`, one map per
@@ -230,7 +230,7 @@ export async function replaceEstimatedFlat(ctx: Ctx,
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_FLAT_BY_DATE(ctx), points, (p) =>
-    encrypt(JSON.stringify(p.balances))
+    encrypt(ctx, JSON.stringify(p.balances))
   );
 }
 
@@ -250,7 +250,7 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
     const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
     const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
     if (flatSample) {
-      const parsed = JSON.parse(await decrypt(flatSample)) as Record<string, number>;
+      const parsed = JSON.parse(await decrypt(ctx, flatSample)) as Record<string, number>;
       if (account_id in (parsed ?? {})) return true;
     }
   } catch {
@@ -267,7 +267,7 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
     const newest = Object.keys(map ?? {}).sort().pop();
     const sample = newest ? map?.[newest] : undefined;
     if (!sample) return false;
-    return account_id in ((JSON.parse(await decrypt(sample)) as Record<string, number>) ?? {});
+    return account_id in ((JSON.parse(await decrypt(ctx, sample)) as Record<string, number>) ?? {});
   } catch {
     return false; // unreadable: report not-covered, so the caller forces a recompute
   }
@@ -284,7 +284,7 @@ export async function getEstimatedFlat(ctx: Ctx): Promise<Record<string, number>
   try {
     const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
     if (!blob) return {}; // never written (layer predates this key): genuinely empty
-    return JSON.parse(await decrypt(blob)) as Record<string, number>;
+    return JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
   } catch {
     return null; // unreadable: not the same as "nothing to subtract"
   }
@@ -341,28 +341,31 @@ const digestOf = (blob: string) => createHash('sha256').update(blob).digest('bas
 /**
  * A per-date balance map, decrypted once per process. getHistory reads every
  * per-account map on every load while anything is hidden, so without this the
- * same year of immutable maps is decrypted on every dashboard load. Keyed by a
- * digest of the ciphertext, so a rewritten map is a different key and never
- * served stale, and one container's entries can't answer for another's. LRU
- * within a byte budget; forgetting an account evicts the maps it rewrote
- * (evictDecrypted) so its balances don't stay in memory.
+ * same year of immutable maps is decrypted on every dashboard load. Keyed by
+ * the container and a digest of the ciphertext, so a rewritten map is a
+ * different key and never served stale, and one container's entries can't
+ * answer for another's, not even a copy of the same bytes, which must go
+ * through decrypt(ctx, ) and its check of the container's key. LRU within a byte
+ * budget; forgetting an account evicts the maps it rewrote (evictDecrypted)
+ * so its balances don't stay in memory.
  */
-async function decryptMap(blob: string): Promise<Record<string, number>> {
-  const key = digestOf(blob);
+const decryptedKey = (ctx: Ctx, blob: string) => `${ctx.container}:${digestOf(blob)}`;
+async function decryptMap(ctx: Ctx, blob: string): Promise<Record<string, number>> {
+  const key = decryptedKey(ctx, blob);
   const hit = DECRYPTED_MAPS.get(key);
   if (hit) return hit;
   // Frozen: every caller shares it.
-  const map = Object.freeze(JSON.parse(await decrypt(blob))) as Record<string, number>;
+  const map = Object.freeze(JSON.parse(await decrypt(ctx, blob))) as Record<string, number>;
   DECRYPTED_MAPS.set(key, map, blob.length * COST_PER_CHAR);
   return map;
 }
-function evictDecrypted(blob: string): void {
-  DECRYPTED_MAPS.delete(digestOf(blob));
+function evictDecrypted(ctx: Ctx, blob: string): void {
+  DECRYPTED_MAPS.delete(decryptedKey(ctx, blob));
 }
 /** For tests: the cache itself. */
-export const decryptMapForTest = (blob: string) => decryptMap(blob);
+export const decryptMapForTest = (ctx: Ctx, blob: string) => decryptMap(ctx, blob);
 /** For tests: whether a map is held decrypted. */
-export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(blob));
+export const isDecryptedCached = (ctx: Ctx, blob: string) => DECRYPTED_MAPS.has(decryptedKey(ctx, blob));
 
 /**
  * The flat balances that applied on one date: the per-date record, falling back
@@ -370,6 +373,7 @@ export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(b
  * `{}` vs `null` contract as getEstimatedFlat.
  */
 async function flatFor(
+  ctx: Ctx,
   byDate: Record<string, string> | null,
   date: string,
   legacy: Record<string, number> | null
@@ -377,7 +381,7 @@ async function flatFor(
   const blob = byDate?.[date];
   if (!blob) return legacy;
   try {
-    return await decryptMap(blob);
+    return await decryptMap(ctx, blob);
   } catch {
     return null;
   }
@@ -388,7 +392,7 @@ async function flatFor(
 export async function replaceEstimatedAccounts(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  await replaceRange(ACCOUNTS_EST_HASH(ctx), points, (p) => encrypt(JSON.stringify(p.balances)));
+  await replaceRange(ACCOUNTS_EST_HASH(ctx), points, (p) => encrypt(ctx, JSON.stringify(p.balances)));
 }
 
 /**
@@ -409,7 +413,7 @@ export async function replaceEstimatedExtension(ctx: Ctx,
   await replaceRange(
     ACCOUNTS_EST_EXT_HASH(ctx),
     points,
-    (p) => encrypt(JSON.stringify(p.balances)),
+    (p) => encrypt(ctx, JSON.stringify(p.balances)),
     coveredFrom
   );
 }
@@ -460,7 +464,7 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
     try {
       const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), date);
       if (!blob) continue;
-      balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      balances = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
     } catch {
       continue; // undecryptable date (rotated key): try the day before
     }
@@ -513,7 +517,7 @@ export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, str
     const blob = await redis().hget<string>(key, date); // uncaught: storage failing is never "no balance"
     if (!blob) return null;
     try {
-      return await decryptMap(blob);
+      return await decryptMap(ctx, blob);
     } catch (err) {
       if (!unreadableForGood(err)) throw err;
       return null; // damaged for good: the date before answers
@@ -604,7 +608,7 @@ export async function getAccountHistory(ctx: Ctx,
   async function balanceIn(blob: string | undefined): Promise<number | null> {
     if (!blob) return null;
     try {
-      const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      const balances = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
       for (const id of ids) {
         const value = balances[id];
         if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -673,7 +677,7 @@ export async function readMeasuredBalances(
   const open = async (blob: unknown): Promise<Record<string, number> | null> => {
     try {
       if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
-      const map = await decryptMap(blob);
+      const map = await decryptMap(ctx, blob);
       const out: Record<string, number> = {};
       for (const [id, value] of Object.entries(map ?? {})) if (typeof value === 'number' && Number.isFinite(value)) out[id] = value;
       return out;
@@ -764,7 +768,7 @@ export async function readHistoryForExport(
 
   /** A stored total, or null when it can't be used, named. */
   const total = async (date: string, blob: unknown): Promise<number | null> => {
-    const opened = await openStored(blob);
+    const opened = await openStored(ctx, blob);
     if (!opened.ok) {
       totalsNamed[opened.flaw].add(date);
       return null;
@@ -786,7 +790,7 @@ export async function readHistoryForExport(
 
   /** A stored map of balances, or null when it can't be used, named. */
   const open = async (date: string, blob: unknown): Promise<Record<string, unknown> | null> => {
-    const opened = await openStored(blob);
+    const opened = await openStored(ctx, blob);
     if (!opened.ok) {
       accountsNamed[opened.flaw].add(date);
       return null;
@@ -928,11 +932,11 @@ export async function clearBackfillDone(ctx: Ctx): Promise<void> {
 }
 
 /** Per-date balances for a layer, or null when that date has no map at all. */
-async function balancesFor(source: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
+async function balancesFor(ctx: Ctx, source: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
   const blob = source?.[date];
   if (!blob) return null;
   try {
-    return await decryptMap(blob);
+    return await decryptMap(ctx, blob);
   } catch {
     return null;
   }
@@ -975,19 +979,19 @@ export type EndedAccounts = ReadonlyMap<string, { type: string | null; from: str
  * nothing here can be trusted. Absent from a readable map means the account was
  * never in these points (linked after the last backfill): nothing to remove.
  */
-async function hiddenContribution(src: HiddenSources, date: string, estimated: boolean, id: string, type: string | null): Promise<number | null> {
+async function hiddenContribution(ctx: Ctx, src: HiddenSources, date: string, estimated: boolean, id: string, type: string | null): Promise<number | null> {
   const signed = (b: number) => (type === null ? null : signedContribution(type, b));
   if (!estimated) {
-    const balances = await balancesFor(src.realAccounts, date);
+    const balances = await balancesFor(ctx, src.realAccounts, date);
     if (!balances) return null;
     const b = balances[id];
     return typeof b === 'number' ? signed(b) : 0;
   }
-  const estFlat = await flatFor(src.estFlatByDate, date, src.legacyFlat);
+  const estFlat = await flatFor(ctx, src.estFlatByDate, date, src.legacyFlat);
   if (estFlat === null) return null;
   const flatBalance = estFlat[id];
   if (typeof flatBalance === 'number') return signed(flatBalance);
-  const balances = await balancesFor(src.estAccounts, date);
+  const balances = await balancesFor(ctx, src.estAccounts, date);
   if (!balances) return null;
   const b = balances[id];
   return typeof b === 'number' ? signed(b) : 0;
@@ -1073,7 +1077,7 @@ export async function readHistoryPoints(
     entries.map(async ({ date, blob, estimated }): Promise<HistoryPoint | null> => {
       let value: number;
       try {
-        value = Number(await decrypt(blob));
+        value = Number(await decrypt(ctx, blob));
       } catch {
         return null; // undecryptable point (rotated key) -- drop it
       }
@@ -1081,7 +1085,7 @@ export async function readHistoryPoints(
 
       if (hiding) {
         for (const [id, { type }] of hidden ?? []) {
-          const c = await hiddenContribution(sources, date, estimated, id, type);
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
           // Can't tell what this account contributed: dropped rather than
           // showing a spike the size of the account (see hiddenContribution).
           if (c === null) return null;
@@ -1089,7 +1093,7 @@ export async function readHistoryPoints(
         }
         for (const [id, { type, from }] of ending) {
           if (date < from) continue; // before its end: untouched
-          const c = await hiddenContribution(sources, date, estimated, id, type);
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
           if (c === null) return null;
           value -= c;
         }
@@ -1099,7 +1103,7 @@ export async function readHistoryPoints(
     })
   );
   const sorted = points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
-  return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(sorted, ending, sources) : [] };
+  return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(ctx, sorted, ending, sources) : [] };
 }
 
 /** The days the ended accounts stop counting: bridgeInteriorEstimates keeps a
@@ -1115,7 +1119,7 @@ export function endBreaks(ended: Iterable<readonly [string, { from: string }]>):
  * that moved nothing (an account closed at zero) is no step, so the stretch
  * around it is bridged as any other, never drawn as a step on that day.
  */
-async function movingBreaks(points: readonly HistoryPoint[], ending: readonly [string, { type: string | null; from: string }][], sources: HiddenSources): Promise<string[]> {
+async function movingBreaks(ctx: Ctx, points: readonly HistoryPoint[], ending: readonly [string, { type: string | null; from: string }][], sources: HiddenSources): Promise<string[]> {
   const days = new Set<string>();
   for (const [id, { type, from }] of ending) {
     if (days.has(from)) continue;
@@ -1126,7 +1130,7 @@ async function movingBreaks(points: readonly HistoryPoint[], ending: readonly [s
       before = p;
     }
     if (!before) continue;
-    if ((await hiddenContribution(sources, before.date, !!before.estimated, id, type)) === 0) continue;
+    if ((await hiddenContribution(ctx, sources, before.date, !!before.estimated, id, type)) === 0) continue;
     days.add(from);
   }
   return [...days].sort();
@@ -1286,7 +1290,7 @@ export async function forgetAccountBalances(
     if (known) return known;
     let map: Record<string, number> | 'unreadable';
     try {
-      map = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      map = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
     } catch (err) {
       if (!unreadableForGood(err)) throw err;
       map = 'unreadable';
@@ -1297,12 +1301,12 @@ export async function forgetAccountBalances(
 
   // Without the account, or null when it isn't in the map.
   const without = async (blob: string): Promise<string | null | 'unreadable'> => {
-    evictDecrypted(blob);
+    evictDecrypted(ctx, blob);
     const map = await decryptOnce(blob);
     if (map === 'unreadable') return 'unreadable';
     if (!map || typeof map !== 'object' || !(account_id in map)) return null;
     const { [account_id]: _gone, ...rest } = map;
-    return encrypt(JSON.stringify(rest));
+    return encrypt(ctx, JSON.stringify(rest));
   };
 
   const scrub = async (key: string, date: string, first: string) => {
@@ -1446,7 +1450,7 @@ export async function foldHiddenAccount(
   const strict = async (blob: string | null | undefined): Promise<Record<string, number> | null | 'unreadable'> => {
     if (!blob) return null;
     try {
-      return await decryptMap(blob);
+      return await decryptMap(ctx, blob);
     } catch (err) {
       if (unreadableForGood(err)) return 'unreadable';
       throw err;
@@ -1527,12 +1531,12 @@ export async function foldHiddenAccount(
         } else if (c !== 0) {
           let value: number;
           try {
-            value = Number(await decrypt(total));
+            value = Number(await decrypt(ctx, total));
           } catch (err) {
             if (!unreadableForGood(err)) throw err;
             value = NaN; // unreadable for good: dropped from the chart anyway
           }
-          if (Number.isFinite(value)) newTotal = await encrypt(String(value - c));
+          if (Number.isFinite(value)) newTotal = await encrypt(ctx, String(value - c));
         }
       }
       const pairs: string[] = [];
@@ -1540,7 +1544,7 @@ export async function foldHiddenAccount(
         const m = maps[i];
         let next = blobs[i] ?? '';
         if (m && m !== 'unreadable' && account_id in m && m[account_id] !== 0) {
-          next = await encrypt(JSON.stringify({ ...m, [account_id]: 0 }));
+          next = await encrypt(ctx, JSON.stringify({ ...m, [account_id]: 0 }));
         }
         pairs.push(blobs[i] ?? '', next);
       }
@@ -1549,7 +1553,7 @@ export async function foldHiddenAccount(
       );
       if (answer === 2) return; // folded already, by an attempt still finishing
       if (answer === 1) {
-        for (const b of blobs) if (b) evictDecrypted(b);
+        for (const b of blobs) if (b) evictDecrypted(ctx, b);
         folded++;
         if (newTotal === '-') {
           deleted++;
@@ -1599,9 +1603,9 @@ const EXTENSION_BATCH = 500;
 
 /** A map of balances read for the anchor, strictly: storage failing, a key
  *  this deployment can't open, or a map damaged or not a map, throws. */
-async function anchorMap(blob: unknown): Promise<Record<string, number>> {
+async function anchorMap(ctx: Ctx, blob: unknown): Promise<Record<string, number>> {
   if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
-  const map = JSON.parse(await decrypt(blob));
+  const map = JSON.parse(await decrypt(ctx, blob));
   if (!map || typeof map !== 'object' || Array.isArray(map)) throw new SyntaxError('a balance map is not a map');
   const out: Record<string, number> = {};
   for (const [id, v] of Object.entries(map as Record<string, unknown>)) if (typeof v === 'number' && Number.isFinite(v)) out[id] = v;
@@ -1631,22 +1635,22 @@ export async function readEarliestPoint(
   if (!date) return null;
   const estimated = !realDays.has(date);
   const totalBlob = await redis().hget<string>(estimated ? ESTIMATED_HASH(ctx) : HISTORY_HASH(ctx), date);
-  const total = Number(await decrypt(String(totalBlob)));
+  const total = Number(await decrypt(ctx, String(totalBlob)));
   if (!Number.isFinite(total)) throw new SyntaxError('the earliest net-worth total is not a number');
   if (!estimated) {
     // A total recorded without its map (the two are separate writes) names
     // no account: nothing can be walked from it.
     const map = await redis().hget(ACCOUNTS_HASH(ctx), date);
-    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(map), estimated, walked: null };
+    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(ctx, map), estimated, walked: null };
   }
   const [walkedBlob, flatBlob] = await Promise.all([redis().hget(ACCOUNTS_EST_HASH(ctx), date), redis().hget(ACCOUNTS_EST_FLAT_BY_DATE(ctx), date)]);
-  const walked = walkedBlob === null || walkedBlob === undefined ? {} : await anchorMap(walkedBlob);
+  const walked = walkedBlob === null || walkedBlob === undefined ? {} : await anchorMap(ctx, walkedBlob);
   let flat: Record<string, number>;
-  if (flatBlob !== null && flatBlob !== undefined) flat = await anchorMap(flatBlob);
+  if (flatBlob !== null && flatBlob !== undefined) flat = await anchorMap(ctx, flatBlob);
   else {
     // Points written before the per-date record: the single one applies.
     const legacy = await redis().get(ACCOUNTS_EST_FLAT_LEGACY(ctx));
-    flat = legacy === null || legacy === undefined ? {} : await anchorMap(legacy);
+    flat = legacy === null || legacy === undefined ? {} : await anchorMap(ctx, legacy);
   }
   return { date, total, balances: { ...flat, ...walked }, estimated, walked: Object.keys(walked) };
 }
@@ -1685,15 +1689,15 @@ export async function replaceEstimatedBefore(
     const walked: Record<string, string> = {};
     const flat: Record<string, string> = {};
     for (const p of batch) {
-      walked[p.date] = await encrypt(JSON.stringify(p.walked));
-      flat[p.date] = await encrypt(JSON.stringify(p.held));
+      walked[p.date] = await encrypt(ctx, JSON.stringify(p.walked));
+      flat[p.date] = await encrypt(ctx, JSON.stringify(p.held));
     }
     await redis().hset(ACCOUNTS_EST_HASH(ctx), walked);
     await redis().hset(ACCOUNTS_EST_FLAT_BY_DATE(ctx), flat);
   }
   for (let i = 0; i < points.length; i += EXTENSION_BATCH) {
     const totals: Record<string, string> = {};
-    for (const p of points.slice(i, i + EXTENSION_BATCH)) totals[p.date] = await encrypt(String(p.total));
+    for (const p of points.slice(i, i + EXTENSION_BATCH)) totals[p.date] = await encrypt(ctx, String(p.total));
     await redis().hset(ESTIMATED_HASH(ctx), totals);
   }
 }

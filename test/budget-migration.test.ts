@@ -435,7 +435,7 @@ describe('the budgets route', () => {
     const t: Taxonomy = (await get()).body.categories;
     const food = named(t, 'food and drink').id;
     const later = { version: 1, categories: { [food]: { amount: 300, rollover: 40 } }, groups: {}, mirror: { 'food and drink': 300 }, mirror_before: null };
-    await fake.set(SET_KEY, await encrypt(JSON.stringify(later)));
+    await fake.set(SET_KEY, await encrypt(TEST_CTX, JSON.stringify(later)));
     const stored = fake.strings.get(SET_KEY);
     const read = await get();
     expect(read.status).toBe(409);
@@ -503,7 +503,7 @@ describe('renaming renames everywhere at once', () => {
         personal_finance_category: { primary: 'GENERAL_MERCHANDISE', detailed: 'GENERAL_MERCHANDISE_SUPERSTORES', confidence_level: 'HIGH' },
       },
     ];
-    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('access-a') }) });
+    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-a') }) });
     await setOverride(ctx, 'p_store', 'groceries');
     await setBudgets(ctx, { groceries: 150 });
     const list = async () => (await (await transactions.GET(new Request('http://x/api/transactions'))).json());

@@ -110,7 +110,7 @@ beforeEach(async () => {
     row('t_old', { date: daysAgo(500), amount: 40 }),
     row('t_coffee', { name: 'BLUE BOTTLE', amount: 5, personal_finance_category: { primary: 'FOOD_AND_DRINK', detailed: 'FOOD_AND_DRINK_COFFEE' } }),
   ];
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(token) }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }) });
   await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account('acct_a'), balance: 1 }] } as any]);
   await saveManualAccount(ctx, { account_id: MANUAL, name: 'Cash', institution_name: 'Wallet', type: 'depository', subtype: 'cash', balance: 50 } as any);
   const t = newManualTxn(MANUAL, { date: daysAgo(2), name: 'AMZN locker pickup', amount: 9, currency: 'USD', category: null, note: null });
@@ -430,7 +430,7 @@ describe('a rule on an account', () => {
     plaidTxns['token-item_a'] = [...plaidTxns['token-item_a'], row('t_b', { account_id: 'acct_b', name: 'ON B' }), row('t_gone', { account_id: 'acct_old', name: 'ON OLD' })];
     await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account('acct_a'), balance: 1 }, { ...account('acct_b'), balance: 1 }] } as any]);
     for (const [old, to] of Object.entries(links)) {
-      await fake.hset(ctxKey('account-links'), { [old]: to === 'unreadable' ? 'not-a-link' : await encrypt(JSON.stringify({ to, linked_at: '2026-01-01T00:00:00.000Z', evidence: {} })) });
+      await fake.hset(ctxKey('account-links'), { [old]: to === 'unreadable' ? 'not-a-link' : await encrypt(TEST_CTX, JSON.stringify({ to, linked_at: '2026-01-01T00:00:00.000Z', evidence: {} })) });
     }
   };
 

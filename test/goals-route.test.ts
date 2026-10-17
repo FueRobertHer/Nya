@@ -34,16 +34,16 @@ const today = () => new Date().toISOString().slice(0, 10);
 const daysAgo = (n: number) => new Date(Date.now() - n * 86_400_000).toISOString().slice(0, 10);
 
 const remembered = (accounts: Record<string, unknown>[]) =>
-  encrypt(JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
+  encrypt(TEST_CTX, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
 /** The balances Nya recorded on a day, as a snapshot records them. */
 const recordBalances = async (balances: Record<string, number>, day = daysAgo(1)) =>
-  fake.hset(ctxKey('history:accounts'), { [day]: await encrypt(JSON.stringify(balances)) });
+  fake.hset(ctxKey('history:accounts'), { [day]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 
 beforeEach(async () => {
   fake.reset();
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-bank') });
+  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-bank') });
   await fake.hset(ctxKey('accounts:meta'), {
     item_bank: await remembered([
       { account_id: 'acc_sav', name: 'Savings', type: 'depository', subtype: 'savings' },
@@ -474,7 +474,7 @@ describe('a store that can’t be read', () => {
 
   test('a plan a later release wrote is unrecognised: 409, kept as it is', async () => {
     await setGoals(ctx, [G(1)]);
-    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: await encrypt(JSON.stringify({ v: 2, core: { name: 'Goal 1', target: 5000, account_id: 'acc_sav' }, plan: {}, before: null })) });
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: await encrypt(TEST_CTX, JSON.stringify({ v: 2, core: { name: 'Goal 1', target: 5000, account_id: 'acc_sav' }, plan: {}, before: null })) });
     expect((await quietly(get)).body).toMatchObject({ unreadable: true, unreadable_ids: [], unrecognised_ids: [ID(1)] });
     expect((await quietly(() => put([G(1)]))).status).toBe(409);
   });

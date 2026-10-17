@@ -72,7 +72,7 @@ describe('approvals', () => {
   test('the display read names what it can’t use and returns the rest: never empty for it', async () => {
     await store.approve(ctx, [input('t1'), input('t2')], NOW);
     const later = { ...(await approvalStore.get(ctx, 't2')), weight: 1 };
-    await fake.hset(ctxKey('transaction-approvals'), { t2: await encrypt(JSON.stringify(later)), t3: DAMAGED });
+    await fake.hset(ctxKey('transaction-approvals'), { t2: await encrypt(ctx, JSON.stringify(later)), t3: DAMAGED });
     const read = await store.readApprovalsForDisplay(ctx, ['t1', 't2', 't3', 't4', 'split:p1', 'group:g1']);
     expect([...read.approvals.keys()]).toEqual(['t1']);
     expect([...read.unknown].sort()).toEqual(['t2', 't3']);
@@ -94,7 +94,7 @@ describe('approvals', () => {
   test('a repair removes only damaged ones, and the settings only when theirs are', async () => {
     await store.approve(ctx, [input('t1')], NOW);
     const later = { ...(await approvalStore.get(ctx, 't1')), weight: 1 };
-    await fake.hset(ctxKey('transaction-approvals'), { t2: DAMAGED, t3: await encrypt(JSON.stringify(later)) });
+    await fake.hset(ctxKey('transaction-approvals'), { t2: DAMAGED, t3: await encrypt(ctx, JSON.stringify(later)) });
     await fake.set(ctxKey('review-settings'), DAMAGED);
     expect(await store.repairReview(ctx)).toEqual({ removed: 1, settings: true, unrecognised: 1 });
     expect([...fake.hashes.get(ctxKey('transaction-approvals'))!.keys()].sort()).toEqual(['t1', 't3']);
@@ -150,7 +150,7 @@ describe('gone with the transaction', () => {
   test('what a prune may forget: bank ids only, the removed ones by id, damaged ones too, never one a later release wrote', async () => {
     await store.approve(ctx, [input('t1'), input('t2'), input('manual-txn:6b1f3e2a-1c4d'), input('imported-txn:abc')], NOW);
     const later = { ...(await approvalStore.get(ctx, 't2')), weight: 1 };
-    await fake.hset(ctxKey('transaction-approvals'), { t2: await encrypt(JSON.stringify(later)), t3: DAMAGED });
+    await fake.hset(ctxKey('transaction-approvals'), { t2: await encrypt(ctx, JSON.stringify(later)), t3: DAMAGED });
     expect((await store.approvalsToPrune(ctx)).sort()).toEqual(['t1', 't3']);
     expect((await store.approvalsToPrune(ctx, new Set(['t2', 't3', 't9', 'manual-txn:6b1f3e2a-1c4d']))).sort()).toEqual(['t3']);
     expect(await store.approvalsToPrune(ctx, new Set(['t1']))).toEqual(['t1']);

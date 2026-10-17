@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -101,7 +101,7 @@ describe('the rotation', () => {
 
   test('the status shows a key created by the first write', async () => {
     await fake.del(keysHashKey());
-    const out = await encrypt('x');
+    const out = await encrypt(TEST_CTX, 'x');
     const body = await (await post()).json();
     expect(body.active_key).toBe(out.split('.')[1]);
     expect(body.active_key).toMatch(/^k1-/);
@@ -182,10 +182,12 @@ describe('the rotation', () => {
   });
 
   test('an unexpected failure is a 500 that repeats nothing from the error', async () => {
-    const realHgetall = fake.hgetall.bind(fake);
-    fake.hgetall = (async () => {
-      throw new Error('command was: ["hgetall","secret-looking-content"]');
-    }) as typeof fake.hgetall;
+    // The key store is read a page at a time (HSCAN), so that is where the
+    // unexpected failure is armed.
+    const realHscan = fake.hscan.bind(fake);
+    fake.hscan = (async () => {
+      throw new Error('command was: ["hscan","secret-looking-content"]');
+    }) as typeof fake.hscan;
     const logged: string[] = [];
     const origError = console.error;
     console.error = (...a: unknown[]) => logged.push(a.join(' '));
@@ -195,7 +197,7 @@ describe('the rotation', () => {
       expect(await res.text()).not.toContain('secret-looking-content');
       expect(logged.join(' ')).not.toContain('secret-looking-content');
     } finally {
-      fake.hgetall = realHgetall as typeof fake.hgetall;
+      fake.hscan = realHscan as typeof fake.hscan;
       console.error = origError;
     }
   });

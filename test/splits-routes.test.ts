@@ -122,7 +122,7 @@ beforeEach(async () => {
   next = { added: [], modified: [], removed: [] };
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('token-a') }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'token-a') }) });
   await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account('acct_a'), balance: 100 }] } as any]);
   await saveManualAccount(ctx, { account_id: MANUAL, name: 'Cash', institution_name: 'Wallet', type: 'depository', subtype: 'cash', balance: 50 } as any);
   const t = newManualTxn(MANUAL, { date: daysAgo(2), name: 'Farmers market', amount: 30, currency: 'USD', category: null, note: 'eggs and flowers' });
@@ -393,7 +393,7 @@ describe('what can’t be read is never taken for nothing', () => {
   test('a split saved in a shape this release doesn’t know is unrecognised: never applied half, never removed', async () => {
     await listed();
     const later = { version: 1, amount: 150, currency: 'USD', parts: [{ id: 'a', amount: 150, category_id: catId('travel'), tax: 3 }], updated_at: new Date().toISOString() };
-    await fake.hset(ctxKey('transaction-splits'), { t_costco: await encrypt(JSON.stringify(later)) });
+    await fake.hset(ctxKey('transaction-splits'), { t_costco: await encrypt(ctx, JSON.stringify(later)) });
     const body = await quietly(() => listed());
     expect(body.transactions.find((t) => t.transaction_id === 't_costco')).toMatchObject({ amount: 150, split_unread: true });
     const del = await quietly(() => route('transaction-splits', 'DELETE', { transaction_id: 't_costco' }));

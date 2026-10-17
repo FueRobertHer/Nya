@@ -23,7 +23,8 @@
 // reading nothing. One in the right form that doesn't work is refused the same
 // way whatever the reason (a container that doesn't exist, one without a
 // summary, a forged or altered mac, an expired day, records that can't be
-// read), after the same work: the container's registry entry and its key are
+// read, a data key that can't be used, as a deleted account's), after the
+// same work: the container's registry entry and its key are
 // read at once, and a mac is computed and compared in constant time, under a
 // key that is never right when there is none. So neither the answer nor its
 // timing tells which containers exist or have a summary. Only once the mac
@@ -43,6 +44,7 @@
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
 import { getContainer, isContainerId, type ContainerId, type Ctx } from '../containers';
+import { ContainerKeyError } from '../crypto';
 import { StoredDataUnreadableError } from '../repo';
 import { weeklySettingStore, weeklyStateStore, unsubscribeCount, UNSUBSCRIBES_PER_HOUR, type WeeklyState } from './store';
 
@@ -117,11 +119,16 @@ export function oneClickUrl(link: string, token: string): string {
 export type LinkCheck = { kind: 'ok'; ctx: Ctx } | { kind: 'malformed' } | { kind: 'refused' } | { kind: 'unavailable' };
 
 /** The key a container's links are signed with, or null: none, or records
- *  that can't be read, which can't be checked and so don't work. */
+ *  that can't be read, or under a data key that can't be used (a deleted
+ *  account's is destroyed), which can't be checked and so don't work. */
 async function keyOf(ctx: Ctx): Promise<WeeklyState['key'] | null> {
   try {
     return (await weeklyStateStore.get(ctx))?.key ?? null;
   } catch (err) {
+    if (err instanceof ContainerKeyError) {
+      console.error('Weekly summary: a link was refused, as the data key of the container it names can’t be used.');
+      return null;
+    }
     if (!(err instanceof StoredDataUnreadableError)) throw err;
     console.error('Weekly summary: a link was refused, as the records its key is kept in could not be read.');
     return null;
