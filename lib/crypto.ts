@@ -199,7 +199,7 @@ export class ContainerKeyError extends ContainerError {
     readonly keyId: string | null,
     readonly reason: string
   ) {
-    super(`The data key of container ${container}${keyId ? ` (${keyId})` : ''} can't be used: ${reason}.`);
+    super(`The data key of container ${container}${keyId ? ` (${keyId})` : ''} can't be used: ${reason.replace(/\.$/, '')}.`);
     this.name = 'ContainerKeyError';
   }
 }

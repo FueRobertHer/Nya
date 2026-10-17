@@ -97,6 +97,8 @@ export type BackupOptions = {
   onStep?: (step: BackupStep, ms: number) => void;
   /** Tests shorten these. */
   limits?: Partial<Record<BackupStep, number>>;
+  /** How long to wait for the key archives' lock (lib/key-archive.ts). */
+  keysLockWaitMs?: number;
 };
 
 /**
@@ -297,7 +299,9 @@ export async function runBackup(
   // nothing is pruned.
   const named = namedKeyIds(keyIdsByContainer(records));
   const maxDays = Math.max(days + 1, MIN_KEPT);
-  const keyArchive = await step('keys', opts, (signal) => writeKeyArchive(client, store, keysLock, { takenAt: now, named, maxDays, signal }));
+  const keyArchive = await step('keys', opts, (signal) =>
+    writeKeyArchive(client, store, keysLock, { takenAt: now, named, maxDays, signal, ...(opts.keysLockWaitMs !== undefined ? { lockWaitMs: opts.keysLockWaitMs } : {}) })
+  );
   const shared = await step('count', opts, () => noteSharedKeys(records, now));
 
   const cutoff = now.getTime() - days * 86_400_000;

@@ -492,10 +492,12 @@ export async function rewriteGenerations(store: BackupStore, tombstones: Map<str
     const text = await store.get(g.pathname, signal);
     if (text === null) continue;
     const old = verifyKeyArchive(text);
-    const next = rewriteGeneration(old, tombstones, now);
+    // Always after the file it replaces, so the two never share a name.
+    const at = new Date(Math.max(now.getTime(), Date.parse(old.header.written_at) + 1));
+    const next = rewriteGeneration(old, tombstones, at);
     if (next === null) continue;
     checkRewrite(old, next, tombstones);
-    const pathname = keyArchiveName(old.header.taken_at, now);
+    const pathname = keyArchiveName(old.header.taken_at, at);
     if (pathname === g.pathname) refuse('A key archive would be rewritten under its own name.');
     await store.put(pathname, next, signal, { cacheMaxAgeSeconds: KEY_ARCHIVE_CACHE_SECONDS });
     if ((await store.get(pathname, signal)) !== next) {

@@ -32,8 +32,8 @@ export const DAY = 86_400_000;
  *  app reads (the last 365 days) whenever the tests run. */
 export const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
 
-const remembered = (accounts: Record<string, unknown>[]) =>
-  encrypt(TEST_CTX, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
+const remembered = (accounts: Record<string, unknown>[], where: { container: any } = TEST_CTX) =>
+  encrypt(where, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
 
 export function txn(id: string, account_id: string, daysBack: number, amount: number, over: Record<string, unknown> = {}) {
   return {
@@ -199,11 +199,13 @@ export async function connectWithoutTransactions(
 /** Someone else's container: none of it may ever show for the first one's token. */
 export async function seedOther(fake: FakeRedis) {
   await fake.hset(testKey('containers'), { [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-02-01T00:00:00.000Z' }) });
-  await saveItem(OTHER, { item_id: 'item_other', institution_name: 'OtherBank', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-other') });
-  await fake.hset(ctxKey('accounts:meta', OTHER), { item_other: await remembered([{ account_id: 'acc_other', name: 'OTHER-SECRET-ACCOUNT', type: 'depository' }]) });
+  // Encrypted for the container they are stored in, as the app does: with a
+  // key per container, OTHER's values are under OTHER's key.
+  await saveItem(OTHER, { item_id: 'item_other', institution_name: 'OtherBank', encrypted_access_token: await encrypt(OTHER, 'access-sandbox-other') });
+  await fake.hset(ctxKey('accounts:meta', OTHER), { item_other: await remembered([{ account_id: 'acc_other', name: 'OTHER-SECRET-ACCOUNT', type: 'depository' }], OTHER) });
   await fake.set(
     ctxKey('txns:item_other', OTHER),
-    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: {}, txns: { t_o: txn('t_o', 'acc_other', 1, 77, { name: 'OTHER-SECRET-TXN', institution_name: 'OtherBank' }) } })
+    await encodeJsonBlob(OTHER, { schema_version: 2, cursor: 'c', accounts: {}, txns: { t_o: txn('t_o', 'acc_other', 1, 77, { name: 'OTHER-SECRET-TXN', institution_name: 'OtherBank' }) } })
   );
   await setBudgets(OTHER, { 'OTHER-SECRET-BUDGET': 5 });
 }

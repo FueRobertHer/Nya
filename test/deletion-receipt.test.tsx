@@ -180,3 +180,64 @@ describe('the receipt, on screen', () => {
     expect(none).not.toContain('Nightly backups');
   });
 });
+
+// A data key per container (docs/operations.md, "Per-container data keys"):
+// what the receipt says of the key, from the map entry the deletion read.
+describe('the receipt, on the data key', () => {
+  const lines = (r: ReturnType<typeof receipt>) => receiptSections(r, US).find((s) => s.title === 'Expires later')!.lines;
+
+  test('a key of its own, destroyed, and the key backups rewritten: nothing under it can be decrypted from any copy', () => {
+    const r = receipt({ keys: { own_key: true, shared_from: null, key_backups: { rewritten_at: '2026-10-06T14:05:30.000Z' } } });
+    expect(r.keys).toEqual({ own_key: true, shared_from: null, key_backups: { rewritten_at: '2026-10-06T14:05:30.000Z' }, shared_until: null });
+    expect(lines(r)).toContain(
+      'Your data key: your data was encrypted under a key of its own, which was destroyed with your account. The backups of the keys were rewritten without it at October 6, 2026 at 2:05 PM, so nothing encrypted under it can be decrypted from any copy Nya keeps (a deleted backup can still be served from the storage’s cache for up to a minute).'
+    );
+    expect(lines(r)).toContain('Copies under a shared key: none. No nightly backup holds any of your data under a key shared by everyone on this server.');
+  });
+
+  test('the key backups left for the next nightly backup, or none kept', () => {
+    const pending = lines(receipt({ keys: { own_key: true, shared_from: null, key_backups: { pending: true } } })).join('\n');
+    expect(pending).toContain('The backups of the keys are rewritten without it by the next nightly backup that succeeds. Until then, a copy taken before the deletion can still be decrypted with this server’s master key.');
+    const none = lines(receipt({ keys: { own_key: true, shared_from: null, key_backups: { none: true } } })).join('\n');
+    expect(none).toContain('This server keeps no backups of the keys, so it is gone everywhere Nya keeps one.');
+  });
+
+  test('values that were under a shared key: readable until the last nightly copy that can hold them is gone', () => {
+    // Given its key by the migration pass on October 1: copies from before then can hold it under the shared key.
+    const r = receipt({ keys: { own_key: true, shared_from: '2026-10-01T00:00:00.000Z', key_backups: { rewritten_at: '2026-10-06T14:05:30.000Z' } } });
+    expect(r.keys!.shared_until).toBe('2026-11-02T00:00:00.000Z');
+    expect(lines(r)).toContain('Copies under a shared key: nightly backups can hold some of your data under a key shared by everyone on this server, readable with its master key, until November 2, 2026.');
+  });
+
+  test('no key of its own: nothing was destroyed, and every copy stays readable until it goes', () => {
+    const r = receipt({ keys: { own_key: false, shared_from: AT.toISOString(), key_backups: { none: true } } });
+    expect(r.keys!.shared_until).toBe('2026-11-07T14:05:00.000Z');
+    expect(lines(r).join('\n')).toContain('your data was encrypted under a key shared by everyone on this copy of Nya, not one of its own');
+    expect(lines(r).join('\n')).toContain('until November 7, 2026.');
+  });
+
+  test('a key it couldn’t tell about is said, and the dates assume the worst', () => {
+    const r = receipt({ keys: { own_key: null, shared_from: AT.toISOString(), key_backups: { none: true } } });
+    expect(lines(r).join('\n')).toContain('whether your data was under a key of its own couldn’t be read on this attempt');
+  });
+
+  test('the database host’s own backups, when they are kept, or can’t be said', () => {
+    const kept = receipt({ database_days: 3 });
+    expect(kept.database).toEqual({ days: 3, until: '2026-10-09T14:05:00.000Z' });
+    expect(lines(kept)).toContain('The database host’s own backups: each holds the whole database, keys included, for 3 days, so a copy holding your data readably can exist until October 9, 2026.');
+    expect(receipt({ database_days: 0 }).database).toBeUndefined();
+    const unknown = receipt({ database_days: null });
+    expect(unknown.database).toBeNull();
+    expect(lines(unknown).join('\n')).toContain('The database host’s own backups: how long they keep a copy couldn’t be worked out on this server.');
+  });
+
+  test('before deleting: whether the data is under a key of its own, and the database host’s backups', () => {
+    const view = (status: object) =>
+      renderToStaticMarkup(<DeleteAccountView status={{ enabled: true, can_delete: true, ...status }} typed="" busy={false} error="" onType={() => {}} onDelete={() => {}} />);
+    expect(view({ own_key: true })).toContain('Your data is encrypted under a key of its own, which is destroyed with your account');
+    expect(view({ own_key: false })).toContain('Your data is encrypted under a key shared by everyone on this copy of Nya, until whoever runs it moves it to one of its own');
+    expect(view({ own_key: null })).not.toContain('encrypted under a key');
+    expect(view({ database_days: 3 })).toContain('The database host also keeps its own backups, of everything, for 3 days.');
+    expect(view({ database_days: 0 })).not.toContain('database host');
+  });
+});
