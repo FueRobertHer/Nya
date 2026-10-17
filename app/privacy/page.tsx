@@ -72,12 +72,14 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys): Commi
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
-    today: `Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in, then gives you a receipt of what was deleted, what expires when, and what stays and why. ${deletedInBackups(backups)}${keys.key.length > 0 ? ` ${keys.key.join(' ')}` : ''} Plaid keeps what it collected under its own policy; the receipt links to the Plaid Portal, where you can delete it.`,
+    today: `Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in, then gives you a receipt of what was deleted, what expires when, and what stays and why. ${deletedInBackups(backups)}${
+      keys.key.length > 0
+        ? ` ${keys.key.join(' ')}`
+        : ' A data key per account, which makes your copies in backups unreadable once your account is deleted, needs a master key, which this copy of Nya doesn’t have set.'
+    } Plaid keeps what it collected under its own policy; the receipt links to the Plaid Portal, where you can delete it.`,
     next: {
       label: 'Not built yet',
-      text: keys.key.length > 0
-        ? 'Encrypting the details stored as plain text (dates, ids, bank names and the like), which stay readable in backups until they are deleted.'
-        : 'A key per person is built in, but needs a master key, which this copy of Nya doesn’t have set.',
+      text: 'Encrypting the details stored as plain text (dates, ids, bank names and the like), which stay readable in backups until they are deleted.',
     },
   },
   {

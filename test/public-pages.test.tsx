@@ -652,7 +652,8 @@ describe('a data key per account, on both pages', () => {
       expect(page).not.toContain('a data key of its own');
       expect(page).not.toContain('its key was destroyed');
     }
-    expect(privacy()).toContain('A key per person is built in, but needs a master key, which this copy of Nya doesn’t have set.');
+    expect(privacy()).toContain('A data key per account, which makes your copies in backups unreadable once your account is deleted, needs a master key, which this copy of Nya doesn’t have set.');
+    expect(privacy()).toContain('Not built yet Encrypting the details stored as plain text');
   });
 
   test('without backups, the key goes with the rest of the data, and nothing is said of backups of it', () => {
