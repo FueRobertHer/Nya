@@ -71,7 +71,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
   ],
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
+    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
   ],
   [
     'Your device',
@@ -215,9 +215,10 @@ export default function SecurityPage() {
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
           <li>
             for sharing: the names you and the people you connect with gave each other, which accounts each of you
-            shares at which level and until when, and for each connection a random id, which its records of when shared
-            accounts were shown are kept under, and when those records began (what they record is encrypted), never
-            the balances or transactions themselves.
+            shares at which level and until when, which of your net worth, spending, holdings, budgets and goals each
+            of you shares, at which level (with the random ids of the goals chosen), and for each connection a random
+            id, which its records of when shared accounts were shown are kept under, and when those records began (what
+            they record is encrypted), never the balances, amounts or transactions themselves.
           </li>
         </ul>
         <p>

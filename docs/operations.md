@@ -14,6 +14,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Rules, tags and notes, and rolling back](#rules-tags-and-notes-and-rolling-back)
 - [Goals: plans and rolling back](#goals-plans-and-rolling-back)
 - [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
+- [Sharing more than accounts, and rolling back](#sharing-more-than-accounts-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -56,7 +57,7 @@ Balances, transactions, budgets, goals and access tokens stay **encrypted** in t
 
 SimpleFIN Access URLs are never in the archive. Unlike a Plaid access token, which is of no use without the Plaid secret, an Access URL works on its own: it holds the credentials that read a person's accounts there ([Bring your own sync](features.md#bring-your-own-sync)). So it is kept out of every backup, with the counts of requests made to SimpleFIN, and a restore ends each person's SimpleFIN access: they connect again with a new Setup Token, and their accounts, history and transactions carry on.
 
-Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
+Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, which other kinds (net worth, spending, holdings, budgets, goals) each shares at which level, with the random ids of the goals chosen, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
@@ -334,6 +335,16 @@ The release with budget rollover and income carryover ([features.md](features.md
 Rollover settings and the income setting themselves are as they were before the rollback.
 
 **If a read fails.** A record or setting that can't be read is never taken for none: the Budgets tab's month answers 409 and says so, showing this month's budgets without any carry; rollover changes are refused (409); the read-only API answers 409 `unreadable`; the download names the part it couldn't read. Budgets still save: a save writes only the budget set, and the record, once it can be read again, notes the change as of the month it is read in, as it does after a rollback. Nothing is saved over either store. A damaged record is a backup to restore, or a bug to fix: a record a later release wrote reads as unrecognised and waits for that release.
+
+## Sharing more than accounts, and rolling back
+
+The release that lets a person share their net worth, spending, holdings, budgets and chosen goals beside their accounts ([authentication.md](authentication.md#sharing-between-people)) keeps those choices in the share record each connection already has, the `<id>|share|<user>` field of the environment-wide `connections` hash, under a key of its own, `views`, beside `accounts` (or `expiring`, for a share with an end). Nothing else is stored for them: what the other person is shown of each kind is worked out from the owner's own data each time it is read (`lib/share-views.ts`), and each quarter hour of a record of showings (`sharing-access-log`) may carry the kinds it showed, under `views`. There is nothing to run.
+
+**What a rollback sees.** The release before reads a share's `accounts` (or `expiring`) as it always did, and passes over `views`, a key it doesn't know: the other person sees the accounts shared and none of the other kinds, and the owner's drawer shows only the accounts (a share of other kinds alone reads there as one that shares no account, and can't be renewed). Any change it saves to the share, its accounts or its end (Save, or Renew), writes the share without `views`: from then on, rolled forward or not, the other kinds are no longer shared. So a rollback can take a kind away, never share one more widely. Renaming the person leaves the share as it is. Removing or blocking the connection deletes the field, `views` with it, as it always did. Its records of showings read as before, the kinds on a quarter hour passed over; a showing it records in the same quarter hour writes that one row back without them. Its data download leaves the other kinds out.
+
+**Rolling forward again.** A share the release before didn't save is read with the kinds as they were chosen, and they show again at once (the person can't have meant to end what their drawer didn't show them, so check with them if they changed sharing meanwhile); one it saved has none until they are chosen again. A kind, a level or a field this release doesn't know, written by a later one, is read as not shared, never as more.
+
+**If a read fails.** Each kind is worked out on its own: one whose data can't be read (the budgets, the goals, the allocation settings, holdings history, an account's end, a bank's stored transactions, a manual account's book, or an account net worth or holdings would count that couldn't be read or hasn't been loaded) says so on the other person's card and in the owner's preview, never a short figure, and the rest is shown. Storage out of reach fails the read of that person's share whole, as it does for accounts. Nothing on this path writes to the owner's data, so there is nothing to repair here: fix or restore what can't be read, and the share reads again. A goals share can't name a new goal while the goals can't be read (the save answers 409); the goals already chosen stay chosen.
 
 ## Rolling back once the brokerage option is on
 

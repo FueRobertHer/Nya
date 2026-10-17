@@ -74,7 +74,7 @@ const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
   {
     promise: 'You decide what anyone else sees, and you can see what they see about you.',
     today:
-      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
+      'Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; before you save, Sharing says what they could work out from all of it together. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.',
   },
   {
     promise: 'You can see who can read what, including us.',

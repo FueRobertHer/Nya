@@ -196,7 +196,7 @@ describe('from the combination, never one share alone', () => {
       [at(checking, 'balance'), at(savings, 'balance'), ira],
       [holiday]
     );
-    for (const i of inferences(f)) expect(i.text).not.toMatch(/[–—]/);
-    expect(RESIDUAL_NOTE).not.toMatch(/[–—]/);
+    for (const i of inferences(f)) expect(i.text).not.toMatch(/[\u2013\u2014]/);
+    expect(RESIDUAL_NOTE).not.toMatch(/[\u2013\u2014]/);
   });
 });

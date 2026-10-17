@@ -16,6 +16,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 - [Budgets by month and rollover](#budgets-by-month-and-rollover)
 - [Cash flow](#cash-flow)
 - [Splits and groups](#splits-and-groups)
+- [Sharing](#sharing)
 - [Containers](#containers)
 - [On-device snapshot and offline use](#on-device-snapshot-and-offline-use)
 - [Hiding amounts](#hiding-amounts)
@@ -24,7 +25,7 @@ How Nya stores, protects and reconstructs your data. Operational procedures are 
 
 ## Storage and encryption
 
-Everything is stored in Upstash Redis, in a key namespace per environment (`production:`, `preview:`, `dev:`; see `lib/storage.ts`). The values that hold financial data are encrypted (AES-256-GCM, `lib/crypto.ts`) before they are written: Plaid access tokens, SimpleFIN Access URLs, balances, history, transactions, budgets, goals, category changes and renames, tags, notes and rules, manual accounts, the records of when shared accounts were shown (the sharing access log) and the caches. The structure around them is not: key and field names, and the few stores that hold no amounts (`classify()` in `lib/reencrypt.ts` lists every store and how it is kept). So a leak of the database or of a backup alone exposes no balances, transactions or access tokens, but it does expose dates and times, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, and for each connection the random id its records of showings are kept under and when they began, though not what they record (the same list as [operations.md](operations.md#taking-a-backup-by-hand)).
+Everything is stored in Upstash Redis, in a key namespace per environment (`production:`, `preview:`, `dev:`; see `lib/storage.ts`). The values that hold financial data are encrypted (AES-256-GCM, `lib/crypto.ts`) before they are written: Plaid access tokens, SimpleFIN Access URLs, balances, history, transactions, budgets, goals, category changes and renames, tags, notes and rules, manual accounts, the records of when shared accounts were shown (the sharing access log) and the caches. The structure around them is not: key and field names, and the few stores that hold no amounts (`classify()` in `lib/reencrypt.ts` lists every store and how it is kept). So a leak of the database or of a backup alone exposes no balances, transactions or access tokens, but it does expose dates and times, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, which other kinds (net worth, spending, holdings, budgets, goals) each shares at which level, with the random ids of the goals chosen, and for each connection the random id its records of showings are kept under and when they began, though not what they record (the same list as [operations.md](operations.md#taking-a-backup-by-hand)).
 
 Encryption is layered. Data is encrypted with **data keys** that the app generates and keeps in Redis, each locked with one **master key** (`MASTER_KEY`, which lives only in your environment variables). `PLAID_ENCRYPTION_KEY` is the original key, `k0`, used for everything written before data keys existed and as a fallback if a data key is ever unavailable. Rotating the master key re-locks only the data keys, never the data. See [operations.md](operations.md#encryption-keys) for turning it on, moving old data across, and rotating.
 
@@ -357,6 +358,28 @@ Every total then counts what it is given, by `lib/spending.ts` as before, and no
 **The download** applies the same `expandSplitsAndGroups` to the file's own rows (`lib/export-splits.ts`): the transactions CSV keeps each transaction's row and `amount`, and adds a row for each part and each group's net, with `nya_amount` what the app counts (empty on a split transaction, a grouped one, and a pending one its posted one replaced), so neither column counts twice. An OFX statement lists each transaction once, whole, with its parts or its group in the memo when they fit, as they apply over every row of the file, the imported rows that count among them (`appliedSplitsOf`, worked out once per statement). Both pass the file's imported rows' `represents` as `stands`, so a bank's row standing for one is split and grouped as the app does it. Reports read the same rows as the app, and their appendix says which part of which transaction a row is. Sharing reads stored rows directly and applies neither.
 
 **Cost.** Two more `HGETALL`s per read, of records people make by hand (at most 5,000 splits and 2,000 groups), and one pass over the rows.
+
+## Sharing
+
+`lib/sharing.ts` is the only code that reads another person's container: it builds the owner's `Ctx` from the owners map, passes it read-only to what builds the other person's view of the share (`projectShare`), and makes its only two writes there in the records of showings (`recordShowing`, `forgetShowings`). Its header has the model, and [authentication.md](authentication.md#sharing-between-people) has it as people see it. Nothing it returns carries the `Ctx` or anyone's user id, and every read on this path asks not to tidy as it goes (`readOnly`), so a share is never a write to the owner's data. Nothing on it calls Plaid.
+
+**Accounts** are projected in `lib/sharing.ts` itself (`sharedAccounts`): each account at its level, from the stored balances and transactions. **The other kinds** (#45 step 3, `lib/share-kinds.ts`) are projected in `lib/share-views.ts`, one function each, built up field by field on the reads the owner's own screens and the read-only API use, never arithmetic of their own, so a share can't say what the owner's app contradicts:
+
+| Kind | Built from | Never in it |
+| --- | --- | --- |
+| Net worth | `readNetWorthAndHistory` (`lib/api-read.ts`): each counted account's newest measured balance added up per currency, the total in the one most accounts are in shown and the others named; the history the chart draws (`getHistory`, hidden accounts subtracted, ended ones from their end day), one point a week (`sampleSeries`). With the accounts behind it, `readAccounts` | an account's name or balance unless the accounts are chosen, any account id |
+| Spending | The Activity tab's assembly (`assembleBankRows` and `finishActivity` in `lib/activity.ts`, never syncing) and `summarize` (`lib/totals.ts`) for each of the last six months, rolled up by the owner's category groups | money in, a transaction or its id, merchant, note or tags, a split's parts, a group of transactions, how many there were |
+| Holdings | `allocate` (`lib/allocation/allocation.ts`), the Plan tab's allocation, over `readAccounts` and `readHoldings` (the positions last recorded), with the owner's allocation settings | an account's name, number or id, a security's id, a quantity, a price, a cost basis |
+| Budgets | `readBudgetMonth` (`lib/budget-month.ts`) and `budgetsAnswer` (`lib/api-read.ts`, `readBudgets`' own answer from the month read) for this month and last | the income pool, a transaction |
+| Goals | `readGoals` (`lib/api-goals.ts`, which runs the Goals card's `lib/goal-view.ts`), the chosen goals only | a goal not chosen, archived, or on a hidden account; its monthly rate, what each month needs or is short by, its allocation |
+
+Each kind is caught on its own (`projectViews`): an error that says the data can't be used (`StoredDataUnreadableError`, a transaction store that can't be decoded) makes that kind `{ unreadable: true }`, and the rest is shown; anything else (storage out of reach) throws, and the share isn't shown. A total that would be short of transactions that couldn't be read (a bank's stored ones, a manual account's book, rows imported from files) is unreadable too, never a short figure (`transactionsDamaged`); one short of transactions not yet in (a bank still bringing in its history) is shown, and says so.
+
+**Settings** are kept in the share record, under `views`, beside `accounts` (the `lib/sharing.ts` header), and read closed (`parseViews` in `lib/share-kinds.ts`): a kind, a level or a field this release doesn't know is shared as nothing. The drawer's change is checked as a shape by the route and in full by `saveConnection` before anything is written.
+
+**What the viewer could work out** is `lib/share-inference.ts`: pure rules over everything shared on a connection together, run on the owner's device by the drawer over what is being chosen, and by `previewShare` over what is shown (the preview's `inferences`, never part of what the viewer is sent).
+
+**Records of showings** count, beside each account's level, each kind shown at its level (`views` on a quarter hour, `lib/access-log.ts`), a kind that couldn't be read never.
 
 ## Containers
 
