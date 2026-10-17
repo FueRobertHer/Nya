@@ -24,6 +24,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { localMonth } from '@/lib/local-date';
 import type { Budgets } from '@/lib/budget-set';
 import type { Carries, IncomeCarryover, IncomePool, MonthGap } from '@/lib/rollover';
+import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
 /** The month view's answer (app/api/budgets/month). */
 export type BudgetMonthView = {
@@ -48,6 +49,9 @@ export type BudgetMonthView = {
   left_out_text: string | null;
   counted_left_out_text: string | null;
   notes: string[];
+  /** This month's suggestions from history (lib/budget-suggestions.ts), with
+   *  the history; null otherwise, and absent from a server before them. */
+  suggestions?: BudgetSuggestions | null;
 };
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);

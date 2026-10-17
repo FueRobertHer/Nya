@@ -13,6 +13,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import CategoryPicker from './CategoryPicker';
 import { signedMoney } from '@/lib/format';
 import { MAX_CONDITIONS, RULE_NAME_MAX, RULE_TEXT_MAX, sortedRules, type RuleField } from '@/lib/rules';
@@ -342,7 +343,9 @@ export default function RuleSheet({
                       <span>
                         {s.date} {s.name} <span className="type-tag">· {s.account_name}</span>
                       </span>
-                      <span className="num">{signedMoney(-s.amount, s.currency, { always: true })}</span>
+                      <span className="num">
+                        <Masked>{signedMoney(-s.amount, s.currency, { always: true })}</Masked>
+                      </span>
                     </li>
                   ))}
                 </ul>

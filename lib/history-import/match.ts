@@ -48,8 +48,25 @@
 // an imported row a free bank row matches by the same rule retires,
 // uncounted, while the bank's row stays (settle). Earlier imports' rows are
 // matched first, so what an import showed in its review is what it does once
-// committed. Worked out on every read, never stored: undoing an import, or
-// the bank removing its row, puts the imported row back exactly as it was.
+// committed. Worked out on every read: undoing an import, or the bank
+// removing its row, puts the imported row back exactly as it was.
+//
+// KEPT ONCE MADE. A pair the rule made holds while the bank's row is there,
+// whatever the bank changes on that row later: Plaid keeps a transaction's
+// id when it modifies it (a tip added, a currency settled, a merchant's name
+// corrected), and a pair worked out again from the new amount would let the
+// imported row count beside it, the one transaction twice. So the sync that
+// changes a bank row, before it saves the change, keeps which of the
+// connection's rows stood for which imported row (lib/history-import/twins.ts,
+// the imported-twins store), and settle takes those pairs first (`twins`), by
+// the bank row's id: a bank row that stood for a row still stands for it, as
+// a duplicate's twin or as the row that superseded it, until the bank removes
+// it. Nothing is paired by them that the rule didn't pair; a read never
+// writes them. A pair the rule made is worked out from the amounts, as it
+// always was, until a sync changes its bank row, which keeps it first; one
+// the bank changed before pairs were kept is lost to it. A disconnect carries
+// the pairs by their bank rows' content, which the re-added connection's
+// syncs make again once the person links the accounts.
 //
 // ACROSS AN EDGE (a row dated before the bank's earliest posted row, or a
 // bank row dated outside the period the row's file covers) two rows can only
@@ -404,6 +421,9 @@ export type Settled<T extends HeldRow> = {
  * `order` its imports, earliest first; `bankFrom` its connection's earliest
  * posted row; `covers` the period each import's file covers, where known.
  *
+ *   0. A pair kept once made (`twins`, see KEPT ONCE MADE): a row the bank
+ *      row with that id stood for, while that posted row is there, whatever
+ *      it says now: as a duplicate's twin, or as the row superseding it.
  *   1. A duplicate of the bank's row stands while a posted bank row has its
  *      key, one bank row to one duplicate, earlier imports first.
  *   2. A duplicate of an earlier import's row stands while that row is kept.
@@ -420,7 +440,13 @@ export function settle<T extends HeldRow>(
   held: readonly T[],
   banks: readonly BankRow[],
   order: readonly string[],
-  opts: { bankFrom: string | null; pending?: boolean; covers?: ReadonlyMap<string, { from: string; to: string }> }
+  opts: {
+    bankFrom: string | null;
+    pending?: boolean;
+    covers?: ReadonlyMap<string, { from: string; to: string }>;
+    /** Pairs kept once made: each imported row's id to the bank row's id. */
+    twins?: ReadonlyMap<string, string>;
+  }
 ): Settled<T> {
   const rank = new Map(order.map((id, i) => [id, i]));
   const rankOf = (import_id: string) => rank.get(import_id) ?? Number.MAX_SAFE_INTEGER;
@@ -428,6 +454,23 @@ export function settle<T extends HeldRow>(
   // Earlier imports first; within an import, in the order kept.
   const sorted = [...held].sort((a, b) => before(a.import_id, b.import_id));
   const posted = banks.filter((b) => !b.pending);
+
+  // 0. Pairs kept once made, while their bank row is there, whatever it says.
+  const consumed = new Set<BankRow>();
+  const standing = new Map<string, Standing>();
+  const superseded = new Map<string, BankRow>();
+  if (opts.twins && opts.twins.size > 0) {
+    const byId = new Map(posted.map((b) => [b.transaction_id, b]));
+    for (const r of sorted) {
+      const id = opts.twins.get(r.id);
+      const b = id === undefined ? undefined : byId.get(id);
+      if (!b || consumed.has(b)) continue;
+      consumed.add(b);
+      if (r.same_as) standing.set(r.id, { bank: b });
+      else superseded.set(r.id, b);
+    }
+  }
+  const decided = (r: T) => standing.has(r.id) || superseded.has(r.id);
 
   // 1. Claims on the bank's rows, while those rows are there.
   const byKey = new Map<string, BankRow[]>();
@@ -437,10 +480,8 @@ export function settle<T extends HeldRow>(
     if (list) list.push(b);
     else byKey.set(k, [b]);
   }
-  const consumed = new Set<BankRow>();
-  const standing = new Map<string, Standing>();
   for (const r of sorted) {
-    if (!r.same_as) continue;
+    if (!r.same_as || decided(r)) continue;
     const b = byKey.get(r.same_as)?.find((x) => !consumed.has(x));
     if (!b) continue;
     consumed.add(b);
@@ -451,14 +492,14 @@ export function settle<T extends HeldRow>(
   //    taken as a transaction of its own, so no chain of names goes round.
   const importOf = new Map(held.map((r) => [r.id, r.import_id]));
   for (const r of sorted) {
-    if (!r.same_as_row || standing.has(r.id)) continue;
+    if (!r.same_as_row || decided(r)) continue;
     const named = importOf.get(r.same_as_row);
     if (named !== undefined && before(named, r.import_id) < 0) standing.set(r.id, { row: r.same_as_row });
   }
 
   // 3. Superseded: the rest against the free posted rows, never across an
   //    edge, nor as a pair the person said is not one.
-  const candidates = sorted.filter((r) => !standing.has(r.id));
+  const candidates = sorted.filter((r) => !decided(r));
   const forbidden = (r: T, b: BankRow) =>
     (r.distinct_from ?? []).includes(bankKey(b)) || crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null);
   const match = (rows: T[], twins: BankRow[], into: Map<string, BankRow>): Set<BankRow> => {
@@ -471,7 +512,6 @@ export function settle<T extends HeldRow>(
     }
     return used;
   };
-  const superseded = new Map<string, BankRow>();
   let free = posted.filter((b) => !consumed.has(b));
   for (const import_id of [...new Set(candidates.map((r) => r.import_id))]) {
     if (free.length === 0) break;

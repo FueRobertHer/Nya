@@ -103,9 +103,9 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
-import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
+import { historyImportStore, importedTwinsStore, importedTxnStore, isHistoryImportEntry, isImportedBook, isImportedTwins, type ImportedTxn } from './history-import/store';
 import { settle, type BankRow } from './history-import/match';
-import { standsFor } from './history-import/read';
+import { standsFor, twinsOf } from './history-import/read';
 import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Layered } from './export-layers';
 import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
 import { splitStore } from './splits';
@@ -1103,6 +1103,23 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) =>
       `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}, and a transaction the bank sent that stands for one of them doesn’t show what you said about it.`,
   },
+  // One entry per connection: which of its bank rows stand for which
+  // imported rows, kept by the sync (lib/history-import/twins.ts).
+  'imported-twins': {
+    noun: 'pairs of imported and bank transactions',
+    one: 'connection',
+    many: 'connections',
+    missing: (noun, counts) =>
+      `Not all of your ${noun} could be read, so the transactions imported into the accounts of ${counts} are matched to the bank’s by what each says now: one the bank changed since they were paired may be listed beside the bank’s own.`,
+  },
+  // One entry per earlier account: the pairs of a connection since
+  // disconnected, by the content of its bank rows, kept for a re-link.
+  'carried-imported-twins': {
+    noun: 'pairs of imported and bank transactions carried from earlier accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing those of ${counts}.`,
+  },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
@@ -1907,8 +1924,10 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
  * settle, over the file's own rows): not those standing for a transaction
  * already there (a duplicate whose twin is in the file), nor those a bank row
  * in the file now stands for, which are in the JSON file only, so no
- * transaction is in transactions.csv twice. Each with the id its account is
- * known by now, following the file's links. And, by the bank row's id, the
+ * transaction is in transactions.csv twice; a bank row the sync kept as
+ * standing for one (the file's imported-twins part) stands for it whatever
+ * its amount became, as in the app (match.ts KEPT ONCE MADE). Each with the
+ * id its account is known by now, following the file's links. And, by the bank row's id, the
  * imported rows it stands for, earlier imports first (`represents`), which
  * take what was said about them to it, and the category you set on one
  * (`carried`, the earliest import's first), which that row shows as yours, as
@@ -1958,6 +1977,14 @@ export function importedTransactionsIn(
     banks.set(current, list);
   }
   const itemOf = new Map(doc.accounts.map((a) => [a.account_id, a.item_id]));
+  // Which bank row each connection kept as standing for which imported row.
+  // An entry the file lists under problems instead pairs nothing here: those
+  // rows are matched by what they say, as before anything was kept, and the
+  // file's notes say so.
+  const kept = new Map<string, Map<string, string>>();
+  for (const e of Array.isArray(doc[importedTwinsStore.name]) ? (doc[importedTwinsStore.name] as { id?: unknown; value?: unknown }[]) : []) {
+    if (typeof e?.id === 'string' && isImportedTwins(e.value)) kept.set(e.id, twinsOf(e.value));
+  }
   // The imports in the order they were made, earlier ones matched first, and
   // the period each covers.
   const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : []).filter(
@@ -1970,7 +1997,12 @@ export function importedTransactionsIn(
   const importOf = new Map<string, string>();
   for (const [account_id, rows] of held) {
     const item = itemOf.get(account_id) ?? null;
-    const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: opts.pending ?? true });
+    const settled = settle(rows, banks.get(account_id) ?? [], order, {
+      bankFrom: item ? (firstPosted.get(item) ?? null) : null,
+      covers,
+      pending: opts.pending ?? true,
+      twins: (item ? kept.get(item) : undefined) ?? new Map(),
+    });
     for (const row of settled.counted) out.push({ row, account_id });
     for (const row of rows) importOf.set(row.id, row.import_id);
     for (const [rowId, bankId] of standsFor(settled)) {
@@ -2330,6 +2362,8 @@ export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonl
     'manual-transactions',
     'manual_accounts',
     'imported-transactions',
+    // Which bank row stands for which imported row, as the app counts them.
+    'imported-twins',
     connectorAccountsStore.name,
     taxonomyStore.name,
     txnAnnotationStore.name,

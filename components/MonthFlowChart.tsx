@@ -16,7 +16,8 @@
 import { useMemo, useRef, useState } from 'react';
 import { type Txn } from './MonthBreakdown';
 import { countsInTotals, totalsCurrency } from '@/lib/spending';
-import { formatMoney, compactMoney } from '@/lib/format';
+import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
 const W = 340;
 const H = 150;
@@ -156,10 +157,10 @@ export default function MonthFlowChart({
 
       <div className="chart-readout">
         <span className="chart-readout-value" style={{ color: 'var(--up)' }}>
-          {formatMoney(cumIn[i], currency)}
+          <Masked>{formatMoney(cumIn[i], currency)}</Masked>
         </span>
         <span className="chart-readout-value" style={{ color: 'var(--down)' }}>
-          {formatMoney(cumOut[i], currency)}
+          <Masked>{formatMoney(cumOut[i], currency)}</Masked>
         </span>
         <span className="chart-readout-date">
           {active !== null ? `through ${dayLabel(days[i])}` : `month to date`}
@@ -171,7 +172,7 @@ export default function MonthFlowChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`Cumulative income and spending for ${dayLabel(1)} to ${dayLabel(lastDay)}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`}
+        aria-label={spoken(`Cumulative income and spending for ${dayLabel(1)} to ${dayLabel(lastDay)}. Income ${formatMoney(totalIn, currency)}, spending ${formatMoney(totalOut, currency)}.`)}
         onPointerMove={(e) => scrub(e.clientX)}
         onPointerDown={(e) => scrub(e.clientX)}
         onPointerLeave={() => setActive(null)}

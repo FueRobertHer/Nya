@@ -7,7 +7,8 @@
 // expand/collapse loop.
 
 import { useEffect, useState } from 'react';
-import { formatMoney } from '@/lib/format';
+import { amountsHidden, formatMoney, hiddenMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
 type InvestmentTxn = {
   investment_transaction_id: string;
@@ -79,6 +80,7 @@ function fmtDay(iso: string): string {
  */
 function fmtAmount(t: InvestmentTxn): string {
   const flipped = -t.amount;
+  if (amountsHidden()) return hiddenMoney(flipped, t.currency || 'USD', 'always');
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -129,14 +131,14 @@ export default function InvestmentActivity({
       {data.note && <p className="empty-note">{data.note}.</p>}
       {data.ytd_contributions > 0 && (
         <div className="type-tag">
-          {formatMoney(data.ytd_contributions, data.txns[0]?.currency)} contributed this year
+          <Masked>{formatMoney(data.ytd_contributions, data.txns[0]?.currency)}</Masked> contributed this year
         </div>
       )}
       {/* Kept on its own line rather than added to the figure above: a rollover
           is existing retirement money arriving, not money saved this year. */}
       {data.ytd_rollovers > 0 && (
         <div className="type-tag">
-          {formatMoney(data.ytd_rollovers, data.txns[0]?.currency)} rolled over this year
+          <Masked>{formatMoney(data.ytd_rollovers, data.txns[0]?.currency)}</Masked> rolled over this year
         </div>
       )}
       <table className="txn-table">
@@ -154,7 +156,9 @@ export default function InvestmentActivity({
                     </div>
                   </div>
                 </td>
-                <td className={`num${inflow ? ' inflow' : ''}`}>{fmtAmount(t)}</td>
+                <td className={`num${inflow ? ' inflow' : ''}`}>
+                  <Masked>{fmtAmount(t)}</Masked>
+                </td>
               </tr>
             );
           })}

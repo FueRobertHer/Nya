@@ -265,6 +265,7 @@ describe('no chart library', () => {
     const chart = readFileSync(join(import.meta.dir, '..', 'components', 'CashFlowSankey.tsx'), 'utf8');
     const from = [...chart.matchAll(/^import [^;]* from '([^']+)';/gm)].map((m) => m[1]);
     expect(from.length).toBeGreaterThan(3);
-    expect(from.filter((f) => f !== 'react' && !f.startsWith('@/lib/'))).toEqual([]);
+    // Nya's own: its library, and its components (the hide amounts text).
+    expect(from.filter((f) => f !== 'react' && !f.startsWith('@/lib/') && !f.startsWith('./'))).toEqual([]);
   });
 });

@@ -17,6 +17,7 @@ import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
 import { forgetConnection } from './connection-health';
+import { forgetImportedTwins, retireImportedTwins } from './history-import/twins';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
 
@@ -64,10 +65,27 @@ export async function disconnectItem(
   } catch (err) {
     console.error('disconnect: could not record exclusions to carry across a re-link', err instanceof Error ? err.message : err);
   }
+  // And which of them stood for rows imported from the bank's files, by
+  // their content too (lib/history-import/twins.ts), so that once the
+  // re-added account is linked its bank's rows stand for those again rather
+  // than count beside them. Best effort too.
+  try {
+    if (stored) await retireImportedTwins(ctx, item_id, stored);
+  } catch (err) {
+    console.error('disconnect: could not record which transactions stood for imported ones to carry across a re-link', err instanceof Error ? err.message : err);
+  }
 
   await removeItem(ctx, item_id);
   // Drop this Item's persisted sync cursor + transactions.
   await clearItemTransactions(ctx, item_id);
+  // And which of them stood for imported rows, carried above: no sync of it
+  // runs again (best effort: an entry left behind is inert, its connection
+  // gone).
+  try {
+    await forgetImportedTwins(ctx, item_id);
+  } catch (err) {
+    console.error('disconnect: could not forget which of its transactions stood for imported ones', err instanceof Error ? err.message : err);
+  }
   // And its stored investment transactions. A sync still running writes, then
   // sees the Item gone and deletes what it wrote (lib/invstore.ts).
   await clearInvestmentStore(ctx, item_id);

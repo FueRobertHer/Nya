@@ -174,7 +174,7 @@ import { anySplitsOrGroups, appliedSplitsOf, splitInputsOf, splitMemoOf } from '
 import { splitFor } from './split-rows';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
-import { importedTxnStore } from './history-import/store';
+import { importedTwinsStore, importedTxnStore } from './history-import/store';
 import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
@@ -898,6 +898,15 @@ export function ofxFile(
         `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
       );
       incomplete.add(importedTxnStore.name);
+    }
+    // Which of its bank rows stand for which imported rows, kept by the sync
+    // (lib/history-import/twins.ts): unread, those rows are matched by what
+    // each says now, as importedTransactionsIn does.
+    if (fromFiles.length > 0 && missingIds(doc.problems, importedTwinsStore.name).includes(linked.item_id ?? '')) {
+      notes.push(
+        `Which of the bank’s transactions stand for the ones you imported into this account could not be read, so they are matched by what each says now: one the bank changed since they were paired may be in this statement beside the bank’s own. The JSON download lists it under problems. ${UNCHANGED}`
+      );
+      incomplete.add(importedTwinsStore.name);
     }
     if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
       notes.push(

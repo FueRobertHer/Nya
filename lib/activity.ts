@@ -376,6 +376,13 @@ export async function assembleBankRows(
     const stands = imported.represents.get(t.transaction_id);
     if (stands) t.stands_for = stands;
   }
+  // A posted bank row standing for an imported row whose amount it no longer
+  // says (the bank changed its own since the two were paired): the imported
+  // row's amount, which the Activity tab says beside it.
+  for (const t of transactions) {
+    const was = imported.changed.get(t.transaction_id);
+    if (was !== undefined && !t.pending) t.imported_amount = was;
+  }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
   const incomplete = results.flatMap((r, i) =>

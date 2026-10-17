@@ -34,13 +34,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import { categoryOptions, nameForRules, type Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { bankRows } from '@/lib/split-rows';
 import type { TxnSaved } from './transaction-edits';
 import { isOwedType } from '@/lib/balance';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import {
   balanceAfter,
@@ -551,13 +552,20 @@ export default function ManualTxnSheet({
         <label className="quick-add-check">
           <input type="checkbox" checked={updating} disabled={busy} onChange={(e) => set({ updateBalance: e.target.checked })} />
           <span>
-            Also update {account.name}&apos;s {owed ? 'amount owed' : 'balance'}, from {money(balance)} to {money(after)}
+            Also update {account.name}&apos;s {owed ? 'amount owed' : 'balance'}, from <Masked>{money(balance)}</Masked> to <Masked>{money(after)}</Masked>
           </span>
         </label>
       )}
-      <p className="panel-note">{balanceNote}</p>
+      <p className="panel-note">
+        <Masked>{balanceNote}</Masked>
+      </p>
 
-      {error && <div className="error">{error}</div>}
+      {/* The server's words can name a balance (one changed since the form opened). */}
+      {error && (
+        <div className="error">
+          <Masked>{hideAmountsIn(error)}</Masked>
+        </div>
+      )}
 
       {done ? (
         <div className="button-pair" style={{ marginTop: 16 }}>

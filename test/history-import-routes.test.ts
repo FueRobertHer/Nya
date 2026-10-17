@@ -370,7 +370,7 @@ describe('a later sync', () => {
     expect((await activity()).transactions.filter((t) => t.source === 'import:ofx').length).toBe(0);
     // The estimated history walks posted rows only: the imported lunch counts there.
     const { countedRows } = await import('@/lib/history-import/read');
-    const settled = countedRows(await book(), [{ transaction_id: 'b_pending', account_id: 'acc_chk', date: daysAgo(1), amount: 15, currency: 'USD', name: 'LUNCH', merchant_name: null, pending: true }], [], { bankFrom: daysAgo(60) });
+    const settled = countedRows(await book(), [{ transaction_id: 'b_pending', account_id: 'acc_chk', date: daysAgo(1), amount: 15, currency: 'USD', name: 'LUNCH', merchant_name: null, pending: true }], [], { bankFrom: daysAgo(60), twins: new Map() });
     expect(settled.counted.length).toBe(1);
   });
 

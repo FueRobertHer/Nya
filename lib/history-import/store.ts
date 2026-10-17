@@ -37,6 +37,22 @@
 //                             imports shows, and the periods the walk reads
 //                             (lib/history-import/extend.ts), so neither
 //                             decompresses a file's records.
+//   imported-twins            one entry per connection, under its Plaid Item
+//                             id: which of its bank rows stood for which
+//                             imported row, kept by the sync before it changes
+//                             them (lib/history-import/twins.ts), so a bank row
+//                             the bank later modifies keeps standing for the
+//                             row it stood for, whatever its amount becomes.
+//                             Compressed. In the download, which counts the
+//                             rows by it as the app does. Gone with its
+//                             connection, once carried (below).
+//   carried-imported-twins    one entry per earlier account, under its account
+//                             id: the pairs of a connection since disconnected,
+//                             each imported row's id to the content its bank
+//                             row had, so linking the re-added account makes
+//                             them again with the bank row that has it. Gone
+//                             once made again, and when that earlier account
+//                             is forgotten. In the download.
 //   imported-history-walk     one entry ("walk"): what the estimated history
 //                             built from imported rows covers (the anchor, the
 //                             oldest day drawn, how far back each account
@@ -514,6 +530,65 @@ export function isWalkState(v: unknown): v is WalkState {
       (isRecord(v.problem) && v.problem.kind === 'unreadable' && Array.isArray(v.problem.accounts) && v.problem.accounts.every((a) => typeof a === 'string')))
   );
 }
+
+// ---- The bank's rows that stood for imported rows, kept ----
+
+/**
+ * One connection's bank rows that stood for rows imported into its accounts
+ * (lib/history-import/match.ts settle), kept by the sync before it changes
+ * them (lib/history-import/twins.ts): each imported row's id to the
+ * transaction id of the bank row standing for it. A bank row stands for one
+ * imported row at most. Only ever a pair the matching rule made, never a new
+ * one: what this keeps is that it stays made while the bank's row is there,
+ * whatever its amount, day or words become.
+ */
+export type ImportedTwins = { version: 1; twins: Record<string, string> };
+
+/** A bank row's id as Plaid gives it, never an imported row's. */
+const isBankTxnId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(v) && !v.startsWith(IMPORTED_TXN_PREFIX);
+
+export function isImportedTwins(v: unknown): v is ImportedTwins {
+  if (!isRecord(v) || v.version !== 1 || !isRecord(v.twins)) return false;
+  const banks = new Set<string>();
+  for (const [row, bank] of Object.entries(v.twins)) {
+    if (!isImportedTxnId(row) || !isBankTxnId(bank) || banks.has(bank)) return false;
+    banks.add(bank);
+  }
+  return true;
+}
+
+export const importedTwinsStore = defineMapStore<ImportedTwins>('imported-twins', {
+  what: 'pairs of imported and bank transactions',
+  isValid: isImportedTwins,
+  exportable: true, // what says which bank row each imported row is, as the app counts them
+  compress: true, // a pair for each imported row the bank's window holds
+});
+
+/**
+ * The pairs kept at a connection since disconnected, carried so that linking
+ * the re-added account to the earlier one makes them again
+ * (lib/history-import/twins.ts CARRIED ACROSS A RE-LINK): each imported
+ * row's id to the content key its bank row had then (lib/transactions.ts
+ * contentKey: the account, the day, the amount in cents and the bank's own
+ * words), which survives a re-link where Plaid's transaction ids don't. One
+ * entry per earlier account, under its account id, as categories and what
+ * was said about transactions carry (lib/overrides.ts,
+ * lib/txn-annotations.ts): the keys name a day, an amount and a merchant, so
+ * they live inside the encrypted value, never in a field name.
+ */
+export type CarriedTwins = { version: 1; twins: Record<string, string> };
+
+export function isCarriedTwins(v: unknown): v is CarriedTwins {
+  if (!isRecord(v) || v.version !== 1 || !isRecord(v.twins)) return false;
+  return Object.entries(v.twins).every(([row, key]) => isImportedTxnId(row) && typeof key === 'string' && key.length > 0 && key.length <= 2000);
+}
+
+export const carriedTwinsStore = defineMapStore<CarriedTwins>('carried-imported-twins', {
+  what: 'pairs of imported and bank transactions carried from earlier accounts',
+  isValid: isCarriedTwins,
+  exportable: true, // which bank transaction each imported row was, kept for a re-link
+  compress: true, // as many pairs as the connection kept
+});
 
 export const historyWalkStore = defineMapStore<WalkState>('imported-history-walk', {
   what: 'estimated history from imports',
