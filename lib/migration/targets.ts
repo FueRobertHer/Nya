@@ -4,8 +4,9 @@
 // (lib/migration/plan.ts MigrationState): the person's categories and tags,
 // their manual and linked accounts (what the file's accounts can go into),
 // and for each account chosen, what it already holds: a manual account's
-// book, a linked account's bank rows and earlier imports (lib/history-import/
-// read.ts readAccountContext). Server only.
+// book, a linked account's bank rows, earlier imports and the bank rows kept
+// as standing for their rows (lib/history-import/read.ts readAccountContext,
+// its `twins`). Server only.
 //
 // STRICT where a wrong read would duplicate or lose a row: a book, a bank's
 // store, the links an account's earlier imports are found through. One of
@@ -92,7 +93,11 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
       contexts.set(id, await readAccountContext(ctx, account, links));
     } catch (err) {
       if (err instanceof StateUnreadableError) unavailable.set(id, `${account.institution_name}’s transactions for ${account.name} can’t be read just now, so this file can’t be matched against them. Try again later.`);
-      else if (err instanceof StoredDataUnreadableError) unavailable.set(id, `What was imported into ${account.name} before can’t be read, so this file can’t be matched against it.`);
+      // Its earlier imports' rows, or which of the bank's rows were kept as
+      // standing for them (lib/history-import/twins.ts): either decides what
+      // the file's rows are, so neither is guessed.
+      else if (err instanceof StoredDataUnreadableError)
+        unavailable.set(id, `What was imported into ${account.name} before, or which of ${account.institution_name}’s transactions stand for it, can’t be read just now, so this file can’t be matched against it.`);
       else throw err;
     }
   }

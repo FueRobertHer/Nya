@@ -30,6 +30,7 @@ import { wholeMoney } from '@/components/plan-text';
 import { PreviewView } from '@/components/Sharing';
 import { ReportView } from '@/components/ReportView';
 import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
+import { MappingStep, ReviewStep, type Question as MigrationQuestion, type Review as MigrationReview } from '@/components/MigrationSheet';
 import CashFlowSankey from '@/components/CashFlowSankey';
 import SplitSheet from '@/components/SplitSheet';
 import GroupSheet from '@/components/GroupSheet';
@@ -532,6 +533,129 @@ const IMPORT_PREVIEW: Preview = {
   balance: null,
 };
 
+/** Another app's export as the switching sheet reviews it
+ *  (components/MigrationSheet.tsx): its Visa going into a new manual account
+ *  (with what its rows come to, for its balance), its Checking into a linked
+ *  account, with a row the bank has beside it, and a line whose amount
+ *  can't be read. */
+const MIGRATION_REVIEW: MigrationReview = {
+  app: 'ynab',
+  app_name: 'YNAB',
+  detected: true,
+  entry: null,
+  read: { date_order: 'mdy', order_open: false, sign: null, sign_from: null, decimal: '.' },
+  currency: { chosen: null, in_file: false },
+  rows: 4,
+  notes: [],
+  accounts: [
+    { key: 'Checking', name: 'Checking', rows: 2, first: '2026-09-01', last: '2026-09-05', currencies: [], net: 1850, transfers: 0, opening: 0, splits: 0, uncategorized: 0, choice: { to: 'linked', id: 'chk' } },
+    { key: 'Visa', name: 'Visa', rows: 2, first: '2026-09-02', last: '2026-09-10', currencies: [], net: 1236.42, transfers: 0, opening: 0, splits: 0, uncategorized: 0, choice: null },
+  ],
+  offered: [{ kind: 'linked', id: 'chk', name: 'Checking', institution: 'Chase', type: 'depository', currency: 'USD', mask: '1111' }],
+  categories: {
+    mappings: [
+      {
+        key: 'monthly bills\u001frent',
+        group: 'Monthly Bills',
+        name: 'Rent',
+        kind: null,
+        from: null,
+        rows: 1,
+        target: { to: 'new', name: 'Rent', kind: 'expense', group: { new: 'Monthly Bills' } },
+        by: 'new',
+        differs: null,
+      },
+    ],
+    added: 1,
+    room: 400,
+    problem: null,
+  },
+  counts: { uncategorized: 0, transfers: 0, opening: 0 },
+  tags: { on: true, names: [], more: 0, added: 0 },
+  splits: { rebuilt: 0, parts: 0, dropped: 0, kept: [], unmarked: null },
+  problems: [{ line: 5, reason: 'Its amount (1.234,5x) can’t be read.' }],
+  more_problems: 0,
+  targets: [
+    {
+      key: 'linked:chk',
+      kind: 'linked',
+      name: 'Checking',
+      new: false,
+      sources: ['Checking'],
+      currency: 'USD',
+      counts: { new: 1, duplicates: 1 },
+      first_date: '2026-09-01',
+      last_date: '2026-09-05',
+      totals: { out: 0, in: 2500.75 },
+      currency_of_totals: 'USD',
+      proposals: [
+        {
+          index: 1,
+          line: 3,
+          file: { date: '2026-09-05', name: 'Landlord', amount: 1850, currency: 'USD' },
+          twin: { date: '2026-09-06', name: 'ZELLE PAYMENT TO LANDLORD', amount: 1850, currency: 'USD', kind: 'bank', descriptor: null },
+          days: 1,
+          confidence: 'high',
+          similar: true,
+          choice: 'same',
+        },
+      ],
+      more_proposals: 0,
+      problems: [],
+      more_problems: 0,
+      before_bank: 0,
+      within_bank: 0,
+      pending_alike: 0,
+      history_pending: false,
+      splits: 0,
+      exploded: [],
+      tags_cut: 0,
+    },
+    {
+      key: 'new:Visa',
+      kind: 'manual',
+      name: 'Visa',
+      new: true,
+      sources: ['Visa'],
+      currency: 'USD',
+      counts: { new: 2 },
+      first_date: '2026-09-02',
+      last_date: '2026-09-10',
+      totals: { out: 1271.42, in: 35 },
+      currency_of_totals: 'USD',
+      proposals: [],
+      more_proposals: 0,
+      problems: [],
+      more_problems: 0,
+      before_bank: null,
+      within_bank: null,
+      pending_alike: null,
+      history_pending: false,
+      splits: 0,
+      exploded: [],
+      tags_cut: 0,
+    },
+  ],
+  blocks: [],
+  waiting: { accounts: 1, proposals: 0 },
+  review: 'a'.repeat(32),
+};
+/** A header the switching sheet doesn't know, with its first rows. */
+const MIGRATION_MAPPING: Extract<MigrationQuestion, { needs: 'mapping' }> = {
+  needs: 'mapping',
+  app: null,
+  columns: {},
+  table: {
+    header: ['When', 'Bank', 'Who', 'Out', 'In'],
+    sample: [
+      { line: 2, cells: ['2026-09-01', 'Checking', 'Rent', '2450.00', ''] },
+      { line: 3, cells: ['2026-09-02', 'Checking', 'Payroll', '', '5,120.33'] },
+    ],
+    rows: 2,
+  },
+  problem: null,
+};
+
 /** A month the cash flow draws: pay and a refund in, spending in four
  *  groups, one with a long name, so labels are cut to fit. */
 const FLOW: Txn[] = [
@@ -680,6 +804,24 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     const read = readImport(CSV, { format: 'csv', options, thisYear: 2026 });
     return <CsvMapping file={picked(CSV)} read={read} options={options} setOptions={() => {}} account="Checking" busy={false} error="" onNext={() => {}} />;
   },
+  'Switching from another app: where each account goes, its categories, a row the bank has, and each account’s import': () => (
+    <ReviewStep
+      r={MIGRATION_REVIEW}
+      taxonomy={null}
+      options={{}}
+      accounts={{ Checking: { to: 'linked', id: 'chk' }, Visa: { to: 'new', name: 'Visa', institution: 'YNAB', type: 'credit', balance: '' } }}
+      categories={{}}
+      tags={true}
+      choices={{}}
+      busy={false}
+      error=""
+      onAnswer={() => {}}
+      onImport={() => {}}
+    />
+  ),
+  'Switching from another app: a file’s columns, and its first rows': () => (
+    <MappingStep q={MIGRATION_MAPPING} options={{ app: 'zerosum' }} busy={false} error="" onAnswer={() => {}} />
+  ),
   'Import: what a file brings in, and a line that can’t be read': () => (
     <ImportPreview
       preview={IMPORT_PREVIEW}

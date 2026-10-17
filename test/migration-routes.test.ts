@@ -17,10 +17,20 @@ import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscop
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
+/** What the next sync brings: rows added, modified and removed. */
+const plaid = { added: [] as unknown[], modified: [] as unknown[], removed: [] as string[] };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     transactionsSync: async () => ({
-      data: { added: [], modified: [], removed: [], accounts: [], next_cursor: 'c-next', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' },
+      data: {
+        added: plaid.added.splice(0),
+        modified: plaid.modified.splice(0),
+        removed: plaid.removed.splice(0).map((transaction_id) => ({ transaction_id })),
+        accounts: [],
+        next_cursor: 'c-next',
+        has_more: false,
+        transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
+      },
     }),
   },
 }));
@@ -39,7 +49,7 @@ const { getManualAccounts } = await import('@/lib/manual');
 const { readTaxonomy, ensureTaxonomy } = await import('@/lib/category-store');
 const { readTagSet } = await import('@/lib/tags');
 const { manualTxnStore } = await import('@/lib/manual-txns');
-const { importedTxnStore } = await import('@/lib/history-import/store');
+const { importedTxnStore, importedTwinsStore } = await import('@/lib/history-import/store');
 const { splitStore } = await import('@/lib/splits');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { migrationStore } = await import('@/lib/migration/store');
@@ -187,6 +197,9 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
 beforeEach(async () => {
   fake.reset();
   forgetEpochs();
+  plaid.added = [];
+  plaid.modified = [];
+  plaid.removed = [];
   await registerTestContainer(fake);
 });
 
@@ -720,6 +733,101 @@ describe('the import', () => {
     expect(await migrationStore.get(ctx, id)).toBeNull();
     expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.length).toBe(1);
   });
+});
+
+// ---- A linked account's pairs kept once made ----
+
+describe('into a linked account whose bank rows stand for an earlier import’s', () => {
+  /** A bank's own CSV of the account, imported into it through its history
+   *  import, as reviewed: the row it brought. */
+  async function historyImport(lines: string[]) {
+    const form = (meta: object) => {
+      const f = new FormData();
+      f.set('file', new Blob([new TextEncoder().encode(['Date,Description,Amount', ...lines].join('\n')) as Uint8Array<ArrayBuffer>]), 'bank.csv');
+      f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+    };
+    const p = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
+    expect(p.status).toBe(200);
+    expect((await asRes(await historyRoutes.POST(form({ action: 'import', review: p.body.preview.review })))).status).toBe(200);
+    return (await importedTxnStore.get(ctx, 'acc_chk'))!.rows;
+  }
+  const sync = () => assembleBankRows(ctx, { sync: true });
+  const RENT = bankTxn('b_rent', 'acc_chk', 55, 1850, { name: 'ZELLE PAYMENT TO LANDLORD', merchant_name: 'Landlord', category: 'rent and utilities' });
+  /** YNAB's register of the same account: the rent, and a row of its own. */
+  const file = (rent: number) => {
+    const ynab = CASES.find((c) => c.app === 'ynab')!;
+    return ynab.linked([
+      { days: 55, payee: 'Landlord', amount: rent, category: 'Rent', group: 'Bills' },
+      { days: 30, payee: 'Corner Shop', amount: 60, category: 'Shopping', group: 'Fun' },
+    ]);
+  };
+  const answers = { accounts: { Checking: { to: 'linked', id: 'acc_chk' } }, options: { date_order: 'mdy' } };
+  const rent = async () => ((await activity()).transactions as any[]).filter((t) => t.name !== 'FIRST ROW' && /landlord/i.test(`${t.name} ${t.merchant_name ?? ''}`));
+  const spentOnRent = async () => (await activity()).transactions.filter((t: any) => t.amount > 1000).reduce((n: number, t: any) => n + t.amount, 0);
+
+  test('a bank row standing for an earlier file’s row: the app’s row is that transaction, never one beside it, and undone it stays so', async () => {
+    await seed();
+    const [earlier] = await historyImport([`${daysAgo(55)},ZELLE PAYMENT TO LANDLORD,-1850.00`]);
+    expect(earlier.same_as).toBeDefined();
+    const { preview, done } = await importReviewed(file(1850), answers);
+    const [target] = preview.targets;
+    expect(target.proposals.map((p: any) => [p.file.name, p.twin.kind, p.twin.amount, p.choice])).toEqual([['Landlord', 'bank', 1850, 'same']]);
+    expect(target.counts.new).toBe(1);
+    expect(done.status).toBe(200);
+    // The rent once, as the bank's, kept as the earlier file's row it stands
+    // for, with the app's category; the app's own row beside the bank's rows.
+    expect((await rent()).map((t) => [t.transaction_id, t.amount, t.category_name])).toEqual([['b_rent', 1850, 'Rent']]);
+    expect(await spentOnRent()).toBe(1850);
+    expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.find((r) => r.name === 'Landlord')!.same_as_row).toBe(earlier.id);
+    const undone = await undo({ migration_id: (await list()).body.imports[0].id, confirm: true });
+    expect(undone.status).toBe(200);
+    expect((await rent()).map((t) => [t.transaction_id, t.amount, t.category_name])).toEqual([['b_rent', 1850, 'rent and utilities']]);
+    expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.map((r) => r.id)).toEqual([earlier.id]);
+  });
+
+  test('a row the bank changed since: the app’s row is found as the earlier file’s, and the transaction counts once, at the bank’s amount', async () => {
+    await seed();
+    const [earlier] = await historyImport([`${daysAgo(55)},ZELLE PAYMENT TO LANDLORD,-1850.00`]);
+    // The bank modifies its row (the same id): the sync keeps the pair first.
+    plaid.modified.push({ ...RENT, amount: 1875 });
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [earlier.id]: 'b_rent' } });
+    expect((await rent()).map((t) => [t.transaction_id, t.amount])).toEqual([['b_rent', 1875]]);
+
+    // The app's file has the rent as the person entered it, at the old amount.
+    const { preview, done } = await importReviewed(file(1850), answers);
+    const [target] = preview.targets;
+    expect(target.proposals.map((p: any) => [p.twin.kind, p.twin.id, p.twin.amount, p.choice])).toEqual([['imported', earlier.id, 1850, 'same']]);
+    expect(target.counts.new).toBe(1);
+    expect(done.status).toBe(200);
+    expect((await rent()).map((t) => [t.transaction_id, t.amount, t.category_name])).toEqual([['b_rent', 1875, 'Rent']]);
+    expect(await spentOnRent()).toBe(1875);
+    // At the bank's new amount the app's row is the same transaction too.
+    const again = await preview_(file(1875));
+    expect(again.targets[0].counts.new ?? 0).toBe(0);
+
+    // Undone, the pair still holds: the earlier file's row stays the bank's.
+    const undone = await undo({ migration_id: (await list()).body.imports[0].id, confirm: true });
+    expect(undone.status).toBe(200);
+    expect((await rent()).map((t) => [t.transaction_id, t.amount])).toEqual([['b_rent', 1875]]);
+    expect(await spentOnRent()).toBe(1875);
+  });
+
+  test('pairs that can’t be read: the account isn’t matched against, said, and nothing is imported into it', async () => {
+    await seed();
+    await historyImport([`${daysAgo(55)},ZELLE PAYMENT TO LANDLORD,-1850.00`]);
+    await fake.hset(ctxKey('imported-twins'), { item_chase: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const p = await quietly(() => preview(file(1850), answers));
+    expect(p.status).toBe(200);
+    expect(p.body.preview.blocks.join(' ')).toContain('stand for');
+    const refused = await quietly(() => post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...answers }, file(1850)));
+    expect(refused.status).toBe(409);
+    expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.length).toBe(1);
+  });
+
+  /** The review of a file into the linked account, with the answers above. */
+  const preview_ = async (f: string) => (await preview(f, answers)).body.preview;
 });
 
 describe('the download of my data', () => {

@@ -15,12 +15,17 @@
 // sent twice is made once. The list under the file is every import from
 // another app, with Undo, which takes all of one out in one action.
 //
-// Amounts are formatted through lib/format.ts only, never kept formatted in a
-// memo, so they follow whatever the formatters do (the hide-amounts toggle).
+// Amounts are formatted through lib/format.ts only, as they are drawn, never
+// kept formatted in a memo, so they follow the hide-amounts switch: each one
+// drawn inside <Masked>, so a screen reader hears "hidden" for it, and a
+// file's own figures (its first rows, a column's name, a line's problem) with
+// hideFiguresIn, since they carry no currency to tell an amount by.
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
-import { formatMoney, signedMoney } from '@/lib/format';
+import { Masked, spokenLabel } from './HideAmounts';
+import { shownReason } from './ImportSheet';
+import { formatMoney, hideAmountsIn, hideFiguresIn, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
@@ -402,7 +407,7 @@ export default function MigrationSheet({
               Day first
             </button>
           </div>
-          {error && <div className="error">{error}</div>}
+          {error && <div className="error">{hideAmountsIn(error)}</div>}
         </div>
       ) : review ? (
         <ReviewStep
@@ -429,7 +434,7 @@ export default function MigrationSheet({
             <input key={inputKey} type="file" accept=".csv,.tsv,.zip,text/csv,application/zip" disabled={busy} onChange={(e) => e.target.files?.[0] && void choose(e.target.files[0])} />
           </label>
           {busy && <div className="spinner" role="status" aria-label="Reading the file" />}
-          {error && <div className="error">{error}</div>}
+          {error && <div className="error">{hideAmountsIn(error)}</div>}
           {notice && <p className="panel-note" role="status">{notice}</p>}
           <details className="migration-how">
             <summary>How to export from each app</summary>
@@ -501,20 +506,20 @@ export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<
             >
               <option value="">None</option>
               {q.table.header.map((h, i) => (
-                <option key={i} value={i}>
-                  {h}
+                <option key={i} value={i} aria-label={spokenLabel(hideFiguresIn(h))}>
+                  {hideFiguresIn(h)}
                 </option>
               ))}
             </select>
           </label>
         ))}
-      {q.problem && <div className="error">{q.problem}</div>}
-      {error && <div className="error">{error}</div>}
+      {q.problem && <div className="error">{hideAmountsIn(q.problem)}</div>}
+      {error && <div className="error">{hideAmountsIn(error)}</div>}
       <p className="section-label">The first rows</p>
       <ul className="import-problems">
         {q.table.sample.map((row) => (
           <li key={row.line}>
-            Line {row.line}: {row.cells.join(' · ')}
+            Line {row.line}: <Masked>{hideFiguresIn(row.cells.join(' · '))}</Masked>
           </li>
         ))}
       </ul>
@@ -633,7 +638,7 @@ export function ReviewStep({
         ))}
       {r.notes.map((n) => (
         <p key={n} className="panel-note">
-          {n}
+          {hideAmountsIn(n)}
         </p>
       ))}
 
@@ -731,7 +736,7 @@ export function ReviewStep({
           <ul className="import-problems">
             {(allProblems ? r.problems : r.problems.slice(0, 5)).map((p) => (
               <li key={`${p.line}-${p.reason}`}>
-                Line {p.line}: {p.reason}
+                Line {p.line}: <Masked>{shownReason(p.reason)}</Masked>
               </li>
             ))}
           </ul>
@@ -745,10 +750,10 @@ export function ReviewStep({
 
       {r.blocks.map((b) => (
         <div key={b} className="error">
-          {b}
+          {hideAmountsIn(b)}
         </div>
       ))}
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error">{hideAmountsIn(error)}</div>}
       <div className="action-row">
         <button disabled={!canImport} onClick={onImport}>
           {busy ? 'Reading…' : waiting > 0 ? `${plural(waiting, 'answer')} still needed` : 'Import'}
@@ -866,7 +871,7 @@ function AccountRow({
               <input inputMode="decimal" value={answer.balance} placeholder="0.00" disabled={busy} onChange={(e) => onAnswer({ ...answer, balance: e.target.value })} />
             </label>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              Its transactions in this file come to {formatMoney(hint, a.currencies[0] ?? currency)} ({appName}’s balance if the file holds all of its history).{' '}
+              Its transactions in this file come to <Masked>{formatMoney(hint, a.currencies[0] ?? currency)}</Masked> ({appName}’s balance if the file holds all of its history).{' '}
               <button className="link-btn" disabled={busy} onClick={() => onAnswer({ ...answer, balance: String(Math.round(hint * 100) / 100) })}>
                 Use it
               </button>
@@ -954,7 +959,12 @@ function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: Pro
       </p>
       <p className="panel-note">
         {range ? `${range} · ` : ''}in {t.currency}
-        {t.currency_of_totals && (c.new ?? 0) > 0 ? ` · new: ${formatMoney(t.totals.out, t.currency_of_totals)} out, ${formatMoney(t.totals.in, t.currency_of_totals)} in` : ''}
+        {t.currency_of_totals && (c.new ?? 0) > 0 && (
+          <>
+            {' · new: '}
+            <Masked>{formatMoney(t.totals.out, t.currency_of_totals)}</Masked> out, <Masked>{formatMoney(t.totals.in, t.currency_of_totals)}</Masked> in
+          </>
+        )}
       </p>
       {t.kind === 'linked' && t.before_bank !== null && (t.before_bank > 0 || (t.within_bank ?? 0) > 0) && (
         <p className="panel-note">
@@ -980,12 +990,16 @@ function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: Pro
                 <div className="import-row-text">
                   <div className="import-conflict-version">
                     <span className="import-row-name">{p.file.name}</span>
-                    <span className={`import-row-amount${p.file.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.file.amount, p.file.currency)}</span>
+                    <span className={`import-row-amount${p.file.amount < 0 ? ' inflow' : ''}`}>
+                      <Masked>{fmtAmount(p.file.amount, p.file.currency)}</Masked>
+                    </span>
                   </div>
                   <div className="import-row-meta">In the file, {fmtDay(p.file.date)}</div>
                   <div className="import-conflict-version">
                     <span className="import-row-name">{p.twin.name}</span>
-                    <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.twin.amount, p.twin.currency ?? p.file.currency)}</span>
+                    <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>
+                      <Masked>{fmtAmount(p.twin.amount, p.twin.currency ?? p.file.currency)}</Masked>
+                    </span>
                   </div>
                   <div className="import-row-meta">
                     {p.twin.kind === 'bank' ? 'The bank’s' : 'An earlier file’s'}, {fmtDay(p.twin.date)} · {p.days === 0 ? 'the same day' : `${plural(p.days, 'day')} apart`} · {CONFIDENCE[p.confidence]}
@@ -1010,7 +1024,7 @@ function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: Pro
         <ul className="import-problems">
           {t.problems.slice(0, 3).map((p) => (
             <li key={`${p.line}-${p.reason}`}>
-              Line {p.line}: {p.reason}
+              Line {p.line}: <Masked>{shownReason(p.reason)}</Masked>
             </li>
           ))}
         </ul>
@@ -1021,7 +1035,7 @@ function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: Pro
 
 /** Every import from another app, with Undo. */
 export function PastMigrations({ items, error, onUndo }: { items: Listed[] | null; error: string; onUndo: (item: Listed) => void }) {
-  if (error) return <p className="panel-note">{error}</p>;
+  if (error) return <p className="panel-note">{hideAmountsIn(error)}</p>;
   if (!items || items.length === 0) return null;
   return (
     <>
@@ -1080,7 +1094,7 @@ export function UndoConfirm({ item, busy, error, onConfirm, onCancel }: { item: 
         {e.made.accounts.length > 0 ? ` The ${plural(e.made.accounts.length, 'account')} it made (${listWords(e.made.accounts.map((a) => a.name))}) ${e.made.accounts.length === 1 ? 'goes' : 'go'} too, unless ${e.made.accounts.length === 1 ? 'it holds' : 'they hold'} transactions of your own since.` : ''}
         {e.made.categories.length + e.made.tags.length > 0 ? ' The categories and tags it made go when nothing else uses them.' : ''}
       </p>
-      {error && <div className="error">{error}</div>}
+      {error && <div className="error">{hideAmountsIn(error)}</div>}
       <div className="action-row">
         <button className="secondary" disabled={busy} onClick={onCancel}>
           Keep it
