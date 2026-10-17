@@ -2091,7 +2091,7 @@ export default function Dashboard({
                                           />
                                         </div>
                                         <span className="util-label">
-                                          {Math.round(util * 100)}% of {fmt(a.limit, a.currency)} limit
+                                          {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit
                                         </span>
                                       </div>
                                     )}
@@ -2115,7 +2115,7 @@ export default function Dashboard({
                                         {cash.flagged && (
                                           <span className="cash-dot" aria-hidden="true" />
                                         )}
-                                        {fmt(cash.cash, a.currency)}
+                                        <Masked>{fmt(cash.cash, a.currency)}</Masked>
                                         {cash.flagged ? ' uninvested' : ' in cash'}
                                         {/* "of holdings", not "of this
                                             account": the denominator is the
@@ -2295,14 +2295,11 @@ export default function Dashboard({
                                   Cash label in the list below. */}
                               {instCash.cash > 0 && (
                                 <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                                  {fmt(instCash.cash, instCurrency)}{' '}
+                                  <Masked>{fmt(instCash.cash, instCurrency)}</Masked>{' '}
                                   {instCash.flagged ? 'uninvested' : 'cash'}
                                 </span>
                               )}
-                              {fmt(
-                                inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0),
-                                instCurrency
-                              )}
+                              <Masked>{fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
                               <svg
                                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
                                 viewBox="0 0 24 24"
@@ -2361,7 +2358,7 @@ export default function Dashboard({
                                       <div
                                         className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
                                       >
-                                        {fmtGain(h.value, h.cost_basis)}
+                                        <Masked>{fmtGain(h.value, h.cost_basis)}</Masked>
                                       </div>
                                     )}
                                   </td>

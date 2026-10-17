@@ -579,9 +579,11 @@ export function RepairCard({ fixed, editable, onSave, money }: { fixed: Repair[]
   return (
     <div className="card">
       <div className="error" style={{ marginTop: 0 }}>
-        {whole
-          ? "Your saved plan can't be used by this version of Nya, so the figures below use the defaults."
-          : `Your saved plan has ${fixed.length === 1 ? 'a value' : 'values'} this version of Nya can't use: ${what}.`}
+        <Masked>
+          {whole
+            ? "Your saved plan can't be used by this version of Nya, so the figures below use the defaults."
+            : `Your saved plan has ${fixed.length === 1 ? 'a value' : 'values'} this version of Nya can't use: ${what}.`}
+        </Masked>
       </div>
       <p className="panel-note">
         {whole
@@ -605,7 +607,7 @@ function Row({ label, value, note, action }: { label: string; value: React.React
       </div>
       {(note || action) && (
         <div className="plan-row-note">
-          <span>{note}</span>
+          <span>{typeof note === 'string' ? <Masked>{note}</Masked> : note}</span>
           {action}
         </div>
       )}
@@ -618,10 +620,10 @@ function Notes({ source, warnings = [] }: { source: string; warnings?: (string |
   const shown = warnings.filter((w): w is string => !!w);
   return (
     <>
-      {source}
+      <Masked>{source}</Masked>
       {shown.map((w) => (
         <span key={w} className="plan-warning">
-          {w}
+          <Masked>{w}</Masked>
         </span>
       ))}
     </>
@@ -881,13 +883,17 @@ export function FiCard({
   return (
     <div className="card">
       <div className="total-label">FI number</div>
-      <div className="total-value">{view.fiNumber !== null ? money(view.fiNumber) : '--'}</div>
+      <div className="total-value">
+        <Masked>{view.fiNumber !== null ? money(view.fiNumber) : '--'}</Masked>
+      </div>
       <div className="as-of">
-        {view.fiNumber !== null && spending.value !== null
-          ? `${money(spending.value)} a year${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
-          : !formulasTake(plan)
-            ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
-            : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
+        <Masked>
+          {view.fiNumber !== null && spending.value !== null
+            ? `${money(spending.value)} a year${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
+            : !formulasTake(plan)
+              ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
+              : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
+        </Masked>
       </div>
       {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
       {view.progress !== null && (
@@ -896,7 +902,7 @@ export function FiCard({
             <div className={`meter-fill${view.progress >= 1 ? ' done' : ''}`} style={{ width: `${Math.min(100, view.progress * 100)}%` }} />
           </div>
           <div className="as-of">
-            {money(assets.value ?? 0)} invested · {progressText(view.progress)} of the way
+            <Masked>{money(assets.value ?? 0)}</Masked> invested · {progressText(view.progress)} of the way
           </div>
           {assetsShort && <div className="as-of stale">Invested assets may be low (below).</div>}
         </>
@@ -1041,8 +1047,8 @@ export function SimulationCard({
   } else if (rateFrom === 'spending') {
     setup = (
       <>
-        Retire {when} with {money(sim.startBalance)} ({startLabel}), spending what you spend now,{' '}
-        {money(spendingNow ?? 0)} a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
+        Retire {when} with <Masked>{money(sim.startBalance)}</Masked> ({startLabel}), spending what you spend now,{' '}
+        <Masked>{money(spendingNow ?? 0)}</Masked> a year after tax, for {sim.years} years{startAge !== null ? ` (to age ${startAge + sim.years})` : ''}. That is a{' '}
         <strong>{pct(rate, 1)}</strong> withdrawal rate{rate > plan.withdrawalRate * 1.001 ? `, above the ${pct(plan.withdrawalRate)} your FI number assumes` : ''}.
       </>
     );
@@ -1054,7 +1060,7 @@ export function SimulationCard({
     return (
       <div className="card">
         {header}
-        <p className="panel-note">{setup}</p>
+        <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
         <div className="plan-working" role="status">
           Working it out…
         </div>
@@ -1065,7 +1071,7 @@ export function SimulationCard({
     return (
       <div className="card">
         {header}
-        <p className="panel-note">{setup}</p>
+        <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
         {outcome.unavailable ? (
           <>
             <p className="empty-note">
@@ -1091,7 +1097,7 @@ export function SimulationCard({
   return (
     <div className="card">
       {header}
-      <p className="panel-note">{setup}</p>
+      <p className="panel-note">{typeof setup === 'string' ? <Masked>{setup}</Masked> : setup}</p>
 
       {/* While a new answer is worked out, the last one keeps its place but
           is hidden: it answered other assumptions than the ones above. */}
@@ -1103,7 +1109,7 @@ export function SimulationCard({
         )}
         {vpw && spendingNow !== null && (
           <p className="panel-note">
-            Its first year spends {money(r.firstYearSpending)} after tax, against the {money(spendingNow)} you spend now.
+            Its first year spends <Masked>{money(r.firstYearSpending)}</Masked> after tax, against the <Masked>{money(spendingNow)}</Masked> you spend now.
           </p>
         )}
         <div className="plan-stats">
@@ -1118,9 +1124,11 @@ export function SimulationCard({
             <div className="plan-stat">
               <span className="plan-stat-value">{lowShare === null ? '--' : successText(lowShare)}</span>
               <span className="plan-stat-label">
-                {lowShare === null
-                  ? 'no start lasted, so there is no spending to compare'
-                  : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`}
+                <Masked>
+                  {lowShare === null
+                    ? 'no start lasted, so there is no spending to compare'
+                    : `of the first year's spending in the lowest year, in the worst ${r.method === 'historical' ? 'start' : 'run'} that lasted${r.lowestSpending?.start ? ` (${monthName(r.lowestSpending.start)})` : ''}: ${money(r.lowestSpending!.amount)} against ${money(r.firstYearSpending)}`}
+                </Masked>
               </span>
             </div>
           )}
@@ -1133,7 +1141,7 @@ export function SimulationCard({
 
         <PlanFanChart bands={r.balance} startAge={startAge} currency={currency} />
         <div className="as-of">
-          Ending balance: {money(r.ending.p10)} (10th percentile), {money(r.ending.p50)} (median), {money(r.ending.p90)} (90th).
+          Ending balance: <Masked>{money(r.ending.p10)}</Masked> (10th percentile), <Masked>{money(r.ending.p50)}</Masked> (median), <Masked>{money(r.ending.p90)}</Masked> (90th).
         </div>
 
         {canRunOut(plan.rule) === false && r.successRate === 1 && (
@@ -1148,9 +1156,11 @@ export function SimulationCard({
                 <li key={w.start}>
                   <span>{monthName(w.start!)}</span>
                   <span className="plan-muted">
-                    {w.failedYear !== null
-                      ? `ran out in year ${w.failedYear + 1}${startAge !== null ? ` (age ${startAge + w.failedYear})` : ''}`
-                      : `lasted, ${money(w.endBalance)} left${flexible ? `, lowest year ${money(w.lowestSpending)}` : ''}`}
+                    <Masked>
+                      {w.failedYear !== null
+                        ? `ran out in year ${w.failedYear + 1}${startAge !== null ? ` (age ${startAge + w.failedYear})` : ''}`
+                        : `lasted, ${money(w.endBalance)} left${flexible ? `, lowest year ${money(w.lowestSpending)}` : ''}`}
+                    </Masked>
                   </span>
                 </li>
               ))}
@@ -1176,12 +1186,12 @@ export function SimulationCard({
           </li>
           {placedIncome.map((x) => (
             <li key={x.id}>
-              {x.label}: {money(x.amount)} a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
+              {x.label}: <Masked>{money(x.amount)}</Masked> a year after tax from age {x.fromAge}, {x.inflationAdjusted ? 'rising with inflation' : "in today's dollars when it starts, then losing value to inflation"}.
             </li>
           ))}
           {placedExpenses.map((x) => (
             <li key={x.id}>
-              {x.label}: {money(x.amount)} at age {x.atAge}, on top of the year&apos;s spending.
+              {x.label}: <Masked>{money(x.amount)}</Masked> at age {x.atAge}, on top of the year&apos;s spending.
             </li>
           ))}
           <li>
@@ -1235,9 +1245,11 @@ export function GridCard({
         <div className="inst-name">{plan.rule === 'vpw' ? 'By length' : 'By withdrawal rate and length'}</div>
       </div>
       <p className="panel-note">
-        {plan.rule === 'vpw'
-          ? `VPW has no withdrawal rate to vary, so this is the plan at each length, starting with ${money(startBalance)}.`
-          : `The share of ${noun} that lasted, each starting with ${money(startBalance)} and everything else as above.`}
+        <Masked>
+          {plan.rule === 'vpw'
+            ? `VPW has no withdrawal rate to vary, so this is the plan at each length, starting with ${money(startBalance)}.`
+            : `The share of ${noun} that lasted, each starting with ${money(startBalance)} and everything else as above.`}
+        </Masked>
         {flexible ? " This rule lasts by cutting spending, so each cell's second line is the lowest year's spending, as a share of the first year's, in the worst one that lasted." : ''}{' '}
         Your plan is outlined.
       </p>

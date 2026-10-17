@@ -33,6 +33,7 @@ import {
 import { EMPTY_PLANNED, thresholdOf, type Planned } from '@/lib/planned';
 import { formatMoney } from '@/lib/format';
 import { useAmountsHidden } from './hide-amounts';
+import { Masked } from './HideAmounts';
 import { isCurrencyCode, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { refusedNames, unallowedNames, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { joinNames, type Incomplete, type Stopped } from '@/lib/month-coverage';
@@ -233,22 +234,24 @@ export default function ForecastCard({
         ))}
       </div>
 
-      {warning && <p className={warning.tone === 'down' ? 'error forecast-warning' : 'stale-note forecast-warning'}>{warning.text}</p>}
+      {warning && (
+        <p className={warning.tone === 'down' ? 'error forecast-warning' : 'stale-note forecast-warning'}>
+          <Masked>{warning.text}</Masked>
+        </p>
+      )}
       {failed && <p className="error">Transactions couldn&apos;t be loaded, so no bills or income are in this: it is your balance and what you planned.</p>}
       {loading && !failed && <p className="stale-note">Transactions are still loading, so no bills or income are in this yet.</p>}
       {!ready && <p className="stale-note">Your planned items aren&apos;t loaded, so they aren&apos;t in this, and bills you marked not recurring may be.</p>}
 
       <p className="panel-note">
-        Starts from {money(forecast.start)}
-        {position.pending.count > 0
-          ? `: ${money(position.balances)} in ${where}, less ${money(position.pending.amount)} still pending.`
-          : ` in ${where}.`}
+        Starts from <Masked>{money(forecast.start)}</Masked>
+        <Masked>{position.pending.count > 0 ? `: ${money(position.balances)} in ${where}, less ${money(position.pending.amount)} still pending.` : ` in ${where}.`}</Masked>
         {balancesAsOf && balancesSaved
           ? ` Those are the balances saved on ${fmtLoaded(balancesAsOf, today)}, the last time they loaded; anything since isn't in it.`
           : balancesAsOf
             ? ` Balances as of ${fmtLoaded(balancesAsOf, today)}.`
             : ''}{' '}
-        Expected to end near {money(forecast.end)} on {fmtDay(forecast.days[forecast.days.length - 1].date)}.
+        Expected to end near <Masked>{money(forecast.end)}</Masked> on {fmtDay(forecast.days[forecast.days.length - 1].date)}.
       </p>
 
       <div className="card-actions">
@@ -266,7 +269,9 @@ export default function ForecastCard({
       <div className="forecast-warn-row">
         {warnDraft === null ? (
           <>
-            <span>{threshold > 0 ? `Warns below ${money(threshold)}` : 'Warns below zero'}</span>
+            <span>
+              <Masked>{threshold > 0 ? `Warns below ${money(threshold)}` : 'Warns below zero'}</Masked>
+            </span>
             {onSavePlanned && ready && (
               <button className="link-btn" onClick={() => setWarnDraft(threshold ? String(threshold) : '')}>
                 Change
@@ -297,14 +302,14 @@ export default function ForecastCard({
       </div>
       {warn.other && (
         <div className="stale-note">
-          Your warning of {formatMoney(warn.other.amount, warn.other.currency)} was set in {warn.other.currency}, and this forecast is in{' '}
-          {code}, so it warns below {money(threshold)} until you change it.
+          Your warning of <Masked>{formatMoney(warn.other.amount, warn.other.currency)}</Masked> was set in {warn.other.currency}, and this forecast is in{' '}
+          {code}, so it warns below <Masked>{money(threshold)}</Masked> until you change it.
         </div>
       )}
 
       {notes.map((n) => (
         <div className="stale-note" key={n}>
-          {n}
+          <Masked>{n}</Masked>
         </div>
       ))}
       <div className="chart-note">
@@ -343,13 +348,13 @@ export default function ForecastCard({
         {whatIf && (
           <>
             <p className={`forecast-whatif ${whatIf.lowest.balance < 0 ? 'down' : whatIf.lowest.balance < threshold ? 'warn' : ''}`}>
-              Expected lowest {money(whatIf.lowest.balance)} {lowestWhen(whatIf)}
-              {moved === 0 ? ', the same as without it.' : `, ${money(Math.abs(moved))} lower than ${money(low.balance)} without it.`}
+              Expected lowest <Masked>{money(whatIf.lowest.balance)}</Masked> {lowestWhen(whatIf)}
+              <Masked>{moved === 0 ? ', the same as without it.' : `, ${money(Math.abs(moved))} lower than ${money(low.balance)} without it.`}</Masked>
             </p>
             {whatIf.belowZero && !forecast.belowZero && <p className="error">With it, the balance is expected to drop below zero {around(whatIf.belowZero)}.</p>}
             {!whatIf.belowZero && whatIf.belowThreshold && !forecast.belowThreshold && (
               <p className="stale-note">
-                With it, the balance is expected below {money(threshold)} {from(whatIf.belowThreshold)}.
+                With it, the balance is expected below <Masked>{money(threshold)}</Masked> {from(whatIf.belowThreshold)}.
               </p>
             )}
             <ForecastChart forecast={forecast} whatIf={whatIf} currency={position.currency} threshold={threshold} />

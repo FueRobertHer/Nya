@@ -27,6 +27,7 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { formatMoney } from '@/lib/format';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import {
   shortDate,
   endFor,
@@ -841,7 +842,9 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
           <span className="incoming-account-name">{a.label}</span>
           {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
         </span>
-        <span className="incoming-account-value">{shownBalance(a)}</span>
+        <span className="incoming-account-value">
+          <Masked>{shownBalance(a)}</Masked>
+        </span>
       </div>
       {a.transactions_unreadable ? (
         <div className="incoming-account-date">Its transactions can&apos;t be read, so they aren&apos;t shown.</div>
@@ -861,7 +864,9 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
               {t.date} {t.name}
               {t.pending ? ' (pending)' : ''}
             </span>
-            <span>{sharedTxnAmount(t)}</span>
+            <span>
+              <Masked>{sharedTxnAmount(t)}</Masked>
+            </span>
           </div>
         ))}
     </div>

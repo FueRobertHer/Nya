@@ -34,6 +34,7 @@ import { instantDay } from '@/lib/local-date';
 import { joinNames } from '@/lib/month-coverage';
 import { connectorBadge, connectorHealthText, connectorSideText, connectorSite } from '@/lib/connectors/health';
 import type { ConnectorAsk } from './Connectors';
+import { Masked } from './HideAmounts';
 
 /** What the view needs of an institution, as /api/net-worth sends it. */
 export type HealthInstitution = {
@@ -418,13 +419,17 @@ export function ConnectionHealthView({
                     <span className={`health-badge health-${TONES[h.state] ?? 'warn'}`}>{fed ? connectorBadge(h) : badgeOf(h, now)}</span>
                   </div>
                   {/* A connector's own words can name a balance (a card reported as money held). */}
-                  {text && <p className="health-text">{hideAmountsIn(text)}</p>}
+                  {text && (
+                    <p className="health-text">
+                      <Masked>{hideAmountsIn(text)}</Masked>
+                    </p>
+                  )}
                   {h.unread && (
                     <p className="health-text health-affected">Some of what Nya keeps about this connection couldn&apos;t be read, so a warning from Plaid may be missing here.</p>
                   )}
                   {affectedText(inst).map((line) => (
                     <p className="health-text health-affected" key={line}>
-                      {line}
+                      <Masked>{line}</Masked>
                     </p>
                   ))}
                   {questions?.(inst)}

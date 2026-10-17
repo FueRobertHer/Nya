@@ -17,6 +17,7 @@ import { cadenceLabel, type Cadence, type RecurringSeries } from '@/lib/recurrin
 import { plannedCadenceLabel, type PlannedCadence, type PlannedItem } from '@/lib/planned';
 import { amountsHidden, compactMoney, formatMoney, hiddenMoney, signedMoney, spoken } from '@/lib/format';
 import type { ForecastInstitution } from '@/lib/forecast';
+import { Masked } from './HideAmounts';
 
 const WEEKDAYS = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
 const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
@@ -219,7 +220,7 @@ export default function CalendarView({
             >
               <span className="cal-num">{Number(date.slice(8))}</span>
               <span className={`cal-fig${figure === null ? '' : figure > 0 ? ' in' : figure < 0 ? ' out' : ''}${estimated ? ' estimated' : ''}`}>
-                {figure === null ? '' : cellFigure(figure, currency)}
+                <Masked>{figure === null ? '' : cellFigure(figure, currency)}</Masked>
               </span>
               <span className="cal-dots" aria-hidden="true">
                 {dots.map((k) => (
@@ -260,7 +261,7 @@ export default function CalendarView({
           {posted.length > 0 && (
             <>
               <div className="recurring-section">
-                Posted{day.posted !== null && <span> · {signedMoney(day.posted, currency)}</span>}
+                Posted{day.posted !== null && <span> · <Masked>{signedMoney(day.posted, currency)}</Masked></span>}
               </div>
               <table>
                 <tbody>
@@ -270,7 +271,7 @@ export default function CalendarView({
                         {e.name}
                         {postedTags(e) && <div className="type-tag">{postedTags(e)}</div>}
                       </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
+                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
                     </tr>
                   ))}
                 </tbody>
@@ -280,7 +281,7 @@ export default function CalendarView({
           {expected.length > 0 && (
             <>
               <div className="recurring-section">
-                Expected{day.expected !== null && <span> · {signedMoney(day.expected, currency)}</span>}
+                Expected{day.expected !== null && <span> · <Masked>{signedMoney(day.expected, currency)}</Masked></span>}
               </div>
               <table>
                 <tbody>
@@ -294,7 +295,7 @@ export default function CalendarView({
                           {offText(e) ? ` · ${offText(e)}` : ''}
                         </div>
                       </td>
-                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}>{amountOf(e)}</td>
+                      <td className={`num${(e.amount ?? 0) > 0 ? ' inflow' : ''}`}><Masked>{amountOf(e)}</Masked></td>
                     </tr>
                   ))}
                 </tbody>
@@ -312,7 +313,9 @@ export default function CalendarView({
                         {e.name}
                         <div className="type-tag">{e.amount === null ? 'due, minimum not reported' : 'minimum due, not in the figures'}</div>
                       </td>
-                      <td className="num">{e.amount === null ? '' : formatMoney(Math.abs(e.amount), e.currency ?? currency)}</td>
+                      <td className="num">
+                        <Masked>{e.amount === null ? '' : formatMoney(Math.abs(e.amount), e.currency ?? currency)}</Masked>
+                      </td>
                     </tr>
                   ))}
                 </tbody>

@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { dirname, join, relative } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { compactMoney, formatMoney, hiddenFigure, hideAmountsIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
 import {
@@ -28,6 +29,9 @@ import PlanFanChart from '@/components/PlanFanChart';
 import { wholeMoney } from '@/components/plan-text';
 import { PreviewView } from '@/components/Sharing';
 import { ReportView } from '@/components/ReportView';
+import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
+import { readImport, type ImportOptions } from '@/lib/import/read';
+import { bypasses, clientModules, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
 import { resolvePeriod } from '@/lib/report/period';
 import type { Txn as StoredTxn } from '@/lib/transactions';
@@ -98,17 +102,56 @@ function exposed(html: string): string {
   return decode([html.replace(/<[^>]+>/g, ' '), ...attrs].join('\n'));
 }
 
-/** A figure as the formatters write one: a currency's symbol beside a digit
- *  ("$12", "-$12", "CA$5", "12 €"), a code after one ("12.50 DOGE"), or a
- *  figure with cents ("1,234.56"); never a percentage. */
-const AMOUNT = /\p{Sc}[\s ]?[-+]?\d|\d[\s ]?\p{Sc}|\d[\d,]*\.\d{2}(?![\d%])|\d[\s ](?:USD|EUR|GBP|JPY|DOGE)\b/u;
+/** A figure as the formatters write one, or as anything else could: a
+ *  currency's symbol beside a digit ("$12", "-$12", "CA$5", "12 €"), a code
+ *  before or after one ("CHF 12.00", "12.50 DOGE"), a figure with cents or
+ *  finer ("1,234.56", a quantity's "12.345"), thousands ("1,234"), or a
+ *  compact figure ("1.2K"); never a percentage. */
+const CODES = '(?:USD|EUR|GBP|JPY|CAD|AUD|CHF|DOGE|BTC|ETH)';
+const AMOUNT = new RegExp(
+  [
+    String.raw`\p{Sc}[\s ]?[-+]?\d`,
+    String.raw`\d[\s  ]?\p{Sc}`,
+    String.raw`\d[\d,]*\.\d{2,}(?![\d%])`,
+    String.raw`\b\d{1,3}(?:,\d{3})+(?:\.\d+)?\b(?!%)`,
+    String.raw`\b\d+\.\d[KMBT]\b`,
+    String.raw`\b\d+(?:\.\d+)?[KMBT]?[\s ]${CODES}\b`,
+    String.raw`\b${CODES}[\s ][-+]?\d`,
+  ].join('|'),
+  'u'
+);
+
+/** Examples of how a file can write an amount, in the CSV mapping step's
+ *  choices: nobody's figures, and meaningless masked. */
+const EXAMPLES = ['Negative (-12.50)', 'Positive (12.50)', 'a point (1,234.56)', 'a comma (1.234,56)'];
 
 /** No figure anywhere a person or a screen reader is given one (each line
  *  that holds one is listed, to say where), and the mask is there instead. */
 function expectNoAmounts(html: string) {
-  const text = exposed(html);
+  const text = EXAMPLES.reduce((t, e) => t.split(e).join(''), exposed(html));
   expect(text.split(/\n|(?<=>)|\s{2,}/).filter((l) => AMOUNT.test(l))).toEqual([]);
   expect(text).toContain(MASK);
+}
+
+/** What a screen reader is given: the text, but what is hidden from it
+ *  (aria-hidden), and an image's or a labelled control's text, said by its
+ *  label instead; and each label it reads. */
+function spokenText(html: string): string {
+  const said: string[] = [];
+  const quiet: boolean[] = [];
+  const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+  for (const m of html.matchAll(/<!--[\s\S]*?-->|<\/([a-zA-Z][\w:-]*)\s*>|<([a-zA-Z][\w:-]*)((?:\s+[^\s=>\/]+(?:="[^"]*")?)*)\s*(\/?)>|([^<]+)/g)) {
+    if (m[1]) quiet.pop();
+    else if (m[2]) {
+      const attrs = m[3] ?? '';
+      const label = attrs.match(/\saria-label="([^"]*)"/)?.[1];
+      const hidden = /\saria-hidden="true"/.test(attrs);
+      if (label !== undefined && !hidden && !quiet.some(Boolean)) said.push(label);
+      if (VOID.has(m[2].toLowerCase()) || m[4] === '/') continue;
+      quiet.push(hidden || /\srole="img"/.test(attrs) || (label !== undefined && /^(?:button|a|option)$/i.test(m[2])));
+    } else if (m[5] && !quiet.some(Boolean)) said.push(m[5]);
+  }
+  return decode(said.join('\n'));
 }
 
 /** What shows a proportion: each style (a meter's or a bar's width, a
@@ -444,6 +487,38 @@ function report() {
   return buildReport(input);
 }
 
+const CSV = 'Date,Description,Amount\n2026-09-01,Rent,-2450.00\n2026-09-02,Payroll,5120.33\n2026-09-03,Grocer,-84.12\n';
+const picked = (text: string): Picked => ({ name: 'checking.csv', blob: new Blob([text]), text, encoding: 'utf-8', format: 'csv' });
+const IMPORT_PREVIEW: Preview = {
+  format: 'csv',
+  encoding: 'utf-8',
+  statement: null,
+  read: { date_order: null, dates_ordered: false, decimal: null },
+  counts: { new: 2, present: 0, repeated: 0, replaced: 0, skipped: 0, conflicts: 0, unreadable: 1 },
+  rows: [
+    { line: 2, date: '2026-09-01', name: 'Rent', amount: 2450, currency: 'USD', category: null, note: null, outcome: 'new' },
+    { line: 3, date: '2026-09-02', name: 'Payroll', amount: -5120.33, currency: 'USD', category: null, note: null, outcome: 'new' },
+  ],
+  // A file's amount, quoted where it couldn't be read: no currency to tell it by.
+  problems: [{ line: 4, reason: 'Its amount (1.234,5x) can’t be read.' }],
+  more_problems: 0,
+  conflicts: [],
+  more_conflicts: 0,
+  shared_ids: [],
+  more_shared_ids: 0,
+  kinds: { transfers: 0, atm: 0, payments: 0, fees: 0 },
+  first_date: '2026-09-01',
+  last_date: '2026-09-02',
+  currency: 'USD',
+  currency_from: 'file',
+  other_currencies: [],
+  totals: { out: 2450, in: 5120.33 },
+  shortened: 0,
+  warnings: [],
+  account_mismatch: null,
+  balance: null,
+};
+
 const sapphire = {
   account_id: 'sapphire',
   name: 'Sapphire',
@@ -525,6 +600,28 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
   ),
   'Reports: the report on screen': () => <ReportView report={report()} />,
+  'Import: a CSV file’s columns, and the lines its column names may be on': () => {
+    const options: ImportOptions = { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out', delimiter: ',' } };
+    const read = readImport(CSV, { format: 'csv', options, thisYear: 2026 });
+    return <CsvMapping file={picked(CSV)} read={read} options={options} setOptions={() => {}} account="Checking" busy={false} error="" onNext={() => {}} />;
+  },
+  'Import: what a file brings in, and a line that can’t be read': () => (
+    <ImportPreview
+      preview={IMPORT_PREVIEW}
+      file={picked(CSV)}
+      options={{}}
+      account={{ account_id: 'manual_checking-1', name: 'Checking', type: 'depository', balance: 1000, currency: 'USD', institution_name: 'Cascade CU' }}
+      busy={false}
+      error=""
+      setBalance={false}
+      onSetBalance={() => {}}
+      acknowledged={false}
+      onAcknowledge={() => {}}
+      onFlip={() => {}}
+      onImport={() => {}}
+      onBack={() => {}}
+    />
+  ),
 };
 
 describe('the main screens with amounts hidden', () => {
@@ -538,6 +635,9 @@ describe('the main screens with amounts hidden', () => {
       expect(shapes(hidden)).toEqual(shapes(shown));
       // A screen reader is never left with bullets in a label it reads alone.
       for (const m of hidden.matchAll(/aria-label="([^"]*)"/g)) expect(m[1]).not.toContain(MASK);
+      // Nor in any text it is given: each hidden amount is said as "hidden".
+      expect(spokenText(hidden).split('\n').filter((l) => l.includes(MASK))).toEqual([]);
+      expect(spokenText(hidden)).toContain('hidden');
     });
   }
 
@@ -634,5 +734,98 @@ describe('never the server, the API or a download', () => {
     }
     const page = readFileSync(join(ROOT, 'components', 'ReportsPage.tsx'), 'utf8');
     expect(page).toContain('useFiguresWhenPrinted();');
+  });
+});
+
+// ---- Nothing writes an amount past the switch ----
+
+describe('every module a page can load writes its amounts through the switch (a scan of the source)', () => {
+  const modules = clientModules(ROOT);
+  const sources = modules.filter((m) => m !== 'lib/format.ts').map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
+
+  test('it reaches every component and what they import', () => {
+    expect(modules).toContain('components/Dashboard.tsx');
+    expect(modules).toContain('components/plan-text.ts');
+    // Library code a component imports, at any depth.
+    expect(modules).toContain('lib/budget-suggestions.ts');
+    expect(modules).toContain('lib/format.ts');
+    // A route is the server's, never a page's.
+    expect(modules.some((m) => m.startsWith('app/api/'))).toBe(false);
+  });
+
+  test('no amount is formatted past lib/format.ts: Intl, toLocaleString with a currency or fraction digits, or a "$" by hand, unless the function checks the switch', () => {
+    // Each that does is said, with where: write it with formatMoney,
+    // signedMoney or compactMoney, or check amountsHidden() first.
+    expect(bypasses(sources)).toEqual([]);
+  });
+
+  test('no memo keeps an amount the switch can’t change', () => {
+    // A useMemo whose callback writes an amount lists the switch
+    // (useAmountsHidden()) among its dependencies; a component in memo()
+    // that writes one reads it; no useState starts from one.
+    expect(staleMemos(ROOT, modules)).toEqual([]);
+  });
+
+  test('a label a screen reader reads alone is said through spoken(), and an amount drawn as text through <Masked>', () => {
+    expect(unspokenLabels(ROOT, modules)).toEqual([]);
+    expect(unmaskedChildren(ROOT, modules)).toEqual([]);
+  });
+
+  test('the scan finds what it is for: a formatter of its own, a memo, a label and a figure past the switch', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nya-amounts-'));
+    const write = (path: string, text: string) => {
+      mkdirSync(dirname(join(dir, path)), { recursive: true });
+      writeFileSync(join(dir, path), text);
+    };
+    try {
+      mkdirSync(join(dir, 'app'));
+      write('lib/format.ts', 'export function formatMoney(n: number, c: string | null): string { return String(n) + (c ?? ""); }\n');
+      // An imported helper that writes an amount, as a chart's module might.
+      write('lib/flow.ts', "import { formatMoney } from './format';\nexport function flowLabel(n: number): string {\n  return `Flow ${formatMoney(n, null)}`;\n}\n");
+      write(
+        'components/Flow.tsx',
+        [
+          "'use client';",
+          "import { useMemo } from 'react';",
+          "import { formatMoney } from '@/lib/format';",
+          "import { flowLabel } from '@/lib/flow';",
+          "import { Masked } from './HideAmounts';",
+          "import { useAmountsHidden } from './hide-amounts';",
+          "const local = (n: number) => formatMoney(n, 'USD');",
+          'export function Flow({ n }: { n: number }) {',
+          '  const hidden = useAmountsHidden();',
+          '  const title = useMemo(() => flowLabel(n), [n]);',
+          '  const kept = useMemo(() => local(n), [n, hidden]);',
+          "  const own = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n);",
+          '  const dollars = `$${n.toFixed(2)}`;',
+          '  return (',
+          '    <div aria-label={flowLabel(n)}>',
+          "      <span>{formatMoney(n, 'USD')}</span>",
+          '      <Masked>{local(n)}</Masked>',
+          '      <svg role="img"><text>{local(n)}</text></svg>',
+          '      {title}{kept}{own}{dollars}',
+          '    </div>',
+          '  );',
+          '}',
+          '',
+        ].join('\n')
+      );
+      write('components/HideAmounts.tsx', 'export function Masked({ children }: { children: string }) { return children; }\n');
+      write('components/hide-amounts.ts', 'export function useAmountsHidden(): boolean { return false; }\n');
+      const mods = clientModules(dir);
+      expect(mods).toEqual(['components/Flow.tsx', 'components/HideAmounts.tsx', 'components/hide-amounts.ts', 'lib/flow.ts', 'lib/format.ts']);
+      const own = mods.filter((m) => m !== 'lib/format.ts').map((m) => ({ path: m, text: readFileSync(join(dir, m), 'utf8') }));
+      expect(bypasses(own).map((b) => [b.file, b.line])).toEqual([
+        ['components/Flow.tsx', 12],
+        ['components/Flow.tsx', 13],
+      ]);
+      // The memo of the imported helper's label, not the one that lists the switch.
+      expect(staleMemos(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 10]]);
+      expect(unspokenLabels(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 15]]);
+      // The figure drawn bare, not the one in <Masked> nor the chart's own text.
+      expect(unmaskedChildren(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 16]]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

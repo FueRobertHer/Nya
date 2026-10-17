@@ -596,7 +596,9 @@ export default function MonthBreakdown({
                   aria-pressed={m === selected}
                   aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
                 >
-                  <span className="trend-val">{fmtCompactSigned(net, currency)}</span>
+                  <span className="trend-val">
+                    <Masked>{fmtCompactSigned(net, currency)}</Masked>
+                  </span>
                   <span
                     className={`trend-bar${net >= 0 ? " up" : " down"}`}
                     style={{
@@ -721,8 +723,8 @@ export default function MonthBreakdown({
                       />
                     </div>
                     <span className="cat-val">
-                  <Masked>{formatMoney(sum, currency)}</Masked>
-                </span>
+                      <Masked>{formatMoney(sum, currency)}</Masked>
+                    </span>
                   </div>
                 ))}
               </div>

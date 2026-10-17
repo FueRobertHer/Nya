@@ -38,7 +38,7 @@ import { categoriesIn, displayName, indexTaxonomy, sortedGroups, type Taxonomy }
 import { carryText, monthName, sinceText, startChoices, withCarry, type Carries, type Carry } from '@/lib/rollover';
 import { localMonth } from '@/lib/local-date';
 import { Sheet } from './Sheet';
-import { Masked } from './HideAmounts';
+import { Masked, spokenLabel } from './HideAmounts';
 import BudgetSuggestion from './BudgetSuggestion';
 import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
@@ -418,7 +418,11 @@ export default function BudgetsCard({
                     against a budget here. Move a category into a spending group to budget it.
                   </p>
                 )}
-                {m.reconcile && <p className="panel-note budget-note">{reconcileText(m)}</p>}
+                {m.reconcile && (
+                  <p className="panel-note budget-note">
+                    <Masked>{reconcileText(m)}</Masked>
+                  </p>
+                )}
                 {editing === keyOf(groupTarget) ? (
                   editor(groupTarget, `${m.group.name} as a whole`)
                 ) : (
@@ -495,23 +499,27 @@ export default function BudgetsCard({
             <optgroup label="A whole group">
               {choices
                 .filter((c) => c.free)
-                .map(({ group }) => (
-                  <option key={group.id} value={`group:${group.id}`}>
-                    {group.name}
-                    {hint(meters.groups.find((m) => m.group.id === group.id)?.spent_all)}
-                  </option>
-                ))}
+                .map(({ group }) => {
+                  const text = `${group.name}${hint(meters.groups.find((m) => m.group.id === group.id)?.spent_all)}`;
+                  return (
+                    <option key={group.id} value={`group:${group.id}`} aria-label={spokenLabel(text)}>
+                      {text}
+                    </option>
+                  );
+                })}
             </optgroup>
             {choices
               .filter((c) => c.categories.length > 0)
               .map(({ group, categories }) => (
                 <optgroup key={group.id} label={group.name}>
-                  {categories.map((c) => (
-                    <option key={c.id} value={`category:${c.id}`}>
-                      {displayName(c.name)}
-                      {hint(spent[c.id])}
-                    </option>
-                  ))}
+                  {categories.map((c) => {
+                    const text = `${displayName(c.name)}${hint(spent[c.id])}`;
+                    return (
+                      <option key={c.id} value={`category:${c.id}`} aria-label={spokenLabel(text)}>
+                        {text}
+                      </option>
+                    );
+                  })}
                 </optgroup>
               ))}
           </select>
@@ -548,7 +556,7 @@ export default function BudgetsCard({
             <div className="sheet-form">
               <p className="panel-note">
                 {resetting.name}’s carryover goes to zero from {monthName(shownMonth)}: this month starts from its budget alone
-                {carryOf(resetting.target) ? `, and what is carried now (${carryText(carryOf(resetting.target)!, money, shownMonth)}) is set aside` : ''}. Earlier
+                <Masked>{carryOf(resetting.target) ? `, and what is carried now (${carryText(carryOf(resetting.target)!, money, shownMonth)}) is set aside` : ''}</Masked>. Earlier
                 months keep theirs.
               </p>
               <p className="panel-note">{REFUND_NOTE}</p>

@@ -47,8 +47,8 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
         </span>
       </div>
       <div className="pool-breakdown">
-        {month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}, plus {money(pool.income)} income{running ? ' so far' : ''}, less{' '}
-        {money(pool.spending)} spent
+        <Masked>{month === pool.from ? 'Nothing carried in' : `${money(pool.carried_in)} left from ${last}`}</Masked>, plus <Masked>{money(pool.income)}</Masked> income
+        {running ? ' so far' : ''}, less <Masked>{money(pool.spending)}</Masked> spent
       </div>
       {pool.uncertain.length > 0 && (
         <div className="stale-note">
@@ -83,9 +83,9 @@ export function IncomePoolHeader({ pool, currency, month, today }: { pool: Incom
                     {monthName(m.month, today, 'short')}
                     {m.uncertain && <span className="pool-uncertain" title="Its transactions may be incomplete"> *</span>}
                   </th>
-                  <td>{money(m.income)}</td>
-                  <td>{money(m.spending)}</td>
-                  <td>{money(m.carried_out)}</td>
+                  <td><Masked>{money(m.income)}</Masked></td>
+                  <td><Masked>{money(m.spending)}</Masked></td>
+                  <td><Masked>{money(m.carried_out)}</Masked></td>
                 </tr>
               ))}
             </tbody>

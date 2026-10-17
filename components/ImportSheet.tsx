@@ -33,8 +33,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { Masked, spokenLabel } from './HideAmounts';
 import type { SheetInstitution } from './ManualTxnSheet';
-import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn, hideFiguresIn, signedMoney } from '@/lib/format';
 import { instantDay, localDate } from '@/lib/local-date';
 import { isOwedType } from '@/lib/balance';
 import { DEFAULT_CURRENCY, isCurrencyCode } from '@/lib/manual-txn-input';
@@ -170,6 +171,9 @@ const fmtDay = (day: string) => new Date(`${day}T00:00:00`).toLocaleDateString(u
 const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fmtDay(a) : `${fmtDay(a)} to ${fmtDay(b)}`) : null);
 /** As the Activity tab shows an amount: money in signed plus. */
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
+/** A line's problem as shown: an amount it quotes from the file, which
+ *  carries no currency to tell it by, hidden while amounts are. */
+const shownReason = (reason: string) => hideAmountsIn(reason).replace(/(amount \()([^)]*)\)/g, (_, at: string, text: string) => `${at}${hideFiguresIn(text)})`);
 
 const OUTCOME_TEXT: Record<Outcome, string> = {
   new: 'new',
@@ -754,7 +758,7 @@ export default function ImportSheet({
           </p>
           {done.balance_updated && typeof done.balance === 'number' && (
             <p className="status-note">
-              {name}’s {account && isOwedType(account.type) ? 'amount owed' : 'balance'} is now {formatMoney(done.balance, account?.currency ?? DEFAULT_CURRENCY)}.
+              {name}’s {account && isOwedType(account.type) ? 'amount owed' : 'balance'} is now <Masked>{formatMoney(done.balance, account?.currency ?? DEFAULT_CURRENCY)}</Masked>.
             </p>
           )}
           {done.balance_error && <div className="error">The rows were imported, but {done.balance_error}</div>}
@@ -919,8 +923,8 @@ export function CsvMapping({
       <select value={columns[role] ?? ''} onChange={(e) => setColumn(role, e.target.value)} disabled={busy}>
         {optional && <option value="">None</option>}
         {table.header.map((h, i) => (
-          <option key={i} value={i}>
-            {h}
+          <option key={i} value={i} aria-label={spokenLabel(hideFiguresIn(h))}>
+            {hideFiguresIn(h)}
           </option>
         ))}
       </select>
@@ -949,11 +953,14 @@ export function CsvMapping({
           <label className="field">
             Column names on
             <select value={table.header_line} onChange={(e) => reread({ header_line: Number(e.target.value) })} disabled={busy}>
-              {lines.map((l) => (
-                <option key={l.line} value={l.line}>
-                  {`Line ${l.line}: ${l.cells.join(' | ').slice(0, 40)}`}
-                </option>
-              ))}
+              {lines.map((l) => {
+                const text = `Line ${l.line}: ${hideFiguresIn(l.cells.join(' | ').slice(0, 40))}`;
+                return (
+                  <option key={l.line} value={l.line} aria-label={spokenLabel(text)}>
+                    {text}
+                  </option>
+                );
+              })}
             </select>
           </label>
         </div>
@@ -1068,7 +1075,7 @@ export function CsvMapping({
                       {` · ${r.row.amount > 0 ? 'money out' : 'money in'}`}
                     </div>
                   </div>
-                  <div className={`import-row-amount${r.row.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(r.row.amount, r.row.currency)}</div>
+                  <div className={`import-row-amount${r.row.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(r.row.amount, r.row.currency)}</Masked></div>
                 </li>
               ))}
             </ul>
@@ -1195,7 +1202,7 @@ export function PreviewView({
       </p>
       {c.new > 0 && p.currency && sentChoices === choices && (
         <p className="panel-note" style={{ marginTop: 2 }}>
-          New: {formatMoney(p.totals.out, p.currency)} out, {formatMoney(p.totals.in, p.currency)} in
+          New: <Masked>{formatMoney(p.totals.out, p.currency)}</Masked> out, <Masked>{formatMoney(p.totals.in, p.currency)}</Masked> in
         </p>
       )}
       <p className="panel-note">Read as {readAs.join(', ')}.</p>
@@ -1305,7 +1312,7 @@ export function PreviewView({
                   {r.category ? ` · ${r.category}` : ''} · {OUTCOME_TEXT[r.outcome]}
                 </div>
               </div>
-              <div className={`import-row-amount${r.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(r.amount, r.currency)}</div>
+              <div className={`import-row-amount${r.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(r.amount, r.currency)}</Masked></div>
             </li>
           ))}
         </ul>
@@ -1320,7 +1327,7 @@ export function PreviewView({
             {shownProblems.map((pr, i) => (
               <li key={`${pr.line}-${i}`}>
                 {pr.line > 0 ? `Line ${pr.line}: ` : ''}
-                {pr.reason}
+                <Masked>{shownReason(pr.reason)}</Masked>
               </li>
             ))}
           </ul>
@@ -1338,13 +1345,13 @@ export function PreviewView({
           <label className="quick-add-check" style={{ marginTop: 16 }}>
             <input type="checkbox" checked={setBalance} disabled={busy} onChange={(e) => onSetBalance(e.target.checked)} />
             <span>
-              Also set {name}’s {owed ? 'amount owed' : 'balance'} to {formatMoney(b.amount, keptIn)}, the statement’s balance on{' '}
-              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now {formatMoney(b.from, keptIn)})
+              Also set {name}’s {owed ? 'amount owed' : 'balance'} to <Masked>{formatMoney(b.amount, keptIn)}</Masked>, the statement’s balance on{' '}
+              {b.as_of ? fmtDay(b.as_of) : 'its date'} (now <Masked>{formatMoney(b.from, keptIn)}</Masked>)
             </span>
           </label>
         ) : (
           <p className="panel-note" style={{ marginTop: 16 }}>
-            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was {formatMoney(b.amount, p.statement?.currency ?? keptIn)}.{' '}
+            The statement’s balance{b.as_of ? ` on ${fmtDay(b.as_of)}` : ''} was <Masked>{formatMoney(b.amount, p.statement?.currency ?? keptIn)}</Masked>.{' '}
             {balanceRefusal(b.refusal!, name, keptIn)}
           </p>
         ))}
@@ -1425,7 +1432,7 @@ export function ConflictList({
                 <div className="import-row-meta">In the file{c.line ? ` (line ${c.line})` : ''}</div>
                 <div className="import-conflict-version">
                   <span className="import-row-name">{c.file.name}</span>
-                  <span className={`import-row-amount${c.file.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(c.file.amount, c.file.currency)}</span>
+                  <span className={`import-row-amount${c.file.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(c.file.amount, c.file.currency)}</Masked></span>
                 </div>
                 <div className="import-row-meta">{fmtDay(c.file.date)}</div>
                 <div className="import-row-meta" style={{ marginTop: 6 }}>
@@ -1433,7 +1440,7 @@ export function ConflictList({
                 </div>
                 <div className="import-conflict-version">
                   <span className="import-row-name">{c.stored.name}</span>
-                  <span className={`import-row-amount${c.stored.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(c.stored.amount, c.stored.currency)}</span>
+                  <span className={`import-row-amount${c.stored.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(c.stored.amount, c.stored.currency)}</Masked></span>
                 </div>
                 <div className="import-row-meta">
                   {fmtDay(c.stored.date)} · {differsText(c.differs)}
@@ -1534,7 +1541,7 @@ export function PastImports({
               {i.record === 'missing' && <div className="import-row-meta">Its record is gone; Undo still takes its transactions out.</div>}
               {i.record === 'unrecognised' && <div className="import-row-meta">A newer version of Nya saved it, so it can’t be undone here.</div>}
               {i.balance_update && (
-                <div className="import-row-meta">It also set the balance to {formatMoney(i.balance_update.to, keptIn)}.</div>
+                <div className="import-row-meta">It also set the balance to <Masked>{formatMoney(i.balance_update.to, keptIn)}</Masked>.</div>
               )}
               {confirming && (
                 <div className="import-confirm">

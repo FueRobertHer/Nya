@@ -12,9 +12,8 @@
 
 import { useMemo, useRef, useState } from 'react';
 import type { Bands } from '@/lib/fire/simulate';
-import { compactMoney } from '@/lib/format';
+import { compactMoney, spoken } from '@/lib/format';
 import { wholeMoney } from './plan-text';
-import { spoken } from '@/lib/format';
 import { Masked } from './HideAmounts';
 
 const W = 340;
@@ -194,9 +193,9 @@ export default function PlanFanChart({
             {tableYears.map((y) => (
               <tr key={y}>
                 <td>{startAge !== null ? startAge + y : y}</td>
-                <td className="num">{wholeMoney(bands.p10[y], currency)}</td>
-                <td className="num">{wholeMoney(bands.p50[y], currency)}</td>
-                <td className="num">{wholeMoney(bands.p90[y], currency)}</td>
+                <td className="num"><Masked>{wholeMoney(bands.p10[y], currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(bands.p50[y], currency)}</Masked></td>
+                <td className="num"><Masked>{wholeMoney(bands.p90[y], currency)}</Masked></td>
               </tr>
             ))}
           </tbody>

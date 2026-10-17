@@ -51,6 +51,13 @@ export function Masked({ children }: { children: string | null | undefined }) {
   );
 }
 
+/** What a screen reader is to be given for text that holds hidden amounts
+ *  and can't hold markup (a select's option): its spoken words, as an
+ *  aria-label, or nothing for text without one. */
+export function spokenLabel(text: string): string | undefined {
+  return text.includes(MASK) ? spoken(text) : undefined;
+}
+
 /**
  * The page's figures while the browser prints it, whatever the switch says:
  * printing a report is a deliberate act, and the paper or PDF has its

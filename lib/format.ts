@@ -97,6 +97,17 @@ export function hideAmountsIn(text: string): string {
   return hidden ? text.replace(AMOUNT_IN_TEXT, (m) => m.replace(FIGURES_IN_TEXT, MASK)) : text;
 }
 
+// Figures as a file writes them: digits with the separators a bank's export
+// uses ("1,234.56", "1.234,56", "1'234.56", "1 234,56").
+const FIGURES_ANYWHERE = /\d(?:[\d,.'\u00a0\u202f]*\d)?/gu;
+
+/** Text read from a file (a CSV line's cells), whose amounts carry no
+ *  currency to tell them by, with every figure in it MASK'd while amounts
+ *  are hidden (a date's too), and as it is otherwise. */
+export function hideFiguresIn(text: string): string {
+  return hidden ? text.replace(FIGURES_ANYWHERE, MASK) : text;
+}
+
 // A hidden amount as the formatters write it: its sign, and its symbol
 // before MASK (with a code's letters, "CA$") or an ISO code and a no-break
 // space; or MASK with its symbol or code after it ("••• €", "••• DOGE").

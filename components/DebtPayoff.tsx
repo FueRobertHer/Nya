@@ -15,6 +15,7 @@
 
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import { compactMoney, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import {
@@ -337,9 +338,11 @@ export function PayoffPanel({
         {summary}
         {[...shared.entries()].map(([group, s]) => (
           <p className="panel-note" key={group}>
-            {s.named
-              ? `${s.institution} is one of the servicers Plaid says bill one payment across an account's loans and show it on each, so the ${money(s.totalCents)} shown on ${s.loans} student loans there is split across them by balance.`
-              : `As you said, the ${money(s.totalCents)} shown on ${s.loans} student loans at ${s.institution} is one payment, so it's split across them by balance.`}
+            <Masked>
+              {s.named
+                ? `${s.institution} is one of the servicers Plaid says bill one payment across an account's loans and show it on each, so the ${money(s.totalCents)} shown on ${s.loans} student loans there is split across them by balance.`
+                : `As you said, the ${money(s.totalCents)} shown on ${s.loans} student loans at ${s.institution} is one payment, so it's split across them by balance.`}
+            </Masked>
           </p>
         ))}
       </section>
@@ -365,7 +368,7 @@ export function PayoffPanel({
         ) : (
           comparison && (
             <p className="panel-note payoff-field-note">
-              On top of the payments below: {money(comparison[inputs.strategy].monthlyCents)} a month in all.
+              On top of the payments below: <Masked>{money(comparison[inputs.strategy].monthlyCents)}</Masked> a month in all.
             </p>
           )
         )}
@@ -471,7 +474,9 @@ function Waiting({ rows, waiting, money }: { rows: PlanRow[]; waiting: number; m
         {plural(waiting, 'it', 'them')} out, to see the plan.
       </p>
       {[...lines].map(([key, line]) => (
-        <p key={key}>{line}</p>
+        <p key={key}>
+          <Masked>{line}</Masked>
+        </p>
       ))}
     </div>
   );
@@ -519,7 +524,7 @@ function PlanSummary({
     // interest pays off eventually, just not within the horizon.
     return (
       <div className="stale-note">
-        At {money(plan.monthlyCents)} a month these debts aren&apos;t paid off within {HORIZON_YEARS} years
+        At <Masked>{money(plan.monthlyCents)}</Masked> a month these debts aren&apos;t paid off within {HORIZON_YEARS} years
         {plan.monthlyCents <= interestNowCents ? ": the payments don't cover the interest" : ''}. Add more each
         month.
       </div>
@@ -568,13 +573,13 @@ function PlanSummary({
         </div>
         <div>
           <div className="total-label">Interest</div>
-          <div className="summary-value">{money(plan.interestCents!)}</div>
+          <div className="summary-value"><Masked>{money(plan.interestCents!)}</Masked></div>
           <div className="as-of">{STRATEGY_LABEL[strategy].toLowerCase()} order</div>
         </div>
       </div>
       {lines.map((l) => (
         <div className="status-note" key={l}>
-          {l}
+          <Masked>{l}</Masked>
         </div>
       ))}
     </>
@@ -608,7 +613,9 @@ function PlanDetail({
           {p.months !== null ? durationLabel(p.months) : `not within ${HORIZON_YEARS} years`}
         </div>
       </td>
-      <td className="num">{p.interestCents !== null ? money(p.interestCents) : '--'}</td>
+      <td className="num">
+        <Masked>{p.interestCents !== null ? money(p.interestCents) : '--'}</Masked>
+      </td>
     </tr>
   );
   let orders = '';
@@ -642,7 +649,7 @@ function PlanDetail({
         </table>
         <p className="panel-note">
           Minimums only pays each debt just its own payment, with no extra, and a debt&apos;s payment stops
-          once it&apos;s cleared.{orders}
+          once it&apos;s cleared.<Masked>{orders}</Masked>
         </p>
       </section>
 
@@ -670,9 +677,9 @@ function PlanDetail({
                 <span className="payoff-step-when">{d.month ? monthLabel(d.month) : 'Not by 50 years'}</span>
               </div>
               <div className="payoff-sub">
-                {d.months !== null
-                  ? `${durationLabel(d.months)} · ${money(d.interestCents!)} interest`
-                  : `not paid off within ${HORIZON_YEARS} years`}
+                <Masked>
+                  {d.months !== null ? `${durationLabel(d.months)} · ${money(d.interestCents!)} interest` : `not paid off within ${HORIZON_YEARS} years`}
+                </Masked>
               </div>
             </li>
           ))}
@@ -736,7 +743,9 @@ function DebtRow({
           {a.name}
           {a.mask && <span className="acct-mask"> ••{a.mask}</span>}
         </span>
-        <span className="payoff-debt-owed">{owed}</span>
+        <span className="payoff-debt-owed">
+          <Masked>{owed}</Masked>
+        </span>
       </div>
       <div className="type-tag">
         {a.institution} · {a.subtype || a.type}
@@ -748,9 +757,9 @@ function DebtRow({
   // it is owed, so it is planned unless the person leaves it out.
   const accrued = a.accruedInterestCents !== null && status !== 'nothing-owed' && status !== 'no-balance' && (
     <div className="payoff-sub">
-      {row.accruedIncluded
-        ? `Includes ${money(a.accruedInterestCents)} of accrued interest. `
-        : `${money(a.accruedInterestCents)} of accrued interest left out. `}
+      <Masked>
+        {row.accruedIncluded ? `Includes ${money(a.accruedInterestCents)} of accrued interest. ` : `${money(a.accruedInterestCents)} of accrued interest left out. `}
+      </Masked>
       <button className="link-btn" onClick={() => onAccrued(row.accruedIncluded)}>
         {row.accruedIncluded ? 'Leave it out' : 'Include it'}
       </button>
@@ -812,16 +821,18 @@ function DebtRow({
     const pay = debt.minimumCents;
     interestLine =
       pay > interest ? (
-        <div className="payoff-sub">About {money(interest)} a month in interest at this balance.</div>
+        <div className="payoff-sub">About <Masked>{money(interest)}</Masked> a month in interest at this balance.</div>
       ) : (
         <div className="stale-note">
-          {pay === 0
-            ? interest === 0
-              ? 'With no payment, it never pays off on its own.'
-              : `With no payment, it never pays off on its own, and it grows by about ${money(interest)} a month in interest.`
-            : pay === interest
-              ? `${money(pay)} a month only covers the interest, so on its own the balance never falls.`
-              : `${money(pay)} a month doesn't cover the interest (about ${money(interest)} a month), so on its own it never pays this off.`}
+          <Masked>
+            {pay === 0
+              ? interest === 0
+                ? 'With no payment, it never pays off on its own.'
+                : `With no payment, it never pays off on its own, and it grows by about ${money(interest)} a month in interest.`
+              : pay === interest
+                ? `${money(pay)} a month only covers the interest, so on its own the balance never falls.`
+                : `${money(pay)} a month doesn't cover the interest (about ${money(interest)} a month), so on its own it never pays this off.`}
+          </Masked>
         </div>
       );
   }
@@ -889,9 +900,9 @@ function DebtRow({
       {apr.source === 'plaid' && a.aprParts && (
         <p className="panel-note">
           Blended from the card&apos;s rates by what each applied to at its last statement:{' '}
-          {a.aprParts
-            .map((p) => `${p.rate}% on ${money(Math.round(p.balance * 100))}${p.type && APR_KIND[p.type] ? ` (${APR_KIND[p.type]})` : ''}`)
-            .join(', ')}
+          <Masked>
+            {a.aprParts.map((p) => `${p.rate}% on ${money(Math.round(p.balance * 100))}${p.type && APR_KIND[p.type] ? ` (${APR_KIND[p.type]})` : ''}`).join(', ')}
+          </Masked>
           .
         </p>
       )}
@@ -905,19 +916,21 @@ function DebtRow({
       {minimumNeeded && (a.minimumHold === 'escrow' || a.minimumHold === 'escrow-unknown') && plaidPayment !== null && (
         <div className="payoff-hold">
           <p className="panel-note">
-            {a.minimumHold === 'escrow'
-              ? `Plaid's ${money(plaidPayment)} includes escrow (taxes and insurance${a.escrowCents !== null ? `; the escrow account holds ${money(a.escrowCents)}` : ''}), which doesn't pay down the loan. Type the principal and interest from a statement.`
-              : `Plaid's ${money(plaidPayment)} is the whole monthly payment, which can include escrow (taxes and insurance) that doesn't pay down the loan. Type the principal and interest from a statement.`}
+            <Masked>
+              {a.minimumHold === 'escrow'
+                ? `Plaid's ${money(plaidPayment)} includes escrow (taxes and insurance${a.escrowCents !== null ? `; the escrow account holds ${money(a.escrowCents)}` : ''}), which doesn't pay down the loan. Type the principal and interest from a statement.`
+                : `Plaid's ${money(plaidPayment)} is the whole monthly payment, which can include escrow (taxes and insurance) that doesn't pay down the loan. Type the principal and interest from a statement.`}
+            </Masked>
           </p>
           {a.workedOut && (
             <button className="link-btn" onClick={() => onTerm('minimum', cents(a.workedOut!.cents))}>
-              Use {money(a.workedOut.cents)}, worked out from the original {money(Math.round(a.workedOut.principal * 100))}{' '}
+              Use <Masked>{money(a.workedOut.cents)}</Masked>, worked out from the original <Masked>{money(Math.round(a.workedOut.principal * 100))}</Masked>{' '}
               over {durationLabel(a.workedOut.months)} at {a.workedOut.apr}%
             </button>
           )}
           {a.minimumHold === 'escrow-unknown' && (
             <button className="link-btn" onClick={() => onTerm('minimum', cents(plaidPayment))}>
-              No escrow? Use Plaid&apos;s {money(plaidPayment)}
+              No escrow? Use Plaid&apos;s <Masked>{money(plaidPayment)}</Masked>
             </button>
           )}
         </div>
@@ -925,7 +938,7 @@ function DebtRow({
 
       {minimumNeeded && a.minimumHold === 'zero' && (
         <p className="panel-note">
-          Plaid shows a {money(0)} minimum. That&apos;s usually autopay at some servicers, nothing due this
+          Plaid shows a <Masked>{money(0)}</Masked> minimum. That&apos;s usually autopay at some servicers, nothing due this
           cycle, or a deferment rather than a payment. Type what you pay each month.
         </p>
       )}
@@ -967,14 +980,14 @@ function SharedNote({
     return (
       <div className="payoff-hold">
         <p className="panel-note">
-          Plaid shows the same {total} minimum on {s.loans} loans here. Some servicers bill one payment across
+          Plaid shows the same <Masked>{total}</Masked> minimum on {s.loans} loans here. Some servicers bill one payment across
           an account&apos;s loans and show it on each loan; others bill each loan its own. Which is it here?
         </p>
         <button className="link-btn" onClick={() => onShared(true)}>
-          One {total} payment for {all}: split it by balance
+          One <Masked>{total}</Masked> payment for {all}: split it by balance
         </button>
         <button className="link-btn" onClick={() => onShared(false)}>
-          Each loan pays {total}
+          Each loan pays <Masked>{total}</Masked>
         </button>
       </div>
     );
@@ -984,17 +997,19 @@ function SharedNote({
     return (
       <div className="payoff-hold">
         <p className="panel-note">
-          {s.named
-            ? `Plaid says ${row.account.institution} bills one payment across an account's loans and shows it on each loan, so the ${total} it shows on ${s.loans} loans here is split by balance.`
-            : `You said the ${total} shown on these ${s.loans} loans is one payment, so it's split by balance.`}
+          <Masked>
+            {s.named
+              ? `Plaid says ${row.account.institution} bills one payment across an account's loans and shows it on each loan, so the ${total} it shows on ${s.loans} loans here is split by balance.`
+              : `You said the ${total} shown on these ${s.loans} loans is one payment, so it's split by balance.`}
+          </Masked>
         </p>
         {s.named ? (
           <button className="link-btn" onClick={() => onTerm('minimum', (s.totalCents / 100).toFixed(2))}>
-            Billed separately? Use {total} for this loan
+            Billed separately? Use <Masked>{total}</Masked> for this loan
           </button>
         ) : (
           <button className="link-btn" onClick={() => onShared(false)}>
-            Each loan pays {total} instead
+            Each loan pays <Masked>{total}</Masked> instead
           </button>
         )}
       </div>
@@ -1002,9 +1017,9 @@ function SharedNote({
   }
   return (
     <div className="payoff-hold">
-      <p className="panel-note">You said each of these {s.loans} loans pays the {total} Plaid shows.</p>
+      <p className="panel-note">You said each of these {s.loans} loans pays the <Masked>{total}</Masked> Plaid shows.</p>
       <button className="link-btn" onClick={() => onShared(true)}>
-        One {total} payment for {all} instead: split it
+        One <Masked>{total}</Masked> payment for {all} instead: split it
       </button>
     </div>
   );
@@ -1028,7 +1043,7 @@ function TermSource({
     <>
       {' '}
       <button className="link-btn" onClick={onRestore}>
-        {restore}
+        <Masked>{restore}</Masked>
       </button>
     </>
   );
@@ -1040,7 +1055,13 @@ function TermSource({
       </div>
     );
   }
-  if (term.source === 'plaid') return <div className="payoff-source">{fromDefault}</div>;
+  if (term.source === 'plaid') {
+    return (
+      <div className="payoff-source">
+        <Masked>{fromDefault}</Masked>
+      </div>
+    );
+  }
   if (term.source === 'worked-out') {
     return (
       <div className="payoff-source">
@@ -1202,11 +1223,11 @@ function PayoffChart({
       <div className="chart-readout chart-readout-stable">
         <span className="chart-readout-value">
           <span className="payoff-key" style={{ background: PLAN_COLOR }} />
-          {fmt(planVals[i])}
+          <Masked>{fmt(planVals[i])}</Masked>
         </span>
         <span className="chart-readout-value">
           <span className="payoff-key" style={{ background: BASELINE_COLOR }} />
-          {fmt(baseVals[i])}
+          <Masked>{fmt(baseVals[i])}</Masked>
         </span>
         <span className="chart-readout-date">{i === 0 ? 'owed now' : `owed in ${monthLabel(addMonths(start, i))}`}</span>
       </div>
