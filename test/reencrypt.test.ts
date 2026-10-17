@@ -26,7 +26,7 @@ async function legacy(plain: string): Promise<string> {
   delete process.env.MASTER_KEY;
   forgetActiveKey();
   try {
-    return await encrypt(plain);
+    return await encrypt(TEST_CTX, plain);
   } finally {
     process.env.MASTER_KEY = master;
     forgetActiveKey();
@@ -148,10 +148,10 @@ describe('the pass', () => {
 
   test('a check with an active key counts only what is not under it', async () => {
     await seed();
-    fake.strings.set(testKey('budgets'), await encrypt('{"food":1}')); // creates k1, writes under it
+    fake.strings.set(testKey('budgets'), await encrypt(TEST_CTX, '{"food":1}')); // creates k1, writes under it
     const before = snapshot();
     const report = await check();
-    expect(report.active_key).toMatch(/^k1-/);
+    expect((report as { active_key?: string }).active_key).toMatch(/^k1-/);
     expect(report.to_move).toEqual({ k0: 5 });
     expect(snapshot()).toBe(before);
   });
@@ -166,24 +166,24 @@ describe('the pass', () => {
   test('a run moves every value to the active key, and readers get the same data', async () => {
     await seed();
     const report = await run();
-    const active = report.active_key as string;
+    const active = (report as { active_key?: string }).active_key as string;
     expect(active).toMatch(/^k1-/);
     expect(report).toMatchObject({ walked_all: true, moved: 5, changed_meanwhile: 0, complete: true });
 
     const goals = fake.strings.get(testKey('goals'))!;
     expect(formatOf(goals).keyId).toBe(active);
-    expect(await decrypt(goals)).toBe('[{"id":"g1"}]');
-    expect(await decrypt(fake.strings.get(testKey('txns:item-1'))!)).toBe('{"txns":{}}');
+    expect(await decrypt(TEST_CTX, goals)).toBe('[{"id":"g1"}]');
+    expect(await decrypt(TEST_CTX, fake.strings.get(testKey('txns:item-1'))!)).toBe('{"txns":{}}');
     const hist = fake.hashes.get(testKey('history:net-worth'))!;
-    expect(await decrypt(hist.get('2026-01-01')!)).toBe('100');
-    expect(await decrypt(hist.get('2026-01-02')!)).toBe('101');
+    expect(await decrypt(TEST_CTX, hist.get('2026-01-01')!)).toBe('100');
+    expect(await decrypt(TEST_CTX, hist.get('2026-01-02')!)).toBe('101');
 
     const item = JSON.parse(fake.hashes.get(testKey('plaid:items'))!.get('item-1')!);
     // Only the token is ciphertext: the rest of the record comes through as it was.
     expect(item).toMatchObject({ item_id: 'item-1', institution_name: 'Bank é', transactions_billed: false });
     expect(Object.keys(item)).toEqual(['item_id', 'institution_name', 'encrypted_access_token', 'transactions_billed']);
     expect(formatOf(item.encrypted_access_token).keyId).toBe(active);
-    expect(await decrypt(item.encrypted_access_token)).toBe('access-sandbox-1');
+    expect(await decrypt(TEST_CTX, item.encrypted_access_token)).toBe('access-sandbox-1');
 
     expect(await check()).toMatchObject({ to_move: {}, complete: true });
   });
@@ -228,7 +228,7 @@ describe('the pass', () => {
     fake.hashes.set(keysHashKey(), new Map([[old, JSON.stringify({ created_at: 'x', wrapped: { [m.fingerprint]: await m.wrap(old, raw) } })]]));
     // The value is written while k1 is active, then k2 takes over.
     fake.strings.set(activeKeyName(), old);
-    fake.strings.set(testKey('budgets'), await encrypt('{"food":1}'));
+    fake.strings.set(testKey('budgets'), await encrypt(TEST_CTX, '{"food":1}'));
     const raw2 = new Uint8Array(32).fill(53);
     const next = await dataKeyId(2, raw2);
     fake.hashes.get(keysHashKey())!.set(next, JSON.stringify({ created_at: 'x', wrapped: { [m.fingerprint]: await m.wrap(next, raw2) } }));
@@ -239,7 +239,7 @@ describe('the pass', () => {
     expect(await run()).toMatchObject({ active_key: next, moved: 1, complete: true });
     const budgets = fake.strings.get(testKey('budgets'))!;
     expect(formatOf(budgets).keyId).toBe(next);
-    expect(await decrypt(budgets)).toBe('{"food":1}');
+    expect(await decrypt(TEST_CTX, budgets)).toBe('{"food":1}');
   });
 
   // A seam store's values, compressed ones among them, move like any other's
@@ -271,7 +271,7 @@ describe('the pass', () => {
     forgetActiveKey();
     const report = await run();
     expect(report).toMatchObject({ moved: 3, complete: true });
-    expect(stored().map((v) => formatOf(v).keyId)).toEqual(Array(3).fill(report.active_key));
+    expect(stored().map((v) => formatOf(v).keyId)).toEqual(Array(3).fill((report as { active_key?: string }).active_key));
     expect(await readHoldingsHistory(TEST_CTX, range)).toEqual(before);
   });
 
@@ -293,10 +293,10 @@ describe('the pass', () => {
       fake.eval = realEval as typeof fake.eval;
     }
     expect(report).toMatchObject({ moved: 4, changed_meanwhile: 1, complete: false });
-    expect(await decrypt(fake.strings.get(testKey('goals'))!)).toBe('[{"id":"newer"}]');
+    expect(await decrypt(TEST_CTX, fake.strings.get(testKey('goals'))!)).toBe('[{"id":"newer"}]');
 
     expect(await run()).toMatchObject({ moved: 1, complete: true });
-    expect(await decrypt(fake.strings.get(testKey('goals'))!)).toBe('[{"id":"newer"}]');
+    expect(await decrypt(TEST_CTX, fake.strings.get(testKey('goals'))!)).toBe('[{"id":"newer"}]');
   });
 
   test('an unreadable value is reported and left alone, without quoting it', async () => {
@@ -419,7 +419,7 @@ describe('the pass', () => {
 
   test('a run reads the active key fresh, not from the minute-long cache', async () => {
     await seed();
-    await encrypt('x'); // caches k1 as active
+    await encrypt(TEST_CTX, 'x'); // caches k1 as active
     const m = await importMasterKey(MASTER);
     const raw = new Uint8Array(32).fill(54);
     const k2 = await dataKeyId(2, raw);
@@ -453,7 +453,7 @@ describe('the pass', () => {
     fake.ttls.set(testKey('cache:net-worth'), 900);
     fake.hashes.set(testKey('cache:inv-activity:v4'), new Map([['acct', await legacy('[]')]]));
     expect(await run()).toMatchObject({ moved: 2, complete: true });
-    expect(await decrypt(fake.strings.get(testKey('cache:net-worth'))!)).toBe('{"total":1}');
+    expect(await decrypt(TEST_CTX, fake.strings.get(testKey('cache:net-worth'))!)).toBe('{"total":1}');
     expect(fake.ttls.get(testKey('cache:net-worth'))).toBe(900);
   });
 
@@ -466,8 +466,8 @@ describe('the pass', () => {
   });
 
   test('encrypted data in a key listed as plaintext is reported', async () => {
-    fake.strings.set(testKey('txns-blocked:item-1'), await encrypt('x'));
-    fake.hashes.set(testKey('account-links:dismissed'), new Map([['a>b', await encrypt('y')]]));
+    fake.strings.set(testKey('txns-blocked:item-1'), await encrypt(TEST_CTX, 'x'));
+    fake.hashes.set(testKey('account-links:dismissed'), new Map([['a>b', await encrypt(TEST_CTX, 'y')]]));
     const report = await check();
     expect(report.complete).toBe(false);
     expect(report.unreadable.map((u) => [u.key, u.field, u.reason])).toEqual([
@@ -523,7 +523,7 @@ describe('the pass', () => {
     expect(await run()).toMatchObject({ moved: 1, complete: true });
     const item = JSON.parse(fake.hashes.get(testKey('plaid:items'))!.get('item-1')!);
     expect(item.institution_name).toBe('Renamed');
-    expect(await decrypt(item.encrypted_access_token)).toBe('access-2');
+    expect(await decrypt(TEST_CTX, item.encrypted_access_token)).toBe('access-2');
   });
 
   test('a key deleted between listing and reading is skipped', async () => {
@@ -717,15 +717,15 @@ describe.skipIf(!hasRedis && !process.env.CI)('the scripts, on a real Redis', ()
     };
     for (const [key, value] of fake.strings) await client.send('SET', [key, value]);
     for (const [key, h] of fake.hashes) for (const [f, v] of h) await client.send('HSET', [key, f, v]);
-    await encrypt('create the first data key');
+    await encrypt(TEST_CTX, 'create the first data key');
     await client.send('SET', [activeKeyName(), fake.strings.get(activeKeyName())!]);
     for (const [f, v] of fake.hashes.get(keysHashKey())!) await client.send('HSET', [keysHashKey(), f, v]);
 
     const report = await reencrypt({ dryRun: false, budgetMs: 60_000, client: realClient });
     expect(report).toMatchObject({ moved: 5, unreadable_count: 0, complete: true });
-    expect(await decrypt(String(await client.send('GET', [testKey('goals')])))).toBe('[{"id":"g1"}]');
+    expect(await decrypt(TEST_CTX, String(await client.send('GET', [testKey('goals')])))).toBe('[{"id":"g1"}]');
     const item = JSON.parse(String(await client.send('HGET', [testKey('plaid:items'), 'item-1'])));
-    expect(await decrypt(item.encrypted_access_token)).toBe('access-sandbox-1');
+    expect(await decrypt(TEST_CTX, item.encrypted_access_token)).toBe('access-sandbox-1');
     expect(await reencrypt({ dryRun: true, budgetMs: 60_000, client: realClient })).toMatchObject({ complete: true });
   });
 });

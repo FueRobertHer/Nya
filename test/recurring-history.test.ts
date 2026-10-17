@@ -69,7 +69,7 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Big Bank', encrypted_access_token: await encrypt('access-token') }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Big Bank', encrypted_access_token: await encrypt(TEST_CTX, 'access-token') }) });
   plaidRows = [
     // Prime, yearly: once this year, once the year before.
     plaid({ transaction_id: 'prime_now', date: daysAgo(30) }),

@@ -212,7 +212,7 @@ describe('the store', () => {
     expect(await plannedStore.get(TEST_CTX)).toEqual(planned());
     const raw = String(await fake.get(ctxKey('planned-items')));
     expect(raw).not.toContain('Car registration');
-    expect(JSON.parse(await decrypt(raw))).toEqual(planned());
+    expect(JSON.parse(await decrypt(TEST_CTX, raw))).toEqual(planned());
   });
 
   test('damaged bytes are unreadable, a later release\'s value is not understood, and neither reads as none', async () => {
@@ -220,7 +220,7 @@ describe('the store', () => {
     const damaged = await plannedStore.get(TEST_CTX).catch((e: unknown) => e);
     expect(damaged).toBeInstanceOf(UnreadableValueError);
     expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
-    await fake.set(ctxKey('planned-items'), await encrypt(JSON.stringify({ ...EMPTY_PLANNED, version: 2 })));
+    await fake.set(ctxKey('planned-items'), await encrypt(TEST_CTX, JSON.stringify({ ...EMPTY_PLANNED, version: 2 })));
     const later = await plannedStore.get(TEST_CTX).catch((e: unknown) => e);
     expect(later).toBeInstanceOf(StoredDataUnreadableError);
     expect((later as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
@@ -268,7 +268,7 @@ describe('the route', () => {
   });
 
   test('a plan stored with its warning as a bare number loads, upgraded, and saves back', async () => {
-    await fake.set(ctxKey('planned-items'), await encrypt(JSON.stringify({ ...planned(), threshold: 250 })));
+    await fake.set(ctxKey('planned-items'), await encrypt(TEST_CTX, JSON.stringify({ ...planned(), threshold: 250 })));
     const res = await route.GET();
     expect(res.status).toBe(200);
     const { planned: read } = await res.json();

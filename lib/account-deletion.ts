@@ -220,7 +220,7 @@ export async function deleteAccount(
       // 2. Its banks.
       for (const item of await getItems(ctx)) {
         try {
-          await opts.removeItem(await decrypt(item.encrypted_access_token));
+          await opts.removeItem(await decrypt(ctx, item.encrypted_access_token));
           disconnected++;
         } catch (err) {
           notDisconnected++;

@@ -148,7 +148,7 @@ export function isRecordable(inst: InstitutionResult): boolean {
   return !inst.error && !inst.unconfirmed_missing;
 }
 
-export async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
+export async function fetchInstitution(ctx: Ctx, item: StoredItem): Promise<InstitutionResult> {
   const result: InstitutionResult = {
     institution_name: item.institution_name,
     item_id: item.item_id,
@@ -165,7 +165,7 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
 
   let access_token: string;
   try {
-    access_token = await decrypt(item.encrypted_access_token);
+    access_token = await decrypt(ctx, item.encrypted_access_token);
   } catch {
     result.error = 'Could not decrypt stored credentials';
     result.failure = { cause: 'credentials', side: 'nya', code: null };
@@ -374,7 +374,7 @@ export async function computeNetWorth(
       (err: unknown) => ({ ok: false as const, err })
     );
 
-  const institutions = await Promise.all(items.map(fetchInstitution));
+  const institutions = await Promise.all(items.map((item) => fetchInstitution(ctx, item)));
 
   // An account missing from a SUCCESSFUL fetch is either a closure or a provider
   // glitch, and until that resolves the total isn't a measurement of everything

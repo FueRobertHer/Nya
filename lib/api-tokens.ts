@@ -76,6 +76,7 @@ import { ownedContainer } from './owners';
 import { deploymentContainer } from './sessions';
 import { isDemoUser } from './demo';
 import { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { ContainerKeyError } from './crypto';
 
 export { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX };
 
@@ -214,11 +215,17 @@ export type Authenticated = { ctx: Ctx; id: string; token: ApiToken };
 const NO_HASH = Buffer.alloc(32);
 
 /** A token's record, or null: none, or one that can't be used, which can't
- *  be checked and so doesn't authenticate. Storage failing throws. */
+ *  be checked and so doesn't authenticate. A container whose data key can't
+ *  be used is answered the same way, before any secret has matched, so a
+ *  broken key tells nobody the container exists. Storage failing throws. */
 async function recordOf(ctx: Ctx, id: string): Promise<ApiToken | null> {
   try {
     return await apiTokenStore.get(ctx, id);
   } catch (err) {
+    if (err instanceof ContainerKeyError) {
+      console.error(`API token: refused, since ${err.message}`);
+      return null;
+    }
     if (!(err instanceof UnreadableEntriesError)) throw err;
     console.error(`API token: a token’s record ${err.unreadable.length > 0 ? 'is damaged' : 'is not one this version understands'}, so it was refused.`);
     return null;

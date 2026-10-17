@@ -2,7 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } fr
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
 
 // The read-only API and the MCP server, held to what their review checked by
 // hand: what they write (their own bookkeeping only), what a damaged record
@@ -205,7 +205,7 @@ describe('a damaged record elsewhere', () => {
   // One reader of manual accounts for every report (lib/manual.ts
   // getManualAccountsReport), by the storage seam's rules.
   test('of a manual account saved in a form this version doesn’t know: named as unrecognised, never as damaged', async () => {
-    await fake.hset(ctxKey('manual:accounts'), { manual_wallet: await encrypt(JSON.stringify({ account_id: 'manual_wallet', name: 'Wallet', kind: 'a later one' })) });
+    await fake.hset(ctxKey('manual:accounts'), { manual_wallet: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'manual_wallet', name: 'Wallet', kind: 'a later one' })) });
     await quietly(async () => {
       const { body: accounts } = await call('accounts');
       expect(accounts.accounts.map((a: any) => a.id)).not.toContain('manual_wallet');
@@ -421,9 +421,9 @@ describe('the MCP server', () => {
       { account_id: 'acc_big_a', name: 'Big A', type: 'investment', subtype: 'brokerage', mask: '0001' },
       { account_id: 'acc_big_b', name: 'Big B', type: 'investment', subtype: 'brokerage', mask: '0002' },
     ];
-    await saveItem(ctx, { item_id: 'item_big', institution_name: 'Big Broker', encrypted_access_token: await encrypt('access-sandbox-big') });
+    await saveItem(ctx, { item_id: 'item_big', institution_name: 'Big Broker', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-big') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_big: await encrypt(JSON.stringify(accounts.map((a) => ({ official_name: null, limit: null, currency: 'USD', ...a })))),
+      item_big: await encrypt(TEST_CTX, JSON.stringify(accounts.map((a) => ({ official_name: null, limit: null, currency: 'USD', ...a })))),
     });
     const securities = Array.from({ length: 2400 }, (_, i) => ({ security_id: `sec_${i}`, ticker_symbol: `T${i}`, name: `Security number ${i} with a longer name`, type: 'equity', is_cash_equivalent: false }));
     const holdings = accounts.flatMap((a) =>

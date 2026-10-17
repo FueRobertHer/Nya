@@ -31,7 +31,7 @@ async function remember(item_id: string, ids: string[]): Promise<void> {
     limit: null,
     currency: 'USD',
   }));
-  await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(accounts)) });
+  await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(TEST_CTX, JSON.stringify(accounts)) });
 }
 
 const asAccounts = (ids: string[]) => ids.map((account_id) => ({ account_id }));
@@ -55,7 +55,7 @@ async function record(item_id: string): Promise<Record<string, string> | null> {
   const blob = await fake.hget<string>(ctxKey('accounts:vanished'), item_id);
   if (!blob) return null;
   const { decrypt } = await import('@/lib/crypto');
-  return JSON.parse(await decrypt(blob));
+  return JSON.parse(await decrypt(TEST_CTX, blob));
 }
 
 beforeEach(() => fake.reset());
@@ -228,7 +228,7 @@ describe('corrupt or missing state fails safe', () => {
   test('an unparseable timestamp is treated as just now, not as ancient', async () => {
     await remember('item_a', ['acct_1', 'acct_2']);
     await fake.hset(ctxKey('accounts:vanished'), {
-      item_a: await encrypt(JSON.stringify({ acct_2: 'not-a-date' })),
+      item_a: await encrypt(TEST_CTX, JSON.stringify({ acct_2: 'not-a-date' })),
     });
 
     // Waving it through would be the failure that matters: a corrupt entry

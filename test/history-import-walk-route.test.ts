@@ -130,7 +130,7 @@ async function quietly<T>(fn: () => Promise<T>): Promise<T> {
 async function storeBank(txns: ReturnType<typeof bankTxn>[], item = 'item_chase', accounts: Record<string, unknown> = CHASE_ACCOUNTS) {
   await fake.set(
     ctxKey(`txns:${item}`),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(txns.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(txns.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
 }
 const CHASE_ACCOUNTS = {
@@ -152,10 +152,10 @@ function estimatedLayer(): string {
 }
 
 async function seed() {
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   plaid.accounts = [account('acc_chk', 'depository', 1000), account('acc_card', 'credit', 300), account('acc_loan', 'loan', 9000)];
   await fake.hset(ctxKey('accounts:meta'), {
-    item_chase: await encrypt(
+    item_chase: await encrypt(TEST_CTX, 
       JSON.stringify([
         { account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
         { account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
@@ -166,8 +166,8 @@ async function seed() {
   await storeBank([bankTxn('b_first', 'acc_chk', 60, 10), bankTxn('b_mid', 'acc_chk', 30, -200), bankTxn('c_buy', 'acc_card', 40, 50)]);
   // Two recorded days: what the import, the undo and every walk must leave
   // byte for byte as they are.
-  const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
-  await fake.hset(ctxKey('history:net-worth'), { [daysAgo(2)]: await encrypt(String(1000 - 300 - 9000)), [daysAgo(1)]: await encrypt(String(1000 - 300 - 9000)) });
+  const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
+  await fake.hset(ctxKey('history:net-worth'), { [daysAgo(2)]: await encrypt(TEST_CTX, String(1000 - 300 - 9000)), [daysAgo(1)]: await encrypt(TEST_CTX, String(1000 - 300 - 9000)) });
   await fake.hset(ctxKey('history:accounts'), {
     [daysAgo(2)]: await map({ acc_chk: 1000, acc_card: 300, acc_loan: 9000 }),
     [daysAgo(1)]: await map({ acc_chk: 1000, acc_card: 300, acc_loan: 9000 }),
@@ -408,9 +408,9 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     await removeItem(ctx, 'item_chase');
     await fake.del(ctxKey('txns:item_chase'));
     await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
-    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase-2') });
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase-2') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+      item_chase2: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
     });
     await storeBank([{ ...bankTxn('n0', 'acc_new', 60, 5), name: 'FIRST' }, { ...bankTxn('n4', 'acc_new', 20, 1850), name: 'RENT' }], 'item_chase2', {
       acc_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null },
@@ -418,8 +418,8 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     await linkAccounts(ctx, 'acc_chk', 'acc_new', { basis: 'by_hand' });
     // The chart's earliest point: 10,000 recorded a day ago.
     for (const k of ['history:net-worth', 'history:accounts', 'snapshot:taken']) await fake.del(ctxKey(k));
-    await fake.hset(ctxKey('history:net-worth'), { [daysAgo(1)]: await encrypt('10000') });
-    await fake.hset(ctxKey('history:accounts'), { [daysAgo(1)]: await encrypt(JSON.stringify({ acc_new: 10000 })) });
+    await fake.hset(ctxKey('history:net-worth'), { [daysAgo(1)]: await encrypt(TEST_CTX, '10000') });
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(1)]: await encrypt(TEST_CTX, JSON.stringify({ acc_new: 10000 })) });
     await markBackfillDone(ctx);
     await markDrawStale(ctx);
     await drawImportedHistory(ctx);
@@ -503,7 +503,7 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     await markEnded(ctx, 'acc_chk', { state: 'closed', on: daysAgo(5) }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', currency: 'USD' });
     plaid.accounts = [account('acc_card', 'credit', 300), account('acc_loan', 'loan', 9000)];
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase: await encrypt(
+      item_chase: await encrypt(TEST_CTX, 
         JSON.stringify([
           { account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
           { account_id: 'acc_loan', name: 'Car loan', official_name: null, mask: '3333', type: 'loan', subtype: 'auto', limit: null, currency: 'USD' },
@@ -518,7 +518,7 @@ describe('the estimated history, where the bank’s rows and the imported ones m
     expect(valueOn(history, 201)).toBe(440 - 250 - 9000);
     const saved = (await fake.hget(ctxKey('account-lifecycle'), 'acc_chk')) as string;
     // Damaged bytes, and the shape a later release writes, read after a rollback.
-    const later = await encrypt(
+    const later = await encrypt(TEST_CTX, 
       JSON.stringify({ lifecycle: { state: 'merged', on: daysAgo(5), into: 'acc_x' }, type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', set_at: new Date().toISOString(), v: 9 })
     );
     for (const unread of ['not ciphertext', later]) {
@@ -623,12 +623,12 @@ describe('the backfill walks imported rows only across covered days', () => {
    *  connection of its own, gives Plaid 40 days. */
   async function twoConnections() {
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase: await encrypt(
+      item_chase: await encrypt(TEST_CTX, 
         JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])
       ),
-      item_card: await encrypt(JSON.stringify([{ account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' }])),
+      item_card: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' }])),
     });
-    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt('access-sandbox-card') });
+    await saveItem(ctx, { item_id: 'item_card', institution_name: 'Card Co', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-card') });
     plaid.accounts = [account('acc_chk', 'depository', 1000), account('acc_card', 'credit', 1300)];
     await storeBank([bankTxn('b_first', 'acc_chk', 300, 10)], 'item_chase', { acc_chk: CHASE_ACCOUNTS.acc_chk });
     await storeBank([bankTxn('c_buy', 'acc_card', 40, 50)], 'item_card', { acc_card: CHASE_ACCOUNTS.acc_card });

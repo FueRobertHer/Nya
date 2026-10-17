@@ -42,7 +42,7 @@ describe('goals', () => {
     ['a value that decrypts to the wrong shape', '{"not":"a list"}'],
   ] as const) {
     test(`${name} is reported, never read as none`, async () => {
-      const blob = stored === null ? await encrypt('not json') : stored.startsWith('{') ? await encrypt(stored) : stored;
+      const blob = stored === null ? await encrypt(TEST_CTX, 'not json') : stored.startsWith('{') ? await encrypt(TEST_CTX, stored) : stored;
       await fake.set(ctxKey('goals'), blob);
       await expect(getGoals(ctx)).rejects.toBeInstanceOf(StoredDataUnreadableError);
     });
@@ -102,7 +102,7 @@ describe('budgets', () => {
   });
 
   test('the wrong shape is unreadable', async () => {
-    await fake.set(ctxKey('budgets'), await encrypt('[1,2]'));
+    await fake.set(ctxKey('budgets'), await encrypt(TEST_CTX, '[1,2]'));
     await expect(getBudgets(ctx)).rejects.toBeInstanceOf(StoredDataUnreadableError);
   });
 

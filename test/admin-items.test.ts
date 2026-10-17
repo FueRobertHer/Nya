@@ -43,7 +43,7 @@ const route = await import('@/app/api/admin/unused/route');
 const OTHER = { container: '7c1d9e4a-52b3-4f6e-9a08-3d2e1f0a9b8c' } as typeof admin;
 
 async function link(ctx: typeof admin, item_id: string, token: string) {
-  await saveItem(ctx, { item_id, institution_name: `Bank ${item_id}`, encrypted_access_token: await encrypt(token) });
+  await saveItem(ctx, { item_id, institution_name: `Bank ${item_id}`, encrypted_access_token: await encrypt(TEST_CTX, token) });
 }
 /** Starts the clock long enough ago that the next check flags an Item Plaid refuses. */
 async function aged(ctx: typeof admin) {

@@ -85,7 +85,7 @@ beforeEach(async () => {
   partner = { container: await ownerContainer('user_partner') };
   await saveManualAccount(partner as any, manual('manual_partner'));
   await fake.hset(`test:c:${partner.container}:plaid:items`, {
-    item_p: JSON.stringify({ item_id: 'item_p', institution_name: 'Ally', encrypted_access_token: await encrypt('token-partner') }),
+    item_p: JSON.stringify({ item_id: 'item_p', institution_name: 'Ally', encrypted_access_token: await encrypt(TEST_CTX, 'token-partner') }),
   });
   // Two transactions on one account, and two days of history: what the receipt counts.
   const row = (id: string, date: string) => ({
@@ -104,10 +104,10 @@ beforeEach(async () => {
   });
   await fake.set(
     `test:c:${partner.container}:txns:item_p`,
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: { acc_p: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1', balances: null } }, txns: { t1: row('t1', '2026-01-01'), t2: row('t2', '2026-01-02') } })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: { acc_p: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1', balances: null } }, txns: { t1: row('t1', '2026-01-01'), t2: row('t2', '2026-01-02') } })
   );
-  await fake.hset(`test:c:${partner.container}:history:net-worth`, { '2026-01-01': await encrypt('10'), '2026-01-02': await encrypt('20') });
-  await fake.hset(`test:c:${partner.container}:history:accounts`, { '2026-01-02': await encrypt(JSON.stringify({ acc_p: 10, manual_partner: 10 })) });
+  await fake.hset(`test:c:${partner.container}:history:net-worth`, { '2026-01-01': await encrypt(TEST_CTX, '10'), '2026-01-02': await encrypt(TEST_CTX, '20') });
+  await fake.hset(`test:c:${partner.container}:history:accounts`, { '2026-01-02': await encrypt(TEST_CTX, JSON.stringify({ acc_p: 10, manual_partner: 10 })) });
   const link = await as('user_owner', () => route('connections/invite', 'POST', {}));
   const { id } = (await as('user_partner', () => route('connections/accept', 'POST', { token: link.body.url.split('/connect/')[1] }))).body;
   await as('user_owner', () => route('connections', 'PUT', { id, accounts: { manual_owner: 'balance' } }));

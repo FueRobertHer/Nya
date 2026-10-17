@@ -73,7 +73,7 @@ async function ownerBank() {
     row('t_private', 'acct_mine', daysAgo(2), 7),
   ];
   await fake.hset(ctxKey('plaid:items'), {
-    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   const inst = {
     item_id: 'item_a',
@@ -629,7 +629,7 @@ describe('sharing accounts on a connection', () => {
   test('each balance is the account’s newest measured one, with its own date', async () => {
     const { recordPartialAccounts } = await import('@/lib/history');
     // An older full snapshot too: the newest measurement must win, not the first.
-    await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(JSON.stringify({ acct_joint: 111 })) });
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(TEST_CTX, JSON.stringify({ acct_joint: 111 })) });
     await recordPartialAccounts(TEST_CTX, { acct_joint: 640 });
     await share({ acct_joint: 'balance' });
     const [from] = await sharedWithPartner();
@@ -920,7 +920,7 @@ describe('what they see: the preview', () => {
 
   test('changes nothing in my container, old-shaped records included', async () => {
     await share({ acct_joint: 'balance' });
-    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
     const before = await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'));
     expect((await previewOf('user_owner')).status).toBe(200);
     expect(await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'))).toEqual(before);
@@ -1231,7 +1231,7 @@ describe('a shared balance, in its own currency', () => {
     plaidAccounts[token] = plaid;
     plaidTxns[token] = rows;
     await fake.hset(ctxKey('plaid:items'), {
-      item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Monzo', encrypted_access_token: await encrypt(token) }),
+      item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Monzo', encrypted_access_token: await encrypt(TEST_CTX, token) }),
     });
     const inst = {
       item_id: 'item_b',
@@ -2028,7 +2028,7 @@ describe('records of showings', () => {
     await rememberAccounts(TEST_CTX, [{ item_id: 'item_a', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_joint', '1111'), balance: 500, currency: null }] } as any]);
     // A remembered account in the shape from before per-item records, which
     // the owner's own loads tidy away and someone else's read must not.
-    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
     const before = ownerData();
     expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
     const [read] = await sharedWithPartner();

@@ -68,9 +68,9 @@ beforeEach(async () => {
   fake.reset();
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('t') }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 't') }) });
   const txns = { t_hotel: stored('t_hotel'), t_taxi: stored('t_taxi', { amount: 30 }), t_carried: stored('t_carried', { amount: 99, date: '2026-09-01' }) };
-  await fake.set(ctxKey('txns:item_a'), await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns }));
+  await fake.set(ctxKey('txns:item_a'), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: {}, txns }));
   await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ account_id: 'acc_new', name: 'Checking', type: 'depository', subtype: 'checking', mask: '1', balance: 1 }] } as any]);
   await saveManualAccount(ctx, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: NOW.toISOString() } as any);
   await manualTxnStore.set(ctx, 'manual_wallet', {

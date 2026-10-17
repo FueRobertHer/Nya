@@ -969,7 +969,7 @@ describe('workplace plan contributions', () => {
 
 describe('the store', () => {
   const saved = plan({ age: 40, spending: 50_000 });
-  const stored = async () => JSON.parse(await decrypt(String(await fake.get(ctxKey('fire-plan')))));
+  const stored = async () => JSON.parse(await decrypt(TEST_CTX, String(await fake.get(ctxKey('fire-plan')))));
 
   test('is declared on the storage seam, under the name it always had, and in the data download', () => {
     expect(firePlanStore.name).toBe('fire-plan');
@@ -988,17 +988,17 @@ describe('the store', () => {
 
   test('a plan saved before the store moved onto the seam reads back unchanged, and the old reader reads the new', async () => {
     // Exactly as the store saved it before: lib/stored-json.ts, under the same key.
-    await writeEncryptedJson(ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
+    await writeEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
     expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
     expect(await (await route.GET()).json()).toEqual({ plan: saved });
     // And what the seam saves, the release before it reads: a rollback loses nothing.
     await firePlanStore.set(TEST_CTX, plan({ age: 41 }));
-    expect(await readEncryptedJson(ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
+    expect(await readEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
   });
 
   test('a plan saved without a field added since reads with its default, and the next save stores every field', async () => {
     const { ceiling: _, ...old } = saved;
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
+    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(old)));
     const read = await firePlanStore.get(TEST_CTX);
     expect(read).toEqual({ ...saved, ceiling: DEFAULT_PLAN.ceiling });
     await firePlanStore.set(TEST_CTX, read!);
@@ -1010,9 +1010,9 @@ describe('the store', () => {
   // from a bank is "bank" for each.
   test('plans saved before the three-way switch read with what they meant', async () => {
     const { planFunding: _, ...older } = saved;
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(older)));
+    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(older)));
     expect(await firePlanStore.get(TEST_CTX)).toEqual({ ...saved, planFunding: [] });
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo', 'acc_sep'] })));
+    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify({ ...older, bankFunded: ['acc_solo', 'acc_sep'] })));
     const read = await firePlanStore.get(TEST_CTX);
     expect(read).toEqual({
       ...saved,
@@ -1030,7 +1030,7 @@ describe('the store', () => {
 
   test('a plan outside today’s ranges or rules still reads; a save is held to them', async () => {
     const old = { ...saved, withdrawalRate: 0.2, horizon: 61, targetAge: 30 };
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(old)));
+    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(old)));
     expect(await firePlanStore.get(TEST_CTX)).toEqual(old);
     const res = await route.PUT(new Request('http://x', { method: 'PUT', body: JSON.stringify({ plan: old }) }));
     expect(res.status).toBe(400);
@@ -1044,7 +1044,7 @@ describe('the store', () => {
     expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
     // Intact, but not understood: never offered for removal.
     for (const later of [{ ...saved, version: 9 }, { ...saved, goal: 'travel' }]) {
-      await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify(later)));
+      await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify(later)));
       const e = await firePlanStore.get(TEST_CTX).catch((err: unknown) => err);
       expect(e).toBeInstanceOf(StoredDataUnreadableError);
       expect((e as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);

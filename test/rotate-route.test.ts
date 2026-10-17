@@ -1,5 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX } from './fake-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -101,7 +101,7 @@ describe('the rotation', () => {
 
   test('the status shows a key created by the first write', async () => {
     await fake.del(keysHashKey());
-    const out = await encrypt('x');
+    const out = await encrypt(TEST_CTX, 'x');
     const body = await (await post()).json();
     expect(body.active_key).toBe(out.split('.')[1]);
     expect(body.active_key).toMatch(/^k1-/);

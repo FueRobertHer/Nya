@@ -78,7 +78,7 @@ async function addItem(item_id: string, account_id: string, txns: any[], seenOn 
   plaidTxns[token] = txns;
   plaidAccounts[token] = [account(account_id)];
   await fake.hset(ctxKey('plaid:items'), {
-    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   const inst = { item_id, institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account(account_id), balance: 100 }] };
   await rememberAccounts(ctx, [inst as any]);
@@ -401,11 +401,11 @@ describe('carry-over edge cases', () => {
 });
 
 describe('forgetting an earlier account', () => {
-  const enc = async (m: unknown) => encrypt(JSON.stringify(m));
+  const enc = async (m: unknown) => encrypt(TEST_CTX, JSON.stringify(m));
   const layers = ['history:accounts', 'history:accounts:est', 'history:accounts:est:ext', 'history:accounts:partial', 'history:accounts:est:flatd'];
   const readMap = async (key: string, date: string) => {
     const { decrypt } = await import('@/lib/crypto');
-    return JSON.parse(await decrypt((await fake.hget<string>(ctxKey(key), date))!));
+    return JSON.parse(await decrypt(TEST_CTX, (await fake.hget<string>(ctxKey(key), date))!));
   };
   const forget = (old: string) => route('account-links', 'POST', { action: 'forget', old });
 
@@ -420,7 +420,7 @@ describe('forgetting an earlier account', () => {
     await addItem('item_new', 'acct_other', []);
     for (const key of layers) await fake.hset(ctxKey(key), { '2026-01-01': await enc({ acct_old: 100, acct_other: 5 }) });
     await fake.set(ctxKey('history:accounts:est:flat'), await enc({ acct_old: 7, acct_other: 1 }));
-    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('105') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '105') });
     await links.dismissPair(ctx, 'acct_old', 'acct_other');
   };
 
@@ -435,7 +435,7 @@ describe('forgetting an earlier account', () => {
     expect((await forget('acct_old')).body).toEqual({ forgotten: true, unreadable_days: 0 });
     for (const key of layers) expect(await readMap(key, '2026-01-01')).toEqual({ acct_other: 5 });
     const { decrypt } = await import('@/lib/crypto');
-    expect(JSON.parse(await decrypt((await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
+    expect(JSON.parse(await decrypt(TEST_CTX, (await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
     expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).toBeNull();
     expect(await fake.hget(ctxKey('txn-category-carry'), 'acct_old')).toBeNull();
     expect(await fake.hget(ctxKey('carried-annotations'), 'acct_old')).toBeNull();
@@ -532,14 +532,14 @@ describe('forgetting an earlier account', () => {
     return getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
   };
   const withEstimated = async () => {
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt(TEST_CTX, '50') });
     await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
   };
   const storedTotal = async (key: string, date: string) => {
     const { decrypt } = await import('@/lib/crypto');
     const blob = await fake.hget<string>(ctxKey(key), date);
-    return blob ? Number(await decrypt(blob)) : null;
+    return blob ? Number(await decrypt(TEST_CTX, blob)) : null;
   };
   const leftovers = async () => {
     const keys = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
@@ -616,7 +616,7 @@ describe('forgetting an earlier account', () => {
   // folded before the stop keeps its place on the chart, and isn't redone.
   test('a retry skips the points already folded', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt('40') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt(TEST_CTX, '40') });
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-15': await enc({ acct_old: 40 }) });
     await withEstimated();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
@@ -663,7 +663,7 @@ describe('forgetting an earlier account', () => {
   // per date first, so each can be folded on its own.
   test('points that read the old single flat record are folded too', async () => {
     await setup(); // the legacy record holds acct_old: 7
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-11-01': await encrypt('20') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-11-01': await encrypt(TEST_CTX, '20') });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const before = await series();
     expect(before.find((p) => p.date === '2025-11-01')!.value).toBe(13);
@@ -677,9 +677,9 @@ describe('forgetting an earlier account', () => {
   // deleted within the account's life, kept outside it, where it can't be.
   test('a point dropped while hidden is deleted within its life, and kept outside it', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999'), '2025-06-01': await encrypt('77') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt(TEST_CTX, '999'), '2025-06-01': await encrypt(TEST_CTX, '77') });
     // An estimate the real point hid: it can't show once the real one goes.
-    await fake.hset(ctxKey('history:net-worth:est'), { '2026-02-01': await encrypt('888') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2026-02-01': await encrypt(TEST_CTX, '888') });
     await fake.hset(ctxKey('history:accounts:est'), { '2026-02-01': await enc({ acct_other: 888 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const dates = (h: { date: string }[]) => h.map((p) => p.date);
@@ -696,7 +696,7 @@ describe('forgetting an earlier account', () => {
   test('today recorded again after a forget is right', async () => {
     await setup();
     const today = new Date().toISOString().slice(0, 10);
-    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt('105') });
+    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt(TEST_CTX, '105') });
     await fake.hset(ctxKey('history:accounts'), { [today]: await enc({ acct_old: 100, acct_other: 5 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await forget('acct_old');
@@ -709,7 +709,7 @@ describe('forgetting an earlier account', () => {
   test('two forgotten hidden accounts on one day are both folded out', async () => {
     await setup();
     await fake.hset(ctxKey('history:accounts'), { '2026-01-01': await enc({ acct_old: 100, acct_two: 30, acct_other: 5 }) });
-    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('135') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '135') });
     await links.recordDirectory(ctx, [{ item_id: 'item_two', institution_name: 'Ally', institution_id: 'ins_9', error: null, accounts: [{ ...account('acct_two'), mask: '2222' }] } as any], Date.now() - DAY);
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await setAccountHidden(ctx, 'acct_two', 'depository', true);
@@ -729,7 +729,7 @@ describe('forgetting an earlier account', () => {
     await setup();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await fake.hset(ctxKey('history:accounts'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
-    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt('7') });
+    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt(TEST_CTX, '7') });
     expect((await forget('acct_old')).status).toBe(500);
     expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(105);
   });
@@ -818,7 +818,7 @@ describe('forgetting an earlier account', () => {
   // stop must still count toward it, or a day inside it reads as outside.
   test('a retry sees the same life, so a day it can’t tell inside it is still deleted', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth'), { '2025-10-01': await encrypt('11'), '2025-10-15': await encrypt('99') });
+    await fake.hset(ctxKey('history:net-worth'), { '2025-10-01': await encrypt(TEST_CTX, '11'), '2025-10-15': await encrypt(TEST_CTX, '99') });
     await fake.hset(ctxKey('history:accounts'), { '2025-10-01': await enc({ acct_old: 10, acct_other: 1 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const evalOrig = fake.eval.bind(fake);
@@ -913,7 +913,7 @@ describe('forgetting an earlier account', () => {
     // The other side of a link, too.
     await setAccountHidden(ctx, 'acct_other', 'depository', true);
     await markForgetting(ctx, 'acct_other', (await getHiddenAccounts(ctx)).get('acct_other')!, 'tag-2');
-    await fake.hset(ctxKey('hidden:accounts'), { acct_old: await encrypt(JSON.stringify({ type: 'depository', hidden_at: 'x' })) });
+    await fake.hset(ctxKey('hidden:accounts'), { acct_old: await encrypt(TEST_CTX, JSON.stringify({ type: 'depository', hidden_at: 'x' })) });
     expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_other' })).status).toBe(409);
   });
 
@@ -1004,9 +1004,9 @@ describe('forgetting an earlier account', () => {
     const oldBlob = (await fake.hget<string>(ctxKey('history:accounts'), '2026-01-01'))!;
     const hiddenOther = (await links.getEffectiveHidden(ctx)).hidden;
     expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
-    expect(isDecryptedCached(oldBlob)).toBe(true);
+    expect(isDecryptedCached(TEST_CTX, oldBlob)).toBe(true);
     await forget('acct_old');
-    expect(isDecryptedCached(oldBlob)).toBe(false);
+    expect(isDecryptedCached(TEST_CTX, oldBlob)).toBe(false);
     expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
     const { getAccountHistory } = await import('@/lib/history');
     expect(await getAccountHistory(ctx, 'acct_old', [])).toEqual([]);
@@ -1016,9 +1016,9 @@ describe('forgetting an earlier account', () => {
 describe('the decrypted-map cache', () => {
   test('keeps what was used most recently within its byte budget', async () => {
     const { getHistory, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
-    const enc = async (m: unknown) => encrypt(JSON.stringify(m));
+    const enc = async (m: unknown) => encrypt(TEST_CTX, JSON.stringify(m));
     for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
-      await fake.hset(ctxKey('history:net-worth'), { [d]: await encrypt('10') });
+      await fake.hset(ctxKey('history:net-worth'), { [d]: await encrypt(TEST_CTX, '10') });
       await fake.hset(ctxKey('history:accounts'), { [d]: await enc({ a: 1, [d]: 1 }) });
     }
     const blob = async (d: string) => (await fake.hget<string>(ctxKey('history:accounts'), d))!;
@@ -1027,7 +1027,7 @@ describe('the decrypted-map cache', () => {
     try {
       const hidden = new Map([['a', { type: 'depository', hidden_at: 'x' }]]);
       await getHistory(ctx, hidden);
-      const cached = await Promise.all(['2026-01-01', '2026-01-02', '2026-01-03'].map(async (d) => isDecryptedCached(await blob(d))));
+      const cached = await Promise.all(['2026-01-01', '2026-01-02', '2026-01-03'].map(async (d) => isDecryptedCached(TEST_CTX, await blob(d))));
       expect(cached.filter(Boolean).length).toBe(2);
     } finally {
       setDecryptedBudget(16 * 1024 * 1024);
@@ -1038,14 +1038,14 @@ describe('the decrypted-map cache', () => {
 describe('the decrypted-map cache order', () => {
   test('a map used again is kept over one used longer ago', async () => {
     const { decryptMapForTest, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
-    const [a, b, c] = await Promise.all([1, 2, 3].map((n) => encrypt(JSON.stringify({ x: n }))));
+    const [a, b, c] = await Promise.all([1, 2, 3].map((n) => encrypt(TEST_CTX, JSON.stringify({ x: n }))));
     setDecryptedBudget(a.length * 6 * 2 + 10); // room for two
     try {
-      await decryptMapForTest(a);
-      await decryptMapForTest(b);
-      await decryptMapForTest(a); // used again
-      await decryptMapForTest(c);
-      expect([isDecryptedCached(a), isDecryptedCached(b), isDecryptedCached(c)]).toEqual([true, false, true]);
+      await decryptMapForTest(TEST_CTX, a);
+      await decryptMapForTest(TEST_CTX, b);
+      await decryptMapForTest(TEST_CTX, a); // used again
+      await decryptMapForTest(TEST_CTX, c);
+      expect([isDecryptedCached(TEST_CTX, a), isDecryptedCached(TEST_CTX, b), isDecryptedCached(TEST_CTX, c)]).toEqual([true, false, true]);
     } finally {
       setDecryptedBudget(16 * 1024 * 1024);
     }
