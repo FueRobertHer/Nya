@@ -18,6 +18,17 @@
 //     bank's own rows (a row the bank has is proposed as its duplicate, kept
 //     beside it and never counted while it is there; a low-confidence one
 //     waits for the person's answer), so the bank's rows are never doubled.
+//     Nor is anything the bank's balance and rows already are brought in
+//     beside them (planMigration's first pass): the app's opening balances
+//     and balance adjustments never; and where the account's own
+//     transactions reach (the bank's from its first row on, an earlier
+//     file's period), neither Lunch Money's groups nor the lines of a split
+//     whose whole the file doesn't hold, a split Nya can't hold coming in
+//     whole instead (TargetPlan left_out, whole). Before that, they come in
+//     as a manual account takes them. An export that marks no split has its
+//     rows of one day and key taken together as one of the account's
+//     transactions where they add up to one no row is by itself
+//     (combineUnmarked, TargetPlan combined).
 // The rows are CSV rows to both ('import:csv', matched by content), with the
 // app's payee, note, and the category the mapping sends their category to
 // (lib/migration/categories.ts): a transfer the app marks between the
@@ -55,8 +66,8 @@ import type { AppRead } from '../import/apps/read';
 import type { AppTxn, SplitWhole } from '../import/apps/types';
 import type { AppProblem } from '../import/apps/common';
 import { APP_NAMES } from '../import/apps/types';
-import { planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from '../history-import/plan';
-import { couldBe, type Matchable } from '../history-import/match';
+import { knownOf, planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from '../history-import/plan';
+import { couldBe, daysApart, type Matchable } from '../history-import/match';
 import { coveredPeriod } from '../history-import/commit';
 import type { Covers } from '../history-import/store';
 import type { AccountContext, LinkedAccount } from '../history-import/read';
@@ -375,11 +386,17 @@ const withoutParts = (t: AppTxn): AppTxn => ({ ...t, category: sharedCategory((t
  * In a linked account, the rows of an export that doesn't mark a split's
  * lines (AppTxn.group_key) of one of the file's accounts, one day and one
  * group key, that add up exactly to one of the account's own transactions
- * (a posted bank row, or a row an earlier file brought), when they aren't
- * each one by itself: one split transaction's lines, which the bank has as
- * one row. They go in together, with their categories as its parts where Nya
- * can hold it (else whole), so they are matched to that row, never counted
- * beside it.
+ * which no row of the file is by itself (a bank row, posted or still
+ * pending, or a row an earlier file brought), when they aren't each one by
+ * themselves: one split transaction's lines, which the bank has as one row.
+ * They go in together, with their categories as its parts where Nya can hold
+ * it (else whole), so they are matched to that row (or, while it is
+ * pending, retired by it once it posts), never counted beside it.
+ *
+ * Every row of the file is paired with what it is by itself first (the
+ * closest such transaction, each once, a pending one too): rows that each are
+ * one stay as they are, and a total is only ever matched to a transaction no
+ * row of the file is, so separate purchases are never made one.
  */
 function combineUnmarked(
   entries: Entry[],
@@ -395,20 +412,49 @@ function combineUnmarked(
     const key = [t.account, t.date, t.group_key.toLowerCase(), currencyOf(t)].join('\u001f');
     groups.set(key, [...(groups.get(key) ?? []), e]);
   }
+  if (![...groups.values()].some((g) => g.length > 1)) return { entries, transactions: 0, lines: [] };
+
+  // The account's transactions by amount, to find each row's quickly; a
+  // pending one counts here, as what the row will be once it posts.
+  const cents = (n: number) => Math.round(n * 100);
+  const byAmount = new Map<number, Matchable[]>();
+  for (const k of known) byAmount.set(cents(k.amount), [...(byAmount.get(cents(k.amount)) ?? []), k]);
+  const alike = (row: { date: string; amount: number; currency: string }, k: Matchable) => couldBe(row, k.pending ? { ...k, pending: false } : k);
+  const claimed = new Set<Matchable>();
+  const claim = (row: { date: string; amount: number; currency: string }): Matchable | null => {
+    let best: Matchable | null = null;
+    for (const k of byAmount.get(cents(row.amount)) ?? []) {
+      if (claimed.has(k) || !alike(row, k)) continue;
+      if (!best || daysApart(row.date, k.date) < daysApart(row.date, best.date)) best = k;
+    }
+    if (best) claimed.add(best);
+    return best;
+  };
+  const single = new Map<Entry, Matchable | null>();
+  for (const e of [...entries].sort((a, b) => (a.txn.date < b.txn.date ? -1 : a.txn.date > b.txn.date ? 1 : a.txn.line - b.txn.line))) {
+    single.set(e, claim({ date: e.txn.date, amount: e.txn.amount, currency: currencyOf(e.txn) }));
+  }
+
   const taken = new Set<Entry>();
   const added: Entry[] = [];
   let transactions = 0;
   const lines: number[] = [];
-  const isKnown = (date: string, amount: number, currency: string) => known.some((k) => couldBe({ date, amount, currency }, k));
   for (const group of groups.values()) {
     if (group.length < 2) continue;
     const sign = Math.sign(group[0].txn.amount);
     if (sign === 0 || group.some((e) => Math.sign(e.txn.amount) !== sign)) continue;
+    // Each one by itself: separate transactions.
+    if (group.every((e) => single.get(e))) continue;
     const first = group[0].txn;
     const currency = currencyOf(first);
     const total = group.reduce((n, e) => n + Math.round(e.txn.amount * 1e6), 0) / 1e6;
-    if (!isKnown(first.date, total, currency)) continue;
-    if (group.every((e) => isKnown(e.txn.date, e.txn.amount, currency))) continue;
+    if (!claim({ date: first.date, amount: total, currency })) continue;
+    // What some of its rows were taken to be by themselves is free again:
+    // they are the parts of the one transaction.
+    for (const e of group) {
+      const own = single.get(e);
+      if (own) claimed.delete(own);
+    }
     const parts = group.map((e) => e.txn);
     const built = fromLines({ account: first.account, date: first.date, currency: first.currency, payee: first.payee, note: null, tags: [...new Set(parts.flatMap((p) => p.tags))], raw: parts.map((p) => p.raw) }, parts);
     let entry: Entry;
@@ -426,6 +472,10 @@ function combineUnmarked(
   if (added.length === 0) return { entries, transactions: 0, lines: [] };
   return { entries: [...entries.filter((e) => !taken.has(e)), ...added].sort((a, b) => a.txn.line - b.txn.line), transactions, lines };
 }
+
+/** A linked account's earlier imports with the period each covers, as its
+ *  import's own plan takes them. */
+const importsOf = (context: AccountContext) => new Map<string, { covers: Period | null }>([...context.summaries].map(([id, s]) => [id, { covers: { from: s.covers.from, to: s.covers.to } }]));
 
 /** The most of the app's categories one import maps (and the most the
  *  person's answers can name: lib/migration/request.ts). */
@@ -546,6 +596,14 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     };
     const note = (by: Map<string, number[]>, reason: string, lines: readonly number[]) => by.set(reason, [...(by.get(reason) ?? []), ...lines]);
     const splitLines = new Map<string, AppTxn[]>();
+    const context = isLinked ? state.contexts.get(choice.id)! : null;
+    // Where a linked account's own transactions already reach: its bank's,
+    // from its first row on, and the periods files imported into it cover.
+    // There, what the bank or an earlier file has, as one row or as several,
+    // would count twice beside what the app writes otherwise; before, nothing
+    // has it, and a row comes in as a manual account takes it.
+    const periods = context ? [...context.summaries.values()].map((s) => s.covers) : [];
+    const reached = (day: string) => !!context && ((context.bank_from !== null && day >= context.bank_from) || periods.some((p) => p.from <= day && day <= p.to));
     for (const t of txns) {
       if (!sources.has(accountKey(t))) continue;
       if (isLinked) {
@@ -556,11 +614,11 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
           continue;
         }
         // Lunch Money's group: the net of transactions the bank has one by one.
-        if (t.grouped) {
+        if (t.grouped && reached(t.date)) {
           b.left_out.groups.push(...t.lines);
           continue;
         }
-        // A split's line: the bank has its transaction as one row.
+        // A split's line: the bank may have its transaction as one row.
         if (t.split_of) {
           splitLines.set(t.split_of.key, [...(splitLines.get(t.split_of.key) ?? []), t]);
           continue;
@@ -574,7 +632,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       if (why === null) {
         room.splits--;
         b.entries.push({ txn: t, split: true });
-      } else if (isLinked) {
+      } else if (isLinked && reached(t.date)) {
         note(b.whole, why, t.lines);
         b.entries.push({ txn: withoutParts(t), split: false });
       } else {
@@ -582,21 +640,30 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         for (const e of explode(t)) b.entries.push({ txn: e, split: false });
       }
     }
-    if (isLinked) {
-      // Each split's lines as the whole the file gives, or left out when it
-      // doesn't hold it (a line is missing): never beside the bank's row.
+    if (context) {
+      // Each split's lines where the bank or an earlier file reaches: the
+      // whole the file gives, as they have it, or left out when the file
+      // doesn't hold it (a line is missing); before, its lines as they are.
+      const keptWhy = new Map<number, string>();
+      for (const k of read.parsed.splits.kept) for (const line of k.lines) keptWhy.set(line, k.reason);
       for (const lines of splitLines.values()) {
         const whole = lines[0].split_of!.whole;
+        const day = whole?.date ?? lines.reduce((d, l) => (l.date < d ? l.date : d), lines[0].date);
+        if (!reached(day)) {
+          for (const l of lines) b.entries.push({ txn: l, split: false });
+          continue;
+        }
         if (!whole) {
           b.left_out.lines.push(...lines.flatMap((l) => l.lines));
           continue;
         }
-        note(b.whole, 'Nya can’t hold it as a split, so it comes in as one transaction, as the bank has it.', lines.flatMap((l) => l.lines));
+        note(b.whole, keptWhy.get(lines[0].line) ?? WHY.together, lines.flatMap((l) => l.lines));
         b.entries.push({ txn: wholeTxn(whole, lines), split: false });
       }
       b.entries.sort((x, y) => x.txn.line - y.txn.line);
-      const context = state.contexts.get(choice.id)!;
-      const known: Matchable[] = [...context.banks.filter((r) => !r.pending), ...context.held];
+      // What the account already has, as its import's own plan counts it,
+      // and the bank's pending rows: what a row will be once they post.
+      const known: Matchable[] = [...knownOf(context.held, context.banks, context.order, context.bank_from, importsOf(context), context.twins), ...context.banks.filter((r) => r.pending)];
       const c = combineUnmarked(b.entries, known, currencyOf, canHold, room);
       b.entries = c.entries;
       b.combined = { transactions: c.transactions, lines: c.lines };
@@ -717,7 +784,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         if (last === null || row.date > last) last = row.date;
       }
       covers = coveredPeriod(null, first, last, state.today);
-      const imports = new Map<string, { covers: Period | null }>([...context.summaries].map(([id, s]) => [id, { covers: { from: s.covers.from, to: s.covers.to } }]));
+      const imports = importsOf(context);
       linked = planHistoryImport({
         rows,
         problems,

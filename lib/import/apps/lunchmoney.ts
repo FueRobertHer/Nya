@@ -160,7 +160,7 @@ export const LUNCH_MONEY: AppSpec = {
       'Lunch Money’s export doesn’t carry a category’s “treat as income” or “exclude from totals” settings: check the kind of each new category below.',
       ...(grouped > 0
         ? [
-            `${grouped.toLocaleString('en-US')} ${grouped === 1 ? 'row is a group' : 'rows are groups'} of transactions in Lunch Money, written as one row at ${grouped === 1 ? 'its' : 'their'} net: ${grouped === 1 ? 'it comes in as one transaction' : 'each comes in as one transaction'}.`,
+            `${grouped.toLocaleString('en-US')} ${grouped === 1 ? 'row is a group' : 'rows are groups'} of transactions in Lunch Money, written as one row at ${grouped === 1 ? 'its' : 'their'} net: ${grouped === 1 ? 'it comes in as one transaction' : 'each comes in as one transaction'}, but into a linked account where its bank’s own transactions, or a file imported before, already have them one by one.`,
           ]
         : []),
     ];

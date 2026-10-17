@@ -27,9 +27,13 @@
 // Tags the tags; Amount in Monarch's sign, money out negative (as the import
 // guides above say), turned into Plaid's. The CSV has no category groups, so a
 // category's kind comes from Monarch's own default categories by name (Transfer,
-// Credit Card Payment, Buy, Sell and Balance Adjustments as transfers; the
-// income ones above as income), shown in the review as that, for the person to
-// check: one they made themselves can't be told from the file.
+// Credit Card Payment, Buy and Sell as transfers; the income ones above as
+// income), shown in the review as that, for the person to check: one they made
+// themselves can't be told from the file. A row under Balance Adjustments is
+// Monarch's own adjustment of an account's balance, read as an opening
+// balance is (AppTxn.starting): nothing the bank moved, and in no total.
+// Rows have no group key of their own beyond the bank's words, Original
+// Statement, which one split's rows share (AppTxn.group_key).
 //
 // NOT CONFIRMED: how tags are separated (read as commas), whether newer files
 // add columns (an Owner column, say: any other column is left in the raw
@@ -37,8 +41,8 @@
 // "will create individual transactions", and nothing in the file says which
 // rows were one transaction, so each part comes in as a transaction of its own
 // with its own category, which counts the same in every total; the review says
-// so. Balance Adjustments is named a transfer category by a migration guide
-// only (waypointbudget.com), not by Monarch.
+// so. Balance Adjustments is named a category of balance changes by a
+// migration guide only (waypointbudget.com), not by Monarch.
 
 import { cleanText } from '../normalize';
 import { appAmount, cellOf, NO_PAYEE, problemOf, rawCells, readLine, tagsOf, textOrNull, type AppSpec } from './common';
@@ -50,7 +54,6 @@ import type { CategoryKind } from '../../categories';
 const KINDS: ReadonlyMap<string, CategoryKind> = new Map([
   ['transfer', 'transfer'],
   ['credit card payment', 'transfer'],
-  ['balance adjustments', 'transfer'],
   ['buy', 'transfer'],
   ['sell', 'transfer'],
   ['paychecks', 'income'],

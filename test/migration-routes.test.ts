@@ -964,6 +964,70 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     });
   }
 
+  /** Everything counted, as one total (the bank's first row of 1 too). */
+  const counted = async () => {
+    const out = spending((await activity()).transactions as any[], 'USD');
+    return Math.round(Object.values(out).reduce((n, x) => n + x, 0) * 100) / 100;
+  };
+  const MONARCH = 'Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags';
+  const ONE = bankTxn('b_first', 'acc_chk', 60, 1, { name: 'FIRST ROW' });
+
+  test('a split whose bank row is still pending is taken as it, and retired by it once it posts', async () => {
+    await seed(ctx, [ONE, bankTxn('p_costco', 'acc_chk', 1, 120, { name: 'COSTCO WHSE #0012', pending: true })]);
+    const file = [MONARCH, `${daysAgo(1)},Costco,Groceries,Checking,COSTCO WHSE #0012,,-80.00,`, `${daysAgo(1)},Costco,Household,Checking,COSTCO WHSE #0012,,-40.00,`].join('\n');
+    const { preview, done } = await importReviewed(file, linkedTo);
+    expect(preview.targets[0].combined.transactions).toBe(1);
+    expect(preview.targets[0].pending_alike).toBe(1);
+    expect(done.status).toBe(200);
+    expect(await counted()).toBe(121);
+    // The bank posts it: one transaction, the app's parts on it.
+    await seed(ctx, [ONE, bankTxn('b_costco', 'acc_chk', 1, 120, { name: 'COSTCO WHSE #0012', pending_transaction_id: 'p_costco' })]);
+    expect(await counted()).toBe(121);
+    expect(((await activity()).transactions as any[]).filter((t) => t.split_of).map((t) => t.amount).sort()).toEqual([40, 80]);
+  });
+
+  test('separate purchases still pending at the bank are each their own, never made one to match another transaction', async () => {
+    const parking = (id: string, over: Record<string, unknown> = {}) => bankTxn(id, 'acc_chk', 1, 2.5, { name: 'CITY PARKING 0042', ...over });
+    await seed(ctx, [ONE, parking('p_park1', { pending: true }), parking('p_park2', { pending: true }), bankTxn('b_bakery', 'acc_chk', 3, 5, { name: 'CORNER BAKERY' })]);
+    const file = [
+      MONARCH,
+      `${daysAgo(1)},City Parking,Parking,Checking,CITY PARKING 0042,,-2.50,`,
+      `${daysAgo(1)},City Parking,Parking,Checking,CITY PARKING 0042,,-2.50,`,
+      `${daysAgo(3)},Corner Bakery,Restaurants,Checking,CORNER BAKERY,,-5.00,`,
+    ].join('\n');
+    const { preview, done } = await importReviewed(file, linkedTo);
+    expect(preview.targets[0].combined.transactions).toBe(0);
+    expect(preview.targets[0].pending_alike).toBe(2);
+    expect(done.status).toBe(200);
+    expect(await counted()).toBe(11);
+    await seed(ctx, [ONE, parking('b_park1', { pending_transaction_id: 'p_park1' }), parking('b_park2', { pending_transaction_id: 'p_park2' }), bankTxn('b_bakery', 'acc_chk', 3, 5, { name: 'CORNER BAKERY' })]);
+    expect(await counted()).toBe(11);
+  });
+
+  test('before the bank’s own rows begin, nothing has a group or a split’s lines: they come in as a manual account takes them, and the period is whole', async () => {
+    await seed(ctx, [ONE]);
+    const lm = [
+      'date,payee,amount,currency,category,category_group,notes,tags,account,original_name,type,parent_id,id,recurring_id,created_at',
+      `${daysAgo(420)},Grocer,30.00,usd,Groceries,Food,,,Checking,,,,1,,`,
+      `${daysAgo(400)},Dinner with friends,45.00,usd,Restaurants,Food,we split the bill,,Checking,,group,,2,,`,
+      `${daysAgo(380)},Grocer,20.00,usd,Groceries,Food,,,Checking,,,,3,,`,
+    ].join('\n');
+    const { preview, done } = await importReviewed(lm, linkedTo);
+    const [target] = preview.targets;
+    expect(target.left_out).toEqual({ opening: 0, groups: 0, lines: 0 });
+    expect(target.counts.new).toBe(3);
+    expect(done.status).toBe(200);
+    expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.map((r) => [r.name, r.amount]).sort()).toEqual([['Dinner with friends', 45], ['Grocer', 20], ['Grocer', 30]]);
+    // YNAB's split with a line missing, and one Nya can't hold, from before
+    // the bank's rows: their lines, each under its category.
+    const ynab = [ynabHeader, ynabRow(300, 'Target', 'Food', 'Groceries', 'Split (1/3) ', 10), ynabRow(300, 'Target', 'Home', 'Supplies', 'Split (3/3) ', 12), ynabRow(200, 'Costco', 'Food', 'Groceries', 'Split (1/2) ', 80), ynabRow(200, 'Costco', '', '', 'Split (2/2) ', 40)].join('\n');
+    const second = await importReviewed(ynab, { ...linkedTo, options: { date_order: 'mdy' } });
+    expect(second.preview.targets[0].left_out.lines).toBe(0);
+    expect(second.preview.targets[0].whole).toEqual([]);
+    expect(second.preview.targets[0].counts.new).toBe(4);
+    expect(second.done.status).toBe(200);
+  });
+
   test('opening balances and balance adjustments aren’t brought in, so they are never walked as money that moved', async () => {
     const FIRST = bankTxn('b_first', 'acc_chk', 300, 10, { name: 'FIRST ROW' });
     await seed(ctx, [FIRST, ...BANK.slice(1)]);

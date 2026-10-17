@@ -1215,9 +1215,15 @@ function TargetSection({
       {t.kind === 'linked' && (left.opening > 0 || left.groups > 0 || left.lines > 0) && (
         <p className="panel-note">
           {[
-            left.opening > 0 ? `${plural(left.opening, 'opening balance or balance adjustment', 'opening balances and balance adjustments')} from ${appName} aren’t brought in: ${t.name}’s balance and transactions are ${bank}’s own` : null,
-            left.groups > 0 ? `${plural(left.groups, 'group')} of transactions ${appName} keeps at ${left.groups === 1 ? 'its' : 'their'} net ${left.groups === 1 ? 'isn’t' : 'aren’t'} brought in: ${bank} has ${left.groups === 1 ? 'its' : 'their'} transactions one by one` : null,
-            left.lines > 0 ? `${plural(left.lines, 'line')} of split transactions ${left.lines === 1 ? 'isn’t' : 'aren’t'} brought in: the file doesn’t hold ${left.lines === 1 ? 'its transaction' : 'their transactions'} whole, which ${bank} has as one` : null,
+            left.opening > 0
+              ? `${left.opening === 1 ? 'An opening balance or balance adjustment' : `${left.opening.toLocaleString()} opening balances and balance adjustments`} from ${appName} ${left.opening === 1 ? 'isn’t' : 'aren’t'} brought in: ${t.name}’s balance and transactions are ${bank}’s own`
+              : null,
+            left.groups > 0
+              ? `${plural(left.groups, 'group')} of transactions ${appName} keeps at ${left.groups === 1 ? 'its' : 'their'} net ${left.groups === 1 ? 'isn’t' : 'aren’t'} brought in where ${bank}’s own transactions, or a file imported before, already have ${left.groups === 1 ? 'its' : 'their'} transactions one by one`
+              : null,
+            left.lines > 0
+              ? `${plural(left.lines, 'line')} of split transactions ${left.lines === 1 ? 'isn’t' : 'aren’t'} brought in: the file doesn’t hold ${left.lines === 1 ? 'its transaction' : 'their transactions'} whole, and ${bank}’s own transactions, or a file imported before, already reach ${left.lines === 1 ? 'its' : 'their'} day`
+              : null,
           ]
             .filter(Boolean)
             .join('. ')}
@@ -1226,7 +1232,7 @@ function TargetSection({
       )}
       {(t.whole ?? []).map((w) => (
         <p key={w.reason} className="panel-note">
-          {plural(w.count, 'line')} of split transactions come in whole, as {bank} has them, without their parts: {w.reason}
+          {plural(w.count, 'line')} of split transactions come in whole, as {bank} (or a file imported before) has them, without their parts: {w.reason}
         </p>
       ))}
       {(t.combined?.transactions ?? 0) > 0 && (
@@ -1407,7 +1413,7 @@ export function UndoConfirm({
         <ul className="import-problems">
           <li>
             {plural(p.remove, 'transaction')} {p.remove === 1 ? 'goes' : 'go'}
-            {p.duplicates > 0 ? `, with ${p.duplicates.toLocaleString()} kept as your banks’ own` : ''}.
+            {p.duplicates > 0 ? `, and so ${p.duplicates === 1 ? 'does the row' : `do the ${p.duplicates.toLocaleString()} rows`} it kept as your banks’ own (your banks’ transactions stay)` : ''}.
           </li>
           {p.edited > 0 && (
             <li>

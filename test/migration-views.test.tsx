@@ -147,7 +147,7 @@ describe('the other steps', () => {
     // What each account's Undo says it would take, added up.
     const preview = { remove: 8, edited: 2, moved: 1, duplicates: 2, restore: 0, kept: [{ file_name: 'bank.csv', count: 1 }], incomplete: false };
     const counted = text(renderToStaticMarkup(<UndoConfirm item={{ id: 'app-import:1', record: 'ok', entry }} preview={preview} busy={false} error="" onConfirm={noop} onCancel={noop} />));
-    expect(counted).toContain('8 transactions go, with 2 kept as your banks’ own.');
+    expect(counted).toContain('8 transactions go, and so do the 2 rows it kept as your banks’ own (your banks’ transactions stay).');
     expect(counted).toContain('2 of them were changed since, and go too.');
     expect(counted).toContain('1 is on another account now, and goes too.');
     expect(counted).toContain('1 more transaction stays: bank.csv found it already there, so it is kept for that import.');
