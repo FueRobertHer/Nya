@@ -98,8 +98,9 @@ export function hideAmountsIn(text: string): string {
 }
 
 // Figures as a file writes them: digits with the separators a bank's export
-// uses ("1,234.56", "1.234,56", "1'234.56", "1 234,56").
-const FIGURES_ANYWHERE = /\d(?:[\d,.'\u00a0\u202f]*\d)?/gu;
+// uses ("1,234.56", "1.234,56", "1'234.56", "1 234,56"), and a date's, so
+// "2026-09-01" is one mask, said as one "hidden".
+const FIGURES_ANYWHERE = /\d(?:[\d,.'\/\-\u00a0\u202f]*\d)?/gu;
 
 /** Text read from a file (a CSV line's cells), whose amounts carry no
  *  currency to tell them by, with every figure in it MASK'd while amounts

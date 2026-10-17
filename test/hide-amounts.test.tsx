@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { compactMoney, formatMoney, hiddenFigure, hideAmountsIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
+import { compactMoney, formatMoney, hiddenFigure, hideAmountsIn, hideFiguresIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
 import {
   HIDE_AMOUNTS_KEY,
   amountsHiddenNow,
@@ -207,6 +207,14 @@ describe('the formatters, with amounts hidden', () => {
     // A code after a number that is no amount (a time, a year) is left alone.
     expect(hideAmountsIn('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.')).toBe('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.');
     expect(hideAmountsIn('1.234,56 DOGE and 1,234.56 DOGE')).toBe('••• DOGE and ••• DOGE');
+  });
+
+  test('a file’s figures, which carry no currency to tell an amount by, are hidden whole while it is imported, a date as one', () => {
+    expect(hideFiguresIn('2026-09-01 | Rent | -2450.00')).toBe('2026-09-01 | Rent | -2450.00');
+    hideNow();
+    expect(hideFiguresIn('2026-09-01 | Rent | -2450.00')).toBe('••• | Rent | -•••');
+    expect(hideFiguresIn("1'234.56, 1.234,56 and 1\u00a0234,56")).toBe('•••, ••• and •••');
+    expect(spoken(hideFiguresIn('09/01/2026 | Payroll | 5120.33'))).toBe('hidden | Payroll | hidden');
   });
 
   test('a screen reader hears "hidden" for each, never bullets, and an account’s last digits as they are', () => {
