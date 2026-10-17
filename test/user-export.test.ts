@@ -1172,6 +1172,7 @@ describe('stores built on the storage seam', () => {
       'allocation-settings',
       'budget-months',
       'carried-annotations',
+      'carried-imported-twins',
       'categories',
       'connection-notices',
       'connection-syncs',

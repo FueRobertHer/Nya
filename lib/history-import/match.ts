@@ -55,16 +55,18 @@
 // whatever the bank changes on that row later: Plaid keeps a transaction's
 // id when it modifies it (a tip added, a currency settled, a merchant's name
 // corrected), and a pair worked out again from the new amount would let the
-// imported row count beside it, the one transaction twice. So the sync,
-// before it changes the bank's rows, keeps which of them stood for which
-// imported row (lib/history-import/twins.ts, the imported-twins store), and
-// settle takes those pairs first (`twins`), by the bank row's id: a bank row
-// that stood for a row still stands for it, as a duplicate's twin or as the
-// row that superseded it, until the bank removes it. Nothing is paired by
-// them that the rule didn't pair; a read never writes them. A pair the rule
-// made before this was kept (an earlier release, or a sync that hasn't run
-// since) is worked out from the amounts, as it always was, until the next
-// sync keeps it; one the bank changed before that sync is lost to it.
+// imported row count beside it, the one transaction twice. So the sync that
+// changes a bank row, before it saves the change, keeps which of the
+// connection's rows stood for which imported row (lib/history-import/twins.ts,
+// the imported-twins store), and settle takes those pairs first (`twins`), by
+// the bank row's id: a bank row that stood for a row still stands for it, as
+// a duplicate's twin or as the row that superseded it, until the bank removes
+// it. Nothing is paired by them that the rule didn't pair; a read never
+// writes them. A pair the rule made is worked out from the amounts, as it
+// always was, until a sync changes its bank row, which keeps it first; one
+// the bank changed before pairs were kept is lost to it. A disconnect carries
+// the pairs by their bank rows' content, which the re-added connection's
+// syncs make again once the person links the accounts.
 //
 // ACROSS AN EDGE (a row dated before the bank's earliest posted row, or a
 // bank row dated outside the period the row's file covers) two rows can only

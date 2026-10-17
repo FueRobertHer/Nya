@@ -10,7 +10,9 @@
 //
 // When the bank changed the amount since the split, what changed is shown as
 // left to split (the read layer keeps it as a part of its own until then,
-// lib/split-rows.ts), so saving places it.
+// lib/split-rows.ts), so saving places it; and so is the difference on a row
+// imported from a file whose split was saved at the amount of the bank's
+// transaction that stood for it, once none does.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
@@ -21,7 +23,7 @@ import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
-import { bankKept, splitKeptUnder } from './SplitRows';
+import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
@@ -188,8 +190,17 @@ export default function SplitSheet({
       </p>
       {changed && changed.split_remainder && (
         <div className="stale-note">
-          {bankKept(t) ? 'The bank changed this amount' : 'This amount changed'} from {formatMoney(Math.abs(changed.split_remainder.was), currency)} to{' '}
-          {formatMoney(Math.abs(t.amount), currency)} since you split it. Place the difference below.
+          {splitAtBanksAmount(t) ? (
+            <>
+              You split this at {formatMoney(Math.abs(changed.split_remainder.was), currency)}, the amount of the bank’s transaction that stood for it. None does
+              now, so it counts at your file’s {formatMoney(Math.abs(t.amount), currency)}. Place the difference below.
+            </>
+          ) : (
+            <>
+              {bankKept(t) ? 'The bank changed this amount' : 'This amount changed'} from {formatMoney(Math.abs(changed.split_remainder.was), currency)} to{' '}
+              {formatMoney(Math.abs(t.amount), currency)} since you split it. Place the difference below.
+            </>
+          )}
         </div>
       )}
       <div className="sheet-form">

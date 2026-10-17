@@ -1112,6 +1112,14 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) =>
       `Not all of your ${noun} could be read, so the transactions imported into the accounts of ${counts} are matched to the bank’s by what each says now: one the bank changed since they were paired may be listed beside the bank’s own.`,
   },
+  // One entry per earlier account: the pairs of a connection since
+  // disconnected, by the content of its bank rows, kept for a re-link.
+  'carried-imported-twins': {
+    noun: 'pairs of imported and bank transactions carried from earlier accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing those of ${counts}.`,
+  },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },

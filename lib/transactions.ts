@@ -1151,11 +1151,12 @@ async function syncItem(ctx: Ctx,
     if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
     else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
     // Before the rows change: which of them stood for rows imported from the
-    // bank's files, kept so that a row this sync modifies (a new amount, a
-    // corrected name) keeps standing for the one it stood for, and never
-    // lets it count beside it (lib/history-import/twins.ts). Best effort: it
-    // never fails the sync. Imported here, when needed, as it reads this
-    // module's rows itself.
+    // bank's files, kept when this sync changes one (a new amount, a
+    // corrected name, a removal), so that a row it modifies keeps standing
+    // for the one it stood for and never lets it count beside it, and the
+    // pairs carried across a re-link made again (lib/history-import/twins.ts).
+    // Best effort: it never fails the sync. Imported here, when needed, as it
+    // reads this module's rows itself.
     await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the

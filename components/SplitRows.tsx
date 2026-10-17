@@ -17,6 +17,7 @@ import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
 import { PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
+import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 
 /** What a row of the list says in place of its category: a split
  *  transaction's parts, a group's size; null for any other. */
@@ -34,6 +35,13 @@ export function entryLabel(t: Pick<Txn, 'split_parts' | 'group_members' | 'group
  *  row entered by hand or imported changes only when it is edited or
  *  imported again. */
 export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConnectorKind(t.source);
+
+/** Whether a row is one imported into a linked account from its bank's file
+ *  (#52), whose amount is the file's and never changes: a split of it that
+ *  adds up to another amount was saved while a bank row at that amount stood
+ *  for it (an edit then adds up to the bank's), and none does now (the bank
+ *  removed it), so it counts at the file's amount again. */
+export const splitAtBanksAmount = (t: Pick<Txn, 'transaction_id'>): boolean => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX);
 
 /** Where a split transaction's split is kept, which an edit of it names: the
  *  transaction itself, or the row imported from a file that a bank row stands
@@ -58,7 +66,12 @@ export function entryNotice(t: Txn): string | null {
   }
   if (t.split_unread) return 'How you split this couldn’t be read, so it shows whole.';
   if (t.split_unapplied) return 'Its split no longer fits (its currency changed), so it shows whole: split it again.';
-  if (t.split_parts?.some((p) => p.split_remainder)) return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
+  if (t.split_parts?.some((p) => p.split_remainder)) {
+    if (splitAtBanksAmount(t)) {
+      return 'You split this at the amount of the bank’s transaction that stood for it. None does now, so it counts at your file’s amount, with the difference as a part of its own until you edit the split.';
+    }
+    return bankKept(t) ? 'The bank changed this amount since you split it.' : 'This amount changed since you split it.';
+  }
   return t.group_members ? groupGoneText(t, 'row') : null;
 }
 

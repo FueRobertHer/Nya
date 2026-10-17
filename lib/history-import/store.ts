@@ -44,7 +44,15 @@
 //                             the bank later modifies keeps standing for the
 //                             row it stood for, whatever its amount becomes.
 //                             Compressed. In the download, which counts the
-//                             rows by it as the app does.
+//                             rows by it as the app does. Gone with its
+//                             connection, once carried (below).
+//   carried-imported-twins    one entry per earlier account, under its account
+//                             id: the pairs of a connection since disconnected,
+//                             each imported row's id to the content its bank
+//                             row had, so linking the re-added account makes
+//                             them again with the bank row that has it. Gone
+//                             once made again, and when that earlier account
+//                             is forgotten. In the download.
 //   imported-history-walk     one entry ("walk"): what the estimated history
 //                             built from imported rows covers (the anchor, the
 //                             oldest day drawn, how far back each account
@@ -554,6 +562,32 @@ export const importedTwinsStore = defineMapStore<ImportedTwins>('imported-twins'
   isValid: isImportedTwins,
   exportable: true, // what says which bank row each imported row is, as the app counts them
   compress: true, // a pair for each imported row the bank's window holds
+});
+
+/**
+ * The pairs kept at a connection since disconnected, carried so that linking
+ * the re-added account to the earlier one makes them again
+ * (lib/history-import/twins.ts CARRIED ACROSS A RE-LINK): each imported
+ * row's id to the content key its bank row had then (lib/transactions.ts
+ * contentKey: the account, the day, the amount in cents and the bank's own
+ * words), which survives a re-link where Plaid's transaction ids don't. One
+ * entry per earlier account, under its account id, as categories and what
+ * was said about transactions carry (lib/overrides.ts,
+ * lib/txn-annotations.ts): the keys name a day, an amount and a merchant, so
+ * they live inside the encrypted value, never in a field name.
+ */
+export type CarriedTwins = { version: 1; twins: Record<string, string> };
+
+export function isCarriedTwins(v: unknown): v is CarriedTwins {
+  if (!isRecord(v) || v.version !== 1 || !isRecord(v.twins)) return false;
+  return Object.entries(v.twins).every(([row, key]) => isImportedTxnId(row) && typeof key === 'string' && key.length > 0 && key.length <= 2000);
+}
+
+export const carriedTwinsStore = defineMapStore<CarriedTwins>('carried-imported-twins', {
+  what: 'pairs of imported and bank transactions carried from earlier accounts',
+  isValid: isCarriedTwins,
+  exportable: true, // which bank transaction each imported row was, kept for a re-link
+  compress: true, // as many pairs as the connection kept
 });
 
 export const historyWalkStore = defineMapStore<WalkState>('imported-history-walk', {
