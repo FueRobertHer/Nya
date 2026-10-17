@@ -495,9 +495,10 @@ export async function finishActivity(
    *  none were ever saved or they couldn't be read (a note says which). */
   tags: TagSet | null;
   /** The review queue (lib/review-store.ts): on from a day, or off, or its
-   *  settings unread; and, when those couldn't be read, the note that says
+   *  settings unread, and how many of the rows' approvals couldn't be read
+   *  (`unknown`); and, when the settings couldn't be read, the note that says
    *  so, for a reader that shows what needs review (the app), not reports. */
-  review: { on: boolean; since: string | null; unread: boolean };
+  review: { on: boolean; since: string | null; unread: boolean; unknown: number };
   review_note: string | null;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -603,7 +604,12 @@ export async function finishActivity(
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes],
     unread_notes: [...plaid.notes, ...manual.notes],
     tags_note: tagRead.note,
-    review: { on: !reviewParts.settingsUnread && !!reviewParts.settings?.on, since: reviewParts.settings?.since ?? null, unread: reviewParts.settingsUnread },
+    review: {
+      on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,
+      since: reviewParts.settings?.since ?? null,
+      unread: reviewParts.settingsUnread,
+      unknown: reviewParts.approvalsUnknown.size,
+    },
     review_note: review.queueNote,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
