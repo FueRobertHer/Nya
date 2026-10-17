@@ -34,7 +34,7 @@ const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { assembleBankRows, finishActivity } = await import('@/lib/activity');
-const { countsInTotals } = await import('@/lib/spending');
+const { spendingByCategory } = await import('@/lib/totals');
 const { getManualAccounts } = await import('@/lib/manual');
 const { readTaxonomy, ensureTaxonomy } = await import('@/lib/category-store');
 const { readTagSet } = await import('@/lib/tags');
@@ -144,17 +144,27 @@ async function activity(c = ctx) {
 }
 
 /** Spending by category, as the totals count it (lib/totals.ts
- *  spendingByCategory: money out that counts, by the category it is filed
- *  under), rounded to the cent. */
+ *  spendingByCategory itself: money out that counts, by the category it is
+ *  filed under), by the category's name, rounded to the cent. */
 function spending(rows: { amount: number; category_name?: string | null; category_id?: string }[], currency = 'USD', only?: (t: any) => boolean) {
-  const out: Record<string, number> = {};
-  for (const t of rows as any[]) {
-    if (only && !only(t)) continue;
-    if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
-    const name = t.category_name ?? 'other';
-    out[name] = Math.round(((out[name] ?? 0) + t.amount) * 100) / 100;
-  }
-  return out;
+  const counted = (rows as any[]).filter((t) => !only || only(t));
+  const by = spendingByCategory(counted, () => true, currency, (t) => t.category_name ?? 'other');
+  return Object.fromEntries(Object.entries(by).map(([name, n]) => [name, Math.round(n * 100) / 100]));
+}
+
+/** The real balance history, as stored: what an import, its undo and the
+ *  estimated history drawn after them must leave byte for byte as it is. */
+function realLayer(c = ctx): string {
+  const keys = ['history:net-worth', 'history:accounts', 'history:accounts:partial', 'snapshot:taken'].map((k) => ctxKey(k, c));
+  return JSON.stringify(keys.map((k) => [k, [...((fake as any).hashes.get(k) ?? new Map()).entries()].sort()]));
+}
+
+/** Two recorded days of balance history. */
+async function recordHistory(c = ctx) {
+  const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
+  await fake.hset(ctxKey('history:net-worth', c), { [daysAgo(2)]: await encrypt('1000'), [daysAgo(1)]: await encrypt('1000') });
+  await fake.hset(ctxKey('history:accounts', c), { [daysAgo(2)]: await map({ acc_chk: 1000 }), [daysAgo(1)]: await map({ acc_chk: 1000 }) });
+  await fake.hset(ctxKey('snapshot:taken', c), { [daysAgo(1)]: `${daysAgo(1)}T13:00:00.000Z` });
 }
 
 /** A new manual account for each of the file's accounts, typed by its name. */
@@ -318,8 +328,11 @@ for (const c of CASES) {
     });
 
     test('into new manual accounts: its own spending by category, transfers out, splits, tags and notes', async () => {
+      await recordHistory();
+      const real = realLayer();
       const { done } = await importReviewed(fixture(c.file), { accounts: newAccounts(c.accounts) });
       expect(done.status).toBe(200);
+      expect(realLayer()).toBe(real);
       expect(done.body.made.accounts.length).toBe(c.accounts.length);
       const accounts = await getManualAccounts(ctx);
       expect(accounts.map((a) => a.name).sort()).toEqual([...c.accounts].sort());
@@ -377,6 +390,9 @@ for (const c of CASES) {
 
     test('into a linked account: matched against the bank’s rows, never doubled, and undone exactly', async () => {
       await seed();
+      await recordHistory();
+      const real = realLayer();
+      expect(real).toContain(`${daysAgo(1)}T13:00:00.000Z`);
       const file = c.linked([
         { days: 400, payee: 'Old Store', amount: 100, category: 'Shopping', group: 'Fun' },
         { days: 55, payee: 'Landlord', amount: 1850, category: 'Rent', group: 'Bills' },
@@ -403,8 +419,11 @@ for (const c of CASES) {
       // The bank's rent shows the app's category, as the person filed it there.
       expect(read.find((t) => t.transaction_id === 'b_rent').category_name).toBe('Rent');
       expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.length).toBe(4);
+      // Nothing is written to the balance history.
+      expect(realLayer()).toBe(real);
       const undone = await undo({ migration_id: (await list()).body.imports[0].id, confirm: true });
       expect(undone.status).toBe(200);
+      expect(realLayer()).toBe(real);
       expect(await importedTxnStore.get(ctx, 'acc_chk')).toBeNull();
       expect((await activity()).transactions.map((t: any) => t.transaction_id).sort()).toEqual(before);
       expect((await activity()).transactions.find((t: any) => t.transaction_id === 'b_rent')!.category_name).toBe('rent and utilities');
