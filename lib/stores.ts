@@ -41,6 +41,7 @@ import './splits';
 import './tags';
 import './timeline-notes';
 import './txn-annotations';
+import './weekly-summary/store';
 
 import { storesDeclaredSoFar, type Store } from './repo';
 

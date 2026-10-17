@@ -56,6 +56,12 @@
 // (MAIL_DEADLINE_MS), so a fault many containers share is seen before anybody
 // is written to (lib/connection-notices.ts).
 //
+// The weekly summaries go after them, within what is left of the same
+// deadline, for each container whose snapshot is done for the day and whose
+// summary is due (lib/weekly-summary/job.ts), judged at the day's run. The
+// catch-up run sends those that didn't fit, or whose snapshot was done only
+// then.
+//
 // Deferred: spreading the runs across a window. The job takes the date it is
 // for (scheduledFor), which is the seam that needs.
 
@@ -71,6 +77,7 @@ import { pruneAccessLog } from './access-log';
 import { nightlyLogIds } from './sharing';
 import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type SendOptions } from './connection-notices';
 import { checkContainerKey, ContainerKeyError } from './crypto';
+import { WEEKLY_BUDGET_MS, sendWeeklySummaries, type WeeklyRunOptions } from './weekly-summary/job';
 
 export const CONCURRENCY = 3;
 export const REGISTRY_RETRY_MS = 1000;
@@ -353,7 +360,14 @@ export type RunOptions = {
   budgetMs?: number;
   /** For tests: how the emails reach Resend and whom they go to. */
   mail?: Omit<SendOptions, 'clock' | 'deadline'>;
+  /** For tests: the same for the weekly summaries. */
+  weekly?: Omit<WeeklyRunOptions, 'clock' | 'deadline' | 'scheduledFor'>;
 };
+
+/** The outcomes after which a container's day is done enough for its weekly
+ *  summary: its snapshot recorded (now or earlier that day), or run and found
+ *  something it couldn't read, or nothing linked. */
+const SUMMARY_READY = new Set<string>(['recorded', 'already', 'unclean', 'empty']);
 
 /** Runs every container in the registry for the date (see the header). */
 export async function runSnapshots(registry: Registry, opts: RunOptions): Promise<SnapshotReport> {
@@ -428,6 +442,12 @@ export async function runSnapshots(registry: Registry, opts: RunOptions): Promis
     const deadline = Math.min(started + MAIL_DEADLINE_MS, clock() + MAIL_BUDGET_MS);
     await sendNotices(outbox, { ...opts.mail, clock, deadline }).catch((err) => console.error('Connection notices: the emails could not be sent.', reasonOf(err)));
   }
+  // Then the weekly summaries, within what is left of the same deadline.
+  const done = new Map(results.map((r) => [r.container, r.status]));
+  const weekly = Math.min(started + MAIL_DEADLINE_MS, clock() + WEEKLY_BUDGET_MS);
+  await sendWeeklySummaries(registry, { ...opts.weekly, clock, deadline: weekly, scheduledFor: date, ready: (c) => SUMMARY_READY.has(done.get(c) ?? '') }).catch((err) =>
+    console.error('Weekly summary: the summaries could not be sent.', reasonOf(err))
+  );
   return { scheduled_for: date, results, failed: results.filter((r) => r.status === 'failed').length };
 }
 
