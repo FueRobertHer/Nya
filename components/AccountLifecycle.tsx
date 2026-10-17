@@ -32,6 +32,7 @@
 
 import { useCallback, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import { localDate } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
@@ -328,7 +329,11 @@ export function LifecycleForm({
           ? `Every day before ${dayText(day)} stays as it was. From ${dayText(day)} on it isn’t counted: not in net worth, the chart, allocation, budgets or spending. Nothing is deleted, so reopening puts it back exactly.`
           : 'Choose a day up to today.'}
       </p>
-      {effect && <p className={effect.owed ? 'stale-note lifecycle-effect' : 'panel-note lifecycle-effect'}>{effect.text}</p>}
+      {effect && (
+        <p className={effect.owed ? 'stale-note lifecycle-effect' : 'panel-note lifecycle-effect'}>
+          <Masked>{effect.text}</Masked>
+        </p>
+      )}
       {effect?.owed && (
         <label className="lifecycle-confirm">
           <input type="checkbox" checked={owedOk} onChange={(e) => setOwedOk(e.target.checked)} disabled={busy} />
@@ -462,12 +467,16 @@ function ReportedQuestion({
   const [owedOk, setOwedOk] = useState(false);
   return (
     <li className="lifecycle-question">
-      <p className="lifecycle-ask">{ask}</p>
+      <p className="lifecycle-ask">
+        <Masked>{ask}</Masked>
+      </p>
       <p className="panel-note">{detail}</p>
       {owed && (
         <label className="lifecycle-confirm">
           <input type="checkbox" checked={owedOk} onChange={(e) => setOwedOk(e.target.checked)} disabled={busy} />
-          <span>Stop counting the {owed} it owes</span>
+          <span>
+            Stop counting the <Masked>{owed}</Masked> it owes
+          </span>
         </label>
       )}
       <div className="card-actions">
@@ -533,7 +542,9 @@ export function AccountQuestions({
         });
         return (
           <li key={a.account_id} className="lifecycle-question">
-            <p className="lifecycle-ask">{ask}</p>
+            <p className="lifecycle-ask">
+              <Masked>{ask}</Masked>
+            </p>
             <p className="panel-note">{detail}</p>
             <div className="card-actions">
               <button className="secondary" onClick={() => onOpen(target('closed'))} disabled={busy}>

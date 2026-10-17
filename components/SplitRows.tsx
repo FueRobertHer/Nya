@@ -12,6 +12,7 @@
 
 import type { Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
+import { Masked } from './HideAmounts';
 import { signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
@@ -267,7 +268,7 @@ export function PartRows({
                 </div>
               )}
             </td>
-            <td className={`num${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}>{signedMoney(-p.amount, currency, { always: true })}</td>
+            <td className={`num${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}><Masked>{signedMoney(-p.amount, currency, { always: true })}</Masked></td>
           </tr>
         );
       })}
@@ -339,7 +340,7 @@ export function MemberRows({
                 </div>
               )}
             </td>
-            <td className={`num${m.amount < 0 ? ' inflow' : ''} excluded`}>{signedMoney(-m.amount, currency, { always: true })}</td>
+            <td className={`num${m.amount < 0 ? ' inflow' : ''} excluded`}><Masked>{signedMoney(-m.amount, currency, { always: true })}</Masked></td>
           </tr>
         );
       })}

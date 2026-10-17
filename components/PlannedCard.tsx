@@ -10,6 +10,7 @@
 import { useRef, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { Sheet } from './Sheet';
+import { Masked } from './HideAmounts';
 import { formatMoney } from '@/lib/format';
 import { isCalendarDay, isCurrencyCode, knownCurrency, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import {
@@ -163,8 +164,7 @@ export default function PlannedCard({
                       </div>
                     </td>
                     <td className={`num${item.kind === 'income' ? ' inflow' : ''}`}>
-                      {item.kind === 'income' ? '+' : '-'}
-                      {formatMoney(item.amount, item.currency)}
+                      <Masked>{`${item.kind === 'income' ? '+' : '-'}${formatMoney(item.amount, item.currency)}`}</Masked>
                     </td>
                   </tr>
                 ))}
@@ -273,7 +273,7 @@ export default function PlannedCard({
                     Cancel
                   </button>
                   <button onClick={save} disabled={!ready || saving}>
-                    {saving ? 'Saving…' : editing ? 'Save' : amount !== null && isCurrencyCode(code) ? `Add ${formatMoney(amount, code)}` : 'Add'}
+                    <Masked>{saving ? 'Saving…' : editing ? 'Save' : amount !== null && isCurrencyCode(code) ? `Add ${formatMoney(amount, code)}` : 'Add'}</Masked>
                   </button>
                 </div>
                 {editing && (

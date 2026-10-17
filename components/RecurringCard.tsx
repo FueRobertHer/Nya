@@ -18,6 +18,7 @@ import { formatMoney } from '@/lib/format';
 import { leftOutText } from '@/lib/spending';
 import { countsInMonthly, recurringMonthly } from '@/lib/totals';
 import type { NoSpending } from '@/lib/no-transactions';
+import { Masked } from './HideAmounts';
 
 function fmtDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
@@ -195,9 +196,9 @@ export default function RecurringCard({
                 {isOpen && (
                   <div className="txn-edit" onClick={(e) => e.stopPropagation()}>
                     <p className="panel-note" style={{ marginTop: 4 }}>
-                      Seen {s.seen} times from {fmtDay(s.firstDate)} to {fmtDay(s.lastDate)}, about {formatMoney(s.amount, s.currency ?? currency)}{' '}
+                      Seen {s.seen} times from {fmtDay(s.firstDate)} to {fmtDay(s.lastDate)}, about <Masked>{formatMoney(s.amount, s.currency ?? currency)}</Masked>{' '}
                       {s.agreement === 'average' ? 'each time, the average of the last half year' : 'each time'}
-                      {s.previousAmount !== undefined ? `, ${formatMoney(s.previousAmount, s.currency ?? currency)} before its price changed` : ''}.
+                      <Masked>{s.previousAmount !== undefined ? `, ${formatMoney(s.previousAmount, s.currency ?? currency)} before its price changed` : ''}</Masked>.
                       {counted(s) ? ` ${counted(s)}` : ''}
                     </p>
                     <div className="card-actions" style={{ marginTop: 8 }}>
@@ -211,7 +212,7 @@ export default function RecurringCard({
               </td>
               <td className={`num${s.kind === 'income' ? ' inflow' : ''}`}>
                 {s.kind === 'income' ? '+' : ''}
-                {formatMoney(s.amount, s.currency ?? currency)}
+                <Masked>{formatMoney(s.amount, s.currency ?? currency)}</Masked>
               </td>
             </tr>
           );
@@ -224,7 +225,7 @@ export default function RecurringCard({
     <div className="card">
       <div className="inst-header">
         <div className="inst-name">Recurring</div>
-        {bills.some(inTotal) && <div className="inst-total">~{formatMoney(billsMonthly.total, currency)}/mo out</div>}
+        {bills.some(inTotal) && <div className="inst-total">~<Masked>{formatMoney(billsMonthly.total, currency)}</Masked>/mo out</div>}
       </div>
 
       {saveError && <p className="stale-note">{saveError}</p>}
@@ -253,7 +254,7 @@ export default function RecurringCard({
             <>
               <div className="recurring-section">
                 Income
-                {income.some(inTotal) && <span> · ~{formatMoney(incomeMonthly.total, currency)}/mo in</span>}
+                {income.some(inTotal) && <span> · ~<Masked>{formatMoney(incomeMonthly.total, currency)}</Masked>/mo in</span>}
               </div>
               {table(income)}
             </>

@@ -28,6 +28,8 @@ import type { Report, ReportCategory } from '@/lib/report/build';
 import { EARLIEST_REPORT_DAY, isTimeZone, resolvePeriod, type ReportRequest } from '@/lib/report/period';
 import { categoryKey, REPORT_SETTINGS_LIMITS } from '@/lib/report/settings';
 import { localDate } from '@/lib/local-date';
+import { HideAmountsToggle, useFiguresWhenPrinted } from './HideAmounts';
+import { useAmountsHidden } from './hide-amounts';
 
 /** What the form holds. */
 export type ReportForm = { kind: 'year' | 'range'; year: number; start: string; end: string; currency: string | null };
@@ -86,6 +88,11 @@ export function csvQuery(report: Pick<Report, 'period' | 'currency'>): string {
 }
 
 export default function ReportsPage() {
+  // On screen the report follows the switch to hide amounts
+  // (components/hide-amounts.ts), drawn again when it changes; printed, it
+  // has its figures, since printing a report is a deliberate act.
+  useAmountsHidden();
+  useFiguresWhenPrinted();
   const [form, setForm] = useState<ReportForm | null>(null);
   const [zone, setZone] = useState('UTC');
   const [today, setToday] = useState('');
@@ -197,9 +204,12 @@ export default function ReportsPage() {
 
   return (
     <main className="wrap report-wrap">
-      <nav className="report-nav no-print" aria-label="Back to Nya">
-        <a href="/">← Nya</a>
-      </nav>
+      <div className="report-top no-print">
+        <nav className="report-nav" aria-label="Back to Nya">
+          <a href="/">← Nya</a>
+        </nav>
+        <HideAmountsToggle />
+      </div>
       <div className="no-print">
         <h1>Reports</h1>
         <p className="sub">

@@ -12,6 +12,7 @@ import { useMemo } from 'react';
 import { formatMoney } from '@/lib/format';
 import { spendingByTag, type TaggedRow } from '@/lib/tag-totals';
 import { shownColor, type Tag } from '@/lib/tags';
+import { Masked } from './HideAmounts';
 
 export default function SpendByTag({ txns, tags, currency }: { txns: readonly TaggedRow[]; tags: readonly Tag[]; currency: string | null }) {
   const totals = useMemo(() => {
@@ -38,7 +39,7 @@ export default function SpendByTag({ txns, tags, currency }: { txns: readonly Ta
             <div className="cat-track">
               <div className="cat-bar" style={{ width: `${(spent / max) * 100}%` }} />
             </div>
-            <span className="cat-val">{formatMoney(spent, currency)}</span>
+            <span className="cat-val"><Masked>{formatMoney(spent, currency)}</Masked></span>
           </div>
         ))}
       </div>

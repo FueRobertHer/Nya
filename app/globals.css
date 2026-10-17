@@ -5129,3 +5129,95 @@ button.cash-flow-show {
   padding: 6px 12px;
   font-size: 13px;
 }
+
+/* --- hide amounts (components/hide-amounts.ts, components/HideAmounts.tsx) ---
+   The switch in the header, pressed while amounts are hidden; on the report
+   page it sits across from the way back to Nya. While amounts are hidden the
+   root carries data-amounts="hidden", the hook for a figure drawn without
+   the formatters in lib/format.ts: a field holding an amount shows the same
+   mask whatever the amount, its own text not drawn at all (one dot per
+   figure would say how large it is), until the field is in use, so a form
+   opened in public shows no figure either. An empty field shows its
+   placeholder, an example. A percentage's field (data-percent) stays, as
+   percentages do everywhere. */
+.hide-amounts-btn[aria-pressed="true"] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.report-top {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.report-top .report-nav {
+  margin-bottom: 0;
+}
+
+:root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus):not(:placeholder-shown) {
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  text-shadow: none;
+  /* Three dots in the text's color, where the text starts, sized to it. */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 26 8'%3E%3Cg fill='%23e8e9ec'%3E%3Ccircle cx='4' cy='4' r='3'/%3E%3Ccircle cx='13' cy='4' r='3'/%3E%3Ccircle cx='22' cy='4' r='3'/%3E%3C/g%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-origin: content-box;
+  background-position: left center;
+  background-size: 1.3em 0.4em;
+}
+
+/* --- starter category templates (components/CategoryTemplates.tsx,
+   components/TemplateOffer.tsx) ---
+   Each set with what it is beside the button that previews it, stacked on a
+   phone; what a set changes, a line each. */
+.template-option {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+
+.template-option-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.template-option-text .panel-note {
+  margin: 0;
+}
+
+.template-changes {
+  margin: 4px 0 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.template-changes li + li {
+  margin-top: 4px;
+}
+
+/* --- budget suggestions from history (components/BudgetSuggestion.tsx) ---
+   In the editor and under the budget about to be added: the line, a button
+   as wide as its words, and the notes. */
+.budget-suggestion {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.budget-suggestion .budget-note {
+  margin: 0;
+}
+
+.budget-suggestion > button {
+  align-self: flex-start;
+  width: auto;
+  padding: 8px 14px;
+  font-size: 14px;
+}

@@ -7,6 +7,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [Payment details](#payment-details)
 - [Debt payoff plan](#debt-payoff-plan)
 - [Hiding accounts](#hiding-accounts)
+- [Hiding amounts](#hiding-amounts)
 - [Accounts that end](#accounts-that-end)
   - [When Nya asks](#when-nya-asks)
   - [Notes on the timeline](#notes-on-the-timeline)
@@ -148,6 +149,16 @@ Hiding is **retroactive**: the net-worth chart redraws as though the account was
 Hiding is not a security feature: the data is still fetched and stored, it just isn't shown or counted. To actually remove an account, disconnect it (Plaid) or delete it (manual). A disconnected account that was hidden stays hidden (its history is kept, so unhiding it would change past totals) until you unhide it.
 
 Hiding leaves an account out of every day, past ones too. To stop counting an account only from a day on, because it closed, isn't yours any more, or you stopped following it, give it an end instead ([below](#accounts-that-end)): every day before it still counts.
+
+## Hiding amounts
+
+For using Nya in public, on a shared screen or in a screenshot: the eye in the header, beside Refresh (and on the Reports page), hides every amount on screen and keeps everything else. Balances and net worth, transactions and their day totals (a split transaction's parts and a group's net among them), the month's totals and top spending, the cash flow, budgets and what their meters say, goals, the income pool, the forecast, the calendar and recurring bills, the payoff plan, the Plan, the sharing preview of what someone sees, reports on screen, and every chart's axis, readout and label show **$•••**. The sign and the currency stay where they were (money in still reads "+$•••", a euro account "€•••", an amount in a currency without a symbol "••• DOGE"), the figures go, and one mask stands for any size, so not even a compact "$1.2K" on an axis says how much. A holding's quantity and the amount in a rule are hidden too, and so is an amount in a message from the server, such as a balance that changed since a form opened or what a split's parts came to when it was refused, and every figure from a file while it is being imported (a CSV file's lines, where its column names may be, and an amount quoted because it couldn't be read). A field holding an amount shows the same **•••**, however large the amount, until you are in the field (an empty one shows its example; a rate or a share in percent shows as it is).
+
+What shows proportions stays: meters and bars keep their lengths, the charts their lines, bands and markers, and percentages stay (a budget at 95%, a card's utilization, a change over a range, a goal's share, the Plan's success rates), since a percentage says no amount. A screen reader hears "hidden" for each hidden amount, in the text and in the labels of charts, meters and buttons, rather than a row of bullets. A choice in a list (a category to budget, with what was spent there) gives its words the same way, as its label, which most screen readers say, though one reading a phone's own list may read its bullets. The switch is a button named Hide amounts, pressed while amounts are hidden.
+
+It is remembered on this device, in the browser's own storage (beside the dashboard's last-known snapshot), and never stored on the server: it follows you to another tab on the device, not to another device. Where the browser keeps nothing (a private window, blocked site data), it lasts as long as the page is open, and a page that can't read the choice shows amounts.
+
+It never changes what leaves Nya: the read-only API and the MCP server, the data download (JSON, CSV and OFX), a report's CSV and every answer from the server carry the figures. A report printed, or saved as a PDF, has its figures too: printing is a deliberate act, so the Reports page shows them while the browser prints and hides them again after. Printing any other page prints what is on screen. Where it applies in the code is in [architecture.md](architecture.md#hiding-amounts).
 
 ## Accounts that end
 
@@ -543,6 +554,29 @@ Groups can be **added**, with their kind, **renamed**, moved **up** or **down** 
 
 Choosing a category, for a transaction or for one you enter by hand, offers your categories by group, without the archived ones (but for the one it has).
 
+### Starter sets
+
+A starter set is a ready-made set of categories and groups to start from. **Start from a starter set**, on the Categories screen, offers three:
+
+- **Simple**: about a dozen broad categories with plain names (Food, Shopping, Transport, Home and utilities, Health, Fees, Travel and others) in six groups: Income, Everyday, Home and bills, Fun, Other and Transfers. Personal care, home improvement and government and non profit are archived while nothing uses them.
+- **Detailed**: the set Nya starts everyone with, one category for each of Plaid's, in ten groups, named as they were at the start. On a set still as Nya made it, it changes nothing. After Simple it brings the start back, archived ones shown again. After Freelancer it puts Nya's categories back as they were, and leaves the two business groups and their categories, which are yours then to keep or delete (or undo Freelancer instead, right after applying it).
+- **Freelancer**: Nya's categories for your personal spending, and two groups of your own: Business income (Client payments, Other business income) and Business expenses (Software and subscriptions, Equipment, Office and supplies, Business travel, Business meals, Advertising, Professional services, Business fees, Taxes). Your income category is called Personal income. Plaid can't tell a business purchase from a personal one, so file them yourself, or with a [rule](#rules).
+
+What a set can change, and nothing else:
+
+- **Add** groups, and categories of its own. One you already have by that name (in any case) is used instead, moved into the set's group.
+- **Rename** the categories Nya made at the start, and **move** them into the set's groups. Each is found by the key it was made with (Plaid's category, or the uncategorized one), so one you renamed is found too. One another was merged into is placed as what it is, never as what went into it, and the preview says where the merged one files.
+- **Archive** one of those it has no place for, only while nothing uses it: no transaction of any date, no budget and no rule, and no category merged into it that the set keeps (so what Plaid files there never lands in an archived category). One in use stays shown, and the preview says why.
+- **Show again** one it places that is archived.
+- **Remove** a group it left empty that is one of a set's (by its name and kind) and has no budget of its own, now or in any past month Nya keeps (see [looking back at a month](#looking-back-at-a-month)), so no past month loses its budget. A group of yours, or one with a budget in a past month, stays, empty, and the preview says so.
+- Put the groups in its order, its own first.
+
+It never deletes or merges a category, never moves one into a group of another kind (one you moved into a spending group stays there, so nothing counts differently and no total moves), and never changes what a group with a budget of its own holds, so that budget covers what it did. A name another category has is left as it is. Your own categories (ones you made, or a file brought, even with one of Nya's merged into them) and your own groups stay where they are.
+
+**See what Simple changes** (and the same for each set) shows, before anything changes, what the set would do to your categories as they are, worked out with your budgets, your budgets by month and what uses each category: the groups it adds, removes and keeps, each category it adds, renames, moves, archives or shows again, what it leaves as it is and why, and how your transactions and budgets file afterwards. Every transaction stays in its category (under its new name, counting in its new group), and every budget stays with its category, by id, wherever it moves. **Apply** is a second tap; if what it would do changed since the preview (your categories changed on another device, say), nothing changes and the preview is worked out again, so the next **Apply** applies what it shows. **Undo** is offered right after, until you leave the screen: names, groups and archiving go back, the groups it removed come back as the same groups, and the categories and groups it added go while nothing uses them. What it can't put back (a name another category has taken since, a category used since, a group whose name another group of another kind has taken) is kept, and said; so is anything changed since the apply, on another device, which stays as it is now. Applying a set twice changes nothing the second time.
+
+While your categories are still the ones Nya made (nothing renamed, regrouped, archived or merged), the Budgets tab offers the starter sets once, in a card above the budgets. **See starter sets** or **Keep mine** ends the offer on that device; the sets stay on the Categories screen. The read-only API and the download see your categories as they are after a set, as after any change; neither applies one.
+
 ### Totals by group
 
 The Activity tab's **Top spending** is by group: each group's total, which a tap opens to its categories'. The Budgets tab lists budgets by group the same way.
@@ -557,6 +591,14 @@ A budget can be on a category or on a group as a whole (**Add Budget** offers bo
 Each group opens to its categories' meters and its own amount. The month's total counts each group once, at its limit. Home warns about a group nearing or over its limit as it does about a category, when the group has an amount of its own (without one, its categories' budgets warn on their own).
 
 Budgets are kept by category id, so a renamed category keeps its budget, and a merged one's is added to where it went. A budget left on a category or group since deleted (on another device, say) is shown, and can be removed. The release before this one still reads the category budgets, by name ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)).
+
+### Suggestions from history
+
+Editing a budget, or choosing a category or group to add one to, shows what was spent there on average over the last three complete months, rounded up to a round figure, with one tap to use it (**Use $415.00**, or **Add at $415.00**): "Suggested: $415.00, from the average of July, August and September ($412.37 a month)." It is counted by the rule every total follows, as the meters count spending: in the budgets' currency (what is in another is named under the budget it would have counted for, never added), without transfers, cash withdrawals, loan payments, what you excluded or what a [rule](#rules) hides, and with a refund as money in, never off spending. A category's is what is filed under it now, a group's everything in it now. A month with nothing spent counts as nothing. The average is to the cent, and the suggestion is that rounded up: to the unit under $100, then to $5, $50, $500 as it grows, from $100 up never more than 5% over.
+
+Only months Nya's history reaches whole are averaged: never one before your first transaction, nor the month your history begins in (unless from its first day), nor one in which a bank's stored transactions begin after it began, which would count as spending nothing. With fewer than three, the suggestion says which months it is from and why the others aren't counted; with none, there is no suggestion yet, and it says why (or, before your first transaction, that there are none yet). A month averaged that may be missing transactions (a connection that stopped syncing, transactions that couldn't be read) is named, with why: the suggestion may be low. A category with nothing spent in those months has no suggestion, and says so (and, when what was spent there is in another currency, that too). With rollover on, the suggestion is still the plain monthly average: what rolled over isn't spending.
+
+Suggestions are worked out on the server for this month only, from the stored transactions the Budgets tab reads for its months anyway, never from Plaid, and aren't stored. The read-only API doesn't offer them.
 
 ### In the API and the download
 

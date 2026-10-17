@@ -28,7 +28,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
-import { CsvMapping, DateOrderQuestion, kindsText, type Picked } from './ImportSheet';
+import { CsvMapping, DateOrderQuestion, kindsText, shownReason, type Picked } from './ImportSheet';
+import { Masked } from './HideAmounts';
 import { formatMoney, signedMoney } from '@/lib/format';
 import { instantDay } from '@/lib/local-date';
 import { isCurrencyCode } from '@/lib/manual-txn-input';
@@ -933,7 +934,7 @@ export function ReviewView({
                     <div className="import-row-meta">In the file{p.line ? ` (line ${p.line})` : ''}</div>
                     <div className="import-conflict-version">
                       <span className="import-row-name">{p.file.name}</span>
-                      <span className={`import-row-amount${p.file.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.file.amount, p.file.currency)}</span>
+                      <span className={`import-row-amount${p.file.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(p.file.amount, p.file.currency)}</Masked></span>
                     </div>
                     <div className="import-row-meta">{fmtDay(p.file.date)}</div>
                     <div className="import-row-meta" style={{ marginTop: 6 }}>
@@ -943,7 +944,7 @@ export function ReviewView({
                     </div>
                     <div className="import-conflict-version">
                       <span className="import-row-name">{p.twin.name}</span>
-                      <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(p.twin.amount, p.twin.currency ?? p.file.currency)}</span>
+                      <span className={`import-row-amount${p.twin.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(p.twin.amount, p.twin.currency ?? p.file.currency)}</Masked></span>
                     </div>
                     <div className="import-row-meta">
                       {fmtDay(p.twin.date)}
@@ -1003,10 +1004,10 @@ export function ReviewView({
                 <div className="import-row-text">
                   <div className="import-conflict-version">
                     <span className="import-row-name">{x.file.name}</span>
-                    <span className={`import-row-amount${x.file.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(x.file.amount, x.file.currency)}</span>
+                    <span className={`import-row-amount${x.file.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(x.file.amount, x.file.currency)}</Masked></span>
                   </div>
                   <div className="import-row-meta">
-                    {fmtDay(x.file.date)} · already imported: {x.stored.name}, {fmtDay(x.stored.date)}, {fmtAmount(x.stored.amount, x.stored.currency)}
+                    {fmtDay(x.file.date)} · already imported: {x.stored.name}, {fmtDay(x.stored.date)}, <Masked>{fmtAmount(x.stored.amount, x.stored.currency)}</Masked>
                     {(conflicts.each[String(x.index)] ?? conflicts.all ?? x.suggested) === null ? ' · choose one' : ''}
                   </div>
                   <div className="import-choices" role="group" aria-label={`What to do with ${x.file.name}`}>
@@ -1039,7 +1040,7 @@ export function ReviewView({
                   {row.category ? ` · ${row.category}` : ''} · {OUTCOME_TEXT[row.outcome] ?? row.outcome}
                 </div>
               </div>
-              <div className={`import-row-amount${row.amount < 0 ? ' inflow' : ''}`}>{fmtAmount(row.amount, row.currency)}</div>
+              <div className={`import-row-amount${row.amount < 0 ? ' inflow' : ''}`}><Masked>{fmtAmount(row.amount, row.currency)}</Masked></div>
             </li>
           ))}
         </ul>
@@ -1054,7 +1055,7 @@ export function ReviewView({
             {shownProblems.map((pr, i) => (
               <li key={`${pr.line}-${i}`}>
                 {pr.line > 0 ? `Line ${pr.line}: ` : ''}
-                {pr.reason}
+                <Masked>{shownReason(pr.reason)}</Masked>
               </li>
             ))}
           </ul>
@@ -1069,7 +1070,7 @@ export function ReviewView({
 
       {c.new > 0 && r.currency && sentChoices === choices && (
         <p className="panel-note" style={{ marginTop: 12 }}>
-          New: {formatMoney(r.totals.out, r.currency)} out, {formatMoney(r.totals.in, r.currency)} in
+          New: <Masked>{formatMoney(r.totals.out, r.currency)}</Masked> out, <Masked>{formatMoney(r.totals.in, r.currency)}</Masked> in
         </p>
       )}
       <p className="panel-note">

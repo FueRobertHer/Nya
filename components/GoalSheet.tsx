@@ -11,7 +11,8 @@
 
 import { useState } from 'react';
 import { Sheet } from './Sheet';
-import { formatMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
+import { formatMoney, hideAmountsIn } from '@/lib/format';
 import { isOwedType } from '@/lib/balance';
 import { goalViews, type GoalAccount } from '@/lib/goal-view';
 import { endedTag, outlookText, sourceNote } from '@/lib/goal-text';
@@ -132,9 +133,11 @@ export default function GoalSheet({
         )}
         {account && room !== null && (
           <p className="panel-note goal-room">
-            {d.allocate
-              ? `Up to ${money(room)} of ${account.name}’s ${money(account.balance!)} can be set aside for it.`
-              : `Without an allocation it counts what the allocated goals on ${account.name} leave: all of it when none is allocated.`}
+            <Masked>
+              {d.allocate
+                ? `Up to ${money(room)} of ${account.name}’s ${money(account.balance!)} can be set aside for it.`
+                : `Without an allocation it counts what the allocated goals on ${account.name} leave: all of it when none is allocated.`}
+            </Masked>
           </p>
         )}
         <label className="field">
@@ -151,11 +154,15 @@ export default function GoalSheet({
           {e}
         </div>
       ))}
-      {preview && <p className="panel-note">{preview}</p>}
+      {preview && (
+        <p className="panel-note">
+          <Masked>{preview}</Masked>
+        </p>
+      )}
       <p className="panel-note">
         An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
       </p>
-      {attempted && saveError && <div className="error">{saveError}</div>}
+      {attempted && saveError && <div className="error">{hideAmountsIn(saveError)}</div>}
       {confirmDelete && goal ? (
         <>
           <p className="panel-note">Delete {goal.name} for good? Archiving keeps it, with its history.</p>
