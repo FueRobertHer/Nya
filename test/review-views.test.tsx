@@ -9,7 +9,7 @@ import { swipeEnd, swipeMove, swipeOffset, swipeStart, SLOP, type Point } from '
 import { activityKey, cardKey, isTyping } from '@/components/review-keys';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep } from '@/components/card-mode-state';
 import { withApproved, withUndone, reviewViewOf, type ReviewControls } from '@/components/review-state';
-import { changedWords, defaultListWords, defaultWords, doneWords, endWords, suggestionWords, toReviewWords } from '@/components/review-text';
+import { approvedAsImported, changedSinceWords, changedWords, defaultListWords, defaultWords, doneWords, endWords, suggestionWords, toReviewWords } from '@/components/review-text';
 import { merchantOf, recategorizedRow } from '@/components/transaction-edits';
 import { searchEntries } from '@/components/txn-search';
 import { localDate } from '@/lib/local-date';
@@ -300,6 +300,34 @@ describe('the Activity tab', () => {
     expect(say(txn('t1', { review_unknown: true }))).toContain('Whether you approved this couldn\'t be read');
     expect(say(txn('group:g', { group_members: [txn('t_a', { needs_review: true }), txn('t_b', { needs_review: true })] }))).toBe('2 of its transactions need review. Approve them');
     expect(say(txn('t1'))).toBe('');
+  });
+
+  test('a bank row standing for one imported from its file, approved at the file’s amount, says the bank changed it once', () => {
+    // As the read layer leaves it once the bank changed its amount (#52's kept pair).
+    const twin = txn('b_costco', { amount: 160.5, needs_review: true, review_changed: { amount: 150, currency: 'USD' }, imported_amount: 150 });
+    expect(approvedAsImported(twin.review_changed!, twin)).toBe(true);
+    // On the Activity tab the row's own note says it (lib/history-import/view.ts
+    // importedChangedNote): the detail adds only the approval.
+    const detail = text(renderToStaticMarkup(<ReviewNote t={twin} taxonomy={taxonomy} review={controls()} onChanged={() => {}} />));
+    expect(detail).toBe('You approved it at the amount imported from your bank’s file, before the bank changed it. Approve');
+    // Card Mode, without the row's note, says the two in one.
+    const card = (t: Txn) => text(renderToStaticMarkup(<CardMode open txns={[t]} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />));
+    const one = card(twin);
+    expect(one).toContain('You approved it at $150.00 out, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.');
+    expect(one.match(/changed (?:its|the) amount/g)).toHaveLength(1);
+    // Approved since at another amount the bank changed again: two things,
+    // each with its own figure.
+    const again = { ...twin, review_changed: { amount: 158.25, currency: 'USD' } };
+    expect(approvedAsImported(again.review_changed, again)).toBe(false);
+    expect(changedSinceWords(again.review_changed, again, true)).toBe('The bank changed the amount since you approved it at $158.25 out.');
+    const two = card(again);
+    expect(two).toContain('The bank changed the amount since you approved it at $158.25 out.');
+    expect(two).toContain('This is the transaction you imported from your bank’s file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.');
+    // Never approved: the card says what the row says; another currency is another amount.
+    expect(card({ ...twin, review_changed: undefined })).toContain('This is the transaction you imported from your bank’s file at $150.00.');
+    expect(approvedAsImported({ amount: 150, currency: 'CAD' }, twin)).toBe(false);
+    expect(approvedAsImported({ amount: 150, currency: 'USD' }, { ...twin, imported_amount: undefined })).toBe(false);
+    expect(changedSinceWords({ amount: 50, currency: 'USD' }, txn('t1'), false)).toBe(changedWords({ amount: 50, currency: 'USD' }));
   });
 
   test('approved at once, and undone at once, a split one’s parts and a group’s transactions with it', () => {

@@ -1027,7 +1027,7 @@ export default function MonthBreakdown({
                             {/* A bank row standing for a row imported from
                                 its file, which the bank changed since (#52). */}
                             {t.imported_amount !== undefined && (
-                              <div className="excluded-tag">{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</div>
+                              <div className="excluded-tag"><Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</Masked></div>
                             )}
                           </div>
                         </div>

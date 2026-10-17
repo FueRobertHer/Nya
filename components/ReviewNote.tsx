@@ -12,7 +12,8 @@ import { useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import type { ReviewControls } from './review-state';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
-import { changedWords, defaultWords, suggestionWords } from './review-text';
+import { Masked } from './HideAmounts';
+import { changedSinceWords, defaultWords, suggestionWords } from './review-text';
 
 function day(iso: string): string {
   const d = new Date(iso);
@@ -87,7 +88,12 @@ export default function ReviewNote({
   if (t.needs_review) {
     lines.push(
       <div className="review-note" key="needs">
-        <span>{t.review_changed ? changedWords(t.review_changed) : 'Waiting for you to approve it as it is.'}</span>
+        {/* Beside the row's own note when it stands for a row imported from
+            the bank's file at the amount approved (components/MonthBreakdown.tsx),
+            so the change is said once. */}
+        <span>
+          <Masked>{t.review_changed ? changedSinceWords(t.review_changed, t, true) : 'Waiting for you to approve it as it is.'}</Masked>
+        </span>
         <button className="secondary" onClick={() => void review.approve([t])}>
           Approve
         </button>
@@ -109,7 +115,7 @@ export default function ReviewNote({
     // Changed since it was approved, before the queue's first day: said, not queued.
     lines.push(
       <div className="rename-hint" key="changed">
-        {changedWords(t.review_changed)}
+        <Masked>{changedSinceWords(t.review_changed, t, true)}</Masked>
       </div>
     );
   }

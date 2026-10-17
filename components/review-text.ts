@@ -4,7 +4,7 @@
 // Amounts go through lib/format.ts, as every amount on a screen does.
 
 import { formatMoney } from '@/lib/format';
-import type { ReviewSuggestion } from '@/lib/review-layer';
+import { sameAmount, type ReviewSuggestion } from '@/lib/review-layer';
 
 const NUMBER_WORDS = ['no', 'one', 'two', 'three'];
 
@@ -26,6 +26,31 @@ export function defaultListWords(d: { since: string; agree: number }, day: (iso:
 export function changedWords(was: { amount: number; currency: string | null }): string {
   // Plaid's sign: positive is money out, shown as the list shows it.
   return `The bank changed the amount since you approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}.`;
+}
+
+/** A bank row as the words below read it: the amount of the row imported
+ *  from the bank's file that it stands for, when the bank changed its own
+ *  after the two were paired (`imported_amount`, which the Activity tab says
+ *  beside the row: lib/history-import/view.ts importedChangedNote). */
+type Twin = { imported_amount?: number; iso_currency_code?: string | null; unofficial_currency_code?: string | null };
+
+/** Whether an approval that no longer holds was of the amount the row was
+ *  imported from the bank's file at: then the imported row's note (the bank
+ *  has changed its amount since) and the review's say one thing. */
+export function approvedAsImported(was: { amount: number; currency: string | null }, t: Twin): boolean {
+  if (t.imported_amount === undefined) return false;
+  return sameAmount(was, { amount: t.imported_amount, iso_currency_code: t.iso_currency_code ?? null, unofficial_currency_code: t.unofficial_currency_code ?? null });
+}
+
+/** Why an approved transaction is back in the queue, said once: as
+ *  changedWords says it, unless it was approved at the amount it was
+ *  imported from the bank's file at (approvedAsImported). Then, `beside` the
+ *  imported row's note (the Activity tab draws it on the row), only what the
+ *  review adds; alone (Card Mode), the two in one. */
+export function changedSinceWords(was: { amount: number; currency: string | null }, t: Twin, beside: boolean): string {
+  if (!approvedAsImported(was, t)) return changedWords(was);
+  if (beside) return 'You approved it at the amount imported from your bank’s file, before the bank changed it.';
+  return `You approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
 }
 
 /** What would file an approved transaction elsewhere now, offered. */

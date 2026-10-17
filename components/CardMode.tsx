@@ -4,7 +4,8 @@
 // at a time, full screen, made for a phone. A card shows the merchant (as the
 // list shows it), the amount, the day, the account, the category, the note
 // and the tags, and what to know first (the bank changed its amount since it
-// was approved, a merchant's default filed it, it is split or in a group).
+// was approved, a merchant's default filed it, it is split or in a group, it
+// stands for a row imported from the bank's file that the bank changed since).
 //
 //   Approve       swipe right, the Approve button, → or A, or Enter on the card
 //   Recategorize  swipe left, the button, ← or C: the app's category picker,
@@ -20,7 +21,9 @@
 // a screen reader hears what each action did and how many are left, and with
 // reduced motion the cards don't fly. It ends with "All caught up" and how
 // many were approved, or, with some skipped, "Done for now" and the way back
-// to them. Amounts go through lib/format.ts.
+// to them. Amounts go through lib/format.ts, and are drawn through <Masked>
+// (components/HideAmounts.tsx), so a screen reader hears a hidden one as
+// "hidden"; no label or live-region text names one.
 
 import { useEffect, useRef, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
@@ -29,13 +32,15 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import type { Tag } from '@/lib/tags';
 import { bankRows } from '@/lib/split-rows';
 import { currencyOf } from '@/lib/spending';
-import { signedMoney } from '@/lib/format';
+import { formatMoney, signedMoney } from '@/lib/format';
+import { importedChangedNote } from '@/lib/history-import/view';
 import CategoryPicker from './CategoryPicker';
+import { Masked } from './HideAmounts';
 import TagChips from './TagChips';
 import { cardKey, CARD_KEYS } from './review-keys';
 import { swipeEnd, swipeMove, swipeOffset, swipeStart, type Point, type Swipe } from './swipe';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep, type Cards } from './card-mode-state';
-import { changedWords, defaultWords, doneWords, endWords } from './review-text';
+import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords } from './review-text';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
 type StepUndo = Promise<ApprovalTicket | null> | Promise<CardUndo | null>;
@@ -312,7 +317,9 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
               Recategorize
             </span>
             <div className="card-mode-merchant">{t.name}</div>
-            <div className={`card-mode-amount${t.amount < 0 ? ' inflow' : ''}`}>{signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}</div>
+            <div className={`card-mode-amount${t.amount < 0 ? ' inflow' : ''}`}>
+              <Masked>{signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}</Masked>
+            </div>
             <div className="card-mode-meta">
               {dayText(t.date)} · {t.institution_name} · {t.account_name}
               {t.pending ? ' · pending' : ''}
@@ -332,13 +339,27 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
               <div className="card-mode-category">{categoryText(t)}</div>
             )}
             {t.filed_by_default && <div className="card-mode-hint">{defaultWords(t.name, t.filed_by_default.agree)}</div>}
-            {t.review_changed && <div className="card-mode-hint">{changedWords(t.review_changed)}</div>}
+            {t.review_changed && (
+              <div className="card-mode-hint">
+                <Masked>{changedSinceWords(t.review_changed, t, false)}</Masked>
+              </div>
+            )}
+            {/* A bank row standing for a row imported from its file, which
+                the bank changed since (#52), as the Activity tab says it;
+                in the line above when that was the amount approved. */}
+            {t.imported_amount !== undefined && !(t.review_changed && approvedAsImported(t.review_changed, t)) && (
+              <div className="card-mode-hint">
+                <Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t) ?? currency))}</Masked>
+              </div>
+            )}
             {t.split_parts && (
               <ul className="card-mode-parts" aria-label="Its parts">
                 {t.split_parts.map((p) => (
                   <li key={p.transaction_id}>
                     <span>{p.category_id && ix ? displayName(categoryById(ix, p.category_id)?.name ?? categoryText(p)) : categoryText(p)}</span>
-                    <span>{signedMoney(-p.amount, currencyOf(p) ?? currency, { always: true })}</span>
+                    <span>
+                      <Masked>{signedMoney(-p.amount, currencyOf(p) ?? currency, { always: true })}</Masked>
+                    </span>
                   </li>
                 ))}
               </ul>
