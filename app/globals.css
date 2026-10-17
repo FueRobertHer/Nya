@@ -5129,3 +5129,24 @@ button.cash-flow-show {
   padding: 6px 12px;
   font-size: 13px;
 }
+
+/* --- switching from another app (components/MigrationSheet.tsx) --- */
+
+/* The way in: a line under the account buttons, its link wrapping on a
+   narrow phone rather than pushing the card wider. */
+.migration-link .link-btn {
+  display: inline;
+  text-align: left;
+  white-space: normal;
+}
+
+/* Each app's export steps, folded until asked for. */
+.migration-how {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.migration-how summary {
+  cursor: pointer;
+  color: var(--muted);
+}
