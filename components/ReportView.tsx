@@ -408,7 +408,9 @@ export function ReportView({ report }: { report: Report }) {
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
                         <td className="num"><Masked>{formatMoney(-r.amount || 0, r.currency)}</Masked></td>
-                        <td>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</td>
+                        <td>
+                          <Masked>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</Masked>
+                        </td>
                       </tr>
                     );
                   })}

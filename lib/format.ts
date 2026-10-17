@@ -134,7 +134,12 @@ function withCode(amount: number, currency: string, sign: string): string {
 }
 
 export function formatMoney(amount: number, currency?: string | null): string {
-  if (hidden) return hiddenMoney(amount, currency);
+  return hidden ? hiddenMoney(amount, currency) : fullMoney(amount, currency);
+}
+
+/** formatMoney's figures, whatever the switch says: only for what is
+ *  measured here, never drawn (amountSamples). */
+function fullMoney(amount: number, currency?: string | null): string {
   if (currency) {
     try {
       return new Intl.NumberFormat(undefined, {
@@ -170,7 +175,12 @@ export function signedMoney(amount: number, currency: string | null, opts: { alw
 
 // Compact form for dense labels (chart axes): $1.2K, €3.4M.
 export function compactMoney(amount: number, currency?: string | null): string {
-  if (hidden) return hiddenMoney(amount, currency);
+  return hidden ? hiddenMoney(amount, currency) : fullCompact(amount, currency);
+}
+
+/** compactMoney's figures, whatever the switch says: only for what is
+ *  measured here, never drawn (amountSamples). */
+function fullCompact(amount: number, currency?: string | null): string {
   if (currency) {
     try {
       return new Intl.NumberFormat(undefined, {
@@ -190,6 +200,18 @@ export function compactMoney(amount: number, currency?: string | null): string {
   if (abs >= 1e6) return `${sign}$${(abs / 1e6).toFixed(1)}M`;
   if (abs >= 1e3) return `${sign}$${(abs / 1e3).toFixed(1)}K`;
   return `${sign}$${Math.round(abs)}`;
+}
+
+/**
+ * Amounts as wide as the widest each short form writes in `currency` in this
+ * locale (formatMoney's under ten, compactMoney's at each size), with 8s for
+ * figures: nobody's amount, the same whatever the switch says. For a layout
+ * that must not move with an amount's size, nor with whether amounts are
+ * hidden (a chart's labels, cut to fit beside the room their amounts take,
+ * would otherwise say how long a hidden figure is). Measured, never drawn.
+ */
+export function amountSamples(currency?: string | null): string[] {
+  return [fullMoney(8.88, currency), ...[888, 888_888, 888_888_888, 888_888_888_888].map((n) => fullCompact(n, currency))];
 }
 
 // The most common currency across a set of amounts, used to label summed

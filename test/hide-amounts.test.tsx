@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { compactMoney, formatMoney, hiddenFigure, hideAmountsIn, hideFiguresIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
+import { amountSamples, compactMoney, formatMoney, hiddenFigure, hideAmountsIn, hideFiguresIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
 import {
   HIDE_AMOUNTS_KEY,
   amountsHiddenNow,
@@ -30,6 +30,11 @@ import { wholeMoney } from '@/components/plan-text';
 import { PreviewView } from '@/components/Sharing';
 import { ReportView } from '@/components/ReportView';
 import { CsvMapping, PreviewView as ImportPreview, type Picked, type Preview } from '@/components/ImportSheet';
+import CashFlowSankey from '@/components/CashFlowSankey';
+import SplitSheet from '@/components/SplitSheet';
+import GroupSheet from '@/components/GroupSheet';
+import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
+import { indexTaxonomy } from '@/lib/categories';
 import { readImport, type ImportOptions } from '@/lib/import/read';
 import { bypasses, clientModules, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
@@ -527,6 +532,58 @@ const IMPORT_PREVIEW: Preview = {
   balance: null,
 };
 
+/** A month the cash flow draws: pay and a refund in, spending in four
+ *  groups, one with a long name, so labels are cut to fit. */
+const FLOW: Txn[] = [
+  txn({ transaction_id: 'f1', date: day(1), name: 'ACME CORP', amount: -3100.4, category: 'income' }),
+  txn({ transaction_id: 'f2', date: day(2), name: 'Amazon', amount: -38.5, category: 'general merchandise' }),
+  txn({ transaction_id: 'f3', date: day(2), name: 'Whole Foods', amount: 412.3, category: 'groceries' }),
+  txn({ transaction_id: 'f4', date: day(3), name: 'Nopalito', amount: 96, category: 'restaurants' }),
+  txn({ transaction_id: 'f5', date: day(4), name: 'Landlord', amount: 2100, category: 'rent and utilities' }),
+  txn({ transaction_id: 'f6', date: day(5), name: 'Lisbon', amount: 1250.75, category: 'travel' }),
+  txn({ transaction_id: 'f7', date: day(5), name: 'Target', amount: 85, category: 'general merchandise' }),
+];
+
+// A transaction split three ways, and a dinner grouped with its payback, as
+// the server sends them (lib/split-rows.ts expandSplitsAndGroups).
+const splitSet = categoriesFor({}, { words: ['groceries', 'household', 'auto', 'restaurants'] }).taxonomy;
+const splitCat = (name: string) => splitSet.categories.find((c) => c.name === name)!.id;
+const splitRows = (): Txn[] => {
+  const of = (id: string, over: Partial<Txn>) => txn({ transaction_id: id, name: id, category_id: splitCat('general merchandise'), category_name: 'general merchandise', category_kind: 'expense', ...over } as Partial<Txn>);
+  const rows = [
+    of('Costco', { amount: 150 }),
+    of('Bistro', { amount: 120 }),
+    of('Venmo from Sam', { amount: -60, category: 'transfer in', category_id: splitCat('transfer in'), category_name: 'transfer in', category_kind: 'transfer' } as Partial<Txn>),
+  ];
+  return expandSplitsAndGroups(rows as never, {
+    splits: new Map([
+      [
+        'Costco',
+        {
+          version: 1 as const,
+          amount: 150,
+          currency: 'USD',
+          parts: [
+            { id: 'p0', amount: 100.01, category_id: splitCat('groceries'), note: 'food' },
+            { id: 'p1', amount: 30, category_id: splitCat('household') },
+            { id: 'p2', amount: 19.99, category_id: splitCat('auto') },
+          ],
+          updated_at: '2026-10-01T00:00:00.000Z',
+        },
+      ],
+    ]),
+    splitsUnknown: new Set(),
+    groups: new Map([
+      [
+        'g1',
+        { version: 1, name: 'Dinner with Sam', category_id: splitCat('restaurants'), members: ['Bistro', 'Venmo from Sam'], date: day(1), currency: 'USD', created_at: '2026-10-01T00:00:00.000Z', updated_at: '2026-10-01T00:00:00.000Z' },
+      ],
+    ]),
+    groupsUnknown: 0,
+    ix: indexTaxonomy(splitSet),
+  } as never).rows as unknown as Txn[];
+};
+
 const sapphire = {
   account_id: 'sapphire',
   name: 'Sapphire',
@@ -608,6 +665,16 @@ const SCREENS: Record<string, () => React.ReactElement> = {
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
   ),
   'Reports: the report on screen': () => <ReportView report={report()} />,
+  'Activity: the cash flow, where money came from and went': () => <CashFlowSankey txns={FLOW} taxonomy={taxonomy} currency="USD" onPick={() => {}} />,
+  'Activity: a split transaction and a group, with their parts and transactions': () => (
+    <MonthBreakdown txns={splitRows()} notes={[]} loading={false} taxonomy={splitSet} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} />
+  ),
+  'Activity: splitting a transaction, and what is left to split': () => (
+    <SplitSheet t={(bankRows(splitRows()) as Txn[]).find((t) => t.transaction_id === 'Costco')!} taxonomy={splitSet} onClose={() => {}} onSaved={() => {}} />
+  ),
+  'Activity: grouping transactions, and what the group comes to': () => (
+    <GroupSheet start={null} group={splitRows().find((t) => t.group_members)!} txns={splitRows()} taxonomy={splitSet} onClose={() => {}} onSaved={() => {}} />
+  ),
   'Import: a CSV file’s columns, and the lines its column names may be on': () => {
     const options: ImportOptions = { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out', delimiter: ',' } };
     const read = readImport(CSV, { format: 'csv', options, thisYear: 2026 });
@@ -648,6 +715,24 @@ describe('the main screens with amounts hidden', () => {
       expect(spokenText(hidden)).toContain('hidden');
     });
   }
+
+  test('the cash flow is drawn from the amounts’ proportions alone: its labels, their lines and where they are tapped never move with a figure’s size, and a hidden one’s names never say it', () => {
+    const names = (html: string) => [...html.matchAll(/<tspan class="sankey-name"[^>]*>([^<]*)<\/tspan>/g)].map((m) => m[1]);
+    const flow = (scale: number) => () => <CashFlowSankey txns={FLOW.map((t) => ({ ...t, amount: t.amount * scale }))} taxonomy={taxonomy} currency="USD" onPick={() => {}} />;
+    const small = both(flow(1));
+    const large = both(flow(100));
+    // The same proportions, a hundred times the figures: the same drawing,
+    // tap areas and all, shown or hidden (to a millionth of a unit, past
+    // which floating point is all that differs).
+    const near = (html: string) => shapes(html).map((s) => s.replace(/-?\d+\.\d+/g, (n) => Number(n).toFixed(6)));
+    expect(near(large.shown)).toEqual(near(small.shown));
+    expect(near(large.hidden)).toEqual(near(small.shown));
+    // Hidden, every name is cut beside the mask, whatever the figure.
+    expect(names(small.hidden).some((n) => n.endsWith('…'))).toBe(true);
+    expect(names(large.hidden)).toEqual(names(small.hidden));
+    // The room kept is the widest any label writes in the currency here.
+    for (const s of amountSamples('USD')) expect(s).toMatch(/^\$[\d.,]+[KMBT]?$/);
+  });
 
   test('percentages stay: they say no amount', () => {
     const groceries = taxonomy.categories.find((c) => c.name === 'groceries')!.id;

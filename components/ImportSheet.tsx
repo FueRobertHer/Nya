@@ -173,7 +173,7 @@ const fmtRange = (a: string | null, b: string | null) => (a && b ? (a === b ? fm
 const fmtAmount = (amount: number, currency: string | null) => signedMoney(-amount, currency, { always: true });
 /** A line's problem as shown: an amount it quotes from the file, which
  *  carries no currency to tell it by, hidden while amounts are. */
-const shownReason = (reason: string) => hideAmountsIn(reason).replace(/(amount \()([^)]*)\)/g, (_, at: string, text: string) => `${at}${hideFiguresIn(text)})`);
+export const shownReason = (reason: string) => hideAmountsIn(reason).replace(/(amount \()([^)]*)\)/g, (_, at: string, text: string) => `${at}${hideFiguresIn(text)})`);
 
 const OUTCOME_TEXT: Record<Outcome, string> = {
   new: 'new',

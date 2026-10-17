@@ -20,7 +20,13 @@
 // charts, laid out by a pure function (lib/sankey.ts), its colors the app's
 // own variables: money in and what is left over in the up hue, spending in
 // the accent, what came from savings or debt in the down hue. Labels sit
-// outside their nodes, which are too thin to hold them, cut to fit.
+// outside their nodes, which are too thin to hold them, cut to fit. Where a
+// label goes, on how many lines, and where it can be tapped are worked out
+// beside the room the widest amount could take (amountSamples), never the
+// amount's own width, so the chart is drawn the same while amounts are
+// hidden; the name drawn is cut beside the amount drawn, which while amounts
+// are hidden is the mask, so a name's cut never says how long a hidden
+// figure is.
 //
 // TAPPING a payer, a group, a category or a fold lists its transactions in the
 // Activity list below (components/MonthBreakdown.tsx), with the list's own
@@ -29,7 +35,8 @@
 // flow with its amount, each row's name a button that does what a tap does.
 
 import { Fragment, useMemo, useState, type Ref } from 'react';
-import { compactMoney, formatMoney } from '@/lib/format';
+import { amountSamples, compactMoney, formatMoney, spoken } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import { displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import {
   cashFlow,
@@ -49,7 +56,7 @@ import {
   type FlowRow,
   type PeriodKey,
 } from '@/lib/cash-flow';
-import { fitLabel, fitText, layoutSankey, textWidth, SANKEY_DEFAULTS, type SankeyNodeBox } from '@/lib/sankey';
+import { fitBeside, fitText, layoutSankey, textWidth, SANKEY_DEFAULTS, type SankeyNodeBox } from '@/lib/sankey';
 import { instantDay, localDate } from '@/lib/local-date';
 import type { Incomplete, Stopped } from '@/lib/month-coverage';
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
@@ -122,24 +129,45 @@ const TWO_LINES = SANKEY_DEFAULTS.labelHeight * 2 + 2;
 
 type Label = { name: string; amount: string; lines: 1 | 2; width: number };
 
+/** The room a label keeps for its amount: the widest labelMoney can write in
+ *  `currency` here. The same for every node, every amount and whether
+ *  amounts are hidden, so the labels are laid out from the names and the
+ *  nodes alone. */
+function amountRoom(currency: string | null): number {
+  return Math.max(...amountSamples(currency).map((s) => textWidth(s, LABEL_SIZE)));
+}
+
+/** A name on one line beside `room` for its amount, taking a node's short
+ *  name (a fold's "Other") rather than cutting the long one: whole or cut,
+ *  '' for the amount alone, null when not even the room fits. */
+function nameBeside(b: SankeyNodeBox, name: string, room: number, short?: string): string | null {
+  const one = fitBeside(name, room, b.label!.maxWidth, LABEL_SIZE);
+  if (short && one !== name) {
+    const brief = fitBeside(short, room, b.label!.maxWidth, LABEL_SIZE);
+    if (brief === short) return brief;
+  }
+  return one;
+}
+
 /** A node's label as it is drawn: its name and amount on one line, cut to
  *  fit; or, on a node tall enough whose label sits at its middle, the name on
  *  a line of its own above the amount, when one line would cut it. A node
- *  with a short name (a fold's "Other") takes it rather than be cut. */
-function labelOf(b: SankeyNodeBox, name: string, amount: string, short?: string): Label | null {
+ *  with a short name (a fold's "Other") takes it rather than be cut. Whether
+ *  it is drawn, its lines and its width are worked out beside `room` for the
+ *  amount, the same whatever the amount and whether it is hidden; the name
+ *  drawn on one line is cut beside the amount drawn. */
+function labelOf(b: SankeyNodeBox, name: string, amount: string, room: number, short?: string): Label | null {
   if (!b.label) return null;
-  let one = fitLabel(name, amount, b.label.maxWidth, LABEL_SIZE);
-  if (short && one?.name !== name) {
-    const brief = fitLabel(short, amount, b.label.maxWidth, LABEL_SIZE);
-    if (brief?.name === short) one = brief;
-  }
+  const laid = nameBeside(b, name, room, short);
   const centred = Math.abs(b.label.y - (b.y + b.height / 2)) < 0.5;
-  if (centred && b.height >= TWO_LINES && one?.name !== name && one?.name !== short) {
+  if (centred && b.height >= TWO_LINES && laid !== name && laid !== short) {
     const top = fitText(name, b.label.maxWidth, LABEL_SIZE);
-    if (top) return { name: top, amount, lines: 2, width: Math.max(textWidth(top, LABEL_SIZE), textWidth(amount, LABEL_SIZE)) };
+    if (top) return { name: top, amount, lines: 2, width: Math.max(textWidth(top, LABEL_SIZE), room) };
   }
-  if (!one) return null;
-  return { ...one, lines: 1, width: textWidth(one.name ? `${one.name} ${one.amount}` : one.amount, LABEL_SIZE) };
+  if (laid === null) return null;
+  // The amount drawn is never wider than its room, so its name fits beside it.
+  const drawn = nameBeside(b, name, Math.min(textWidth(amount, LABEL_SIZE), room), short) ?? laid;
+  return { name: drawn, amount, lines: 1, width: (laid ? textWidth(`${laid} `, LABEL_SIZE) : 0) + room };
 }
 
 /** Where a node can be tapped: its bar, widened to a finger, and its label. */
@@ -239,6 +267,7 @@ export default function CashFlowSankey({
   };
   const empty = graph.nodes.length === 0;
   const c = flow.currency;
+  const room = amountRoom(c);
 
   return (
     <div className="card">
@@ -272,15 +301,15 @@ export default function CashFlowSankey({
           <div className="summary-row cash-flow-summary">
             <div>
               <div className="total-label">In</div>
-              <div className="summary-value inflow">{formatMoney(flow.money_in, c)}</div>
+              <div className="summary-value inflow"><Masked>{formatMoney(flow.money_in, c)}</Masked></div>
             </div>
             <div>
               <div className="total-label">Out</div>
-              <div className="summary-value">{formatMoney(flow.money_out, c)}</div>
+              <div className="summary-value"><Masked>{formatMoney(flow.money_out, c)}</Masked></div>
             </div>
             <div>
               <div className="total-label">Net</div>
-              <div className={`summary-value${flow.net < 0 ? ' negative' : flow.net > 0 ? ' inflow' : ''}`}>{formatMoney(flow.net, c)}</div>
+              <div className={`summary-value${flow.net < 0 ? ' negative' : flow.net > 0 ? ' inflow' : ''}`}><Masked>{formatMoney(flow.net, c)}</Masked></div>
             </div>
           </div>
 
@@ -288,7 +317,7 @@ export default function CashFlowSankey({
             className={`sankey-svg${marked ? ' sankey-picking' : ''}`}
             viewBox={`0 0 ${layout.width} ${layout.height}`}
             role="img"
-            aria-label={summaryText(flow, caption)}
+            aria-label={spoken(summaryText(flow, caption))}
           >
             {layout.links.map((l) => {
               const lit = marked !== null && (marked === 'total' || l.source === marked || l.target === marked);
@@ -296,7 +325,7 @@ export default function CashFlowSankey({
             })}
             {layout.nodes.map((b) => {
               const n = byId.get(b.id)!;
-              const label = labelOf(b, n.label, labelMoney(n.value, c), n.short);
+              const label = labelOf(b, n.label, labelMoney(n.value, c), room, n.short);
               const tappable = !!onPick && n.ids !== null;
               return (
                 <g
@@ -406,19 +435,19 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
                 {name(`payer:${p.key}`, payerLabel(p))}
                 {p.refund && <span className="cash-flow-tag"> refund</span>}
               </td>
-              <td className="num">{formatMoney(p.amount, c)}</td>
+              <td className="num"><Masked>{formatMoney(p.amount, c)}</Masked></td>
               <td className="num">{p.transactions}</td>
             </tr>
           ))}
           <tr className="cash-flow-total">
             <td>Money in</td>
-            <td className="num">{formatMoney(flow.money_in, c)}</td>
+            <td className="num"><Masked>{formatMoney(flow.money_in, c)}</Masked></td>
             <td className="num">{flow.money_in_transactions}</td>
           </tr>
           {flow.from_savings_or_debt > 0 && (
             <tr>
               <td>From savings or debt, beyond what came in</td>
-              <td className="num">{formatMoney(flow.from_savings_or_debt, c)}</td>
+              <td className="num"><Masked>{formatMoney(flow.from_savings_or_debt, c)}</Masked></td>
               <td className="num" />
             </tr>
           )}
@@ -433,7 +462,7 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
             <Fragment key={g.id}>
               <tr>
                 <td>{name(`group:${g.id}`, g.name)}</td>
-                <td className="num">{formatMoney(g.amount, c)}</td>
+                <td className="num"><Masked>{formatMoney(g.amount, c)}</Masked></td>
                 <td className="num">{g.transactions}</td>
               </tr>
               {g.categories.map((cat) => {
@@ -441,7 +470,7 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
                 return (
                   <tr key={cat.id} className="cash-flow-child">
                     <td>{name(`category:${cat.id}`, label)}</td>
-                    <td className="num">{formatMoney(cat.amount, c)}</td>
+                    <td className="num"><Masked>{formatMoney(cat.amount, c)}</Masked></td>
                     <td className="num">{cat.transactions}</td>
                   </tr>
                 );
@@ -450,13 +479,13 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
           ))}
           <tr className="cash-flow-total">
             <td>Money out</td>
-            <td className="num">{formatMoney(flow.money_out, c)}</td>
+            <td className="num"><Masked>{formatMoney(flow.money_out, c)}</Masked></td>
             <td className="num">{flow.money_out_transactions}</td>
           </tr>
           {flow.left_over > 0 && (
             <tr>
               <td>Left over, of what came in</td>
-              <td className="num">{formatMoney(flow.left_over, c)}</td>
+              <td className="num"><Masked>{formatMoney(flow.left_over, c)}</Masked></td>
               <td className="num" />
             </tr>
           )}
