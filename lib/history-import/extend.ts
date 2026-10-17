@@ -154,7 +154,7 @@ export async function importedFlowsForBackfill(
   const flows: { date: string; account_id: string; amount: number }[] = [];
   for (const a of read.accounts) {
     const currency = opts.walked.get(a.account.account_id) ?? a.account.currency;
-    const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+    const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, twins: a.twins });
     // Only through the covered days that reach today (see the header).
     const run = runThrough(coverageOf(a, read, counted, currency, opts.today).covered, opts.today);
     if (!run) continue;
@@ -244,7 +244,7 @@ function walkOf(
 ): { walk: WalkAccount; excluded: ExcludedImport[]; importedAfter: boolean; runFrom: string | null } {
   const currency = a.account.currency;
   const inCurrency = (c: string) => currency === null || c === currency;
-  const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers });
+  const { counted } = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, twins: a.twins });
   const { covered, excluded } = coverageOf(a, read, counted, currency, today);
   const run = runThrough(covered, today);
   const flows = new Map<string, number>();
