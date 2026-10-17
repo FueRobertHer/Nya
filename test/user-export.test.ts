@@ -1187,6 +1187,7 @@ describe('stores built on the storage seam', () => {
       'holdings:history',
       'import-settings',
       'imported-transactions',
+      'imported-twins',
       'imports',
       'income-carryover',
       'manual-transactions',

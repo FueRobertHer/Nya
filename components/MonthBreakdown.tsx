@@ -24,7 +24,7 @@ import { instantDay, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
-import { IMPORTED_TXN_PREFIX, importedRowsNote } from "@/lib/history-import/view";
+import { IMPORTED_TXN_PREFIX, importedChangedNote, importedRowsNote } from "@/lib/history-import/view";
 import { isConnectorKind } from "@/lib/connectors/types";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
@@ -102,6 +102,9 @@ export type Txn = {
   payment_reference: string | null;
   // As in lib/transactions.ts: on manual rows, and on rows the person excluded.
   source?: string;
+  // As in lib/transactions.ts (#52): on a bank row standing for a row
+  // imported from the bank's file at another amount, that row's amount.
+  imported_amount?: number;
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
@@ -926,6 +929,11 @@ export default function MonthBreakdown({
                               </div>
                             )}
                             {entryNotice(t) && <div className="excluded-tag">{entryNotice(t)}</div>}
+                            {/* A bank row standing for a row imported from
+                                its file, which the bank changed since (#52). */}
+                            {t.imported_amount !== undefined && (
+                              <div className="excluded-tag">{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</div>
+                            )}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (

@@ -9,16 +9,20 @@
 // from their banks' files (#52, lib/history-import/store.ts), never syncing.
 // An imported row is found whether or not it counts now: one a bank row
 // stands for keeps its split and its place in a group, which that bank row
-// shows (lib/split-rows.ts), and an edit of them is made on it. Strict: an id
-// not found while a store that could hold it couldn't be read is never
-// answered as "not stored".
+// shows (lib/split-rows.ts), and an edit of them is made on it. Its amount is
+// that bank row's when the sync kept the two as a pair
+// (lib/history-import/match.ts KEPT ONCE MADE) and the bank changed its
+// amount since: the amount shown, which a split of it adds up to. Strict: an
+// id not found while a store that could hold it couldn't be read is never
+// answered as "not stored", nor is an imported row's amount while the pairs
+// that could change it can't be read.
 
 import type { Ctx } from './containers';
 import { getItems } from './storage';
 import { readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
-import { importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
+import { importedTwinsStore, importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 
@@ -38,8 +42,9 @@ export type FoundTxn = {
 };
 
 /** Where a row imported into a linked account is looked for, as a refusal
- *  names it. */
+ *  names it, and what says which bank row stands for one. */
 const IMPORTED_BOOKS = 'transactions imported from your bank’s files';
+const IMPORTED_PAIRS = 'which of the bank’s transactions stand for the ones you imported';
 
 /** Some of the stores that could hold what was asked for couldn't be read,
  *  so whether it is stored isn't known: nothing was changed. 409. */
@@ -48,7 +53,7 @@ export class LookupUnreadableError extends Error {
   constructor(readonly where: string[]) {
     // Reconnecting a bank, or reading a manual account again, brings back
     // what it holds; nothing does that for an imported row.
-    const lasting = where.some((w) => w !== IMPORTED_BOOKS) ? '; if it lasts, reconnecting the bank, or reading the manual account again, brings them back' : '';
+    const lasting = where.some((w) => w !== IMPORTED_BOOKS && w !== IMPORTED_PAIRS) ? '; if it lasts, reconnecting the bank, or reading the manual account again, brings them back' : '';
     super(`Some of your stored transactions couldn’t be read just now (${where.join(', ')}), so nothing was changed. Try again later${lasting}.`);
     this.name = 'LookupUnreadableError';
   }
@@ -107,8 +112,9 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
     }
     unreadBooks = unreadable.length + unrecognised.length > 0;
   }
+  let unreadPairs = false;
   if (imported.size > 0) {
-    const { entries, unreadable, unrecognised } = await importedTxnStore.getAllReport(ctx);
+    const [{ entries, unreadable, unrecognised }, twins] = await Promise.all([importedTxnStore.getAllReport(ctx), importedTwinsStore.getAllReport(ctx)]);
     for (const book of entries.values()) {
       for (const r of book.rows) {
         if (!imported.has(r.id)) continue;
@@ -116,12 +122,42 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
       }
     }
     unreadImported = unreadable.length + unrecognised.length > 0;
+    unreadPairs = twins.unreadable.length + twins.unrecognised.length > 0;
+    // A row a bank row was kept as standing for, at that row's amount now
+    // (see the header), read from the connection that keeps the pair.
+    const pinned = new Map<string, Map<string, string>>();
+    for (const [item_id, entry] of twins.entries) {
+      for (const [row, bank] of Object.entries(entry.twins)) {
+        if (!found.has(row)) continue;
+        const byBank = pinned.get(item_id) ?? new Map<string, string>();
+        byBank.set(bank, row);
+        pinned.set(item_id, byBank);
+      }
+    }
+    for (const [item_id, byBank] of pinned) {
+      let rows;
+      try {
+        rows = await readStoredTxns(ctx, item_id);
+      } catch (err) {
+        if (!(err instanceof StateUnreadableError)) throw err;
+        unreadPairs = true;
+        continue;
+      }
+      for (const t of rows) {
+        const row = byBank.get(t.transaction_id);
+        if (row === undefined || t.pending) continue;
+        found.set(row, { ...found.get(row)!, amount: t.amount, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? found.get(row)!.currency });
+      }
+    }
   }
   const missing = (among: Set<string>) => [...among].some((id) => !found.has(id));
   const where = [
     ...(unreadBanks.length > 0 && missing(bank) ? unreadBanks : []),
     ...(unreadBooks && missing(manual) ? ['a manual account'] : []),
     ...(unreadImported && missing(imported) ? [IMPORTED_BOOKS] : []),
+    // Found, but whether a bank row now stands for it at another amount
+    // can't be told: no amount is answered for it.
+    ...(unreadPairs && imported.size > 0 ? [IMPORTED_PAIRS] : []),
   ];
   if (where.length > 0) throw new LookupUnreadableError(where);
   return found;

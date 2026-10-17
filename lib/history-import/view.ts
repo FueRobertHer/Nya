@@ -37,6 +37,18 @@ export function importedRowsNote(rows: readonly NotedRow[]): string | null {
   return `${n.toLocaleString('en-US')} of this month’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
 }
 
+/**
+ * Beside a bank row that stands for a row imported from the bank's file at
+ * another amount (the bank changed its own after the two were paired, and
+ * the pair was kept: lib/history-import/match.ts KEPT ONCE MADE), what
+ * happened, in words, or null. `money` formats an amount in the row's
+ * currency.
+ */
+export function importedChangedNote(t: { imported_amount?: number }, money: (n: number) => string): string | null {
+  if (t.imported_amount === undefined) return null;
+  return `This is the transaction you imported from your bank’s file at ${money(Math.abs(t.imported_amount))}. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
+}
+
 export type ImportedHistoryView = {
   /** The chart's earliest point before the drawing: what it joins. */
   until: string;

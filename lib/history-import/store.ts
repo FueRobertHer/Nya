@@ -37,6 +37,14 @@
 //                             imports shows, and the periods the walk reads
 //                             (lib/history-import/extend.ts), so neither
 //                             decompresses a file's records.
+//   imported-twins            one entry per connection, under its Plaid Item
+//                             id: which of its bank rows stood for which
+//                             imported row, kept by the sync before it changes
+//                             them (lib/history-import/twins.ts), so a bank row
+//                             the bank later modifies keeps standing for the
+//                             row it stood for, whatever its amount becomes.
+//                             Compressed. In the download, which counts the
+//                             rows by it as the app does.
 //   imported-history-walk     one entry ("walk"): what the estimated history
 //                             built from imported rows covers (the anchor, the
 //                             oldest day drawn, how far back each account
@@ -514,6 +522,39 @@ export function isWalkState(v: unknown): v is WalkState {
       (isRecord(v.problem) && v.problem.kind === 'unreadable' && Array.isArray(v.problem.accounts) && v.problem.accounts.every((a) => typeof a === 'string')))
   );
 }
+
+// ---- The bank's rows that stood for imported rows, kept ----
+
+/**
+ * One connection's bank rows that stood for rows imported into its accounts
+ * (lib/history-import/match.ts settle), kept by the sync before it changes
+ * them (lib/history-import/twins.ts): each imported row's id to the
+ * transaction id of the bank row standing for it. A bank row stands for one
+ * imported row at most. Only ever a pair the matching rule made, never a new
+ * one: what this keeps is that it stays made while the bank's row is there,
+ * whatever its amount, day or words become.
+ */
+export type ImportedTwins = { version: 1; twins: Record<string, string> };
+
+/** A bank row's id as Plaid gives it, never an imported row's. */
+const isBankTxnId = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_.:-]{1,200}$/.test(v) && !v.startsWith(IMPORTED_TXN_PREFIX);
+
+export function isImportedTwins(v: unknown): v is ImportedTwins {
+  if (!isRecord(v) || v.version !== 1 || !isRecord(v.twins)) return false;
+  const banks = new Set<string>();
+  for (const [row, bank] of Object.entries(v.twins)) {
+    if (!isImportedTxnId(row) || !isBankTxnId(bank) || banks.has(bank)) return false;
+    banks.add(bank);
+  }
+  return true;
+}
+
+export const importedTwinsStore = defineMapStore<ImportedTwins>('imported-twins', {
+  what: 'pairs of imported and bank transactions',
+  isValid: isImportedTwins,
+  exportable: true, // what says which bank row each imported row is, as the app counts them
+  compress: true, // a pair for each imported row the bank's window holds
+});
 
 export const historyWalkStore = defineMapStore<WalkState>('imported-history-walk', {
   what: 'estimated history from imports',

@@ -147,11 +147,13 @@ export type HistoryCommitInput = {
   columns: string[] | null;
   covers: Covers;
   /** The account's bank rows, its imports in order with the period each
-   *  covers, and where the bank's rows begin, as read for the review. */
+   *  covers, where the bank's rows begin, and which bank rows were kept as
+   *  standing for kept rows, as read for the review. */
   banks: readonly BankRow[];
   order: readonly string[];
   imports: ReadonlyMap<string, { covers: Period | null }>;
   bank_from: string | null;
+  twins: ReadonlyMap<string, string>;
   choices: HistoryChoices;
   /** The digest of the review the person saw (reviewDigest). */
   reviewed: string;
@@ -282,6 +284,7 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
       banks: input.banks,
       order: input.order,
       bankFrom: input.bank_from,
+      twins: input.twins,
       covers: input.covers,
       imports: input.imports,
       choices: input.choices,

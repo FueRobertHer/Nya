@@ -217,11 +217,12 @@ export function knownOf(
   banks: readonly BankRow[],
   order: readonly string[],
   bankFrom: string | null,
-  imports: ReadonlyMap<string, { covers: Period | null }>
+  imports: ReadonlyMap<string, { covers: Period | null }>,
+  twins: ReadonlyMap<string, string>
 ): Known[] {
   const covers = new Map<string, Period>();
   for (const [id, i] of imports) if (i.covers) covers.set(id, i.covers);
-  const settled = settle(held, banks, order, { bankFrom, covers });
+  const settled = settle(held, banks, order, { bankFrom, covers, twins });
   const standsOn = new Map<BankRow, string>();
   for (const [rowId, st] of settled.standing) if ('bank' in st) standsOn.set(st.bank, rowId);
   for (const [rowId, b] of settled.superseded) standsOn.set(b, rowId);
@@ -240,7 +241,17 @@ export function knownOf(
       names: on ? { row: on } : { key: bankKey(b) },
     });
   }
-  for (const r of settled.counted) {
+  // Every row earlier imports kept that counts; and a row a bank row was
+  // kept as standing for at another amount (the bank changed its own since:
+  // lib/history-import/match.ts KEPT ONCE MADE), which is that transaction
+  // still as its file had it, so another file's copy of it is found already
+  // there, as before the bank changed it, never added beside it.
+  const heldById = new Map(held.map((h) => [h.id, h]));
+  const amountChanged = [...standsOn].flatMap(([b, rowId]) => {
+    const r = heldById.get(rowId);
+    return r && Math.round(r.amount * 1000) !== Math.round(b.amount * 1000) ? [r] : [];
+  });
+  for (const r of [...settled.counted, ...amountChanged]) {
     known.push({
       kind: 'imported',
       id: r.id,
@@ -274,7 +285,9 @@ function edgeOf(row: { date: string }, twin: Known, bankFrom: string | null, cov
  * it has had; `banks` its bank rows under every id (pending ones included,
  * never matched); `order` the account's imports, earliest first, and
  * `imports` the period each covers; `bankFrom` the bank's earliest row for
- * the connection; `covers` the period this file covers.
+ * the connection; `twins` the bank rows kept as standing for kept rows
+ * (lib/history-import/match.ts KEPT ONCE MADE); `covers` the period this
+ * file covers.
  */
 export function planHistoryImport(input: {
   rows: NormalizedRecord[];
@@ -283,6 +296,8 @@ export function planHistoryImport(input: {
   banks: readonly BankRow[];
   order: readonly string[];
   bankFrom: string | null;
+  /** None given: none kept (the route and the commit give the account's). */
+  twins?: ReadonlyMap<string, string>;
   covers?: Period | null;
   imports?: ReadonlyMap<string, { covers: Period | null }>;
   choices?: HistoryChoices;
@@ -307,7 +322,7 @@ export function planHistoryImport(input: {
   });
 
   // What the account already has, each transaction once.
-  const known = knownOf(held, banks, input.order, input.bankFrom, input.imports ?? new Map());
+  const known = knownOf(held, banks, input.order, input.bankFrom, input.imports ?? new Map(), input.twins ?? new Map());
   const matching = rows.flatMap((r, i) =>
     outcomes[i].outcome === 'new' || (outcomes[i].outcome === 'conflict' && conflictChoice.get(i) === 'new')
       ? [{ index: i, date: r.row.date, amount: r.row.amount, currency: r.row.currency, name: r.row.name }]
