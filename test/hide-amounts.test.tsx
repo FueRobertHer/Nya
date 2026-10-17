@@ -661,6 +661,42 @@ const SCREENS: Record<string, () => React.ReactElement> = {
       unsaved={false}
     />
   ),
+  'Sharing: a net worth, spending, holdings, budgets and goals shared': () => (
+    <PreviewView
+      who="Pat"
+      expiresAt={null}
+      preview={{
+        connection: 'c1',
+        view: {
+          accounts: [],
+          expires_at: null,
+          views: {
+            net_worth: {
+              detail: 'history',
+              currency: 'USD',
+              total: 321_480.25,
+              as_of: '2026-09-27',
+              from: '2026-09-26',
+              other_currencies: [],
+              without_balance: 0,
+              history: [
+                { date: '2026-09-13', value: 318_000 },
+                { date: '2026-09-20', value: 320_400.5 },
+                { date: '2026-09-27', value: 321_480.25 },
+              ],
+              accounts: [{ label: 'Joint ••1111', balance: 1250.5, currency: 'USD', debt: false, as_of: '2026-09-27' }],
+            },
+            spending: { detail: 'amounts', by: 'category', currency: 'USD', months: [{ month: '2026-09', so_far: true, total: 1357.5, groups: [{ name: 'Housing', pct: 88, amount: 1200, categories: [{ name: 'Rent', pct: 88, amount: 1200 }] }], left_out: null }] },
+            holdings: { detail: 'amounts', currency: 'USD', as_of: '2026-09-27', total: 20_500, classes: [{ slot: 'us-stocks', name: 'US stocks', pct: 100, amount: 20_500 }], buckets: [{ slot: 'roth', name: 'Roth', pct: 100, amount: 20_500 }], positions: [{ ticker: 'VTI', name: null, class: 'US stocks', pct: 100, amount: 20_500 }], notes: [] },
+            budgets: { detail: 'amounts', by: 'group', currency: 'USD', months: [{ month: '2026-09', total: { name: 'All budgets', pct: 43, over: false, spent: 42.5, limit: 100 }, groups: [{ name: 'Food', pct: 43, over: false, spent: 42.5, limit: 100 }], left_out: null, may_be_incomplete: false }] },
+            goals: { detail: 'amounts', goals: [{ name: 'Rainy day', state: 'tracked', pct: 33, currency: 'USD', saved: 1000, target: 3000, target_date: null, outlook: { status: 'on_track', completion: '2028-06', beyond: false, date_passed: false }, as_of: '2026-09-27' }] },
+          },
+        },
+      }}
+      error=""
+      unsaved={false}
+    />
+  ),
   'Plan: the simulation’s fan chart': () => (
     <PlanFanChart bands={{ p10: [100_000, 80_000, 0], p25: [100_000, 90_000, 50_000], p50: [100_000, 105_000, 110_000], p75: [100_000, 120_000, 150_000], p90: [100_000, 140_000, 200_000] }} startAge={60} currency="USD" />
   ),

@@ -5221,3 +5221,76 @@ button.cash-flow-show {
   padding: 8px 14px;
   font-size: 14px;
 }
+
+/* --- sharing's other kinds: net worth, spending, holdings, budgets, goals
+   (components/SharedViews.tsx on a "Shared by" card, components/ShareKinds.tsx
+   in the drawer). Class names avoid "share" (components/Sharing.tsx). --- */
+
+/* Each kind a section of the card, under the accounts. */
+.incoming-kind {
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--line);
+}
+
+.incoming-kind-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.incoming-kind-sub {
+  margin: 12px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.incoming-kind .peer-row {
+  padding: 6px 0;
+}
+
+.incoming-kind .peer-row + .peer-row {
+  border-top: none;
+}
+
+.incoming-kind .peer-row select {
+  max-width: 70%;
+}
+
+.incoming-line + .incoming-line {
+  margin-top: 6px;
+}
+
+/* A category under its group, or a goal's lesser line. */
+.incoming-sub {
+  padding-left: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.incoming-meter {
+  height: 6px;
+  margin-top: 2px;
+}
+
+/* The drawer: each kind a choice, what it shows beneath, and what they could
+   work out from all of it together. */
+.kind-row + .kind-row {
+  border-top: 1px solid var(--line);
+}
+
+.kind-row .plan-check {
+  margin: 0 0 10px;
+}
+
+.kind-what {
+  margin: 0 0 8px;
+}
+
+.kind-warnings {
+  margin-top: 12px;
+}
+
+.kind-warnings .stale-note {
+  margin: 0 0 8px;
+}

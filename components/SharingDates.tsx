@@ -18,6 +18,7 @@
 
 import { useState } from 'react';
 import { ACCESS_LOG_DAYS, RECORD_FIRST_DAYS, type Level, type RecordSummary, type ShownDay } from '@/lib/share-rules';
+import { VIEW_KINDS, type ViewKind } from '@/lib/share-kinds';
 
 /** "Sep 28", with the year only when it isn't this one. Takes a YYYY-MM-DD
  *  (a calendar day, shown as it is) or a full ISO time (an instant, shown as the
@@ -178,21 +179,33 @@ export function timesText(n: number): string {
   return n === 1 ? 'once' : n === 2 ? 'twice' : `${n} times`;
 }
 
-/** What was shown, widest first, from how many accounts were shown at each
- *  level: "the balance and transactions of 1 account, balances of 2 accounts
- *  and that 1 account exists". */
-export function describeLevels(n: Record<Level, number>): string {
-  const parts = [
+/** "a", "a and b", "a, b and c". */
+const inWords = (parts: string[]) => (parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? ''));
+
+/** What was shown of accounts, widest first, from how many were shown at
+ *  each level. */
+function levelParts(n: Record<Level, number>): string[] {
+  return [
     n.transactions === 1 ? 'the balance and transactions of 1 account' : n.transactions > 1 ? `balances and transactions of ${n.transactions} accounts` : '',
     n.balance === 1 ? 'the balance of 1 account' : n.balance > 1 ? `balances of ${n.balance} accounts` : '',
     n.exists === 1 ? 'that 1 account exists' : n.exists > 1 ? `that ${n.exists} accounts exist` : '',
   ].filter(Boolean);
-  return parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : (parts[0] ?? '');
 }
 
-/** "Shown 3 times on Oct 4, balances of 2 accounts." */
+/** What was shown, widest first, from how many accounts were shown at each
+ *  level: "the balance and transactions of 1 account, balances of 2 accounts
+ *  and that 1 account exists". */
+export function describeLevels(n: Record<Level, number>): string {
+  return inWords(levelParts(n));
+}
+
+/** The other kinds of share as a record's day names them (lib/share-kinds.ts). */
+const KIND_SHOWN: Record<ViewKind, string> = { net_worth: 'net worth', spending: 'spending', holdings: 'holdings', budgets: 'budgets', goals: 'goals' };
+
+/** "Shown 3 times on Oct 4, balances of 2 accounts, net worth and spending." */
 export function shownText(d: ShownDay, now: Date = new Date()): string {
-  const what = describeLevels(d.levels);
+  const kinds = VIEW_KINDS.filter((k) => d.views?.[k]).map((k) => KIND_SHOWN[k]);
+  const what = inWords([...levelParts(d.levels), ...kinds]);
   return `Shown ${timesText(d.times)} on ${shortDate(d.day, now)}${what ? `, ${what}` : ''}.`;
 }
 
