@@ -145,8 +145,18 @@ describe('the suggestion', () => {
       row(`${SEP}-05`, -60),
     ]);
     expect(s.categories[id('groceries')]).toEqual({ average: 30, amount: 30 });
-    expect(s.left_out).toEqual([{ currency: 'EUR', count: 1 }]);
+    // Named under the budget it would have counted for, and only there.
+    expect(s.left_out).toEqual({ categories: { [id('groceries')]: [{ currency: 'EUR', count: 1 }] }, groups: { [groupId('Food')]: [{ currency: 'EUR', count: 1 }] } });
     expect(words(s, { kind: 'category', id: id('groceries') }).notes).toContain("1 transaction in EUR isn't in this average, which is in USD.");
+    expect(words(s, { kind: 'group', id: groupId('Food') }).notes).toContain("1 transaction in EUR isn't in this average, which is in USD.");
+    const restaurants = words(suggest([row(`${JUL}-03`, 90), row(`${JUL}-04`, 500, 'groceries', { iso_currency_code: 'EUR' }), row(`${JUL}-05`, 40, 'restaurants')]), { kind: 'category', id: id('restaurants') });
+    expect(restaurants.notes).toEqual([]);
+    // Spending in another currency only: no suggestion, and that is why.
+    expect(words(suggest([row(`${JUL}-04`, 500, 'coffee', { iso_currency_code: 'EUR' })]), { kind: 'category', id: id('coffee') })).toEqual({
+      line: 'Nothing in USD was spent here in July, August and September, so there’s no suggestion.',
+      amount: null,
+      notes: ["1 transaction in EUR isn't in what a suggestion goes by, which is in USD."],
+    });
     // Income and transfers are never budgeted: no suggestion for them.
     const income = suggest([row(`${JUL}-03`, 20, 'income')]);
     expect(Object.keys(income.categories)).toEqual([]);
@@ -219,7 +229,11 @@ describe('only months the stored history reaches whole', () => {
       amount: null,
       notes: [],
     });
-    expect(suggest([], { earliest: null }).months).toEqual([]);
+    // No transaction at all yet: said as it is, never as a month they begin in.
+    const none = suggest([], { earliest: null });
+    expect(none.months).toEqual([]);
+    expect(none.unreached).toEqual([JUL, AUG, SEP].map((month) => ({ month, kind: 'none' })));
+    expect(words(none, { kind: 'category', id: id('groceries') })).toEqual({ line: 'No suggestion yet: there are no transactions to go by yet.', amount: null, notes: [] });
   });
 
   test('a month that may be incomplete otherwise is counted, and named with why: it may be low', () => {
@@ -326,7 +340,7 @@ describe('the month answer', () => {
     expect(body.suggestions.groups[food.group]).toEqual({ average: 103.33, amount: 105 });
     expect(body.suggestions.currency).toBe('USD');
     // The one in euros is named, never added.
-    expect(body.suggestions.left_out).toEqual([{ currency: 'EUR', count: 1 }]);
+    expect(Object.values(body.suggestions.left_out.categories)).toEqual([[{ currency: 'EUR', count: 1 }]]);
   });
 
   test('none for a month gone by, nor without the history', async () => {

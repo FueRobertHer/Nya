@@ -53,12 +53,11 @@ export default function BudgetSuggestion({
           <Masked>{`${verb} ${formatMoney(words.amount, currency)}`}</Masked>
         </button>
       )}
-      {words.amount !== null &&
-        words.notes.map((n) => (
-          <p className="panel-note budget-note" key={n}>
-            <Masked>{n}</Masked>
-          </p>
-        ))}
+      {words.notes.map((n) => (
+        <p className="panel-note budget-note" key={n}>
+          <Masked>{n}</Masked>
+        </p>
+      ))}
     </div>
   );
 }

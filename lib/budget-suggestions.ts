@@ -12,8 +12,9 @@
 // spendingByCategory (lib/totals.ts), as the meters count it: outflows that
 // count in totals (lib/spending.ts countsInTotals), in the one currency the
 // budgets are in, so transfers, cash and loan payments, what was excluded and
-// what a rule hides are left out, and what is in another currency is named,
-// never added. A row is filed by the category it is under now
+// what a rule hides are left out, and what is in another currency is named
+// under the budget it would have counted for, never added. A row is filed by
+// the category it is under now
 // (lib/categories.ts filedId), a group's by the categories in it now, as a
 // group's budget counts it. The average is over the months counted, a month
 // with nothing spent counting as nothing, to the cent (the currency's minor
@@ -22,11 +23,11 @@
 //
 // ONLY WHAT THE STORED HISTORY REACHES. The three months before this one are
 // considered. One the stored history doesn't reach whole is never counted:
-// before the first month with any transaction, the month the history begins
-// in (from a day after its first), or one in which a bank's stored history
-// begins after it began (lib/rollover.ts MonthGap `begins`). With fewer than
-// three, the suggestion is from those there are, and says which; with none,
-// there is none. A month counted that may be missing transactions otherwise
+// any, while there is no transaction at all, before the first month with
+// one, the month the history begins in (from a day after its first), or one
+// in which a bank's stored history begins after it began (lib/rollover.ts
+// MonthGap `begins`). With fewer than three, the suggestion is from those
+// there are, and says which; with none, there is none. A month counted that may be missing transactions otherwise
 // (a connection that stopped syncing, rows that couldn't be read) is
 // counted, and named with why, as the budgets' notes name it: the
 // suggestion may be low.
@@ -36,7 +37,7 @@
 
 import { addMonths, monthName, monthsText, type MonthGap } from './rollover';
 import { spendingByCategory, type TotalsRow } from './totals';
-import { leftOutByCurrency, leftOutText, type LeftOut } from './spending';
+import { inCurrency, leftOutByCurrency, leftOutText, type LeftOut } from './spending';
 import { filedId, type CategoryIndex } from './categories';
 import { minorDigits } from './manual-txn-input';
 import { MAX_BUDGET_AMOUNT } from './budget-set';
@@ -53,6 +54,8 @@ export type Suggestion = {
 
 /** Why a month the stored history doesn't reach whole isn't counted. */
 export type Unreached =
+  /** There is no transaction at all yet. */
+  | { month: string; kind: 'none' }
   /** Before the first month with any transaction (that month, `first`). */
   | { month: string; kind: 'before'; first: string }
   /** The month the history begins in, on `first`, a day after its first. */
@@ -75,8 +78,9 @@ export type BudgetSuggestions = {
   categories: Record<string, Suggestion>;
   /** By id, for each spending group that had spending in a month averaged. */
   groups: Record<string, Suggestion>;
-  /** What the months averaged left out for being in another currency. */
-  left_out: LeftOut;
+  /** What the months averaged left out for being in another currency, by
+   *  the category or group it would have counted for (only those with any). */
+  left_out: { categories: Record<string, LeftOut>; groups: Record<string, LeftOut> };
 };
 
 /** The average, rounded up to a round figure (see the header): to the unit
@@ -116,8 +120,12 @@ export function suggestBudgets(input: {
   // reads them from then on).
   const firstDay = input.rows.reduce<string | null>((d, t) => (d === null || t.date < d ? t.date : d), null);
   for (const m of consideredMonths(month)) {
-    if (input.earliest === null || m < input.earliest) {
-      unreached.push({ month: m, kind: 'before', first: input.earliest ?? month });
+    if (input.earliest === null) {
+      unreached.push({ month: m, kind: 'none' });
+      continue;
+    }
+    if (m < input.earliest) {
+      unreached.push({ month: m, kind: 'before', first: input.earliest });
       continue;
     }
     if (m === input.earliest && firstDay !== null && firstDay.slice(0, 7) === m && firstDay > `${m}-01`) {
@@ -167,6 +175,24 @@ export function suggestBudgets(input: {
       const s = suggest(total);
       return s ? [[id, s] as const] : [];
     }));
+  // What each budget's average leaves out for being in another currency:
+  // the spending in the months averaged that it would have counted but for
+  // that, filed as the rest is.
+  const otherCategory = new Map<string, (TotalsRow & { date: string })[]>();
+  const otherGroup = new Map<string, (TotalsRow & { date: string })[]>();
+  for (const t of inMonths) {
+    if (t.amount <= 0 || inCurrency(t, currency)) continue;
+    const c = ix.byId.get(filedId(ix, t));
+    const group = c ? ix.groupById.get(c.group) : undefined;
+    if (!c || !group || group.kind !== 'expense') continue;
+    otherCategory.set(c.id, [...(otherCategory.get(c.id) ?? []), t]);
+    otherGroup.set(group.id, [...(otherGroup.get(group.id) ?? []), t]);
+  }
+  const leftOut = (m: Map<string, (TotalsRow & { date: string })[]>) =>
+    Object.fromEntries([...m].flatMap(([id, rows]) => {
+      const l = leftOutByCurrency(rows, currency);
+      return l.length > 0 ? [[id, l] as const] : [];
+    }));
   return {
     month,
     currency,
@@ -175,7 +201,7 @@ export function suggestBudgets(input: {
     incomplete,
     categories: out(byCategory),
     groups: out(byGroup),
-    left_out: leftOutByCurrency(inMonths.filter((t) => t.amount > 0), currency),
+    left_out: { categories: leftOut(otherCategory), groups: leftOut(otherGroup) },
   };
 }
 
@@ -193,6 +219,7 @@ export function suggestionWords(
   const counted = s.months.length;
   if (counted === 0) {
     const first = s.unreached[0];
+    if (first?.kind === 'none') return { line: 'No suggestion yet: there are no transactions to go by yet.', amount: null, notes };
     const why =
       first && first.kind !== 'begins'
         ? `Nya’s transactions begin ${first.kind === 'before' ? `in ${monthName(first.first, thisMonth)}` : `on ${opts.day(first.first)}`}`
@@ -202,7 +229,16 @@ export function suggestionWords(
     return { line: `No suggestion yet: there isn’t a complete month of transactions to go by${why ? ` (${why})` : ''}.`, amount: null, notes };
   }
   const found = (target.kind === 'category' ? s.categories : s.groups)[target.id];
-  if (!found) return { line: `Nothing was spent here in ${names(s.months)}, so there’s no suggestion.`, amount: null, notes };
+  const otherCurrency = (target.kind === 'category' ? s.left_out.categories : s.left_out.groups)[target.id] ?? [];
+  if (!found) {
+    // Spending in another currency only: said, as that is why there is none.
+    const left = leftOutText(otherCurrency, s.currency, { where: 'what a suggestion goes by', plural: false });
+    return {
+      line: `Nothing${left && s.currency ? ` in ${s.currency}` : ''} was spent here in ${names(s.months)}, so there’s no suggestion.`,
+      amount: null,
+      notes: left ? [left] : notes,
+    };
+  }
   const line = `Suggested: ${opts.money(found.amount)}, from ${counted === 1 ? `${names(s.months)} alone` : `the average of ${names(s.months)}`} (${opts.money(found.average)} a month).`;
 
   if (counted < SUGGESTION_MONTHS) {
@@ -221,7 +257,7 @@ export function suggestionWords(
   for (const m of s.incomplete) {
     notes.push(`${monthName(m.month, thisMonth)} may be incomplete (${m.gaps.map(opts.gapText).join('; ')}), so this may be low.`);
   }
-  const left = leftOutText(s.left_out, s.currency, { where: 'this average', plural: false });
+  const left = leftOutText(otherCurrency, s.currency, { where: 'this average', plural: false });
   if (left) notes.push(left);
   if (opts.rolling) notes.push('Rollover is on: this is still the plain monthly average, with nothing that rolled over in it.');
   return { line, amount: found.amount, notes };
