@@ -29,6 +29,8 @@ import { choiceForId, fileForAnswer } from '@/lib/category-store';
 import { CategoryError } from '@/lib/categories';
 import { formatMoney } from '@/lib/format';
 import { loggable } from '@/lib/log-safe';
+import { followEdit } from '@/lib/review-store';
+import { currencyOf } from '@/lib/spending';
 
 // Transactions on manual accounts (lib/manual-txns.ts), ONE ROW PER REQUEST:
 // POST adds one, PATCH changes one, DELETE removes one, each named by its id,
@@ -364,7 +366,16 @@ export async function PATCH(req: Request) {
     // A SimpleFIN account's row (its category changed) answers like the rest.
     const on = target ?? (await getKeptAccount(ctx, saved.account_id));
     if (!on) return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
-    return NextResponse.json({ transaction: await fileForAnswer(ctx, manualRowForDisplay(on, saved)) });
+    const row = manualRowForDisplay(on, saved);
+    // A new amount or currency is the person's own word: an approval of the
+    // row follows it (lib/review-store.ts followEdit). Best effort: one that
+    // can't follow leaves the row in the queue, said as an amount changed.
+    if (changes.amount !== undefined || changes.currency !== undefined) {
+      await followEdit(ctx, saved.id, { amount: row.amount, currency: currencyOf(row) }).catch((err) =>
+        console.warn('manual-transactions: an approval did not follow the edit', loggable(err))
+      );
+    }
+    return NextResponse.json({ transaction: await fileForAnswer(ctx, row) });
   } catch (err) {
     if (err instanceof InvalidTxnError) return NextResponse.json({ error: err.message }, { status: 400 });
     return storeFailure(err, 'Failed to save the transaction');

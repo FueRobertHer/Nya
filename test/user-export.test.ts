@@ -1194,12 +1194,15 @@ describe('stores built on the storage seam', () => {
       'manual-transactions',
       'planned-items',
       'report-settings',
+      'review-settings',
       'rules',
       'tags',
       'timeline-notes',
       'transaction-annotations',
+      'transaction-approvals',
       'transaction-groups',
       'transaction-splits',
+      'vendor-defaults',
       'weekly-summary',
     ]);
     // The weekly summary's signing key and record, and its counters, are the

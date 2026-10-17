@@ -65,8 +65,8 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes: read, unread_notes, tags_note, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
-    const notes = tags_note ? [...read, tags_note] : read;
+    const { transactions, notes: read, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const notes = [...read, ...(tags_note ? [tags_note] : []), ...(review_note ? [review_note] : [])];
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -84,6 +84,9 @@ export async function GET(req: Request) {
       categories: taxonomy,
       // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
       tags: tags?.tags ?? [],
+      // The review queue (lib/review-store.ts): on from a day, or off; what
+      // needs review is marked on each row (lib/review-layer.ts).
+      review,
       as_of: plaid.as_of,
       from_cache: fromCache,
     });

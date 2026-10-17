@@ -49,6 +49,8 @@ import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
 import { pruneSplitsAndGroups } from './split-gone';
+import type { ReviewSuggestion } from './review-layer';
+import { carryApprovalsToPosted } from './review-store';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -163,6 +165,29 @@ export type Txn = {
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // On a posted bank row, the pending one it replaced (Plaid's
+  // pending_transaction_id), whose approval is its own until the sync that
+  // removes the pending one moves it (lib/review-store.ts). Never sent.
+  pending_from?: string;
+
+  // The review queue and merchants' defaults (lib/review-layer.ts), applied
+  // on read, absent when there is nothing to say: it needs review; when it
+  // was approved, and where that approval is kept when it isn't its own
+  // (the pending row it replaced, a row imported from a file it stands for);
+  // whether its approval or the queue couldn't be read; the amount it was
+  // approved at, when the bank changed it since; the category a rule, a
+  // default or the bank would give it now, offered while it stays where it
+  // was approved; the name it was approved under, when another shows now;
+  // and the merchant's default that filed it.
+  needs_review?: true;
+  reviewed_at?: string;
+  review_unknown?: true;
+  review_changed?: { amount: number; currency: string | null };
+  review_via?: string;
+  review_suggestion?: ReviewSuggestion;
+  approved_name?: string;
+  filed_by_default?: { id: string; agree: number; earlier?: true };
+
   // Sent: on a posted bank row standing for a row imported from the bank's
   // file whose amount it no longer says (the bank changed its own after the
   // two were paired, and the pair was kept: lib/history-import/match.ts KEPT
@@ -755,13 +780,21 @@ export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null
  * transactions' records, and the stores are read only when one has one.
  * Never fails the sync: a record left is pruned by the next disconnect or
  * forget, and is never shown meanwhile, its transaction being gone. A split
- * of one goes the same way, and one in a group leaves it (lib/split-gone.ts).
+ * of one goes the same way, and one in a group leaves it (lib/split-gone.ts),
+ * and so does its approval, but a pending one's, which first moves to the
+ * posted row that replaced it among `rows` (the store as just saved), being
+ * the same transaction (lib/review-store.ts carryApprovalsToPosted).
  */
-async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
+async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>, rows: Iterable<StoredTxn>): Promise<void> {
   try {
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    await carryApprovalsToPosted(ctx, removed, rows);
+  } catch (err) {
+    console.warn('transactions: could not move the approvals of pending transactions that posted', err instanceof Error ? err.name : err);
   }
   try {
     await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx), { among: removed });
@@ -1161,7 +1194,7 @@ async function syncItem(ctx: Ctx,
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.
-    if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed);
+    if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed, Object.values(state.txns));
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
     // return it: accurate figures this request plus a note that they won't
@@ -1300,6 +1333,9 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
       ...carriedFacts(t, carriedAnnotations),
       ...(inputs.withAccountIds ? { account_id: t.account_id } : {}),
       account_ref: t.account_id,
+      // The pending row a posted one replaced, whose approval is its own
+      // (lib/review-layer.ts); never sent.
+      ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
     }));
 }
 

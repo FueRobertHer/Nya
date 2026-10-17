@@ -4,9 +4,11 @@
 // (lib/manual-txns.ts), kept beside it rather than in it: whether it is left
 // out of budgets and reports, the tags they put on it or took off it (#40,
 // lib/tags.ts), and a bank row's note. It is one record per transaction, not a
-// store per flag, so a reviewed state can join it later as a field of the same
-// record, and everything below (pruning, carrying, forgetting) covers every
-// field at once.
+// store per flag, so everything below (pruning, carrying, forgetting) covers
+// every field at once. An approval in the review queue is kept apart
+// (lib/review-store.ts): one per transaction since the queue began, closed in
+// shape, and read only for the rows shown, where these few records are read
+// whole.
 //
 // A map store on the storage seam (lib/repo.ts), keyed by transaction_id:
 // Plaid's own id, a manual row's "manual-txn:<uuid>", or a row's imported
@@ -72,8 +74,8 @@
 // which is cheap for what people say about transactions by hand: one-offs
 // excluded, a few tagged or noted, far under MAX_ANNOTATIONS. Rules tag many
 // transactions without a record each (they apply on read). A state kept on
-// every transaction (reviewed, say) would read only the shown rows' records
-// instead (getMany).
+// every transaction, as approvals are (lib/review-store.ts), reads only the
+// shown rows' records instead (getMany).
 
 import { defineMapStore } from './repo';
 import type { Ctx } from './containers';
