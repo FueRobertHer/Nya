@@ -84,8 +84,10 @@
 // its group in its place, each part or its row in the group naming the
 // imported row (split_carried_from, group_carried_from), where an edit of
 // the split or the group is made, as that is where it is kept. The bank
-// row's own split, or its own place in a group, comes first; a pending one
-// takes neither until it posts, as it takes nothing said about the row. So
+// row's own split, or its own place in a group, comes first (the routes
+// refuse to make one while it shows the imported row's: lib/txn-lookup.ts
+// importedStoodFor); a pending one takes neither until it posts, as it takes
+// nothing said about the row, and the group says it is pending. So
 // the transaction counts once, as its parts or in its group, never as its
 // parts and its twin; and the bank removing its row (or a re-link whose
 // window starts later) puts the imported row back, split and grouped as it
