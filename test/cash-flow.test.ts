@@ -22,7 +22,11 @@ import {
 } from '@/lib/cash-flow';
 import { layoutSankey } from '@/lib/sankey';
 import { summarize, spendingByCategory, tidy } from '@/lib/totals';
-import { countsInTotals } from '@/lib/spending';
+import { countsInTotals, countTransactions } from '@/lib/spending';
+import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
+import type { SplitRecord } from '@/lib/splits';
+import type { TxnGroup } from '@/lib/groups';
+import type { Txn } from '@/lib/transactions';
 import { spendingByGroup } from '@/lib/budget-set';
 import { addCategory, addGroup, categoryById, filedId, groupOf, indexTaxonomy } from '@/lib/categories';
 import { localDate } from '@/lib/local-date';
@@ -116,8 +120,12 @@ describe('one source of truth: the totals’ own figures, to the cent', () => {
       return { ...t, category_id: c.id, category_name: t.category === null ? null : c.name, category_kind: groupOf(ix, c).kind };
     });
     const again = cashFlow(filed, inSep, 'USD', ix);
-    expect(again.groups).toEqual(flow.groups);
-    expect(again.payers).toEqual(flow.payers);
+    // The same flows, of rows filed otherwise.
+    const shape = (f: CashFlow) => ({
+      groups: f.groups.map((g) => ({ ...g, categories: g.categories.map(({ rows, ...c }) => ({ ...c, rows: rows.map((t) => t.transaction_id) })) })),
+      payers: f.payers.map(({ rows, ...p }) => ({ ...p, rows: rows.map((t) => t.transaction_id) })),
+    });
+    expect(shape(again)).toEqual(shape(flow));
     expect(again.money_in).toBe(flow.money_in);
   });
 
@@ -168,7 +176,7 @@ describe('money in, by who paid it', () => {
 
   test('SimpleFIN and imported rows count like a bank’s: an uncategorized one under the uncategorized category', () => {
     const other = flow.groups.find((g) => g.name === 'Other')!;
-    expect(other.categories).toEqual([{ id: taxonomy.uncategorized, name: 'other', amount: 34, transactions: 2, ids: expect.any(Array) }]);
+    expect(other.categories).toEqual([{ id: taxonomy.uncategorized, name: 'other', amount: 34, transactions: 2, ids: expect.any(Array), rows: expect.any(Array) }]);
     expect(flow.groups.find((g) => g.name === 'Housing')!.categories.map((c) => [c.name, c.amount])).toEqual([
       ['rent and utilities', 1500],
       ['home improvement', 60],
@@ -610,5 +618,146 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
       ['The earliest transaction here is from Aug 31, 2026, so this period may be missing what came before it.'],
       ['The earliest transaction here is from Aug 30, 2026, so this period may be missing what came before it.'],
     ]);
+  });
+});
+
+describe('split and grouped transactions (#39), as the read layer gives them', () => {
+  const at = '2026-09-20T12:00:00.000Z';
+  const split = (amount: number, parts: [number, string][]): SplitRecord => ({
+    version: 1,
+    amount,
+    currency: 'USD',
+    parts: parts.map(([a, c], i) => ({ id: `part-${i}-${c.replace(/\W/g, '')}`, amount: a, category_id: named(c) })),
+    updated_at: at,
+  });
+  const group = (name: string, category: string, members: string[], date: string): TxnGroup => ({ version: 1, name, category_id: named(category), members, date, currency: 'USD', created_at: at, updated_at: at });
+  /** Rows as lib/activity.ts finishActivity answers them: each split
+   *  transaction as its parts, each group as its net. */
+  const expand = (rows: FlowRow[], splits: Record<string, SplitRecord>, groups: Record<string, TxnGroup> = {}): FlowRow[] => {
+    const done = expandSplitsAndGroups(rows as unknown as Txn[], { splits: new Map(Object.entries(splits)), splitsUnknown: new Set(), groups: new Map(Object.entries(groups)), groupsUnknown: 0, ix });
+    expect(done.notes).toEqual([]);
+    return done.rows as unknown as FlowRow[];
+  };
+  const by = (id: string, date: string, name: string, amount: number, category: string | null) => row(date, name, amount, { transaction_id: id, category });
+  const BANK: FlowRow[] = [
+    by('pay', '2026-09-01', 'ACME CORP', -3000, 'income'),
+    // One charge, food and the house: two groups.
+    by('costco', '2026-09-03', 'COSTCO', 300, 'general merchandise'),
+    // Split, and the bank changed the amount since: up a dollar; down ten.
+    by('flix', '2026-09-05', 'NETFLIX', 15.99, 'entertainment'),
+    by('gym', '2026-09-06', 'GYM', 50, 'personal care'),
+    // A dinner a friend paid half of; a trip reimbursed in full; tickets
+    // paid back with more than they cost.
+    by('dinner', '2026-09-10', 'DINER', 120, 'food and drink'),
+    by('sam', '2026-09-11', 'SAM', -60, null),
+    by('flight', '2026-09-12', 'AIRLINE', 400, 'travel'),
+    by('reimbursed', '2026-09-14', 'EMPLOYER', -400, 'income'),
+    by('tickets', '2026-09-15', 'TICKETS', 90, 'entertainment'),
+    by('ann', '2026-09-16', 'ANN', -50, null),
+    by('bo', '2026-09-17', 'BO', -50, null),
+  ];
+  const SPLITS = {
+    costco: split(300, [
+      [200, 'groceries'],
+      [100, 'home improvement'],
+    ]),
+    flix: split(14.99, [
+      [10, 'entertainment'],
+      [4.99, 'general merchandise'],
+    ]),
+    gym: split(60, [
+      [30, 'personal care'],
+      [30, 'medical'],
+    ]),
+  };
+  const GROUPS = {
+    'g-dinner': group('Dinner with Sam', 'food and drink', ['dinner', 'sam'], '2026-09-10'),
+    'g-trip': group('Work trip', 'travel', ['flight', 'reimbursed'], '2026-09-12'),
+    'g-concert': group('Concert', 'entertainment', ['tickets', 'ann', 'bo'], '2026-09-15'),
+  };
+  const rows = expand(BANK, SPLITS, GROUPS);
+  const split9 = cashFlow(rows, inSep, 'USD', ix);
+  const categories = () => split9.groups.flatMap((g) => g.categories.map((c) => ({ ...c, group: g.name })));
+  const category = (name: string) => categories().find((c) => c.name === name)!;
+
+  test('money in, out, the counts and every category’s spending and transactions are the totals’ own, to the cent', () => {
+    const s = summarize(rows, inSep, 'USD');
+    expect([split9.money_in, split9.money_out, split9.net, split9.transactions, split9.counted]).toEqual([s.money_in, s.money_out, s.net, s.transactions, s.counted]);
+    expect([split9.money_in, split9.money_out]).toEqual([3020, 435.99]);
+    // Transactions, not rows: each split one once, each group as many as it holds.
+    expect([split9.transactions, split9.counted]).toEqual([11, 11]);
+    const budgets = spendingByCategory(rows, inSep, 'USD', bucket);
+    expect(Object.fromEntries(categories().map((c) => [c.id, c.amount]))).toEqual(Object.fromEntries(Object.entries(budgets).map(([id, v]) => [id, tidy(v)])));
+    expect(Object.fromEntries(categories().map((c) => [c.name, c.transactions]))).toEqual(Object.fromEntries(s.categories.map((c) => [c.category, c.transactions])));
+    expect(split9.groups.map((g) => [g.id, g.amount])).toEqual(spendingByGroup(ix, new Map(Object.entries(budgets))).map((r) => [r.group.id, tidy(r.total)]));
+  });
+
+  test('a split transaction flows to each of its parts’ categories, two groups among them, and counts once on each side', () => {
+    expect([category('groceries').group, category('groceries').amount, category('groceries').transactions]).toEqual(['Food', 200, 1]);
+    expect([category('home improvement').group, category('home improvement').amount, category('home improvement').transactions]).toEqual(['Housing', 100, 1]);
+    // Two parts of one transaction in one group are one of its transactions.
+    expect(split9.groups.find((g) => g.name === 'Health and personal care')).toMatchObject({ amount: 60, transactions: 1 });
+    // Money out: the charge, the subscription, the gym and the dinner's two.
+    expect(split9.money_out_transactions).toBe(5);
+    // Money in: the pay, the gym's money back and the concert's three.
+    expect(split9.money_in_transactions).toBe(5);
+    expect(countTransactions(rows.filter((t) => t.amount > 0))).toBe(split9.money_out_transactions);
+  });
+
+  test('what the bank changed a split amount by is a part of its own: more is spending in the transaction’s own category, less is money back from its payer', () => {
+    expect(category('entertainment')).toMatchObject({ amount: 11, transactions: 1 });
+    expect(split9.payers.find((p) => p.key === 'gym')).toMatchObject({ name: 'GYM', amount: 10, transactions: 1, refund: true });
+  });
+
+  test('a group counts once, at its net, in its own category: a payback in it is no payer, one netting to nothing flows nowhere, one netting to money in is a payer of its name', () => {
+    expect(split9.payers.map((p) => [p.name, p.amount, p.transactions, p.refund])).toEqual([
+      ['ACME CORP', 3000, 1, false],
+      ['Concert', 10, 3, true],
+      ['GYM', 10, 1, true],
+    ]);
+    expect(category('food and drink')).toMatchObject({ amount: 60, transactions: 2 });
+    // The trip comes to nothing: counted, as the totals count it, in no flow.
+    expect(categories().some((c) => c.name === 'travel')).toBe(false);
+    expect(summarize(rows.filter((t) => t.transaction_id === 'group:g-trip'), inSep, 'USD')).toMatchObject({ counted: 2, money_in: 0, money_out: 0 });
+  });
+
+  test('a fold counts each transaction once, however many of its parts it holds', () => {
+    const small = expand(
+      [by('pay', '2026-09-01', 'PAY', -1000, 'income'), by('diner', '2026-09-02', 'DINER', 500, 'food and drink'), by('mart', '2026-09-03', 'MART', 20, 'general merchandise'), by('rent', '2026-09-04', 'LANDLORD', 400, 'rent and utilities')],
+      {
+        mart: split(20, [
+          [12, 'groceries'],
+          [8, 'coffee'],
+        ]),
+      }
+    );
+    const g = flowGraph(cashFlow(small, inSep, 'USD', ix));
+    const food = taxonomy.groups.find((x) => x.name === 'Food')!.id;
+    expect(g.nodes.find((n) => n.id === `other:${food}`)).toMatchObject({ value: 20, transactions: 1, members: [{ name: 'Groceries', amount: 12 }, { name: 'Coffee', amount: 8 }] });
+    expect(cashFlow(small, inSep, 'USD', ix).money_out_transactions).toBe(3);
+  });
+
+  test('a tap lists the parts in its node, which the list puts back whole, and a group’s row with its transactions inside it', () => {
+    const pick = (node: string) => pickedRows(rows, { period: 'last-month', node, label: '' }, { ix, currency: 'USD', today: '2026-10-11' });
+    const groceries = pick(`category:${named('groceries')}`);
+    expect(groceries.map((t) => [t.transaction_id, t.amount, (t as FlowRow & { split_of?: string }).split_of])).toEqual([[`split:part-0-groceries`, 200, 'costco']]);
+    const listed = bankRows(groceries);
+    expect(listed.map((t) => [t.transaction_id, t.amount, t.split_parts?.length])).toEqual([['costco', 300, 1]]);
+    const concert = pick('payer:concert');
+    expect(concert.map((t) => [t.transaction_id, (t.group_members as readonly FlowRow[]).map((m) => m.transaction_id)])).toEqual([['group:g-concert', ['tickets', 'ann', 'bo']]]);
+    expect(countTransactions(concert)).toBe(3);
+  });
+
+  test('what is left out is counted by transaction too: a split one excluded, or hidden by a rule, is one', () => {
+    const excluded = expand(
+      BANK.map((t) => (t.transaction_id === 'costco' ? { ...t, excluded: true } : t.transaction_id === 'flix' ? { ...t, excluded: true, excluded_by_rule: true as const } : t)),
+      SPLITS,
+      GROUPS
+    );
+    const f = cashFlow(excluded, inSep, 'USD', ix);
+    expect([f.excluded, f.hidden_by_rule]).toEqual([2, 1]);
+    expect(cashFlowNotes({ flow: f, period: sep, rows: excluded, today: '2026-10-11', now: Date.parse('2026-10-11T12:00:00Z'), day: (iso) => iso }).counted[0]).toBe(
+      "Transfers, cash withdrawals and loan payments are left out, as in the month's totals. So are 1 transaction you excluded and 1 a rule hides."
+    );
   });
 });

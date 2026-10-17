@@ -61,13 +61,21 @@
 // its own beside the payers, never a link running back. What was left over is
 // a node beside the groups.
 //
-// SPLIT TRANSACTIONS (#39). A transaction split into parts would reach here
-// as a row a part, each in its own category, and flow as the totals count it;
-// `tally` is the one place that counts a node's transactions, where the parts
-// of one transaction would count once, and pickedRows the one that lists a
-// node's rows, which would list a part's whole transaction.
+// SPLITS AND GROUPS (#39) come in as every total reads them
+// (lib/split-rows.ts): a split transaction as its parts, each under its own
+// category, so one charge can flow to two groups; a group of transactions as
+// one row, its net, named for the group and filed under its category, its
+// transactions inside it and never money in or out on their own (a friend's
+// payback in a dinner's group is no payer). A group whose net is money in is
+// a payer of its name; one netting to nothing flows nowhere. Every count is
+// of transactions, as the totals' are (lib/spending.ts transactionCounter): a
+// split one's parts are one, a group's row as many as it holds, and a fold or
+// a side of the chart counts each once, however its parts are spread. A tap
+// lists a node's rows, which the Activity list puts back whole: a split
+// transaction with only its parts in the node under it, a group's row with
+// its transactions.
 
-import { countsInTotals, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
+import { countTransactions, countsInTotals, transactionCounter, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
 import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
@@ -91,9 +99,11 @@ export type FlowRow = TotalsRow & {
   group_members?: readonly FlowRow[];
 };
 
-/** One payer's counted money in. `key` is its name as compared. */
-export type Payer = { key: string; name: string; amount: number; transactions: number; refund: boolean; ids: string[] };
-export type FlowCategory = { id: string; name: string; amount: number; transactions: number; ids: string[] };
+/** One payer's counted money in. `key` is its name as compared. `rows` are
+ *  the rows it sums (their ids, `ids`), by which a fold counts its
+ *  transactions, each once (see SPLITS AND GROUPS above). */
+export type Payer = { key: string; name: string; amount: number; transactions: number; refund: boolean; ids: string[]; rows: FlowRow[] };
+export type FlowCategory = { id: string; name: string; amount: number; transactions: number; ids: string[]; rows: FlowRow[] };
 export type FlowGroup = { id: string; name: string; kind: CategoryKind; amount: number; transactions: number; ids: string[]; categories: FlowCategory[] };
 
 export type CashFlow = {
@@ -112,6 +122,11 @@ export type CashFlow = {
   /** Money out by group, most first, each with its categories, most first:
    *  they add up to money_out. */
   groups: FlowGroup[];
+  /** How many transactions the money in came from, and the money out went
+   *  to: each once, however its parts are spread (a split one's parts in two
+   *  groups are one). */
+  money_in_transactions: number;
+  money_out_transactions: number;
   /** Transactions in the period, and of them: counted; left out as
    *  transfers, cash withdrawals or loan payments; excluded (by the person or
    *  a rule's hide); of those, hidden by a rule; counted although whether the
@@ -126,20 +141,10 @@ export type CashFlow = {
   left_out_text: string | null;
 };
 
-/** Counts a node's transactions: a row each, while every row is a whole
- *  transaction (see SPLIT TRANSACTIONS above). */
-type Tally = { add: (t: FlowRow) => void; readonly n: number };
-function tally(): Tally {
-  let n = 0;
-  return {
-    add: () => {
-      n++;
-    },
-    get n() {
-      return n;
-    },
-  };
-}
+/** What counts a node's transactions, as the totals count them (see SPLITS
+ *  AND GROUPS above): a split one's parts once, a group's row as many as it
+ *  holds. */
+type Tally = ReturnType<typeof transactionCounter>;
 
 /** A payer's name as compared: the same in any capitals and spacing. */
 export const payerKey = (name: string): string => name.normalize('NFC').replace(/\s+/g, ' ').trim().toLowerCase();
@@ -153,12 +158,14 @@ const byAmount = <T extends { amount: number; name: string }>(a: T, b: T) => b.a
  */
 export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => boolean, currency: string | null, ix: CategoryIndex): CashFlow {
   const totals = summarize(rows, inRange, currency);
-  type PayerSum = { name: string; amount: number; tally: Tally; refund: boolean; ids: string[] };
-  type CategorySum = { name: string; amount: number; tally: Tally; ids: string[] };
+  type PayerSum = { name: string; amount: number; tally: Tally; refund: boolean; ids: string[]; rows: FlowRow[] };
+  type CategorySum = { name: string; amount: number; tally: Tally; ids: string[]; rows: FlowRow[] };
   type GroupSum = { name: string; kind: CategoryKind; amount: number; tally: Tally; ids: string[]; categories: Map<string, CategorySum> };
   const payers = new Map<string, PayerSum>();
   const groups = new Map<string, GroupSum>();
-  const hidden = tally();
+  const hidden = transactionCounter();
+  const cameIn = transactionCounter();
+  const wentOut = transactionCounter();
   const uncategorized = uncategorizedOf(ix);
   for (const t of rows) {
     if (!inRange(t.date)) continue;
@@ -168,22 +175,26 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
     const group = groupOf(ix, category);
     if (t.amount < 0) {
       const key = payerKey(t.name);
-      const p: PayerSum = payers.get(key) ?? { name: t.name.trim(), amount: 0, tally: tally(), refund: true, ids: [] };
+      const p: PayerSum = payers.get(key) ?? { name: t.name.trim(), amount: 0, tally: transactionCounter(), refund: true, ids: [], rows: [] };
       p.amount += -t.amount;
       p.tally.add(t);
       p.ids.push(t.transaction_id);
+      p.rows.push(t);
+      cameIn.add(t);
       // Money back on spending: filed under a spending category the row names.
       if (group.kind !== 'expense' || category.id === uncategorized.id) p.refund = false;
       payers.set(key, p);
     } else {
-      const g: GroupSum = groups.get(group.id) ?? { name: group.name, kind: group.kind, amount: 0, tally: tally(), ids: [], categories: new Map() };
+      const g: GroupSum = groups.get(group.id) ?? { name: group.name, kind: group.kind, amount: 0, tally: transactionCounter(), ids: [], categories: new Map() };
       g.amount += t.amount;
       g.tally.add(t);
       g.ids.push(t.transaction_id);
-      const c: CategorySum = g.categories.get(category.id) ?? { name: category.name, amount: 0, tally: tally(), ids: [] };
+      const c: CategorySum = g.categories.get(category.id) ?? { name: category.name, amount: 0, tally: transactionCounter(), ids: [], rows: [] };
       c.amount += t.amount;
       c.tally.add(t);
       c.ids.push(t.transaction_id);
+      c.rows.push(t);
+      wentOut.add(t);
       g.categories.set(category.id, c);
       groups.set(group.id, g);
     }
@@ -196,7 +207,7 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
     left_over: totals.net > 0 ? totals.net : 0,
     from_savings_or_debt: totals.net < 0 ? tidy(-totals.net) : 0,
     payers: [...payers]
-      .map(([key, p]) => ({ key, name: p.name, amount: tidy(p.amount), transactions: p.tally.n, refund: p.refund, ids: p.ids }))
+      .map(([key, p]) => ({ key, name: p.name, amount: tidy(p.amount), transactions: p.tally.n, refund: p.refund, ids: p.ids, rows: p.rows }))
       .sort((a, b) => byAmount(a, b) || (a.key < b.key ? -1 : 1)),
     groups: [...groups]
       .map(([id, g]) => ({
@@ -206,9 +217,11 @@ export function cashFlow(rows: readonly FlowRow[], inRange: (date: string) => bo
         amount: tidy(g.amount),
         transactions: g.tally.n,
         ids: g.ids,
-        categories: [...g.categories].map(([cid, c]) => ({ id: cid, name: c.name, amount: tidy(c.amount), transactions: c.tally.n, ids: c.ids })).sort(byAmount),
+        categories: [...g.categories].map(([cid, c]) => ({ id: cid, name: c.name, amount: tidy(c.amount), transactions: c.tally.n, ids: c.ids, rows: c.rows })).sort(byAmount),
       }))
       .sort(byAmount),
+    money_in_transactions: cameIn.n,
+    money_out_transactions: wentOut.n,
     transactions: totals.transactions,
     counted: totals.counted,
     transfers: totals.transfers,
@@ -237,6 +250,7 @@ export type FlowNode = {
   /** A shorter label, for where the whole one won't fit beside its amount. */
   short?: string;
   value: number;
+  /** How many transactions it sums, each once, as the totals count them. */
   transactions: number;
   ids: readonly string[] | null;
   members?: { name: string; amount: number }[];
@@ -299,7 +313,7 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
       label: 'Other income',
       short: 'Other',
       value,
-      transactions: payers.folded.reduce((a, p) => a + p.transactions, 0),
+      transactions: countTransactions(payers.folded.flatMap((p) => p.rows)),
       ids: payers.folded.flatMap((p) => p.ids),
       members: members(payers.folded.map((p) => ({ name: payerLabel(p), amount: p.amount }))),
     });
@@ -348,7 +362,7 @@ export function flowGraph(flow: CashFlow, opts: { minShare?: number; maxPayers?:
         kind: 'other-categories',
         label: 'Other',
         value,
-        transactions: cats.folded.reduce((a, c) => a + c.transactions, 0),
+        transactions: countTransactions(cats.folded.flatMap((c) => c.rows)),
         ids: cats.folded.flatMap((c) => c.ids),
         members: members(cats.folded.map((c) => ({ name: displayName(c.name), amount: c.amount }))),
       });

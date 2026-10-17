@@ -41,7 +41,8 @@ const { readSpending } = await import('@/lib/api-read');
 const { readCashFlow } = await import('@/lib/api-cash-flow');
 const { cashFlow, cashFlowNotes, dayText, inPeriod, lastDayOf, periodOf, pickedRows, PERIODS } = await import('@/lib/cash-flow');
 const { summarize, spendingByCategory, tidy } = await import('@/lib/totals');
-const { totalsCurrency } = await import('@/lib/spending');
+const { countTransactions, totalsCurrency } = await import('@/lib/spending');
+const { bankRows } = await import('@/lib/split-rows');
 const { filedId, indexTaxonomy, uncategorizedOf } = await import('@/lib/categories');
 const { localDate } = await import('@/lib/local-date');
 const { monthName } = await import('@/lib/rollover');
@@ -183,12 +184,17 @@ function expectTheTotals(rows: Awaited<ReturnType<typeof activity>>['rows'], ix:
   for (const p of periods) {
     const inRange = inPeriod(p);
     const flow = cashFlow(rows, inRange, currency, ix);
-    const s = summarize(rows, inRange, currency);
-    expect([p.from, flow.money_in, flow.money_out, flow.counted, flow.transfers, flow.excluded]).toEqual([p.from, s.money_in, s.money_out, s.counted, s.transfers, s.excluded]);
+    const s = summarize(rows, inRange, currency, (bucket) => ({ category: bucket, category_id: bucket, group_id: null, group: null }));
+    expect([p.from, flow.money_in, flow.money_out, flow.transactions, flow.counted, flow.transfers, flow.excluded]).toEqual([p.from, s.money_in, s.money_out, s.transactions, s.counted, s.transfers, s.excluded]);
     const budgets = spendingByCategory(rows, inRange, currency, (t) => filedId(ix, t));
     expect([p.from, Object.fromEntries(flow.groups.flatMap((g) => g.categories.map((c) => [c.id, c.amount])))]).toEqual([
       p.from,
       Object.fromEntries(Object.entries(budgets).map(([id, v]) => [id, tidy(v)])),
+    ]);
+    // And each category's transactions, as the totals count them.
+    expect([p.from, Object.fromEntries(flow.groups.flatMap((g) => g.categories.map((c) => [c.id, c.transactions])))]).toEqual([
+      p.from,
+      Object.fromEntries(s.categories.map((c) => [c.category, c.transactions])),
     ]);
     expect(tidy(flow.payers.reduce((a, x) => a + x.amount, 0))).toBe(flow.money_in);
   }
@@ -369,5 +375,65 @@ describe('the API’s cash flow over imported rows', () => {
     await storeBank([...BANK, bankTxn('b_mid', 49, 60, { name: 'CORNER SHOP #12' })]);
     const after = await same(3);
     expect([after.money_out, after.counted]).toEqual([before.money_out, before.counted]);
+  });
+});
+
+describe('an imported row’s split (#39), carried to the bank row that comes to stand for it', () => {
+  const route = async (path: string, method: string, body?: unknown) => {
+    const mod: any = await import(`@/app/api/${path}/route`);
+    const res: Response = await mod[method](new Request(`http://x/api/${path}`, { method, body: body ? JSON.stringify(body) : undefined }));
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  test('counts once, as the bank row’s parts, in the totals’ own figures; a tap lists the part in its node; the API agrees with spending', async () => {
+    await importStatement();
+    const categories = (await route('categories', 'GET')).body.categories;
+    const catId = (name: string): string => categories.categories.find((c: { name: string }) => c.name === name).id;
+    const shop = byName((await activity()).rows, 'CORNER SHOP');
+    const res = await route('transaction-splits', 'PUT', {
+      transaction_id: shop.transaction_id,
+      parts: [
+        { amount: 45, category_id: catId('food and drink') },
+        { amount: 15, category_id: catId('home improvement') },
+      ],
+    });
+    expect(res.status).toBe(200);
+    const split = await activity();
+    expect(split.rows.filter((t) => t.split_of === shop.transaction_id).map((t) => t.amount)).toEqual([45, 15]);
+    expectTheTotals(split.rows, split.ix);
+
+    // The bank sends the corner shop: its row is answered as the imported
+    // row's parts, which name the imported row, where the split is kept.
+    await storeBank([...BANK, bankTxn('b_mid', 49, 60, { name: 'CORNER SHOP #12' })]);
+    const sent = await activity();
+    const parts = sent.rows.filter((t) => t.split_of === 'b_mid');
+    expect(parts.map((p) => [p.amount, p.split_carried_from])).toEqual([
+      [45, shop.transaction_id],
+      [15, shop.transaction_id],
+    ]);
+    expect(sent.rows.some((t) => t.transaction_id === shop.transaction_id || t.split_of === shop.transaction_id || t.transaction_id === 'b_mid')).toBe(false);
+    expectTheTotals(sent.rows, sent.ix);
+    const year = periodOf('last-12-months', today);
+    const flow = cashFlow(sent.rows, inPeriod(year), 'USD', sent.ix);
+    const home = flow.groups.flatMap((g) => g.categories).find((c) => c.name === 'home improvement')!;
+    expect([home.amount, home.transactions, home.ids]).toEqual([15, 1, [parts[1].transaction_id]]);
+    // Out: the rent, the grocer, the corner shop once (two parts) and the old
+    // store. In: the pay, the old pay and the deposit.
+    expect([flow.money_out_transactions, flow.money_in_transactions]).toEqual([4, 3]);
+    // A tap on its category lists the bank row whole, the part in it under it.
+    const listed = pickedRows(sent.rows, { period: 'last-12-months', node: `category:${home.id}`, label: '' }, { ix: sent.ix, currency: 'USD', today });
+    expect(bankRows(listed).map((t) => [t.transaction_id, t.amount, t.split_parts?.map((p) => p.amount)])).toEqual([['b_mid', 60, [15]]]);
+    expect(countTransactions(listed)).toBe(1);
+    // The bank's row isn't imported: three of the year's transactions are.
+    expect(cashFlowNotes({ flow, period: year, rows: sent.rows, today, day }).counted).toContain('3 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+
+    const range = { from: daysAgo(364), to: daysAgo(0) };
+    const [f, s] = await Promise.all([readCashFlow(ctx, range), readSpending(ctx, range)]);
+    expect([f.money_in, f.money_out, f.transactions, f.counted]).toEqual([s.money_in, s.money_out, s.transactions, s.counted]);
+    const flat = f.groups.flatMap((g) => g.categories.map((c) => ({ category: c.name, category_id: c.id, group: g.name, group_id: g.id, spent: c.amount, transactions: c.transactions })));
+    const sorted = [...flat].sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1));
+    expect(sorted).toEqual(s.categories as unknown as typeof sorted);
+    const groups = f.groups.map((g) => ({ id: g.id, name: g.name, kind: g.kind, spent: g.amount, transactions: g.transactions }));
+    expect(groups).toEqual(s.groups as unknown as typeof groups);
   });
 });

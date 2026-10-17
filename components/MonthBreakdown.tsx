@@ -41,7 +41,7 @@ import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
-import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions } from "./SplitRows";
+import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -578,6 +578,12 @@ export default function MonthBreakdown({
     // figure above counts the parts and the nets, as every total does.
     return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
   }, [visible, currency]);
+  // Each split transaction whole, every part of it (#39), from all the rows:
+  // a pick from the cash flow lists only the parts in its node under it, but
+  // the transaction still says how many parts it has, and its split is edited
+  // from all of them, never from those the list happens to show.
+  const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
+  const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
 
   if (loading) {
     return (
@@ -855,7 +861,7 @@ export default function MonthBreakdown({
             {query || filterTag ? ` of ${countTransactions(listed)}` : ""}
           </div>
         </div>
-        {flowPick && <FlowShown pick={flowPick} count={picked?.length ?? 0} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
+        {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
         <input
           className="text-input search-input"
@@ -959,7 +965,7 @@ export default function MonthBreakdown({
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
-                              {entryLabel(t) ? ` · ${entryLabel(t)}` : ""}
+                              {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
                               {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
                               {t.source ? ` · ${sourceLabel(t.source)}` : ""}
@@ -978,7 +984,7 @@ export default function MonthBreakdown({
                                 Couldn&apos;t read whether you excluded this
                               </div>
                             )}
-                            {entryNotice(t) && <div className="excluded-tag">{entryNotice(t)}</div>}
+                            {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -1029,7 +1035,7 @@ export default function MonthBreakdown({
                               <SplitActions
                                 t={t}
                                 onSplit={(x) => {
-                                  setSplitting(x);
+                                  setSplitting(whole(x));
                                   setRecatId(null);
                                 }}
                                 onGroup={(x) => {
@@ -1173,7 +1179,7 @@ export default function MonthBreakdown({
                         onOpen={setRecatId}
                         onChanged={() => onSplitsChanged?.()}
                         onError={setSplitError}
-                        onEditSplit={setSplitting}
+                        onEditSplit={(x) => setSplitting(whole(x))}
                       />
                     )}
                     {t.group_members && (

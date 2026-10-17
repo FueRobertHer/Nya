@@ -12,6 +12,10 @@ import { formatMoney } from '@/lib/format';
 import { localDate, localMonth } from '@/lib/local-date';
 import { addMonths } from '@/lib/rollover';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
+import { countTransactions } from '@/lib/spending';
+import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
+import { entryLabel, wholeSplits } from '@/components/SplitRows';
+import type { Txn as StoredTxnRow } from '@/lib/transactions';
 import { categoriesFor } from './category-fixture';
 
 // The Activity tab's cash flow (components/CashFlowSankey.tsx, #41), rendered:
@@ -382,5 +386,80 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     expect(listed('payer:old deposit')).toEqual(['OLD DEPOSIT']);
     // The table lists the deposit under the name the list shows, never a refund.
     expect(text(sankey({ txns: rows }))).toContain('OLD DEPOSIT : list its transactions $500.00 1');
+  });
+});
+
+describe('split and grouped transactions (#39)', () => {
+  const at = new Date().toISOString();
+  const cat = (name: string) => taxonomy.categories.find((c) => c.name === name)!.id;
+  const by = (id: string, d: number, name: string, amount: number, category: string | null) => row(day(d), name, amount, category, { transaction_id: id });
+  // The month as the read layer answers it (lib/split-rows.ts): a charge
+  // split across two groups, a small one split across two small categories
+  // of one, and tickets paid back with more than they cost, grouped.
+  const rows = expandSplitsAndGroups(
+    [
+      by('pay', 1, 'ACME CORP', -3100, 'income'),
+      by('costco', 2, 'COSTCO', 300, 'general merchandise'),
+      by('diner', 3, 'DINER', 500, 'food and drink'),
+      by('mart', 3, 'MART', 20, 'general merchandise'),
+      by('tickets', 4, 'TICKETS', 90, 'entertainment'),
+      by('ann', 5, 'ANN', -50, null),
+      by('bo', 5, 'BO', -50, null),
+      by('rent', 6, 'Landlord', 2100, 'rent and utilities'),
+    ] as unknown as StoredTxnRow[],
+    {
+      splits: new Map([
+        ['costco', { version: 1, amount: 300, currency: 'USD', parts: [{ id: 'c1', amount: 200, category_id: cat('home improvement') }, { id: 'c2', amount: 100, category_id: cat('general merchandise') }], updated_at: at }],
+        ['mart', { version: 1, amount: 20, currency: 'USD', parts: [{ id: 'm1', amount: 12, category_id: cat('groceries') }, { id: 'm2', amount: 8, category_id: cat('restaurants') }], updated_at: at }],
+      ]),
+      splitsUnknown: new Set(),
+      groups: new Map([['g-concert', { version: 1, name: 'Concert', category_id: cat('entertainment'), members: ['tickets', 'ann', 'bo'], date: day(4), currency: 'USD', created_at: at, updated_at: at }]]),
+      groupsUnknown: 0,
+      ix,
+    }
+  ).rows as unknown as Txn[];
+
+  test('the table counts transactions, as the totals do: a split one once on each side, a group as many as it holds', () => {
+    const t = text(sankey({ txns: rows }));
+    const s = summarize(rows, (d) => d.startsWith(month), 'USD');
+    expect([s.money_in, s.money_out]).toEqual([3110, 2920]);
+    expect(t).toContain(`Money in ${formatMoney(3110, 'USD')} 4`);
+    expect(t).toContain(`Money out ${formatMoney(2920, 'USD')} 4`);
+    expect(t).toContain('Concert : list its transactions refund $10.00 3');
+    expect(t).toContain('Home improvement : list its transactions $200.00 1');
+    expect(t).toContain('Shopping : list its transactions $100.00 1');
+    // The month's own count beside it is of the same transactions.
+    expect(s.counted).toBe(1 + 1 + 1 + 1 + 3 + 1);
+  });
+
+  test('a fold’s tooltip counts the transaction once, though two of its parts are in it', () => {
+    expect(sankey({ txns: rows })).toContain('<title>Other: $20.00, 1 transaction (Groceries, Restaurants)</title>');
+  });
+
+  test('a tap on a category lists the split transaction whole with the part in it under it, still said to be split in two; on a group’s payer, the group’s row with its transactions', () => {
+    const pick = (node: string) => pickedRows(rows, { period: 'this-month', node, label: '' }, { ix, currency: 'USD', today });
+    const groceries = pick(`category:${cat('groceries')}`);
+    const listed = bankRows(groceries);
+    expect(listed.map((t) => [t.name, t.amount, t.split_parts?.map((p) => p.amount)])).toEqual([['MART', 20, [12]]]);
+    // Labelled, and its split edited, by the whole transaction, every part of it.
+    expect(entryLabel(listed[0])).toBe('Split into 1');
+    expect(entryLabel(wholeSplits(rows).get('mart')!)).toBe('Split into 2');
+    expect(wholeSplits(rows).get('mart')!.split_parts!.map((p) => p.amount)).toEqual([12, 8]);
+    const concert = pick('payer:concert');
+    expect(bankRows(concert, { groups: 'keep' }).map((t) => [t.name, t.amount, t.group_members?.map((m) => m.name)])).toEqual([['Concert', -10, ['TICKETS', 'ANN', 'BO']]]);
+    // The line above the list counts its transactions.
+    expect(text(renderToStaticMarkup(<FlowShown pick={{ period: 'this-month', node: 'payer:concert', label: 'Concert' }} count={countTransactions(concert)} onClear={() => {}} />))).toBe(
+      `Concert, ${periodCaption(periodOf('this-month', today), today)}, from the cash flow: 3 transactions. Back to the month`
+    );
+  });
+
+  test('the Activity tab counts a pick’s transactions, and labels and edits a split one listed in part by the whole of it', () => {
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
+    expect(source).toContain('<FlowShown pick={flowPick} count={countTransactions(picked ?? [])}');
+    expect(source).toContain('const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);');
+    expect(source).toContain('{entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}');
+    expect(source).toContain('{entryNotice(whole(t)) && ');
+    expect(source).toContain('setSplitting(whole(x));');
+    expect(source).toContain('onEditSplit={(x) => setSplitting(whole(x))}');
   });
 });

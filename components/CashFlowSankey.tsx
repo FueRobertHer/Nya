@@ -11,8 +11,10 @@
 // THE TOTALS' OWN FIGURES. The flows are lib/cash-flow.ts's, from the rows the
 // tab totals, by the rules the month's totals follow: the money in is the tab's
 // money in for the same months, and spending by category the Budgets tab's,
-// to the cent, in the one currency the tab's totals are in. What it leaves
-// out, and what may be missing from the period, is said beside it.
+// to the cent, in the one currency the tab's totals are in, and every count is
+// of transactions, as theirs is (#39): a split one once, however its parts
+// are spread, and a group as many as it holds. What it leaves out, and what
+// may be missing from the period, is said beside it.
 //
 // HOUSE STYLE. Dependency-free inline SVG on a 340-wide viewBox, as the other
 // charts, laid out by a pure function (lib/sankey.ts), its colors the app's
@@ -411,7 +413,7 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
           <tr className="cash-flow-total">
             <td>Money in</td>
             <td className="num">{formatMoney(flow.money_in, c)}</td>
-            <td className="num">{flow.payers.reduce((a, p) => a + p.transactions, 0)}</td>
+            <td className="num">{flow.money_in_transactions}</td>
           </tr>
           {flow.from_savings_or_debt > 0 && (
             <tr>
@@ -449,7 +451,7 @@ function FlowTable({ flow, caption, onShow }: { flow: CashFlow; caption: string;
           <tr className="cash-flow-total">
             <td>Money out</td>
             <td className="num">{formatMoney(flow.money_out, c)}</td>
-            <td className="num">{flow.groups.reduce((a, g) => a + g.transactions, 0)}</td>
+            <td className="num">{flow.money_out_transactions}</td>
           </tr>
           {flow.left_over > 0 && (
             <tr>
