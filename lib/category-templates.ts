@@ -11,19 +11,26 @@
 //     name, in any case, is used instead: moved into the template's group);
 //   - rename the categories Nya made at the start (each found by the key it
 //     was made with, Plaid's category or "other", so one you renamed is
-//     found too) and move them into the template's groups;
+//     found too, and one another was merged into is placed as what it is,
+//     never as what went into it) and move them into the template's groups;
 //   - archive one of those it has no place for, when nothing uses it: no
-//     transaction of any date, no budget and no rule (lib/category-usage.ts).
-//     One in use stays as it is, and the preview says so;
+//     transaction of any date, no budget and no rule (lib/category-usage.ts),
+//     and it holds no category the template keeps (one merged into it). One
+//     in use stays as it is, and the preview says so;
 //   - show again one it places that is archived;
-//   - remove a group it left empty, which has no budget of its own;
+//   - remove a group it left empty that is one of a set's (the start's, or a
+//     template's, by name and kind) and has no budget of its own, now or in
+//     any month the record of budgets by month keeps
+//     (lib/budget-months-store.ts), so no past month loses its budget. One
+//     left empty that has stays, and the preview says so;
 //   - put the groups in its order, its own first.
 // It never deletes or merges a category, never moves one into a group of
 // another kind (so nothing counts differently: no total moves), and never
 // changes what a group with a budget of its own holds, so that budget covers
 // what it covered. Every transaction stays in its category, and every budget
 // with it: budgets are kept by id (lib/budget-set.ts). Your own categories
-// and groups stay where they are.
+// (made by you, or grown from a file) and groups (by a name no set has) stay
+// where they are.
 //
 // PREVIEW, THEN APPLY. planTemplate works out the set a template would make
 // and what changes, from the set, the budgets and what uses the categories it
@@ -32,12 +39,15 @@
 // previewed (`signature`), so what is applied is what was shown. Applying a
 // template twice changes nothing the second time.
 //
-// UNDO. The apply answers what the template changed, as it was (undoOf), and
-// undoTemplate puts it back on the set as it is then: names, groups and
-// archiving restored, groups it removed added again, the categories and
-// groups it added removed when nothing uses them, and the groups' order. What
-// can't be put back (a name another category has taken, a category used
-// since) is kept, and said.
+// UNDO. The apply answers what the template changed, as it was and as it
+// made it (undoOf), and undoTemplate puts it back on the set as it is then:
+// names, groups and archiving restored, groups it removed added again under
+// their own ids (so a budget or a record naming one by id finds it), the
+// categories and groups it added removed when nothing uses them, and the
+// groups' order. What can't be put back (a name another category has taken,
+// a category used since, a group that can't be made again) is kept, and
+// said; so is what was changed since the apply (on another device), which
+// stays as it is now.
 
 import {
   addCategory,
@@ -45,6 +55,7 @@ import {
   categoryForKey,
   cleanName,
   CATEGORY_KINDS,
+  defaultName,
   deleteCategory,
   indexTaxonomy,
   isTaxonomy,
@@ -61,6 +72,7 @@ import {
   type Taxonomy,
 } from './categories';
 import type { Budgets } from './budget-set';
+import type { BudgetMonths } from './rollover';
 
 export type TemplateId = 'simple' | 'detailed' | 'freelancer';
 export const TEMPLATE_IDS: readonly TemplateId[] = ['simple', 'detailed', 'freelancer'];
@@ -182,12 +194,48 @@ export const isTemplateId = (v: unknown): v is TemplateId => typeof v === 'strin
 
 const lower = (s: string) => s.toLowerCase();
 
-/** The seeded category a key places: the uncategorized one for
- *  UNCATEGORIZED_KEY, else the one Plaid's primary category files into
- *  (which a merge may have moved to another category). */
-function seededCategory(t: Taxonomy, ix: ReturnType<typeof indexTaxonomy>, key: string): Category | null {
-  if (key === UNCATEGORIZED_KEY) return ix.byId.get(t.uncategorized) ?? null;
-  return categoryForKey(ix, PLAID, key);
+/** A seeded category's name, as the start has it: what a key is called. */
+const seedName = (key: string) => SEED_PLACEMENTS[key]?.name ?? defaultName(plaidText(key));
+
+/** The groups a set makes (the start's, or a template's), by kind and name
+ *  in any case: a group by any other is yours, and no template removes it. */
+const SET_GROUPS: ReadonlySet<string> = new Set(Object.values(TEMPLATES).flatMap((tpl) => tpl.groups.map((g) => `${g.kind}:${lower(g.name)}`)));
+const isSetGroup = (g: CategoryGroup) => SET_GROUPS.has(`${g.kind}:${lower(g.name)}`);
+
+/**
+ * The key a template places a category by: the one it was made with. "other"
+ * for the uncategorized category; else its first key, when that is Plaid's
+ * primary category, as every category Nya made at the start has it. A merge
+ * adds the keys of the category merged away after the kept one's own, so the
+ * kept one is placed as what it is, never as what went into it; and one you
+ * made (its first key is its name's) is placed by none, whatever was merged
+ * into it. Null for one placed by none.
+ */
+function madeWith(t: Taxonomy, c: Category): string | null {
+  if (c.id === t.uncategorized) return UNCATEGORIZED_KEY;
+  const first = c.provider_keys[0];
+  return first !== undefined && first.provider === PLAID ? first.key : null;
+}
+
+/** Each category a key places, by the key it was made with. */
+function byMadeWith(t: Taxonomy): Map<string, Category> {
+  const out = new Map<string, Category>();
+  for (const c of t.categories) {
+    const key = madeWith(t, c);
+    if (key !== null && !out.has(key)) out.set(key, c);
+  }
+  return out;
+}
+
+/** The keys a template keeps shown: a category holding one (merged into it)
+ *  is never archived, so what files under that key never lands in an
+ *  archived category. */
+const shownKeys = (template: CategoryTemplate) => new Set(Object.entries(template.seeded).flatMap(([k, p]) => (p.archive ? [] : [k])));
+
+/** The key of a category merged into `c` that the template keeps shown, if
+ *  `c` holds one (other than its own). */
+function holdsShown(c: Category, own: string, shown: ReadonlySet<string>): string | null {
+  return c.provider_keys.find((k) => k.provider === PLAID && k.key !== own && shown.has(k.key))?.key ?? null;
 }
 
 /**
@@ -200,20 +248,34 @@ function seededCategory(t: Taxonomy, ix: ReturnType<typeof indexTaxonomy>, key: 
 export function isSeededSet(t: Taxonomy): boolean {
   if (t.merged && Object.keys(t.merged).length > 0) return false;
   const ix = indexTaxonomy(t);
+  const made = byMadeWith(t);
   const groups = [...t.groups].sort((a, b) => a.order - b.order);
   if (groups.length !== SEED_GROUPS.length || groups.some((g, i) => g.name !== SEED_GROUPS[i].name || g.kind !== SEED_GROUPS[i].kind)) return false;
   for (const key of SEEDED_KEYS) {
-    const c = seededCategory(t, ix, key);
+    const c = made.get(key);
     const p = SEED_PLACEMENTS[key];
     if (!c || c.name !== p.name || ix.groupById.get(c.group)?.name !== p.group) return false;
   }
   return t.categories.every((c) => !c.archived && !c.icon);
 }
 
+/**
+ * The groups the record of budgets by month (lib/budget-months-store.ts) has
+ * a budget for, now or in any month it keeps: what a template keeps though
+ * it left them empty, so their past months keep their budgets. A record that
+ * can't be read is never taken for none (the route reads it strictly).
+ */
+export function groupsWithBudgets(months: BudgetMonths | null): Set<string> {
+  const had = (m: BudgetMonths['groups'][string]) => m.seen !== null || (m.amounts ?? []).some((a) => a.amount !== null) || (m.rollover ?? []).length > 0;
+  return new Set(Object.entries(months?.groups ?? {}).flatMap(([id, m]) => (had(m) ? [id] : [])));
+}
+
 /** Why a template leaves a category as it is, or doesn't do all it says. */
 export type KeptWhy =
   /** One it would archive, in use. */
   | 'used'
+  /** One it would archive, holding a category it keeps (merged into it). */
+  | 'holds'
   /** Its group, or the template's, has a budget of its own. */
   | 'group-budget'
   /** The template's group counts as another kind. */
@@ -249,16 +311,24 @@ export type KeptCategory = {
   group?: string;
   /** The name the template has for it (`name-taken`). */
   wanted?: string;
+  /** The category merged into it that the template keeps (`holds`), as the
+   *  start names it. */
+  holds?: string;
 };
+
+/** A group a template leaves empty but keeps, and why: one of yours (by a
+ *  name no set has), or one with a budget in a past month. */
+export type KeptGroup = { name: string; why: 'yours' | 'past-budgets' };
 
 export type TemplatePlan = {
   template: TemplateId;
-  groups: { added: string[]; removed: string[]; reordered: boolean };
+  groups: { added: string[]; removed: string[]; reordered: boolean; kept: KeptGroup[] };
   /** Every category it adds, renames, moves, archives or shows again. */
   categories: PlannedCategory[];
   /** What it leaves as it is, and why. */
   kept: KeptCategory[];
-  /** Seeded categories merged into another before, placed once, as that one. */
+  /** Seeded categories merged into another before (`name`, as the start
+   *  names it), filed with the one they went into (`into`, as it is after). */
   merged: { name: string; into: string }[];
   /** Budgets on categories it renames or moves: they stay with them. */
   budgets: { id: string; name: string; group: string }[];
@@ -271,21 +341,24 @@ export type TemplatePlan = {
 };
 
 /** What a plan reads beside the set: the budgets (a group's own budget keeps
- *  what it holds), and what uses each category the template would archive,
- *  by id (lib/category-usage.ts; one not here counts as used). */
-export type PlanFacts = { budgets: Budgets; usage: ReadonlyMap<string, CategoryUsage>; newId: () => string };
+ *  what it holds), what uses each category the template would archive, by
+ *  id (lib/category-usage.ts; one not here counts as used), and the groups
+ *  with a budget in some month of the record of budgets by month
+ *  (groupsWithBudgets: one left empty is kept). */
+export type PlanFacts = { budgets: Budgets; usage: ReadonlyMap<string, CategoryUsage>; recorded: ReadonlySet<string>; newId: () => string };
 
 const unused = (u: CategoryUsage | undefined): boolean => !!u && u.transactions === 0 && !u.budget && (u.rules ?? 0) === 0;
 
 /** The categories a template would archive if nothing used them: what the
  *  route reads the usage of before planning. */
 export function archiveCandidates(t: Taxonomy, template: CategoryTemplate): string[] {
-  const ix = indexTaxonomy(t);
+  const made = byMadeWith(t);
+  const shown = shownKeys(template);
   const out = new Set<string>();
   for (const [key, p] of Object.entries(template.seeded)) {
     if (!p.archive) continue;
-    const c = seededCategory(t, ix, key);
-    if (c && c.id !== t.uncategorized && !c.archived) out.add(c.id);
+    const c = made.get(key);
+    if (c && c.id !== t.uncategorized && !c.archived && holdsShown(c, key, shown) === null) out.add(c.id);
   }
   return [...out];
 }
@@ -300,9 +373,10 @@ const ordered = (groups: readonly CategoryGroup[]) => [...groups].sort((a, b) =>
  */
 export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: PlanFacts): TemplatePlan {
   const ix = indexTaxonomy(t);
+  const made = byMadeWith(t);
+  const shown = shownKeys(template);
   const locked = (groupId: string) => facts.budgets.groups[groupId] !== undefined;
   const kept: KeptCategory[] = [];
-  const merged: { name: string; into: string }[] = [];
 
   // The template's groups: one of yours with the name (any case), else new.
   let groups: CategoryGroup[] = t.groups.map((g) => ({ ...g }));
@@ -337,20 +411,23 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
     order.push(c.id);
   };
 
+  // A seeded category merged into another before files with that one: the
+  // kept one is placed as what it is, and the note says where it went.
+  const mergedInto: { key: string; holder: string }[] = [];
   for (const [key, p] of Object.entries(template.seeded)) {
-    const c = seededCategory(t, ix, key);
-    if (!c) continue;
-    if (ends.has(c.id)) {
-      // Merged before into a category another key placed already.
-      const seedName = SEED_PLACEMENTS[key]?.name ?? plaidText(key);
-      merged.push({ name: seedName, into: ends.get(c.id)!.name });
+    const c = made.get(key);
+    if (!c) {
+      const holder = categoryForKey(ix, PLAID, key);
+      if (holder) mergedInto.push({ key, holder: holder.id });
       continue;
     }
     let archived = !!c.archived;
     if (p.archive && c.id !== t.uncategorized) {
       if (!c.archived) {
+        const holds = holdsShown(c, key, shown);
         const u = facts.usage.get(c.id);
-        if (unused(u)) archived = true;
+        if (holds !== null) kept.push({ id: c.id, name: c.name, why: 'holds', holds: seedName(holds) });
+        else if (unused(u)) archived = true;
         else if (u) kept.push({ id: c.id, name: c.name, why: 'used', uses: { transactions: u.transactions, budget: u.budget, rules: u.rules ?? 0 } });
         else kept.push({ id: c.id, name: c.name, why: 'used' });
       }
@@ -424,12 +501,20 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
     }
   }
 
-  // Groups it emptied, with no budget of their own, go; the template's own,
+  // Groups it emptied, with no budget of their own, go, when they are a
+  // set's and had no budget in a past month either; yours, and one whose
+  // past months had a budget, stay, empty, and are said. The template's own,
   // left empty (what it was to hold stayed where it was, or couldn't be
   // added), aren't made.
   const holds = (id: string) => taxonomy.categories.some((c) => c.group === id);
   const before = new Set(t.groups.map((g) => g.id));
-  const emptied = t.groups.filter((g) => t.categories.some((c) => c.group === g.id) && !holds(g.id) && !locked(g.id));
+  const keptGroups: KeptGroup[] = [];
+  const emptied = t.groups.filter((g) => {
+    if (!t.categories.some((c) => c.group === g.id) || holds(g.id) || locked(g.id)) return false;
+    const why = !isSetGroup(g) ? 'yours' : facts.recorded.has(g.id) ? 'past-budgets' : null;
+    if (why !== null) keptGroups.push({ name: g.name, why });
+    return why === null;
+  });
   const unmade = added.filter((id) => !holds(id));
   groups = taxonomy.groups.filter((g) => !emptied.some((e) => e.id === g.id) && !unmade.includes(g.id));
   const groupsAdded = added.filter((id) => !unmade.includes(id));
@@ -467,12 +552,16 @@ export function planTemplate(t: Taxonomy, template: CategoryTemplate, facts: Pla
   const unchanged = planned.length === 0 && removed.length === 0 && addedNames.length === 0 && !reordered;
   const signature = JSON.stringify({
     template: template.id,
-    groups: { added: addedNames, removed, reordered },
+    groups: { added: addedNames, removed, reordered, kept: keptGroups.map((g) => [g.name, g.why]) },
     categories: planned.map((p) => [p.id, p.was, p.name, p.from, p.group, p.archive]),
   });
+  // Each merged seeded category, by the name the start gave it, with the
+  // name the one it went into ends with.
+  const endName = (id: string) => taxonomy.categories.find((c) => c.id === id)?.name ?? ix.byId.get(id)?.name ?? '';
+  const merged = mergedInto.map((m) => ({ name: seedName(m.key), into: endName(m.holder) }));
   return {
     template: template.id,
-    groups: { added: addedNames, removed, reordered },
+    groups: { added: addedNames, removed, reordered, kept: keptGroups },
     categories: planned,
     kept: dedupeKept(kept),
     merged,
@@ -496,18 +585,26 @@ function dedupeKept(kept: KeptCategory[]): KeptCategory[] {
 
 // ---- Undo ----
 
-/** What a template changed, as it was: what its undo puts back. */
+/** A category as a template found it, or as it left it. */
+export type CategoryState = { name: string; group: string; archived: boolean };
+
+/** What a template changed, as it was and as it made it: what its undo puts
+ *  back, and how it tells what was changed since. */
 export type TemplateUndo = {
   template: TemplateId;
-  /** Each category it renamed, moved, archived or showed again, as it was. */
-  categories: { id: string; name: string; group: string; archived: boolean }[];
-  /** What it added, by id. */
-  added: { categories: string[]; groups: string[] };
+  /** Each category it renamed, moved, archived or showed again, as it was,
+   *  and as the template left it (`after`). */
+  categories: ({ id: string } & CategoryState & { after: CategoryState })[];
+  /** What it added: each category as it made it, each group by its name. */
+  added: { categories: { id: string; name: string; group: string }[]; groups: { id: string; name: string }[] };
   /** Groups it removed, as they were. */
   removed: { id: string; name: string; kind: CategoryKind }[];
   /** Every group's id, in the order before. */
   order: string[];
 };
+
+const stateOf = (c: Category): CategoryState => ({ name: c.name, group: c.group, archived: !!c.archived });
+const sameState = (a: CategoryState, b: CategoryState) => a.name === b.name && a.group === b.group && a.archived === b.archived;
 
 /** The undo of going from `before` to `after` (a template applied). */
 export function undoOf(template: TemplateId, before: Taxonomy, after: Taxonomy): TemplateUndo {
@@ -516,16 +613,14 @@ export function undoOf(template: TemplateId, before: Taxonomy, after: Taxonomy):
   const groupsAfter = new Set(after.groups.map((g) => g.id));
   return {
     template,
-    categories: after.categories
-      .filter((c) => {
-        const b = was.get(c.id);
-        return b && (b.name !== c.name || b.group !== c.group || !!b.archived !== !!c.archived);
-      })
-      .map((c) => {
-        const b = was.get(c.id)!;
-        return { id: b.id, name: b.name, group: b.group, archived: !!b.archived };
-      }),
-    added: { categories: after.categories.filter((c) => !was.has(c.id)).map((c) => c.id), groups: after.groups.filter((g) => !groupsBefore.has(g.id)).map((g) => g.id) },
+    categories: after.categories.flatMap((c) => {
+      const b = was.get(c.id);
+      return b && !sameState(stateOf(b), stateOf(c)) ? [{ id: b.id, ...stateOf(b), after: stateOf(c) }] : [];
+    }),
+    added: {
+      categories: after.categories.filter((c) => !was.has(c.id)).map((c) => ({ id: c.id, name: c.name, group: c.group })),
+      groups: after.groups.filter((g) => !groupsBefore.has(g.id)).map((g) => ({ id: g.id, name: g.name })),
+    },
     removed: before.groups.filter((g) => !groupsAfter.has(g.id)).map((g) => ({ id: g.id, name: g.name, kind: g.kind })),
     order: ordered(before.groups).map((g) => g.id),
   };
@@ -533,68 +628,82 @@ export function undoOf(template: TemplateId, before: Taxonomy, after: Taxonomy):
 
 const ID = /^[A-Za-z0-9_-]{1,64}$/;
 const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
-const isIdList = (v: unknown, max: number): v is string[] => Array.isArray(v) && v.length <= max && v.every((x) => typeof x === 'string' && ID.test(x));
+const isId = (v: unknown): v is string => typeof v === 'string' && ID.test(v);
+const isIdList = (v: unknown, max: number): v is string[] => Array.isArray(v) && v.length <= max && v.every(isId);
 const isName = (v: unknown): v is string => typeof v === 'string' && cleanName(v).length > 0 && cleanName(v).length <= NAME_MAX;
+const isState = (v: unknown): v is CategoryState => isRecord(v) && isName(v.name) && isId(v.group) && typeof v.archived === 'boolean';
+const readState = (v: CategoryState): CategoryState => ({ name: cleanName(v.name), group: v.group, archived: v.archived });
 
 /** An undo as a request carries it, checked field by field; null when it
  *  isn't one. */
 export function readUndo(v: unknown): TemplateUndo | null {
   if (!isRecord(v) || !isTemplateId(v.template) || !Array.isArray(v.categories) || !isRecord(v.added) || !Array.isArray(v.removed)) return null;
-  if (v.categories.length > MAX_CATEGORIES || v.removed.length > MAX_GROUPS) return null;
-  for (const c of v.categories) {
-    if (!isRecord(c) || typeof c.id !== 'string' || !ID.test(c.id) || !isName(c.name) || typeof c.group !== 'string' || !ID.test(c.group) || typeof c.archived !== 'boolean') return null;
-  }
-  for (const g of v.removed) {
-    if (!isRecord(g) || typeof g.id !== 'string' || !ID.test(g.id) || !isName(g.name) || !CATEGORY_KINDS.includes(g.kind as CategoryKind)) return null;
-  }
-  if (!isIdList(v.added.categories, MAX_CATEGORIES) || !isIdList(v.added.groups, MAX_GROUPS) || !isIdList(v.order, MAX_GROUPS)) return null;
+  const { categories: addedCategories, groups: addedGroups } = v.added;
+  if (v.categories.length > MAX_CATEGORIES || v.removed.length > MAX_GROUPS || !Array.isArray(addedCategories) || !Array.isArray(addedGroups)) return null;
+  if (addedCategories.length > MAX_CATEGORIES || addedGroups.length > MAX_GROUPS || !isIdList(v.order, MAX_GROUPS)) return null;
+  for (const c of v.categories) if (!isRecord(c) || !isId(c.id) || !isState(c.after) || !isState(c)) return null;
+  for (const g of v.removed) if (!isRecord(g) || !isId(g.id) || !isName(g.name) || !CATEGORY_KINDS.includes(g.kind as CategoryKind)) return null;
+  for (const c of addedCategories) if (!isRecord(c) || !isId(c.id) || !isName(c.name) || !isId(c.group)) return null;
+  for (const g of addedGroups) if (!isRecord(g) || !isId(g.id) || !isName(g.name)) return null;
   return {
     template: v.template,
-    categories: v.categories.map((c) => ({ id: c.id as string, name: cleanName(c.name as string), group: c.group as string, archived: c.archived as boolean })),
-    added: { categories: v.added.categories, groups: v.added.groups },
-    removed: v.removed.map((g) => ({ id: g.id as string, name: cleanName(g.name as string), kind: g.kind as CategoryKind })),
+    categories: (v.categories as ({ id: string } & CategoryState & { after: CategoryState })[]).map((c) => ({ id: c.id, ...readState(c), after: readState(c.after) })),
+    added: {
+      categories: (addedCategories as { id: string; name: string; group: string }[]).map((c) => ({ id: c.id, name: cleanName(c.name), group: c.group })),
+      groups: (addedGroups as { id: string; name: string }[]).map((g) => ({ id: g.id, name: cleanName(g.name) })),
+    },
+    removed: (v.removed as { id: string; name: string; kind: CategoryKind }[]).map((g) => ({ id: g.id, name: cleanName(g.name), kind: g.kind })),
     order: v.order,
   };
 }
 
-/** What an undo couldn't put back, and why. */
-export type UndoKept = { name: string; why: 'gone' | 'used' | 'name-taken' | 'group-budget' | 'kind' | 'not-empty' };
+/** What an undo couldn't put back, and why. `group`: it is a group. */
+export type UndoKept = {
+  name: string;
+  why: 'gone' | 'changed' | 'used' | 'name-taken' | 'group-budget' | 'kind' | 'not-empty' | 'group-name-taken' | 'group-full';
+  group?: true;
+};
 
 /**
  * The set with what a template changed put back (see UNDO). `usage` is what
  * uses each category it added that is still there (lib/category-usage.ts):
  * one in use, or not counted, is kept.
  */
-export function undoTemplate(
-  t: Taxonomy,
-  undo: TemplateUndo,
-  facts: PlanFacts
-): { taxonomy: Taxonomy; kept: UndoKept[] } {
+export function undoTemplate(t: Taxonomy, undo: TemplateUndo, facts: Pick<PlanFacts, 'budgets' | 'usage'>): { taxonomy: Taxonomy; kept: UndoKept[] } {
   const kept: UndoKept[] = [];
   const locked = (groupId: string) => facts.budgets.groups[groupId] !== undefined;
   let groups = t.groups.map((g) => ({ ...g }));
 
   // The groups it removed, back: the same one if it is there, one of the
-  // name and kind, or a new one.
+  // name and kind, or made again under its own id, so a budget or a record
+  // of budgets by month naming it by id finds it again. One that can't be
+  // made (its name taken by a group of another kind, or no room) isn't, and
+  // what it held stays where it is.
   const groupId = new Map<string, string>();
   for (const r of undo.removed) {
     const same = groups.find((g) => g.id === r.id) ?? groups.find((g) => lower(g.name) === lower(r.name) && g.kind === r.kind);
     if (same) groupId.set(r.id, same.id);
-    else if (!groups.some((g) => lower(g.name) === lower(r.name)) && groups.length < MAX_GROUPS) {
-      const made = { id: facts.newId(), name: r.name, kind: r.kind, order: groups.length };
-      groups.push(made);
-      groupId.set(r.id, made.id);
+    else if (groups.some((g) => lower(g.name) === lower(r.name))) kept.push({ name: r.name, why: 'group-name-taken', group: true });
+    else if (groups.length >= MAX_GROUPS) kept.push({ name: r.name, why: 'group-full', group: true });
+    else {
+      groups.push({ id: r.id, name: r.name, kind: r.kind, order: groups.length });
+      groupId.set(r.id, r.id);
     }
   }
   const groupBy = (id: string) => groups.find((g) => g.id === (groupId.get(id) ?? id)) ?? null;
 
-  // Each category it changed, as it was, where that can be.
+  // Each category it changed, as it was, where that can be; one changed
+  // since the apply stays as it is now.
   const byId = new Map(t.categories.map((c) => [c.id, c]));
-  const ends = new Map<string, { name: string; group: string; archived: boolean }>();
+  const ends = new Map<string, CategoryState>();
   for (const was of undo.categories) {
     const c = byId.get(was.id);
     if (!c) {
       kept.push({ name: was.name, why: 'gone' });
+      continue;
+    }
+    if (!sameState(stateOf(c), was.after)) {
+      kept.push({ name: c.name, why: 'changed' });
       continue;
     }
     let group = c.group;
@@ -636,28 +745,35 @@ export function undoTemplate(
   };
 
   // The categories it added go, when nothing uses them (lib/categories.ts
-  // deleteCategory: never one with transactions, a budget or a rule).
-  for (const id of undo.added.categories) {
-    const c = taxonomy.categories.find((x) => x.id === id);
+  // deleteCategory: never one with transactions, a budget or a rule) and
+  // they are as it made them.
+  for (const a of undo.added.categories) {
+    const c = taxonomy.categories.find((x) => x.id === a.id);
     if (!c) continue;
-    const u = facts.usage.get(id);
+    if (c.name !== a.name || c.group !== a.group) {
+      kept.push({ name: c.name, why: 'changed' });
+      continue;
+    }
+    const u = facts.usage.get(a.id);
     if (!u) {
       kept.push({ name: c.name, why: 'used' });
       continue;
     }
     try {
-      taxonomy = deleteCategory(taxonomy, id, u);
+      taxonomy = deleteCategory(taxonomy, a.id, u);
     } catch (err) {
       if (!(err instanceof CategoryError)) throw err;
       kept.push({ name: c.name, why: 'used' });
     }
   }
-  // And the groups it added, once empty and without a budget of their own.
-  for (const id of undo.added.groups) {
-    const g = taxonomy.groups.find((x) => x.id === id);
+  // And the groups it added, once empty, without a budget of their own, and
+  // called as it named them.
+  for (const a of undo.added.groups) {
+    const g = taxonomy.groups.find((x) => x.id === a.id);
     if (!g) continue;
-    if (taxonomy.categories.some((c) => c.group === id) || locked(id)) kept.push({ name: g.name, why: 'not-empty' });
-    else taxonomy = { ...taxonomy, groups: taxonomy.groups.filter((x) => x.id !== id) };
+    if (g.name !== a.name) kept.push({ name: g.name, why: 'changed', group: true });
+    else if (taxonomy.categories.some((c) => c.group === a.id) || locked(a.id)) kept.push({ name: g.name, why: 'not-empty', group: true });
+    else taxonomy = { ...taxonomy, groups: taxonomy.groups.filter((x) => x.id !== a.id) };
   }
   // The order as it was, for the groups there are; any other after.
   const at = new Map(undo.order.map((id, i) => [groupId.get(id) ?? id, i]));

@@ -4,10 +4,12 @@ import {
   CategoryError,
   addCategory,
   addGroup,
+  categoryForKey,
   indexTaxonomy,
   mergeCategories,
   moveCategory,
   renameCategory,
+  renameGroup,
   seedTaxonomy,
   setArchived,
   textKeys,
@@ -27,10 +29,12 @@ import {
   UNCATEGORIZED_KEY,
   undoOf,
   undoTemplate,
+  groupsWithBudgets,
   type PlanFacts,
+  type TemplateUndo,
 } from '@/lib/category-templates';
 import { budgetMeters, placeBudgets, type Budgets } from '@/lib/budget-set';
-import { changeLine, keptLine, PlanView, CategoryTemplatesView } from '@/components/CategoryTemplates';
+import { applyTemplate, changeLine, keptGroupLine, keptLine, PlanView, CategoryTemplatesView, undoKeptLine, type ShownPlan } from '@/components/CategoryTemplates';
 import TemplateOffer, { offeredHere, TemplateOfferCard, TEMPLATE_OFFER_KEY } from '@/components/TemplateOffer';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { createElement } from 'react';
@@ -77,7 +81,10 @@ const groupOf = (t: Taxonomy, name: string) => t.groups.find((g) => g.id === nam
 /** Nothing uses any of these: the usage a route would read. */
 const nothing = (t: Taxonomy, template = TEMPLATES.simple): Map<string, CategoryUsage> =>
   new Map(archiveCandidates(t, template).map((id) => [id, { transactions: 0, budget: false, rules: 0, keys: t.categories.find((c) => c.id === id)!.provider_keys }]));
-const facts = (t: Taxonomy, over: Partial<PlanFacts> = {}): PlanFacts => ({ budgets: NO_BUDGETS, usage: nothing(t), newId: ids(), ...over });
+const facts = (t: Taxonomy, over: Partial<PlanFacts> = {}): PlanFacts => ({ budgets: NO_BUDGETS, usage: nothing(t), recorded: new Set(), newId: ids(), ...over });
+/** What uses each category an undo would remove: nothing. */
+const addedUnused = (t: Taxonomy, undo: TemplateUndo, used: Record<string, number> = {}) =>
+  new Map(undo.added.categories.map(({ id }) => [id, { transactions: used[id] ?? 0, budget: false, rules: 0, keys: t.categories.find((c) => c.id === id)!.provider_keys }]));
 /** The set's shape, ids aside: each group in order with its categories. */
 const shape = (t: Taxonomy) =>
   [...t.groups]
@@ -242,6 +249,93 @@ describe('the preview', () => {
     expect(plan.merged).toEqual([{ name: 'entertainment', into: 'Travel' }]);
   });
 
+  test('a category another was merged into is placed as what it is, never archived while it holds one the template keeps', () => {
+    // Personal care merged into medical: medical becomes Health, where Simple
+    // puts it, and the note says personal care went into it.
+    let t = seeded();
+    t = mergeCategories(t, named(t, 'personal care')!.id, named(t, 'medical')!.id);
+    const medical = named(t, 'medical')!;
+    let plan = planTemplate(t, TEMPLATES.simple, facts(t));
+    expect(named(plan.taxonomy, 'Health')!.id).toBe(medical.id);
+    expect(groupOf(plan.taxonomy, 'Health')).toBe('Home and bills');
+    expect(named(plan.taxonomy, 'Health')!.archived).toBeUndefined();
+    expect(plan.merged).toEqual([{ name: 'personal care', into: 'Health' }]);
+    // Medical merged into personal care: it stays personal care, in
+    // Everyday, and isn't archived, unused as it is, since Simple keeps
+    // medical in its lists: new medical transactions never land in an
+    // archived category.
+    t = seeded();
+    t = mergeCategories(t, named(t, 'medical')!.id, named(t, 'personal care')!.id);
+    const care = named(t, 'personal care')!;
+    expect(archiveCandidates(t, TEMPLATES.simple)).not.toContain(care.id);
+    const unused = new Map([[care.id, { transactions: 0, budget: false, rules: 0 }], ...nothing(t)]);
+    plan = planTemplate(t, TEMPLATES.simple, facts(t, { usage: unused }));
+    const after = plan.taxonomy.categories.find((c) => c.id === care.id)!;
+    expect([after.name, groupOf(plan.taxonomy, 'Personal care'), after.archived]).toEqual(['Personal care', 'Everyday', undefined]);
+    expect(categoryForKey(indexTaxonomy(plan.taxonomy), 'plaid', 'MEDICAL')!.id).toBe(care.id);
+    expect(plan.kept.map((k) => keptLine(k, 'Simple'))).toEqual(['Personal care isn’t archived: Medical was merged into it before, and Simple keeps that in its lists.']);
+    expect(plan.merged).toEqual([{ name: 'medical', into: 'Personal care' }]);
+    const { taxonomy: _t, signature: _s, ...rest } = plan;
+    const text = renderToStaticMarkup(PlanView({ plan: { ...rest, basis: 'b'.repeat(64) } })).replace(/<[^>]+>/g, ' ');
+    expect(text).toContain('Medical was merged into Personal care before, so it files there and isn’t a category of its own here.');
+  });
+
+  test('a category of yours that a seeded one was merged into stays yours: not renamed, not moved', () => {
+    let t = seeded(['groceries']);
+    const groceries = named(t, 'groceries')!;
+    t = mergeCategories(t, named(t, 'food and drink')!.id, groceries.id);
+    const plan = planTemplate(t, TEMPLATES.simple, facts(t));
+    const after = plan.taxonomy.categories.find((c) => c.id === groceries.id)!;
+    expect([after.name, groupOf(plan.taxonomy, 'groceries')]).toEqual(['groceries', 'Other']);
+    expect(plan.categories.some((c) => c.id === groceries.id)).toBe(false);
+    expect(plan.merged).toEqual([{ name: 'food and drink', into: 'groceries' }]);
+  });
+
+  test('a group left empty stays when it is yours, or had a budget in a past month, and the preview says why', () => {
+    let t = seeded();
+    t = addGroup(t, { name: 'Kids', kind: 'expense' }, ids()).taxonomy;
+    const kids = groupNamed(t, 'Kids')!;
+    t = moveCategory(t, named(t, 'personal care')!.id, kids.id);
+    const food = groupNamed(t, 'Food')!;
+    const plan = planTemplate(t, TEMPLATES.simple, facts(t, { recorded: new Set([food.id]) }));
+    expect(plan.groups.removed).toEqual(['Shopping', 'Housing', 'Transport', 'Travel and entertainment', 'Health and personal care', 'Services and fees']);
+    expect(groupNamed(plan.taxonomy, 'Kids')!.id).toBe(kids.id);
+    expect(groupNamed(plan.taxonomy, 'Food')!.id).toBe(food.id);
+    expect(plan.taxonomy.categories.some((c) => c.group === food.id || c.group === kids.id)).toBe(false);
+    expect(plan.groups.kept.map(keptGroupLine)).toEqual([
+      'Food is left empty and stays: it had a budget in past months, which those months keep.',
+      'Kids is left empty and stays: it is a group of yours. Delete it on the Categories screen if you don’t need it.',
+    ]);
+    const { taxonomy: _t, signature: _s, ...rest } = plan;
+    const text = renderToStaticMarkup(PlanView({ plan: { ...rest, basis: 'b'.repeat(64) } }));
+    expect(text).toContain('Kids is left empty and stays');
+  });
+
+  test('the groups with a budget in some month are the record’s that had one', () => {
+    const record = {
+      version: 1 as const,
+      since: '2026-01',
+      categories: {},
+      groups: {
+        now: { seen: 600 },
+        before: { seen: null, amounts: [{ until: '2026-09', amount: 600 }] },
+        never: { seen: null, amounts: [{ until: '2026-09', amount: null }] },
+      },
+    };
+    expect([...groupsWithBudgets(record)].sort()).toEqual(['before', 'now']);
+    expect(groupsWithBudgets(null).size).toBe(0);
+  });
+
+  test('a category of its own not added, its group’s name being one of yours of another kind, says so', () => {
+    let t = seeded();
+    t = addGroup(t, { name: 'Business income', kind: 'expense' }, ids()).taxonomy;
+    const plan = planTemplate(t, TEMPLATES.freelancer, facts(t, { usage: nothing(t, TEMPLATES.freelancer) }));
+    expect(plan.kept.filter((k) => k.id === null && k.why === 'kind').map((k) => keptLine(k, 'Freelancer'))).toEqual([
+      'Client payments isn’t added: your group called Business income counts its transactions another way than Freelancer’s group of that name.',
+      'Other business income isn’t added: your group called Business income counts its transactions another way than Freelancer’s group of that name.',
+    ]);
+  });
+
   test('Freelancer adds its groups and categories, and uses one of yours by the name', () => {
     let t = seeded();
     t = addCategory(t, { name: 'taxes', group: groupNamed(t, 'Other')!.id }, ids()).taxonomy;
@@ -319,7 +413,8 @@ describe('the preview', () => {
     expect(text).toContain('Nothing is deleted or merged.');
     expect(text).toContain('Budgets stay with their categories: Travel’s, in Fun.');
     const list = renderToStaticMarkup(CategoryTemplatesView({ step: { at: 'list' }, busy: false, error: null, onPreview: () => {}, onApply: () => {}, onUndo: () => {}, onList: () => {} }));
-    for (const id of TEMPLATE_IDS) expect(list).toContain(TEMPLATES[id].name);
+    // Each button is named for its set, so a screen reader tells them apart.
+    for (const id of TEMPLATE_IDS) expect(list).toContain(`See what ${TEMPLATES[id].name} changes</button>`);
     expect(list).toContain('it never deletes or merges one');
   });
 });
@@ -355,12 +450,13 @@ describe('undo', () => {
       const seed = seeded(['groceries']);
       const plan = planTemplate(seed, TEMPLATES[id], facts(seed, { usage: nothing(seed, TEMPLATES[id]) }));
       const undo = undoOf(id, seed, plan.taxonomy);
-      const added = new Map(undo.added.categories.map((cid) => [cid, { transactions: 0, budget: false, rules: 0, keys: plan.taxonomy.categories.find((c) => c.id === cid)!.provider_keys }]));
-      const back = undoTemplate(plan.taxonomy, undo, facts(plan.taxonomy, { usage: added }));
+      const back = undoTemplate(plan.taxonomy, undo, facts(plan.taxonomy, { usage: addedUnused(plan.taxonomy, undo) }));
       expect([id, back.kept]).toEqual([id, []]);
       expect(shape(back.taxonomy)).toEqual(shape(seed));
-      // The categories that were there are the same ones, by id.
+      // The categories that were there are the same ones, by id, and so are
+      // the groups it removed: made again under their own ids.
       for (const c of seed.categories) expect(back.taxonomy.categories.find((x) => x.id === c.id)!.name).toBe(c.name);
+      expect([id, back.taxonomy.groups.map((g) => g.id).sort()]).toEqual([id, seed.groups.map((g) => g.id).sort()]);
     }
   });
 
@@ -372,16 +468,58 @@ describe('undo', () => {
     // Someone named another category "income" since, the name it had.
     now = renameCategory(now, named(now, 'transportation')!.id, 'Income');
     const client = named(now, 'Client payments')!;
-    const usage = new Map(undo.added.categories.map((cid) => [cid, { transactions: cid === client.id ? 2 : 0, budget: false, rules: 0, keys: now.categories.find((c) => c.id === cid)!.provider_keys }]));
-    const back = undoTemplate(now, undo, facts(now, { usage }));
+    const back = undoTemplate(now, undo, facts(now, { usage: addedUnused(now, undo, { [client.id]: 2 }) }));
     expect(back.kept).toEqual([
       { name: 'Personal income', why: 'name-taken' },
       { name: 'Client payments', why: 'used' },
-      { name: 'Business income', why: 'not-empty' },
+      { name: 'Business income', why: 'not-empty', group: true },
     ]);
     expect(named(back.taxonomy, 'Client payments')).toBeDefined();
     expect(named(back.taxonomy, 'Software and subscriptions')).toBeUndefined();
     expect(groupNamed(back.taxonomy, 'Business expenses')).toBeUndefined();
+  });
+
+  test('what was changed since the apply stays as it is now, and is said', () => {
+    const seed = seeded();
+    const plan = planTemplate(seed, TEMPLATES.freelancer, facts(seed, { usage: nothing(seed, TEMPLATES.freelancer) }));
+    const undo = undoOf('freelancer', seed, plan.taxonomy);
+    let now = plan.taxonomy;
+    // On another device, since: a category it renamed, one it added, and a
+    // group it added, each renamed.
+    now = renameCategory(now, named(now, 'Personal income')!.id, 'Salary');
+    now = renameCategory(now, named(now, 'Equipment')!.id, 'Gear');
+    now = renameGroup(now, groupNamed(now, 'Business expenses')!.id, 'Work costs');
+    const back = undoTemplate(now, undo, facts(now, { usage: addedUnused(now, undo) }));
+    expect(back.kept.map(undoKeptLine)).toEqual([
+      'Salary was changed since, so it stays as it is now.',
+      'Gear was changed since, so it stays as it is now.',
+      'The group Work costs was changed since, so it stays as it is now.',
+    ]);
+    expect(named(back.taxonomy, 'Salary')).toBeDefined();
+    expect(groupOf(back.taxonomy, 'Gear')).toBe('Work costs');
+    // The rest went as it should: the other categories it added are gone.
+    expect(named(back.taxonomy, 'Advertising')).toBeUndefined();
+    expect(groupNamed(back.taxonomy, 'Business income')).toBeUndefined();
+  });
+
+  test('a group it removed that can’t be made again is said, and what it held stays where it is', () => {
+    const seed = seeded();
+    const plan = planTemplate(seed, TEMPLATES.simple, facts(seed));
+    const undo = undoOf('simple', seed, plan.taxonomy);
+    // A group called Food that counts income, made since.
+    const now = addGroup(plan.taxonomy, { name: 'Food', kind: 'income' }, ids()).taxonomy;
+    const back = undoTemplate(now, undo, facts(now, { usage: addedUnused(now, undo) }));
+    expect(back.kept.map(undoKeptLine)).toEqual([
+      'The group Food isn’t back, as another group has its name, so what it held stays where it is.',
+      'The group Everyday stays: it holds categories, or has a budget of its own.',
+    ]);
+    expect([named(back.taxonomy, 'food and drink')!.name, groupOf(back.taxonomy, 'food and drink')]).toEqual(['food and drink', 'Everyday']);
+    // No room for the groups it removed: each is said.
+    let full = plan.taxonomy;
+    for (let i = full.groups.length; i < MAX_GROUPS; i++) full = addGroup(full, { name: `Group ${i}`, kind: 'expense' }, ids()).taxonomy;
+    const crowded = undoTemplate(full, undo, facts(full, { usage: addedUnused(full, undo) }));
+    expect(crowded.kept.filter((k) => k.why === 'group-full').map((k) => k.name)).toEqual(undo.removed.map((r) => r.name));
+    expect(undoKeptLine(crowded.kept.find((k) => k.why === 'group-full')!)).toBe('The group Food isn’t back, as you have the most groups there can be, so what it held stays where it is.');
   });
 
   test('an undo is read field by field: anything else is refused', () => {
@@ -393,10 +531,15 @@ describe('undo', () => {
       null,
       'undo',
       { ...undo, template: 'fancy' },
-      { ...undo, categories: [{ id: 'a:b', name: 'x', group: 'g', archived: false }] },
-      { ...undo, categories: [{ id: 'a', name: '', group: 'g', archived: false }] },
+      { ...undo, categories: [{ id: 'a:b', name: 'x', group: 'g', archived: false, after: { name: 'y', group: 'g', archived: false } }] },
+      { ...undo, categories: [{ id: 'a', name: '', group: 'g', archived: false, after: { name: 'y', group: 'g', archived: false } }] },
+      { ...undo, categories: [{ id: 'a', name: 'x', group: 'g', archived: false }] },
+      { ...undo, categories: [{ id: 'a', name: 'x', group: 'g', archived: false, after: { name: 'y', group: 'g:h', archived: false } }] },
       { ...undo, removed: [{ id: 'g', name: 'G', kind: 'savings' }] },
       { ...undo, added: { categories: [7], groups: [] } },
+      { ...undo, added: { categories: ['a'], groups: [] } },
+      { ...undo, added: { categories: [], groups: [{ id: 'g' }] } },
+      { ...undo, added: { categories: [] } },
       { ...undo, order: 'all' },
     ]) {
       expect(readUndo(bad)).toBeNull();
@@ -452,6 +595,62 @@ describe('the route', () => {
     const refused = await act({ action: 'apply', template: 'simple', basis: preview.body.preview.basis });
     expect(refused.status).toBe(409);
     expect(refused.body.error).toContain('changed since');
+    // Marked, so the page works the preview out again.
+    expect(refused.body.changed).toBe(true);
+    expect(fake.strings.get(KEY)).toBe(stored);
+  });
+
+  test('the page shows the preview worked out again after an apply refused for a change, so Apply applies what is shown', async () => {
+    const plan = { basis: 'a'.repeat(64) } as ShownPlan;
+    const fresh = { basis: 'c'.repeat(64) } as ShownPlan;
+    const calls: unknown[] = [];
+    const next = await applyTemplate('simple', plan, async (body) => {
+      calls.push(body);
+      return body.action === 'apply'
+        ? { ok: false, error: 'Your categories changed since this was worked out, so nothing was changed.', changed: true }
+        : { ok: true, data: { preview: fresh } };
+    });
+    expect(calls).toEqual([
+      { action: 'apply', template: 'simple', basis: plan.basis },
+      { action: 'preview', template: 'simple' },
+    ]);
+    expect(next).toEqual({ step: { at: 'preview', template: 'simple', plan: fresh }, error: 'Your categories changed since this was worked out, so nothing was changed. Here is what it would do now.' });
+    // Refused for another reason: the preview as it was, with why.
+    expect(await applyTemplate('simple', plan, async () => ({ ok: false, error: 'Nope.', changed: false }))).toEqual({ step: { at: 'preview', template: 'simple', plan }, error: 'Nope.' });
+  });
+
+  test('a group with a budget in a past month stays, so its record of budgets by month stays; undo brings removed groups back by id', async () => {
+    const t = await ensureTaxonomy(ctx);
+    const food = groupNamed(t, 'Food')!;
+    const shopping = groupNamed(t, 'Shopping')!;
+    const { noteMonths, budgetMonthsStore } = await import('@/lib/budget-months-store');
+    // Food had a budget of its own until September.
+    await noteMonths(ctx, { categories: {}, groups: { [food.id]: { amount: 600 } } }, t, '2026-07');
+    await noteMonths(ctx, { categories: {}, groups: {} }, t, '2026-09');
+    const preview = await act({ action: 'preview', template: 'simple' });
+    expect(preview.body.preview.groups.removed).not.toContain('Food');
+    expect(preview.body.preview.groups.kept).toEqual([{ name: 'Food', why: 'past-budgets' }]);
+    const applied = await act({ action: 'apply', template: 'simple', basis: preview.body.preview.basis });
+    expect(applied.status).toBe(200);
+    expect(groupNamed(applied.body.categories, 'Food')!.id).toBe(food.id);
+    // The next read of a month notes the set again: Food's past stays.
+    await noteMonths(ctx, { categories: {}, groups: {} }, applied.body.categories, '2026-10');
+    expect((await budgetMonthsStore.get(ctx))!.groups[food.id]).toEqual({ seen: null, amounts: [{ until: '2026-09', amount: 600 }] });
+    // Undo: Shopping, which it removed, is back under its own id.
+    const undone = await act({ action: 'undo', undo: applied.body.undo });
+    expect(undone.body.kept).toEqual([]);
+    expect(groupNamed(undone.body.categories, 'Shopping')!.id).toBe(shopping.id);
+    expect(shape(undone.body.categories)).toEqual(shape(t));
+  });
+
+  test('a record of budgets by month that can’t be read answers 409, and nothing is changed', async () => {
+    await ensureTaxonomy(ctx);
+    await fake.set(ctxKey('budget-months'), 'damaged-bytes-that-are-not-ciphertext');
+    const stored = fake.strings.get(KEY);
+    const res = await act({ action: 'preview', template: 'simple' });
+    expect(res.status).toBe(409);
+    expect(res.body.unreadable).toBe(true);
+    expect((await act({ action: 'apply', template: 'simple', basis: 'a'.repeat(64) })).status).toBe(409);
     expect(fake.strings.get(KEY)).toBe(stored);
   });
 

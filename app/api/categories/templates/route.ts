@@ -8,8 +8,10 @@ import { changeTaxonomy, ensureTaxonomy, newCategoryId } from '@/lib/category-st
 import { categoryUsage } from '@/lib/category-usage';
 import { loadBudgets } from '@/lib/budget-store';
 import { BudgetError } from '@/lib/budget-set';
+import { budgetMonthsStore } from '@/lib/budget-months-store';
 import {
   archiveCandidates,
+  groupsWithBudgets,
   isTemplateId,
   planTemplate,
   readUndo,
@@ -24,17 +26,20 @@ import {
 // Starter category templates (lib/category-templates.ts), for the Categories
 // screen (components/CategoryTemplates.tsx). Each action reads what it needs
 // strictly: the categories, the budgets (a group with a budget of its own
-// keeps what it holds), and what uses each category it would archive or
-// remove (lib/category-usage.ts, the stored rows of any date, never Plaid),
-// so nothing is archived or removed on a read that failed.
+// keeps what it holds), the record of budgets by month (a group left empty
+// that had a budget in a past month stays, so that month keeps it), and what
+// uses each category it would archive or remove (lib/category-usage.ts, the
+// stored rows of any date, never Plaid), so nothing is archived or removed on
+// a read that failed.
 //
 //   preview { template }          what it would change: the plan, and `basis`,
 //                                 a digest of its changes
 //   apply   { template, basis }   applies it in one compare-and-set on the
 //                                 stored set, worked out again on the set as
-//                                 it is then, and refused (409) when that isn't
-//                                 what was previewed; answers the set and the
-//                                 undo (what it changed, as it was)
+//                                 it is then, and refused (409, `changed`)
+//                                 when that isn't what was previewed; answers
+//                                 the set and the undo (what it changed, as it
+//                                 was and as it made it)
 //   undo    { undo }              puts back what an apply changed, as far as
 //                                 it can, in one compare-and-set; answers the
 //                                 set and what it kept, and why
@@ -49,9 +54,18 @@ const BASIS = /^[0-9a-f]{64}$/;
 /** A digest of a plan's changes: what a preview showed, for the apply. */
 const digest = (signature: string) => createHash('sha256').update(signature).digest('hex');
 
+/** An apply refused because what it would do is no longer what was
+ *  previewed: answered 409 with `changed`, so the page previews again. */
+class PlanChanged extends CategoryError {
+  constructor() {
+    super('Your categories changed since this was worked out, so nothing was changed.', 409);
+  }
+}
+
 function failure(err: unknown, what: string): NextResponse {
   const unavailable = containerUnavailable(err);
   if (unavailable) return unavailable;
+  if (err instanceof PlanChanged) return NextResponse.json({ error: err.message, changed: true }, { status: 409 });
   if (err instanceof StoredDataUnreadableError) {
     console.error('Stored data unreadable for a category template:', describeUnreadable(err));
     return NextResponse.json({ error: err.message, unreadable: true }, { status: 409 });
@@ -101,19 +115,18 @@ export async function POST(req: Request) {
       if (body.action === 'apply' && (typeof basis !== 'string' || !BASIS.test(basis))) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       const template = TEMPLATES[body.template];
       const start = await ensureTaxonomy(ctx);
-      const { budgets } = await loadBudgets(ctx);
+      const [{ budgets }, months] = await Promise.all([loadBudgets(ctx), budgetMonthsStore.get(ctx)]);
+      const recorded = groupsWithBudgets(months);
       const usage = await usageOf(ctx, start, archiveCandidates(start, template));
       if (body.action === 'preview') {
-        return NextResponse.json({ preview: shown(planTemplate(start, template, { budgets, usage, newId: newCategoryId })) });
+        return NextResponse.json({ preview: shown(planTemplate(start, template, { budgets, usage, recorded, newId: newCategoryId })) });
       }
       // Worked out again on the set as it is when it is saved, which may run
       // more than once: what was previewed, or nothing.
       const made: { plan?: TemplatePlan; before?: Taxonomy } = {};
       const after = await changeTaxonomy(ctx, (t) => {
-        const plan = planTemplate(t, template, { budgets, usage, newId: newCategoryId });
-        if (digest(plan.signature) !== basis) {
-          throw new CategoryError('Your categories changed since this was worked out, so nothing was changed. Look at what it would do again, then apply it.', 409);
-        }
+        const plan = planTemplate(t, template, { budgets, usage, recorded, newId: newCategoryId });
+        if (digest(plan.signature) !== basis) throw new PlanChanged();
         made.plan = plan;
         made.before = t;
         return plan.unchanged ? t : plan.taxonomy;
@@ -127,11 +140,11 @@ export async function POST(req: Request) {
       if (!undo) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       const start = await ensureTaxonomy(ctx);
       const { budgets } = await loadBudgets(ctx);
-      const added = undo.added.categories.filter((id) => start.categories.some((c) => c.id === id));
+      const added = undo.added.categories.filter((a) => start.categories.some((c) => c.id === a.id)).map((a) => a.id);
       const usage = await usageOf(ctx, start, added);
       const done: { kept: UndoKept[] } = { kept: [] };
       const after = await changeTaxonomy(ctx, (t) => {
-        const r = undoTemplate(t, undo, { budgets, usage, newId: newCategoryId });
+        const r = undoTemplate(t, undo, { budgets, usage });
         done.kept = r.kept;
         return r.taxonomy;
       });

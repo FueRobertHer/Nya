@@ -7,31 +7,61 @@
 // what it adds, renames, moves into its groups and archives, what it leaves
 // as it is and why, and how your transactions and budgets file afterwards.
 // Applying it is a second, deliberate tap, and Undo is offered right after,
-// until you leave this screen.
+// until you leave this screen. When your categories changed since the
+// preview, the apply is refused and the preview worked out again.
 
 import { useState } from 'react';
 import { displayName, MAX_CATEGORIES } from '@/lib/categories';
-import { TEMPLATE_IDS, TEMPLATES, type KeptCategory, type PlannedCategory, type TemplateId, type TemplatePlan, type TemplateUndo, type UndoKept } from '@/lib/category-templates';
+import {
+  TEMPLATE_IDS,
+  TEMPLATES,
+  type KeptCategory,
+  type KeptGroup,
+  type PlannedCategory,
+  type TemplateId,
+  type TemplatePlan,
+  type TemplateUndo,
+  type UndoKept,
+} from '@/lib/category-templates';
 
 /** A plan as the route sends it: without the set it would make. */
 export type ShownPlan = Omit<TemplatePlan, 'taxonomy' | 'signature'> & { basis: string };
 
-type Step =
+export type Step =
   | { at: 'list' }
   | { at: 'preview'; template: TemplateId; plan: ShownPlan | null }
   | { at: 'applied'; template: TemplateId; plan: ShownPlan; undo: TemplateUndo }
   | { at: 'undone'; template: TemplateId; kept: UndoKept[] };
 
-/** Sends one action; the answer, or why there is none. */
-async function send(body: Record<string, unknown>): Promise<{ ok: true; data: Record<string, unknown> } | { ok: false; error: string }> {
+type Answer = { ok: true; data: Record<string, unknown> } | { ok: false; error: string; changed: boolean };
+type Send = (body: Record<string, unknown>) => Promise<Answer>;
+
+/** Sends one action; the answer, or why there is none (`changed`: what the
+ *  apply would do changed since the preview). */
+async function send(body: Record<string, unknown>): Promise<Answer> {
   try {
     const res = await fetch('/api/categories/templates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     const data = await res.json().catch(() => null);
     if (res.ok && data) return { ok: true, data };
-    return { ok: false, error: typeof data?.error === 'string' ? data.error : 'That couldn’t be done. Try again.' };
+    return { ok: false, error: typeof data?.error === 'string' ? data.error : 'That couldn’t be done. Try again.', changed: data?.changed === true };
   } catch {
-    return { ok: false, error: 'Nya could not be reached. Check your connection and try again.' };
+    return { ok: false, error: 'Nya could not be reached. Check your connection and try again.', changed: false };
   }
+}
+
+/**
+ * Applies what was previewed, and answers what the screen shows next: the
+ * set applied; or, when it would now do something else (changed since, on
+ * another device), the preview worked out again on the set as it is, with
+ * why, so Apply applies what is shown; or the preview, with what went wrong.
+ */
+export async function applyTemplate(template: TemplateId, plan: ShownPlan, post: Send = send): Promise<{ step: Step; error: string | null; categories?: unknown }> {
+  const r = await post({ action: 'apply', template, basis: plan.basis });
+  if (r.ok) return { step: { at: 'applied', template, plan: r.data.applied as ShownPlan, undo: r.data.undo as TemplateUndo }, error: null, categories: r.data.categories };
+  if (!r.changed) return { step: { at: 'preview', template, plan }, error: r.error };
+  const again = await post({ action: 'preview', template });
+  if (!again.ok) return { step: { at: 'preview', template, plan: null }, error: again.error };
+  return { step: { at: 'preview', template, plan: again.data.preview as ShownPlan }, error: `${r.error} Here is what it would do now.` };
 }
 
 const list = (names: string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
@@ -58,6 +88,8 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export function keptLine(k: KeptCategory, template: string): string {
   const name = displayName(k.name);
   switch (k.why) {
+    case 'holds':
+      return `${name} isn’t archived: ${displayName(k.holds ?? '')} was merged into it before, and ${template} keeps that in its lists.`;
     case 'used': {
       const u = k.uses;
       const what = u
@@ -72,12 +104,21 @@ export function keptLine(k: KeptCategory, template: string): string {
     case 'group-budget':
       return `${name} stays where it is: ${k.group} has a budget of its own, so what it holds stays the same.`;
     case 'kind':
-      return `${name} stays where it is: ${template}’s group for it counts its transactions another way, which would change your totals.`;
+      return k.id === null
+        ? `${name} isn’t added: your group called ${k.group} counts its transactions another way than ${template}’s group of that name.`
+        : `${name} stays where it is: ${template}’s group for it counts its transactions another way, which would change your totals.`;
     case 'name-taken':
       return k.id === null ? `${name} isn’t added: another category has that name.` : `${name} keeps its name: another category is called ${displayName(k.wanted ?? '')}.`;
     case 'full':
       return `${name} isn’t added: you have ${MAX_CATEGORIES} categories, the most there can be.`;
   }
+}
+
+/** Why a group left empty stays, in a line. */
+export function keptGroupLine(g: KeptGroup): string {
+  return g.why === 'yours'
+    ? `${g.name} is left empty and stays: it is a group of yours. Delete it on the Categories screen if you don’t need it.`
+    : `${g.name} is left empty and stays: it had a budget in past months, which those months keep.`;
 }
 
 /** What undo couldn't put back, in a line. */
@@ -86,6 +127,12 @@ export function undoKeptLine(k: UndoKept): string {
   switch (k.why) {
     case 'gone':
       return `${name} was deleted since, so it isn’t back.`;
+    case 'changed':
+      return `${k.group ? `The group ${name}` : name} was changed since, so it stays as it is now.`;
+    case 'group-name-taken':
+      return `The group ${name} isn’t back, as another group has its name, so what it held stays where it is.`;
+    case 'group-full':
+      return `The group ${name} isn’t back, as you have the most groups there can be, so what it held stays where it is.`;
     case 'used':
       return `${name} stays: something uses it now.`;
     case 'name-taken':
@@ -109,11 +156,16 @@ export function PlanView({ plan }: { plan: ShownPlan }) {
   });
   return (
     <>
-      {(plan.groups.added.length > 0 || plan.groups.removed.length > 0 || plan.groups.reordered) && (
+      {(plan.groups.added.length > 0 || plan.groups.removed.length > 0 || plan.groups.kept.length > 0 || plan.groups.reordered) && (
         <div className="panel-section">
           <div className="section-label">Groups</div>
           {plan.groups.added.length > 0 && <p className="panel-note">Adds {list(plan.groups.added)}.</p>}
           {plan.groups.removed.length > 0 && <p className="panel-note">Removes {list(plan.groups.removed)}, left empty.</p>}
+          {plan.groups.kept.map((g) => (
+            <p className="panel-note" key={`kept:${g.name}`}>
+              {keptGroupLine(g)}
+            </p>
+          ))}
           {plan.groups.reordered && <p className="panel-note">Puts your groups in {name}’s order, its own first.</p>}
         </div>
       )}
@@ -136,7 +188,7 @@ export function PlanView({ plan }: { plan: ShownPlan }) {
             ))}
             {plan.merged.map((m) => (
               <li key={`merged:${m.name}`}>
-                {displayName(m.name)} was merged into {displayName(m.into)} before, so it isn’t a category of its own here.
+                {displayName(m.name)} was merged into {displayName(m.into)} before, so it files there and isn’t a category of its own here.
               </li>
             ))}
           </ul>
@@ -177,11 +229,11 @@ export default function CategoryTemplates({ onTaxonomy }: { onTaxonomy: (t: unkn
   async function apply(template: TemplateId, plan: ShownPlan) {
     setError(null);
     setBusy(true);
-    const r = await send({ action: 'apply', template, basis: plan.basis });
+    const next = await applyTemplate(template, plan);
     setBusy(false);
-    if (!r.ok) return setError(r.error);
-    onTaxonomy(r.data.categories);
-    setStep({ at: 'applied', template, plan: r.data.applied as ShownPlan, undo: r.data.undo as TemplateUndo });
+    if (next.categories !== undefined) onTaxonomy(next.categories);
+    setStep(next.step);
+    setError(next.error);
   }
   async function undo(template: TemplateId, payload: TemplateUndo) {
     setError(null);
@@ -243,7 +295,7 @@ export function CategoryTemplatesView({
               <span className="panel-note">{TEMPLATES[id].summary}</span>
             </div>
             <button className="secondary" onClick={() => onPreview(id)} disabled={busy}>
-              See what it changes
+              See what {TEMPLATES[id].name} changes
             </button>
           </div>
         ))}
