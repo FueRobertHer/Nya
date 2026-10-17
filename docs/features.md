@@ -874,7 +874,7 @@ Each token may make 100 requests a minute, and one person may have 10 tokens; an
 
 With accounts (Clerk), people who connect by an invite link can share parts of their finances with each other, read-only, each choosing what the other sees and for how long, and seeing exactly what that is and each time it was shown. How connecting, ends, previews and the records of showings work is in [authentication.md](authentication.md#sharing-between-people).
 
-What can be shared, each on its own and Not shared until chosen:
+What can be shared, each on its own, and none of it until it is chosen:
 
 - **Accounts**, one by one: that it exists, its balance, or its balance and the last 30 days of transactions.
 - **Net worth**: the total now, or the total and its history (your chart, a point a week, estimates marked), with or without the accounts behind it, each with its balance. The total is your accounts' newest balances added up, as on the Accounts tab, in the currency most of them are in.

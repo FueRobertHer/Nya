@@ -99,7 +99,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
   return (
     <>
       <div className="peer-row">
-        <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : 'No balance yet'}</span>
+        <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : ''}</span>
         <span className="incoming-account-value">{v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}</span>
       </div>
       {v.other_currencies.map((o) => (
@@ -122,8 +122,8 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
         ))}
       {v.accounts && v.accounts.length > 0 && (
         <div className="incoming-kind-lines">
-          {v.accounts.map((a) => (
-            <div key={a.label} className="peer-row">
+          {v.accounts.map((a, i) => (
+            <div key={`${a.label}-${i}`} className="peer-row">
               <span>
                 <span className="incoming-account-name">{a.label}</span>
                 {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
@@ -167,15 +167,15 @@ function SpendingKind({ v }: { v: SpendingView }) {
         <p className="empty-note">Nothing spent in {name(m.month, m.so_far)}.</p>
       ) : (
         <div className="incoming-kind-lines">
-          {m.groups.map((g) => (
-            <div key={g.name} className="incoming-line">
+          {m.groups.map((g, i) => (
+            <div key={`${g.name}-${i}`} className="incoming-line">
               <div className="peer-row">
                 <span className="incoming-account-name">{g.name}</span>
                 <span className="incoming-account-value">{amounts && g.amount !== undefined ? <Masked>{`${formatMoney(g.amount, v.currency)} · ${pctText(g.pct, g.amount)}`}</Masked> : pctText(g.pct)}</span>
               </div>
               <Bar pct={g.pct} />
-              {g.categories?.map((c) => (
-                <div key={c.name} className="peer-row incoming-sub">
+              {g.categories?.map((c, j) => (
+                <div key={`${c.name}-${j}`} className="peer-row incoming-sub">
                   <span>{c.name}</span>
                   <span className="incoming-account-value">{amounts && c.amount !== undefined ? <Masked>{`${formatMoney(c.amount, v.currency)} · ${pctText(c.pct, c.amount)}`}</Masked> : pctText(c.pct)}</span>
                 </div>
@@ -292,11 +292,11 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
           ) : (
             <>
               <BudgetRow b={m.total} currency={v.currency} />
-              {m.groups.map((g) => (
-                <div key={g.name}>
+              {m.groups.map((g, i) => (
+                <div key={`${g.name}-${i}`}>
                   <BudgetRow b={g} currency={v.currency} />
-                  {g.categories?.map((c) => (
-                    <BudgetRow key={c.name} b={c} currency={v.currency} sub />
+                  {g.categories?.map((c, j) => (
+                    <BudgetRow key={`${c.name}-${j}`} b={c} currency={v.currency} sub />
                   ))}
                 </div>
               ))}
@@ -360,12 +360,12 @@ function GoalsKind({ v }: { v: GoalsView }) {
   if (v.goals.length === 0) return <p className="empty-note">No goals to show.</p>;
   return (
     <div className="incoming-kind-lines">
-      {v.goals.map((g) => {
+      {v.goals.map((g, i) => {
         const why = goalState(g);
         const outlook = outlookWords(g);
         const amounts = g.saved !== undefined && g.target !== undefined;
         return (
-          <div key={g.name} className="incoming-line">
+          <div key={`${g.name}-${i}`} className="incoming-line">
             <div className="peer-row">
               <span className="incoming-account-name">{g.name}</span>
               <span className="incoming-account-value">

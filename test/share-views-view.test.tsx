@@ -172,6 +172,15 @@ describe('on the card of the one it is shared with', () => {
     const one = text(card({ net_worth: { ...(VIEWS.net_worth as any), history: [{ date: '2026-10-18', value: 1 }], accounts: undefined } }));
     expect(one).toContain('Its history begins Oct 18');
   });
+
+  test('a net worth with no balance yet says so once; two goals of one name are both shown', () => {
+    const none = text(card({ net_worth: { detail: 'total', currency: null, total: null, as_of: null, from: null, other_currencies: [], without_balance: 1 } }));
+    expect(none.match(/No balance yet/g)).toHaveLength(1);
+    expect(none).toContain('1 account has no balance yet');
+    const goals = (VIEWS.goals as GoalsView).goals;
+    const twice = text(card({ goals: { detail: 'amounts', goals: [goals[0], goals[0]] } }));
+    expect(twice.match(/Rainy day/g)).toHaveLength(2);
+  });
 });
 
 describe('a goal’s outlook, in words, never with the rate behind it', () => {

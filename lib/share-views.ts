@@ -66,7 +66,7 @@ import { readBudgetMonth } from './budget-month';
 import { summarize, tidy, type SummaryCategory } from './totals';
 import { totalsCurrency } from './spending';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
-import { allocate, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
+import { allocate, isMoney, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
 import { BUCKET_NAMES, BUCKET_SLOTS } from './allocation/buckets';
 import { allocationSettingsStore } from './allocation-settings';
@@ -346,7 +346,7 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare): Promise<HoldingsView
     ...(s.positions
       ? {
           positions: alloc.securities
-            .filter((r) => Math.abs(r.amount) >= 0.005)
+            .filter((r) => isMoney(r.amount))
             .map((r) => {
               const split = r.classified.split;
               const classes = split ? ASSET_CLASSES.filter((c) => (split[c] ?? 0) > 0) : [];
