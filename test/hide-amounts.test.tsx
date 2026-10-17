@@ -569,8 +569,16 @@ describe('the main screens with amounts hidden', () => {
     // React writes inputMode as it is spelled; the browser reads attribute
     // names in any case, as the CSS hook does.
     for (const f of amounts) expect(/inputmode="decimal"|class="[^"]*budget-input/i.test(f)).toBe(true);
-    const css = readFileSync(join(ROOT, 'app', 'globals.css'), 'utf8');
-    expect(css).toContain(':root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus)');
+    const css = readFileSync(join(ROOT, 'app', 'globals.css'), 'utf8').replace(/\r/g, '');
+    const hook = ':root[data-amounts="hidden"] :is(input[inputmode="decimal"], input.budget-input):not([data-percent]):not(:focus):not(:placeholder-shown) {';
+    expect(css).toContain(hook);
+    // The field's own text isn't drawn at all, and one mask is, the same
+    // whatever the amount: never a dot per figure, which says its size.
+    const rule = css.slice(css.indexOf(hook), css.indexOf('}', css.indexOf(hook)));
+    expect(rule).toContain('color: transparent;');
+    expect(rule).toContain('-webkit-text-fill-color: transparent;');
+    expect(rule).toContain('background-image: url("data:image/svg+xml,');
+    expect(css).not.toContain('-webkit-text-security');
   });
 });
 
