@@ -83,6 +83,10 @@ mock.module('node:https', () => ({ ...realHttps, default: { ...(realHttps as any
 
 const { runBackup, vercelBlobStore, backupFolder, MIN_KEPT, backupProblem, recordOutcome, nodeText, backupRetention } = await import('@/lib/backup');
 const { verifyArchive } = await import('@/lib/restore');
+const { keyArchiveFolder, verifyKeyArchive, KEY_GENERATIONS } = await import('@/lib/key-archive');
+/** The data archives kept, and the key archives (lib/key-archive.ts). */
+const dataBlobs = () => [...blobs.keys()].filter((p) => p.startsWith(backupFolder())).sort();
+const keyBlobs = () => [...blobs.keys()].filter((p) => p.startsWith(keyArchiveFolder())).sort();
 const { GET } = await import('@/app/api/backup/route');
 
 const DAY = 86_400_000;
@@ -110,19 +114,25 @@ const store = async () => (await vercelBlobStore())!;
 const cron = (auth = 'Bearer cron') => GET(new Request('http://x/api/backup', { headers: { authorization: auth } }));
 
 describe('the nightly backup', () => {
-  test('writes the export, privately, and it restores', async () => {
+  test('writes the export, privately, and it restores, with its key archive beside it', async () => {
     const result = await runBackup(fake as any, await store(), clock);
-    expect(result.pathname).toBe(`${backupFolder()}nya-2026-06-15T16-00-00-000Z.ndjson`);
+    expect(result.pathname).toBe(`${backupFolder()}nya-2026-06-15T16-00-00-000Z.f2.ndjson`);
     expect(result.keys).toBe(2);
     const stored = blobs.get(result.pathname)!;
     expect(stored.options).toMatchObject({ access: 'private', addRandomSuffix: false, allowOverwrite: false });
+    expect(stored.options.cacheControlMaxAge).toBeUndefined();
     expect(result.bytes).toBe(Buffer.byteLength(stored.body));
     expect(verifyArchive(stored.body).records.map((r) => r.key)).toEqual(['budgets', 'history:net-worth']);
+    // The key archive: outside the data archives' folder, cached for a minute at most.
+    expect(result.key_archive.pathname.startsWith(`${keyArchiveFolder()}nya-keys-2026-06-15T16-00-00-000Z--`)).toBe(true);
+    const keys = blobs.get(result.key_archive.pathname)!;
+    expect(keys.options).toMatchObject({ access: 'private', addRandomSuffix: false, allowOverwrite: false, cacheControlMaxAge: 60 });
+    expect(verifyKeyArchive(keys.body).header.taken_at).toBe(clock.toISOString());
   });
 
   test('reads the copy back from its URL with node’s client, with the token, uncompressed', async () => {
     const { pathname } = await runBackup(fake as any, await store(), clock);
-    expect(urlReads).toEqual([
+    expect(urlReads.filter((r) => r.url.includes(backupFolder()))).toEqual([
       {
         url: `https://store.blob.vercel-storage.com/${pathname}?cache=0`,
         headers: { authorization: 'Bearer token', 'accept-encoding': 'identity' },
@@ -159,8 +169,9 @@ describe('the nightly backup', () => {
       await runBackup(fake as any, s, clock);
     }
     // 12 nightly copies, 3 days kept: the newest MIN_KEPT stay regardless.
-    expect(blobs.size).toBe(MIN_KEPT);
-    const names = [...blobs.keys()].sort();
+    expect(dataBlobs()).toHaveLength(MIN_KEPT);
+    expect(keyBlobs()).toHaveLength(KEY_GENERATIONS);
+    const names = dataBlobs();
     expect(names.at(-1)).toContain('2026-06-26');
     expect(names[0]).toContain(`2026-06-${26 - MIN_KEPT + 1}`);
   });
@@ -173,7 +184,8 @@ describe('the nightly backup', () => {
       clock = new Date(start + d * DAY);
       await runBackup(fake as any, s, clock);
     }
-    expect(blobs.size).toBe(11); // today and the 10 days before it
+    expect(dataBlobs()).toHaveLength(11); // today and the 10 days before it
+    expect(keyBlobs()).toHaveLength(KEY_GENERATIONS);
   });
 
   test('a failed write prunes nothing', async () => {
@@ -185,8 +197,10 @@ describe('the nightly backup', () => {
     }
     process.env.BACKUP_KEEP_DAYS = '1';
     corruptReads = true;
+    const keysBefore = keyBlobs();
     await expect(runBackup(fake as any, s, new Date(start + 40 * DAY))).rejects.toThrow();
-    expect(blobs.size).toBe(10);
+    expect(dataBlobs()).toHaveLength(10);
+    expect(keyBlobs()).toEqual(keysBefore);
   });
 
   test('another environment’s backups are never touched', async () => {
@@ -244,7 +258,7 @@ describe('a step that never answers', () => {
     return { s, seen };
   }
 
-  const limits = { export: 1000, upload: 20, 'read-back': 20, list: 20, prune: 20, discard: 20 };
+  const limits = { export: 1000, upload: 20, 'read-back': 20, keys: 200, count: 200, list: 20, prune: 20, discard: 20 };
 
   test('fails the run with the step it was on, and cancels the request', async () => {
     const { s, seen } = await hanging('get');
@@ -258,7 +272,7 @@ describe('a step that never answers', () => {
   test('a read of the URL that never answers fails as the read-back step and leaves the copy', async () => {
     hangReads = true;
     await expect(runBackup(fake as any, await store(), clock, { limits })).rejects.toThrow("backup's read-back step took longer than 0.02s");
-    expect(blobs.size).toBe(1);
+    expect(dataBlobs()).toHaveLength(1);
   });
 
   test('a step that finished is never failed by its report', async () => {
@@ -291,12 +305,14 @@ describe('a step that never answers', () => {
     await expect(runBackup(fake as any, s, new Date(start + 40 * DAY), { limits })).rejects.toThrow('read-back');
     // The newest few from before plus the unverified copy: had it been
     // trusted, the oldest of those would have been pruned.
-    expect(blobs.size).toBe(MIN_KEPT + 1);
+    expect(dataBlobs()).toHaveLength(MIN_KEPT + 1);
   });
 
+  // The key archive lists its generations first, so a list that hangs fails
+  // its step.
   for (const [method, name] of [
     ['put', 'upload'],
-    ['list', 'list'],
+    ['list', 'keys'],
   ] as const) {
     test(`a ${name} that hangs fails as the ${name} step`, async () => {
       const { s } = await hanging(method);
@@ -308,8 +324,16 @@ describe('a step that never answers', () => {
     process.env.BACKUP_KEEP_DAYS = '1';
     const start = clock.getTime();
     for (let d = 0; d < MIN_KEPT; d++) await runBackup(fake as any, await store(), new Date(start + d * DAY));
-    const { s } = await hanging('del');
+    // Only the data archives' prune hangs: the key archives' is the keys step's.
+    const real = await store();
+    const s = { ...real, del: (paths: string[], signal?: AbortSignal) => (paths.every((p) => p.startsWith(backupFolder())) ? never() : real.del(paths, signal)) };
     await expect(runBackup(fake as any, s, new Date(start + 40 * DAY), { limits })).rejects.toThrow("backup's prune step");
+  });
+
+  test('a key archive step that hangs fails as the keys step, and keeps the data archive', async () => {
+    const { s } = await hanging('list');
+    await expect(runBackup(fake as any, s, clock, { limits })).rejects.toThrow("backup's keys step");
+    expect(dataBlobs()).toHaveLength(1);
   });
 
   test('a discard that hangs still reports the bad read-back', async () => {
@@ -321,7 +345,7 @@ describe('a step that never answers', () => {
   test('each finished step reports how long it took', async () => {
     const steps: string[] = [];
     await runBackup(fake as any, await store(), clock, { onStep: (step, ms) => (expect(ms).toBeGreaterThanOrEqual(0), steps.push(step)) });
-    expect(steps).toEqual(['export', 'upload', 'read-back', 'list']); // nothing old enough to prune
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'keys', 'count', 'list']); // nothing old enough to prune
   });
 
   test('the Vercel Blob store hands each call its signal', async () => {
@@ -442,8 +466,16 @@ describe('saying when backups have stopped', () => {
   test('a status that can’t be read is no notice, and a failed record never fails the backup', async () => {
     fake.failNext('get');
     expect(await backupProblem()).toBeNull();
-    fake.failNext('set');
-    expect((await quiet(() => cron())).status).toBe(200);
+    const set = fake.set.bind(fake);
+    fake.set = (async (key: string, ...rest: unknown[]) => {
+      if (key === testKey('backups:status')) throw new Error('down');
+      return (set as any)(key, ...rest);
+    }) as typeof fake.set;
+    try {
+      expect((await quiet(() => cron())).status).toBe(200);
+    } finally {
+      fake.set = set as typeof fake.set;
+    }
   });
 
   test('the status is kept out of the backup itself', async () => {

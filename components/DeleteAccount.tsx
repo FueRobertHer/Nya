@@ -17,7 +17,7 @@ import { useClerk } from '@clerk/nextjs';
 import type { DeletionReceipt } from '@/lib/deletion-receipt';
 import { DeletionReceiptView, keepPartial, keepReceipt, withEarlierAttempts } from './DeletionReceipt';
 
-type Status = { enabled: boolean; can_delete?: boolean; reason?: string; backup_days?: number | null } | 'failed';
+type Status = { enabled: boolean; can_delete?: boolean; reason?: string; backup_days?: number | null; own_key?: boolean | null; database_days?: number | null } | 'failed';
 
 export default function DeleteAccount({ beforeSignOut }: { beforeSignOut: () => void }) {
   const { signOut } = useClerk();
@@ -116,7 +116,14 @@ export function DeleteAccountView({
             Disconnects your banks, deletes everything stored for you (balances, history, transactions, categories,
             budgets, goals) and stops all sharing, then deletes your sign-in. This can’t be undone.
             {typeof status.backup_days === 'number' &&
-              ` Nightly backups keep a copy for up to ${status.backup_days} days: encrypted, except dates, ids, bank names and the merchant names you renamed.`}{' '}
+              ` Nightly backups keep a copy for up to ${status.backup_days} days: encrypted, except dates, ids, bank names and the merchant names you renamed.`}
+            {status.own_key === true &&
+              ' Your data is encrypted under a key of its own, which is destroyed with your account: from then on nothing encrypted under it can be decrypted from any copy Nya keeps.'}
+            {status.own_key === false &&
+              ' Your data is encrypted under a key shared by everyone on this copy of Nya, until whoever runs it moves it to one of its own, so copies of it in backups stay readable with the server’s keys until they are deleted.'}
+            {typeof status.database_days === 'number' &&
+              status.database_days > 0 &&
+              ` The database host also keeps its own backups, of everything, for ${status.database_days} ${status.database_days === 1 ? 'day' : 'days'}.`}{' '}
             To keep a copy, use Download my data under Manage accounts first. When it’s done you’ll get a receipt of what
             was deleted and what stays.
           </p>

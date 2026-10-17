@@ -153,7 +153,9 @@ const FROZEN_PREFIXES = [
  * were approved with that design's review (docs/architecture.md,
  * "Per-container data keys"): environment-wide by nature, beside the key
  * store under the family already listed, holding no data, which the seam
- * (containers only) can't hold.
+ * (containers only) can't hold. So were the key archives' lock and the
+ * marker a deletion leaves for the nightly run ("backups:keys-lock",
+ * "backups:keys-pending"), beside the backups' own record, under that family.
  */
 const FROZEN_KEY_NAMES = [
   'account-links in lib/link-core.ts',
@@ -162,6 +164,8 @@ const FROZEN_KEY_NAMES = [
   'accounts:directory in lib/links.ts',
   'accounts:meta in lib/last-known.ts',
   'accounts:vanished in lib/vanished.ts',
+  'backups:keys-lock in lib/backup.ts',
+  'backups:keys-pending in lib/backup.ts',
   'backups:status in lib/backup.ts',
   'budgets in lib/budgets.ts',
   'cache:inv-activity:v4 in lib/cache.ts',

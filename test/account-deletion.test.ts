@@ -36,6 +36,27 @@ const fake = new FakeRedis();
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
+// Vercel Blob, kept in memory: where the key archives a deletion rewrites
+// are kept (lib/key-archive.ts). Read back through the store's own URL with
+// node's client, which is served from here too.
+const blobs = new Map<string, { body: string; options: any }>();
+mock.module('@vercel/blob', () => ({
+  put: async (pathname: string, body: string, options: any) => {
+    if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
+    blobs.set(pathname, { body, options });
+    return { pathname };
+  },
+  get: async (pathname: string) =>
+    blobs.has(pathname) ? { statusCode: 200, stream: new ReadableStream({}), headers: new Headers(), blob: { url: `https://store.blob.vercel-storage.com/${pathname}` } } : null,
+  list: async ({ prefix }: { prefix: string }) => ({
+    blobs: [...blobs.keys()].filter((p) => p.startsWith(prefix)).sort().map((pathname) => ({ pathname, uploadedAt: new Date() })),
+    hasMore: false,
+  }),
+  del: async (pathnames: string[]) => {
+    for (const p of pathnames) blobs.delete(p);
+  },
+}));
+
 const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { ownerContainer, ownersKey } = await import('@/lib/owners');
@@ -68,6 +89,7 @@ let partner: { container: any };
 const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
+  blobs.clear();
   removed.length = 0;
   deletedUsers.length = 0;
   removeFails = false;

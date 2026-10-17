@@ -15,7 +15,19 @@
 //
 // One archive per environment per run, holding every container (a restore
 // replaces the environment; see lib/restore.ts). Named by the time it was
-// taken, so names sort by age and never collide.
+// taken, so names sort by age and never collide, and `.f2` for format 2, so an
+// archive the release before writes (format 1, with the key store inside) is
+// told apart by its name.
+//
+// THE KEYS GO APART (docs/operations.md, "Per-container data keys"). A data
+// archive of format 2 leaves the key store out; each run then writes a key
+// archive (lib/key-archive.ts), checks it, and keeps seven generations. A run
+// that can't write and check its key archive fails, its data archive kept.
+// The same run notes, in each container's map entry, the time of an archive
+// that holds one of its values under k0 or an environment key (`shared_in`),
+// read from the headers alone, and clears its `moved`; and the time of any
+// format-1 archive the release before took after the container's key was made
+// (a rollback), since that archive holds the key itself.
 //
 // Each run records its outcome (backups:status, environment-wide), and the
 // dashboard says so when the last run failed or none has succeeded for two
@@ -37,13 +49,18 @@ import { get as httpGet } from 'node:http';
 import { get as httpsGet } from 'node:https';
 import { verifyArchive } from './restore';
 import { exportLines, type ExportClient } from './export';
-import { envPrefix, kEnv, redis } from './storage';
+import { envPrefix, kEnv, redis, rawRedis } from './storage';
+import { rewriteAfterDeletion, writeKeyArchive, type KeyArchiveResult, type KeysLock, type KeysPending } from './key-archive';
+import { containersUnderSharedKeys, keyIdsByContainer, namedKeyIds } from './archive-scan';
+import { MasterKeyError, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
 
 /** What a backup needs from object storage. Vercel Blob in production
  *  (vercelBlobStore); tests pass one kept in memory. Each call is given a
  *  signal that aborts when its step runs out of time. */
 export type BackupStore = {
-  put(pathname: string, body: string, signal?: AbortSignal): Promise<void>;
+  /** `cacheMaxAgeSeconds`: how long a cache may serve it, for a file that
+   *  must stop being served soon after it is deleted (a key archive). */
+  put(pathname: string, body: string, signal?: AbortSignal, opts?: { cacheMaxAgeSeconds?: number }): Promise<void>;
   /** The blob's text, or null if it isn't there. */
   get(pathname: string, signal?: AbortSignal): Promise<string | null>;
   list(prefix: string, signal?: AbortSignal): Promise<{ pathname: string; uploadedAt: Date }[]>;
@@ -55,18 +72,21 @@ export const MIN_KEPT = 7;
 
 /**
  * How long each step may take, in milliseconds. The longest path (export,
- * upload, read-back, list, prune) adds up to 240s, a minute under the route's
- * maxDuration of 300s, so a failure is still recorded before Vercel ends the
- * function. `discard` takes the place of list and prune when the read-back is
- * wrong. A 1 MB archive takes seconds; these are for a call that never answers.
+ * upload, read-back, the key archive, the count, list, prune) adds up to
+ * 240s, a minute under the route's maxDuration of 300s, so a failure is still
+ * recorded before Vercel ends the function. `discard` takes the place of the
+ * rest when the read-back is wrong. A 1 MB archive takes seconds; these are
+ * for a call that never answers.
  */
 export const STEP_LIMITS_MS = {
-  export: 90_000,
-  upload: 45_000,
-  'read-back': 45_000,
-  list: 30_000,
-  prune: 30_000,
-  discard: 30_000,
+  export: 75_000,
+  upload: 35_000,
+  'read-back': 35_000,
+  keys: 40_000,
+  count: 15_000,
+  list: 20_000,
+  prune: 20_000,
+  discard: 20_000,
 } as const;
 
 export type BackupStep = keyof typeof STEP_LIMITS_MS;
@@ -153,12 +173,97 @@ export function backupRetention(): { kept: false } | { kept: true; keep_days: nu
   return { kept: true, keep_days: days, min_kept: MIN_KEPT, max_days: Math.max(days + 1, MIN_KEPT) };
 }
 
+/**
+ * DATABASE_BACKUP_DAYS, validated: how many days the database host's own
+ * backups keep a copy (Upstash's Daily Backup keeps each for 1 or 3 days; 0,
+ * the default, means it is off). Each holds the whole database, key store
+ * included, so the pages and the deletion receipt add it to how long a
+ * deleted account's copies stay readable. Null when it isn't a whole number
+ * of days, 0 or more: then no date that depends on it is true.
+ */
+export function databaseBackupDays(): number | null {
+  const raw = process.env.DATABASE_BACKUP_DAYS;
+  if (raw === undefined || raw === '') return 0;
+  const n = Number(raw);
+  return Number.isInteger(n) && n >= 0 && n <= 366 ? n : null;
+}
+
 /** Where this environment's backups live in the store. */
 export function backupFolder(): string {
   return `backups/${envPrefix().replace(/:$/, '')}/`;
 }
 
-export type BackupResult = { pathname: string; bytes: number; keys: number; pruned: string[] };
+export type BackupResult = {
+  pathname: string;
+  bytes: number;
+  keys: number;
+  pruned: string[];
+  /** The key archive this run wrote, and what it rewrote and pruned. */
+  key_archive: KeyArchiveResult;
+  /** Containers noted as having a value under a shared key in this archive. */
+  shared_in: string[];
+  /** Containers noted as held, with their key, by an archive the release
+   *  before took (a rollback). */
+  rollback_noted: string[];
+};
+
+/** A data archive's name: format 2's carry `.f2`. */
+const DATA_ARCHIVE = /nya-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)(\.f2)?\.ndjson$/;
+
+/** When a data archive was taken, from its name, as an ISO time, and whether
+ *  the release before wrote it (format 1). Null for a name that isn't one. */
+export function dataArchiveName(pathname: string): { taken: string; format1: boolean } | null {
+  const m = DATA_ARCHIVE.exec(pathname);
+  if (!m) return null;
+  const [date, time] = m[1].split('T');
+  const [h, mi, s, ms] = time.slice(0, -1).split('-');
+  return { taken: `${date}T${h}:${mi}:${s}.${ms}Z`, format1: m[2] === undefined };
+}
+
+/**
+ * Notes, in each container's map entry, that this archive holds one of its
+ * values under k0 or an environment key: `shared_in` set to when it was
+ * taken, `moved` cleared, so the migration pass walks it again. From the
+ * values' headers alone. Answers the containers noted.
+ */
+async function noteSharedKeys(records: Awaited<ReturnType<typeof verifyArchive>>['records'], takenAt: Date): Promise<string[]> {
+  const keyRecords = await readKeyRecords();
+  const owner = (id: string): string | null | undefined => {
+    const r = keyRecords.get(id);
+    if (r === undefined || r instanceof MasterKeyError) return undefined;
+    return r.container ?? null;
+  };
+  const shared = containersUnderSharedKeys(keyIdsByContainer(records), owner);
+  const at = takenAt.toISOString();
+  const noted: string[] = [];
+  for (const c of shared) {
+    const e = await updateContainerEntry(c, (cur) => (cur && 'key' in cur && (cur.moved !== undefined || cur.shared_in !== at) ? { key: cur.key, since: cur.since, shared_in: at } : null));
+    if (e && 'key' in e && e.shared_in === at) noted.push(c);
+  }
+  return noted;
+}
+
+/**
+ * Notes a rollback, seen in the store's own listing: a format-1 archive (the
+ * release before's, holding the whole key store) taken after a container's
+ * key was made holds that container readably. Its time goes in `shared_in`
+ * (if later than what is there) and `moved` is cleared.
+ */
+async function noteRollbacks(listed: { pathname: string }[]): Promise<string[]> {
+  const format1 = listed.map((b) => dataArchiveName(b.pathname)).filter((n): n is { taken: string; format1: boolean } => n !== null && n.format1).map((n) => n.taken).sort();
+  if (format1.length === 0) return [];
+  const noted: string[] = [];
+  for (const [container, entry] of await readContainerEntries()) {
+    if (entry instanceof ContainerKeyError || !('key' in entry)) continue;
+    const newest = format1.filter((t) => t > entry.since).at(-1);
+    if (!newest || (entry.shared_in !== undefined && entry.shared_in >= newest)) continue;
+    const e = await updateContainerEntry(container, (cur) =>
+      cur && 'key' in cur && (cur.shared_in === undefined || cur.shared_in < newest) ? { key: cur.key, since: cur.since, shared_in: newest } : null
+    );
+    if (e && 'key' in e && e.shared_in === newest) noted.push(container);
+  }
+  return noted;
+}
 
 export async function runBackup(
   client: ExportClient,
@@ -175,7 +280,7 @@ export async function runBackup(
     return { body, records: verifyArchive(body).records };
   });
 
-  const pathname = `${backupFolder()}nya-${now.toISOString().replace(/[:.]/g, '-')}.ndjson`;
+  const pathname = `${backupFolder()}nya-${now.toISOString().replace(/[:.]/g, '-')}.f2.ndjson`;
   await step('upload', opts, (signal) => store.put(pathname, body, signal));
 
   // Read back: what counts is what the store will hand over on the bad day. A
@@ -187,8 +292,17 @@ export async function runBackup(
     throw new Error(`The backup ${pathname} did not read back as written`);
   }
 
+  // The key archive, checked against what tonight's values name. A run that
+  // can't write and check it fails here: its data archive is kept, and
+  // nothing is pruned.
+  const named = namedKeyIds(keyIdsByContainer(records));
+  const maxDays = Math.max(days + 1, MIN_KEPT);
+  const keyArchive = await step('keys', opts, (signal) => writeKeyArchive(client, store, keysLock, { takenAt: now, named, maxDays, signal }));
+  const shared = await step('count', opts, () => noteSharedKeys(records, now));
+
   const cutoff = now.getTime() - days * 86_400_000;
   const existing = await step('list', opts, (signal) => store.list(backupFolder(), signal));
+  const rollbacks = await noteRollbacks(existing);
   existing.sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
   const pruned = existing
     .slice(MIN_KEPT)
@@ -196,7 +310,7 @@ export async function runBackup(
     .map((b) => b.pathname);
   if (pruned.length > 0) await step('prune', opts, (signal) => store.del(pruned, signal));
 
-  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned };
+  return { pathname, bytes: Buffer.byteLength(body), keys: records.length, pruned, key_archive: keyArchive, shared_in: shared, rollback_noted: rollbacks };
 }
 
 /**
@@ -235,7 +349,7 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
   if (!token) return null;
   const blob = await import('@vercel/blob');
   return {
-    async put(pathname, body, signal) {
+    async put(pathname, body, signal, opts) {
       await blob.put(pathname, body, {
         abortSignal: signal,
         access: 'private',
@@ -244,6 +358,7 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
         allowOverwrite: false,
         // Large bodies go up in parts, each retried on its own.
         multipart: body.length > 8 * 1024 * 1024,
+        ...(opts?.cacheMaxAgeSeconds !== undefined ? { cacheControlMaxAge: opts.cacheMaxAgeSeconds } : {}),
       });
     },
     async get(pathname, signal) {
@@ -278,6 +393,92 @@ export async function vercelBlobStore(readUrl: ReadUrl = nodeText): Promise<Back
       if (pathnames.length > 0) await blob.del(pathnames, { abortSignal: signal });
     },
   };
+}
+
+// The key archives' lock and the marker a deletion leaves (lib/key-archive.ts
+// KeysLock), beside the backups' own record.
+
+const KEYS_LOCK = () => kEnv('backups:keys-lock');
+const KEYS_PENDING = () => kEnv('backups:keys-pending');
+
+/** How long the key archives' lock is held at most. The nightly run's key
+ *  archive step and a deletion's rewrite each finish well inside it. */
+export const KEYS_LOCK_MS = 120_000;
+
+/** Deletes a key only while it holds exactly ARGV[1]: the lock's release,
+ *  and the marker's clearing. The same script as the snapshot's lock
+ *  (lib/snapshot-job.ts), and named the same. */
+export const DELETE_IF_HOLDS = `-- nya:release-lock
+if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) end
+return 0`;
+
+const isIsoTime = (v: unknown): v is string => typeof v === 'string' && !Number.isNaN(Date.parse(v));
+
+async function readPending(): Promise<KeysPending | null> {
+  const raw = await redis().get<unknown>(KEYS_PENDING());
+  if (raw === null || raw === undefined) return null;
+  let v: unknown = raw;
+  if (typeof raw === 'string') {
+    try {
+      v = JSON.parse(raw);
+    } catch {
+      v = null;
+    }
+  }
+  const p = v as { since?: unknown; containers?: unknown } | null;
+  // One that can't be read still says a rewrite is owed.
+  if (!p || typeof p !== 'object' || !isIsoTime(p.since) || !Array.isArray(p.containers)) return { since: new Date(0).toISOString(), containers: [] };
+  return { since: p.since, containers: p.containers.filter((c): c is string => typeof c === 'string') };
+}
+
+export const keysLock: KeysLock = {
+  async take(waitMs) {
+    const token = crypto.randomUUID();
+    const until = Date.now() + waitMs;
+    for (;;) {
+      if (await redis().set(KEYS_LOCK(), token, { nx: true, px: KEYS_LOCK_MS })) return token;
+      if (Date.now() >= until) return null;
+      await new Promise((r) => setTimeout(r, Math.min(500, Math.max(0, until - Date.now()))));
+    }
+  },
+  async release(token) {
+    try {
+      await redis().eval(DELETE_IF_HOLDS, [KEYS_LOCK()], [token]);
+    } catch (err) {
+      console.error('Key archives: the lock could not be released; it will expire.', err instanceof Error ? err.name : typeof err);
+    }
+  },
+  readPending,
+  async markPending(container, now) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const cur = await readPending();
+      const next: KeysPending = { since: cur?.since ?? now.toISOString(), containers: [...new Set([...(cur?.containers ?? []), container])].sort() };
+      await redis().set(KEYS_PENDING(), JSON.stringify(next));
+      if ((await readPending())?.containers.includes(container)) return;
+    }
+  },
+  async clearPendingIf(seen) {
+    await redis().eval(DELETE_IF_HOLDS, [KEYS_PENDING()], [JSON.stringify(seen)]);
+  },
+};
+
+/** Whether a deletion left the key archives for the nightly run, and since
+ *  when: for the status. */
+export async function keysPending(): Promise<KeysPending | null> {
+  return readPending();
+}
+
+/**
+ * A deletion's last step (lib/account-deletion.ts): every kept key archive
+ * rewritten without the keys just destroyed, or left for the next nightly
+ * run (lib/key-archive.ts rewriteAfterDeletion). Never throws.
+ */
+export function rewriteKeyArchivesAfterDeletion(
+  store: BackupStore | null,
+  container: string,
+  opts: { now?: Date; limitMs?: number; lockWaitMs?: number } = {}
+): ReturnType<typeof rewriteAfterDeletion> {
+  return rewriteAfterDeletion(store, rawRedis() as unknown as Parameters<typeof rewriteAfterDeletion>[1], keysLock, container, opts);
 }
 
 const STATUS = () => kEnv('backups:status');

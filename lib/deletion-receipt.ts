@@ -40,6 +40,23 @@ export type DeletionCounts = {
 export type BackupRetention = { kept: false } | { kept: true; keep_days: number; min_kept: number; max_days: number } | null;
 
 /**
+ * What the receipt says of the account's data key (docs/operations.md,
+ * "Per-container data keys"), from its map entry as the deletion read it
+ * before destroying the key (lib/account-deletion.ts keyFactsOf).
+ */
+export type ReceiptKeys = {
+  /** Whether its data was under a key of its own; null when that couldn't be
+   *  read on this attempt. */
+  own_key: boolean | null;
+  /** The latest time a copy can have held some of it under a key shared by
+   *  everyone on this copy of Nya (an ISO time), or null for never. */
+  shared_from: string | null;
+  /** The key backups: rewritten without its key, at a time; left for the
+   *  next nightly backup; or none kept on this server. */
+  key_backups: { rewritten_at: string } | { pending: true } | { none: true };
+};
+
+/**
  * A day added to the backup date people are given. The nightly backup is
  * pruned minutes into a run that a cron can start up to an hour late, so the
  * last copy can outlive the exact figure (lib/backup.ts backupRetention) by
@@ -72,6 +89,14 @@ export type DeletionReceipt = {
     | { kept: true; keep_days: number; min_kept: number; until: string; stopped: boolean }
     /** The retention setting couldn't be read. */
     | null;
+  /** Its data key, when it had a container: what was destroyed, and until
+   *  when copies under a shared key stay readable (null: none do; absent
+   *  from a receipt the release before made). */
+  keys?: ReceiptKeys & { shared_until: string | null };
+  /** The database host's own backups (DATABASE_BACKUP_DAYS): kept that many
+   *  days, each the whole database. Absent when they are off; null when the
+   *  setting can't be read. */
+  database?: { days: number; until: string } | null;
 };
 
 /** The receipt for a deletion that just finished. `stopped`: the nightly
@@ -84,9 +109,20 @@ export function buildDeletionReceipt(input: {
   deleted_at: Date;
   retention: BackupRetention;
   stopped: boolean;
+  keys?: ReceiptKeys | null;
+  /** DATABASE_BACKUP_DAYS (lib/backup.ts databaseBackupDays): 0 when off,
+   *  null when it can't be read. */
+  database_days?: number | null;
 }): DeletionReceipt {
   const { retention } = input;
+  const dbDays = input.database_days === undefined ? 0 : input.database_days;
+  // A copy under a shared key is gone once the newest nightly copy that can
+  // hold it is: backupDaysAtMost after it was taken.
+  const sharedUntil = (from: string | null): string | null =>
+    from === null || !retention?.kept ? null : new Date(Date.parse(from) + backupDaysAtMost(retention) * 86_400_000).toISOString();
   return {
+    ...(input.keys ? { keys: { ...input.keys, shared_until: sharedUntil(input.keys.shared_from) } } : {}),
+    ...(dbDays === null ? { database: null } : dbDays > 0 ? { database: { days: dbDays, until: new Date(input.deleted_at.getTime() + dbDays * 86_400_000).toISOString() } } : {}),
     deleted_at: input.deleted_at.toISOString(),
     found_data: input.found_data,
     resumed: input.resumed,
@@ -152,6 +188,7 @@ const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one :
 export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): ReceiptSection[] {
   const number = new Intl.NumberFormat(opts.locale);
   const day = (iso: string) => new Intl.DateTimeFormat(opts.locale, { dateStyle: 'long', timeZone: opts.timeZone }).format(new Date(iso));
+  const time = (iso: string) => new Intl.DateTimeFormat(opts.locale, { dateStyle: 'long', timeStyle: 'short', timeZone: opts.timeZone }).format(new Date(iso));
   const count = (n: number | null) => (n === null ? 'unavailable' : number.format(n));
   const d = r.deleted;
   const unavailable = [d.accounts, d.transactions, d.investment_transactions, d.history_days].some((n) => n === null);
@@ -187,6 +224,34 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
                 ? 'The nightly backup isn’t running right now, and old copies are deleted only when it runs, so that date moves later by as long as it stays stopped.'
                 : 'That holds as long as the nightly backup keeps running.'),
           ];
+
+  const k = r.keys;
+  if (k) {
+    if (k.own_key === true) {
+      later.push(
+        'Your data key: your data was encrypted under a key of its own, which was destroyed with your account. ' +
+          ('rewritten_at' in k.key_backups
+            ? `The backups of the keys were rewritten without it at ${time(k.key_backups.rewritten_at)}, so nothing encrypted under it can be decrypted from any copy Nya keeps (a deleted backup can still be served from the storage’s cache for up to a minute).`
+            : 'pending' in k.key_backups
+              ? 'The backups of the keys are rewritten without it by the next nightly backup that succeeds. Until then, a copy taken before the deletion can still be decrypted with this server’s master key.'
+              : 'This server keeps no backups of the keys, so it is gone everywhere Nya keeps one.')
+      );
+    } else if (k.own_key === false) {
+      later.push('Your data key: your data was encrypted under a key shared by everyone on this copy of Nya, not one of its own, so no key of yours was destroyed: copies of it stay readable with this server’s keys until they are deleted, as below.');
+    } else {
+      later.push('Your data key: whether your data was under a key of its own couldn’t be read on this attempt, so what follows assumes it wasn’t.');
+    }
+    if (b !== null && b.kept) {
+      later.push(
+        k.shared_until === null
+          ? 'Copies under a shared key: none. No nightly backup holds any of your data under a key shared by everyone on this server.'
+          : `Copies under a shared key: nightly backups can hold some of your data under a key shared by everyone on this server, readable with its master key, until ${day(k.shared_until)}.`
+      );
+    }
+  }
+  const db = r.database;
+  if (db === null) later.push('The database host’s own backups: how long they keep a copy couldn’t be worked out on this server. Ask whoever runs it.');
+  else if (db) later.push(`The database host’s own backups: each holds the whole database, keys included, for ${plural(db.days, 'day', 'days')}, so a copy holding your data readably can exist until ${day(db.until)}.`);
 
   const stays = [
     `Plaid’s own copy: Plaid keeps what it collected from your banks under its own privacy policy. Disconnecting ended Nya’s connections; it doesn’t delete Plaid’s records. See and delete what Plaid holds at the Plaid Portal: ${PLAID_PORTAL}`,

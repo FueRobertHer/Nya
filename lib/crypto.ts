@@ -574,6 +574,15 @@ async function highestKeyNumber(): Promise<number> {
   return max;
 }
 
+/** The key counter as stored (the last number handed out), or null when
+ *  there is none yet or it isn't a number. For the status. */
+export async function readKeyCounter(): Promise<number | null> {
+  const v = await redis().get<unknown>(keySeqKey());
+  if (typeof v === 'number' && Number.isSafeInteger(v)) return v;
+  if (typeof v === 'string' && /^(0|[1-9][0-9]*)$/.test(v)) return Number(v);
+  return null;
+}
+
 /** The next number for a new data key. Two keys may share one; their ids
  *  still differ, since an id commits to its key. */
 export async function nextKeyNumber(): Promise<number> {
