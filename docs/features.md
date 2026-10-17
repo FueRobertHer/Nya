@@ -588,7 +588,7 @@ Nothing is written to your balance history: a new account's balance is the one y
 - **YNAB's and Lunch Money's APIs.** Either would need your personal access token, a key to everything in that app's budget, to change as well as to read, and Nya couldn't be tested against either without real credentials. The exports carry the same transactions, categories, tags, notes and splits, so the importer reads those. What an API would add is Lunch Money's category settings, and YNAB's splits as its own structure rather than the marks in their memos.
 - **Actual's full export** (Settings, Export data), a zip of its SQLite database. Reading it would take an SQLite reader, which Nya doesn't have without a new dependency, and Actual's schema followed from release to release. Its CSV holds the same transactions.
 - **Budgets and goals** (YNAB's plan file, ZeroSum's `budget.csv`): they aren't transactions. Set yours in Nya ([Budgets on categories and groups](#budgets-on-categories-and-groups)).
-- The apps' balances over time, investment holdings, recurring items and rules. Lunch Money's transaction groups come in as one row at their net, as its export writes them, but into a linked account where its bank's own transactions, or a file imported before, already have them one by one.
+- The apps' balances over time, investment holdings, recurring items and rules. Lunch Money's transaction groups come in as one row at their net, as its export writes them, but not into a linked account where its bank's own transactions, or a file imported before, already have them one by one.
 
 ### Limits, and what isn't confirmed
 

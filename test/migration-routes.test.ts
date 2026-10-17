@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
@@ -1002,6 +1002,47 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     expect(await counted()).toBe(11);
     await seed(ctx, [ONE, parking('b_park1', { pending_transaction_id: 'p_park1' }), parking('b_park2', { pending_transaction_id: 'p_park2' }), bankTxn('b_bakery', 'acc_chk', 3, 5, { name: 'CORNER BAKERY' })]);
     expect(await counted()).toBe(11);
+  });
+
+  test('a group dated inside a bank file imported before is left out, since that file has its transactions one by one', async () => {
+    // On a clock of its own: every day here is a fixed one.
+    setSystemTime(new Date('2026-10-17T12:00:00Z'));
+    try {
+      await seed(ctx, [bankTxn('b_first', 'acc_chk', 0, 1, { name: 'FIRST ROW', date: '2026-08-18' })]);
+      // The bank's own file of a year before, through its history import:
+      // the dinner as the bank has it, a charge and a friend's repayment.
+      const bankCsv = ['Date,Description,Amount', '2025-08-23,GROCER,-30.00', '2025-09-12,DINNER PLACE,-135.00', '2025-09-13,VENMO FROM SAM,90.00', '2025-10-02,GROCER,-20.00'].join('\n');
+      const form = (meta: object) => {
+        const f = new FormData();
+        f.set('file', new Blob([new TextEncoder().encode(bankCsv) as Uint8Array<ArrayBuffer>]), 'bank.csv');
+        f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
+        return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+      };
+      const hp = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
+      expect((await asRes(await historyRoutes.POST(form({ action: 'import', review: hp.body.preview.review })))).status).toBe(200);
+      expect(await counted()).toBe(1 + 30 + 135 + 20);
+      // Lunch Money's export of the same days: the dinner as a group at its net.
+      const lm = [
+        'date,payee,amount,currency,category,category_group,notes,tags,account,original_name,type,parent_id,id,recurring_id,created_at',
+        '2025-08-23,Grocer,30.00,usd,Groceries,Food,,,Checking,,,,1,,',
+        '2025-09-12,Dinner with friends,45.00,usd,Restaurants,Food,,,Checking,,group,,2,,',
+        '2025-10-02,Grocer,20.00,usd,Groceries,Food,,,Checking,,,,3,,',
+      ].join('\n');
+      const { preview, done } = await importReviewed(lm, linkedTo);
+      const [target] = preview.targets;
+      // The group is left out, and the groceries are found exactly as the
+      // earlier file's own rows, already in the account.
+      expect(target.left_out).toEqual({ opening: 0, groups: 1, lines: 0 });
+      expect(target.counts.new ?? 0).toBe(0);
+      expect(target.counts.present).toBe(2);
+      expect(target.proposals).toEqual([]);
+      expect(done.status).toBe(200);
+      // Spent as the bank's file says, the dinner once: never the group's 45 beside it.
+      expect(await counted()).toBe(1 + 30 + 135 + 20);
+      expect(((await activity()).transactions as any[]).some((t) => t.name === 'Dinner with friends')).toBe(false);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test('before the bank’s own rows begin, nothing has a group or a split’s lines: they come in as a manual account takes them, and the period is whole', async () => {
