@@ -73,7 +73,7 @@ const record = (iso: string, accountIds: string[], holdings: any[]) => recordAt(
 /** The balances measured on a day, as recordSnapshot (real) or
  *  recordPartialAccounts (partial) write them. */
 async function measured(date: string, balances: Record<string, number>, layer: 'real' | 'partial' = 'real') {
-  await fake.hset(ctxKey(layer === 'real' ? 'history:accounts' : 'history:accounts:partial'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey(layer === 'real' ? 'history:accounts' : 'history:accounts:partial'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 }
 
 /** An account as the account directory remembers it (lib/links.ts). */
@@ -92,7 +92,7 @@ async function known(account_id: string, first_seen: string, name: string, insti
     first_seen,
     last_seen: first_seen,
   };
-  await fake.hset(ctxKey('accounts:directory'), { [account_id]: await encrypt(JSON.stringify(entry)) });
+  await fake.hset(ctxKey('accounts:directory'), { [account_id]: await encrypt(TEST_CTX, JSON.stringify(entry)) });
 }
 
 /** An investment account as the Plan tab lists it: one today's allocation
@@ -379,7 +379,7 @@ describe('an account the dashboard can’t show', () => {
 
   test('not listed, but remembered for a connection still stored: the same, from what the server knows', async () => {
     await outage();
-    await saveItem(ctx, { item_id: 'if', institution_name: 'Fidelity', encrypted_access_token: await encrypt('tok') });
+    await saveItem(ctx, { item_id: 'if', institution_name: 'Fidelity', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
     await rememberAccounts(ctx, [{ item_id: 'if', error: null, accounts: [{ account_id: 'k401', name: '401(k)', type: 'investment', subtype: '401k', currency: 'USD' }] }]);
     const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk')] });
     expect(lateDays(body)).toEqual(STILL_MISSING);
@@ -388,7 +388,7 @@ describe('an account the dashboard can’t show', () => {
 
   test('missing from an answer pending confirmation: still expected', async () => {
     await outage();
-    await fake.hset(ctxKey('accounts:vanished'), { if: await encrypt(JSON.stringify({ k401: new Date().toISOString() })) });
+    await fake.hset(ctxKey('accounts:vanished'), { if: await encrypt(TEST_CTX, JSON.stringify({ k401: new Date().toISOString() })) });
     const { body } = await ask({ from: '2026-08-01', to: '2026-10-09', currency: 'USD', accounts: [acct('brk')] });
     expect(lateDays(body)).toEqual(STILL_MISSING);
     expect(body.accounts.find((a: any) => a.account_id === 'k401')).toMatchObject({ state: 'unshown' });
@@ -479,7 +479,7 @@ describe('each day counted by today’s rules', () => {
 
   test('a listed id from before a reconnect is read as the account it is now', async () => {
     await record('2026-10-01T13:00:00Z', ['acct_new'], [hold('acct_new', 'vti', 1_000)]);
-    await fake.hset(ctxKey('account-links'), { acct_old: await encrypt(JSON.stringify({ to: 'acct_new', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
+    await fake.hset(ctxKey('account-links'), { acct_old: await encrypt(TEST_CTX, JSON.stringify({ to: 'acct_new', linked_at: '2026-10-02T00:00:00.000Z', evidence: {} })) });
     const { body } = await ask({ from: '2026-10-01', to: '2026-10-01', currency: 'USD', accounts: [acct('acct_old')] });
     expect(body.days[0]).toMatchObject({ classes: { 'us-stocks': 1_000 }, missing: [] });
     expect(body.accounts.map((a: any) => [a.account_id, a.state])).toEqual([['acct_new', 'shown']]);

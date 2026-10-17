@@ -193,7 +193,7 @@ export async function POST() {
     // A balance read Plaid didn't answer says why (balancesFailure).
     const perItem = await Promise.all(
       items.map(async (item) => {
-        const access_token = await decrypt(item.encrypted_access_token);
+        const access_token = await decrypt(ctx, item.encrypted_access_token);
         // Stored balances, not the billed live balance call: see lib/networth.ts.
         let bal: Awaited<ReturnType<typeof plaidClient.accountsGet>>;
         try {

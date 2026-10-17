@@ -177,7 +177,7 @@ async function addItem(
   await saveItem(ctx, {
     item_id,
     institution_name,
-    encrypted_access_token: await encrypt(token),
+    encrypted_access_token: await encrypt(TEST_CTX, token),
     ...('billed' in opts ? { transactions_billed: opts.billed } : {}),
   });
   if (opts.remember !== false) await remember(item_id, institution_name, accounts);

@@ -62,7 +62,7 @@ export async function getHiddenAccounts(ctx: Ctx): Promise<HiddenMap> {
   await Promise.all(
     Object.entries(map).map(async ([account_id, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as Partial<HiddenAccount>;
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as Partial<HiddenAccount>;
         if (typeof parsed.type !== 'string') {
           throw new Error('missing type');
         }
@@ -97,21 +97,21 @@ export async function setAccountHidden(ctx: Ctx,
   const existing = await redis().hget<string>(HIDDEN_HASH(ctx), account_id);
   if (existing) {
     try {
-      const parsed = JSON.parse(await decrypt(existing)) as Partial<HiddenAccount>;
+      const parsed = JSON.parse(await decrypt(ctx, existing)) as Partial<HiddenAccount>;
       if (typeof parsed.forget_tag === 'string') forget_tag = parsed.forget_tag;
     } catch (err) {
       throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
     }
   }
   const value: HiddenAccount = { type, hidden_at: new Date().toISOString(), ...(forget_tag ? { forget_tag } : {}) };
-  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
 }
 
 /** Marks a hidden account as being forgotten, with the tag its progress is
  *  kept under (see HiddenAccount.forget_tag). */
 export async function markForgetting(ctx: Ctx, account_id: string, entry: HiddenAccount, forget_tag: string): Promise<void> {
   const value: HiddenAccount = { ...entry, forget_tag };
-  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
 }
 
 /**

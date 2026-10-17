@@ -94,9 +94,9 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta'), {
-    item_chase: await encrypt(
+    item_chase: await encrypt(TEST_CTX, 
       JSON.stringify([
         { account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
         { account_id: 'acc_sav', name: 'Savings', official_name: null, mask: '2222', type: 'depository', subtype: 'savings', limit: null, currency: 'USD' },
@@ -105,7 +105,7 @@ beforeEach(async () => {
   });
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: 'c1',
       accounts: {
@@ -268,19 +268,19 @@ describe('a goal’s pace', () => {
       await saveItem(ctx, {
         item_id: 'item_cu',
         institution_name: 'Credit union',
-        encrypted_access_token: await encrypt('access-sandbox-cu'),
+        encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-cu'),
         ...(kind === 'refused' ? { transactions_billed: false } : {}),
       });
       await fake.hset(ctxKey('accounts:meta'), {
-        item_cu: await encrypt(JSON.stringify([{ account_id: 'acc_cu', name: 'Savings', official_name: null, mask: '4444', type: 'depository', subtype: 'savings', limit: null, currency: 'USD' }])),
+        item_cu: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_cu', name: 'Savings', official_name: null, mask: '4444', type: 'depository', subtype: 'savings', limit: null, currency: 'USD' }])),
       });
       if (kind === 'refused') {
         await fake.set(
           ctxKey('txns:item_cu'),
-          await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: new Date().toISOString(), code: 'PRODUCTS_NOT_SUPPORTED', accounts: ['acc_cu'] } })
+          await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: {}, refused: { at: new Date().toISOString(), code: 'PRODUCTS_NOT_SUPPORTED', accounts: ['acc_cu'] } })
         );
       }
-      const balance = async (m: string, value: number) => fake.hset(ctxKey('history:accounts'), { [lastDayOf(m)]: await encrypt(JSON.stringify({ acc_cu: value })) });
+      const balance = async (m: string, value: number) => fake.hset(ctxKey('history:accounts'), { [lastDayOf(m)]: await encrypt(TEST_CTX, JSON.stringify({ acc_cu: value })) });
       await balance(addMonths(M1, -1), 1000);
       await balance(M1, 1500);
       await balance(M2, 1500);

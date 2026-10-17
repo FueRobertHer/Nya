@@ -64,7 +64,7 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const { encrypt } = await import('@/lib/crypto');
-ITEM.encrypted_access_token = await encrypt('access-token');
+ITEM.encrypted_access_token = await encrypt(TEST_CTX, 'access-token');
 const { syncInvestments, readInvStore, nextWindow, clearInvestmentStore } = await import('@/lib/invstore');
 const { encodeJsonBlob } = await import('@/lib/blob');
 
@@ -289,7 +289,7 @@ describe('storage failures never overwrite', () => {
   });
 
   test('a blob from a newer schema is never written over', async () => {
-    const newer = await encodeJsonBlob({ schema_version: 99, txns: {}, accounts: {}, coverage: {}, securities: {} });
+    const newer = await encodeJsonBlob(TEST_CTX, { schema_version: 99, txns: {}, accounts: {}, coverage: {}, securities: {} });
     await fake.set(key, newer);
     plaid.rows = [row('a', '2026-09-01')];
     await syncInvestments(ctx, ITEM, { now: NOW });
@@ -569,7 +569,7 @@ describe('/api/investment-activity', () => {
     // A record that starts 100 days ago (the sync is fresh, so it stays so).
     const state = await readInvStore(ctx, 'item1');
     state.coverage.ira = { from: daysAgo(100), through: state.coverage.ira.through };
-    await fake.set(key, await encodeJsonBlob(state));
+    await fake.set(key, await encodeJsonBlob(TEST_CTX, state));
     const { clearCaches } = await import('@/lib/cache');
     await clearCaches(ctx);
     const short = await get();
@@ -733,7 +733,7 @@ describe('third review: route and shape details', () => {
   });
 
   test('a stored `cancelled` that is not an object makes the store unreadable, not a crash', async () => {
-    await fake.set(key, await encodeJsonBlob({ schema_version: 1, txns: {}, accounts: {}, coverage: {}, securities: {}, cancelled: 'x' }));
+    await fake.set(key, await encodeJsonBlob(TEST_CTX, { schema_version: 1, txns: {}, accounts: {}, coverage: {}, securities: {}, cancelled: 'x' }));
     plaid.rows = [row('a', '2026-09-01')];
     const sync = await syncInvestments(ctx, ITEM, { now: NOW });
     expect(sync.storeNote).toBe('Saved investment history could not be read');

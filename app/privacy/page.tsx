@@ -1,12 +1,14 @@
 import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
-import { backupRetention } from '@/lib/backup';
-import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
+import { backupRetention, databaseBackupDays } from '@/lib/backup';
+import { masterKeyConfigured } from '@/lib/crypto';
+import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -19,7 +21,10 @@ export const metadata: Metadata = {
 // makes it true today and, where some of it is still to come, what is not
 // built yet. Reads no stored data: what it says of backups comes from
 // backupRetention() (lib/backup.ts, environment only), the rule the deletion
-// receipt dates by, so the two never disagree, and whether it names an email
+// receipt dates by, so the two never disagree, and DATABASE_BACKUP_DAYS; what
+// it says of a data key per account, from whether a master key is set
+// (lib/crypto.ts masterKeyConfigured) and keyDeletionText
+// (lib/deletion-receipt.ts), as the security page says it; whether it names an email
 // provider, or says a download is emailed, from sendsEmail()
 // (lib/notice-recipients.ts): mail set up, and someone it may write to, which
 // is whether this copy sends email at all.
@@ -48,7 +53,10 @@ const downloadEmail = (mail: boolean) =>
     ? 'Each download is emailed to you: when it happened and which format, never what is in it.'
     : 'This copy of Nya sends no email, so a download isn’t emailed to you.';
 
-const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
+/** What the pages say of a data key per account, as this copy is set up. */
+type Keys = ReturnType<typeof keyDeletionText>;
+
+const commitments = (backups: BackupRetention, mail: boolean, keys: Keys): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -65,10 +73,14 @@ const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
-    today: `Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in, then gives you a receipt of what was deleted, what expires when, and what stays and why. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy; the receipt links to the Plaid Portal, where you can delete it.`,
+    today: `Delete my account disconnects your banks at Plaid, deletes everything stored for you, ends all sharing and deletes your sign-in, then gives you a receipt of what was deleted, what expires when, and what stays and why. ${deletedInBackups(backups)}${
+      keys.key.length > 0
+        ? ` ${keys.key.join(' ')}`
+        : ' A data key per account, which makes your copies in backups unreadable once your account is deleted, needs a master key, which this copy of Nya doesn’t have set.'
+    } Plaid keeps what it collected under its own policy; the receipt links to the Plaid Portal, where you can delete it.`,
     next: {
       label: 'Not built yet',
-      text: 'A key per person, so that deleting your account makes your copies in backups unreadable at once.',
+      text: 'Encrypting the details stored as plain text (dates, ids, bank names and the like), which stay readable in backups until they are deleted.',
     },
   },
   {
@@ -111,14 +123,21 @@ const commitments = (backups: BackupRetention, mail: boolean): Commitment[] => [
   },
 ];
 
-const processors = (backups: BackupRetention, mail: boolean): [string, string][] => [
+/** What the database host's own backups keep, as DATABASE_BACKUP_DAYS says. */
+function databaseBackups(days: number | null): string {
+  if (days === null) return ' Its own backups of the database, if they are on, keep a copy for as long as its setting says, which couldn’t be worked out on this copy of Nya.';
+  if (days > 0) return ` Its own backups of the database keep a copy for ${days === 1 ? '1 day' : `${days} days`}.`;
+  return '';
+}
+
+const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null): [string, string][] => [
   [
     'Vercel',
     `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'} Handles every request and response, and keeps the app’s logs.`,
   ],
   [
     'Upstash',
-    'The database. Holds your data: the values that hold money encrypted, and the details listed on the Security page in plain text.',
+    `The database. Holds your data: the values that hold money encrypted, and the details listed on the Security page in plain text.${databaseBackups(dbDays)} Its own internal copies follow its own policy.`,
   ],
   [
     'Plaid',
@@ -136,7 +155,7 @@ const processors = (backups: BackupRetention, mail: boolean): [string, string][]
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number, and keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid or SimpleFIN gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -159,7 +178,7 @@ function backupsRow(backups: BackupRetention): string {
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention, mail: boolean): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
@@ -179,8 +198,11 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
   ['Nightly backups', backupsRow(backups)],
   [
     'A deleted account',
-    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)} Plaid keeps what it collected under its own policy.`,
+    `Out of reach at once, and deleted from the database, apart from invite links you made that nobody used (your sign-in id and the name you gave), which expire within 72 hours. ${deletedInBackups(backups)}${keys.key.length > 0 ? ` ${keys.key.slice(1).join(' ')}` : ''} Plaid keeps what it collected under its own policy.`,
   ],
+  ...(keys.key.length > 0
+    ? ([['A record that a deleted account existed', 'Its random id and the day its key was destroyed: kept for good, so that a restored backup never brings the account back.']] as [string, string][])
+    : []),
   ['Invite links', '72 hours, or until used.'],
   ['Records of when shared accounts were shown', showingsRow(backups)],
   [
@@ -195,10 +217,15 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
     'Requests counted for each API token',
     `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`,
   ],
+  [
+    'The weekly summary',
+    `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
+  ],
+  ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
   ['Sessions with Clerk accounts', 'As long as Clerk’s session settings for this copy of Nya allow.'],
   ['Failed password attempts, counted by IP address', '15 minutes.'],
-  ['Requests with API tokens that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
+  ['Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address', `${API_AUTH_WINDOW_SECONDS / 60} minutes.`],
   [
     'What your device keeps',
     'Your accounts, their balances and your net-worth history, as the app last showed them, until you sign out on that device, or it next finds you were signed out elsewhere.',
@@ -208,6 +235,8 @@ const retention = (backups: BackupRetention, mail: boolean): [string, string][] 
 export default function PrivacyPage() {
   const backups = backupRetention();
   const mail = sendsEmail();
+  const dbDays = databaseBackupDays();
+  const keys = keyDeletionText({ envelope: masterKeyConfigured(), backups, databaseDays: dbDays });
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -215,7 +244,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {commitments(backups, mail).map((c) => (
+      {commitments(backups, mail, keys).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -234,7 +263,7 @@ export default function PrivacyPage() {
       <InfoSection title="Who processes your data">
         <table className="info-table">
           <tbody>
-            {processors(backups, mail).map(([name, what]) => (
+            {processors(backups, mail, dbDays).map(([name, what]) => (
               <tr key={name}>
                 <th scope="row">{name}</th>
                 <td>{what}</td>
@@ -258,7 +287,7 @@ export default function PrivacyPage() {
             </tr>
           </thead>
           <tbody>
-            {retention(backups, mail).map(([what, howLong]) => (
+            {retention(backups, mail, keys).map(([what, howLong]) => (
               <tr key={what}>
                 <th scope="row">{what}</th>
                 <td>{howLong}</td>
@@ -305,6 +334,13 @@ export default function PrivacyPage() {
             {deletedInBackups(backups)}
             {backups?.kept ? ' The receipt gives the date.' : ''}
           </li>
+          {keys.key.length > 0 && <li>{keys.key.join(' ')}</li>}
+          {keys.notReached.length > 0 && (
+            <li>
+              What deleting your key doesn’t reach:{' '}
+              {keys.notReached.map((line) => line.charAt(0).toLowerCase() + line.slice(1).replace(/\.$/, '')).join('; ')}.
+            </li>
+          )}
           <li>
             Invite links you made that nobody has used hold your sign-in id and the name you gave, and expire on their
             own within 72 hours.

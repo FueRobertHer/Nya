@@ -90,8 +90,26 @@ describe('with mail on', () => {
     const err = await sendMail(message, { fetch: f.fn }).catch((e) => e);
     expect(err).toBeInstanceOf(MailError);
     expect(err.status).toBe(422);
+    expect(err.code).toBe('validation_error');
     expect(err.message).toContain('422, validation_error');
     expect(err.message).not.toContain('me@example.com');
+    // A name that isn't one of Resend's short codes is never kept.
+    const odd = await sendMail(message, { fetch: fakeFetch(() => Response.json({ name: 'Me <me@example.com>' }, { status: 409 })).fn }).catch((e) => e);
+    expect([odd.status, odd.code]).toEqual([409, null]);
+  });
+
+  // The weekly summary's List-Unsubscribe headers (lib/weekly-summary/job.ts).
+  test('message headers go as Resend takes them: only the unsubscribe pair, one line each', async () => {
+    const f = fakeFetch(() => Response.json({ id: 'x' }));
+    const headers = { 'List-Unsubscribe': '<https://nya.example.com/api/weekly-summary/unsubscribe?t=abc>', 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' };
+    await sendMail({ ...message, headers }, { fetch: f.fn });
+    expect(JSON.parse(String(f.calls[0].init.body)).headers).toEqual(headers);
+    // Any other name, or a value that would start another header line, is left out.
+    await sendMail({ ...message, headers: { 'List-Unsubscribe': '<https://x.example>\r\nBcc: someone@example.com', Bcc: 'someone@example.com' } as never }, { fetch: f.fn });
+    expect(JSON.parse(String(f.calls[1].init.body)).headers).toBeUndefined();
+    // None at all sends no field.
+    await sendMail(message, { fetch: f.fn });
+    expect('headers' in JSON.parse(String(f.calls[2].init.body))).toBe(false);
   });
 
   test('no answer at all throws too: it is never taken for sent', async () => {

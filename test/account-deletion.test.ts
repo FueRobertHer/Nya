@@ -36,6 +36,27 @@ const fake = new FakeRedis();
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
+// Vercel Blob, kept in memory: where the key archives a deletion rewrites
+// are kept (lib/key-archive.ts). Read back through the store's own URL with
+// node's client, which is served from here too.
+const blobs = new Map<string, { body: string; options: any }>();
+mock.module('@vercel/blob', () => ({
+  put: async (pathname: string, body: string, options: any) => {
+    if (blobs.has(pathname) && !options.allowOverwrite) throw new Error('exists');
+    blobs.set(pathname, { body, options });
+    return { pathname };
+  },
+  get: async (pathname: string) =>
+    blobs.has(pathname) ? { statusCode: 200, stream: new ReadableStream({}), headers: new Headers(), blob: { url: `https://store.blob.vercel-storage.com/${pathname}` } } : null,
+  list: async ({ prefix }: { prefix: string }) => ({
+    blobs: [...blobs.keys()].filter((p) => p.startsWith(prefix)).sort().map((pathname) => ({ pathname, uploadedAt: new Date() })),
+    hasMore: false,
+  }),
+  del: async (pathnames: string[]) => {
+    for (const p of pathnames) blobs.delete(p);
+  },
+}));
+
 const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { ownerContainer, ownersKey } = await import('@/lib/owners');
@@ -68,6 +89,7 @@ let partner: { container: any };
 const saved = { ...process.env };
 beforeEach(async () => {
   fake.reset();
+  blobs.clear();
   removed.length = 0;
   deletedUsers.length = 0;
   removeFails = false;
@@ -85,7 +107,7 @@ beforeEach(async () => {
   partner = { container: await ownerContainer('user_partner') };
   await saveManualAccount(partner as any, manual('manual_partner'));
   await fake.hset(`test:c:${partner.container}:plaid:items`, {
-    item_p: JSON.stringify({ item_id: 'item_p', institution_name: 'Ally', encrypted_access_token: await encrypt('token-partner') }),
+    item_p: JSON.stringify({ item_id: 'item_p', institution_name: 'Ally', encrypted_access_token: await encrypt(TEST_CTX, 'token-partner') }),
   });
   // Two transactions on one account, and two days of history: what the receipt counts.
   const row = (id: string, date: string) => ({
@@ -104,10 +126,10 @@ beforeEach(async () => {
   });
   await fake.set(
     `test:c:${partner.container}:txns:item_p`,
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: { acc_p: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1', balances: null } }, txns: { t1: row('t1', '2026-01-01'), t2: row('t2', '2026-01-02') } })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: { acc_p: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1', balances: null } }, txns: { t1: row('t1', '2026-01-01'), t2: row('t2', '2026-01-02') } })
   );
-  await fake.hset(`test:c:${partner.container}:history:net-worth`, { '2026-01-01': await encrypt('10'), '2026-01-02': await encrypt('20') });
-  await fake.hset(`test:c:${partner.container}:history:accounts`, { '2026-01-02': await encrypt(JSON.stringify({ acc_p: 10, manual_partner: 10 })) });
+  await fake.hset(`test:c:${partner.container}:history:net-worth`, { '2026-01-01': await encrypt(TEST_CTX, '10'), '2026-01-02': await encrypt(TEST_CTX, '20') });
+  await fake.hset(`test:c:${partner.container}:history:accounts`, { '2026-01-02': await encrypt(TEST_CTX, JSON.stringify({ acc_p: 10, manual_partner: 10 })) });
   const link = await as('user_owner', () => route('connections/invite', 'POST', {}));
   const { id } = (await as('user_partner', () => route('connections/accept', 'POST', { token: link.body.url.split('/connect/')[1] }))).body;
   await as('user_owner', () => route('connections', 'PUT', { id, accounts: { manual_owner: 'balance' } }));
@@ -187,6 +209,16 @@ describe('deleting my account', () => {
     expect(res.status).toBe(409);
     expect(keysOf(TEST_CONTAINER).length).toBeGreaterThan(0);
     expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ enabled: true, can_delete: true });
+  });
+
+  test('an account whose data belongs to another sign-in too can’t be deleted from the app', async () => {
+    // The owners mapping edited by hand to give one container to two accounts (docs/authentication.md).
+    await fake.hset(ownersKey(), { user_other: partner.container });
+    expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ enabled: true, can_delete: false, reason: expect.stringContaining('belongs to another sign-in too') });
+    expect((await as('user_partner', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(409);
+    expect(keysOf(partner.container).length).toBeGreaterThan(0);
+    await fake.hdel(ownersKey(), 'user_other');
+    expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ can_delete: true });
   });
 
   test('a bank Plaid won’t disconnect doesn’t stop the rest', async () => {
@@ -389,3 +421,212 @@ describe('deleting my account', () => {
   });
 });
 
+
+// A data key per container (docs/operations.md, "Per-container data keys"):
+// an account born with one has it destroyed with it.
+describe('an account with a data key of its own', () => {
+  const MASTER = Buffer.alloc(32, 71).toString('base64');
+  let third: { container: any };
+  let keyThird = '';
+  const map = () => fake.hashes.get('test:crypto:container-keys');
+  const quiet = async <R>(fn: () => Promise<R>): Promise<R> => {
+    const orig = console.error;
+    console.error = () => {};
+    try {
+      return await fn();
+    } finally {
+      console.error = orig;
+    }
+  };
+  /** The key archives, kept in memory, read back exactly. */
+  const memoryStore = () => {
+    const files = new Map<string, string>();
+    return {
+      files,
+      put: async (p: string, body: string) => void files.set(p, body),
+      get: async (p: string) => files.get(p) ?? null,
+      list: async (prefix: string) => [...files.keys()].filter((p) => p.startsWith(prefix)).map((pathname) => ({ pathname, uploadedAt: new Date() })),
+      del: async (ps: string[]) => void ps.forEach((p) => files.delete(p)),
+    };
+  };
+
+  beforeEach(async () => {
+    process.env.MASTER_KEY = MASTER;
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_owner,user_partner,user_third';
+    (await import('@/lib/crypto')).forgetActiveKey();
+    // Born with its key, in the step that registers it.
+    third = { container: await ownerContainer('user_third') };
+    keyThird = JSON.parse(map()!.get(third.container)!).key;
+    await saveManualAccount(third as any, manual('manual_third'));
+    await fake.hset(`test:c:${third.container}:plaid:items`, {
+      item_t: JSON.stringify({ item_id: 'item_t', institution_name: 'Ally', encrypted_access_token: await encrypt(third as any, 'token-third') }),
+    });
+  });
+  // The map entries are kept for a minute: never into the next test.
+  afterEach(async () => (await import('@/lib/crypto')).forgetActiveKey());
+
+  test('its key goes with it: out of the key store, with a tombstone and a marker, and the receipt says so', async () => {
+    const res = await as('user_third', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+    expect(res.status).toBe(200);
+    expect(removed).toEqual(['token-third']); // its bank's token read with the key, before it went
+    expect(fake.hashes.get('test:crypto:keys')?.has(keyThird) ?? false).toBe(false);
+    expect(JSON.parse(fake.hashes.get('test:crypto:destroyed')!.get(keyThird)!)).toEqual({ container: third.container, on: new Date().toISOString().slice(0, 10) });
+    expect(JSON.parse(map()!.get(third.container)!)).toEqual({ destroyed: new Date().toISOString().slice(0, 10) });
+    expect(keysOf(third.container)).toEqual([]);
+    expect(await fake.hget(ownersKey(), 'user_third')).toBeNull(); // the marker gone with the sign-in
+    // Born with its key and never under a shared one: no copy under a shared key.
+    expect(res.body.receipt.keys).toEqual({ own_key: true, shared_from: null, key_in: null, key_backups: { none: true }, shared_until: null, key_until: null });
+  });
+
+  test('every kept key archive is rewritten without it, as the last step', async () => {
+    const { runBackup } = await import('@/lib/backup');
+    const { listGenerations, verifyKeyArchive } = await import('@/lib/key-archive');
+    const store = memoryStore();
+    process.env.BLOB_READ_WRITE_TOKEN = 'token';
+    await quiet(() => runBackup(fake as any, store as any, new Date(Date.now() - 86_400_000)));
+    const holds = async () => {
+      const { generations } = await listGenerations(store as any);
+      return verifyKeyArchive((await store.get(generations[0].pathname))!).keys.has(keyThird);
+    };
+    expect(await holds()).toBe(true);
+    const result = await deleteAccount('user_third', { removeItem: async () => {}, keyArchives: store as any });
+    expect(result.keys).toMatchObject({ own_key: true, key_backups: { rewritten_at: expect.any(String) } });
+    expect(await holds()).toBe(false);
+  });
+
+  // A backup the release before took while rolled back (format 1) holds the
+  // whole key store, this account's key included, until it is pruned.
+  describe('after a rollback', () => {
+    const later = async (keys: unknown) => {
+      const { buildDeletionReceipt, receiptSections } = await import('@/lib/deletion-receipt');
+      const { backupRetention } = await import('@/lib/backup');
+      const receipt = buildDeletionReceipt({ counts: {} as any, found_data: true, resumed: false, deleted_at: new Date(), retention: backupRetention(), stopped: false, keys: keys as any, database_days: 0 });
+      const day = (iso: string) => new Intl.DateTimeFormat('en-US', { dateStyle: 'long', timeZone: 'UTC' }).format(new Date(iso));
+      return { text: receiptSections(receipt, { locale: 'en-US', timeZone: 'UTC' }).find((s) => s.title === 'Expires later')!.lines.join('\n'), until: day(receipt.keys!.key_until!) };
+    };
+    const rolledBack = async (store: ReturnType<typeof memoryStore>) => {
+      const { backupFolder } = await import('@/lib/backup');
+      const taken = new Date(Date.parse(JSON.parse(map()!.get(third.container)!).since) + 3_600_000);
+      await store.put(`${backupFolder()}nya-${taken.toISOString().replace(/[:.]/g, '-')}.ndjson`, 'format 1');
+      return taken.toISOString();
+    };
+    beforeEach(() => {
+      process.env.BLOB_READ_WRITE_TOKEN = 'token';
+    });
+
+    test('noted by a nightly run: the receipt says the backup holds the key, until when, and that copies under a shared key can exist', async () => {
+      const { runBackup } = await import('@/lib/backup');
+      const store = memoryStore();
+      const taken = await rolledBack(store);
+      expect((await quiet(() => runBackup(fake as any, store as any, new Date()))).rollback_noted).toEqual([third.container]);
+      const result = await deleteAccount('user_third', { removeItem: async () => {}, keyArchives: store as any });
+      // Worded first: toMatchObject writes its matchers into what it is given.
+      const { text, until } = await later(result.keys);
+      expect(result.keys).toMatchObject({ own_key: true, key_in: taken, shared_from: expect.any(String), key_backups: { rewritten_at: expect.any(String) } });
+      expect(text).toContain(`but a backup taken while an older version of Nya ran holds your key until ${until}: until then, every copy of your data can be decrypted with this server’s master key.`);
+      expect(text).not.toContain('nothing encrypted under it can be decrypted');
+      expect(text).not.toContain('Copies under a shared key: none');
+    });
+
+    test('deleted after rolling forward, before any nightly run: the deletion lists the backups itself', async () => {
+      const store = memoryStore();
+      const taken = await rolledBack(store);
+      expect(JSON.parse(map()!.get(third.container)!).key_in).toBeUndefined(); // nothing noted it
+      const result = await deleteAccount('user_third', { removeItem: async () => {}, keyArchives: store as any });
+      const { text } = await later(result.keys);
+      expect(result.keys).toMatchObject({ own_key: true, key_in: taken });
+      expect(text).toContain('a backup taken while an older version of Nya ran holds your key until');
+      expect(text).not.toContain('Copies under a shared key: none');
+    });
+
+    test('backups that can’t be listed: the receipt says what it couldn’t check', async () => {
+      const store = { ...memoryStore(), list: async (prefix: string) => (prefix.startsWith('backups/') ? Promise.reject(new Error('blob down')) : []) };
+      const result = await quiet(() => deleteAccount('user_third', { removeItem: async () => {}, keyArchives: store as any }));
+      const { text } = await later(result.keys);
+      expect(result.keys).toMatchObject({ own_key: true, key_in: 'unchecked' });
+      expect(text).toContain('but whether a backup taken while an older version of Nya ran holds your key couldn’t be checked: if one does, every copy of your data can be decrypted with this server’s master key until');
+    });
+  });
+
+  test('while it runs, no other tab gets the account a container, and a write that comes too late fails', async () => {
+    const { ContainerKeyError } = await import('@/lib/crypto');
+    let during: unknown[] = [];
+    duringDeleteUser = async () => {
+      during = [await ownerContainer('user_third').catch((e) => e), await encrypt(third as any, 'late').catch((e) => e)];
+    };
+    expect((await as('user_third', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    expect((during[0] as Error).message).toContain('being deleted');
+    expect(during[1]).toBeInstanceOf(ContainerKeyError);
+    expect(keysOf(third.container)).toEqual([]);
+  });
+
+  test('stopped after its key was destroyed, a retry finds its container again by the marker, and finishes', async () => {
+    deleteUserFails = true;
+    expect((await quiet(() => as('user_third', () => route('account', 'DELETE', { confirm: 'DELETE' })))).status).toBe(500);
+    expect(await fake.hget<string>(ownersKey(), 'user_third')).toBe(`deleted:${third.container}`);
+    expect(fake.hashes.get('test:crypto:keys')?.has(keyThird) ?? false).toBe(false);
+    deleteUserFails = false;
+    const retry = await as('user_third', () => route('account', 'DELETE', { confirm: 'DELETE' }));
+    expect(retry.status).toBe(200);
+    expect(deletedUsers).toEqual(['user_third']);
+    expect(await fake.hget(ownersKey(), 'user_third')).toBeNull();
+    // Its map entry was destroyed already: whether it had a key is told by the tombstone.
+    expect(retry.body.receipt.keys).toMatchObject({ own_key: true });
+  });
+
+  test('the night after, its container is swept once more, and only once', async () => {
+    const { sweepDestroyedContainers } = await import('@/lib/account-deletion');
+    expect((await as('user_third', () => route('account', 'DELETE', { confirm: 'DELETE' }))).status).toBe(200);
+    await fake.set(`test:c:${third.container}:snapshot:runs`, 'a late count');
+    expect(await sweepDestroyedContainers(new Date())).toEqual([]); // not the same day
+    const tomorrow = new Date(Date.now() + 86_400_000);
+    expect(await sweepDestroyedContainers(tomorrow)).toEqual([third.container]);
+    expect(keysOf(third.container)).toEqual([]);
+    expect(JSON.parse(map()!.get(third.container)!)).toEqual({ destroyed: new Date().toISOString().slice(0, 10), swept: tomorrow.toISOString().slice(0, 10) });
+    expect(await sweepDestroyedContainers(new Date(Date.now() + 2 * 86_400_000))).toEqual([]);
+  });
+
+  test('the page says the account’s data is under a key of its own; the owner’s, made before, isn’t yet', async () => {
+    expect((await as('user_third', () => route('account', 'GET'))).body).toMatchObject({ can_delete: true, own_key: true, database_days: 0 });
+    expect((await as('user_partner', () => route('account', 'GET'))).body).toMatchObject({ can_delete: true, own_key: false });
+  });
+});
+
+describe('what the receipt says of a data key, from the map entry', () => {
+  const now = new Date('2026-10-17T12:00:00.000Z');
+  const since = '2026-09-01T00:00:00.000Z';
+  const key = 'k1-00000001';
+
+  test('born with it, given it by the pass, or none at all', async () => {
+    const { keyFactsOf } = await import('@/lib/account-deletion');
+    expect(keyFactsOf(null, false, now, [])).toEqual({ own_key: false, shared_from: now.toISOString(), key_in: null });
+    expect(keyFactsOf({ key, since, moved: since }, false, now, [])).toEqual({ own_key: true, shared_from: null, key_in: null });
+    expect(keyFactsOf({ key, since, moved: since, shared_in: '2026-10-02T16:00:00.000Z' }, false, now, [])).toEqual({ own_key: true, shared_from: '2026-10-02T16:00:00.000Z', key_in: null });
+    // Moved by the pass: everything was under a shared key until it found nothing left.
+    expect(keyFactsOf({ key, since, moved: '2026-09-05T00:00:00.000Z' }, false, now, [])).toEqual({ own_key: true, shared_from: '2026-09-05T00:00:00.000Z', key_in: null });
+    expect(keyFactsOf({ key, since }, false, now, [])).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: null });
+    // Read too late (an earlier attempt destroyed it): the tombstone says it had a key, nothing says since when.
+    expect(keyFactsOf({ destroyed: '2026-10-17' }, true, now, [])).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: null });
+    expect(keyFactsOf(undefined, false, now, [])).toEqual({ own_key: null, shared_from: now.toISOString(), key_in: null });
+  });
+
+  test('a backup an older version took after the key was made holds it, and `moved` no longer stands until the pass walks it again', async () => {
+    const { keyFactsOf } = await import('@/lib/account-deletion');
+    const rolled = ['2026-08-01T16:00:00.000Z', '2026-09-10T16:00:00.000Z'];
+    // Noted by a nightly run or not: the newest after its key was made.
+    expect(keyFactsOf({ key, since, moved: since }, false, now, rolled)).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: '2026-09-10T16:00:00.000Z' });
+    expect(keyFactsOf({ key, since, key_in: '2026-09-10T16:00:00.000Z' }, false, now, rolled)).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: '2026-09-10T16:00:00.000Z' });
+    // Noted, and walked again by the pass since: its `moved` stands.
+    expect(keyFactsOf({ key, since, moved: '2026-09-12T00:00:00.000Z', key_in: '2026-09-10T16:00:00.000Z' }, false, now, rolled)).toEqual({ own_key: true, shared_from: '2026-09-12T00:00:00.000Z', key_in: '2026-09-10T16:00:00.000Z' });
+    // Pruned since it was noted: nothing holds the key any more.
+    expect(keyFactsOf({ key, since, moved: '2026-09-12T00:00:00.000Z', key_in: '2026-09-10T16:00:00.000Z' }, false, now, [])).toEqual({ own_key: true, shared_from: '2026-09-12T00:00:00.000Z', key_in: null });
+    // One taken before the key was made doesn't hold it.
+    expect(keyFactsOf({ key, since, moved: since }, false, now, ['2026-08-01T16:00:00.000Z'])).toEqual({ own_key: true, shared_from: null, key_in: null });
+    // Read too late: the newest at all.
+    expect(keyFactsOf({ destroyed: '2026-10-17' }, true, now, rolled)).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: '2026-09-10T16:00:00.000Z' });
+    // The backups couldn't be listed: unchecked, and `moved` doesn't stand.
+    expect(keyFactsOf({ key, since, moved: since }, false, now, null)).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: 'unchecked' });
+    expect(keyFactsOf({ destroyed: '2026-10-17' }, true, now, null)).toEqual({ own_key: true, shared_from: now.toISOString(), key_in: 'unchecked' });
+    expect(keyFactsOf(null, false, now, null)).toEqual({ own_key: false, shared_from: now.toISOString(), key_in: null });
+  });
+});

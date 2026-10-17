@@ -467,7 +467,7 @@ describe('end to end, through the daily snapshot and its catch-up', () => {
 
   async function link(item_id: string, token: string) {
     await fake.hset(ctxKey('plaid:items'), {
-      [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+      [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
     });
   }
   const daily = async (t: number) => {
@@ -794,7 +794,7 @@ describe("Nya's side, and a fault many containers share", () => {
     for (const c of CONTAINERS) {
       for (const bank of ['chase', 'amex']) {
         await fake.hset(ctxKey('plaid:items', ctxOf(c)), {
-          [`item_${bank}`]: JSON.stringify({ item_id: `item_${bank}`, institution_name: bank, encrypted_access_token: await encrypt(`tok-${c}-${bank}`) }),
+          [`item_${bank}`]: JSON.stringify({ item_id: `item_${bank}`, institution_name: bank, encrypted_access_token: await encrypt(TEST_CTX, `tok-${c}-${bank}`) }),
         });
       }
     }
@@ -877,7 +877,7 @@ describe('the time the emails may take', () => {
 
   test('through the daily job: with its deadline already past, nothing is sent and nothing marked', async () => {
     process.env.NOTIFY_EMAIL = 'owner@example.com';
-    await fake.hset(ctxKey('plaid:items'), { item_chase: JSON.stringify({ item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('tok-late') }) });
+    await fake.hset(ctxKey('plaid:items'), { item_chase: JSON.stringify({ item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'tok-late') }) });
     plaidAnswers['tok-late'] = () => {
       throw { response: { data: { error_code: 'ITEM_LOGIN_REQUIRED' } } };
     };

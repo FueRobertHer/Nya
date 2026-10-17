@@ -149,11 +149,11 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   await remember(['acc_chk', 'acc_card']);
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: 'c1',
       accounts: {

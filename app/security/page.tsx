@@ -3,11 +3,13 @@ import type { ReactNode } from 'react';
 import { InfoPage, InfoSection } from '@/components/InfoPage';
 import { cspMode, type CspMode } from '@/lib/security-headers';
 import { masterKeyConfigured } from '@/lib/crypto';
-import { backupRetention } from '@/lib/backup';
-import { backupDaysAtMost, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
+import { backupRetention, databaseBackupDays } from '@/lib/backup';
+import { KEY_GENERATIONS } from '@/lib/key-archive';
+import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention } from '@/lib/deletion-receipt';
 import { sendsEmail } from '@/lib/notice-recipients';
 import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
+import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -21,7 +23,8 @@ export const metadata: Metadata = {
 // things never to promise. Reads no stored data. From the environment it reads
 // only how the Content-Security-Policy is sent, whether a master key is set
 // (lib/crypto.ts), how backups are kept (lib/backup.ts backupRetention, the
-// rule the deletion receipt uses too) and whether this copy sends email
+// rule the deletion receipt uses too, and DATABASE_BACKUP_DAYS) and whether
+// this copy sends email
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
 // write to, which also decides whether a download is emailed), since each
 // changes what is true of this copy.
@@ -61,7 +64,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections, and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.',
+          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.',
         ],
       ] as [string, string][])
     : []),
@@ -97,11 +100,18 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
             environment settings, never in the database. Changing the master key locks the data keys again under the new
             one and leaves the data itself untouched, so a key change cannot damage it.
           </p>
+          <p>
+            Each account made on this version of Nya normally has a data key of its own from the start, used for its data
+            alone. An account made before it, or one made at a moment its key couldn’t be (while the master key is being
+            changed, say), is under a set of data keys shared by everyone on this copy of Nya until whoever runs it moves
+            the account to a key of its own. A value under one account’s key can’t be read as another’s, even copied into
+            its place; values still under a shared key can, until they are moved.
+          </p>
           <p className="info-aside">
             Values written before the master key was set up stay under Nya’s original single key (also AES-256-GCM, also
-            kept only in the environment) until they are moved to a data key, and if a data key ever cannot be used, a
-            value is written under that original key and the server’s log says so. One set of data keys covers everyone
-            on a copy of Nya; a key per person is planned.
+            kept only in the environment) until they are moved to a data key. If a shared data key ever cannot be used, a
+            value is written under that original key and the server’s log says so. An account with a key of its own
+            never falls back: if its key can’t be used, its data can’t be read or written on that server until it can.
           </p>
         </>
       ) : (
@@ -143,11 +153,19 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
       </p>
       <p>
         A backup holds the same kinds of data as the database, apart from API tokens: the encrypted values and the plain
-        text listed above{envelope ? ', and the data keys in their locked form' : ''}. Its encrypted parts cannot be read
+        text listed above{envelope ? ', and, in a file of their own kept beside it, the data keys in their locked form' : ''}. Its encrypted parts cannot be read
         without the keys kept in the server’s environment. API tokens are never backed up, so restoring a backup ends every
         token, and none revoked before it can work again. It never holds the access a SimpleFIN account gives Nya, which
         works on its own: restoring a backup ends that access, and you connect again with a new Setup Token.
       </p>
+      {envelope && (
+        <p>
+          The backups of the data keys are kept apart so that deleting an account can take its key out of every one of
+          them without rewriting the data: the last {KEY_GENERATIONS} nights’ are kept, each checked before an older one is
+          deleted. A key leaves them when the account it belongs to is deleted, or, for one that has gone from the
+          database without that, once no backup still kept can need it.
+        </p>
+      )}
     </>
   );
 }
@@ -175,6 +193,7 @@ export default function SecurityPage() {
   const envelope = masterKeyConfigured();
   const backups = backupRetention();
   const mail = sendsEmail();
+  const keys = keyDeletionText({ envelope, backups, databaseDays: databaseBackupDays() });
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -222,10 +241,12 @@ export default function SecurityPage() {
         </ul>
         <p>
           The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes; of a
-          device that sent API tokens that didn’t work, for up to {API_AUTH_WINDOW_SECONDS / 60} minutes; and on the demo,
-          that of a device that used a demo account, for up to 10 minutes. These never go into backups. And for each API
-          token, how many requests it made in the current minute, deleted when the token is revoked, or{' '}
-          {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.
+          device that sent API tokens, or links to turn off a weekly summary, that didn’t work, for up to{' '}
+          {API_AUTH_WINDOW_SECONDS / 60} minutes; and on the demo, that of a device that used a demo account, for up to 10
+          minutes. These never go into backups. And for each API token, how many requests it made in the current minute,
+          deleted when the token is revoked, or {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with
+          any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many
+          times a link to turn it off was used, kept for an hour.
         </p>
         <p>Encrypting these as well is planned.</p>
       </InfoSection>
@@ -262,9 +283,15 @@ export default function SecurityPage() {
           ends with a receipt, to copy or save: what was deleted, when the last backup holding your data is gone, and
           what stays and why.
         </p>
+        {keys.key.map((line) => (
+          <p key={line}>{line}</p>
+        ))}
         <p>What it does not reach:</p>
         <ul>
           <DeletedInBackups backups={backups} />
+          {keys.notReached.map((line) => (
+            <li key={line}>{line}</li>
+          ))}
           <li>
             Invite links you made that nobody has used: each holds your sign-in id and the name you gave, and expires on
             its own within 72 hours.
@@ -338,6 +365,32 @@ export default function SecurityPage() {
           one.
         </p>
       </InfoSection>
+
+      {mail && (
+        <InfoSection title="The weekly summary">
+          <p>
+            If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a
+            balance, an amount, a percentage or an account number. It does name your budgets and categories over or close to
+            their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days, and
+            the banks that need you or whose transactions may be missing, which the email service and your own email provider
+            can read, as they can any email. A name of yours with a digit, a currency or percent sign, a number or a currency
+            written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese,
+            French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept,
+            seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead
+            of named; a bank’s name, which comes from Plaid or SimpleFIN, only when it has a digit or a currency or percent
+            sign. Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording,
+            the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a
+            currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.
+          </p>
+          <p>
+            Each one has a link that turns it off without signing in. It works for {LINK_DAYS} days, can do nothing but turn
+            off that summary, and is signed with a key kept in your own data, encrypted, and made anew each time you turn the
+            summary on. Opening it only shows a page with a button. A link that doesn’t work gets the same answer whatever
+            the reason, and reads the same things whoever’s data it names, so it can’t be used to find out whose data
+            exists. Links that don’t work are counted by the address they come from, with API tokens that don’t work.
+          </p>
+        </InfoSection>
+      )}
 
       <InfoSection title="Security headers">
         <p>Every response from the app carries these headers:</p>

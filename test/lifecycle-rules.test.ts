@@ -98,7 +98,7 @@ beforeEach(async () => {
   await registerTestContainer(fake);
   plaidTxns.length = 0;
   plaidTxns.push(row('t_before', 10, 'AMZN MKTP US*2K4', 12), row('t_after', 3, 'AMZN MKTP US*9Q1', 20), row('t_coffee', 8, 'BLUE BOTTLE', 5));
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('token-a') }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'token-a') }) });
   await rememberAccounts(ctx, [{ item_id: 'item_a', institution_name: 'Chase', institution_id: null, error: null, accounts: [{ ...account, balance: 100 }] } as any]);
   await saveManualAccount(ctx, { account_id: MANUAL, name: 'Cash', institution_name: 'Wallet', type: 'depository', subtype: 'cash', balance: 50 } as any);
   const before = newManualTxn(MANUAL, { date: daysAgo(9), name: 'AMZN locker pickup', amount: 9, currency: 'USD', category: null, note: null });

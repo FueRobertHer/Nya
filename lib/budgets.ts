@@ -20,7 +20,7 @@ const isBudgets = (v: unknown): v is Budgets => typeof v === 'object' && v !== n
 
 /** Throws StoredDataUnreadableError if budgets were saved but cannot be read. */
 export async function getBudgets(ctx: Ctx): Promise<Budgets> {
-  return (await readEncryptedJson(BUDGETS_KEY(ctx), 'budgets', isBudgets)) ?? {};
+  return (await readEncryptedJson(ctx, BUDGETS_KEY(ctx), 'budgets', isBudgets)) ?? {};
 }
 
 /**
@@ -35,11 +35,11 @@ export async function getBudgets(ctx: Ctx): Promise<Budgets> {
 export async function getBudgetsReport(ctx: Ctx): Promise<{ budgets: Budgets | null; problem: 'unreadable' | 'unrecognised' | null }> {
   const stored = await readStoredValue(BUDGETS_KEY(ctx));
   if (stored === null) return { budgets: {}, problem: null };
-  const opened = await openStoredJson(stored, isBudgets);
+  const opened = await openStoredJson(ctx, stored, isBudgets);
   return opened.ok ? { budgets: opened.value, problem: null } : { budgets: null, problem: opened.flaw };
 }
 
 /** Refuses (StoredDataUnreadableError) to replace budgets it cannot read. */
 export async function setBudgets(ctx: Ctx, budgets: Budgets): Promise<void> {
-  await writeEncryptedJson(BUDGETS_KEY(ctx), 'budgets', budgets, isBudgets);
+  await writeEncryptedJson(ctx, BUDGETS_KEY(ctx), 'budgets', budgets, isBudgets);
 }

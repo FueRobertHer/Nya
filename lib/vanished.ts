@@ -101,7 +101,7 @@ async function readRecord(ctx: Ctx, item_id: string): Promise<VanishRecord> {
   try {
     const blob = await redis().hget<string>(VANISHED_HASH(ctx), item_id);
     if (!blob) return {};
-    return parseRecord(await decrypt(blob));
+    return parseRecord(await decrypt(ctx, blob));
   } catch {
     // Unreadable record: treat as empty. A disappearance in progress restarts its
     // window, delaying acceptance rather than recording a wrong total.
@@ -124,7 +124,7 @@ async function readAllRecords(ctx: Ctx): Promise<Record<string, VanishRecord>> {
   await Promise.all(
     Object.entries(map).map(async ([item_id, blob]) => {
       try {
-        out[item_id] = parseRecord(await decrypt(blob));
+        out[item_id] = parseRecord(await decrypt(ctx, blob));
       } catch {
         out[item_id] = {};
       }
@@ -139,7 +139,7 @@ async function writeRecord(ctx: Ctx, item_id: string, record: VanishRecord): Pro
       await redis().hdel(VANISHED_HASH(ctx), item_id);
       return;
     }
-    await redis().hset(VANISHED_HASH(ctx), { [item_id]: await encrypt(JSON.stringify(record)) });
+    await redis().hset(VANISHED_HASH(ctx), { [item_id]: await encrypt(ctx, JSON.stringify(record)) });
   } catch {
     // Best effort. A lost write means the window restarts next run: later
     // acceptance, never a wrong measurement.

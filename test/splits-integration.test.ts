@@ -95,17 +95,17 @@ const ACCOUNTS = {
 /** Chase: checking, savings and a card, as a sync leaves them and as the
  *  dashboard recorded them. */
 async function seed(rows: ReturnType<typeof txn>[]) {
-  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-x') });
+  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'access-sandbox-x') });
   await fake.set(
     ctxKey('txns:item_bank'),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts: ACCOUNTS, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: at })
+    await encodeJsonBlob(ctx, { schema_version: 2, cursor: 'c1', accounts: ACCOUNTS, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: at })
   );
   await syncsStore.set(ctx, 'item_bank', { at });
   await rememberAccounts(ctx, [
     { item_id: 'item_bank', accounts: Object.entries(ACCOUNTS).map(([account_id, a]) => ({ account_id, name: a.name, mask: a.mask, type: a.type })), error: null },
   ]);
   await fake.hset(ctxKey('accounts:meta'), {
-    item_bank: await encrypt(
+    item_bank: await encrypt(ctx, 
       JSON.stringify(Object.entries(ACCOUNTS).map(([account_id, a]) => ({ account_id, name: a.name, official_name: null, type: a.type, subtype: a.subtype, mask: a.mask, limit: null, currency: 'USD' })))
     ),
   });

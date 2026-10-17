@@ -14,7 +14,7 @@ export async function POST(req: Request) {
     const { public_token, institution_name } = await req.json();
     const exchange = await plaidClient.itemPublicTokenExchange({ public_token });
 
-    const encrypted_access_token = await encrypt(exchange.data.access_token);
+    const encrypted_access_token = await encrypt(ctx, exchange.data.access_token);
 
     // Asked of Plaid rather than taken from the client, which could send any id.
     // Best effort: without it the Item still links, and the duplicate check falls

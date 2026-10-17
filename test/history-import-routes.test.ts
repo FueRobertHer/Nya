@@ -124,9 +124,9 @@ const FILE_ROWS = [
 const STATEMENT = ofx(FILE_ROWS, { start: 365, end: 35 });
 
 async function seed(c = ctx) {
-  await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta', c), {
-    item_chase: await encrypt(
+    item_chase: await encrypt(TEST_CTX, 
       JSON.stringify([
         { account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
         { account_id: 'acc_card', name: 'Visa', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
@@ -139,7 +139,7 @@ async function seed(c = ctx) {
   };
   await fake.set(
     ctxKey('txns:item_chase', c),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(BANK.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(BANK.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
 }
 
@@ -380,14 +380,14 @@ describe('a later sync', () => {
     // the same account, history further back.
     await removeItem(ctx, 'item_chase');
     await fake.del(ctxKey('txns:item_chase'));
-    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase-2') });
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase-2') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+      item_chase2: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
     });
     await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
     await fake.set(
       ctxKey('txns:item_chase2'),
-      await encodeJsonBlob({
+      await encodeJsonBlob(TEST_CTX, {
         schema_version: 2,
         cursor: 'c1',
         accounts: { acc_chk_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -570,13 +570,13 @@ describe('forgetting an earlier account', () => {
     await removeItem(ctx, 'item_chase');
     await fake.del(ctxKey('txns:item_chase'));
     await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
-    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase-2') });
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase-2') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+      item_chase2: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
     });
     await fake.set(
       ctxKey('txns:item_chase2'),
-      await encodeJsonBlob({
+      await encodeJsonBlob(TEST_CTX, {
         schema_version: 2,
         cursor: 'c1',
         accounts: { acc_chk_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },

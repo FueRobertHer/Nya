@@ -137,6 +137,18 @@ export function upstashOn(client: RedisClient) {
     hlen: async (key: string) => Number(await call('hlen', [key])),
     hexists: async (key: string, field: string) => Number(await call('hexists', [key, field])),
     strlen: async (key: string) => Number(await call('strlen', [key])),
+    // A page of a hash, as Upstash decodes HSCAN: [cursor, [field, value, ...]],
+    // each value parsed where it parses (deserializeScanResponse).
+    hscan: async (key: string, cursor: string | number, opts?: { count?: number; match?: string }) => {
+      const answer = (await call('hscan', [
+        key,
+        String(cursor),
+        ...(opts?.match ? ['MATCH', opts.match] : []),
+        ...(opts?.count ? ['COUNT', String(opts.count)] : []),
+      ])) as [string, string[]];
+      const [next, flat] = answer;
+      return [next, flat.map((v, i) => (i % 2 === 1 ? upstashParseField(v) : v))] as [string, unknown[]];
+    },
     eval: async (script: string, keys: string[], args: string[]) =>
       upstashParse(await call('eval', [script, String(keys.length), ...keys, ...args])),
   };

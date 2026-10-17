@@ -33,7 +33,7 @@ export async function readOverridesReport(ctx: Ctx): Promise<{ overrides: Record
     await Promise.all(
       Object.entries(map).map(async ([id, blob]) => {
         try {
-          out[id] = await decrypt(blob);
+          out[id] = await decrypt(ctx, blob);
         } catch {
           // undecryptable override (rotated key) -- drop it
           ok = false;
@@ -56,7 +56,7 @@ export async function readOverridesStrict(ctx: Ctx): Promise<Map<string, string>
   const map = (await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx))) ?? {};
   const out = new Map<string, string>();
   for (const [id, category] of await Promise.all(
-    Object.entries(map).map(async ([id, blob]) => [id, await decrypt(String(blob))] as const)
+    Object.entries(map).map(async ([id, blob]) => [id, await decrypt(ctx, String(blob))] as const)
   )) {
     out.set(id, category);
   }
@@ -64,7 +64,7 @@ export async function readOverridesStrict(ctx: Ctx): Promise<Map<string, string>
 }
 
 export async function setOverride(ctx: Ctx, transaction_id: string, category: string): Promise<void> {
-  await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
+  await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(ctx, category) });
 }
 
 /** Sets many overrides at once, a thousand to a request: the categories an
@@ -77,7 +77,7 @@ export async function setOverrides(ctx: Ctx, categories: ReadonlyMap<string, str
   for (let i = 0; i < entries.length; i += 1000) {
     const chunk = entries.slice(i, i + 1000);
     const fields: Record<string, string> = {};
-    for (const [id, category] of chunk) fields[id] = await encrypt(category);
+    for (const [id, category] of chunk) fields[id] = await encrypt(ctx, category);
     if (chunk.length > 0) await redis().hset(OVERRIDES_HASH(ctx), fields);
   }
 }
@@ -145,7 +145,7 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
     let category: string | undefined;
     if (raw[t.transaction_id] !== undefined) {
       try {
-        category = await decrypt(raw[t.transaction_id]);
+        category = await decrypt(ctx, raw[t.transaction_id]);
       } catch {
         category = undefined; // unreadable: it isn't shown today either
       }
@@ -181,16 +181,16 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
       merged[key] = key in merged && merged[key] !== category ? null : category;
     }
     n += Object.keys(rows).length;
-    writes[account_id] = await encrypt(JSON.stringify(merged));
+    writes[account_id] = await encrypt(ctx, JSON.stringify(merged));
   }
   await redis().hset(CARRY_HASH(ctx), writes);
   await dropDead();
   return n;
 }
 
-async function parseRows(blob: string): Promise<CarriedRows | null> {
+async function parseRows(ctx: Ctx, blob: string): Promise<CarriedRows | null> {
   try {
-    const rows = JSON.parse(await decrypt(blob));
+    const rows = JSON.parse(await decrypt(ctx, blob));
     if (!rows || typeof rows !== 'object' || Array.isArray(rows)) return null;
     for (const v of Object.values(rows)) if (typeof v !== 'string' && v !== null) return null;
     return rows as CarriedRows;
@@ -207,7 +207,7 @@ async function readCarried(ctx: Ctx, account_ids: string[]): Promise<{ carried: 
   const blobs = await Promise.all(account_ids.map((id) => redis().hget<string>(CARRY_HASH(ctx), id)));
   await Promise.all(
     account_ids.map(async (id, i) => {
-      const rows = blobs[i] ? await parseRows(blobs[i]!) : null;
+      const rows = blobs[i] ? await parseRows(ctx, blobs[i]!) : null;
       if (rows) out.set(id, rows);
       else if (blobs[i]) ok = false;
     })
@@ -243,7 +243,7 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
     const out: Carried = new Map();
     await Promise.all(
       Object.entries(raw).map(async ([id, blob]) => {
-        const rows = await parseRows(blob);
+        const rows = await parseRows(ctx, blob);
         if (rows) out.set(id, rows);
       })
     );
@@ -263,7 +263,7 @@ export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
   const raw = (await redis().hgetall<Record<string, string>>(CARRY_HASH(ctx))) ?? {};
   const out: Carried = new Map();
   for (const [id, rows] of await Promise.all(
-    Object.entries(raw).map(async ([id, blob]) => [id, await parseRows(String(blob))] as const)
+    Object.entries(raw).map(async ([id, blob]) => [id, await parseRows(ctx, String(blob))] as const)
   )) {
     if (!rows) throw new Error('The categories carried for an earlier account could not be read');
     out.set(id, rows);

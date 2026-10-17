@@ -14,6 +14,8 @@ import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
 import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
+import { SENDS_NOW_WINDOW_SECONDS, UNSUBSCRIBE_WINDOW_SECONDS } from '@/lib/weekly-summary/store';
 
 // The public pages make promises about the code. These tests hold them to it:
 // every figure they state comes from the code, and none of them makes a claim
@@ -411,9 +413,11 @@ describe('the privacy page', () => {
   test('says a download is emailed only where this copy sends email', () => {
     mailIs(true);
     expect(privacy()).toContain('Each download is emailed to you: when it happened and which format, never what is in it.');
-    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made.');
+    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on.');
     expect(security()).toContain('Each download is emailed to you, so one you didn’t make shows.');
-    expect(security()).toContain('and each time your data is downloaded or an API token is made: which bank needs you and what to do, or when and in which format your data was downloaded, never a balance, an amount or an account number.');
+    expect(security()).toContain(
+      'each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.'
+    );
     mailIs(false);
     for (const page of [privacy(), security()]) {
       expect(page).toContain('This copy of Nya sends no email, so a download isn’t emailed to you.');
@@ -528,13 +532,49 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     mailIs(true);
     const priv = privacy();
     expect(priv).toContain('Resend Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later.');
-    expect(priv).toContain('never a balance, an amount or an account number');
+    expect(priv).toContain('Never a balance, an amount or an account number');
     expect(priv).toContain('Not used yet: no billing provider, since Nya charges nothing yet.');
     expect(priv).not.toContain('no email provider');
     expect(priv).toContain('Emails Nya sent you In your inbox, and with the email service under its own policy.');
     const sec = security();
     expect(sec).toContain('Resend, the email service Your email address and the emails Nya sends you about your bank connections');
-    expect(sec).toContain('never a balance, an amount or an account number');
+    expect(sec).toContain('Never a balance, an amount or an account number');
+  });
+
+  // The weekly summary (lib/weekly-summary/): what the email service sees of
+  // it, named for the owner to sign off on, how long its setting and its
+  // links last, and the section on its link, only where this copy sends email.
+  test('says what the weekly summary carries, how long its links work, and never an amount', () => {
+    mailIs(true);
+    const priv = privacy();
+    // Everything it tells the email service, and exactly what it counts
+    // instead of naming (lib/weekly-summary/compose.ts NAMES).
+    expect(priv).toContain(
+      'The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN have no category; and the currencies of transactions it didn’t count.'
+    );
+    expect(priv).toContain(
+      'Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid or SimpleFIN gives it, with a digit or a currency or percent sign.'
+    );
+    expect(priv).not.toContain('a name with a number in it is left out');
+    expect(priv).toContain(
+      `The weekly summary Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`
+    );
+    expect(priv).toContain('Weekly summaries you asked for now, and uses of a link to turn one off Counted for a day, and for an hour.');
+    // "a day" and "an hour" are the counters' windows (lib/weekly-summary/store.ts).
+    expect(SENDS_NOW_WINDOW_SECONDS).toBe(24 * 60 * 60);
+    expect(UNSUBSCRIBE_WINDOW_SECONDS).toBe(60 * 60);
+    const sec = security();
+    expect(sec).toContain('If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a balance, an amount, a percentage or an account number.');
+    expect(sec).toContain(
+      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named; a bank’s name, which comes from Plaid or SimpleFIN, only when it has a digit or a currency or percent sign.'
+    );
+    expect(sec).toContain(
+      'Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording, the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.'
+    );
+    expect(sec).toContain(`Each one has a link that turns it off without signing in. It works for ${LINK_DAYS} days, can do nothing but turn off that summary`);
+    mailIs(false);
+    expect(security()).not.toContain('The weekly summary');
+    expect(privacy()).not.toContain('The weekly summary tells it');
   });
 
   test('half a setting is no setting: the pages follow lib/mail.ts', () => {
@@ -591,9 +631,9 @@ describe('API tokens, on both pages', () => {
     const page = security();
     expect(page).toContain('and of your API tokens (random, and not enough to use one);');
     expect(page).toContain(
-      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
+      `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many times a link to turn it off was used, kept for an hour.`
     );
-    expect(page).toContain(`of a device that sent API tokens that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
+    expect(page).toContain(`of a device that sent API tokens, or links to turn off a weekly summary, that didn’t work, for up to ${API_AUTH_WINDOW_SECONDS / 60} minutes;`);
   });
 
   test('the privacy page: what an assistant connected to the MCP server reads, how long tokens and their counts are kept, and what the download holds of them', () => {
@@ -608,11 +648,76 @@ describe('API tokens, on both pages', () => {
     expect(page).toContain(
       'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'
     );
-    expect(page).toContain(`Requests with API tokens that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
+    expect(page).toContain(`Requests with API tokens, or links to turn off a weekly summary, that didn’t work, counted by IP address ${API_AUTH_WINDOW_SECONDS / 60} minutes.`);
     expect(page).toContain(
       `Requests counted for each API token Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`
     );
     expect(page).toContain('your API tokens themselves (each one’s name and dates are in)');
     expect(privacyHtml()).toContain('href="/developers"');
+  });
+});
+
+// A data key per account (docs/operations.md, "Per-container data keys"). The
+// pages read no stored data, so they say it conditionally, and never claim a
+// key of its own for an account made before it, until it is moved.
+describe('a data key per account, on both pages', () => {
+  const OWN =
+    'Each account made on this version of Nya normally has a data key of its own from the start, and an account made before it (or one made while a key couldn’t be) has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
+  const DESTROYED =
+    'Deleting an account destroys its own key, so nothing encrypted under it can be decrypted from any copy Nya keeps, normally within minutes of the deletion and at the latest after the next nightly backup that succeeds. The encrypted copies stay in backups, unreadable, until they are deleted, and the plain text in them stays readable until then. Copies under a shared key stay readable with it until they are deleted.';
+
+  test('with a master key and backups: what deleting the key does, when, and what it doesn’t reach', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('kept');
+    for (const page of [security(), privacy()]) {
+      expect(page).toContain(OWN);
+      expect(page).toContain(DESTROYED);
+    }
+    const sec = security();
+    expect(sec).toContain('A backup of the keys that whoever runs this copy of Nya downloaded by hand, for as long as they keep it.');
+    expect(sec).toContain('A backup taken while an older version of Nya ran, which holds every key.');
+    expect(sec).toContain('A record that the account existed: its random id and the day its key was destroyed, kept for good, so that a restored backup never brings the account back.');
+    expect(sec).toContain('in a file of their own kept beside it, the data keys in their locked form');
+    expect(sec).toContain('the last 7 nights’ are kept, each checked before an older one is deleted');
+    // Never more than is so: a key can be born late, and one gone from the database without a deletion is let go in time.
+    expect(sec).toContain('Each account made on this version of Nya normally has a data key of its own from the start');
+    expect(sec).toContain('A key leaves them when the account it belongs to is deleted, or, for one that has gone from the database without that, once no backup still kept can need it.');
+    expect(sec).toContain('A value under one account’s key can’t be read as another’s, even copied into its place; values still under a shared key can, until they are moved.');
+    const priv = privacy();
+    expect(priv).toContain('A record that a deleted account existed Its random id and the day its key was destroyed: kept for good');
+    expect(priv).toContain('What deleting your key doesn’t reach: a backup of the keys that whoever runs this copy of Nya downloaded by hand');
+    expect(priv).toContain('Not built yet Encrypting the details stored as plain text');
+  });
+
+  test('without a master key there is no key per account to speak of, and the pages say nothing of one', () => {
+    delete process.env.MASTER_KEY;
+    backupsAre('kept');
+    for (const page of [security(), privacy()]) {
+      expect(page).not.toContain('a data key of its own');
+      expect(page).not.toContain('its key was destroyed');
+    }
+    expect(privacy()).toContain('A data key per account, which makes your copies in backups unreadable once your account is deleted, needs a master key, which this copy of Nya doesn’t have set.');
+    expect(privacy()).toContain('Not built yet Encrypting the details stored as plain text');
+  });
+
+  test('without backups, the key goes with the rest of the data, and nothing is said of backups of it', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('none');
+    expect(security()).toContain(`${OWN} Deleting an account destroys its own key with the rest of its data.`);
+    expect(security()).not.toContain('A backup of the keys');
+  });
+
+  test('the database host’s own backups, by DATABASE_BACKUP_DAYS', () => {
+    process.env.MASTER_KEY = MASTER;
+    backupsAre('kept');
+    process.env.DATABASE_BACKUP_DAYS = '3';
+    expect(security()).toContain('The database host’s own backups, which hold the whole database, keys included, for 3 days.');
+    expect(privacy()).toContain('Its own backups of the database keep a copy for 3 days. Its own internal copies follow its own policy.');
+    process.env.DATABASE_BACKUP_DAYS = 'three';
+    expect(security()).toContain('how long couldn’t be worked out on this copy of Nya');
+    expect(privacy()).toContain('which couldn’t be worked out on this copy of Nya');
+    delete process.env.DATABASE_BACKUP_DAYS;
+    expect(security()).not.toContain('database host');
+    expect(privacy()).toContain('Its own internal copies follow its own policy.');
   });
 });

@@ -117,14 +117,14 @@ const BANK = [
 ];
 
 async function seed(c = ctx, rows: ReturnType<typeof bankTxn>[] = BANK) {
-  await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(c, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(c, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta', c), {
-    item_chase: await encrypt(JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+    item_chase: await encrypt(c, JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
   });
   const accounts = { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } };
   await fake.set(
     ctxKey('txns:item_chase', c),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(c, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
 }
 
@@ -177,8 +177,8 @@ function realLayer(c = ctx): string {
 
 /** Two recorded days of balance history. */
 async function recordHistory(c = ctx) {
-  const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
-  await fake.hset(ctxKey('history:net-worth', c), { [daysAgo(2)]: await encrypt('1000'), [daysAgo(1)]: await encrypt('1000') });
+  const map = (m: Record<string, number>) => encrypt(c, JSON.stringify(m));
+  await fake.hset(ctxKey('history:net-worth', c), { [daysAgo(2)]: await encrypt(c, '1000'), [daysAgo(1)]: await encrypt(c, '1000') });
   await fake.hset(ctxKey('history:accounts', c), { [daysAgo(2)]: await map({ acc_chk: 1000 }), [daysAgo(1)]: await map({ acc_chk: 1000 }) });
   await fake.hset(ctxKey('snapshot:taken', c), { [daysAgo(1)]: `${daysAgo(1)}T13:00:00.000Z` });
 }
@@ -1029,13 +1029,13 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     await removeItem(ctx, 'item_chase');
     await fake.del(ctxKey('txns:item_chase'));
     await fake.hdel(ctxKey('accounts:meta'), 'item_chase');
-    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase2') });
+    await saveItem(ctx, { item_id: 'item_chase2', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'access-sandbox-chase2') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_chase2: await encrypt(JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+      item_chase2: await encrypt(ctx, JSON.stringify([{ account_id: 'acc_chk_new', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
     });
     await fake.set(
       ctxKey('txns:item_chase2'),
-      await encodeJsonBlob({
+      await encodeJsonBlob(ctx, {
         schema_version: 2,
         cursor: 'c1',
         accounts: { acc_chk_new: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -1248,7 +1248,7 @@ describe('limits and records', () => {
     const entry = (await migrationStore.get(ctx, migration_id))!;
     // As a later release would write it: one more kind of thing it made.
     const later = { ...entry, made: { ...entry.made, rules: ['rule-1'] } };
-    await fake.hset(ctxKey('app-imports'), { [migration_id]: await encrypt(JSON.stringify(later)) });
+    await fake.hset(ctxKey('app-imports'), { [migration_id]: await encrypt(ctx, JSON.stringify(later)) });
     const listed = await quietly(() => list());
     expect(listed.body.imports.find((i: any) => i.id === migration_id)?.record).toBe('unrecognised');
     const refused = await quietly(() => undo({ migration_id, confirm: true }));

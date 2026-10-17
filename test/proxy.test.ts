@@ -10,13 +10,13 @@ const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
 describe('the session gate', () => {
   test('skips exactly the routes that authenticate themselves', () => {
-    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/login']) {
+    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/ops/container-keys', '/api/login', '/api/weekly-summary/unsubscribe']) {
       expect(gated(path)).toBe(false);
     }
   });
 
   test('still covers anything that merely starts with one of them', () => {
-    for (const path of ['/api/v1', '/api/v1/accounts/x', '/api/v1/other', '/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/other']) {
+    for (const path of ['/api/v1', '/api/v1/accounts/x', '/api/v1/other', '/api/ops/rotate-master2', '/api/snapshot-runs', '/api/snapshot/other', '/api/snapshot/catchup/x', '/api/backup/x', '/api/backups', '/api/admin/unused', '/api/plaid/webhook/x', '/api/plaid/check-items2', '/api/plaid/other', '/api/ops/exports', '/api/ops/rotate-master/x', '/api/ops/container-keys/x', '/api/ops/container-key', '/api/ops/other', '/api/weekly-summary', '/api/weekly-summary/send', '/api/weekly-summary/unsubscribe/x', '/api/weekly-summary/unsubscribes']) {
       expect(gated(path)).toBe(true);
     }
   });
@@ -28,7 +28,7 @@ describe('the session gate', () => {
   // They are let through inside (below), but still pass through the proxy:
   // that is what gives a page its Content-Security-Policy.
   test('covers the public pages too', () => {
-    for (const path of ['/login', '/security', '/privacy', '/developers', '/open-download']) expect(gated(path)).toBe(true);
+    for (const path of ['/login', '/security', '/privacy', '/developers', '/open-download', '/unsubscribe']) expect(gated(path)).toBe(true);
   });
 });
 
@@ -55,6 +55,15 @@ describe('the matcher, as Next compiles it', () => {
     const { OPERATION_SPECS } = await import('@/lib/api-spec');
     for (const op of OPERATION_SPECS) expect([op.name, runs(`/api/v1/${op.name}`)]).toEqual([op.name, false]);
     expect(runs('/api/mcp')).toBe(false);
+  });
+
+  // The weekly summary's link (lib/weekly-summary/unsubscribe.ts): its token is
+  // its authentication, and it can only ever turn that summary off.
+  test('exempts the link that turns a weekly summary off at exactly its path', () => {
+    expect(runs('/api/weekly-summary/unsubscribe')).toBe(false);
+    for (const path of ['/api/weekly-summary/unsubscribe/', '/api/weekly-summary/unsubscribe.json', '/api/weekly-summary/unsubscribe/x', '/api/weekly-summary', '/api/weekly-summary/send', '/API/WEEKLY-SUMMARY/UNSUBSCRIBE']) {
+      expect([path, runs(path)]).toEqual([path, true]);
+    }
   });
 
   test('runs for every other spelling of them', () => {
@@ -93,8 +102,8 @@ describe('without a session', () => {
   });
   const call = (path: string, init?: ConstructorParameters<typeof NextRequest>[1]) => proxy(new NextRequest(`https://nya.test${path}`, init));
 
-  test('the login, security, privacy, developer and protected-download pages open, with their policy', async () => {
-    for (const path of ['/login', '/security', '/privacy', '/developers', '/open-download']) {
+  test('the login, security, privacy, developer, protected-download and unsubscribe pages open, with their policy', async () => {
+    for (const path of ['/login', '/security', '/privacy', '/developers', '/open-download', '/unsubscribe']) {
       const res = await call(path);
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
@@ -114,7 +123,7 @@ describe('without a session', () => {
   });
 
   test('only those exact paths', async () => {
-    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/developers/x', '/developer', '/open-download/x', '/open', '/']) {
+    for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/developers/x', '/developer', '/open-download/x', '/open', '/unsubscribe/x', '/unsubscribes', '/']) {
       expect((await call(path)).headers.get('location')).toBe('https://nya.test/login');
     }
     expect((await call('/api/security')).status).toBe(401);

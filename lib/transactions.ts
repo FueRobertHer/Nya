@@ -512,8 +512,8 @@ function emptyState(): ItemState {
 }
 
 // Encoding and the size ceiling live in lib/blob.ts, shared with lib/invstore.ts.
-const encodeState = (state: ItemState) => encodeJsonBlob(state);
-const decodeState = (blob: string) => decodeJsonBlob<Partial<ItemState>>(blob);
+const encodeState = (ctx: Ctx, state: ItemState) => encodeJsonBlob(ctx, state);
+const decodeState = (ctx: Ctx, blob: string) => decodeJsonBlob<Partial<ItemState>>(ctx, blob);
 
 // Shape of a pre-v2 stored blob: an account_id→name map and the lean 9-field
 // rows. Kept only for the one-time in-place upgrade in readState.
@@ -631,7 +631,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
   if (!blob) return emptyState();
 
   try {
-    const parsed = await decodeState(blob);
+    const parsed = await decodeState(ctx, blob);
     const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
     if (version >= TXN_SCHEMA_VERSION) {
       // Current or newer. A newer blob (read by an older deploy after a
@@ -669,7 +669,7 @@ type WriteOutcome = { persisted: true } | { persisted: false; reason: 'oversize'
 
 async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<WriteOutcome> {
   try {
-    const encoded = await encodeState(state);
+    const encoded = await encodeState(ctx, state);
 
     // OVER THE CEILING: refuse, and do not touch `state`.
     //
@@ -970,7 +970,7 @@ async function syncItem(ctx: Ctx,
 ): Promise<SyncOutcome> {
   let access_token: string;
   try {
-    access_token = await decrypt(item.encrypted_access_token);
+    access_token = await decrypt(ctx, item.encrypted_access_token);
   } catch {
     return { state: null, note: `${item.institution_name}: could not decrypt stored credentials` };
   }

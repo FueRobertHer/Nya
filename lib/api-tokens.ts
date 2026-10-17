@@ -47,7 +47,11 @@
 //     in, `unavailable`;
 //   - with the shared password, the container must be this deployment's, as a
 //     session's must (lib/sessions.ts); with no usable container at all,
-//     `unavailable`.
+//     `unavailable`;
+//   - the container's own data key, when it has one, must open
+//     (lib/crypto.ts checkContainerKey), else `unavailable`. A token record
+//     under that key which can't be read for it is refused, as a damaged
+//     record is, since nothing has matched yet.
 // A 503 after the secret matched tells only its holder something, and only
 // about their own data.
 //
@@ -76,6 +80,7 @@ import { ownedContainer } from './owners';
 import { deploymentContainer } from './sessions';
 import { isDemoUser } from './demo';
 import { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { checkContainerKey, ContainerKeyError } from './crypto';
 
 export { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX };
 
@@ -214,11 +219,17 @@ export type Authenticated = { ctx: Ctx; id: string; token: ApiToken };
 const NO_HASH = Buffer.alloc(32);
 
 /** A token's record, or null: none, or one that can't be used, which can't
- *  be checked and so doesn't authenticate. Storage failing throws. */
+ *  be checked and so doesn't authenticate. A container whose data key can't
+ *  be used is answered the same way, before any secret has matched, so a
+ *  broken key tells nobody the container exists. Storage failing throws. */
 async function recordOf(ctx: Ctx, id: string): Promise<ApiToken | null> {
   try {
     return await apiTokenStore.get(ctx, id);
   } catch (err) {
+    if (err instanceof ContainerKeyError) {
+      console.error(`API token: refused, since ${err.message}`);
+      return null;
+    }
     if (!(err instanceof UnreadableEntriesError)) throw err;
     console.error(`API token: a token’s record ${err.unreadable.length > 0 ? 'is damaged' : 'is not one this version understands'}, so it was refused.`);
     return null;
@@ -276,6 +287,16 @@ export async function checkToken(header: string | null, now: number = Date.now()
   }
   const refused = await stillServes(container, record, now);
   if (refused) return refused;
+  // Its data key is opened before anything of its data is read, so a reader
+  // that swallows errors never answers a key that can't be used as "nothing"
+  // (lib/data-ctx.ts). Kept for a minute: no round trip in the hot path.
+  try {
+    await checkContainerKey({ container });
+  } catch (err) {
+    if (!(err instanceof ContainerKeyError)) throw err;
+    console.error(`API token: its data is unavailable, since ${err.message}`);
+    return { kind: 'unavailable', why: 'Your data can’t be read on this server just now.' };
+  }
   return { kind: 'ok', auth: { ctx: { container }, id, token: record } };
 }
 
