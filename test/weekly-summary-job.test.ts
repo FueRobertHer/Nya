@@ -554,6 +554,12 @@ describe('a summary of a container with a bit of everything', () => {
     setSystemTime(new Date('2026-10-12T15:00:00.000Z'));
     const { seedPerson, CHASE_TXNS } = await import('./api-fixture');
     await seedPerson(fake);
+    // The fixture's last sync of Chase is fixed when the fixture first loads,
+    // which in a full run is another file's, at the real time: after Plaid's
+    // warning's end (five days from this clock), it would read as renewed.
+    // The sync is this clock's, as the warning is.
+    const { syncsStore } = await import('@/lib/connection-records');
+    await syncsStore.set(TEST_CTX, 'item_chase', { at: new Date(Date.now() - 2 * 3600_000).toISOString() });
     await turnOn(TEST_CTX, { time_zone: 'UTC' });
     const out = await sendWeeklySummaries(registry(TEST_CONTAINER), {
       clock: () => Date.now(),
