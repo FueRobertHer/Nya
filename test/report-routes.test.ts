@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, testKey, TEST_CONTAINER, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, testKey, TEST_CONTAINER, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
 import { parseCsv } from './csv-parse';
 
 // Reports, through the routes and the real read layer: the report a person's
@@ -95,7 +95,7 @@ const year2025 = () => {
   return p;
 };
 const store = (txns: ReturnType<typeof txn>[], over: Record<string, unknown> = {}) =>
-  encodeJsonBlob({
+  encodeJsonBlob(TEST_CTX, {
     schema_version: 2,
     cursor: 'c',
     accounts: { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -106,7 +106,7 @@ const store = (txns: ReturnType<typeof txn>[], over: Record<string, unknown> = {
 const on = (date: string, id: string, account: string, amount: number, over: Record<string, unknown> = {}) => txn(id, account, 0, amount, { date, ...over });
 /** A connected account, as the directory keeps it, first seen on `first_seen`. */
 const seenFrom = (item_id: string, institution_name: string, first_seen: string) =>
-  encrypt(JSON.stringify({ provider: 'plaid', item_id, institution_id: null, institution_name, name: 'Checking', official_name: null, mask: '3', type: 'depository', subtype: null, persistent_account_id: null, first_seen, last_seen: '2026-10-09' }));
+  encrypt(TEST_CTX, JSON.stringify({ provider: 'plaid', item_id, institution_id: null, institution_name, name: 'Checking', official_name: null, mask: '3', type: 'depository', subtype: null, persistent_account_id: null, first_seen, last_seen: '2026-10-09' }));
 
 /**
  * A year with every kind of gap, from stored data: Chase is fine; Citi
@@ -120,7 +120,7 @@ const seenFrom = (item_id: string, institution_name: string, first_seen: string)
 const CITI = { institution_name: 'Citi', account_name: 'Double Cash' };
 
 async function seedYear() {
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('a1') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 'a1') });
   await fake.set(
     ctxKey('txns:item_chase'),
     await store([
@@ -136,22 +136,22 @@ async function seedYear() {
   await setAccountHidden(ctx, 'acc_save', 'depository', true);
   await setExcluded(ctx, 'c_tv', true);
 
-  await saveItem(ctx, { item_id: 'item_citi', institution_name: 'Citi', encrypted_access_token: await encrypt('a2') });
+  await saveItem(ctx, { item_id: 'item_citi', institution_name: 'Citi', encrypted_access_token: await encrypt(TEST_CTX, 'a2') });
   await fake.set(ctxKey('txns:item_citi'), await store([on('2024-02-02', 'ci_1', 'acc_ci', 20, CITI), on('2025-08-30', 'ci_2', 'acc_ci', 45, { ...CITI, category: 'medical' })], { synced_at: '2025-09-12T15:00:00.000Z' }));
   await syncsStore.set(ctx, 'item_citi', { at: '2025-09-12T15:00:00.000Z' });
   await noticesStore.set(ctx, 'item_citi', { episode: 'e1', since: '2025-09-13T13:00:00.000Z', state: 'needs_reauth', notified_at: null, reminded_at: null });
 
-  await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt('a3') });
+  await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt(TEST_CTX, 'a3') });
   await fake.set(ctxKey('txns:item_ally'), await store([on('2025-07-01', 'al_1', 'acc_al', 30, { institution_name: 'Ally' })], { importing: true }));
 
-  await saveItem(ctx, { item_id: 'item_amex', institution_name: 'Amex', encrypted_access_token: await encrypt('a4') });
+  await saveItem(ctx, { item_id: 'item_amex', institution_name: 'Amex', encrypted_access_token: await encrypt(TEST_CTX, 'a4') });
   await fake.set(ctxKey('txns:item_amex'), await store([on('2025-05-05', 'am_1', 'acc_am', 12.5, { institution_name: 'Amex', category: 'food and drink' })]));
 
   await connectWithoutTransactions(fake, { item_id: 'item_acme', name: 'Acme CU', accounts: [{ account_id: 'acc_acme', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
   await connectWithoutTransactions(fake, { item_id: 'item_vg', name: 'Vanguard', accounts: [{ account_id: 'acc_vg', type: 'investment' }] });
 
   const entry = (item_id: string, institution_name: string, first_seen: string, last_seen: string) =>
-    encrypt(JSON.stringify({ provider: 'plaid', item_id, institution_id: null, institution_name, name: 'Checking', official_name: null, mask: '9', type: 'depository', subtype: null, persistent_account_id: null, first_seen, last_seen }));
+    encrypt(TEST_CTX, JSON.stringify({ provider: 'plaid', item_id, institution_id: null, institution_name, name: 'Checking', official_name: null, mask: '9', type: 'depository', subtype: null, persistent_account_id: null, first_seen, last_seen }));
   await fake.hset(ctxKey('accounts:directory'), {
     acc_wells: await entry('item_wells', 'Wells Fargo', '2024-01-10', '2025-06-30'),
     // A live connection's account: not removed.
@@ -258,9 +258,9 @@ describe('a report from stored data', () => {
   });
 
   test('a missing store, and a connection never synced, are said as couldn’t be loaded', async () => {
-    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt('a') });
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'a') });
     await fake.set(ctxKey('txns:item_a'), 'damaged-not-a-blob');
-    await saveItem(ctx, { item_id: 'item_b', institution_name: 'NewBank', encrypted_access_token: await encrypt('b') });
+    await saveItem(ctx, { item_id: 'item_b', institution_name: 'NewBank', encrypted_access_token: await encrypt(TEST_CTX, 'b') });
     const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
     expect(r.gaps.map((g) => [g.kind, g.institution])).toEqual([
       ['missing', 'Chase'],
@@ -271,7 +271,7 @@ describe('a report from stored data', () => {
   });
 
   test('whether a row was excluded that couldn’t be read counts it, and says so', async () => {
-    await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('a1') });
+    await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'a1') });
     await fake.set(ctxKey('txns:item_chase'), await store([on('2023-01-01', 'old', 'acc_chk', 1), on('2025-04-04', 'q', 'acc_chk', 70)]));
     await fake.hset(ctxKey('transaction-annotations'), { q: 'damaged-not-ciphertext' });
     const r = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
@@ -315,7 +315,7 @@ describe('a report from stored data', () => {
   test('a mark saved as words keeps working as the categories change: renamed, it is the same category; merged, its marks and rows go with it', async () => {
     const { ensureTaxonomy, changeTaxonomy } = await import('@/lib/category-store');
     const { renameCategory, mergeCategories, textKeys } = await import('@/lib/categories');
-    await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('a1') });
+    await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'a1') });
     await fake.set(
       ctxKey('txns:item_chase'),
       await store([
@@ -379,14 +379,14 @@ describe('a report from stored data', () => {
 describe('review: a report from stored data never claims more than it has', () => {
   /** A Chase login with history from 2023, and what its last load remembered. */
   async function chaseLogin(item_id: string, accounts: { account_id: string; mask: string; type: string; name?: string }[]) {
-    await saveItem(ctx, { item_id, institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(`t-${item_id}`) });
+    await saveItem(ctx, { item_id, institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, `t-${item_id}`) });
     await fake.set(ctxKey(`txns:${item_id}`), await store([on('2023-05-01', `${item_id}-0`, accounts[0].account_id, 9), on('2025-02-02', `${item_id}-1`, accounts[0].account_id, 50)]));
     const meta = accounts.map((a) => ({ name: a.name ?? 'Account', official_name: null, subtype: null, limit: null, currency: 'USD', ...a }));
-    await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(JSON.stringify(meta)) });
+    await fake.hset(ctxKey('accounts:meta'), { [item_id]: await encrypt(TEST_CTX, JSON.stringify(meta)) });
   }
   /** An account of a connection removed in March 2026, as the directory keeps it. */
   const removedEntry = (account: { name: string; mask: string; type: string }) =>
-    encrypt(JSON.stringify({ provider: 'plaid', item_id: 'item_personal', institution_id: 'ins_3', institution_name: 'Chase', official_name: null, subtype: null, persistent_account_id: null, first_seen: '2022-01-10', last_seen: '2026-03-01', ...account }));
+    encrypt(TEST_CTX, JSON.stringify({ provider: 'plaid', item_id: 'item_personal', institution_id: 'ins_3', institution_name: 'Chase', official_name: null, subtype: null, persistent_account_id: null, first_seen: '2022-01-10', last_seen: '2026-03-01', ...account }));
   const snapshot = () => JSON.stringify({ s: [...fake.strings].sort(), h: [...fake.hashes].map(([k, v]) => [k, [...v].sort()]).sort() });
 
   test('making a report writes nothing', async () => {
@@ -415,7 +415,7 @@ describe('review: a report from stored data never claims more than it has', () =
     // Linked by the person, whatever the digits say.
     await fake.hset(ctxKey('accounts:directory'), { acc_personal_card: await removedEntry({ name: 'Sapphire', mask: '0000', type: 'credit' }) });
     expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps.map((g) => g.kind)).toEqual(['removed']);
-    await fake.hset(ctxKey('account-links'), { acc_personal_card: await encrypt(JSON.stringify({ to: 'acc_new_card', linked_at: '2026-03-02T00:00:00.000Z', evidence: {} })) });
+    await fake.hset(ctxKey('account-links'), { acc_personal_card: await encrypt(TEST_CTX, JSON.stringify({ to: 'acc_new_card', linked_at: '2026-03-02T00:00:00.000Z', evidence: {} })) });
     expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps).toEqual([]);
   });
 
@@ -468,7 +468,7 @@ describe('review: a report from stored data never claims more than it has', () =
   });
 
   test('a connection never synced is missing only from periods its history could reach; before that, it can go back only so far', async () => {
-    await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt('n') });
+    await saveItem(ctx, { item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt(TEST_CTX, 'n') });
     await fake.hset(ctxKey('accounts:directory'), { acc_n: await seenFrom('item_new', 'NewBank', '2026-09-01') });
     const p2023 = resolvePeriod({ kind: 'year', year: 2023 }, NY, NOW);
     if ('error' in p2023) throw new Error(p2023.error);
@@ -479,7 +479,7 @@ describe('review: a report from stored data never claims more than it has', () =
 
 describe('verification: a report from stored data says what may be missing, and only that', () => {
   test('with no account links, nothing could be carried across a re-link, so a remembered-accounts record that can’t be read is no gap', async () => {
-    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
     await fake.set(ctxKey('txns:item_a'), await store([on('2023-05-01', 'a-0', 'acc_chk', 9), on('2025-02-02', 'a-1', 'acc_chk', 50)]));
     // Of a connection no longer stored, as a disconnect can leave behind.
     await fake.hset(ctxKey('accounts:meta'), { item_gone: 'damaged-not-ciphertext' });
@@ -490,7 +490,7 @@ describe('verification: a report from stored data says what may be missing, and 
 
     // With a link, what it carries can't be told from a paused one without
     // the live accounts: both are said, as before.
-    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(JSON.stringify({ to: 'acc_chk', linked_at: '2025-01-02T00:00:00.000Z', evidence: {} })) });
+    await fake.hset(ctxKey('account-links'), { acc_old: await encrypt(TEST_CTX, JSON.stringify({ to: 'acc_chk', linked_at: '2025-01-02T00:00:00.000Z', evidence: {} })) });
     const linked = await quiet(() => readReport(ctx, year2025(), { now: NOW }));
     expect(linked.gaps.map((g) => g.kind)).toEqual(['own_categories', 'own_exclusions']);
   });
@@ -502,7 +502,7 @@ describe('verification: a report from stored data says what may be missing, and 
   };
 
   test('a connection synced with nothing stored, linked in 2026: a 2015 report says how far back its history can go, never only that the period is empty', async () => {
-    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
     await fake.set(ctxKey('txns:item_a'), await store([]));
     await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-03-02') });
     const r = await quiet(() => readReport(ctx, p2015(), { now: NOW }));
@@ -516,7 +516,7 @@ describe('verification: a report from stored data says what may be missing, and 
   });
 
   test('a store that can’t be read stays missing from a period before its connection was first seen', async () => {
-    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t-a') });
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
     await fake.set(ctxKey('txns:item_a'), 'damaged-not-a-blob');
     // First seen in 2026 (balance history began then), though it may hold far older rows.
     await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-09-01') });
@@ -645,7 +645,7 @@ describe('the marked categories, a setting on the storage seam', () => {
     expect(damaged).toBeInstanceOf(UnreadableValueError);
     expect((damaged as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(false);
     for (const later of [{ ...saved, v: 2 }, { ...saved, groups: [] }]) {
-      await fake.set(SETTINGS_KEY, await encrypt(JSON.stringify(later)));
+      await fake.set(SETTINGS_KEY, await encrypt(TEST_CTX, JSON.stringify(later)));
       const e = await reportSettingsStore.get(ctx).catch((err: unknown) => err);
       expect(e).toBeInstanceOf(StoredDataUnreadableError);
       expect((e as InstanceType<typeof UnreadableValueError>).unrecognised).toBe(true);
@@ -689,7 +689,7 @@ describe('the marked categories, a setting on the storage seam', () => {
   });
 
   test('unreadable or unrecognised settings are a flagged 409 on load and on save, and are left alone', async () => {
-    for (const stored of ['unreadable', await encrypt(JSON.stringify({ ...saved, v: 2 }))]) {
+    for (const stored of ['unreadable', await encrypt(TEST_CTX, JSON.stringify({ ...saved, v: 2 }))]) {
       await fake.set(SETTINGS_KEY, stored);
       const loaded = await quiet(() => settingsRoute.GET());
       expect(loaded.status).toBe(409);

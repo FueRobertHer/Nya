@@ -25,7 +25,7 @@ export async function readLinks(ctx: Ctx): Promise<{ links: Map<string, Link>; u
   await Promise.all(
     Object.entries(raw).map(async ([old, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as Link;
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as Link;
         if (typeof parsed?.to !== 'string' || typeof parsed?.linked_at !== 'string') throw new Error('malformed');
         links.set(old, parsed);
       } catch {

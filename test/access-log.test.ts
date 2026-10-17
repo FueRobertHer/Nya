@@ -224,7 +224,7 @@ describe('clearing a damaged record', () => {
   test('removes only an unreadable one', async () => {
     const readable = log(at(T));
     await accessLogStore.set(ctx, 'ok', readable);
-    const unrecognised = await encrypt('{"not":"a record"}');
+    const unrecognised = await encrypt(TEST_CTX, '{"not":"a record"}');
     await fake.hset(ctxKey('sharing-access-log'), { bad: DAMAGED, odd: unrecognised });
     expect(await clearUnreadableAccessLog(ctx, 'ok')).toBe(false);
     expect(await clearUnreadableAccessLog(ctx, 'odd')).toBe(false);
@@ -285,7 +285,7 @@ describe('the nightly pass', () => {
       ['live', log(at(T))],
       ['gone', log(at(T))],
     ]);
-    await fake.hset(ctxKey('sharing-access-log'), { gone_bad: DAMAGED, gone_odd: await encrypt('{"not":"a record"}') });
+    await fake.hset(ctxKey('sharing-access-log'), { gone_bad: DAMAGED, gone_odd: await encrypt(TEST_CTX, '{"not":"a record"}') });
     await pruneAccessLog(ctx, T, everyone(['live']));
     expect([...((fake as any).hashes.get(ctxKey('sharing-access-log')) as Map<string, string>).keys()]).toEqual(['live']);
   });

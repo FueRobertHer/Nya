@@ -22,7 +22,7 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Unknown item' }, { status: 404 });
     }
 
-    const access_token = await decrypt(item.encrypted_access_token);
+    const access_token = await decrypt(ctx, item.encrypted_access_token);
 
     // Update mode: passing access_token (instead of products) re-opens Link
     // against the *existing* Item, so the user re-authenticates without a

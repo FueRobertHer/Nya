@@ -25,7 +25,7 @@ const { applyHidden } = await import('@/lib/hidden');
 const { accountBalanceMap } = await import('@/lib/networth');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 }
 
 // Recovery only looks back a bounded number of DAYS, so every fixture has to
@@ -163,7 +163,7 @@ describe('rememberAccounts', () => {
   test('clears records left over from the previous per-account shape', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await fake.hset(ctxKey('accounts:meta'), {
-      old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+      old_acct_id: await encrypt(TEST_CTX, JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
     });
 
     expect(await findRememberedAccount(ctx, 'old_acct_id')).toBeNull();
@@ -176,7 +176,7 @@ describe('rememberAccounts', () => {
     await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: 'x' }) });
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await fake.hset(ctxKey('accounts:meta'), {
-      old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+      old_acct_id: await encrypt(TEST_CTX, JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
     });
 
     expect(Object.keys(await rememberedAccountsByItem(ctx))).toEqual(['item_a']);

@@ -323,7 +323,7 @@ describe('when it is due', () => {
     fake.reset();
     await registerTestContainer(fake);
     await turnOn();
-    await fake.set(ctxKey('weekly-summary-state'), await encrypt(JSON.stringify({ v: 1, key: 'x', sent: 'later' })));
+    await fake.set(ctxKey('weekly-summary-state'), await encrypt(TEST_CTX, JSON.stringify({ v: 1, key: 'x', sent: 'later' })));
     expect((await run(MONDAY)).get(ME)).toBe('unreadable');
     expect(delivered).toEqual([]);
     expect(logs.join('\n')).toContain('could not be read, so no summary goes for it');
@@ -360,6 +360,28 @@ describe('what it takes to send one', () => {
     await turnOn();
     expect((await run(MONDAY, { recipients: async () => [] })).get(ME)).toBe('no-recipient');
     expect((await weeklyStateStore.get(TEST_CTX))?.sent ?? null).toBeNull();
+  });
+
+  test('a container whose data key can’t be used gets none, and nothing of it is read', async () => {
+    const c = await import('@/lib/crypto');
+    process.env.MASTER_KEY = Buffer.alloc(32, 71).toString('base64');
+    c.forgetActiveKey();
+    try {
+      await turnOn(); // under the environment's key, written before its own
+      const p = (await c.prepareContainerKey(ME, { born: false }))!;
+      expect((await c.claimContainerKey(p)).outcome).toBe('made');
+      // Its key gone from the store (a restore that lost it, say): the setting still reads, the key doesn't open.
+      fake.hashes.get(c.keysHashKey())!.delete(p.id);
+      c.forgetActiveKey();
+      let gathered = 0;
+      expect((await run(MONDAY, { gather: async () => (gathered++, gather as never) })).get(ME)).toBe('failed');
+      expect(gathered).toBe(0);
+      expect(syncs).toEqual([]);
+      expect(delivered).toEqual([]);
+      expect(logs.join('\n')).toContain(`the data key of container ${ME} can't be used, so no summary goes for it`);
+    } finally {
+      c.forgetActiveKey();
+    }
   });
 
   test('one that can’t be read is tried again by the next run', async () => {

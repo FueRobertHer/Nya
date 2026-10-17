@@ -116,7 +116,7 @@ const STATEMENT = (() => {
 async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
   await fake.set(
     ctxKey('txns:item_chase'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(ctx, {
       schema_version: 2,
       cursor: 'c1',
       accounts: { acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null } },
@@ -127,9 +127,9 @@ async function storeBank(rows: ReturnType<typeof bankTxn>[]) {
 }
 
 async function seed() {
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(ctx, 'access-sandbox-chase') });
   await fake.hset(ctxKey('accounts:meta'), {
-    item_chase: await encrypt(JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+    item_chase: await encrypt(ctx, JSON.stringify([{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
   });
   await storeBank(BANK);
 }

@@ -119,6 +119,7 @@
 // so a closure reads as one rather than as the account vanishing.
 
 import { createHash, randomBytes } from 'node:crypto';
+import { checkContainerKey, ContainerKeyError } from './crypto';
 import { redis, kEnv, getItems } from './storage';
 import { getContainer, isContainerId, type Ctx, type ContainerId } from './containers';
 import { ownersKey } from './owners';
@@ -988,12 +989,24 @@ export async function mySharing(me: string | null, ctx: Ctx): Promise<MySharing 
 
 /** A person's container, for reading what they shared, and for the two
  *  writes in their access log (recordShowing, forgetShowings). Null when it
- *  isn't active. */
+ *  isn't active, or its data key can't be used (their own requests say so;
+ *  someone they share with is shown nothing of theirs meanwhile, as when their
+ *  data can't be read). Its key is opened here, before anything of theirs is
+ *  read, so the readers below never take a broken key for "nothing". */
 async function theirCtx(userId: string): Promise<Ctx | null> {
   const id = await redis().hget<string>(ownersKey(), userId);
   if (typeof id !== 'string' || !isContainerId(id)) return null;
   const rec = await getContainer(id as ContainerId);
-  return rec?.status === 'active' ? { container: id as ContainerId } : null;
+  if (rec?.status !== 'active') return null;
+  const ctx: Ctx = { container: id as ContainerId };
+  try {
+    await checkContainerKey(ctx);
+  } catch (err) {
+    if (!(err instanceof ContainerKeyError)) throw err;
+    console.error(`Shared data: not shown, since ${err.message}`);
+    return null;
+  }
+  return ctx;
 }
 
 export type Shareable = {

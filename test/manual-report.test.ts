@@ -45,10 +45,10 @@ afterEach(() => {
 describe('getManualAccountsReport', () => {
   test('each account by why it can’t be used: damaged, not understood, or under a key this deployment lacks', async () => {
     await fake.hset(ctxKey('manual:accounts'), {
-      manual_cash: await encrypt(JSON.stringify(CASH)),
+      manual_cash: await encrypt(TEST_CTX, JSON.stringify(CASH)),
       manual_damaged: 'not-ciphertext-but-long-enough-to-be-tried',
-      manual_shape: await encrypt(JSON.stringify({ account_id: 'manual_shape', name: 'Boat', kind: 'a later one' })),
-      manual_text: await encrypt('not json'),
+      manual_shape: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'manual_shape', name: 'Boat', kind: 'a later one' })),
+      manual_text: await encrypt(TEST_CTX, 'not json'),
       manual_later: `v2.k9-0badc0de.z.${BODY}`,
       manual_k0: await underAnotherK0(JSON.stringify(CASH)),
     });
@@ -63,7 +63,7 @@ describe('getManualAccountsReport', () => {
   test('with a master key: a data key the key store lacks is unavailable, and ciphertext that fails under one is damaged', async () => {
     process.env.MASTER_KEY = MASTER;
     forgetActiveKey();
-    const sealed = await encrypt(JSON.stringify(CASH));
+    const sealed = await encrypt(TEST_CTX, JSON.stringify(CASH));
     expect(sealed).toStartWith('v2.k1-');
     // One character of the body changed: it no longer authenticates under its
     // key, whose id commits to it, so the bytes are damaged.
@@ -79,7 +79,7 @@ describe('getManualAccountsReport', () => {
 
   // Nothing about any one account: every reader of them fails alike.
   test('without the master key a data key needs, or with storage out of reach, it throws', async () => {
-    await fake.hset(ctxKey('manual:accounts'), { manual_cash: await encrypt(JSON.stringify(CASH)), manual_v2: `v2.k9-0badc0de.-.${BODY}` });
+    await fake.hset(ctxKey('manual:accounts'), { manual_cash: await encrypt(TEST_CTX, JSON.stringify(CASH)), manual_v2: `v2.k9-0badc0de.-.${BODY}` });
     expect(await getManualAccountsReport(ctx).catch((e) => e)).toBeInstanceOf(MasterKeyError);
     await fake.hdel(ctxKey('manual:accounts'), 'manual_v2');
     fake.failNext('hgetall');

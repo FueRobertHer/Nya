@@ -233,4 +233,26 @@ describe.skipIf(!hasRedis && !process.env.CI)('the create script, on a real Redi
     expect(await client.send('EVAL', [CREATE_FIRST, '1', 'reg', 'b', '{}'])).toBe(0);
     expect(await client.send('HKEYS', ['reg'])).toEqual(['a']);
   });
+
+  test('the first container gets its data key in the same step, never replacing one', async () => {
+    const client = real!.client;
+    const keys = ['reg', 'map', 'keys', 'rotation', 'lock', 'master'];
+    const run = (id: string, keyId: string) =>
+      client.send('EVAL', [CREATE_FIRST, String(keys.length), ...keys, id, '{}', keyId, '{"rec":1}', `{"key":"${keyId}"}`, 'M']);
+    expect(await run('a', 'k1-aaaaaaaa')).toBe(1);
+    expect(await client.send('HGET', ['map', 'a'])).toBe('{"key":"k1-aaaaaaaa"}');
+    expect(await client.send('HGET', ['keys', 'k1-aaaaaaaa'])).toBe('{"rec":1}');
+    expect(await client.send('GET', ['master'])).toBe('M');
+    expect(await run('b', 'k2-bbbbbbbb')).toBe(0); // not empty: nothing at all
+    expect(await client.send('HKEYS', ['keys'])).toEqual(['k1-aaaaaaaa']);
+    // An entry already in the map (a registry cleared by hand) is kept.
+    await client.send('DEL', ['reg']);
+    expect(await run('a', 'k3-cccccccc')).toBe(1);
+    expect(await client.send('HGET', ['map', 'a'])).toBe('{"key":"k1-aaaaaaaa"}');
+    expect(await client.send('HEXISTS', ['keys', 'k3-cccccccc'])).toBe(0);
+    // No key given (containerKeyScriptArgs(null)): registered without one.
+    await client.send('FLUSHALL', []);
+    expect(await client.send('EVAL', [CREATE_FIRST, String(keys.length), ...keys, 'z', '{}', '', '', '', ''])).toBe(1);
+    expect(await client.send('EXISTS', ['map', 'keys', 'master'])).toBe(0);
+  });
 });

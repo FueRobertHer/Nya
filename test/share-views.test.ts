@@ -132,7 +132,7 @@ async function chaseTxnsWith(extra: Record<string, unknown>[]) {
     acc_save: { name: 'Savings', official_name: null, type: 'depository', subtype: 'savings', mask: '3333', balances: null },
   };
   const txns = Object.fromEntries([...CHASE_TXNS, ...extra].map((t: any) => [t.transaction_id, t]));
-  await fake.set(ctxKey('txns:item_chase'), await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns, synced_at: SYNCED_AT }));
+  await fake.set(ctxKey('txns:item_chase'), await encodeJsonBlob(ctx, { schema_version: 2, cursor: 'c1', accounts, txns, synced_at: SYNCED_AT }));
 }
 
 /** Ends ahead, as the drawer sends them. */
@@ -262,6 +262,7 @@ describe('net worth', () => {
   test('an account in another currency is left out of the total and named by its currency', async () => {
     await fake.hset(ctxKey('accounts:meta'), {
       item_chase: await encrypt(
+        ctx,
         JSON.stringify([
           { account_id: 'acc_chk', name: 'Checking', type: 'depository', subtype: 'checking', mask: '1111', limit: null, official_name: null, currency: 'USD' },
           { account_id: 'acc_card', name: 'Card', type: 'credit', subtype: 'credit card', mask: '2222', limit: 5000, official_name: null, currency: 'EUR' },
@@ -416,6 +417,7 @@ describe('holdings: what isn’t counted is said', () => {
     const meta = (a: Record<string, unknown>) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a });
     await fake.hset(ctxKey('accounts:meta'), {
       item_broker: await encrypt(
+        ctx,
         JSON.stringify([meta({ account_id: 'acc_ira', name: 'IRA', type: 'investment', subtype: 'ira', mask: '4444' }), meta({ account_id: 'acc_roth', name: 'Roth', type: 'investment', subtype: 'roth', mask: '5555' })])
       ),
     });
@@ -612,7 +614,7 @@ describe('what can’t be read', () => {
   });
 
   test('a connection not loaded yet: net worth and holdings can’t be whole, so say so', async () => {
-    await fake.hset(ctxKey('plaid:items'), { item_new: JSON.stringify({ item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt('x') }) });
+    await fake.hset(ctxKey('plaid:items'), { item_new: JSON.stringify({ item_id: 'item_new', institution_name: 'NewBank', encrypted_access_token: await encrypt(ctx, 'x') }) });
     await shareViews(all);
     expect(unreadable(await quietly(partnerViews))).toEqual(['net_worth', 'holdings']);
   });
@@ -772,7 +774,7 @@ describe('ends and the record of showings', () => {
     await accessLogStore.set(ctx, logId, { shown: [{ at: before, times: 1, read: { acc_chk: 'balance' } }] });
     await partnerSees();
     expect((await accessLogStore.get(ctx, logId))!.shown.map((s) => s.views ?? null)).toEqual([null, { net_worth: { detail: 'total', accounts: false } }]);
-    const later = await encrypt(JSON.stringify({ shown: [{ at: before, times: 1, read: {}, views: { bills: 'upcoming' } }] }));
+    const later = await encrypt(ctx, JSON.stringify({ shown: [{ at: before, times: 1, read: {}, views: { bills: 'upcoming' } }] }));
     await fake.hset(ctxKey('sharing-access-log'), { [logId]: later });
     const err = await accessLogStore.get(ctx, logId).catch((e) => e);
     expect(err.unrecognised).toEqual([logId]);

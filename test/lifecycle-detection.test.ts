@@ -79,7 +79,7 @@ async function storedTxns(rows: { account_id: string; date: string }[]) {
       { transaction_id: `t${i}`, account_id: r.account_id, date: r.date, amount: 5, pending: false, name: 'x', merchant_name: null, iso_currency_code: 'USD' },
     ])
   );
-  await fake.set(ctxKey('txns:item_ally'), await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns, synced_at: null }));
+  await fake.set(ctxKey('txns:item_ally'), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: {}, txns, synced_at: null }));
 }
 
 const points = (body: any) => body.history.map((p: any) => [p.date, p.value, !!p.estimated]);
@@ -114,7 +114,7 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt('tok') });
+  await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
 });
 
 afterEach(() => setSystemTime());
@@ -529,7 +529,7 @@ describe('the dashboard fails loudly rather than count a closed account', () => 
   test('so does one this release doesn’t recognise, which is never offered for removal', async () => {
     plaid.accounts = [SAV, CHK];
     await fake.hset(ctxKey('account-lifecycle'), {
-      sav: await encrypt(JSON.stringify({ lifecycle: { state: 'sold', on: '2026-03-01' }, type: 'depository', label: { name: 'S', institution: 'A', mask: null }, item_id: null, set_at: '2026-03-01T00:00:00Z' })),
+      sav: await encrypt(TEST_CTX, JSON.stringify({ lifecycle: { state: 'sold', on: '2026-03-01' }, type: 'depository', label: { name: 'S', institution: 'A', mask: null }, item_id: null, set_at: '2026-03-01T00:00:00Z' })),
     });
     const { status, body } = await load('2026-03-13');
     expect(status).toBe(409);
@@ -545,8 +545,8 @@ describe('a balance at zero for weeks', () => {
     const start = Date.parse(`${from}T00:00:00Z`);
     for (let i = 0; i < days; i++) {
       const date = new Date(start + i * 86_400_000).toISOString().slice(0, 10);
-      await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
-      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt('500') });
+      await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
+      await fake.hset(ctxKey('history:net-worth'), { [date]: await encrypt(TEST_CTX, '500') });
     }
   }
 
@@ -558,7 +558,7 @@ describe('a balance at zero for weeks', () => {
         { transaction_id: `t${i}`, account_id: r.account_id, date: r.date, amount: 5, pending: false, name: 'x', merchant_name: null, iso_currency_code: 'USD' },
       ])
     );
-    await fake.set(ctxKey('txns:item_ally'), await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns, synced_at: null }));
+    await fake.set(ctxKey('txns:item_ally'), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: {}, txns, synced_at: null }));
   }
 
   test('asks, with the first day of the zeros prefilled, and holds nothing', async () => {
@@ -579,7 +579,7 @@ describe('a balance at zero for weeks', () => {
 
   test('not when it had a balance within the weeks', async () => {
     await measuredDays('2026-02-01', 40, { chk: 500, empty: 0 });
-    await fake.hset(ctxKey('history:accounts'), { '2026-03-01': await encrypt(JSON.stringify({ chk: 500, empty: 12 })) });
+    await fake.hset(ctxKey('history:accounts'), { '2026-03-01': await encrypt(TEST_CTX, JSON.stringify({ chk: 500, empty: 12 })) });
     plaid.accounts = [CHK, EMPTY];
     expect(accountRow((await load('2026-03-13')).body, 'empty').question).toBeUndefined();
   });

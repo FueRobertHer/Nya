@@ -36,7 +36,7 @@ const CARRY_KEY = ctxKey('txn-category-carry');
 describe('seeding', () => {
   test('on the first read, from the categories already on the person’s data, and never again', async () => {
     await setOverride(ctx, 't1', 'groceries');
-    await fake.hset(CARRY_KEY, { acc_old: await encrypt(JSON.stringify({ 'acc_old|2025-01-02|500|bakery': 'bread', 'acc_old|2025-01-03|700|x': null })) });
+    await fake.hset(CARRY_KEY, { acc_old: await encrypt(TEST_CTX, JSON.stringify({ 'acc_old|2025-01-02|500|bakery': 'bread', 'acc_old|2025-01-03|700|x': null })) });
     await setBudgets(ctx, { 'Kids stuff': 120, 'food and drink': 400 });
     const t = await store.ensureTaxonomy(ctx, { observed: textKeys(['farmers market']) });
     for (const name of ['groceries', 'bread', 'Kids stuff', 'farmers market', 'food and drink', 'other']) expect([name, !!named(t, name)]).toEqual([name, true]);

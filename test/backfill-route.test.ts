@@ -77,7 +77,7 @@ beforeEach(async () => {
   errors.length = 0;
   console.error = (...args: unknown[]) => void errors.push(args);
   await registerTestContainer(fake);
-  await saveItem(TEST_CTX, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
+  await saveItem(TEST_CTX, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
 });
 afterEach(() => {
   console.error = origError;

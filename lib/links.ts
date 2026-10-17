@@ -93,7 +93,7 @@ async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, Direct
   await Promise.all(
     Object.entries(raw).map(async ([id, blob]) => {
       try {
-        entries[id] = JSON.parse(await decrypt(blob)) as DirectoryEntry;
+        entries[id] = JSON.parse(await decrypt(ctx, blob)) as DirectoryEntry;
       } catch {
         unreadable.add(id);
       }
@@ -253,7 +253,7 @@ export async function historySpans(ctx: Ctx): Promise<Record<string, Span>> {
     const decoded = await Promise.all(
       Object.entries(map).map(async ([date, blob]) => {
         try {
-          return [date, JSON.parse(await decrypt(blob)) as Record<string, number>] as const;
+          return [date, JSON.parse(await decrypt(ctx, blob)) as Record<string, number>] as const;
         } catch {
           return null;
         }
@@ -336,7 +336,7 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
         last_seen: day,
       };
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
-      writes[a.account_id] = await encrypt(JSON.stringify(next));
+      writes[a.account_id] = await encrypt(ctx, JSON.stringify(next));
     }
     if (Object.keys(writes).length > 0) await redis().hset(directoryKey(ctx), writes);
   } catch (err) {
@@ -814,7 +814,7 @@ export async function dismissAll(ctx: Ctx, old: string, now: number = Date.now()
 
 export async function linkAccounts(ctx: Ctx, old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
   const link: Link = { to, linked_at: new Date(now).toISOString(), evidence };
-  await redis().hset(linksKey(ctx), { [old]: await encrypt(JSON.stringify(link)) });
+  await redis().hset(linksKey(ctx), { [old]: await encrypt(ctx, JSON.stringify(link)) });
 }
 
 export async function unlinkAccount(ctx: Ctx, old: string): Promise<void> {
@@ -992,7 +992,7 @@ export async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<
     ids.map(async (id, i) => {
       if (!blobs[i]) return;
       try {
-        out[id] = JSON.parse(await decrypt(blobs[i]!)) as DirectoryEntry;
+        out[id] = JSON.parse(await decrypt(ctx, blobs[i]!)) as DirectoryEntry;
       } catch {
         // unlabelled, like an account the directory never knew
       }

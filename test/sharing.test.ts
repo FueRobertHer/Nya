@@ -73,7 +73,7 @@ async function ownerBank() {
     row('t_private', 'acct_mine', daysAgo(2), 7),
   ];
   await fake.hset(ctxKey('plaid:items'), {
-    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   const inst = {
     item_id: 'item_a',
@@ -629,7 +629,7 @@ describe('sharing accounts on a connection', () => {
   test('each balance is the account’s newest measured one, with its own date', async () => {
     const { recordPartialAccounts } = await import('@/lib/history');
     // An older full snapshot too: the newest measurement must win, not the first.
-    await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(JSON.stringify({ acct_joint: 111 })) });
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(20)]: await encrypt(TEST_CTX, JSON.stringify({ acct_joint: 111 })) });
     await recordPartialAccounts(TEST_CTX, { acct_joint: 640 });
     await share({ acct_joint: 'balance' });
     const [from] = await sharedWithPartner();
@@ -920,7 +920,7 @@ describe('what they see: the preview', () => {
 
   test('changes nothing in my container, old-shaped records included', async () => {
     await share({ acct_joint: 'balance' });
-    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
     const before = await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'));
     expect((await previewOf('user_owner')).status).toBe(200);
     expect(await fake.hgetall<Record<string, string>>(ctxKey('accounts:meta'))).toEqual(before);
@@ -1231,7 +1231,7 @@ describe('a shared balance, in its own currency', () => {
     plaidAccounts[token] = plaid;
     plaidTxns[token] = rows;
     await fake.hset(ctxKey('plaid:items'), {
-      item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Monzo', encrypted_access_token: await encrypt(token) }),
+      item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Monzo', encrypted_access_token: await encrypt(TEST_CTX, token) }),
     });
     const inst = {
       item_id: 'item_b',
@@ -2042,7 +2042,7 @@ describe('records of showings', () => {
     await rememberAccounts(TEST_CTX, [{ item_id: 'item_a', institution_name: 'Chase', error: null, accounts: [{ ...account('acct_joint', '1111'), balance: 500, currency: null }] } as any]);
     // A remembered account in the shape from before per-item records, which
     // the owner's own loads tidy away and someone else's read must not.
-    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
+    await fake.hset(ctxKey('accounts:meta'), { acct_legacy: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'acct_legacy', type: 'depository' })) });
     const before = ownerData();
     expect(Object.keys(before)).toContain(`${ctxKey('accounts:meta')} acct_legacy`);
     const [read] = await sharedWithPartner();
@@ -2052,5 +2052,72 @@ describe('records of showings', () => {
     const changed = Object.keys(after).filter((k) => after[k] !== before[k]);
     expect(changed).toEqual([`${ctxKey('sharing-access-log')} ${await logIdOf()}`]);
     expect(Object.keys(before).filter((k) => !(k in after))).toEqual([]);
+  });
+});
+
+// A data key per container (docs/architecture.md, "Per-container data keys"):
+// what someone is shown of the owner's is read under the owner's key, and the
+// records of showings their reads write in the owner's container are under it
+// too. The test double refuses any write under another container's key.
+describe('with a data key per container', () => {
+  const cryptoLib = () => import('@/lib/crypto');
+  /** The key ids of every v2 value stored in a container. */
+  const keyIdsIn = async (container: string) => {
+    const { formatOf } = await cryptoLib();
+    const prefix = `test:c:${container}:`;
+    const out = new Set<string>();
+    const add = (v: string) => {
+      for (const m of v.matchAll(/(?:^|")(v2\.k[0-9]+-[0-9a-f]{8}\.[^"]*)/g)) out.add(formatOf(m[1].split('"')[0]).keyId);
+    };
+    for (const [k, v] of (fake as any).strings) if (k.startsWith(prefix)) add(v);
+    for (const [k, h] of (fake as any).hashes) if (k.startsWith(prefix)) for (const v of h.values()) add(v);
+    return out;
+  };
+  const keyOf = (container: string) => JSON.parse((fake as any).hashes.get('test:crypto:container-keys').get(container)).key as string;
+
+  beforeEach(async () => {
+    const c = await cryptoLib();
+    fake.reset();
+    (await import('@/lib/sessions')).forgetEpochs();
+    process.env.MASTER_KEY = Buffer.alloc(32, 95).toString('base64');
+    c.forgetActiveKey();
+    await registerTestContainer(fake);
+    // The owner's container, from before: given its key by the migration pass.
+    const p = (await c.prepareContainerKey(TEST_CTX.container, { born: false }))!;
+    await c.claimContainerKey(p);
+    await ownerBank();
+    await as('user_owner', () => route('transactions', 'GET'));
+    // The others are born with theirs.
+    await as('user_partner', () => route('shared', 'GET'));
+    await as('user_third', () => route('shared', 'GET'));
+    pair = await connect('user_owner', 'user_partner');
+  });
+  afterEach(async () => (await cryptoLib()).forgetActiveKey());
+
+  test('the partner is shown the owner’s data, read under the owner’s key, and each container keeps its own', async () => {
+    await share({ acct_joint: 'transactions', manual_house: 'balance' });
+    const [from] = await sharedWithPartner();
+    expect(from.accounts.find((a: any) => a.id === 'acct_joint').transactions.map((t: any) => t.amount)).toEqual([12]);
+    expect(from.accounts.find((a: any) => a.id === 'manual_house')).toMatchObject({ balance: 300000 });
+    // The record of that showing went into the owner's container, under the owner's key.
+    expect(await ownerRecord()).not.toBeNull();
+    const owner = TEST_CTX.container;
+    const partner = (await containerOf('user_partner')).container;
+    expect(await keyIdsIn(owner)).toEqual(new Set([keyOf(owner)]));
+    for (const id of await keyIdsIn(partner)) expect(id).toBe(keyOf(partner));
+    expect(keyOf(owner)).not.toBe(keyOf(partner));
+  });
+
+  test('when the owner’s key can’t be opened, the partner is shown nothing of theirs, and the owner is told plainly', async () => {
+    await share({ acct_joint: 'balance' });
+    const { keysHashKey, forgetActiveKey } = await cryptoLib();
+    const { KEY_UNAVAILABLE_MESSAGE } = await import('@/lib/data-ctx');
+    await fake.hdel(keysHashKey(), keyOf(TEST_CTX.container));
+    forgetActiveKey();
+    const { result } = await quietly(() => sharedWithPartner());
+    expect(result).toEqual([]);
+    const own = await quietly(() => as('user_owner', () => route('shared', 'GET')));
+    expect(own.result.status).toBe(503);
+    expect(own.result.body).toEqual({ error: KEY_UNAVAILABLE_MESSAGE });
   });
 });

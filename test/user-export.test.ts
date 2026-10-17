@@ -134,13 +134,13 @@ const INV_STATE = {
   cancelled: { it_cxl: '2026-09-15' },
 };
 
-const enc = async (value: unknown) => encrypt(typeof value === 'string' ? value : JSON.stringify(value));
+const enc = async (value: unknown) => encrypt(TEST_CTX, typeof value === 'string' ? value : JSON.stringify(value));
 
 async function seedPerson() {
   await fake.hset(ctxKey('plaid:items'), {
-    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('access-sandbox-SECRET-a') }),
+    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-SECRET-a') }),
     // Linked as a brokerage: whether Plaid included transactions when it was linked is bookkeeping, left out.
-    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt('access-sandbox-SECRET-b'), transactions_billed: false }),
+    item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Fidelity', institution_id: 'ins_12', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-SECRET-b'), transactions_billed: false }),
   });
   await fake.hset(ctxKey('accounts:meta'), {
     item_a: await enc([
@@ -155,7 +155,7 @@ async function seedPerson() {
   });
   await fake.set(
     ctxKey('txns:item_a'),
-    await encodeJsonBlob({
+    await encodeJsonBlob(TEST_CTX, {
       schema_version: 2,
       cursor: 'cursor-SECRET',
       accounts: {
@@ -165,13 +165,13 @@ async function seedPerson() {
       txns: TXNS,
     })
   );
-  await fake.set(ctxKey('invtxns:item_b'), await encodeJsonBlob(INV_STATE));
+  await fake.set(ctxKey('invtxns:item_b'), await encodeJsonBlob(TEST_CTX, INV_STATE));
   await fake.hset(ctxKey('manual:accounts'), {
     manual_house: await enc({ account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', subtype: null, balance: 400000, updated_at: '2026-09-30T10:00:00.000Z' }),
   });
   await fake.hset(ctxKey('hidden:accounts'), { acc_card: await enc({ type: 'credit', hidden_at: '2026-03-01T00:00:00.000Z' }) });
-  await fake.hset(ctxKey('txn-category-overrides'), { t_coffee: await encrypt('Treats'), t_vanished: await encrypt('Old category') });
-  await fake.hset(ctxKey('txn-vendor-renames'), { 'mid:ent_bb': await encrypt('BB Coffee') });
+  await fake.hset(ctxKey('txn-category-overrides'), { t_coffee: await encrypt(TEST_CTX, 'Treats'), t_vanished: await encrypt(TEST_CTX, 'Old category') });
+  await fake.hset(ctxKey('txn-vendor-renames'), { 'mid:ent_bb': await encrypt(TEST_CTX, 'BB Coffee') });
   await fake.hset(ctxKey('account-links'), {
     acc_old: await enc({ to: 'acc_chk', linked_at: '2025-06-02T00:00:00.000Z', evidence: { old_last: '2025-05-31', old_type: 'depository' } }),
   });
@@ -182,9 +182,9 @@ async function seedPerson() {
       [contentKey('acc_old', { date: '2025-11-01', amount: 100, name: 'ATM | withdrawal' })]: null,
     }),
   });
-  await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('1000'), '2026-01-02': await encrypt('1100.5'), '2026-01-03': await encrypt('1050') });
+  await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '1000'), '2026-01-02': await encrypt(TEST_CTX, '1100.5'), '2026-01-03': await encrypt(TEST_CTX, '1050') });
   // The estimate on 2026-01-01 is superseded by the recorded total.
-  await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-30': await encrypt('900'), '2025-12-31': await encrypt('950'), '2026-01-01': await encrypt('123456') });
+  await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-30': await encrypt(TEST_CTX, '900'), '2025-12-31': await encrypt(TEST_CTX, '950'), '2026-01-01': await encrypt(TEST_CTX, '123456') });
   await fake.hset(ctxKey('history:accounts'), {
     '2026-01-01': await enc({ acc_chk: 1500, acc_card: 500 }),
     '2026-01-02': await enc({ acc_chk: 1600.5, acc_card: 500 }),
@@ -241,10 +241,10 @@ async function seedOther() {
     manual_secret: await enc({ account_id: 'manual_secret', name: 'OTHER-ACCOUNT', institution_name: 'Elsewhere', type: 'depository', subtype: null, balance: 1, updated_at: '2026-01-01T00:00:00.000Z' }),
   });
   await fake.hset(ctxKey('plaid:items', OTHER), {
-    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'OTHER-BANK', institution_id: null, encrypted_access_token: await encrypt('x') }),
+    item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'OTHER-BANK', institution_id: null, encrypted_access_token: await encrypt(TEST_CTX, 'x') }),
   });
-  await fake.set(ctxKey('txns:item_a', OTHER), await encodeJsonBlob({ schema_version: 2, cursor: '', accounts: {}, txns: { o1: txn({ transaction_id: 'o1', merchant_name: 'OTHER-MERCHANT' }) } }));
-  await fake.hset(ctxKey('history:net-worth', OTHER), { '2026-01-01': await encrypt('777777') });
+  await fake.set(ctxKey('txns:item_a', OTHER), await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: '', accounts: {}, txns: { o1: txn({ transaction_id: 'o1', merchant_name: 'OTHER-MERCHANT' }) } }));
+  await fake.hset(ctxKey('history:net-worth', OTHER), { '2026-01-01': await encrypt(TEST_CTX, '777777') });
 }
 
 beforeEach(async () => {
@@ -565,7 +565,7 @@ describe('everything stored, decrypted, and nothing else', () => {
     // others are listed, and these are counted under problems, never named by
     // their ids, which are part of the tokens. Nothing stops the download.
     await fake.hset(ctxKey('api-tokens'), { [first.info.id]: DAMAGED });
-    await fake.hset(ctxKey('api-tokens'), { ['0123456789abcdef']: await encrypt(JSON.stringify({ v: 2, label: 'Later' })) });
+    await fake.hset(ctxKey('api-tokens'), { ['0123456789abcdef']: await encrypt(TEST_CTX, JSON.stringify({ v: 2, label: 'Later' })) });
     const short = await download();
     expect(short.api_tokens).toEqual([{ label: 'Claude', created_at: '2026-09-02T10:00:00.000Z', last_used_at: '2026-10-01T08:00:00.000Z' }]);
     expect(short.problems).toEqual([
@@ -852,7 +852,7 @@ describe('a store that can’t be read fails the download, by name', () => {
   });
 
   test('a stored investment transaction without its record', async () => {
-    await fake.set(ctxKey('invtxns:item_b'), await encodeJsonBlob({ ...INV_STATE, txns: { broken: { seen_at: '2026-10-01' } } }));
+    await fake.set(ctxKey('invtxns:item_b'), await encodeJsonBlob(TEST_CTX, { ...INV_STATE, txns: { broken: { seen_at: '2026-10-01' } } }));
     const data = await collectUserData({ ctx, userId: 'user_me' });
     expect(() => buildUserExport(data, NOW)).toThrow(ExportReadError);
   });
@@ -869,8 +869,8 @@ describe('what can’t be read is named, and everything else is in the file', ()
   test('a day of net worth that is damaged or not a number is named, never read around, and the others are in', async () => {
     // A damaged recorded total, with an estimate the same day: the estimate
     // never stands in for it, as the chart gives that day none either.
-    await fake.hset(ctxKey('history:net-worth'), { '2026-01-02': 'garbage-ciphertext', '2026-01-03': await encrypt('abc') });
-    await fake.hset(ctxKey('history:net-worth:est'), { '2026-01-02': await encrypt('999'), '2025-12-30': await encrypt('') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-01-02': 'garbage-ciphertext', '2026-01-03': await encrypt(TEST_CTX, 'abc') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2026-01-02': await encrypt(TEST_CTX, '999'), '2025-12-30': await encrypt(TEST_CTX, '') });
     // A damaged estimate on a day with a recorded total is superseded, so never read or named.
     await fake.hset(ctxKey('history:net-worth:est'), { '2026-01-01': 'garbage-ciphertext' });
     const doc = await download();
@@ -897,7 +897,7 @@ describe('what can’t be read is named, and everything else is in the file', ()
     await fake.hset(ctxKey('history:accounts'), { '2026-01-02': 'garbage-ciphertext' });
     await fake.hset(ctxKey('history:accounts:est'), { '2026-01-02': await enc({ acc_chk: 7, acc_card: 7 }) });
     // An estimate on a day with no recorded map, not a map of balances: named.
-    await fake.hset(ctxKey('history:accounts:est'), { '2025-12-30': await encrypt('[1,2]') });
+    await fake.hset(ctxKey('history:accounts:est'), { '2025-12-30': await encrypt(TEST_CTX, '[1,2]') });
     // A damaged estimate on a recorded day is superseded: never named.
     await fake.hset(ctxKey('history:accounts:est:ext'), { '2026-01-01': 'garbage-ciphertext' });
     const doc = await download();
@@ -949,7 +949,7 @@ describe('what can’t be read is named, and everything else is in the file', ()
     await fake.hset(ctxKey('history:net-worth'), { '2026-01-02': 'garbage-ciphertext' });
     await fake.hset(ctxKey('history:accounts'), { '2026-01-02': 'garbage-ciphertext' });
     await fake.hset(ctxKey('history:accounts:partial'), { '2026-01-04': 'garbage-ciphertext' });
-    await fake.hset(ctxKey('history:accounts:est:ext'), { '2025-12-31': await encrypt('not json') });
+    await fake.hset(ctxKey('history:accounts:est:ext'), { '2025-12-31': await encrypt(TEST_CTX, 'not json') });
     const doc = await download();
     const app = await getHistory(ctx);
     expect(doc.net_worth_history.points).toEqual(app.map((p) => ({ date: p.date, total: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
@@ -962,7 +962,7 @@ describe('what can’t be read is named, and everything else is in the file', ()
   test('a manual account that can’t be read is named, never listed as one since removed, and its balances stay', async () => {
     await fake.hset(ctxKey('manual:accounts'), {
       manual_house: 'garbage-ciphertext',
-      manual_boat: await encrypt(JSON.stringify({ not: 'an account' })),
+      manual_boat: await encrypt(TEST_CTX, JSON.stringify({ not: 'an account' })),
       manual_cash: await enc({ account_id: 'manual_cash', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: '2026-09-30T10:00:00.000Z' }),
     });
     await fake.hset(ctxKey('history:accounts'), { '2026-01-02': await enc({ acc_chk: 1600.5, acc_card: 500, manual_house: 400000 }) });
@@ -1125,7 +1125,7 @@ describe('caveats', () => {
 
   test('two connections to the same bank, both behind, are one caveat', async () => {
     await fake.hset(ctxKey('plaid:items'), {
-      item_c: JSON.stringify({ item_id: 'item_c', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt('t') }),
+      item_c: JSON.stringify({ item_id: 'item_c', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't') }),
     });
     await fake.set(ctxKey('txns-unsaved:item_a'), '2026-10-01T00:00:00.000Z');
     await fake.set(ctxKey('txns-blocked:item_c'), JSON.stringify({ at: '2026-10-01T00:00:00.000Z', chars: 9e9 }));
@@ -1244,9 +1244,9 @@ describe('stores built on the storage seam', () => {
       ['p4', { name: 'Trip', target: 3000 }],
     ]);
     // Damaged bytes, and an entry intact but in a shape this code doesn't know.
-    await fake.hset(ctxKey('export-test-plans'), { p2: DAMAGED, p3: await encrypt(JSON.stringify({ not: 'a plan' })) });
+    await fake.hset(ctxKey('export-test-plans'), { p2: DAMAGED, p3: await encrypt(TEST_CTX, JSON.stringify({ not: 'a plan' })) });
     // A value store's one value, saved by a version this one doesn't know.
-    await fake.set(ctxKey('export-test-settings'), await encrypt(JSON.stringify({ not: 'plans' })));
+    await fake.set(ctxKey('export-test-settings'), await encrypt(TEST_CTX, JSON.stringify({ not: 'plans' })));
     const before = JSON.stringify([...fake.strings, ...[...fake.hashes].map(([k, h]) => [k, [...h]])]);
     const doc = await download();
     // Every entry that reads, in id order.
@@ -1328,7 +1328,7 @@ describe('stores built on the storage seam', () => {
     // Saved before the three-way switch, with the two-way one's list: as the
     // tab reads it, those plans paid from the bank.
     const { planFunding: _, ...older } = plan;
-    await fake.set(ctxKey('fire-plan'), await encrypt(JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
+    await fake.set(ctxKey('fire-plan'), await encrypt(TEST_CTX, JSON.stringify({ ...older, bankFunded: ['acc_solo'] })));
     expect((await download())['fire-plan']).toEqual(plan);
   });
 

@@ -59,19 +59,19 @@ const PRIOR = addMonths(M1, -1);
 const lastDayOf = (m: string) => new Date(Date.UTC(Number(m.slice(0, 4)), Number(m.slice(5, 7)), 0)).toISOString().slice(0, 10);
 
 const remembered = (accounts: Record<string, unknown>[]) =>
-  encrypt(JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
+  encrypt(TEST_CTX, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
 const row = (id: string, account_id: string, date: string, amount: number, over: Record<string, unknown> = {}) =>
   txn(id, account_id, 0, amount, { date, institution_name: 'Chase', account_name: account_id, ...over });
 const blob = (rows: ReturnType<typeof row>[]) =>
-  encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: {}, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() });
+  encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: {}, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() });
 
 beforeEach(async () => {
   fake.reset();
   plaidTouched.length = 0;
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
-  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-chase') });
-  await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt('access-sandbox-broker'), transactions_billed: false });
+  await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-chase') });
+  await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-broker'), transactions_billed: false });
   await fake.hset(ctxKey('accounts:meta'), {
     item_chase: await remembered([
       { account_id: 'acc_sav', name: 'Savings', type: 'depository', subtype: 'savings' },
@@ -103,7 +103,7 @@ beforeEach(async () => {
   await setAccountHidden(ctx, 'acc_hid', 'depository', true);
   // The IRA brings no transactions: its recorded balances at each month's end,
   // and one in the middle of a month, which ends nothing.
-  const map = (m: Record<string, number>) => encrypt(JSON.stringify(m));
+  const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
   await fake.hset(ctxKey('history:accounts'), {
     [lastDayOf(PRIOR)]: await map({ acc_ira: 20_000, acc_sav: 9000, acc_quiet: 500 }),
     [lastDayOf(M1)]: await map({ acc_ira: 20_350.5, acc_sav: 9375.5, acc_quiet: 500 }),
@@ -335,7 +335,7 @@ describe('the months behind each account’s pace', () => {
 
   test('a connection that shares its institution’s name with one that stopped is not marked by it', async () => {
     // The brokerage is also called Chase here, and it is the one that stopped.
-    await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-broker'), transactions_billed: false });
+    await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-broker'), transactions_billed: false });
     await noticesStore.set(ctx, 'item_broker', { episode: 'e1', since: new Date().toISOString(), state: 'needs_reauth', notified_at: null, reminded_at: null });
     const { acc_sav } = (await progress()).body.flows;
     expect(acc_sav.months.some((m: any) => m.gaps?.some((g: any) => g.kind === 'stopped'))).toBe(false);
@@ -391,7 +391,7 @@ describe('the months behind each account’s pace', () => {
   });
 
   test('another person’s rows and balances never count', async () => {
-    await saveItem(OTHER, { item_id: 'item_other', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-other') });
+    await saveItem(OTHER, { item_id: 'item_other', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-other') });
     await fake.hset(ctxKey('accounts:meta', OTHER), { item_other: await remembered([{ account_id: 'acc_sav', name: 'Savings', type: 'depository' }]) });
     await fake.set(ctxKey('txns:item_other', OTHER), await blob([row('o1', 'acc_sav', `${M1}-04`, -1_000_000)]));
     expect((await progress()).body.flows.acc_sav.months[0].amount).toBe(375.5);

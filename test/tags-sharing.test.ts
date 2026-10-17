@@ -109,7 +109,7 @@ beforeEach(async () => {
   plaidTxns[token] = [
     { transaction_id: 't_recent', account_id: 'acct_joint', amount: 12, iso_currency_code: 'USD', date: daysAgo(3), name: 'BLUE BOTTLE 123', merchant_name: 'Blue Bottle', pending: false, counterparties: [] },
   ];
-  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(token) }) });
+  await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }) });
   const inst = { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account('acct_joint'), balance: 500, currency: 'USD' }] };
   await rememberAccounts(TEST_CTX, [inst as any]);
   await links.recordDirectory(TEST_CTX, [inst as any]);

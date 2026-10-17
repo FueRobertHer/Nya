@@ -427,7 +427,7 @@ describe('the store', () => {
       for (const [what, book] of flawed) {
         fake.reset();
         expect([what, isManualTxnBook(book)]).toEqual([what, false]);
-        await fake.hset(ctxKey('manual-transactions'), { [WALLET.account_id]: await encrypt(JSON.stringify(book)) });
+        await fake.hset(ctxKey('manual-transactions'), { [WALLET.account_id]: await encrypt(TEST_CTX, JSON.stringify(book)) });
         const report = await manualTxnStore.getAllReport(ctx);
         expect([what, report.unreadable, report.unrecognised]).toEqual([what, [], [WALLET.account_id]]);
       }
@@ -437,7 +437,7 @@ describe('the store', () => {
       const later = { ...row(WALLET.account_id), raw: { FITID: '20261005-1' }, tags: ['trip'] };
       const book = { version: 1, rows: [later] };
       expect(isManualTxnBook(book)).toBe(true);
-      await fake.hset(ctxKey('manual-transactions'), { [WALLET.account_id]: await encrypt(JSON.stringify(book)) });
+      await fake.hset(ctxKey('manual-transactions'), { [WALLET.account_id]: await encrypt(TEST_CTX, JSON.stringify(book)) });
       const edited = await editManualTxn(ctx, later.id, { amount: 3 });
       expect(edited).toMatchObject({ raw: { FITID: '20261005-1' }, tags: ['trip'], amount: 3 });
       expect((await manualTxnStore.get(ctx, WALLET.account_id))!.rows[0]).toMatchObject({ raw: { FITID: '20261005-1' } });

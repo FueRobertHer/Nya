@@ -51,7 +51,7 @@ export async function POST(req: Request) {
     // Without a measurement nothing can be reconciled, and saying so matters: a
     // removal left unreconciled pauses snapshots at the next healthy load. The
     // new-accounts prompt stays, and running the picker again finishes the job.
-    const inst = await fetchInstitution(item);
+    const inst = await fetchInstitution(ctx, item);
     if (inst.error || inst.accounts.length === 0) {
       return NextResponse.json({ error: 'Could not read the institution' }, { status: 502 });
     }

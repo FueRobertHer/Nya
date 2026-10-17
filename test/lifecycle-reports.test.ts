@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
 
 // An account's end (#50) where the integration branch meets it: a report on
 // a period an account ended in (lib/report/), its totals held to the Activity
@@ -85,14 +85,14 @@ const WALLET = { type: 'depository', label: { name: 'Wallet', institution: 'Cash
 /** Chase: checking, a card and savings, as the last load remembered them and
  *  as stored, with a month of rows; and a cash wallet entered by hand. */
 async function seed() {
-  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt('access-sandbox-bank') });
+  await saveItem(ctx, { item_id: 'item_bank', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-bank') });
   const accounts = {
     acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null },
     acc_card: { name: 'Card', official_name: null, type: 'credit', subtype: 'credit card', mask: '2222', balances: null },
     acc_save: { name: 'Savings', official_name: null, type: 'depository', subtype: 'savings', mask: '3333', balances: null },
   };
   await fake.hset(ctxKey('accounts:meta'), {
-    item_bank: await encrypt(
+    item_bank: await encrypt(TEST_CTX, 
       JSON.stringify(
         Object.entries(accounts).map(([account_id, a]) => ({ account_id, name: a.name, official_name: null, type: a.type, subtype: a.subtype, mask: a.mask, limit: null, currency: 'USD' }))
       )
@@ -112,7 +112,7 @@ async function seed() {
   ];
   await fake.set(
     ctxKey('txns:item_bank'),
-    await encodeJsonBlob({ schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
+    await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c1', accounts, txns: Object.fromEntries(rows.map((t) => [t.transaction_id, t])), synced_at: new Date().toISOString() })
   );
   await saveManualAccount(ctx, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: new Date().toISOString() });
   const entered = (date: string, amount: number) => newManualTxn('manual_wallet', { date, amount, currency: 'USD', name: `Market ${date}`, category: 'food and drink', note: null });
@@ -223,14 +223,14 @@ describe('a report on a period an account ended in', () => {
 
   test('a connection whose only account closed before the period, and that stopped syncing since, has nothing in it to be missing', async () => {
     await seed();
-    await saveItem(ctx, { item_id: 'item_citi', institution_name: 'Citi', encrypted_access_token: await encrypt('access-sandbox-citi') });
+    await saveItem(ctx, { item_id: 'item_citi', institution_name: 'Citi', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-citi') });
     await fake.hset(ctxKey('accounts:meta'), {
-      item_citi: await encrypt(JSON.stringify([{ account_id: 'acc_dc', name: 'Double Cash', official_name: null, type: 'credit', subtype: 'credit card', mask: '5555', limit: null, currency: 'USD' }])),
+      item_citi: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'acc_dc', name: 'Double Cash', official_name: null, type: 'credit', subtype: 'credit card', mask: '5555', limit: null, currency: 'USD' }])),
     });
     const card = { name: 'Double Cash', official_name: null, type: 'credit', subtype: 'credit card', mask: '5555', balances: null };
     await fake.set(
       ctxKey('txns:item_citi'),
-      await encodeJsonBlob({ schema_version: 2, cursor: 'c', accounts: { acc_dc: card }, txns: { dc_1: txn('dc_1', 'acc_dc', 0, 5, { date: '2020-01-02', institution_name: 'Citi' }) }, synced_at: `${BEFORE}T12:00:00.000Z` })
+      await encodeJsonBlob(TEST_CTX, { schema_version: 2, cursor: 'c', accounts: { acc_dc: card }, txns: { dc_1: txn('dc_1', 'acc_dc', 0, 5, { date: '2020-01-02', institution_name: 'Citi' }) }, synced_at: `${BEFORE}T12:00:00.000Z` })
     );
     const p = monthPeriod();
     // Still open, it last synced before the month: a gap.
