@@ -216,6 +216,10 @@ describe('the Activity tab’s list', () => {
     const page = list(rows);
     expect(page).toContain('It is in the group “Trip”, which counts on');
     expect(page).toContain('before the transactions shown here begin, so it isn’t counted here.');
+    // Its amount dimmed, as an excluded one's is; the coffee's not.
+    const html = renderToStaticMarkup(<MonthBreakdown txns={rows} notes={[]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} onSplitsChanged={() => {}} />);
+    expect(html).toMatch(/<td class="num inflow excluded">[^<]*60\.00<\/td>/);
+    expect(html).toMatch(/<td class="num">[^<]*4\.50<\/td>/);
     // The day's figure is the coffee's alone; the month's money in, nothing.
     expect(page).toContain('-$4.50');
     expect(page).not.toContain('+$55.50');
