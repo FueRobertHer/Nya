@@ -158,16 +158,22 @@ import { addDays, minorDigits } from './manual-txn-input';
 import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
 import {
   bookAccountTypes,
+  docFiling,
   importedTransactionsIn,
   layeredBookRows,
   layeredImportedRows,
   missingIds,
   manualTransactionsIn,
+  splitFactRows,
   type ExportFile,
   type ExportLifecycle,
   type UserData,
   type UserExport,
 } from './user-export';
+import { anySplitsOrGroups, appliedSplitsOf, splitInputsOf, splitMemoOf } from './export-splits';
+import { splitFor } from './split-rows';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
 import { importedTxnStore } from './history-import/store';
 import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
 import { isConnectorKind } from './connectors/types';
@@ -333,6 +339,9 @@ export type OfxRow = {
   /** One side of a pair Nya worked out between two SimpleFIN accounts
    *  (lib/manual-txns.ts), and what it is. */
   paired?: PairKind;
+  /** How it is split, or the group it is in, in words for its memo
+   *  (lib/export-splits.ts splitMemoOf). */
+  split?: string;
 };
 
 /** One account, ready to be written as statements. */
@@ -441,6 +450,7 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   let lossy = 0;
   let shortened = 0;
   let memosCut = 0;
+  let splitsLeftOut = 0;
   const line = (tag: string, value: string) => `<${tag}>${escape(value)}\r\n`;
   const status = '<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n';
   const pieces: string[] = [
@@ -472,6 +482,15 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
           if (!t.text || t.text.toLowerCase() === name.text.toLowerCase()) continue;
           memo.push(t.text);
           touched ||= t.lossy;
+        }
+        // How it is split, or its group, last, and only whole: cut, a part's
+        // amount could be read as another.
+        if (r.split) {
+          const t = to1252(r.split);
+          if ([...memo, t.text].join('; ').length <= MEMO_MAX) {
+            memo.push(t.text);
+            touched ||= t.lossy;
+          } else splitsLeftOut++;
         }
         if (touched) lossy++;
         const memoText = memo.join('; ');
@@ -508,6 +527,11 @@ export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[];
   if (memosCut > 0) {
     notes.push(
       `${plural(memosCut, 'transaction’s memo is', 'transactions’ memos are')} longer than OFX’s ${MEMO_MAX} characters, so each is cut there, and its end (your note, its tags) may be missing. The CSV and JSON downloads have them whole.`
+    );
+  }
+  if (splitsLeftOut > 0) {
+    notes.push(
+      `${plural(splitsLeftOut, 'transaction is', 'transactions are')} split or in a group in Nya, and saying how doesn’t fit OFX’s ${MEMO_MAX}-character memo with the rest, so ${splitsLeftOut === 1 ? 'its memo leaves it' : 'their memos leave it'} out. Each is listed whole, as the bank has it; the CSV and JSON downloads have the parts and groups.`
     );
   }
   if (lossy > 0) {
@@ -681,6 +705,23 @@ export function ofxFile(
   // one.
   const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
   const standsForUnread = new Set<string>();
+  // The rows imported into linked accounts from files that count as their
+  // own, as posted rows count (see the header), and the bank's rows standing
+  // for the rest, read once.
+  const imported = importedTransactionsIn(doc, { pending: false });
+  // Splits and groups, from the file's own parts, as the app applies them
+  // (lib/export-splits.ts): each transaction listed whole, how it is split or
+  // its group in its memo, a bank's row standing for imported ones split and
+  // grouped as they were.
+  const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents);
+  // How they apply, from every row of the file, once: a group across
+  // accounts, a transaction in two, a split on a row pending or in another
+  // currency now, each as the app has it.
+  const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc, imported.rows), splitInputs) : null;
+  const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
+    const words = applied && splitMemoOf(r, splitInputs, applied);
+    return words ? { split: words } : {};
+  };
 
   // The rows a book holds for the account (a manual account's own, or those
   // SimpleFIN brought), as the app shows them, each side of a pair the app
@@ -716,6 +757,7 @@ export function ofxFile(
           unmarked: l.excluded === null,
           tags: l.tags,
           ...(paired ? { paired } : {}),
+          ...splitWords({ id: r.id, amount: r.amount, currency: r.currency, bank: isConnectorKind(r.source) }),
         };
       });
   };
@@ -784,10 +826,9 @@ export function ofxFile(
   } else if (linked) {
     rows = [];
     // The transactions imported into it from its bank's files that count as
-    // its own, as posted rows count (see the header). A bank's row standing
-    // for imported ones has what was said about them in the document's
-    // layered fields already (lib/user-export.ts buildUserExport).
-    const imported = importedTransactionsIn(doc, { pending: false });
+    // its own (`imported`, above). A bank's row standing for imported ones
+    // has what was said about them in the document's layered fields already
+    // (lib/user-export.ts buildUserExport).
     for (const t of doc.transactions) {
       if (t.account_id !== account_id) continue;
       if (t.pending) {
@@ -815,6 +856,7 @@ export function ofxFile(
         hidden_by_rule: t.excluded_by_rule === true,
         unmarked: t.excluded === null,
         tags: t.tags ?? [],
+        ...splitWords({ id: t.transaction_id, amount: t.amount, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null }),
       });
     }
     // Each as the app shows it: its name (yours for its merchant, else a
@@ -841,6 +883,9 @@ export function ofxFile(
         hidden_by_rule: l.excluded_by_rule,
         unmarked: l.excluded === null,
         tags: l.tags,
+        // How it is split, or its group, as a bank's row's: its amount is
+        // the file's, changed only by importing it again.
+        ...splitWords({ id: row.id, amount: row.amount, currency: row.currency, bank: false }),
       });
     }
     if (fromFiles.length > 0) {
@@ -962,6 +1007,19 @@ export function ofxFile(
     }
     notes.push(`${said.join(' ')} The JSON download lists them under problems. ${UNCHANGED}`);
     incomplete.add(txnAnnotationStore.name);
+  }
+  // Its own split, or that of the row imported from a file it stands for,
+  // which it would show (lib/split-rows.ts splitFor).
+  const unreadSplits = rows.filter((r) => splitFor(splitInputs, r.id, splitInputs.stands?.get(r.id)) === 'unread').length;
+  if (unreadSplits > 0) {
+    notes.push(
+      `How ${plural(unreadSplits, 'of these transactions is', 'of these transactions are')} split couldn’t be read, so ${unreadSplits === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadSplits === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
+    );
+    incomplete.add(splitStore.name);
+  }
+  if (rows.length > 0 && splitInputs.groupsUnknown > 0) {
+    notes.push(`Some of your groups couldn’t be read, so a transaction’s memo may not say the group it is in. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(groupStore.name);
   }
   // Rules and tags that couldn't be read: none applied, none shown, as the
   // app does until they can be; said, as every part the file is short of.

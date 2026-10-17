@@ -4836,6 +4836,300 @@ button.pool-toggle {
   margin: 4px 0 0;
 }
 
+/* Splits and groups (#39): a split transaction's parts and a group's
+   transactions, nested under its row on the Activity tab (components/SplitRows.tsx),
+   and the sheets that make them (components/SplitSheet.tsx,
+   components/GroupSheet.tsx). */
+.txn-table .part-row td {
+  padding-top: 6px;
+  padding-bottom: 6px;
+  font-size: 13px;
+}
+
+.txn-table .part-row td:first-child {
+  padding-left: 46px;
+}
+
+/* A split transaction's own amount: the bank's, shown quieter, since its
+   parts below are what every total counts. */
+.txn-table .num.split-whole {
+  color: var(--muted);
+}
+
+.part-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.split-part {
+  padding: 10px 0 4px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+}
+
+.split-part-top {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0 10px;
+}
+
+.split-part-top .split-amount {
+  flex: 1 1 96px;
+  min-width: 0;
+}
+
+.split-part-top .split-amount input {
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.split-part-top .split-category {
+  flex: 3 1 180px;
+  min-width: 0;
+}
+
+.split-note {
+  margin-bottom: 6px;
+  font-size: 14px;
+  padding: 10px 12px;
+}
+
+.split-part-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+button.split-small {
+  width: auto;
+  padding: 7px 12px;
+  font-size: 13px;
+}
+
+.split-left {
+  margin: 12px 0 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--warn);
+}
+
+.split-left.done {
+  color: var(--up);
+}
+
+.group-list {
+  margin-bottom: 12px;
+}
+
+.group-member {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 14px;
+  color: var(--text);
+}
+
+.group-member input {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.group-member-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-wrap: anywhere;
+}
+
+/* --- cash flow (#41): the Activity tab's Sankey (components/CashFlowSankey.tsx,
+   laid out by lib/sankey.ts), its table, and the list showing a node's
+   transactions (components/MonthBreakdown.tsx). The app's own colors: money in
+   and what is left over in the up hue, spending in the accent, what came from
+   savings or debt in the down hue, the middle in the muted gray. --- */
+
+.cash-flow-period {
+  margin-top: 10px;
+}
+
+.cash-flow-summary {
+  margin-top: 12px;
+}
+
+.sankey-svg {
+  display: block;
+  width: 100%;
+  /* The labels' size follows the drawing's: on a wide screen it stops
+     growing at about one and a half times a phone's. */
+  max-width: 560px;
+  height: auto;
+  margin: 12px auto 0;
+  /* A tap selects; a drag still scrolls the page, and selects no label. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sankey-link {
+  fill-opacity: 0.3;
+}
+
+.sankey-link.in,
+.sankey-link.left {
+  fill: var(--up);
+}
+
+.sankey-link.out {
+  fill: var(--accent);
+}
+
+.sankey-link.sub {
+  fill-opacity: 0.2;
+}
+
+.sankey-link.deficit {
+  fill: var(--down);
+}
+
+/* With a node's transactions listed, its own ribbons stand out. */
+.sankey-picking .sankey-link {
+  fill-opacity: 0.1;
+}
+
+.sankey-picking .sankey-link.lit {
+  fill-opacity: 0.5;
+}
+
+.sankey-bar {
+  fill: var(--muted);
+}
+
+.sankey-node.in .sankey-bar,
+.sankey-node.left .sankey-bar {
+  fill: var(--up);
+}
+
+.sankey-node.out .sankey-bar {
+  fill: var(--accent);
+}
+
+.sankey-node.deficit .sankey-bar {
+  fill: var(--down);
+}
+
+.sankey-node.picked .sankey-bar {
+  stroke: var(--text);
+  stroke-width: 1.5px;
+}
+
+/* Text in the text colors, never a node's; a halo in the card's color keeps
+   a label legible where it crosses a ribbon. */
+.sankey-label {
+  font-size: 10px;
+  fill: var(--text);
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.sankey-amount {
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sankey-hit {
+  fill: transparent;
+}
+
+.sankey-node.tappable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .sankey-node.tappable:hover .sankey-bar {
+    opacity: 0.8;
+  }
+}
+
+.cash-flow-table {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cash-flow-table summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.cash-flow-table td,
+.cash-flow-table th {
+  padding: 6px 4px;
+  font-size: 12px;
+}
+
+.cash-flow-table td {
+  color: var(--text);
+}
+
+.cash-flow-section th {
+  padding-top: 12px;
+}
+
+.cash-flow-child td:first-child {
+  padding-left: 18px;
+}
+
+.cash-flow-total td {
+  font-weight: 600;
+}
+
+/* A flow's name opens its transactions: text, underlined, never a block. */
+button.cash-flow-show {
+  width: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 400;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 3px;
+  border-radius: 4px;
+}
+
+.cash-flow-tag {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Above the Activity list: which node's transactions it shows, and the way
+   back to the month. */
+.flow-shown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-shown button {
+  width: auto;
+  flex: none;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+
 /* The weekly summary (components/WeeklySummaryCard.tsx, app/unsubscribe):
    its state beside the card's name, and the summary as it goes, in plain
    text, wrapped to the sheet's width. */

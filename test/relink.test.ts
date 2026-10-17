@@ -295,6 +295,25 @@ describe('a re-link, end to end', () => {
     expect(await fake.hget(ctxKey('plaid:items'), 'item_old')).toBeNull();
     expect(removed).toEqual(['token-item_old']);
   });
+
+  test('a split and a group don’t carry across (#39): the disconnect takes them with it, and the re-added transactions show whole once linked', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_b', 'acct_old', { date: daysAgo(5), amount: 6 }), row('t_c', 'acct_old', { date: daysAgo(4), amount: -2 })], Date.now() - DAY);
+    await route('transactions', 'GET');
+    const categories = (await route('categories', 'GET')).body.categories;
+    const id = (name: string) => categories.categories.find((c: any) => c.name === name).id;
+    expect((await route('transaction-splits', 'PUT', { transaction_id: 't_a', parts: [{ amount: 3, category_id: id('food and drink') }, { amount: 1.5, category_id: id('travel') }] })).status).toBe(200);
+    expect((await route('transaction-groups', 'POST', { name: 'Coffee, paid back', category_id: id('food and drink'), members: ['t_b', 't_c'] })).status).toBe(200);
+    expect((await route('transactions', 'GET')).body.transactions.filter((t: any) => t.split_of || t.group_members)).toHaveLength(3);
+
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    expect(await fake.hgetall(ctxKey('transaction-splits'))).toBeNull();
+    expect(await fake.hgetall(ctxKey('transaction-groups'))).toBeNull();
+
+    await addItem('item_new', 'acct_new', [row('n_a', 'acct_new'), row('n_b', 'acct_new', { date: daysAgo(5), amount: 6 }), row('n_c', 'acct_new', { date: daysAgo(4), amount: -2 })]);
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' })).status).toBe(200);
+    const rows = (await route('transactions', 'GET')).body.transactions;
+    expect(rows.map((t: any) => t.transaction_id).sort()).toEqual(['n_a', 'n_b', 'n_c']);
+  });
 });
 
 describe('carry-over edge cases', () => {

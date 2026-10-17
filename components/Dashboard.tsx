@@ -25,10 +25,12 @@ import ConnectButtons from './ConnectButtons';
 import { RedirectChoices } from './ConnectRedirect';
 import type { LinkKind } from '@/lib/item-products';
 import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { unreadNotesOf } from '@/lib/fire/inputs';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
 import HoldingsRecorded from './HoldingsRecorded';
 import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
@@ -507,6 +509,10 @@ export default function Dashboard({
   // Your rules (components/rules-state.ts), and the rule drawer.
   const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // Of those, the ones that say transactions couldn't all be read, which the
+  // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
+  // that says how a rule, a category, a split or a group applies.
+  const [txnUnread, setTxnUnread] = useState<string[]>([]);
   // Institutions whose transactions this load lacks, for Activity's month notes.
   const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
   // Connections that bring in no transactions, so the spending views say why.
@@ -743,6 +749,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnUnread(['Could not load transactions.']);
         setTxnsFailed(true);
         return;
       }
@@ -752,12 +759,14 @@ export default function Dashboard({
       acceptCategories(data.categories);
       acceptTags(data.tags);
       setTxnNotes(data.notes ?? []);
+      setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
       setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnUnread(['Could not load transactions.']);
       setTxnsFailed(true);
     } finally {
       setTxnsLoading(false);
@@ -898,6 +907,7 @@ export default function Dashboard({
     txns,
     setTxns,
     setTxnNotes,
+    setTxnUnread,
     setTxnIncomplete,
     setTxnWithout,
     loadTransactions,
@@ -1886,7 +1896,7 @@ export default function Dashboard({
                 <FiProgressLoader
                   txns={txns}
                   txnsLoading={txnsLoading}
-                  txnNotes={txnNotes}
+                  txnNotes={txnUnread}
                   txnWithout={txnWithout}
                   institutions={planInstitutions}
                   currency={accountCurrency}
@@ -2728,6 +2738,9 @@ export default function Dashboard({
                   )
                 }
                 ruleSentenceOf={ruleSentenceOf}
+                // Splits and groups (#39): applied after the server's cache,
+                // so the list is read again quietly after a change.
+                onSplitsChanged={txnEdits.refresh}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}
@@ -2794,7 +2807,7 @@ export default function Dashboard({
               <PlanTabLoader
                 txns={txns}
                 txnsLoading={txnsLoading}
-                txnNotes={txnNotes}
+                txnNotes={txnUnread}
                 txnWithout={txnWithout}
                 institutions={planInstitutions}
                 holdings={planHoldings}
@@ -3048,6 +3061,8 @@ export default function Dashboard({
               connection at Plaid. You can reconnect it later. Type{' '}
               <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
             </p>
+            {/* What adding it back doesn't bring back (#39). */}
+            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
             {/* Disconnecting is about the connection; closing is about an
                 account (#50). Only the person knows which happened. */}
             {endedOffer !== shownDisconnectTarget.item_id && (

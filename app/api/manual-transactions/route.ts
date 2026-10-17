@@ -23,6 +23,7 @@ import {
   type ManualTxnChanges,
 } from '@/lib/manual-txns';
 import { forgetAnnotations } from '@/lib/txn-annotations';
+import { forgetSplitsAndGroups } from '@/lib/split-gone';
 import { storeFailure } from '@/lib/store-failure';
 import { choiceForId, fileForAnswer } from '@/lib/category-store';
 import { CategoryError } from '@/lib/categories';
@@ -385,6 +386,7 @@ export async function DELETE(req: Request) {
     // Best effort: an exclusion left behind names a row that no longer exists,
     // which is never shown.
     await forgetAnnotations(ctx, [body.id]).catch((err) => console.warn('manual-transactions: an exclusion was left behind', loggable(err)));
+    await forgetSplitsAndGroups(ctx, [body.id]).catch((err) => console.warn('manual-transactions: a split or a group was left behind', loggable(err)));
     return NextResponse.json({ success: true, deleted });
   } catch (err) {
     // A row from SimpleFIN: the bank's, never deleted alone.

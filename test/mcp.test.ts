@@ -184,6 +184,7 @@ describe('tools', () => {
       'get_balance_history',
       'search_transactions',
       'spending_by_category',
+      'get_cash_flow',
       'get_budgets',
       'list_recurring_bills',
       'list_categories',

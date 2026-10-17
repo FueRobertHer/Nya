@@ -150,7 +150,7 @@ describe('the reference, held to the API’s real answers', () => {
       const doc = API_DOCS[op.name];
       const described = new Set(doc.fields.map(([path]) => path));
       // With hidden accounts and estimates too, so every field there can be shows.
-      const extra = [op.args.include_hidden ? 'include_hidden=true' : '', op.args.include_estimated ? 'include_estimated=true' : '', op.name === 'spending' ? 'from=2000-01-01' : '']
+      const extra = [op.args.include_hidden ? 'include_hidden=true' : '', op.args.include_estimated ? 'include_estimated=true' : '', op.name === 'spending' || op.name === 'cash-flow' ? 'from=2000-01-01' : '']
         .filter(Boolean)
         .join('&');
       const real = await answer(op.name, extra);

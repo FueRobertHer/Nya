@@ -46,6 +46,16 @@
 // chosen before the person's own exclusions are applied, and finishActivity
 // narrows it after them (`history`), so an excluded row never keeps another
 // from being used.
+//
+// SPLITS AND GROUPS (#39) are applied last in finishActivity, after the
+// cache, the person's layers and the rules, once the rows are filed
+// (lib/split-rows.ts): a split transaction is answered as its parts and a
+// group's transactions as its net, so every reader's totals count those and
+// nothing twice. A bank row standing for rows imported from files takes
+// their split and their place in a group (`stands_for`, read before the
+// layers take it off), as it takes what was said about them. The rows before
+// the year stay as the bank has them: only recurring detection reads them,
+// and it reads whole transactions.
 
 import { getItems } from './storage';
 import type { Ctx } from './containers';
@@ -63,8 +73,11 @@ import { importedForActivity } from './history-import/read';
 import type { StoredTxn } from './transactions';
 import { filingSet, fileRows } from './category-store';
 import { indexTaxonomy, type Taxonomy } from './categories';
-import { liveTagIds, tagsForDisplay, type TagSet } from './tags';
+import { liveTagIds, orderTagIds, tagsForDisplay, type TagSet } from './tags';
 import { applyLayers } from './txn-layers';
+import { readSplitsForDisplay } from './splits';
+import { readGroupsForDisplay } from './groups';
+import { expandSplitsAndGroups } from './split-rows';
 import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 
@@ -331,11 +344,13 @@ export async function assembleBankRows(
   const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
   const older = [...results.flatMap((r) => r.older), ...imported.older];
   // A bank row standing for imported rows the person chose a category for
-  // takes it, unless they chose one for the bank row itself. A posted one
-  // names those rows (`stands_for`), so what else was said about them (an
-  // exclusion or an include, tags, a note) carries to it in finishActivity,
-  // read with every record on each request: under what is said on the bank
-  // row itself (lib/txn-layers.ts).
+  // takes it, unless they chose one for the bank row itself. It names those
+  // rows (`stands_for`), so, once it has posted, what else was said about
+  // them (an exclusion or an include, tags, a note) carries to it in
+  // finishActivity, read with every record on each request: under what is
+  // said on the bank row itself (lib/txn-layers.ts); and so do their splits
+  // and places in groups, of which a pending one takes none, a group saying
+  // it is pending (lib/split-rows.ts).
   const fromImports = categoriesFromImports(imported.represents, overrides.overrides);
   for (const t of [...transactions, ...older]) {
     const manual = overrides.overrides[t.transaction_id] ?? fromImports.get(t.transaction_id);
@@ -349,7 +364,7 @@ export async function assembleBankRows(
       t.name = renamed;
     }
     const stands = imported.represents.get(t.transaction_id);
-    if (stands && !('pending' in t && t.pending)) t.stands_for = stands;
+    if (stands) t.stands_for = stands;
   }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
@@ -440,10 +455,29 @@ export async function finishActivity(
   hidden: Set<string>,
   /** `subjects`, with `followLinks` for a rule being made that reads an
    *  account: for a rule's preview (app/api/rules/preview). */
-  opts: { since?: string; grow?: boolean; keepEnded?: boolean; subjects?: Map<string, RuleSubject>; followLinks?: boolean } = {}
+  opts: {
+    since?: string;
+    grow?: boolean;
+    keepEnded?: boolean;
+    /** With keepEnded, each ended account's end day (lib/lifecycle.ts
+     *  endDays), for a reader that leaves those rows out itself (a report):
+     *  splits and groups leave them whole and out of every net, as the
+     *  Activity tab, which never reads them, does. */
+    endedFrom?: ReadonlyMap<string, string>;
+    subjects?: Map<string, RuleSubject>;
+    followLinks?: boolean;
+  } = {}
 ): Promise<{
   transactions: Txn[];
   notes: string[];
+  /** Of `notes`, those that say transactions couldn't all be read or aren't
+   *  all in: an institution's (one that failed to sync, needs reconnecting,
+   *  or is still bringing its history in), the rows imported into a linked
+   *  account that can't be shown, a manual account's that can't be read.
+   *  What the Plan weighs its figures by; the others (how rules, categories,
+   *  splits and groups apply when something of theirs can't be read) never
+   *  mean a transaction is missing. */
+  unread_notes: string[];
   /** When the tags couldn't be read, the note that says so: for a reader that
    *  shows tags (the app, the read-only API), not one that doesn't (reports). */
   tags_note: string | null;
@@ -464,11 +498,13 @@ export async function finishActivity(
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [read, annotations, tagRead, ruleRead, lifecycle] = await Promise.all([
+  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
     rulesForDisplay(ctx),
+    readSplitsForDisplay(ctx),
+    readGroupsForDisplay(ctx),
     opts.keepEnded ? null : getEffectiveLifecycle(ctx, new Map()),
   ]);
   const ended = lifecycle ? endDays(lifecycle) : new Map<string, string>();
@@ -502,6 +538,13 @@ export async function finishActivity(
         ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
+  // What each bank row standing for rows imported from files stands for
+  // (#52), which the layers take off the row once they have laid what was
+  // said about those rows on it: their splits and their places in groups are
+  // a posted one's too, and a pending one's group says why it isn't counted
+  // there yet (lib/split-rows.ts).
+  const stands = new Map<string, readonly string[]>();
+  for (const t of transactions) if (t.stands_for?.length) stands.set(t.transaction_id, t.stands_for);
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
@@ -514,6 +557,23 @@ export async function finishActivity(
   const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
   applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
   fileRows(ix, rows);
+  // Last, splits and groups (lib/split-rows.ts): each split transaction of
+  // the year in its parts' place, each group's transactions in its net's, so
+  // every total counts those and nothing twice; a bank row standing for
+  // imported rows split or grouped as they were. Not the rows before the
+  // year, which only recurring detection reads, and it reads transactions
+  // whole.
+  const expanded = expandSplitsAndGroups(transactions, {
+    splits: splitRead.records,
+    splitsUnknown: splitRead.unknown,
+    groups: groupRead.groups,
+    groupsUnknown: groupRead.unknown,
+    ix,
+    orderTags: (ids) => orderTagIds(tagRead.set, ids),
+    from: cutoff,
+    ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
+    ...(stands.size > 0 ? { stands } : {}),
+  });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that
   // couldn't be read for a rule naming one (left out whole until they can be).
@@ -527,13 +587,15 @@ export async function finishActivity(
   // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
-    transactions,
-    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes],
+    transactions: expanded.rows,
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...expanded.notes],
+    unread_notes: [...plaid.notes, ...manual.notes],
     tags_note: tagRead.note,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
-    // counts toward a merchant's limit nor is used.
+    // counts toward a merchant's limit nor is used; from the transactions as
+    // the bank has them, never a split's parts or a group's net.
     history: olderRowsForDetection(transactions, candidates),
     taxonomy: filed.taxonomy,
     tags: tagRead.set,

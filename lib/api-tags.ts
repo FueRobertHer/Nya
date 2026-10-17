@@ -12,6 +12,7 @@
 import type { Ctx } from './containers';
 import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { readTagSet } from './tags';
+import { bankRows } from './split-rows';
 
 export type ApiTag = {
   id: string;
@@ -28,7 +29,9 @@ export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {})
   // Strict: the read that answers 409 when the tags can't be read.
   const [activity] = await Promise.all([readActivity(ctx, !!opts.includeHidden), readTagSet(ctx)]);
   const seen = new Map<string, { transactions: number; last_date: string | null }>();
-  for (const t of activity.rows) {
+  // Each transaction once, a split one whole and a group's each on its own
+  // (lib/split-rows.ts): its parts carry its tags, and are one transaction.
+  for (const t of bankRows(activity.rows)) {
     for (const id of t.tags ?? []) {
       const s = seen.get(id) ?? { transactions: 0, last_date: null };
       s.transactions++;

@@ -15,12 +15,28 @@ import type { ExcludedImport, WalkState, WalkWhy } from './store';
  *  never edited as a manual row is, and named under a month's totals. */
 export const IMPORTED_TXN_PREFIX = 'imported-txn:';
 
-/** Under a month's totals on the Activity tab: how many of its rows came from
- *  files imported into linked accounts rather than from the bank, or null. */
-export function importedRowsNote(rows: readonly { transaction_id: string }[]): string | null {
-  const n = rows.filter((t) => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX)).length;
+/** A month's row as importedRowsNote reads it: a transaction's, a part of a
+ *  split one's (#39, lib/split-rows.ts: `split_of`, the transaction's id), or
+ *  a group's, its transactions inside it. */
+export type NotedRow = { transaction_id: string; split_of?: string; group_members?: readonly NotedRow[] };
+
+/** Under a month's totals on the Activity tab: how many of its transactions
+ *  came from files imported into linked accounts rather than from the bank,
+ *  or null. Transactions, not rows: a split one is one, its parts said by
+ *  their transaction's id, and a group's are each one. `period` names the
+ *  days the rows are of, for totals over others (the cash flow's,
+ *  lib/cash-flow.ts: "October", "this period"). */
+export function importedRowsNote(rows: readonly NotedRow[], period = 'this month'): string | null {
+  const imported = new Set<string>();
+  for (const t of rows) {
+    for (const m of t.group_members ?? [t]) {
+      const id = m.split_of ?? m.transaction_id;
+      if (id.startsWith(IMPORTED_TXN_PREFIX)) imported.add(id);
+    }
+  }
+  const n = imported.size;
   if (n === 0) return null;
-  return `${n.toLocaleString('en-US')} of this month’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
 }
 
 export type ImportedHistoryView = {

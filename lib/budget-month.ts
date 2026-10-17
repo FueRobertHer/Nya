@@ -75,7 +75,7 @@ import { filedId, indexTaxonomy, type CategoryIndex, type Taxonomy } from './cat
 import type { Budgets } from './budget-set';
 import { LOOKBACK_DAYS, type Txn } from './transactions';
 import { spendingByCategory, summarize } from './totals';
-import { leftOutByCurrency, totalsCurrency, type LeftOut } from './spending';
+import { leftOutByCurrency, totalsCurrency, transactionCounter, type LeftOut } from './spending';
 import { stoppedConnections } from './month-coverage';
 import { noTransactionsView, quietItemIds, type NoTransactionsView } from './no-transactions';
 import {
@@ -233,8 +233,15 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     for (const s of bank.sources) if (damaged.has(s.item_id) && !s.no_transactions) unread.push({ what: `How ${s.institution_name} is doing`, until: itemEndedBy(s.item_id) });
   }
 
-  const exclusionUnknown = new Map<string, number>();
-  for (const t of rows) if (t.excluded === null) exclusionUnknown.set(monthOf(t.date), (exclusionUnknown.get(monthOf(t.date)) ?? 0) + 1);
+  // Transactions, never rows: a split one's parts are one (lib/spending.ts transactionCounter).
+  const unknownBy = new Map<string, ReturnType<typeof transactionCounter>>();
+  for (const t of rows) {
+    if (t.excluded !== null) continue;
+    const counter = unknownBy.get(monthOf(t.date)) ?? transactionCounter();
+    counter.add(t);
+    unknownBy.set(monthOf(t.date), counter);
+  }
+  const exclusionUnknown = new Map([...unknownBy].map(([m, c]) => [m, c.n] as const));
 
   // Where the transactions in Nya begin: each bank's oldest stored row, the
   // oldest row entered or imported into a manual account, and the oldest
