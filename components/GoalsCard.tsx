@@ -20,13 +20,14 @@
 
 import { useEffect, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn, spoken } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import { goalViews, type GoalAccount, type GoalView } from '@/lib/goal-view';
 import { archivedText, goalNotes, meterLabel, outlookText, sourceNote, splitText, stateText } from '@/lib/goal-text';
 import { MAX_GOALS, type Goal } from '@/lib/goal-model';
 import { useGoalFlows, type GoalFlowsState } from './goal-flows-state';
 import GoalSheet from './GoalSheet';
+import { Masked } from './HideAmounts';
 
 export type { Goal } from '@/lib/goal-model';
 export type { GoalAccount } from '@/lib/goal-view';
@@ -147,7 +148,7 @@ export function GoalsCardView({
         <div className="inst-name">Goals</div>
       </div>
 
-      {saveError && <p className="stale-note">{saveError}</p>}
+      {saveError && <p className="stale-note">{hideAmountsIn(saveError)}</p>}
       {flows.status === 'error' && views.some((v) => v.projection) && (
         <p className="stale-note">How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.</p>
       )}
@@ -165,7 +166,7 @@ export function GoalsCardView({
         .filter((s) => s.hasAllocations)
         .map((s) => (
           <p className="panel-note goal-unallocated" key={s.account_id}>
-            {splitText(s, accountName(s.account_id))}
+            <Masked>{splitText(s, accountName(s.account_id))}</Masked>
           </p>
         ))}
 
@@ -188,24 +189,29 @@ export function GoalsCardView({
               <div className="budget-line">
                 <span className="budget-name">{goal.name}</span>
                 <span className="budget-amounts">
-                  {v.saved !== null ? `${formatMoney(v.saved, v.currency)} of ` : ''}
-                  {formatMoney(goal.target, v.currency)}
+                  <Masked>{`${v.saved !== null ? `${formatMoney(v.saved, v.currency)} of ` : ''}${formatMoney(goal.target, v.currency)}`}</Masked>
                   {done && <span className="done-tag"> · reached</span>}
                 </span>
               </div>
               {ratio !== null ? (
-                <div className="meter-track goal-meter" role="img" aria-label={meterLabel(v)}>
+                <div className="meter-track goal-meter" role="img" aria-label={spoken(meterLabel(v))}>
                   <div className={`meter-fill${done ? ' done' : ''}`} style={{ width: `${Math.min(ratio * 100, 100)}%` }} />
                   {marker !== null && <span className="goal-marker" style={{ left: `${marker * 100}%` }} />}
                 </div>
               ) : (
-                <div className="type-tag">{stateText(v)}</div>
+                <div className="type-tag">
+                  <Masked>{stateText(v)}</Masked>
+                </div>
               )}
             </button>
-            {said && <p className={`goal-outlook${behind ? ' behind' : ''}`}>{said}</p>}
+            {said && (
+              <p className={`goal-outlook${behind ? ' behind' : ''}`}>
+                <Masked>{said}</Masked>
+              </p>
+            )}
             {notes.map((n) => (
               <p className={`${n.warn ? 'stale-note' : 'panel-note'} goal-note`} key={n.text}>
-                {n.text}
+                <Masked>{n.text}</Masked>
               </p>
             ))}
           </div>
@@ -231,7 +237,10 @@ export function GoalsCardView({
                 return (
                   <li key={g.id}>
                     <span>
-                      {g.name} <span className="type-tag">{archivedText(g, currencyOf(g))}</span>
+                      {g.name}{' '}
+                      <span className="type-tag">
+                        <Masked>{archivedText(g, currencyOf(g))}</Masked>
+                      </span>
                     </span>
                     {confirmDelete === g.id ? (
                       <span className="goal-archived-actions">

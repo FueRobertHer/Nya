@@ -163,6 +163,12 @@ export type Txn = {
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // Sent: on a posted bank row standing for a row imported from the bank's
+  // file whose amount it no longer says (the bank changed its own after the
+  // two were paired, and the pair was kept: lib/history-import/match.ts KEPT
+  // ONCE MADE), that row's amount, in Plaid's sign, for the Activity tab to
+  // say. The bank's row is the one that counts.
+  imported_amount?: number;
 
   // Splits and groups (#39), applied last on read (lib/split-rows.ts),
   // absent on every other row. A part of a split transaction, in its place:
@@ -1144,6 +1150,14 @@ async function syncItem(ctx: Ctx,
     else delete state.importing;
     if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
     else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
+    // Before the rows change: which of them stood for rows imported from the
+    // bank's files, kept when this sync changes one (a new amount, a
+    // corrected name, a removal), so that a row it modifies keeps standing
+    // for the one it stood for and never lets it count beside it, and the
+    // pairs carried across a re-link made again (lib/history-import/twins.ts).
+    // Best effort: it never fails the sync. Imported here, when needed, as it
+    // reads this module's rows itself.
+    await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.

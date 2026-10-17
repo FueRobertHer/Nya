@@ -20,6 +20,7 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
+import CategoryTemplates from './CategoryTemplates';
 import {
   categoriesIn,
   displayName,
@@ -40,7 +41,8 @@ type Level =
   | { at: 'category'; id: string }
   | { at: 'group'; id: string }
   | { at: 'add-category'; group: string | null }
-  | { at: 'add-group' };
+  | { at: 'add-group' }
+  | { at: 'templates' };
 
 /** How a group's kind is said on the screen. */
 const KIND_LABEL: Record<CategoryKind, string> = { expense: 'Spending', income: 'Income', transfer: 'Transfers' };
@@ -136,7 +138,9 @@ export default function CategoryManager({
           ? 'Add a category'
           : level.at === 'add-group'
             ? 'Add a group'
-            : 'Categories';
+            : level.at === 'templates'
+              ? 'Starter sets'
+              : 'Categories';
 
   let body: React.ReactNode;
   if (level.at === 'list') {
@@ -154,6 +158,10 @@ export default function CategoryManager({
             Add a group
           </button>
         </div>
+        {/* Starter sets (lib/category-templates.ts): a ready-made set to start from. */}
+        <button className="secondary" style={{ marginTop: 8 }} onClick={() => go({ at: 'templates' })}>
+          Start from a starter set
+        </button>
         {groups.map((g) => (
           <div className="panel-section" key={g.id}>
             <button className="cat-manage-group" onClick={() => go({ at: 'group', id: g.id })} aria-label={`${g.name}, ${KIND_LABEL[g.kind]}: edit the group`}>
@@ -185,6 +193,8 @@ export default function CategoryManager({
   } else if (level.at === 'group') {
     const g = ix.groupById.get(level.id);
     body = g ? groupLevel(g) : <p className="empty-note">That group no longer exists.</p>;
+  } else if (level.at === 'templates') {
+    body = <CategoryTemplates onTaxonomy={onTaxonomy} />;
   } else if (level.at === 'add-category') {
     body = (
       <div className="sheet-form">

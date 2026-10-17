@@ -20,7 +20,11 @@
 // irregular" is on, above the meters (components/IncomePool.tsx). A month
 // picker shows a past month as it was: its budgets then, its spending, and
 // what rolled into it. Until the month has loaded, or when it can't be, this
-// month shows as it always has, with a note.
+// month shows as it always has, with a note. This month's answer carries the
+// budget suggestions from history the editor offers (lib/budget-suggestions.ts).
+//
+// While your categories are still the ones Nya made, the starter sets are
+// offered here once, above the budgets (components/TemplateOffer.tsx).
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
@@ -46,6 +50,8 @@ import ForecastCard from './ForecastCard';
 import CalendarView from './CalendarView';
 import RecurringCard from './RecurringCard';
 import PlannedCard from './PlannedCard';
+import { Masked } from './HideAmounts';
+import TemplateOffer from './TemplateOffer';
 
 // Stable empty defaults, as in Insights.
 const NO_GAPS: Incomplete[] = [];
@@ -126,6 +132,7 @@ export default function BudgetsTab({
   plannedSaveError = null,
   onSavePlanned,
   budgetMonth = NOT_LOADED,
+  onCategories,
 }: {
   txns: Txn[] | null;
   budgets: Budgets;
@@ -184,6 +191,9 @@ export default function BudgetsTab({
   /** This month's budgets as the server works them out, with rollover
    *  (components/budget-month-state.ts), loaded once for the dashboard. */
   budgetMonth?: BudgetMonthState;
+  /** Takes the set a starter template made (components/TemplateOffer.tsx),
+   *  offered here once while your categories are still the ones Nya made. */
+  onCategories?: (t: unknown) => void;
 }) {
   const thisMonth = localMonth();
   // The month shown: this month, or one picked to look back on.
@@ -330,14 +340,17 @@ export default function BudgetsTab({
 
   return (
     <>
+      {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>
           {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
-              {totalBudget > 0
-                ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
-                : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+              <Masked>
+                {totalBudget > 0
+                  ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                  : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+              </Masked>
             </div>
           )}
         </div>
@@ -396,6 +409,7 @@ export default function BudgetsTab({
             past={past}
             rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
             onRollover={!past && view ? onRollover : undefined}
+            suggestions={!past ? (view?.suggestions ?? null) : null}
           />
         )}
         {!past && view && (

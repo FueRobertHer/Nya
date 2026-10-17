@@ -51,6 +51,7 @@ import { importSettingsStore, type StoredStatement } from '../import/store';
 import { bankKey as keyOf, type BankRow, type Settled } from './match';
 import { planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from './plan';
 import {
+  carriedTwinsStore,
   historyImportStore,
   historyImportSummaryStore,
   importedTxnStore,
@@ -147,11 +148,13 @@ export type HistoryCommitInput = {
   columns: string[] | null;
   covers: Covers;
   /** The account's bank rows, its imports in order with the period each
-   *  covers, and where the bank's rows begin, as read for the review. */
+   *  covers, where the bank's rows begin, and which bank rows were kept as
+   *  standing for kept rows, as read for the review. */
   banks: readonly BankRow[];
   order: readonly string[];
   imports: ReadonlyMap<string, { covers: Period | null }>;
   bank_from: string | null;
+  twins: ReadonlyMap<string, string>;
   choices: HistoryChoices;
   /** The digest of the review the person saw (reviewDigest). */
   reviewed: string;
@@ -282,6 +285,7 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
       banks: input.banks,
       order: input.order,
       bankFrom: input.bank_from,
+      twins: input.twins,
       covers: input.covers,
       imports: input.imports,
       choices: input.choices,
@@ -627,7 +631,8 @@ export async function listHistoryImports(ctx: Ctx, ids: readonly string[], settl
 /**
  * For forgetting an earlier account (lib/links.ts forgetEarlierAccount): the
  * rows imported under its id, its imports' records and summaries, what was
- * said about those rows, their splits and their places in groups, and how
+ * said about those rows, their splits and their places in groups, the pairs
+ * carried for it across a re-link (lib/history-import/twins.ts), and how
  * its last file was read. Readable or not: the
  * person asked for everything about it to go. But a row an import into
  * another account found already there (an import made while the two were
@@ -702,6 +707,9 @@ export async function forgetImportedHistory(ctx: Ctx, account_id: string): Promi
   await forgetAnnotations(ctx, gone);
   await forgetOverrides(ctx, gone);
   await forgetSplitsAndGroups(ctx, gone);
+  // Which bank rows stood for its rows when its connection was disconnected,
+  // kept for a re-link that can't come now.
+  await carriedTwinsStore.remove(ctx, account_id);
   // How its last file was read (lib/import/store.ts), kept per account.
   await importSettingsStore.remove(ctx, account_id);
   return { handedTo: [...handed.keys()] };

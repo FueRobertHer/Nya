@@ -299,7 +299,18 @@ export function fitText(text: string, maxWidth: number, size = 10): string {
  * alone doesn't fit either.
  */
 export function fitLabel(name: string, amount: string, maxWidth: number, size = 10): { name: string; amount: string } | null {
-  const fitted = fitText(name, maxWidth - textWidth(amount, size) - textWidth(' ', size), size);
-  if (fitted) return { name: fitted, amount };
-  return textWidth(amount, size) <= maxWidth ? { name: '', amount } : null;
+  const fitted = fitBeside(name, textWidth(amount, size), maxWidth, size);
+  return fitted === null ? null : { name: fitted, amount };
+}
+
+/**
+ * A name as it fits in `maxWidth` on one line beside `room` kept for what
+ * follows it (an amount, or the room the widest amount could take, so the
+ * label doesn't move with the amount): whole, or cut with an ellipsis; ''
+ * when not even a letter fits; null when the room alone doesn't fit either.
+ */
+export function fitBeside(name: string, room: number, maxWidth: number, size = 10): string | null {
+  const fitted = fitText(name, maxWidth - room - textWidth(' ', size), size);
+  if (fitted) return fitted;
+  return room <= maxWidth ? '' : null;
 }
