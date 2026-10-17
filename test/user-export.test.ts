@@ -1196,7 +1196,11 @@ describe('stores built on the storage seam', () => {
       'tags',
       'timeline-notes',
       'transaction-annotations',
+      'weekly-summary',
     ]);
+    // The weekly summary's signing key and record, and its counters, are the
+    // service's bookkeeping: never in it.
+    for (const k of ['weekly-summary-state', 'weekly-summary-sends', 'weekly-summary-unsubscribes']) expect(keys).not.toContain(k);
     // A map store's entries in id order, a value store's value, as stored.
     expect(doc['export-test-plans']).toEqual([
       { id: 'p1', value: { name: 'House', target: 120_000 } },
