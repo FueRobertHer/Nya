@@ -36,6 +36,7 @@ import type { NoTransactionsView } from '@/lib/no-transactions';
 export type FiProgressProps = {
   txns: Txn[] | null;
   txnsLoading: boolean;
+  /** The notes that say transactions couldn't all be read (PlanTab's). */
   txnNotes: string[];
   /** The connections that bring in no transactions, as the Plan tab gets
    *  them (lib/no-transactions.ts). */

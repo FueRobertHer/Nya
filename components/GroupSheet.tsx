@@ -18,7 +18,7 @@ import { formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { GROUP_NAME_MAX, MAX_MEMBERS, MIN_MEMBERS, toUnits, unitScale } from '@/lib/split-rows';
-import { heldInGroupAs } from './SplitRows';
+import { groupGoneText, heldInGroupAs } from './SplitRows';
 
 /** How many transactions the list offers at once; the search finds the rest. */
 const OFFERED = 60;
@@ -241,12 +241,7 @@ export default function GroupSheet({
         <div className="group-list" role="group" aria-label="Transactions in the group">
           {members0.map(row)}
         </div>
-        {missing > 0 && (
-          <p className="panel-note">
-            {missing} more {missing === 1 ? 'transaction was' : 'transactions were'} in it and {missing === 1 ? 'isn’t' : 'aren’t'} here: the bank removed{' '}
-            {missing === 1 ? 'it' : 'them'}, {missing === 1 ? 'its' : 'their'} account is hidden or ended, or {missing === 1 ? 'it' : 'they'} couldn’t be loaded.
-          </p>
-        )}
+        {missing > 0 && group && <p className="panel-note">{groupGoneText(group, 'sheet')}</p>}
         <input
           className="text-input"
           type="search"

@@ -18,6 +18,7 @@ import type { Txn } from './MonthBreakdown';
 import type { ManualTxnTarget } from './ManualTxnSheet';
 import type { Incomplete } from '@/lib/month-coverage';
 import { noTransactionsView, type NoTransactionsView } from '@/lib/no-transactions';
+import { unreadNotesOf } from '@/lib/fire/inputs';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
 import type { TagChange } from './TxnTagsNote';
@@ -95,6 +96,7 @@ export function useTransactionEdits({
   txns,
   setTxns,
   setTxnNotes,
+  setTxnUnread,
   setTxnIncomplete,
   setTxnWithout,
   loadTransactions,
@@ -106,6 +108,9 @@ export function useTransactionEdits({
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
   setTxnNotes: Dispatch<SetStateAction<string[]>>;
+  /** Of the notes, those that say transactions couldn't all be read (the
+   *  answer's `unread_notes`, lib/fire/inputs.ts unreadNotesOf). */
+  setTxnUnread?: Dispatch<SetStateAction<string[]>>;
   /** The institutions whose rows aren't all in the list (/api/transactions). */
   setTxnIncomplete: Dispatch<SetStateAction<Incomplete[]>>;
   /** The connections that bring in no transactions, as the same answer says
@@ -151,12 +156,13 @@ export function useTransactionEdits({
       if (changes.current !== at || !Array.isArray(data?.transactions)) return;
       setTxns(data.transactions);
       setTxnNotes(Array.isArray(data.notes) ? data.notes : []);
+      setTxnUnread?.(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout?.(noTransactionsView(data));
     } catch {
       // The list shown is the server's answer to the save; the next load reads it again.
     }
-  }, [setTxns, setTxnNotes, setTxnIncomplete, setTxnWithout]);
+  }, [setTxns, setTxnNotes, setTxnUnread, setTxnIncomplete, setTxnWithout]);
 
   /** After a save or delete: the row in the list, or out of it, at once, and
    *  when the balance moved too, net worth as after the account's Update form:

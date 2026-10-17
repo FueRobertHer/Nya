@@ -65,7 +65,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes: read, tags_note, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const { transactions, notes: read, unread_notes, tags_note, incomplete, history, taxonomy, tags } = await finishActivity(ctx, plaid, hidden, { grow: true });
     const notes = tags_note ? [...read, tags_note] : read;
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
@@ -73,6 +73,10 @@ export async function GET(req: Request) {
     return NextResponse.json({
       transactions,
       notes,
+      // Of those, the ones that say transactions couldn't all be read, which
+      // the Plan weighs its figures by (never a rule's, a category's, a
+      // split's or a group's, which mean nothing is missing).
+      unread_notes,
       incomplete,
       without_transactions: plaid.without_transactions ?? [],
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
