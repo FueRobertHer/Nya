@@ -75,6 +75,7 @@ import { dominantCurrency } from './format';
 import { lastEndDay } from './lifecycle';
 import { directoryTypes } from './links';
 import { getKeptAccounts } from './kept-accounts';
+import { rememberedAccountsReport } from './last-known';
 import { readGoalRecords, wireGoal } from './goal-plans';
 import { StoredDataUnreadableError } from './repo';
 import { StateUnreadableError } from './transactions';
@@ -273,15 +274,17 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, now: number): Promise<B
   if (reads.some((r) => transactionsDamaged(r.activity.bank.sources, r.activity.manual_unread))) return UNREADABLE;
   const months: BudgetsMonth[] = reads.map((read) => {
     const answer = budgetsAnswer(read, { month: read.month });
-    const categoriesOf = new Map<string | null, BudgetLine[]>();
+    // A group by its id, or by its name (no two groups share one) where the
+    // answer gives none: one the owner's app hasn't stored yet.
+    const groupKey = (id: string | null, name: string | null) => id ?? `name:${name ?? ''}`;
+    const categoriesOf = new Map<string, BudgetLine[]>();
     for (const b of answer.budgets) {
-      const list = categoriesOf.get(b.group_id) ?? [];
-      list.push(budgetLine(displayName(b.category), b.spent, b.available, s));
-      categoriesOf.set(b.group_id, list);
+      const key = groupKey(b.group_id, b.group);
+      categoriesOf.set(key, [...(categoriesOf.get(key) ?? []), budgetLine(displayName(b.category), b.spent, b.available, s)]);
     }
     const groups: BudgetGroup[] = answer.groups.map((g) => ({
       ...budgetLine(displayName(g.name), g.spent, g.available, s),
-      ...(s.by === 'category' ? { categories: categoriesOf.get(g.id) ?? [] } : {}),
+      ...(s.by === 'category' ? { categories: categoriesOf.get(groupKey(g.id, g.name)) ?? [] } : {}),
     }));
     const carriesUncertain = [...answer.budgets, ...answer.groups].some((b) => (b.rollover?.uncertain_months.length ?? 0) > 0);
     return {
@@ -472,10 +475,16 @@ export async function shareableGoals(ctx: Ctx): Promise<ShareableGoal[]> {
     .map((g) => ({ id: g.id, name: g.name, account_id: g.account_id }));
 }
 
-/** Of these accounts, the investment ones: a linked account's type as the
- *  account directory has it, a kept one's own. For the drawer's warnings. */
+/** Of these accounts, the investment ones, for the warnings about holdings
+ *  shared as percentages: a kept account's own type, a linked one's as its
+ *  last good load remembered it, else as the account directory has it.
+ *  LENIENT, for those warnings only, which nothing writes, deletes or records
+ *  on: a remembered record that can't be read leaves its accounts to the
+ *  directory. */
 export async function investmentAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
-  const [types, kept] = await Promise.all([directoryTypes(ctx, [...ids]), getKeptAccounts(ctx)]);
-  const keptType = new Map(kept.map((k) => [k.account_id, k.type]));
-  return new Set(ids.filter((id) => isInvestmentType((keptType.get(id) ?? types[id]) ?? '')));
+  const [types, kept, remembered] = await Promise.all([directoryTypes(ctx, [...ids]), getKeptAccounts(ctx), rememberedAccountsReport(ctx)]);
+  const typeOf = new Map<string, string>();
+  for (const accounts of Object.values(remembered.byItem)) for (const a of accounts) typeOf.set(a.account_id, a.type);
+  for (const k of kept) typeOf.set(k.account_id, k.type);
+  return new Set(ids.filter((id) => isInvestmentType(typeOf.get(id) ?? types[id] ?? '')));
 }
