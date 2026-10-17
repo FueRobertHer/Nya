@@ -552,8 +552,9 @@ describe('a summary of a container with a bit of everything', () => {
   test('says what the app says, and never a figure', async () => {
     // The fixture's days are counted from now: a Monday afternoon.
     setSystemTime(new Date('2026-10-12T15:00:00.000Z'));
-    const { seedPerson, CHASE_TXNS } = await import('./api-fixture');
-    await seedPerson(fake);
+    const { seedPerson } = await import('./api-fixture');
+    // Seeded as of the clock just set, whichever file imported the fixture first.
+    const { chaseTxns: CHASE_TXNS } = await seedPerson(fake);
     await turnOn(TEST_CTX, { time_zone: 'UTC' });
     const out = await sendWeeklySummaries(registry(TEST_CONTAINER), {
       clock: () => Date.now(),
@@ -606,9 +607,8 @@ describe('a summary of a container with a bit of everything', () => {
   });
 
   test('its spending is the totals’ own over split parts, group nets and a group’s transactions counted elsewhere', async () => {
-    // The fixture's days are fixed when it is first imported, by whichever
-    // test file imports it first: this test reads them from it.
-    const { seedPerson, CHASE_TXNS } = await import('./api-fixture');
+    // The days as seedPerson wrote them, from the clock.
+    const { seedPerson } = await import('./api-fixture');
     const { ensureTaxonomy } = await import('@/lib/category-store');
     const { splitStore } = await import('@/lib/splits');
     const { groupStore } = await import('@/lib/groups');
@@ -617,8 +617,8 @@ describe('a summary of a container with a bit of everything', () => {
     const { moneyOut } = await import('@/lib/weekly-summary/content');
     const { leftOutByCurrency } = await import('@/lib/spending');
     const { addDays } = await import('@/lib/recurring');
+    const { chaseTxns: CHASE_TXNS } = await seedPerson(fake);
     const dayOf = (id: string) => CHASE_TXNS.find((t) => t.transaction_id === id)!.date;
-    await seedPerson(fake);
     const taxonomy = await ensureTaxonomy(TEST_CTX);
     const cat = (name: string) => taxonomy.categories.find((c) => c.name === name)!.id;
     const at = new Date().toISOString();
