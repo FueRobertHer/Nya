@@ -55,6 +55,8 @@ const { splitStore } = await import('@/lib/splits');
 const { rulesStore } = await import('@/lib/rules');
 const { summarize } = await import('@/lib/totals');
 const { PART_PREFIX, REMAINDER_PREFIX } = await import('@/lib/split-rows');
+const { groupStore } = await import('@/lib/groups');
+const { unreadNotesOf, unreadTransactions } = await import('@/lib/fire/inputs');
 
 function account(id: string) {
   return {
@@ -366,6 +368,26 @@ describe('what can’t be read is never taken for nothing', () => {
     const del = await quietly(() => route('transaction-splits', 'DELETE', { transaction_id: 't_costco' }));
     expect(del.status).toBe(409);
     expect(fake.hashes.get(ctxKey('transaction-splits'))!.get('t_costco')).toBe('not-ciphertext-but-long-enough-to-be-tried');
+  });
+
+  test('the Plan is told only the notes that say transactions are missing, never a split’s, a group’s or a rule’s', async () => {
+    await listed();
+    // A split that can't be read, a group whose transactions' currencies
+    // differ, and a bank whose credentials can't be read.
+    await fake.hset(ctxKey('transaction-splits'), { t_costco: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const at = new Date().toISOString();
+    await groupStore.set(ctx, 'g-mixed', { version: 1, name: 'Trip', category_id: catId('travel'), members: ['t_coffee', typed], date: daysAgo(5), currency: 'USD', created_at: at, updated_at: at });
+    await manualTxnStore.update(ctx, MANUAL, (book) => ({ ...book!, rows: book!.rows.map((r) => (r.id === typed ? { ...r, currency: 'EUR' } : r)) }));
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify({ item_id: 'item_b', institution_name: 'Amex', encrypted_access_token: 'not-ciphertext' }) });
+    const body = (await quietly(() => resync())) as unknown as { notes: string[]; unread_notes: string[] };
+    expect(body.notes).toContain('How you split 1 transaction couldn’t be read, so it shows whole until it can be.');
+    expect(body.notes.some((n) => n.startsWith('The transactions in 1 of your groups are in more than one currency now'))).toBe(true);
+    expect(body.unread_notes).toEqual(['Amex: could not decrypt stored credentials']);
+    // So the Plan says Amex's transactions couldn't all be read, and nothing of the others.
+    expect(unreadTransactions(unreadNotesOf(body))).toEqual([{ institution: 'Amex', reason: 'could not decrypt stored credentials' }]);
+    // Of an answer with nothing missing, nothing.
+    await fake.hdel(ctxKey('plaid:items'), 'item_b');
+    expect(unreadTransactions(unreadNotesOf(await quietly(() => resync())))).toEqual([]);
   });
 
   test('a split saved in a shape this release doesn’t know is unrecognised: never applied half, never removed', async () => {

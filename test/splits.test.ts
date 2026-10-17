@@ -617,6 +617,8 @@ describe('groups net their transactions', () => {
     const g1 = out.rows.find((t) => t.group_id === 'g1')!;
     const g2 = out.rows.find((t) => t.group_id === 'g2')!;
     expect([g1.amount, g2.amount, g2.group_missing]).toEqual([60, 5, 1]);
+    // The second says where the one it shares counts.
+    expect([g1.group_away, g2.group_away]).toEqual([undefined, [{ why: 'grouped', group: 'Dinner with Sam' }]]);
     expect(out.rows.some((t) => t.split_of)).toBe(false);
     expect(out.notes).toEqual(['1 transaction in a group is split too, so its parts aren’t used and the group counts it whole.']);
   });
@@ -694,6 +696,14 @@ describe('a bank row standing for rows imported from files (#52)', () => {
     const both = expandSplitsAndGroups([venmo, dinner, coffee], inputs({ groups: new Map([['g1', dinnerGroup], ['g2', own]]), stands }));
     const [a, b] = ['g1', 'g2'].map((id) => both.rows.find((t) => t.group_id === id && t.group_members)!);
     expect([a.amount, a.group_missing, b.amount, b.group_members!.map((m) => m.group_carried_from)]).toEqual([-60, 1, 125, [undefined, undefined]]);
+    expect([a.group_away, b.group_away]).toEqual([[{ why: 'grouped', group: 'Errand' }], undefined]);
+
+    // Still pending, it counts on its own, and the group says why it isn't
+    // counted there yet.
+    const pending = expandSplitsAndGroups([venmo, { ...dinner, pending: true }], inputs({ groups: new Map([['g1', dinnerGroup]]), stands }));
+    const waiting = pending.rows.find((t) => t.group_members)!;
+    expect([waiting.amount, waiting.group_missing, waiting.group_away]).toEqual([-60, 1, [{ why: 'pending' }]]);
+    expect(pending.rows.find((t) => t.transaction_id === 't_bank')).toMatchObject({ amount: 120, pending: true });
 
     // Split as well (two devices at once), it counts whole in the group.
     const splitToo = expandSplitsAndGroups(

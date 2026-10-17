@@ -324,7 +324,19 @@ describe('an imported row splits and groups as the bank’s do', () => {
     expect(refused.body.error).toContain('(transactions imported from your bank’s files)');
     // Reconnecting a bank brings back nothing of a file's rows: not offered.
     expect(refused.body.error).not.toContain('reconnecting');
+    // Nor a split or a group of a bank row of that account, which may stand
+    // for one of them.
+    const bank = await quietly(() =>
+      splitPut('b_grocer', [
+        { amount: 15, category_id: catId('food and drink') },
+        { amount: 5, category_id: catId('home improvement') },
+      ])
+    );
+    expect([bank.status, bank.body.unreadable]).toEqual([409, true]);
+    const group = await quietly(() => route('transaction-groups', 'POST', { name: 'Lunch', category_id: catId('food and drink'), members: ['b_grocer', 'b_tip'] }));
+    expect([group.status, group.body.unreadable]).toEqual([409, true]);
     expect(await splitStore.getAll(ctx)).toEqual(new Map());
+    expect(await groupStore.getAll(ctx)).toEqual(new Map());
   });
 });
 
@@ -466,7 +478,7 @@ describe('when the bank sends the same transaction', () => {
     expect([row.amount, row.split_of]).toEqual([60, undefined]);
   });
 
-  test('the bank’s row split in its own right keeps its own parts; one still pending takes none', async () => {
+  test('a split of the bank’s row itself is refused while it shows the imported row’s; one it has already comes first; one still pending takes none', async () => {
     const { ids } = await importStatement();
     await splitCorner(ids['CORNER SHOP']);
     // Pending: shown whole in the imported row's place until it posts.
@@ -476,21 +488,60 @@ describe('when the bank sends the same transaction', () => {
     expect(rows.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ amount: 60, pending: true });
     expect(rows.some((t) => t.transaction_id === ids['CORNER SHOP'])).toBe(false);
 
-    // Posted, and split on its own: its own split wins.
+    // Posted, it shows the imported row's split: a split of its own, or a
+    // group, would hide it, and is refused.
     await storeBank([...BANK, corner()]);
+    const travel = catId('travel');
+    const own = await splitPut('b_corner', [
+      { amount: 30, category_id: travel },
+      { amount: 30, category_id: travel },
+    ]);
+    expect(own).toEqual({ status: 409, body: { error: 'This transaction is split as you split the row you imported for it from your bank’s file: change that split instead, with Edit split.' } });
+    const grouped = await route('transaction-groups', 'POST', { name: 'Errand', category_id: travel, members: ['b_corner', 'b_tip'] });
+    expect(grouped).toEqual({
+      status: 409,
+      body: {
+        error: '“CORNER SHOP 0042” is split as you split the row you imported for it from your bank’s file, and its parts count on their own, so a group would count it twice. Unsplit it first.',
+      },
+    });
+
+    // One it has already (two devices at once) comes first, and is its own to change.
+    await splitStore.set(ctx, 'b_corner', {
+      version: 1,
+      amount: 60,
+      currency: 'USD',
+      parts: [
+        { id: 'own-1', amount: 30, category_id: travel },
+        { id: 'own-2', amount: 30, category_id: travel },
+      ],
+      updated_at: new Date().toISOString(),
+    });
+    rows = await rowsOf();
+    expect(rows.filter((t) => t.split_of === 'b_corner').map((p) => [p.amount, p.category_id, p.split_carried_from])).toEqual([
+      [30, travel, undefined],
+      [30, travel, undefined],
+    ]);
+    expect(summarize(rows, (d) => d === daysAgo(50), 'USD')).toMatchObject({ money_out: 60 });
+    const changed = await splitPut('b_corner', [
+      { amount: 40, category_id: travel },
+      { amount: 20, category_id: travel },
+    ]);
+    expect(changed.status).toBe(200);
+    // The imported row's is kept, as it is, for the day the bank's row goes.
+    expect(await splitStore.get(ctx, ids['CORNER SHOP'])).not.toBeNull();
+  });
+
+  test('unsplit, the imported row’s split no longer stands in the way of the bank row’s own', async () => {
+    const { ids } = await importStatement();
+    await splitCorner(ids['CORNER SHOP']);
+    await storeBank([...BANK, corner()]);
+    expect((await route('transaction-splits', 'DELETE', { transaction_id: ids['CORNER SHOP'] })).status).toBe(200);
     const own = await splitPut('b_corner', [
       { amount: 30, category_id: catId('travel') },
       { amount: 30, category_id: catId('travel') },
     ]);
     expect(own.status).toBe(200);
-    rows = await rowsOf();
-    expect(rows.filter((t) => t.split_of === 'b_corner').map((p) => [p.amount, p.category_id, p.split_carried_from])).toEqual([
-      [30, catId('travel'), undefined],
-      [30, catId('travel'), undefined],
-    ]);
-    expect(summarize(rows, (d) => d === daysAgo(50), 'USD')).toMatchObject({ money_out: 60 });
-    // The imported row's is kept, as it is, for the day the bank's row goes.
-    expect(await splitStore.get(ctx, ids['CORNER SHOP'])).not.toBeNull();
+    expect((await rowsOf()).filter((t) => t.split_of === 'b_corner').map((p) => p.split_carried_from)).toEqual([undefined, undefined]);
   });
 
   test('its place in a group carries: the group nets the bank’s row, and taking that out takes the imported row out', async () => {
@@ -533,18 +584,52 @@ describe('when the bank sends the same transaction', () => {
     expect(rows.find((t) => t.transaction_id === 'b_corner')!.amount).toBe(60);
   });
 
-  test('the bank’s row in a group in its own right stays there: the imported row’s group says it isn’t here, and nothing counts twice', async () => {
+  test('while the bank’s row is pending, the imported row’s group nets the rest and says it is pending at the bank; posted, it counts there', async () => {
+    const { ids } = await importStatement();
+    const lunch = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: catId('food and drink'), members: [ids['CORNER SHOP'], 'b_payback', 'b_tip'] });
+    await storeBank([...BANK, corner({ pending: true })]);
+    let rows = await rowsOf();
+    let group = rows.find((t) => t.group_id === lunch.body.id && t.group_members)!;
+    expect([group.amount, group.group_missing, group.group_away]).toEqual([-15, 1, [{ why: 'pending' }]]);
+    expect(rows.find((t) => t.transaction_id === 'b_corner')).toMatchObject({ amount: 60, pending: true });
+    await storeBank([...BANK, corner()]);
+    rows = await rowsOf();
+    group = rows.find((t) => t.group_id === lunch.body.id && t.group_members)!;
+    expect([group.amount, group.group_missing, group.group_away]).toEqual([45, undefined, undefined]);
+  });
+
+  test('a group or a split of the bank’s row itself is refused while it counts in the imported row’s group; one it has already comes first, and nothing counts twice', async () => {
     const { ids } = await importStatement();
     const food = catId('food and drink');
     const lunch = await route('transaction-groups', 'POST', { name: 'Lunch with Sam', category_id: food, members: [ids['CORNER SHOP'], 'b_payback'] });
     await storeBank([...BANK, corner()]);
-    const errand = await route('transaction-groups', 'POST', { name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'] });
-    expect(errand.status).toBe(200);
+    // In the lunch, in the imported row's place: a group of its own, the
+    // lunch again by its own id, or a split, would hide that place.
+    const held = '“CORNER SHOP 0042” is already in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file: take it out of that group first.';
+    expect(await route('transaction-groups', 'POST', { name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'] })).toEqual({ status: 409, body: { error: held } });
+    expect(await route('transaction-groups', 'PATCH', { id: lunch.body.id, add: ['b_corner'] })).toEqual({ status: 409, body: { error: held } });
+    expect(
+      await splitPut('b_corner', [
+        { amount: 30, category_id: food },
+        { amount: 30, category_id: food },
+      ])
+    ).toEqual({
+      status: 409,
+      body: {
+        error: 'This transaction counts in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file, and the group counts it whole: take it out of the group to split it.',
+      },
+    });
 
+    // A group of its own made on two devices at once comes first: the lunch
+    // says one of its transactions isn't here.
+    const at = new Date().toISOString();
+    await groupStore.set(ctx, 'errand-1', { version: 1, name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'], date: daysAgo(50), currency: 'USD', created_at: at, updated_at: at });
     const rows = await rowsOf();
     const of = (id: string) => rows.find((t) => t.group_members && t.group_id === id)!;
     expect([of(lunch.body.id).amount, of(lunch.body.id).group_missing, of(lunch.body.id).group_members!.map((m) => m.transaction_id)]).toEqual([-20, 1, ['b_payback']]);
-    expect([of(errand.body.id).amount, of(errand.body.id).group_members!.map((m) => [m.transaction_id, m.group_carried_from])]).toEqual([
+    // And where it counts.
+    expect(of(lunch.body.id).group_away).toEqual([{ why: 'grouped', group: 'Errand' }]);
+    expect([of('errand-1').amount, of('errand-1').group_members!.map((m) => [m.transaction_id, m.group_carried_from])]).toEqual([
       65,
       [
         ['b_corner', undefined],
@@ -611,6 +696,24 @@ describe('the download', () => {
     records = await statement();
     expect(records.has(ids['CORNER SHOP'])).toBe(false);
     expect(records.get('b_corner')!.note).toContain('Split in Nya: Food and drink 45.00; Home improvement 15.00');
+  });
+
+  test('an OFX statement says when the split a bank row would show, an imported row’s, can’t be read, and calls itself incomplete', async () => {
+    const { ids } = await importStatement();
+    await splitPut(ids['CORNER SHOP'], [
+      { amount: 45, category_id: catId('food and drink') },
+      { amount: 15, category_id: catId('home improvement') },
+    ]);
+    await storeBank([...BANK, bankTxn('b_corner', 'acc_chk', 50, 60, { name: 'CORNER SHOP 0042' })]);
+    await fake.hset(ctxKey('transaction-splits'), { [ids['CORNER SHOP']]: DAMAGED });
+    const data = await quietly(() => collectUserData({ ctx, userId: null }));
+    const made = ofxFile(data, buildUserExport(data, new Date()), 'acc_chk', new Date());
+    if (!('file' in made)) throw new Error(made.refused);
+    expect(made.file.notes.find((n) => n.startsWith('How 1 of these transactions is split couldn’t be read'))).toBeDefined();
+    expect(made.file.incomplete).toContain('transaction-splits');
+    // As the app shows it: whole, marked, with its note.
+    const row = (await rowsOf()).find((t) => t.transaction_id === 'b_corner')!;
+    expect([row.amount, row.split_unread]).toEqual([60, true]);
   });
 
   test('an OFX statement names the group an imported row is in, and the bank’s row that takes its place', async () => {

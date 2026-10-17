@@ -171,6 +171,7 @@ import {
   type UserExport,
 } from './user-export';
 import { anySplitsOrGroups, appliedSplitsOf, splitInputsOf, splitMemoOf } from './export-splits';
+import { splitFor } from './split-rows';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 import { importedTwinsStore, importedTxnStore } from './history-import/store';
@@ -1016,7 +1017,9 @@ export function ofxFile(
     notes.push(`${said.join(' ')} The JSON download lists them under problems. ${UNCHANGED}`);
     incomplete.add(txnAnnotationStore.name);
   }
-  const unreadSplits = rows.filter((r) => splitInputs.splitsUnknown.has(r.id)).length;
+  // Its own split, or that of the row imported from a file it stands for,
+  // which it would show (lib/split-rows.ts splitFor).
+  const unreadSplits = rows.filter((r) => splitFor(splitInputs, r.id, splitInputs.stands?.get(r.id)) === 'unread').length;
   if (unreadSplits > 0) {
     notes.push(
       `How ${plural(unreadSplits, 'of these transactions is', 'of these transactions are')} split couldn’t be read, so ${unreadSplits === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadSplits === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`

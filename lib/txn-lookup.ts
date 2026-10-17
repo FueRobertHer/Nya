@@ -23,6 +23,9 @@ import { readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 import { importedTwinsStore, importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
+import { countedRows, readImported, standsFor } from './history-import/read';
+import { effectiveLinks, getLinks, resolveId } from './link-core';
+import { liveAccountIds } from './links';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 
@@ -161,6 +164,42 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
   ];
   if (where.length > 0) throw new LookupUnreadableError(where);
   return found;
+}
+
+// ---- What a bank row stands for ----
+
+/**
+ * The rows imported into linked accounts from files (#52) that each of these
+ * bank transactions stands for now, earlier imports first, worked out as the
+ * read layer works them out (lib/history-import/read.ts importedForActivity's
+ * `represents`): the rows whose split, or place in a group, the bank row
+ * shows (lib/split-rows.ts), which a split or a group of its own would hide.
+ * Only the banks' own rows among `found` are looked at, on the links that
+ * apply now, with the pairs the sync kept (lib/history-import/twins.ts), so
+ * a bank row the bank modified stands for what the read layer says. Strict: the links, the live accounts or one of these accounts'
+ * imported rows that can't be read throw (LookupUnreadableError for the
+ * rows), never an answer of "none". One read of the books when nothing was
+ * imported.
+ */
+export async function importedStoodFor(ctx: Ctx, found: Iterable<FoundTxn>): Promise<Map<string, string[]>> {
+  const bank = [...found].filter((t) => !t.transaction_id.startsWith(MANUAL_TXN_PREFIX) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX));
+  const out = new Map<string, string[]>();
+  if (bank.length === 0 || (await importedTxnStore.count(ctx)) === 0) return out;
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+  const applied = effectiveLinks(links, live);
+  const accounts = new Set(bank.map((t) => resolveId(t.account_id, applied)));
+  const read = await readImported(ctx, { links: applied, only: accounts });
+  if (read.unresolved || [...accounts].some((a) => read.flawed.has(a))) throw new LookupUnreadableError([IMPORTED_BOOKS]);
+  const wanted = new Set(bank.map((t) => t.transaction_id));
+  const rank = new Map(read.order.map((id, i) => [id, i]));
+  const at = new Map<string, number>();
+  for (const a of read.accounts) {
+    const settled = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, pending: true, twins: a.twins });
+    for (const r of a.held) at.set(r.id, rank.get(r.import_id) ?? Number.MAX_SAFE_INTEGER);
+    for (const [rowId, bankId] of standsFor(settled)) if (wanted.has(bankId)) out.set(bankId, [...(out.get(bankId) ?? []), rowId]);
+  }
+  for (const list of out.values()) list.sort((x, y) => (at.get(x) ?? 0) - (at.get(y) ?? 0));
+  return out;
 }
 
 // ---- What a disconnect takes ----

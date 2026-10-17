@@ -344,11 +344,13 @@ export async function assembleBankRows(
   const transactions = [...results.flatMap((r) => r.txns), ...imported.txns];
   const older = [...results.flatMap((r) => r.older), ...imported.older];
   // A bank row standing for imported rows the person chose a category for
-  // takes it, unless they chose one for the bank row itself. A posted one
-  // names those rows (`stands_for`), so what else was said about them (an
-  // exclusion or an include, tags, a note) carries to it in finishActivity,
-  // read with every record on each request: under what is said on the bank
-  // row itself (lib/txn-layers.ts).
+  // takes it, unless they chose one for the bank row itself. It names those
+  // rows (`stands_for`), so, once it has posted, what else was said about
+  // them (an exclusion or an include, tags, a note) carries to it in
+  // finishActivity, read with every record on each request: under what is
+  // said on the bank row itself (lib/txn-layers.ts); and so do their splits
+  // and places in groups, of which a pending one takes none, a group saying
+  // it is pending (lib/split-rows.ts).
   const fromImports = categoriesFromImports(imported.represents, overrides.overrides);
   for (const t of [...transactions, ...older]) {
     const manual = overrides.overrides[t.transaction_id] ?? fromImports.get(t.transaction_id);
@@ -362,7 +364,7 @@ export async function assembleBankRows(
       t.name = renamed;
     }
     const stands = imported.represents.get(t.transaction_id);
-    if (stands && !('pending' in t && t.pending)) t.stands_for = stands;
+    if (stands) t.stands_for = stands;
   }
   // A posted bank row standing for an imported row whose amount it no longer
   // says (the bank changed its own since the two were paired): the imported
@@ -475,6 +477,14 @@ export async function finishActivity(
 ): Promise<{
   transactions: Txn[];
   notes: string[];
+  /** Of `notes`, those that say transactions couldn't all be read or aren't
+   *  all in: an institution's (one that failed to sync, needs reconnecting,
+   *  or is still bringing its history in), the rows imported into a linked
+   *  account that can't be shown, a manual account's that can't be read.
+   *  What the Plan weighs its figures by; the others (how rules, categories,
+   *  splits and groups apply when something of theirs can't be read) never
+   *  mean a transaction is missing. */
+  unread_notes: string[];
   /** When the tags couldn't be read, the note that says so: for a reader that
    *  shows tags (the app, the read-only API), not one that doesn't (reports). */
   tags_note: string | null;
@@ -535,12 +545,13 @@ export async function finishActivity(
         ...(t.own_name ? { own_name: true as const } : {}),
       })),
   ];
-  // What each posted bank row standing for rows imported from files stands
-  // for (#52), which the layers take off the row once they have laid what
-  // was said about those rows on it: their splits and their places in groups
-  // are its too (lib/split-rows.ts).
+  // What each bank row standing for rows imported from files stands for
+  // (#52), which the layers take off the row once they have laid what was
+  // said about those rows on it: their splits and their places in groups are
+  // a posted one's too, and a pending one's group says why it isn't counted
+  // there yet (lib/split-rows.ts).
   const stands = new Map<string, readonly string[]>();
-  for (const t of transactions) if (t.stands_for?.length && !t.pending) stands.set(t.transaction_id, t.stands_for);
+  for (const t of transactions) if (t.stands_for?.length) stands.set(t.transaction_id, t.stands_for);
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
@@ -585,6 +596,7 @@ export async function finishActivity(
   return {
     transactions: expanded.rows,
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...expanded.notes],
+    unread_notes: [...plaid.notes, ...manual.notes],
     tags_note: tagRead.note,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],

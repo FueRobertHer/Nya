@@ -340,9 +340,25 @@ export function cashAccountIds(institutions: AssetInstitution[]): Set<string> {
 }
 
 /** An institution whose transactions could not all be read, from
- *  /api/transactions' notes ("Chase: needs to be reconnected"). A note that
- *  names no institution ("Could not load transactions.") has none. */
+ *  /api/transactions' notes that say so (unreadNotesOf: "Chase: needs to be
+ *  reconnected"). A note that names no institution ("Could not load
+ *  transactions.") has none. */
 export type UnreadTransactions = { institution: string | null; reason: string };
+
+/**
+ * Of an /api/transactions answer, the notes that say transactions couldn't
+ * all be read or aren't all in (`unread_notes`: an institution's, the rows
+ * imported into a linked account that can't be shown, a manual account's),
+ * which the Plan weighs its figures by. Never the others, which say how
+ * something applies when part of it can't be read (a rule, a category, a
+ * split, a group) while every transaction is there. An answer made before
+ * the server sent them has `notes` only, each then taken as one.
+ */
+export function unreadNotesOf(payload: unknown): string[] {
+  const p = typeof payload === 'object' && payload !== null ? (payload as { notes?: unknown; unread_notes?: unknown }) : {};
+  const list = Array.isArray(p.unread_notes) ? p.unread_notes : Array.isArray(p.notes) ? p.notes : [];
+  return list.filter((n): n is string => typeof n === 'string');
+}
 
 export function unreadTransactions(notes: string[]): UnreadTransactions[] {
   return notes.map((note) => {
