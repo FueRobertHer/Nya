@@ -19,7 +19,7 @@ import type { Txn } from './MonthBreakdown';
 import { approvalInputOf, MAX_PER_REQUEST } from '@/lib/review-layer';
 import type { Approval } from '@/lib/review-store';
 import type { VendorEntry } from '@/lib/vendor-defaults';
-import { merchantOf, recategorizedRow } from './transaction-edits';
+import { approvalViaOf, merchantOf, recategorizedRow } from './transaction-edits';
 import { localDate } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 
@@ -199,7 +199,7 @@ export function useReview({
       const shown = recategorizedRow(t, { category_id }, taxonomy);
       setTxns((prev) => (prev ? mapRows(prev, (x) => (x.transaction_id === t.transaction_id ? { ...x, ...shown, review_suggestion: undefined, filed_by_default: undefined } : x)) : prev));
       const account = t.source && t.account_id ? { account_id: t.account_id } : {};
-      const res = await post('/api/recategorize', { transaction_id: t.transaction_id, category_id, ...account, ...merchantOf(t) }).catch(() => null);
+      const res = await post('/api/recategorize', { transaction_id: t.transaction_id, category_id, ...account, ...merchantOf(t), ...approvalViaOf(t) }).catch(() => null);
       const data = res?.ok ? await res.json().catch(() => null) : null;
       if (!data) {
         setError(await refusal(res, 'Could not change the category. Please try again.'));
@@ -233,14 +233,27 @@ export function useReview({
         setError('Its category couldn’t be put back: what it was before couldn’t be read. Choose it again from its detail.');
         ok = false;
       }
-      if (u.vendor) await post('/api/vendor-defaults', { action: 'restore', after: u.vendor.entry, previous: u.vendor.previous }).catch(() => null);
+      if (u.vendor) {
+        // The merchant's categorizations go back only as they were left: one
+        // made since (another device) keeps them, which is said.
+        const res = await post('/api/vendor-defaults', { action: 'restore', after: u.vendor.entry, previous: u.vendor.previous }).catch(() => null);
+        const data = res?.ok ? await res.json().catch(() => null) : null;
+        if (data?.restored !== true) {
+          setError(
+            data
+              ? 'The merchant’s categorizations weren’t put back: another came since. Its default, if it has one, is under Manage, Defaults.'
+              : await refusal(res, 'Could not put the merchant’s categorizations back.')
+          );
+          ok = false;
+        }
+      }
       refresh();
       return ok;
     },
     [undo, refresh]
   );
 
-  return { view, accept, turn, approve, undo, unapprove, recategorizeAndApprove, undoRecategorize, error, setError, saving };
+  return { view, accept, turn, approve, undo, unapprove, recategorizeAndApprove, undoRecategorize, error, setError, saving, refresh };
 }
 
 export type ReviewControls = ReturnType<typeof useReview>;

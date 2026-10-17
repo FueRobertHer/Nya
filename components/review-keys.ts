@@ -59,10 +59,24 @@ export function cardKey(e: KeyLike, onCard: boolean): CardKey | null {
   }
 }
 
+/**
+ * What a key does in Card Mode's category picker, a list whose arrows only
+ * move through the categories (nothing is chosen on input alone, WCAG
+ * 3.2.2): Enter on the list uses the category it shows. Escape is cardKey's
+ * (it closes the picker first).
+ */
+export function pickerKey(e: KeyLike): 'choose' | null {
+  if (withModifier(e) || e.repeat || e.key !== 'Enter') return null;
+  const t = e.target as { tagName?: unknown } | null | undefined;
+  return t && typeof t === 'object' && typeof t.tagName === 'string' && t.tagName.toUpperCase() === 'SELECT' ? 'choose' : null;
+}
+
 export type ActivityKey = 'review' | 'filter' | 'approve-listed' | 'undo' | 'help';
 
-/** What a key does on the Activity tab while the queue is on. Approving what
- *  is listed takes Shift, as it may approve many at once (and can be undone). */
+/** What a key does on the Activity tab while the queue is on and its keys
+ *  are (components/activity-keys.ts: they can be turned off, WCAG 2.1.4).
+ *  Approving what is listed takes Shift, as it may approve many at once, and
+ *  asks first (components/ReviewBar.tsx). */
 export function activityKey(e: KeyLike): ActivityKey | null {
   if (withModifier(e) || e.repeat || isTyping(e.target)) return null;
   if (e.key === '?') return 'help';
@@ -85,6 +99,7 @@ export const CARD_KEYS: readonly (readonly [string, string])[] = [
   ['→ or A', 'Approve'],
   ['Enter', 'Approve (on the card)'],
   ['← or C', 'Recategorize'],
+  ['Enter (in the category list)', 'Use the category shown'],
   ['↓ or S', 'Skip'],
   ['U', 'Undo the last action'],
   ['Esc', 'Close'],
@@ -93,7 +108,7 @@ export const CARD_KEYS: readonly (readonly [string, string])[] = [
 export const ACTIVITY_KEYS: readonly (readonly [string, string])[] = [
   ['R', 'Review one at a time (Card Mode)'],
   ['N', 'Show only what needs review, or everything'],
-  ['Shift+A', 'Approve what is listed'],
+  ['Shift+A', 'Approve what is listed (it asks first)'],
   ['U', 'Undo the last approval'],
   ['?', 'Show or hide these shortcuts'],
 ];

@@ -74,11 +74,14 @@ export default function ReviewNote({
   };
 
   const lines: React.ReactNode[] = [];
-  if (t.filed_by_default) {
+  // A split transaction's parts are filed by their own categories, never by a
+  // default or a rule: what would file the whole files nothing that counts.
+  const whole = !t.split_parts;
+  if (t.filed_by_default && whole) {
     const id = t.filed_by_default.id;
     lines.push(
       <div className="review-note" key="default">
-        <span>{defaultWords(t.name, t.filed_by_default.agree)}.</span>
+        <span>{defaultWords(t.name, t.filed_by_default.agree, t.filed_by_default.earlier === true)}.</span>
         <button className="secondary" disabled={clearing} onClick={() => void clearDefault(id)}>
           Clear default
         </button>
@@ -104,7 +107,7 @@ export default function ReviewNote({
       <div className="review-note" key="approved">
         <span>
           Approved {day(t.reviewed_at)}
-          {t.approved_name !== undefined ? `, as “${t.approved_name}”` : ''}. Nothing but you changes it now.
+          {t.approved_name !== undefined ? `, as “${t.approved_name}”` : ''}. Its category stays as you approved it until you change it.
         </span>
         <button className="secondary" onClick={() => void review.unapprove(t)}>
           Review again
@@ -119,7 +122,9 @@ export default function ReviewNote({
       </div>
     );
   }
-  if (t.review_suggestion && t.reviewed_at) {
+  // Offered while it stays filed where it was approved: approved, or back in
+  // the queue since the bank changed its amount.
+  if (t.review_suggestion && whole) {
     const s = t.review_suggestion;
     lines.push(
       <div className="review-note" key="suggestion">

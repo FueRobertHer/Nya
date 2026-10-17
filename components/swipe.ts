@@ -11,9 +11,15 @@
 /** One pointer position, with its time in milliseconds. */
 export type Point = { x: number; y: number; t: number };
 
-/** A drag under way: where it started, the last two points (for the speed at
- *  release) and the axis it took, once it took one. */
-export type Swipe = { start: Point; prev: Point; last: Point; axis: 'x' | 'y' | null };
+/** A drag under way: where it started, its points of the last SPEED_WINDOW
+ *  ms (for the speed at release), the last of them, and the axis it took,
+ *  once it took one. */
+export type Swipe = { start: Point; recent: Point[]; last: Point; axis: 'x' | 'y' | null };
+
+/** The time a release's speed is measured over, in ms: the last moves before
+ *  it, never only the last step, which a browser's pointerup makes one of
+ *  nothing (it repeats the last move's position). */
+export const SPEED_WINDOW = 100;
 
 /** How far a pointer moves before the drag picks its axis: a tap or a
  *  trembling finger moves nothing. */
@@ -28,7 +34,7 @@ export const FLING = 0.5;
 export const FLING_MIN = 24;
 
 export function swipeStart(p: Point): Swipe {
-  return { start: p, prev: p, last: p, axis: null };
+  return { start: p, recent: [p], last: p, axis: null };
 }
 
 /** The drag after the pointer moved to `p`: its axis is the one it first
@@ -40,7 +46,17 @@ export function swipeMove(s: Swipe, p: Point): Swipe {
     const dy = Math.abs(p.y - s.start.y);
     if (dx > SLOP || dy > SLOP) axis = dx > dy ? 'x' : 'y';
   }
-  return { start: s.start, prev: s.last, last: p, axis };
+  const recent = [...s.recent, p].filter((q) => p.t - q.t <= SPEED_WINDOW);
+  return { start: s.start, recent, last: p, axis };
+}
+
+/** How fast the drag went sideways at its end, px per ms: from the earliest
+ *  of its points within SPEED_WINDOW of the last, to the last. Zero for a
+ *  drag that stood still that long. */
+export function swipeSpeed(s: Swipe): number {
+  const from = s.recent[0] ?? s.last;
+  const dt = s.last.t - from.t;
+  return dt > 0 ? (s.last.x - from.x) / dt : 0;
 }
 
 /** How far to draw the card sideways now: the drag's own, only once it is a
@@ -49,13 +65,19 @@ export function swipeOffset(s: Swipe | null): number {
   return s && s.axis === 'x' ? s.last.x - s.start.x : 0;
 }
 
-/** What a release decides, for a card `width` wide: 'right', 'left', or
- *  null (it springs back). */
+/** What releasing the pointer at `p` decides, for a card `width` wide:
+ *  'right', 'left', or null (it springs back). The release is the drag's last
+ *  point, wherever the browser puts it (a pointerup repeats the last move's
+ *  position), and the speed is its last moves' (swipeSpeed). */
+export function swipeRelease(s: Swipe, p: Point, width: number): 'right' | 'left' | null {
+  return swipeEnd(swipeMove(s, p), width);
+}
+
+/** What a drag that ends where it is now decides (swipeRelease). */
 export function swipeEnd(s: Swipe, width: number): 'right' | 'left' | null {
   if (s.axis !== 'x') return null;
   const dx = s.last.x - s.start.x;
-  const dt = Math.max(1, s.last.t - s.prev.t);
-  const v = (s.last.x - s.prev.x) / dt;
+  const v = swipeSpeed(s);
   const far = Math.abs(dx) >= Math.max(MIN_DISTANCE, width * DISTANCE);
   const flung = Math.abs(v) >= FLING && Math.abs(dx) >= FLING_MIN && Math.sign(v) === Math.sign(dx);
   if (!far && !flung) return null;

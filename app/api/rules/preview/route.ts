@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
-import { indexTaxonomy } from '@/lib/categories';
+import { categoryById, indexTaxonomy } from '@/lib/categories';
 import { ensureTaxonomy } from '@/lib/category-store';
 import { liveTagIds, readTagSet } from '@/lib/tags';
 import { assembleBankRows, finishActivity } from '@/lib/activity';
@@ -9,6 +9,7 @@ import { EARLIEST_DATE } from '@/lib/manual-txn-input';
 import { checkRuleInput, compileRules, RuleError, RULES_VERSION, type RuleSubject } from '@/lib/rules';
 import { currencyOf } from '@/lib/spending';
 import { bankRows } from '@/lib/split-rows';
+import { readApprovalsForDisplay } from '@/lib/review-store';
 
 // What a rule being made or edited would match, before it is saved
 // (components/RuleSheet.tsx): "matches 43 transactions", over every stored
@@ -19,9 +20,11 @@ import { bankRows } from '@/lib/split-rows';
 // Answers { matches, keep_category, keep_name, keep_approved, samples }: how
 // many it matches; of those, how many keep a category the person chose for
 // them, and a name they gave the merchant (a choice made on a row wins over
-// every rule), and how many stay where the person approved them (the review
-// queue: the rule's category is offered there); and up to SAMPLES of them as
-// they show now.
+// every rule), and how many stay where the person approved them, under
+// another category than the rule's (the review queue: the rule's is offered
+// there; one approved under the rule's own category, or with no category,
+// which takes the rule's, isn't counted); and up to SAMPLES of them as they
+// show now.
 //
 // The rule is read alone: what other rules do is not counted, since which of
 // two rules decides a row depends on the order the person gives them. From
@@ -67,12 +70,28 @@ export async function POST(req: Request) {
     const compiled = compileRules({ version: RULES_VERSION, rules: [{ ...draft, actions: { hide: true } }] }, { ix, liveTags: liveTagIds(tags), account: accountOf });
     const test = compiled.rules[0]?.test;
     const matched = test ? transactions.filter((t) => subjects.has(t.transaction_id) && test(subjects.get(t.transaction_id)!)) : [];
+    // Approved ones stay where they were approved, the rule's category offered
+    // on each, never applied unasked (lib/review-layer.ts): those approved
+    // under another real category than the rule's, read by where each
+    // approval is kept (its own id, or `review_via`). One that can't be read
+    // isn't counted.
+    let keepApproved = 0;
+    const setCategory = input.actions.set_category;
+    if (setCategory) {
+      const target = categoryById(ix, setCategory)?.id ?? setCategory;
+      const candidates = matched.filter((t) => !subjects.get(t.transaction_id)!.keeps_category && !t.paired);
+      const kept = (t: (typeof matched)[number]) => t.review_via ?? t.transaction_id;
+      const { approvals } = await readApprovalsForDisplay(ctx, candidates.map(kept));
+      keepApproved = candidates.filter((t) => {
+        const a = approvals.get(kept(t));
+        const c = a?.category_id ? categoryById(ix, a.category_id) : null;
+        return !!c && c.id !== ix.taxonomy.uncategorized && c.id !== target;
+      }).length;
+    }
     return NextResponse.json({
       matches: matched.length,
       keep_category: input.actions.set_category ? matched.filter((t) => subjects.get(t.transaction_id)!.keeps_category).length : 0,
-      // Approved ones stay where they were approved: the rule's category is
-      // offered on each, never applied unasked (lib/review-layer.ts).
-      keep_approved: input.actions.set_category ? matched.filter((t) => !subjects.get(t.transaction_id)!.keeps_category && t.reviewed_at !== undefined).length : 0,
+      keep_approved: keepApproved,
       keep_name: input.actions.set_name ? matched.filter((t) => subjects.get(t.transaction_id)!.keeps_name).length : 0,
       samples: matched.slice(0, SAMPLES).map((t) => ({
         transaction_id: t.transaction_id,

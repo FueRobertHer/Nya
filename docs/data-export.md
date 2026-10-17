@@ -715,10 +715,10 @@ Your merchants' default categories ([features.md](features.md#merchant-defaults)
 | `vendor_key` | The merchant, as the app keys it: `mid:` and the merchant's id at Plaid, or `nm:`, the institution's name, `::` and the merchant's name, lower-cased (as in `transactions[].vendor_key` and `merchant_renames`). |
 | `name` | The merchant's name as shown when you last categorized one of its transactions. |
 | `votes[]` | Your last three categorizations of it, oldest first: each `category_id` (one of your [`categories`](#categories), a merged one's id leading to where it went) and `at`. |
-| `default` | Its default, once two of the last three agreed: `category_id`, `since` (the first day, YYYY-MM-DD, whose transactions it files) and `set_at` (when it was last set to that category). Absent until then. |
+| `default` | Its default, once two of the last three agreed: `category_id`, `since` (the first day, YYYY-MM-DD, whose transactions it files under that category), `set_at` (when it was last set to that category) and, once it has moved, `previous[]`: the categories it had before, oldest first, each `category_id`, `since` and `until` (the day the next began, not included), so the transactions of those days stay filed as they were. Absent until then. |
 | `updated_at` | When it last changed. |
 
-The app files a merchant's transaction dated on or after `since` under the default when it has no category of your own, none you approved it under and none from a rule. Clearing a default removes its entry. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no default files a transaction in the CSV, as in the app then.
+The app files a merchant's transaction dated on or after `since` under the default, and one dated in an earlier category's days under that one, when it has no category of your own, none you approved it under and none from a rule. Clearing a default removes its entry, and with it what it filed. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no default files a transaction in the CSV, as in the app then.
 
 ## The CSV files
 

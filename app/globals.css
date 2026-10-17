@@ -5284,9 +5284,14 @@ button.review-keys-toggle {
   color: var(--muted);
 }
 
-.review-keys > div {
+.review-keys > div,
+.review-keys dl > div {
   display: flex;
   gap: 10px;
+}
+
+.review-keys dl {
+  margin: 0;
 }
 
 .review-keys dt {
@@ -5295,6 +5300,20 @@ button.review-keys-toggle {
 }
 
 .review-keys dd {
+  margin: 0;
+}
+
+/* The switch that turns the Activity tab's keys off (WCAG 2.1.4). */
+.review-keys-switch {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+  color: var(--text);
+}
+
+.review-keys-switch input {
+  width: auto;
   margin: 0;
 }
 
@@ -5339,7 +5358,9 @@ button.review-keys-toggle {
   padding: calc(12px + env(safe-area-inset-top)) 16px calc(16px + env(safe-area-inset-bottom));
 }
 
-.card-mode > * {
+/* Not the live region: .visually-hidden keeps it one pixel, off the page.
+   :where() keeps this as weak as `.card-mode > *`, which it replaces. */
+.card-mode > :where(:not(.visually-hidden)) {
   width: 100%;
   max-width: 480px;
   margin-left: auto;
@@ -5459,13 +5480,15 @@ button.review-keys-toggle {
 
 .card-mode-picker {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   align-items: center;
   margin-top: 14px;
 }
 
+/* The list on its own line, "Use" and Cancel under it. */
 .card-mode-picker select {
-  flex: 1 1 auto;
+  flex: 1 1 100%;
   min-width: 0;
 }
 

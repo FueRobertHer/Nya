@@ -21,6 +21,9 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
   const [defaults, setDefaults] = useState<Shown[] | null>(null);
   const [problem, setProblem] = useState<{ error: string; repairable: boolean } | null>(null);
   const [error, setError] = useState<string | null>(null);
+  // A load that failed (not a 409, which says what it couldn't read): said,
+  // with a way to try again, never a spinner left turning.
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
 
@@ -31,11 +34,13 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
       if (res.ok && Array.isArray(data?.defaults)) {
         setDefaults(data.defaults);
         setProblem(null);
+        setLoadError(null);
       } else if (res.status === 409) {
         setProblem({ error: data?.error ?? 'Your merchants’ default categories could not be read.', repairable: data?.repairable === true });
-      } else setError(data?.error ?? 'Could not load your defaults.');
+        setLoadError(null);
+      } else setLoadError(data?.error ?? 'Could not load your defaults.');
     } catch {
-      setError('Could not reach the server.');
+      setLoadError('Could not reach the server.');
     }
   }, []);
   useEffect(() => {
@@ -93,7 +98,16 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
             ))}
         </>
       ) : defaults === null ? (
-        <div className="spinner" role="status" aria-label="Loading defaults" />
+        loadError ? (
+          <>
+            <p className="stale-note">{loadError}</p>
+            <button className="secondary" onClick={() => void load()}>
+              Try again
+            </button>
+          </>
+        ) : (
+          <div className="spinner" role="status" aria-label="Loading defaults" />
+        )
       ) : defaults.length === 0 ? (
         <p className="empty-note">
           No defaults yet. When two of your last three categorizations of a merchant agree, Nya files its new transactions under that category, unless a rule or you give one another.
@@ -101,7 +115,8 @@ export default function VendorDefaultsCard({ taxonomy, onChanged }: { taxonomy: 
       ) : (
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
-            Each files a merchant’s new transactions that a rule or you haven’t given a category. It changes when two of your last three categorizations agree on another.
+            Each files a merchant’s new transactions that a rule or you haven’t given a category. It changes when two of your last three categorizations agree on another, from that day on: what it
+            filed before stays. Clearing one puts what it filed back where your rules and the bank file it.
           </p>
           <ul className="vendor-defaults">
             {defaults.map((d) => (

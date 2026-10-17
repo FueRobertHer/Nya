@@ -9,8 +9,11 @@ import { sameAmount, type ReviewSuggestion } from '@/lib/review-layer';
 const NUMBER_WORDS = ['no', 'one', 'two', 'three'];
 
 /** "Filed by your default for Costco (two of your last three)": what filed
- *  a transaction, and why the default is what it is. */
-export function defaultWords(merchant: string, agree: number): string {
+ *  a transaction, and why the default is what it is. `earlier`: the default
+ *  has moved since, and files the transaction's day under the category it
+ *  had then (lib/vendor-defaults.ts defaultOn). */
+export function defaultWords(merchant: string, agree: number, earlier = false): string {
+  if (earlier) return `Filed by your default for ${merchant}, in the category it had on this day (it has moved since)`;
   const why = agree >= 2 ? `${NUMBER_WORDS[agree] ?? agree} of your last three` : 'set when two of your last three agreed';
   return `Filed by your default for ${merchant} (${why})`;
 }
@@ -21,18 +24,23 @@ export function defaultListWords(d: { since: string; agree: number }, day: (iso:
   return `Since ${day(d.since)}, ${why}`;
 }
 
-/** Why an approved transaction is back in the queue: the bank changed its
- *  amount since. */
-export function changedWords(was: { amount: number; currency: string | null }): string {
+/** Why an approved transaction is back in the queue: its amount changed
+ *  since, which the bank did (`byBank`), or, for a row from a file, an edit
+ *  that couldn't carry the approval with it (app/api/manual-transactions):
+ *  never put on the bank. */
+export function changedWords(was: { amount: number; currency: string | null }, byBank = true): string {
   // Plaid's sign: positive is money out, shown as the list shows it.
-  return `The bank changed the amount since you approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}.`;
+  const at = `${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}`;
+  return byBank ? `The bank changed the amount since you approved it at ${at}.` : `The amount changed since you approved it at ${at}.`;
 }
 
-/** A bank row as the words below read it: the amount of the row imported
- *  from the bank's file that it stands for, when the bank changed its own
- *  after the two were paired (`imported_amount`, which the Activity tab says
- *  beside the row: lib/history-import/view.ts importedChangedNote). */
-type Twin = { imported_amount?: number; iso_currency_code?: string | null; unofficial_currency_code?: string | null };
+/** A row as the words below read it: where it came from (`source`: a file's
+ *  rows are never the bank's to change), and, for a bank row, the amount of
+ *  the row imported from the bank's file that it stands for, when the bank
+ *  changed its own after the two were paired (`imported_amount`, which the
+ *  Activity tab says beside the row: lib/history-import/view.ts
+ *  importedChangedNote). */
+type Twin = { source?: string; imported_amount?: number; iso_currency_code?: string | null; unofficial_currency_code?: string | null };
 
 /** Whether an approval that no longer holds was of the amount the row was
  *  imported from the bank's file at: then the imported row's note (the bank
@@ -48,7 +56,7 @@ export function approvedAsImported(was: { amount: number; currency: string | nul
  *  imported row's note (the Activity tab draws it on the row), only what the
  *  review adds; alone (Card Mode), the two in one. */
 export function changedSinceWords(was: { amount: number; currency: string | null }, t: Twin, beside: boolean): string {
-  if (!approvedAsImported(was, t)) return changedWords(was);
+  if (!approvedAsImported(was, t)) return changedWords(was, !t.source?.startsWith('import:'));
   if (beside) return 'You approved it at the amount imported from your bank’s file, before the bank changed it.';
   return `You approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
 }

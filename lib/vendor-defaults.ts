@@ -23,11 +23,14 @@
 // never beats what they said outright, on the transaction or in a rule.
 //
 // NEW TRANSACTIONS. A default files the merchant's transactions dated on or
-// after the day it was first set (`since`), never one from before it: a
-// default formed today changes nothing in last year's totals. When the two of
-// three agree on another category later, the default moves to it and keeps
-// its day, so the merchant's unapproved transactions since then follow it;
-// approved ones stay as they were approved (the review queue's rule).
+// after the day it was set (`since`), never one from before it: a default
+// formed today changes nothing in last year's totals. When the two of three
+// agree on another category later, the default moves to it from that day,
+// and the category it had keeps the days it filed (`previous`, each from its
+// day up to the next's), so a move files only what is dated from the move
+// and never re-files the past (defaultOn). Only the person clearing a default
+// takes back what it filed, as they ask. At most MAX_PERIODS earlier
+// categories are kept; an older one files nothing more.
 //
 // HERE, the shape and the rule, pure and safe in the browser; the store is
 // lib/vendor-default-store.ts: one value on the storage seam, every
@@ -38,8 +41,9 @@
 // BY ID. Votes and defaults keep categories by id, followed through a merge
 // to where they went (lib/categories.ts categoryById), so a merge moves a
 // default with the category; a vote for a category that is gone agrees with
-// nothing. A default's category can't be deleted while it is one
-// (lib/category-usage.ts): it is cleared, or the category merged, first.
+// nothing. A default's category can't be deleted while it is one, or one it
+// had still files days (lib/category-usage.ts): it is cleared, or the
+// category merged, first.
 //
 // WHICH ROWS. A merchant is a vendor key, as a vendor rename's (lib/renames.ts):
 // a bank's row, or one imported into a linked account. A row kept in a manual
@@ -52,9 +56,14 @@ export const VENDOR_DEFAULTS_VERSION = 1;
 /** One categorization: the category given (by id), and when. */
 export type VendorVote = { category_id: string; at: string };
 
+/** A category a merchant's default had before it moved, and the days it
+ *  filed: from `since` up to, not including, `until`, the day the next began. */
+export type VendorPeriod = { category_id: string; since: string; until: string };
+
 /** A merchant's default: its category (by id), the day from which it files
- *  the merchant's transactions, and when it was set to that category. */
-export type VendorDefault = { category_id: string; since: string; set_at: string };
+ *  the merchant's transactions in it, when it was set to that category, and
+ *  the categories it had before, oldest first, each with its days. */
+export type VendorDefault = { category_id: string; since: string; set_at: string; previous?: VendorPeriod[] };
 
 /** One merchant's last three categorizations and its default. */
 export type VendorEntry = {
@@ -83,6 +92,9 @@ export const MAX_VENDORS = 1_000;
 /** A vendor key as it is taken (lib/transactions.ts vendorKey). */
 export const MAX_VENDOR_KEY = 200;
 export const MAX_VENDOR_NAME = 100;
+/** The earlier categories kept per merchant's default: past them, the
+ *  oldest files nothing more. */
+export const MAX_PERIODS = 12;
 
 // ---- The stored shape ----
 
@@ -96,6 +108,7 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/;
  *  other limits still reads. */
 const STORED_VENDORS = 5_000;
 const STORED_TEXT = 1_000;
+const STORED_PERIODS = 100;
 
 /** A vendor key as lib/transactions.ts vendorKey makes one: a merchant's
  *  entity id, or an institution and a name. */
@@ -107,15 +120,32 @@ function isVote(v: unknown): v is VendorVote {
   return isRecord(v) && only(v, ['category_id', 'at']) && typeof v.category_id === 'string' && CATEGORY_ID.test(v.category_id) && isInstant(v.at);
 }
 
-function isDefault(v: unknown): v is VendorDefault {
+function isPeriod(v: unknown): v is VendorPeriod {
   return (
     isRecord(v) &&
-    only(v, ['category_id', 'since', 'set_at']) &&
+    only(v, ['category_id', 'since', 'until']) &&
     typeof v.category_id === 'string' &&
     CATEGORY_ID.test(v.category_id) &&
     typeof v.since === 'string' &&
     DAY.test(v.since) &&
-    isInstant(v.set_at)
+    typeof v.until === 'string' &&
+    DAY.test(v.until) &&
+    v.since < v.until
+  );
+}
+
+/** A default, its earlier categories optional (seam rule 7: a default saved
+ *  before they were kept has none). */
+function isDefault(v: unknown): v is VendorDefault {
+  return (
+    isRecord(v) &&
+    only(v, ['category_id', 'since', 'set_at', 'previous']) &&
+    typeof v.category_id === 'string' &&
+    CATEGORY_ID.test(v.category_id) &&
+    typeof v.since === 'string' &&
+    DAY.test(v.since) &&
+    isInstant(v.set_at) &&
+    (v.previous === undefined || (Array.isArray(v.previous) && v.previous.length <= STORED_PERIODS && v.previous.every(isPeriod)))
   );
 }
 
@@ -175,12 +205,24 @@ export function agreedCategory(votes: readonly VendorVote[], resolve: Resolve): 
 /** One categorization, as the route records it. */
 export type CategorizationInput = { vendor_key: string; name: string; category_id: string };
 
+/** A default set to `category_id` from `today`: a new one, or one that moves,
+ *  whose category before keeps the days it filed, from its day up to today
+ *  (none when it filed none: set today, or its category is gone), so the
+ *  past stays filed as it was. */
+function movedTo(before: VendorDefault | undefined, category_id: string, beforeId: string | null, today: string, at: string): VendorDefault {
+  if (!before) return { category_id, since: today, set_at: at };
+  const earlier = beforeId !== null && before.since < today ? [{ category_id: before.category_id, since: before.since, until: today }] : [];
+  const previous = [...(before.previous ?? []), ...earlier].slice(-MAX_PERIODS);
+  return { category_id, since: today, set_at: at, ...(previous.length > 0 ? { previous } : {}) };
+}
+
 /**
  * The defaults after the person gives one of a merchant's transactions a
  * category: the vote joins the merchant's last three (the oldest goes), and
  * its default changes only when two of those three agree on another category
- * than it has (a new one is set from `today`; one that moves keeps its day).
- * Otherwise it stays as it was, a default of none included. `entry` is the
+ * than it has: set from `today`, or moved from `today` with the category it
+ * had keeping the days it filed (movedTo). Otherwise it stays as it was, a
+ * default of none included. `entry` is the
  * merchant's entry after, `previous` before (null for a merchant new here),
  * and `changed` whether its default did. Null when there is no room: every
  * merchant kept has a default (MAX_VENDORS), so none is dropped to make it.
@@ -199,7 +241,7 @@ export function withVote(
   const before = previous?.default;
   const beforeId = before ? opts.resolve(before.category_id) : null;
   let next: VendorDefault | undefined = before;
-  if (agreed && agreed.category_id !== beforeId) next = { category_id: agreed.category_id, since: before?.since ?? opts.today, set_at: at };
+  if (agreed && agreed.category_id !== beforeId) next = movedTo(before, agreed.category_id, beforeId, opts.today, at);
   const entry: VendorEntry = {
     id: previous?.id ?? (opts.newId ?? (() => crypto.randomUUID()))(),
     vendor_key: vote.vendor_key,
@@ -220,9 +262,11 @@ export function withVote(
 }
 
 /** A merchant's default as the read layer applies it: the entry's id, the
- *  category (followed through merges), the day it files from, and how many
- *  of the merchant's last three categorizations agree with it now. */
-export type DefaultFor = { id: string; category_id: string; since: string; agree: number };
+ *  category (followed through merges), the day it files from, how many of
+ *  the merchant's last three categorizations agree with it now, and the
+ *  categories it had before, each with its days (followed through merges;
+ *  one that is gone files nothing). */
+export type DefaultFor = { id: string; category_id: string; since: string; agree: number; previous?: readonly VendorPeriod[] };
 
 /** Each merchant's default, by vendor key, whose category still exists. */
 export function defaultsByVendor(state: VendorDefaults | null, resolve: Resolve): Map<string, DefaultFor> {
@@ -232,13 +276,27 @@ export function defaultsByVendor(state: VendorDefaults | null, resolve: Resolve)
     const category_id = resolve(e.default.category_id);
     if (category_id === null) continue;
     const agree = e.votes.filter((v) => resolve(v.category_id) === category_id).length;
-    out.set(e.vendor_key, { id: e.id, category_id, since: e.default.since, agree });
+    const previous = (e.default.previous ?? []).flatMap((p) => {
+      const id = resolve(p.category_id);
+      return id === null ? [] : [{ ...p, category_id: id }];
+    });
+    out.set(e.vendor_key, { id: e.id, category_id, since: e.default.since, agree, ...(previous.length > 0 ? { previous } : {}) });
   }
   return out;
 }
 
+/** The category a merchant's default files a transaction of `date` under:
+ *  its own from its day on, else the earlier one whose days hold the date
+ *  (`earlier`), else none, for a day before the default was first set. */
+export function defaultOn(d: Pick<DefaultFor, 'category_id' | 'since' | 'previous'>, date: string): { category_id: string; earlier: boolean } | null {
+  if (date >= d.since) return { category_id: d.category_id, earlier: false };
+  const p = (d.previous ?? []).find((q) => date >= q.since && date < q.until);
+  return p ? { category_id: p.category_id, earlier: true } : null;
+}
+
 /** How many merchants' defaults are a category (`isIt`, which follows
- *  merges), for deleting it (lib/category-usage.ts). */
+ *  merges), now or in the days an earlier category of theirs files, for
+ *  deleting it (lib/category-usage.ts). */
 export function defaultUses(state: VendorDefaults | null, isIt: (category_id: string) => boolean): number {
-  return (state?.vendors ?? []).filter((e) => e.default && isIt(e.default.category_id)).length;
+  return (state?.vendors ?? []).filter((e) => e.default && (isIt(e.default.category_id) || (e.default.previous ?? []).some((p) => isIt(p.category_id)))).length;
 }

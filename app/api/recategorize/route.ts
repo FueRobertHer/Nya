@@ -7,7 +7,7 @@ import { isManualId } from '@/lib/manual';
 import { storeFailure } from '@/lib/store-failure';
 import { choiceForId, taxonomyForReading } from '@/lib/category-store';
 import { categoryById, CategoryError, indexTaxonomy } from '@/lib/categories';
-import { noteRecategorized, todayOf } from '@/lib/review-store';
+import { isApprovalId, noteRecategorized, todayOf } from '@/lib/review-store';
 import { recordCategorization } from '@/lib/vendor-default-store';
 import { isVendorKey, MAX_VENDOR_NAME } from '@/lib/vendor-defaults';
 import { loggable } from '@/lib/log-safe';
@@ -40,7 +40,10 @@ import { loggable } from '@/lib/log-safe';
 // (`vendor`: the merchant's entry before and after, for an undo).
 //
 // AN APPROVED TRANSACTION (lib/review-store.ts) keeps its approval, which now
-// holds the category chosen (noteRecategorized), best effort too.
+// holds the category chosen (noteRecategorized), best effort too: the one
+// under its id, or the one it holds through another (`review_via`, as the row
+// says: the pending transaction it replaced, or the row imported from a file
+// that it stands for).
 //
 // AN UNDO. The answer says what the category was before (`previous`: the
 // words chosen for it before, or null for none, when that could be read), and
@@ -58,7 +61,7 @@ function isRestore(v: unknown): v is { category: string | null } {
 export async function POST(req: Request) {
   try {
     const ctx = await dataCtx();
-    const { transaction_id, category_id, account_id, category: words, vendor_key, name, today, restore } = await req.json();
+    const { transaction_id, category_id, account_id, category: words, vendor_key, name, today, restore, review_via } = await req.json();
     let category: unknown = words;
     if (typeof transaction_id !== 'string' || !transaction_id || transaction_id.length > 100) {
       return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
@@ -73,9 +76,10 @@ export async function POST(req: Request) {
     if (vendor_key !== undefined && !isVendorKey(vendor_key)) return NextResponse.json({ error: 'Invalid vendor key' }, { status: 400 });
     if (name !== undefined && (typeof name !== 'string' || name.length > MAX_VENDOR_NAME)) return NextResponse.json({ error: 'Invalid name' }, { status: 400 });
     if (today !== undefined && typeof today !== 'string') return NextResponse.json({ error: 'Invalid day' }, { status: 400 });
+    if (review_via !== undefined && !isApprovalId(review_via)) return NextResponse.json({ error: 'Invalid approval' }, { status: 400 });
 
     if (restore !== undefined) {
-      if (!isRestore(restore) || category_id !== undefined || words !== undefined || vendor_key !== undefined) {
+      if (!isRestore(restore) || category_id !== undefined || words !== undefined || vendor_key !== undefined || review_via !== undefined) {
         return NextResponse.json({ error: 'Say what to put back: the category it had before, or none' }, { status: 400 });
       }
       if (manual) {
@@ -133,7 +137,7 @@ export async function POST(req: Request) {
         const ix = indexTaxonomy((await taxonomyForReading(ctx)).taxonomy);
         const chosen = categoryById(ix, String(category_id));
         if (chosen) {
-          await noteRecategorized(ctx, transaction_id, chosen.id).catch((err) => console.warn('recategorize: the approval was left as it was', loggable(err)));
+          await noteRecategorized(ctx, review_via ?? transaction_id, chosen.id).catch((err) => console.warn('recategorize: the approval was left as it was', loggable(err)));
           if (vendor_key !== undefined && !manual) {
             const resolve = (id: string) => categoryById(ix, id)?.id ?? null;
             const vote = await recordCategorization(ctx, { vendor_key, name: typeof name === 'string' ? name.trim() : '', category_id: chosen.id }, { resolve, today: todayOf(today) });

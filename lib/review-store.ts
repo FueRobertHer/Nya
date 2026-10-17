@@ -111,6 +111,9 @@ export type ReviewSettings = {
 /** Approvals a container keeps: years of a busy household's transactions,
  *  and a bound on the prune's and the download's reads of the whole store. */
 export const MAX_APPROVALS = 50_000;
+/** How many approvals making room forgets (makeRoom): the oldest, by when
+ *  they were made. */
+export const ROOM = 10_000;
 /** Transactions one request approves or puts back, how far before today the
  *  queue may start, and a merchant's name as an approval takes it: shared
  *  with the views (lib/review-layer.ts, safe in the browser). */
@@ -276,17 +279,23 @@ export type ApprovalInput = {
  * undo puts back (undoApprovals). Every approval is read strictly first: one
  * that can't be read refuses the whole (UnreadableEntriesError), so nothing is
  * written over it unseen. New approvals past MAX_APPROVALS are refused whole
- * (409). One request, last write wins against another device's approval of
- * the same transaction (both say it was right as shown).
+ * (409), saying what makes room (makeRoom). One request, last write wins
+ * against another device's approval of the same transaction (both say it was
+ * right as shown).
  */
-export async function approve(ctx: Ctx, items: readonly ApprovalInput[], now: Date = new Date()): Promise<{ approved_at: string; previous: Map<string, Approval | null> }> {
+export async function approve(
+  ctx: Ctx,
+  items: readonly ApprovalInput[],
+  now: Date = new Date(),
+  max: number = MAX_APPROVALS
+): Promise<{ approved_at: string; previous: Map<string, Approval | null> }> {
   const byId = new Map(items.map((i) => [i.transaction_id, i]));
   const ids = [...byId.keys()];
   const current = await approvalStore.getMany(ctx, ids);
   const fresh = ids.filter((id) => !current.has(id)).length;
-  if (fresh > 0 && (await approvalStore.count(ctx)) + fresh > MAX_APPROVALS) {
+  if (fresh > 0 && (await approvalStore.count(ctx)) + fresh > max) {
     throw new ApprovalError(
-      `Nya keeps at most ${MAX_APPROVALS.toLocaleString('en-US')} approvals, and approving these would pass that. Turn the review queue off and on again to start it from today.`,
+      `Nya keeps at most ${max.toLocaleString('en-US')} approvals, and approving these would pass that. To make room, forget your ${ROOM.toLocaleString('en-US')} oldest on the Review queue card under Manage: those transactions stay, filed as ones you never approved are, by your rules, your defaults and the bank.`,
       409
     );
   }
@@ -347,6 +356,40 @@ export async function undoApprovals(ctx: Ctx, items: readonly UndoItem[]): Promi
 export async function noteRecategorized(ctx: Ctx, transaction_id: string, category_id: string): Promise<void> {
   if (!isApprovalId(transaction_id)) return;
   await approvalStore.update(ctx, transaction_id, (current) => (current && current.category_id !== category_id ? { ...current, category_id } : current));
+}
+
+/**
+ * After the person edits the amount or the currency of a row of theirs (one
+ * entered or imported into a manual account: app/api/manual-transactions):
+ * the edit is their own word, so its approval, when it has one, follows it,
+ * rather than putting the row back in the queue as if the bank had changed
+ * it. Nothing for a row not approved. One compare-and-set; refused over an
+ * approval that can't be read.
+ */
+export async function followEdit(ctx: Ctx, transaction_id: string, now: { amount: number; currency: string | null }): Promise<void> {
+  if (!isApprovalId(transaction_id)) return;
+  await approvalStore.update(ctx, transaction_id, (current) =>
+    current && (current.amount !== now.amount || current.currency !== now.currency) ? { ...current, amount: now.amount, currency: now.currency } : current
+  );
+}
+
+/**
+ * Makes room once approvals near MAX_APPROVALS, as the person asks (the
+ * Review queue card): forgets the `n` oldest approvals by when they were made
+ * (`approved_at`), readable ones only (a damaged one is the repair's). Their
+ * transactions stay, filed as a transaction never approved is (the person's
+ * own category, their rules, their merchants' defaults, the bank), and those
+ * dated in the queue's days wait for review again. Answers how many went and
+ * when the newest of them was made. One read of the whole store (bounded by
+ * MAX_APPROVALS), then removes by id: an approval made again in between may
+ * go with them, which the person, having asked, can approve again.
+ */
+export async function makeRoom(ctx: Ctx, n = ROOM): Promise<{ removed: number; through: string | null }> {
+  const { entries } = await approvalStore.getAllReport(ctx);
+  const oldest = [...entries].sort(([, a], [, b]) => (a.approved_at < b.approved_at ? -1 : a.approved_at > b.approved_at ? 1 : 0)).slice(0, Math.max(0, n));
+  const ids = oldest.map(([id]) => id);
+  for (let i = 0; i < ids.length; i += 1000) await approvalStore.remove(ctx, ...ids.slice(i, i + 1000));
+  return { removed: ids.length, through: oldest.length > 0 ? oldest[oldest.length - 1][1].approved_at : null };
 }
 
 // ---- Gone with the transaction ----

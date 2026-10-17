@@ -2,8 +2,12 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
 import {
+  approvalStore,
   approve,
   ApprovalError,
+  makeRoom,
+  MAX_APPROVALS,
+  ROOM,
   parseApprovals,
   parseUndo,
   readReviewSettings,
@@ -20,8 +24,11 @@ import {
 // read. What needs review is worked out on every read of the transactions
 // (lib/review-layer.ts), after the server's cache, so nothing here drops it.
 //
-// GET  the queue's settings: { review: { on, since } }, 409 when they can't
-//      be read (with `repairable` when their bytes are damaged).
+// GET  the queue's settings and how many approvals are kept, of how many
+//      at most, and how many making room forgets:
+//      { review: { on, since }, approvals: { kept, max, room } }, 409 when
+//      the settings can't be read (with `repairable` when their bytes are
+//      damaged, never for settings a later release wrote).
 // POST { action, ... }, one of:
 //   start    { today, since? }  turn it on: transactions dated from `since`
 //                               (today, as the page has it, when absent; at
@@ -36,6 +43,10 @@ import {
 //                               { transaction_id, approved_at, previous }
 //   repair   { confirm: true }   remove the approvals, and the settings,
 //                               whose bytes are damaged
+//   make-room { confirm: true }  forget the ROOM oldest approvals (by when
+//                               they were made), once MAX_APPROVALS is near;
+//                               their transactions stay, filed as ones never
+//                               approved are; answers { removed, through }
 //
 // Every field is checked (ApprovalError, 400: nothing is saved), and every
 // write reads what it replaces strictly first, so an approval or settings
@@ -44,13 +55,14 @@ import {
 // ones are ever offered for removal.
 
 const MAX_BODY_CHARS = 256 * 1024;
-const ACTIONS = new Set(['start', 'stop', 'approve', 'undo', 'repair']);
+const ACTIONS = new Set(['start', 'stop', 'approve', 'undo', 'repair', 'make-room']);
 const FIELDS: Record<string, readonly string[]> = {
   start: ['today', 'since'],
   stop: [],
   approve: ['items'],
   undo: ['items'],
   repair: ['confirm'],
+  'make-room': ['confirm'],
 };
 
 const bad = (error: string, status = 400) => NextResponse.json({ error }, { status });
@@ -65,7 +77,8 @@ export async function GET() {
         { status: 409 }
       );
     }
-    return NextResponse.json({ review: { on: !!settings?.on, since: settings?.since ?? null } });
+    const kept = await approvalStore.count(ctx);
+    return NextResponse.json({ review: { on: !!settings?.on, since: settings?.since ?? null }, approvals: { kept, max: MAX_APPROVALS, room: ROOM } });
   } catch (err) {
     return storeFailure(err, 'Failed to read the review queue');
   }
@@ -109,6 +122,10 @@ export async function POST(req: Request) {
     }
     if (action === 'undo') {
       return NextResponse.json({ restored: await undoApprovals(ctx, parseUndo(body.items)) });
+    }
+    if (action === 'make-room') {
+      if (body.confirm !== true) return bad('Forgetting approvals needs your confirmation');
+      return NextResponse.json(await makeRoom(ctx));
     }
     if (body.confirm !== true) return bad('Removing damaged approvals needs your confirmation');
     return NextResponse.json(await repairReview(ctx));

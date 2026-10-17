@@ -12,32 +12,39 @@
 // WHAT IT DOES TO A ROW, in this order:
 //   1. A MERCHANT'S DEFAULT (lib/vendor-defaults.ts) files the row when
 //      nothing more specific does: not the person's own category, not a
-//      rule's; and only a row dated on or after the day the default was set.
-//      It goes in the layers' slot of resolveCategory (rule_category), with
-//      its words, as a rule's category does, marked `filed_by_default` with
-//      the merchant's entry and how many of its last three categorizations
+//      rule's; and only a row dated on or after the day the default was set,
+//      in the category it had on the row's day (a default that moved keeps
+//      filing what came before the move as it did: defaultOn). It goes in
+//      the layers' slot of resolveCategory (rule_category), with its words,
+//      as a rule's category does, marked `filed_by_default` with the
+//      merchant's entry and how many of its last three categorizations
 //      agree, for "Filed by your default for Costco (two of your last three)".
 //   2. AN APPROVAL (lib/review-store.ts) under the row's id, or, for a posted
 //      row, under the pending one it replaced (`pending_from`, until the sync
 //      that removes the pending one moves it) or under a row imported from a
 //      file that it stands for (`stands_for`): the same transaction, so the
 //      same approval (`review_via` names where it is kept).
+//        - While there is one, the row is never moved to another category by
+//          what isn't the person: when a rule, a default or the bank would
+//          now file it elsewhere, it stays where it was approved and the
+//          other is offered (`review_suggestion`, "Your rule would file it
+//          under Household"), never applied unasked. Approved with no
+//          category (the uncategorized one), it takes what a rule or a
+//          default gives it later, which fills an empty place. The person's
+//          own category always shows, approved or not.
 //        - It holds while the amount and currency are what was approved, in
-//          the currency's minor units. Then the row is approved
-//          (`reviewed_at`), and an approved row is never moved to another
-//          category by what isn't the person: when a rule, a default or the
-//          bank would now file it elsewhere, it stays where it was approved
-//          and the other is offered (`review_suggestion`, "Your rule would
-//          file it under Household"), never applied unasked. The person's own
-//          category always shows, approved or not. A name that changed since
-//          (a rule's, the bank's, the person's rename) shows, with the name
-//          it was approved under beside it (`approved_name`): a name never
-//          changes a total, and the merchant's rows stay named alike.
+//          the currency's minor units: then the row is approved
+//          (`reviewed_at`). A name that changed since (a rule's, the bank's,
+//          the person's rename) shows, with the name it was approved under
+//          beside it (`approved_name`): a name never changes a total, and the
+//          merchant's rows stay named alike.
 //        - A bank that changed the amount since (a tip added, part refunded)
-//          unapproves it: back in the queue, saying from what
-//          (`review_changed`). A split transaction's parts then show the
-//          difference as a part of its own (lib/split-rows.ts), so nothing is
-//          spread silently over what was approved.
+//          puts it back in the queue, saying from what (`review_changed`),
+//          still filed where it was approved, so the category the person
+//          chose never goes with the amount. A split transaction's parts then
+//          show the difference as a part of its own (lib/split-rows.ts),
+//          filed as the transaction is, so nothing is spread silently over
+//          what was approved.
 //   3. NEEDS REVIEW (`needs_review`): with the queue on, a row from the bank,
 //      SimpleFIN or a file (never one entered by hand), dated on or after the
 //      day the queue starts, without an approval that holds. An approval
@@ -50,7 +57,7 @@
 
 import type { OlderTxn, Txn } from './transactions';
 import type { Approval, ApprovalInput } from './review-store';
-import { defaultsByVendor, type DefaultFor, type VendorDefaults } from './vendor-defaults';
+import { defaultOn, defaultsByVendor, type DefaultFor, type VendorDefaults } from './vendor-defaults';
 import { categoryById, choiceText, isProvisionalId, resolveCategory, type Category, type CategoryIndex } from './categories';
 import { toUnits, unitScale } from './split-rows';
 import { currencyOf } from './spending';
@@ -92,7 +99,10 @@ export type ReviewMarks = {
   review_via?: string;
   review_suggestion?: ReviewSuggestion;
   approved_name?: string;
-  filed_by_default?: { id: string; agree: number };
+  /** Filed by the merchant's default: its entry, how many of the last three
+   *  agree with it now, and `earlier` when the category it filed the row
+   *  under is one it had before it moved. */
+  filed_by_default?: { id: string; agree: number; earlier?: true };
 };
 
 const MARKS = ['needs_review', 'reviewed_at', 'review_unknown', 'review_changed', 'review_via', 'review_suggestion', 'approved_name', 'filed_by_default'] as const;
@@ -154,28 +164,30 @@ export function applyReview(t: Row, layer: ReviewLayer, f: ReviewFacts): void {
   const marks = t as Row & ReviewMarks;
   if (f.listed) for (const k of MARKS) delete marks[k];
 
-  // 1. A merchant's default, below the person's own and a rule's.
+  // 1. A merchant's default, below the person's own and a rule's, in the
+  //    category it had on the row's day.
   let byDefault: DefaultFor | null = null;
   if (f.ix && !f.own && !f.paired && f.ruleId === null && t.vendor_key) {
     const d = layer.defaults.get(t.vendor_key);
-    const c = d && t.date >= d.since ? categoryById(f.ix, d.category_id) : null;
-    if (d && c) {
+    const on = d ? defaultOn(d, t.date) : null;
+    const c = on ? categoryById(f.ix, on.category_id) : null;
+    if (d && on && c) {
       t.rule_category = c.id;
       t.category = choiceText(c);
       byDefault = d;
-      if (f.listed) marks.filed_by_default = { id: d.id, agree: d.agree };
+      if (f.listed) marks.filed_by_default = { id: d.id, agree: d.agree, ...(on.earlier ? { earlier: true as const } : {}) };
     }
   }
 
-  // 2. An approval that holds keeps the row where it was approved.
+  // 2. An approval keeps the row filed where it was approved for as long as
+  //    there is one; whether it holds (the amount still the approved one)
+  //    decides only whether the row is approved or back in the queue.
   const { approval, via, unknown } = approvalFor(t, layer);
-  if (approval && sameAmount(approval, t)) {
-    if (f.listed) {
-      marks.reviewed_at = approval.approved_at;
-      if (via) marks.review_via = via;
-    }
+  if (approval) {
     const pinned = f.ix && !f.own && !f.paired && approval.category_id !== null ? categoryById(f.ix, approval.category_id) : null;
-    if (pinned) {
+    // Approved with no category, it takes one a rule or a default gives it
+    // later: that fills an empty place, it overwrites nothing.
+    if (pinned && pinned.id !== f.ix!.taxonomy.uncategorized) {
       const now = resolveCategory(f.ix!, t).category;
       if (now.id !== pinned.id) {
         t.rule_category = pinned.id;
@@ -187,8 +199,14 @@ export function applyReview(t: Row, layer: ReviewLayer, f: ReviewFacts): void {
         }
       }
     }
-    if (f.listed && approval.name !== t.name) marks.approved_name = approval.name;
-    return;
+    if (f.listed && via) marks.review_via = via;
+    if (sameAmount(approval, t)) {
+      if (f.listed) {
+        marks.reviewed_at = approval.approved_at;
+        if (approval.name !== t.name) marks.approved_name = approval.name;
+      }
+      return;
+    }
   }
 
   // 3. Whether it needs review: only the year's rows say.

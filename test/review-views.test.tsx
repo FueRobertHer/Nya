@@ -187,7 +187,13 @@ describe('Card Mode’s cards', () => {
     expect(currentCard(c, waits)).toBeNull();
     expect(cardCounts(c)).toEqual({ approved: 1, recategorized: 1, skipped: 1 });
     expect(endWords(cardCounts(c))).toEqual({ title: 'Done for now', detail: 'You approved 2 transactions, 1 of them with a new category. 1 you skipped still needs review.' });
-    expect(dealSkipped(c).queue).toEqual(['b']);
+    // The skipped dealt again, the rest of the session kept: the end card
+    // counts all of it, and Undo still reaches back into the first round.
+    const again = dealSkipped(c);
+    expect(currentCard(again, waits)).toBe('b');
+    expect(cardCounts(again)).toEqual({ approved: 1, recategorized: 1, skipped: 0 });
+    expect(undoStep(again).step).toEqual({ id: 'c', kind: 'recategorized', undo: 'ticket-c' });
+    expect(endWords(cardCounts(withStep(again, { id: 'b', kind: 'approved' })))).toEqual({ title: 'All caught up', detail: 'You approved 3 transactions, 1 of them with a new category.' });
     // A card approved elsewhere meanwhile is passed over.
     waiting.delete('b');
     expect(currentCard(openCards(['b', 'c']), waits)).toBe('c');
@@ -294,7 +300,7 @@ describe('the Activity tab', () => {
     expect(say(txn('t1', { needs_review: true }))).toBe('Waiting for you to approve it as it is. Approve');
     expect(say(txn('t1', { needs_review: true, review_changed: { amount: 50, currency: 'USD' } }))).toContain('The bank changed the amount since you approved it at $50.00 out.');
     const approved = say(txn('t1', { reviewed_at: '2026-10-11T09:00:00.000Z', approved_name: 'COSTCO WHSE', review_suggestion: { category_id: cat('household'), by: 'rule', rule_id: 'r1' } }));
-    expect(approved).toContain('as “COSTCO WHSE”. Nothing but you changes it now. Review again');
+    expect(approved).toContain('as “COSTCO WHSE”. Its category stays as you approved it until you change it. Review again');
     expect(approved).toContain('Your rule would file it under Household. It stays where you approved it until you choose. Use Household');
     expect(say(txn('t1', { filed_by_default: { id: 'v1', agree: 3 } }))).toBe('Filed by your default for Costco (three of your last three). Clear default');
     expect(say(txn('t1', { review_unknown: true }))).toContain('Whether you approved this couldn\'t be read');

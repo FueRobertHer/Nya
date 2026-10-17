@@ -32,15 +32,15 @@ import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/c
 import type { Tag } from '@/lib/tags';
 import { bankRows } from '@/lib/split-rows';
 import { currencyOf } from '@/lib/spending';
-import { formatMoney, signedMoney } from '@/lib/format';
+import { formatMoney, signedMoney, spoken } from '@/lib/format';
 import { importedChangedNote } from '@/lib/history-import/view';
 import CategoryPicker from './CategoryPicker';
 import { Masked } from './HideAmounts';
 import TagChips from './TagChips';
-import { cardKey, CARD_KEYS } from './review-keys';
-import { swipeEnd, swipeMove, swipeOffset, swipeStart, type Point, type Swipe } from './swipe';
+import { cardKey, pickerKey, CARD_KEYS } from './review-keys';
+import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swipe } from './swipe';
 import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep, type Cards } from './card-mode-state';
-import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords } from './review-text';
+import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords, suggestionWords } from './review-text';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
 type StepUndo = Promise<ApprovalTicket | null> | Promise<CardUndo | null>;
@@ -67,6 +67,49 @@ function useReducedMotion(): boolean {
     return () => q.removeEventListener?.('change', on);
   }, []);
   return reduced;
+}
+
+/**
+ * Card Mode's category list: moving through it (a select's arrows change its
+ * value) changes only the category it shows (`onDraft`); "Use" chooses it
+ * (`onUse`, as Enter on the list does: pickerKey), so nothing is chosen on
+ * input alone (WCAG 3.2.2). No hooks of its own, so a test reads its wiring.
+ */
+export function CardCategoryPicker({
+  taxonomy,
+  merchant,
+  value,
+  useLabel,
+  onDraft,
+  onUse,
+  onCancel,
+}: {
+  taxonomy: Taxonomy | null;
+  merchant: string;
+  value: string;
+  /** The category shown, by name, for "Use …". */
+  useLabel: string;
+  onDraft: (category_id: string) => void;
+  onUse: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="card-mode-picker">
+      {taxonomy ? (
+        <>
+          <CategoryPicker taxonomy={taxonomy} value={value} onChange={onDraft} label={`Category for ${merchant}`} />
+          <button onClick={onUse} disabled={!value}>
+            Use {useLabel}
+          </button>
+        </>
+      ) : (
+        <p className="panel-note">Your categories haven&apos;t loaded, so there is nothing to choose from yet.</p>
+      )}
+      <button className="secondary" onClick={onCancel}>
+        Cancel
+      </button>
+    </div>
+  );
 }
 
 const dayText = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' });
@@ -102,6 +145,9 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   const id = currentCard(cards, waits);
   const t = id ? (byId.get(id) ?? null) : null;
   const [picking, setPicking] = useState(false);
+  // The category the picker shows: moving through the list chooses nothing
+  // (a select's arrows change its value); "Use" or Enter does.
+  const [draft, setDraft] = useState('');
   const [leaving, setLeaving] = useState<'right' | 'left' | 'down' | null>(null);
   const [offset, setOffset] = useState(0);
   const [said, setSaid] = useState('');
@@ -120,7 +166,11 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     html.style.overflow = 'hidden';
     return () => {
       html.style.overflow = overflow;
-      if (before?.isConnected) before.focus({ preventScroll: true });
+      // Back where it was, unless that is gone or disabled (the way in is,
+      // once nothing waits): then the review bar's count.
+      const usable = (el: HTMLElement | null) => !!el && el !== document.body && el.isConnected && !(el as HTMLButtonElement).disabled;
+      const back = usable(before) ? before : document.querySelector<HTMLElement>('[data-review-return]');
+      back?.focus({ preventScroll: true });
     };
   }, []);
   // Each card, and the end, takes focus as it comes; the picker when it opens.
@@ -158,9 +208,15 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     if (!t || leaving || acting.current === t.transaction_id) return;
     if (kind === 'recategorize') {
       // A split transaction's parts have categories of their own.
-      if (!t.split_parts) setPicking(true);
+      if (!t.split_parts) {
+        setDraft(t.category_id ?? taxonomy?.uncategorized ?? '');
+        setPicking(true);
+      }
       return;
     }
+    // Approved or skipped with the picker open: it closes, never left open
+    // on the next card.
+    setPicking(false);
     const row = t;
     acting.current = row.transaction_id;
     await leave(kind === 'approve' ? 'right' : 'down');
@@ -226,6 +282,14 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
       }
       return;
     }
+    // In the picker, Enter uses the category shown (arrows only move through
+    // the list), and Escape closes it.
+    const p = picking ? pickerKey(e) : null;
+    if (p === 'choose') {
+      e.preventDefault();
+      void choose(draft);
+      return;
+    }
     const k = cardKey(e, e.target === cardRef.current);
     if (!k) return;
     e.preventDefault();
@@ -259,7 +323,8 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     const d = drag.current;
     drag.current = null;
     if (!d) return;
-    const end = swipeEnd(swipeMove(d, at(e)), e.currentTarget.getBoundingClientRect().width || 320);
+    // The release is the drag's last point; its speed is the last moves'.
+    const end = swipeRelease(d, at(e), e.currentTarget.getBoundingClientRect().width || 320);
     if (end === 'right') void act('approve');
     else {
       setOffset(0);
@@ -272,6 +337,10 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   };
 
   const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
+  const nameOf = (category_id: string) => {
+    const c = ix ? categoryById(ix, category_id) : null;
+    return c ? displayName(c.name) : 'another category';
+  };
   const position = cardPosition(cards, id);
   const counts = cardCounts(cards);
   const groupRow = t?.group_id ? rows.find((r) => r.group_id === t.group_id && r.group_members) : undefined;
@@ -303,7 +372,9 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             tabIndex={0}
             role="group"
             aria-roledescription="card"
-            aria-label={`Transaction ${position.at} of ${position.of}. Enter approves it.`}
+            // What is approved, before Enter approves it: the merchant, the
+            // amount (said as "hidden" while amounts are hidden) and the category.
+            aria-label={spoken(`${t.name}, ${signedMoney(-t.amount, currencyOf(t) ?? currency, { always: true })}, ${categoryText(t)}. Transaction ${position.at} of ${position.of}. Enter approves it.`)}
             style={style}
             onPointerDown={onPointerDown}
             onPointerMove={onPointerMove}
@@ -325,20 +396,22 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
               {t.pending ? ' · pending' : ''}
             </div>
             {picking ? (
-              <div className="card-mode-picker">
-                {taxonomy ? (
-                  <CategoryPicker taxonomy={taxonomy} value={t.category_id ?? taxonomy.uncategorized} onChange={(c) => void choose(c)} label={`Category for ${t.name}`} />
-                ) : (
-                  <p className="panel-note">Your categories haven&apos;t loaded, so there is nothing to choose from yet.</p>
-                )}
-                <button className="secondary" onClick={() => setPicking(false)}>
-                  Cancel
-                </button>
-              </div>
+              <CardCategoryPicker
+                taxonomy={taxonomy}
+                merchant={t.name}
+                value={draft}
+                useLabel={nameOf(draft)}
+                onDraft={setDraft}
+                onUse={() => void choose(draft)}
+                onCancel={() => setPicking(false)}
+              />
             ) : (
               <div className="card-mode-category">{categoryText(t)}</div>
             )}
-            {t.filed_by_default && <div className="card-mode-hint">{defaultWords(t.name, t.filed_by_default.agree)}</div>}
+            {/* A split transaction's parts are filed by their own categories:
+                what a default or a rule would do to the whole files nothing. */}
+            {t.filed_by_default && !t.split_parts && <div className="card-mode-hint">{defaultWords(t.name, t.filed_by_default.agree, t.filed_by_default.earlier === true)}</div>}
+            {t.review_suggestion && !t.split_parts && <div className="card-mode-hint">{suggestionWords(t.review_suggestion, nameOf(t.review_suggestion.category_id), t.name)}</div>}
             {t.review_changed && (
               <div className="card-mode-hint">
                 <Masked>{changedSinceWords(t.review_changed, t, false)}</Masked>
@@ -379,7 +452,9 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
             <button onClick={() => void act('approve')}>Approve</button>
           </div>
           <div className="card-mode-more">
-            <button className="secondary" disabled={t.pending} onClick={() => onSplit(t)}>
+            {/* A group's transaction isn't split (the split route refuses it):
+                its group is edited instead, as the Activity tab offers. */}
+            <button className="secondary" disabled={t.pending || !!groupRow} onClick={() => onSplit(t)}>
               {t.split_parts ? 'Edit split' : 'Split'}
             </button>
             <button className="secondary" disabled={t.pending || (!!t.split_parts && !groupRow)} onClick={() => onGroup(groupRow ?? t)}>

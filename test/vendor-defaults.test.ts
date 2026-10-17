@@ -64,9 +64,14 @@ describe('two of the last three', () => {
     expect(kept.last.changed).toBe(false);
   });
 
-  test('it changes only when two of the last three agree on another, keeping the day it began', () => {
+  test('it changes only when two of the last three agree on another, from that day, the category before keeping the days it filed', () => {
     const moved = after(['groceries', 'groceries', 'household', 'household']);
-    expect(moved.state.vendors[0].default).toEqual({ category_id: 'household', since: '2026-10-02', set_at: at(3).toISOString() });
+    expect(moved.state.vendors[0].default).toEqual({
+      category_id: 'household',
+      since: '2026-10-04',
+      set_at: at(3).toISOString(),
+      previous: [{ category_id: 'groceries', since: '2026-10-02', until: '2026-10-04' }],
+    });
     // One more that disagrees, with household still two of the last three: unchanged.
     const held = after(['groceries', 'groceries', 'household', 'household', 'auto']);
     expect(held.state.vendors[0].default?.category_id).toBe('household');
@@ -89,8 +94,9 @@ describe('two of the last three', () => {
     expect(replaced!.next.vendors[0].default).toBeDefined();
     expect(replaced!.next.vendors[0].default!.category_id).toBe('gone');
     const again = withVote(replaced!.next, vote('auto'), { at: at(6), today: '2026-10-07', resolve: deleted });
-    // It keeps the day the merchant's default began.
-    expect(again!.next.vendors[0].default).toMatchObject({ category_id: 'auto', since: '2026-10-02' });
+    // It files from that day; the category before is gone and filed nothing,
+    // so no days of it are kept.
+    expect(again!.next.vendors[0].default).toEqual({ category_id: 'auto', since: '2026-10-07', set_at: at(6).toISOString() });
   });
 
   test('what the read layer applies: the category through merges, and how many of the last three agree now', () => {

@@ -54,9 +54,11 @@ export function cardCounts(c: Cards<unknown>): { approved: number; recategorized
   return n;
 }
 
-/** The skipped ones dealt again, in their order, with nothing done to them. */
+/** The skipped ones dealt again, in their order, with nothing done to them,
+ *  and everything else done this time kept: the end card counts the whole
+ *  of it, and Undo still reaches back into the first round. */
 export function dealSkipped<U>(c: Cards<U>): Cards<U> {
-  return openCards(c.steps.filter((s) => s.kind === 'skipped').map((s) => s.id));
+  return { queue: c.queue, steps: c.steps.filter((s) => s.kind !== 'skipped') };
 }
 
 /** Which card this is of those dealt, from 1, and how many: "3 of 12". */

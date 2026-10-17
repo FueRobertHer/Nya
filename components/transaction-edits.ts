@@ -61,6 +61,13 @@ export function merchantOf(t: Pick<Txn, 'vendor_key' | 'name'> | undefined): { v
   return { vendor_key: t.vendor_key, name: t.name.slice(0, MAX_VENDOR_NAME), today: localDate() };
 }
 
+/** Where the approval a row holds is kept when it isn't under the row's own
+ *  id (`review_via`: the pending transaction it replaced, or the row imported
+ *  from a file it stands for), so the category chosen is the one it holds. */
+export function approvalViaOf(t: Pick<Txn, 'review_via'> | undefined): { review_via?: string } {
+  return t?.review_via ? { review_via: t.review_via } : {};
+}
+
 /** Newest first, as /api/transactions orders them; the sort is stable. */
 function newestFirst(a: Txn, b: Txn): number {
   if (a.date !== b.date) return a.date < b.date ? 1 : -1;
@@ -234,7 +241,12 @@ export function useTransactionEdits({
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           // With its merchant, a category chosen by id counts toward the merchant's default.
-          body: JSON.stringify({ transaction_id, ...choice, ...(t?.source && t.account_id ? { account_id: t.account_id } : {}), ...('category_id' in choice ? merchantOf(t) : {}) }),
+          body: JSON.stringify({
+            transaction_id,
+            ...choice,
+            ...(t?.source && t.account_id ? { account_id: t.account_id } : {}),
+            ...('category_id' in choice ? { ...merchantOf(t), ...approvalViaOf(t) } : {}),
+          }),
         });
         if (res.ok) {
           // Its other side, a pair no more, as the server now shows it.
