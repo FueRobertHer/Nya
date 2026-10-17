@@ -278,7 +278,7 @@ describe('through the read layer, and a total', () => {
       const f = new FormData();
       f.set('file', new Blob([new TextEncoder().encode(csv) as Uint8Array<ArrayBuffer>]), 'export.csv');
       f.set('meta', JSON.stringify({ file_name: 'export.csv', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, account_id: 'acc_chk', ...meta }));
-      return new Request('http://localhost/api/history-import', { method: 'POST', body: form === undefined ? undefined : f });
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
     };
     const preview = (await (await routes.POST(form({ action: 'preview' }))).json()).preview;
     expect(preview.proposals.map((p: { twin: { id: string; amount: number }; choice: string }) => [p.twin.id, p.twin.amount, p.choice])).toEqual([[id, 150, 'same']]);
