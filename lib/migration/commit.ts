@@ -41,7 +41,7 @@
 
 import type { Ctx } from '../containers';
 import { loggable } from '../log-safe';
-import { UnreadableEntriesError } from '../repo';
+import { StoredDataUnreadableError } from '../repo';
 import { manualAccountExists, newManualId, saveManualAccount, type ManualAccount } from '../manual';
 import { manualTxnStore } from '../manual-txns';
 import { newManualTxnId } from '../manual-txn-input';
@@ -50,7 +50,7 @@ import { changeTaxonomy, newCategoryId, readTaxonomy, ensureTaxonomy } from '../
 import { categoryForKey, deleteCategory, deleteGroup, indexTaxonomy, TEXT, CategoryError } from '../categories';
 import { categoryUsage } from '../category-usage';
 import { loadBudgets } from '../budget-store';
-import { addTag, changeTagSet, newTagId, readTagSet, tagByName } from '../tags';
+import { addTag, changeTagSet, newTagId, readTagSet, tagByName, TagError } from '../tags';
 import { deleteTag } from '../tag-delete';
 import { readRuleSet } from '../rules';
 import { carriedAnnotationStore, txnAnnotationStore, type TxnAnnotation } from '../txn-annotations';
@@ -225,7 +225,7 @@ export async function commitMigration(
           order: context.order,
           imports,
           bank_from: context.bank_from,
-          choices: answers.choices[t.key] ?? {},
+          choices: t.choices,
           reviewed: reviewDigest(t.linked!.review),
           ids_minted: ids,
           now,
@@ -282,7 +282,7 @@ export async function commitMigration(
     return { entry: done, already: false, linked, made_accounts: accountIds.size > 0 };
   } catch (err) {
     // Whatever was made goes again, as Undo would take it out.
-    await undoMigration(ctx, input.id).catch((cleanup) => console.warn('migration: an import that failed could not be taken out, and is listed with Undo', loggable(cleanup)));
+    await undoMigration(ctx, input.id, { failed: true }).catch((cleanup) => console.warn('migration: an import that failed could not be taken out, and is listed with Undo', loggable(cleanup)));
     throw err;
   }
 }
@@ -294,6 +294,18 @@ export class MigrationNotFoundError extends Error {
   constructor() {
     super('That import was already undone.');
     this.name = 'MigrationNotFoundError';
+  }
+}
+
+/** How long an import may still be being made: longer than the route may run
+ *  (app/api/migration maxDuration), so one older than this stopped. */
+export const STILL_IMPORTING_MS = 5 * 60 * 1000;
+
+/** The import is still being made: undo it once it is done. */
+export class MigrationBusyError extends Error {
+  constructor() {
+    super('This import is still being made. Undo it once it has finished, in a few minutes.');
+    this.name = 'MigrationBusyError';
   }
 }
 
@@ -318,9 +330,13 @@ export type MigrationUndoResult = {
  * be read (each account's import is still listed with Undo on that account),
  * and what an account's undo throws.
  */
-export async function undoMigration(ctx: Ctx, id: string): Promise<MigrationUndoResult> {
+export async function undoMigration(ctx: Ctx, id: string, opts: { failed?: boolean; now?: number } = {}): Promise<MigrationUndoResult> {
   const entry = await migrationStore.get(ctx, id);
   if (!entry) throw new MigrationNotFoundError();
+  // One still being made is left to finish (or to take itself out, when it
+  // fails: `failed`), unless it has gone quiet for longer than any import
+  // takes, so it stopped part way.
+  if (!opts.failed && entry.status === 'importing' && (opts.now ?? Date.now()) - Date.parse(entry.started_at) < STILL_IMPORTING_MS) throw new MigrationBusyError();
   if (entry.status !== 'undoing') await migrationStore.update(ctx, id, (cur) => (cur ? { ...cur, status: 'undoing' } : cur));
   const result: MigrationUndoResult = { removed: 0, duplicates: 0, kept: 0, accounts: { removed: [], kept: [] }, categories: { removed: 0, kept: 0 }, tags: { removed: 0, kept: 0 }, linked: [] };
 
@@ -371,7 +387,12 @@ export async function undoMigration(ctx: Ctx, id: string): Promise<MigrationUndo
       for (const t of there) {
         if (!sure || held.has(t)) result.tags.kept++;
         else {
-          await deleteTag(ctx, t);
+          try {
+            await deleteTag(ctx, t);
+          } catch (err) {
+            // Deleted meanwhile (another undo, the Tags screen): gone either way.
+            if (!(err instanceof TagError)) throw err;
+          }
           result.tags.removed++;
         }
       }
@@ -389,7 +410,10 @@ export async function undoMigration(ctx: Ctx, id: string): Promise<MigrationUndo
       await changeTaxonomy(ctx, (cur) => deleteCategory(cur, c, usage));
       result.categories.removed++;
     } catch (err) {
-      if (!(err instanceof CategoryError) && !(err instanceof UnreadableEntriesError)) console.warn('migration: a category it made was kept', loggable(err));
+      // In use now, changed meanwhile, or something it would need to be sure
+      // of can't be read: kept. Anything else stops the undo, which can be
+      // run again, rather than leave a category nothing says was made here.
+      if (!(err instanceof CategoryError) && !(err instanceof StoredDataUnreadableError)) throw err;
       result.categories.kept++;
     }
   }

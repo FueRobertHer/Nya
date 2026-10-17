@@ -12,7 +12,6 @@ import { APP_ROLES, APPS, type AppColumns, type AppId, type AppReadOptions } fro
 import { MAX_CSV_COLUMNS } from '../import/record';
 import { cleanFileName, MAX_CHOICES } from '../history-import/request';
 import { CONFLICT_CHOICES, PROPOSAL_CHOICES, type Choices, type HistoryChoices } from '../history-import/plan';
-import { MAX_IMPORT_ROWS } from '../import/record';
 import { isMigrationId } from './store';
 import { MAX_SOURCE_ACCOUNTS, type AccountChoice, type MigrationAnswers } from './plan';
 import type { CategoryChoice } from './categories';
@@ -112,7 +111,9 @@ function readChoiceSet<T extends string>(v: unknown, allowed: readonly T[]): Cho
     if (entries.length > MAX_CHOICES) return 'Too many choices';
     const each: Record<string, T> = {};
     for (const [index, choice] of entries) {
-      if (!/^\d{1,5}$/.test(index) || Number(index) >= MAX_IMPORT_ROWS * 3 || !(allowed as readonly unknown[]).includes(choice)) return 'Invalid choices';
+      // Keyed by the line of the file a row starts on (lib/migration/plan.ts
+      // MigrationAnswers).
+      if (!/^\d{1,8}$/.test(index) || Number(index) < 1 || Number(index) > 10_000_000 || !(allowed as readonly unknown[]).includes(choice)) return 'Invalid choices';
       each[String(Number(index))] = choice as T;
     }
     out.each = each;

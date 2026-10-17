@@ -21,7 +21,7 @@ import { planMigration, type MigrationPlan } from '@/lib/migration/plan';
 import { readTargets, type ReadTargets } from '@/lib/migration/targets';
 import { readMigrationMeta } from '@/lib/migration/request';
 import { CategoriesChangedError } from '@/lib/migration/categories';
-import { commitMigration, listMigrations, migrationUndoPlan, MigrationNotFoundError, undoMigration } from '@/lib/migration/commit';
+import { commitMigration, listMigrations, MigrationBusyError, migrationUndoPlan, MigrationNotFoundError, undoMigration } from '@/lib/migration/commit';
 import { isMigrationId, migrationStore } from '@/lib/migration/store';
 
 // Importing another app's export (M2, "Migration importers"; lib/import/apps/
@@ -128,7 +128,7 @@ async function formOf(body: ArrayBuffer, contentType: string | null): Promise<Fo
 }
 
 /** The review, bounded whatever the file (see LIMITS). */
-function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: string | null; encoding: string }) {
+function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: string | null; encoding: string }, currency: string | null) {
   const r = plan.read;
   const listed = <T>(list: readonly T[], max: number) => ({ list: list.slice(0, max), more: Math.max(0, list.length - max) });
   const problems = listed(plan.problems, LISTED_PROBLEMS);
@@ -142,6 +142,9 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
     encoding: file.encoding,
     columns: Object.fromEntries(Object.entries(r.columns).map(([role, at]) => [role, { at, header: r.header[at as number] ?? null, name: ROLE_NAMES[role as keyof typeof ROLE_NAMES] }])),
     read: r.read,
+    // The currency the person chose for the amounts that don't say theirs,
+    // and whether the file has a column that says (Lunch Money's).
+    currency: { chosen: currency, in_file: r.columns.currency !== undefined },
     rows: r.parsed.txns.length,
     notes: [...r.parsed.notes, ...targets.notes],
     accounts: plan.accounts,
@@ -262,7 +265,7 @@ export async function POST(req: Request) {
       today,
     });
     const plan = planMigration(read, answers, targets);
-    if (meta.action === 'preview') return NextResponse.json({ preview: reviewOf(plan, targets, content) });
+    if (meta.action === 'preview') return NextResponse.json({ preview: reviewOf(plan, targets, content, meta.answers.currency) });
 
     // The same import sent again (its answer lost on the way) is the one
     // already made: said so before anything is compared, since what it made
@@ -293,7 +296,7 @@ export async function POST(req: Request) {
       }
       throw err;
     }
-    if (result.already) return NextResponse.json({ migration_id: meta.migration_id, already: true, counts: result.entry.counts });
+    if (result.already) return NextResponse.json({ migration_id: meta.migration_id, already: true, status: result.entry.status, counts: result.entry.counts });
     // Net worth changes with an account it made, and the transactions cached
     // for the Activity tab hold the banks' part, which a linked account's
     // imported rows are part of. Flag first, cache second (as
@@ -341,6 +344,7 @@ export async function DELETE(req: Request) {
     return NextResponse.json({ ...undone, history });
   } catch (err) {
     if (err instanceof MigrationNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
+    if (err instanceof MigrationBusyError) return NextResponse.json({ error: err.message }, { status: 409 });
     return storeFailure(err, 'Failed to undo the import');
   }
 }

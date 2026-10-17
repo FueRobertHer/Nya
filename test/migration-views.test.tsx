@@ -76,6 +76,9 @@ describe('the review', () => {
     expect(words).toContain('1 split transaction rebuilt, with 3 parts adding up exactly to each');
     expect(words).toContain('Bring the tags (2 tags, 2 new)');
     expect(words).toContain('Checking (new)');
+    // Each account's rows with no category, and the currency read in.
+    expect(words).toContain('1 with no category');
+    expect(words).toContain('This file doesn’t say its currency, so amounts are read in the currency of the account they go into (USD for a new one). Change');
     // Amounts as lib/format.ts writes them.
     expect(words).toContain('new: $3,924.10 out, $6,501.25 in');
     expect(html).toMatch(/<button>Import<\/button>/);
@@ -97,6 +100,14 @@ describe('the review', () => {
     expect(words).toContain('Money out is written as negative in this file');
     expect(words).toContain('Lunch Money’s own way is positive');
     expect(words).toContain('treat as income');
+    // Its rows say their currency.
+    expect(words).not.toContain('doesn’t say its currency');
+  });
+
+  test('a currency chosen is said, with the way back to each account’s own', async () => {
+    const { preview } = await previewOf('ynab-register.csv', { currency: 'EUR' });
+    const words = text(review(preview));
+    expect(words).toContain('Amounts are read in EUR, as you chose. Change Use each account’s own');
   });
 });
 

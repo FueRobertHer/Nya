@@ -450,8 +450,73 @@ describe('the review', () => {
   test('the transfers, opening balances and rows with no category are counted for the review', async () => {
     const p = await preview(fixture('ynab-register.csv'), { accounts: newAccounts(['Checking', 'Savings', 'Visa', 'Brokerage']) });
     expect(p.body.preview.counts).toEqual({ uncategorized: 1, transfers: 6, opening: 4 });
+    // Each account's own, so an account YNAB tracks off budget (none of its
+    // rows categorized) is seen for what it is.
+    expect(Object.fromEntries(p.body.preview.accounts.map((a: any) => [a.key, a.uncategorized]))).toEqual({ Checking: 1, Savings: 0, Visa: 0, Brokerage: 0 });
     expect(p.body.preview.splits.rebuilt).toBe(1);
     expect(p.body.preview.notes.join(' ')).toContain('1 transfer has a category in YNAB');
+  });
+
+  test('the currency of a file that doesn’t say one is the person’s to choose', async () => {
+    const accounts = newAccounts(['Checking', 'Savings', 'Visa', 'Brokerage']);
+    const p = await preview(fixture('ynab-register.csv'), { accounts });
+    expect(p.body.preview.currency).toEqual({ chosen: null, in_file: false });
+    expect(p.body.preview.targets.map((t: any) => t.currency)).toEqual(['USD', 'USD', 'USD', 'USD']);
+    const { preview: chosen, done } = await importReviewed(fixture('ynab-register.csv'), { accounts, currency: 'eur' });
+    expect(chosen.currency.chosen).toBe('EUR');
+    expect(chosen.targets.map((t: any) => t.currency)).toEqual(['EUR', 'EUR', 'EUR', 'EUR']);
+    expect(done.status).toBe(200);
+    expect((await getManualAccounts(ctx)).map((a) => a.currency)).toEqual(['EUR', 'EUR', 'EUR', 'EUR']);
+    for (const book of (await manualTxnStore.getAll(ctx)).values()) expect(book.rows.every((r) => r.currency === 'EUR')).toBe(true);
+    // Lunch Money's rows say theirs.
+    const lm = await preview(fixture('lunchmoney-transactions.csv'));
+    expect(lm.body.preview.currency).toEqual({ chosen: null, in_file: true });
+  });
+
+  test('tags that can’t be read are said, and the file can come in without them', async () => {
+    await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
+    const accounts = newAccounts(['Chase Checking (...1111)', 'Chase Sapphire (...4444)', 'Ally Savings (...2222)']);
+    const p = await quietly(() => preview(fixture('monarch-transactions.csv'), { accounts }));
+    expect(p.status).toBe(200);
+    expect(p.body.preview.blocks.join(' ')).toContain('tags can’t be read');
+    const refused = await quietly(() => post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, accounts }, fixture('monarch-transactions.csv')));
+    expect(refused.status).toBe(409);
+    expect(await getManualAccounts(ctx)).toEqual([]);
+    const without = await quietly(() => importReviewed(fixture('monarch-transactions.csv'), { accounts, tags: false }));
+    expect(without.preview.blocks).toEqual([]);
+    expect(without.done.status).toBe(200);
+    // The tags are left as they are, for the person to see to.
+    expect(await fake.get<string>(ctxKey('tags'))).toBe('not-ciphertext-but-long-enough-to-be-tried');
+  });
+
+  test('a linked account’s uncertain match waits for the person, answered by the file’s line', async () => {
+    await seed();
+    const file = [
+      '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"',
+      `"Checking","","${mdy(daysAgo(30))}","Corner Shop","Fun: Treats","Fun","Treats","",$60.00,$0.00,"Cleared"`,
+      `"Checking","","${mdy(daysAgo(50))}","Mystery Payee","Bills: Rent","Bills","Rent","",$1850.00,$0.00,"Cleared"`,
+    ].join('\n');
+    const answers = { accounts: { Checking: { to: 'linked', id: 'acc_chk' } }, options: { date_order: 'mdy' } };
+    const p = await preview(file, answers);
+    const [target] = p.body.preview.targets;
+    // The bank's rent five days off, with nothing else alike: possibly the
+    // same, so it waits.
+    expect(target.proposals.map((x: any) => [x.line, x.confidence, x.choice])).toEqual([[3, 'low', null]]);
+    expect(p.body.preview.waiting.proposals).toBe(1);
+    expect((await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...answers }, file)).body.needs).toBe('answers');
+    // Answered by its line in the file, which stays its own whatever else
+    // the review reads.
+    const choices = { [target.key]: { proposals: { each: { '3': 'new' } } } };
+    const { preview: answered, done } = await importReviewed(file, { ...answers, choices });
+    expect(answered.waiting.proposals).toBe(0);
+    expect(answered.targets[0].proposals[0].choice).toBe('new');
+    expect(done.status).toBe(200);
+    const read = (await activity()).transactions as any[];
+    // The bank's rent, and the file's row beside it as one of its own.
+    const rent = read.filter((t) => t.amount === 1850);
+    expect(rent.length).toBe(2);
+    expect(rent.some((t) => t.transaction_id === 'b_rent')).toBe(true);
+    expect(rent.some((t) => t.source === 'import:csv' && t.name === 'Mystery Payee')).toBe(true);
   });
 
   test('a header Nya doesn’t know asks which app and which column is which', async () => {
@@ -576,6 +641,30 @@ describe('the import', () => {
     expect((await migrationStore.getAll(ctx)).size).toBe(1);
   });
 
+  test('one still being made isn’t undone under it; one that stopped part way is', async () => {
+    const file = fixture('actual-export.csv');
+    const accounts = newAccounts(['Checking', 'Savings']);
+    const { preview: p, done, migration_id } = await importReviewed(file, { accounts });
+    expect(done.status).toBe(200);
+    const entry = (await migrationStore.get(ctx, migration_id))!;
+    // As it is while its steps run.
+    await migrationStore.set(ctx, migration_id, { ...entry, status: 'importing', finished_at: null, started_at: new Date().toISOString() });
+    const busy = await undo({ migration_id, confirm: true });
+    expect(busy.status).toBe(409);
+    expect(busy.body.error).toContain('still being made');
+    expect((await getManualAccounts(ctx)).length).toBe(2);
+    // Sent again meanwhile, it says so rather than making it twice.
+    const again = await post({ action: 'import', review: p.review, migration_id, accounts }, file);
+    expect(again.body).toMatchObject({ migration_id, already: true, status: 'importing' });
+    // Quiet for longer than any import takes, it stopped part way: Undo takes
+    // out what it made.
+    await migrationStore.set(ctx, migration_id, { ...entry, status: 'importing', finished_at: null, started_at: new Date(Date.now() - 10 * 60_000).toISOString() });
+    const undone = await undo({ migration_id, confirm: true });
+    expect(undone.status).toBe(200);
+    expect(await getManualAccounts(ctx)).toEqual([]);
+    expect(await migrationStore.get(ctx, migration_id)).toBeNull();
+  });
+
   test('one that fails part way is undone, so nothing it made is left', async () => {
     await seed();
     // A manual account first, then the linked one, whose review changes
@@ -611,6 +700,39 @@ describe('the import', () => {
     expect((await readTaxonomy(ctx))!.categories.length).toBe(taxonomy);
     expect(await migrationStore.get(ctx, id)).toBeNull();
     expect((await importedTxnStore.get(ctx, 'acc_chk'))!.rows.length).toBe(1);
+  });
+});
+
+describe('the download of my data', () => {
+  test('holds everything an import from another app wrote, with nothing added to it for it', async () => {
+    const { collectUserData, buildUserExport, exportFile } = await import('@/lib/user-export');
+    await seed();
+    // YNAB's Checking into the linked account, the rest into new manual ones.
+    const lines = readFileSync(join(FIXTURES, 'ynab-register.csv'), 'utf8');
+    const { done, migration_id } = await importReviewed(lines, {
+      accounts: { ...newAccounts(['Savings', 'Visa', 'Brokerage']), Checking: { to: 'linked', id: 'acc_chk' } },
+    });
+    expect(done.status).toBe(200);
+    const doc = buildUserExport(await collectUserData({ ctx, userId: null }), new Date()) as any;
+    // The import's own record, each account's import with its raw records, the rows.
+    expect(doc['app-imports'].map((e: any) => e.id)).toEqual([migration_id]);
+    expect(doc['app-imports'][0].value.app).toBe('ynab');
+    expect(doc.imports.length).toBe(3);
+    expect(doc['history-imports'].length).toBe(1);
+    expect(doc['imported-transactions'][0].value.rows.length).toBeGreaterThan(0);
+    expect(doc['manual-transactions'].flatMap((b: any) => b.value.rows).some((r: any) => r.name === 'Costco')).toBe(true);
+    // What was said beside them: tags, the split, the categories and tags made.
+    const tagged = doc['transaction-annotations'].filter((a: any) => a.value.tags?.length);
+    expect(tagged.length).toBeGreaterThan(0);
+    expect(doc['transaction-splits'].length).toBe(1);
+    expect(doc.categories.categories.map((c: any) => c.name)).toContain('Groceries');
+    expect(doc.tags.tags.map((t: any) => t.name).sort()).toEqual(['Blue flag', 'Red flag']);
+    expect(doc.manual_accounts.map((a: any) => a.name).sort()).toEqual(['Brokerage', 'Savings', 'Visa']);
+    // The transactions CSV files the rows as the app does, a split's parts among them.
+    const body = [...exportFile(doc, 'transactions-csv').pieces()].join('');
+    expect(body).toContain('Costco');
+    expect(body).toContain('Groceries');
+    expect(body).toContain('Blue flag');
   });
 });
 

@@ -24,6 +24,7 @@ import { formatMoney, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
+import { isCurrencyCode } from '@/lib/manual-txn-input';
 
 type Options = { app?: AppId; columns?: Partial<Record<AppRole, number>>; date_order?: 'mdy' | 'dmy'; sign?: 'negative-out' | 'positive-out' };
 type AccountAnswer =
@@ -33,9 +34,19 @@ type AccountAnswer =
   | { to: 'skip' };
 type CategoryAnswer = { to: 'existing'; id: string } | { to: 'new'; kind: CategoryKind };
 type ProposalChoices = { all?: 'same' | 'new'; each: Record<string, 'same' | 'new'> };
+/** The answers a review is read again with; `currency` null goes back to
+ *  each account's own. */
+type Answers = {
+  options?: Options;
+  accounts?: Record<string, AccountAnswer>;
+  categories?: Record<string, CategoryAnswer>;
+  tags?: boolean;
+  currency?: string | null;
+  choices?: Record<string, ProposalChoices>;
+};
 
 type Offered = { kind: 'manual' | 'linked'; id: string; name: string; institution: string; type: string; currency: string | null; mask?: string | null };
-type SourceAccount = { key: string; name: string; rows: number; first: string | null; last: string | null; currencies: string[]; net: number; transfers: number; opening: number; splits: number };
+type SourceAccount = { key: string; name: string; rows: number; first: string | null; last: string | null; currencies: string[]; net: number; transfers: number; opening: number; splits: number; uncategorized: number };
 type Mapping = {
   key: string;
   group: string | null;
@@ -87,6 +98,7 @@ export type Review = {
   detected: boolean;
   entry: string | null;
   read: { date_order: 'mdy' | 'dmy' | null; order_open: boolean; sign: 'negative-out' | 'positive-out' | null; sign_from: 'app' | 'file' | 'chosen' | null; decimal: '.' | ',' };
+  currency: { chosen: string | null; in_file: boolean };
   rows: number;
   notes: string[];
   accounts: (SourceAccount & { choice: unknown })[];
@@ -172,12 +184,13 @@ export default function MigrationSheet({
   const [accounts, setAccounts] = useState<Record<string, AccountAnswer>>({});
   const [categories, setCategories] = useState<Record<string, CategoryAnswer>>({});
   const [tags, setTags] = useState(true);
+  const [currency, setCurrency] = useState<string | null>(null);
   const [choices, setChoices] = useState<Record<string, ProposalChoices>>({});
   const [review, setReview] = useState<Review | null>(null);
   const [question, setQuestion] = useState<Question | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [done, setDone] = useState<{ counts: DoneCounts; accounts: number; already: boolean } | null>(null);
+  const [done, setDone] = useState<{ counts: DoneCounts; accounts: number; already: boolean; status: 'importing' | 'done' | 'undoing' } | null>(null);
   const [past, setPast] = useState<Listed[] | null>(null);
   const [pastError, setPastError] = useState('');
   const [undoing, setUndoing] = useState<Listed | null>(null);
@@ -209,6 +222,7 @@ export default function MigrationSheet({
     setAccounts({});
     setCategories({});
     setTags(true);
+    setCurrency(null);
     setChoices({});
     setReview(null);
     setQuestion(null);
@@ -224,25 +238,27 @@ export default function MigrationSheet({
   };
 
   const metaOf = useCallback(
-    (action: 'preview' | 'import', over: { options?: Options; accounts?: Record<string, AccountAnswer>; categories?: Record<string, CategoryAnswer>; tags?: boolean; choices?: Record<string, ProposalChoices> } = {}) => {
+    (action: 'preview' | 'import', over: Answers = {}) => {
       const acc = over.accounts ?? accounts;
       const wired = Object.fromEntries(Object.entries(acc).flatMap(([k, a]) => {
         const w = wireAccount(a);
         return w ? [[k, w]] : [];
       }));
       const ch = over.choices ?? choices;
+      const cur = over.currency !== undefined ? over.currency : currency;
       return {
         action,
         options: over.options ?? options,
         accounts: wired,
         categories: over.categories ?? categories,
         tags: over.tags ?? tags,
+        ...(cur ? { currency: cur } : {}),
         choices: Object.fromEntries(
           Object.entries(ch).map(([k, c]) => [k, { proposals: { ...(c.all ? { all: c.all } : {}), ...(Object.keys(c.each).length > 0 ? { each: c.each } : {}) } }])
         ),
       };
     },
-    [accounts, categories, choices, options, tags]
+    [accounts, categories, choices, currency, options, tags]
   );
 
   /** Sends the file with these answers, for a question or the review. */
@@ -290,11 +306,12 @@ export default function MigrationSheet({
   };
 
   /** Changes answers and reads the review again with them. */
-  const answer = (over: { options?: Options; accounts?: Record<string, AccountAnswer>; categories?: Record<string, CategoryAnswer>; tags?: boolean; choices?: Record<string, ProposalChoices> }) => {
+  const answer = (over: Answers) => {
     if (over.options) setOptions(over.options);
     if (over.accounts) setAccounts(over.accounts);
     if (over.categories) setCategories(over.categories);
     if (over.tags !== undefined) setTags(over.tags);
+    if (over.currency !== undefined) setCurrency(over.currency);
     if (over.choices) setChoices(over.choices);
     if (file) void send(file, metaOf('preview', over));
   };
@@ -303,7 +320,7 @@ export default function MigrationSheet({
     if (!file || !review) return;
     const data = await send(file, { ...metaOf('import'), review: review.review, migration_id: migrationId });
     if (data && !data.error && (data.migration_id || data.already)) {
-      setDone({ counts: data.counts ?? null, accounts: (data.imports ?? []).length, already: !!data.already });
+      setDone({ counts: data.counts ?? null, accounts: (data.imports ?? []).length, already: !!data.already, status: data.status ?? 'done' });
       setReview(null);
       onImported();
       void loadPast();
@@ -342,8 +359,17 @@ export default function MigrationSheet({
       ) : done ? (
         <div className="sheet-form">
           <p className="import-headline" style={{ marginTop: 0 }}>
-            {done.already ? 'This import was already made.' : `Imported ${plural(done.counts?.imported ?? 0, 'transaction')} into ${plural(done.accounts, 'account')}.`}
+            {!done.already
+              ? `Imported ${plural(done.counts?.imported ?? 0, 'transaction')} into ${plural(done.accounts, 'account')}.`
+              : done.status === 'done'
+                ? 'This import was already made.'
+                : done.status === 'undoing'
+                  ? 'This import is being undone.'
+                  : 'This import is still being made, or stopped part way.'}
           </p>
+          {done.already && done.status !== 'done' && (
+            <p className="panel-note">It is in the list of imports: if it stays there unfinished, Undo takes out whatever it made, and you can import the file again.</p>
+          )}
           {done.counts && (
             <p className="panel-note">
               {[
@@ -520,10 +546,11 @@ export function ReviewStep({
   choices: Record<string, ProposalChoices>;
   busy: boolean;
   error: string;
-  onAnswer: (over: { options?: Options; accounts?: Record<string, AccountAnswer>; categories?: Record<string, CategoryAnswer>; tags?: boolean; choices?: Record<string, ProposalChoices> }) => void;
+  onAnswer: (over: Answers) => void;
   onImport: () => void;
 }) {
   const [allCategories, setAllCategories] = useState(false);
+  const [currencyText, setCurrencyText] = useState<string | null>(null);
   const [allProblems, setAllProblems] = useState(false);
   const waiting = r.waiting.accounts + r.waiting.proposals;
   const canImport = !busy && waiting === 0 && r.blocks.length === 0 && r.targets.length > 0;
@@ -560,6 +587,50 @@ export function ReviewStep({
           </span>
         </label>
       )}
+      {!r.currency.in_file &&
+        (currencyText === null ? (
+          <p className="panel-note">
+            {r.currency.chosen
+              ? `Amounts are read in ${r.currency.chosen}, as you chose.`
+              : 'This file doesn’t say its currency, so amounts are read in the currency of the account they go into (USD for a new one).'}{' '}
+            <button className="link-btn" disabled={busy} onClick={() => setCurrencyText(r.currency.chosen ?? '')}>
+              Change
+            </button>
+            {r.currency.chosen && (
+              <>
+                {' '}
+                <button className="link-btn" disabled={busy} onClick={() => onAnswer({ currency: null })}>
+                  Use each account’s own
+                </button>
+              </>
+            )}
+          </p>
+        ) : (
+          <div className="quick-add-pair import-currency">
+            <label className="field">
+              Currency of every row
+              <input
+                value={currencyText}
+                onChange={(e) => setCurrencyText(e.target.value.toUpperCase().slice(0, 3))}
+                maxLength={3}
+                autoCapitalize="characters"
+                autoCorrect="off"
+                spellCheck={false}
+                disabled={busy}
+              />
+            </label>
+            <button
+              className="secondary"
+              disabled={busy || !isCurrencyCode(currencyText)}
+              onClick={() => {
+                onAnswer({ currency: currencyText });
+                setCurrencyText(null);
+              }}
+            >
+              Use
+            </button>
+          </div>
+        ))}
       {r.notes.map((n) => (
         <p key={n} className="panel-note">
           {n}
@@ -713,7 +784,15 @@ function AccountRow({
       <div className="import-row-text">
         <div className="import-row-name">{a.name}</div>
         <div className="import-row-meta">
-          {[plural(a.rows, 'transaction'), range, a.splits > 0 ? plural(a.splits, 'split') : null, a.currencies.length > 0 ? a.currencies.join(', ') : null].filter(Boolean).join(' · ')}
+          {[
+            plural(a.rows, 'transaction'),
+            range,
+            a.splits > 0 ? plural(a.splits, 'split') : null,
+            a.uncategorized > 0 ? `${a.uncategorized.toLocaleString()} with no category` : null,
+            a.currencies.length > 0 ? a.currencies.join(', ') : null,
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </div>
         <label className="field" style={{ marginTop: 6 }}>
           <span>Goes into</span>
@@ -847,7 +926,10 @@ function CategoryRow({ m, taxonomy, busy, onAnswer }: { m: Mapping; taxonomy: Ta
 function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: ProposalChoices; busy: boolean; onChoose: (c: ProposalChoices) => void }) {
   const c = t.counts;
   const range = fmtRange(t.first_date, t.last_date);
-  const choiceOf = (p: Proposal) => choices.each[String(p.index)] ?? choices.all ?? p.choice;
+  // Answers are by the file's line, which stays the row's whatever else is
+  // sent into this account (lib/migration/plan.ts MigrationAnswers).
+  const at = (p: Proposal) => String(p.line ?? 0);
+  const choiceOf = (p: Proposal) => choices.each[at(p)] ?? choices.all ?? p.choice;
   return (
     <>
       <p className="section-label" style={{ marginTop: 16 }}>
@@ -907,10 +989,10 @@ function TargetSection({ t, choices, busy, onChoose }: { t: Target; choices: Pro
                     {chosen === null ? ' · choose one' : ''}
                   </div>
                   <div className="import-choices" role="group" aria-label={`What ${p.file.name} is`}>
-                    <button className="secondary" disabled={busy} aria-pressed={chosen === 'same'} onClick={() => onChoose({ ...choices, each: { ...choices.each, [String(p.index)]: 'same' } })}>
+                    <button className="secondary" disabled={busy} aria-pressed={chosen === 'same'} onClick={() => onChoose({ ...choices, each: { ...choices.each, [at(p)]: 'same' } })}>
                       The same
                     </button>
-                    <button className="secondary" disabled={busy} aria-pressed={chosen === 'new'} onClick={() => onChoose({ ...choices, each: { ...choices.each, [String(p.index)]: 'new' } })}>
+                    <button className="secondary" disabled={busy} aria-pressed={chosen === 'new'} onClick={() => onChoose({ ...choices, each: { ...choices.each, [at(p)]: 'new' } })}>
                       Its own
                     </button>
                   </div>

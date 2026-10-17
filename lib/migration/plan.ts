@@ -97,6 +97,9 @@ export type SourceAccount = {
   transfers: number;
   opening: number;
   splits: number;
+  /** Rows with no category (YNAB's accounts it tracks off budget have none:
+   *  they count as spending or income here until categorized). */
+  uncategorized: number;
   choice: AccountChoice | null;
 };
 
@@ -123,6 +126,8 @@ export type TargetPlan = {
   problems: Problem[];
   manual: ImportPlan | null;
   linked: HistoryPlan | null;
+  /** A linked account's answers, by each row's place (byIndex). */
+  choices: HistoryChoices;
   covers: Covers | null;
   /** By row: the tags it carries (names), a split's parts, and for a linked
    *  account's row the bank already has, the category and note to say on it. */
@@ -134,7 +139,11 @@ export type TargetPlan = {
   tags_cut: number;
 };
 
-/** What the person answered, as checked (lib/migration/request.ts). */
+/** What the person answered, as checked (lib/migration/request.ts). A linked
+ *  account's answers to its proposals are by the line of the file each row
+ *  starts on, never by its place in the account's rows: that place moves when
+ *  another of the file's accounts is sent into the same account, and an
+ *  answer given for one row must never land on another. */
 export type MigrationAnswers = {
   accounts: Readonly<Record<string, AccountChoice>>;
   categories: Readonly<Record<string, CategoryChoice>>;
@@ -143,11 +152,34 @@ export type MigrationAnswers = {
   choices: Readonly<Record<string, HistoryChoices>>;
 };
 
+/** A linked account's answers by line (see MigrationAnswers) as the
+ *  history import's plan takes them: by each row's place among its records. */
+function byIndex(choices: HistoryChoices | undefined, rows: readonly NormalizedRecord[]): HistoryChoices {
+  if (!choices) return {};
+  const proposals = choices.proposals;
+  const conflicts = choices.conflicts;
+  const each = <T,>(by: Record<string, T> | undefined) => {
+    if (!by) return undefined;
+    const out: Record<string, T> = {};
+    for (const r of rows) {
+      const c = r.line === null ? undefined : by[String(r.line)];
+      if (c !== undefined) out[String(r.index)] = c;
+    }
+    return out;
+  };
+  return {
+    ...(proposals ? { proposals: { ...(proposals.all ? { all: proposals.all } : {}), ...(proposals.each ? { each: each(proposals.each) } : {}) } } : {}),
+    ...(conflicts ? { conflicts: { ...(conflicts.all ? { all: conflicts.all } : {}), ...(conflicts.each ? { each: each(conflicts.each) } : {}) } } : {}),
+  };
+}
+
 /** What the plan reads, from the route (lib/migration/targets.ts). */
 export type MigrationState = {
   today: string;
   taxonomy: Taxonomy;
   tags: TagSet | null;
+  /** The person's tags couldn't be read (when the import brings tags). */
+  tagsUnreadable?: boolean;
   manual: ReadonlyMap<string, ManualAccount>;
   linked: ReadonlyMap<string, LinkedAccount>;
   /** For each target chosen: a manual account's book, a linked account's
@@ -215,7 +247,7 @@ export function sourceAccounts(txns: readonly AppTxn[], answers: Readonly<Record
     const key = accountKey(t);
     let a = out.get(key);
     if (!a) {
-      a = { key, name: key || 'This file’s account', rows: 0, first: null, last: null, currencies: [], net: 0, transfers: 0, opening: 0, splits: 0, choice: answers[key] ?? null, byCurrency: new Map() };
+      a = { key, name: key || 'This file’s account', rows: 0, first: null, last: null, currencies: [], net: 0, transfers: 0, opening: 0, splits: 0, uncategorized: 0, choice: answers[key] ?? null, byCurrency: new Map() };
       out.set(key, a);
     }
     a.rows++;
@@ -226,6 +258,7 @@ export function sourceAccounts(txns: readonly AppTxn[], answers: Readonly<Record
     if (t.transfer !== null) a.transfers++;
     if (t.starting) a.opening++;
     if (t.parts) a.splits++;
+    if (!t.starting && t.transfer === null && !t.parts && !t.category) a.uncategorized++;
   }
   return [...out.values()].map(({ byCurrency, ...a }) => ({
     ...a,
@@ -346,6 +379,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       }
     }
   }
+  if (state.tagsUnreadable && tagRows.size > 0) blocks.push('Your tags can’t be read just now, so the file’s tags can’t be matched to yours. Import without tags, or try again later.');
   const tagNames = [...tagRows.values()].map((t) => ({ ...t, existing: !!tagByName(state.tags, t.name) }));
   const tagsAdded = tagNames.filter((t) => !t.existing).length;
   const tagRoom = Math.max(0, MAX_TAGS - (state.tags?.tags.length ?? 0));
@@ -425,6 +459,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     let manual: ImportPlan | null = null;
     let linked: HistoryPlan | null = null;
     let covers: Covers | null = null;
+    const chosenAnswers = choice.to === 'linked' ? byIndex(answers.choices[key], rows) : {};
     if (choice.to === 'linked') {
       const context = state.contexts.get(choice.id)!;
       let first: string | null = null;
@@ -444,7 +479,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         bankFrom: context.bank_from,
         covers,
         imports,
-        choices: answers.choices[key] ?? {},
+        choices: chosenAnswers,
       });
     } else {
       manual = planImport(rows, problems, choice.to === 'manual' ? (state.books.get(choice.id) ?? null) : null);
@@ -472,6 +507,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       problems,
       manual,
       linked,
+      choices: chosenAnswers,
       covers,
       tags: tagsOf,
       parts: partsOf,

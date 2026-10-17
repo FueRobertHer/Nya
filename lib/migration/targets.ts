@@ -52,7 +52,19 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     txnAnnotationStore.count(ctx),
     splitStore.count(ctx),
   ]);
-  const tags: TagSet | null = opts.withTags ? await readTagSet(ctx) : null;
+  // Strict, when the import brings tags: which exist decides which are made.
+  // A list that can't be read is said (lib/migration/plan.ts blocks), so the
+  // person can import without tags rather than not at all.
+  let tags: TagSet | null = null;
+  let tagsUnreadable = false;
+  if (opts.withTags) {
+    try {
+      tags = await readTagSet(ctx);
+    } catch (err) {
+      if (!(err instanceof StoredDataUnreadableError)) throw err;
+      tagsUnreadable = true;
+    }
+  }
   const manual = new Map<string, ManualAccount>(manualList.map((a) => [a.account_id, a]));
   const notes: string[] = [];
   if (live.unreadable.length > 0) notes.push('Some of your linked accounts can’t be read just now, so they aren’t offered here. Try again later.');
@@ -93,6 +105,7 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     today: opts.today,
     taxonomy,
     tags,
+    tagsUnreadable,
     manual,
     linked,
     books,
