@@ -118,7 +118,7 @@ export function DeleteAccountView({
             {typeof status.backup_days === 'number' &&
               ` Nightly backups keep a copy for up to ${status.backup_days} days: encrypted, except dates, ids, bank names and the merchant names you renamed.`}
             {status.own_key === true &&
-              ' Your data is encrypted under a key of its own, which is destroyed with your account: from then on nothing encrypted under it can be decrypted from any copy Nya keeps.'}
+              ' Your data is encrypted under a key of its own, which is destroyed with your account: normally within minutes, nothing encrypted under it can be decrypted from any copy Nya keeps, and the receipt names any copy that still holds the key.'}
             {status.own_key === false &&
               ' Your data is encrypted under a key shared by everyone on this copy of Nya, until whoever runs it moves it to one of its own, so copies of it in backups stay readable with the server’s keys until they are deleted.'}
             {typeof status.database_days === 'number' &&

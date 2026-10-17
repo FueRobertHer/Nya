@@ -308,11 +308,11 @@ describe('a step that never answers', () => {
     expect(dataBlobs()).toHaveLength(MIN_KEPT + 1);
   });
 
-  // The key archive lists its generations first, so a list that hangs fails
-  // its step.
+  // The folder is listed before the key archive is written, so a list that
+  // hangs fails as the list step.
   for (const [method, name] of [
     ['put', 'upload'],
-    ['list', 'keys'],
+    ['list', 'list'],
   ] as const) {
     test(`a ${name} that hangs fails as the ${name} step`, async () => {
       const { s } = await hanging(method);
@@ -330,10 +330,15 @@ describe('a step that never answers', () => {
     await expect(runBackup(fake as any, s, new Date(start + 40 * DAY), { limits })).rejects.toThrow("backup's prune step");
   });
 
-  test('a key archive step that hangs fails as the keys step, and keeps the data archive', async () => {
-    const { s } = await hanging('list');
-    await expect(runBackup(fake as any, s, clock, { limits })).rejects.toThrow("backup's keys step");
+  test('a key archive step that hangs fails as the keys step, and keeps the data archive, counted', async () => {
+    const real = await store();
+    // Only the key archives' listing hangs.
+    const s = { ...real, list: (prefix: string, signal?: AbortSignal) => (prefix === keyArchiveFolder() ? never() : real.list(prefix, signal)) };
+    const steps: string[] = [];
+    await expect(runBackup(fake as any, s, clock, { limits, onStep: (step) => void steps.push(step) })).rejects.toThrow("backup's keys step");
     expect(dataBlobs()).toHaveLength(1);
+    // The count and the listing ran first: a night whose key archive fails still notes them.
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'count', 'list']);
   });
 
   test('a discard that hangs still reports the bad read-back', async () => {
@@ -345,7 +350,7 @@ describe('a step that never answers', () => {
   test('each finished step reports how long it took', async () => {
     const steps: string[] = [];
     await runBackup(fake as any, await store(), clock, { onStep: (step, ms) => (expect(ms).toBeGreaterThanOrEqual(0), steps.push(step)) });
-    expect(steps).toEqual(['export', 'upload', 'read-back', 'keys', 'count', 'list']); // nothing old enough to prune
+    expect(steps).toEqual(['export', 'upload', 'read-back', 'count', 'list', 'keys']); // nothing old enough to prune
   });
 
   test('the Vercel Blob store hands each call its signal', async () => {

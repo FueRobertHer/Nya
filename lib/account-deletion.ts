@@ -29,17 +29,21 @@
 //      flight wrote after step 4;
 //  11. every kept key archive is rewritten without the destroyed key
 //      (lib/key-archive.ts), or, if that can't be done in its time, left for
-//      the next nightly backup, which the receipt says.
+//      the next nightly backup, which the receipt says; and the backup folder
+//      is listed for any archive an older version of Nya took after the key
+//      was made (a rollback's, which holds the key itself), so the receipt
+//      says so even when the nightly run hasn't noted it yet.
 //
 // The primary container (the first, the owner's) is never deleted from here:
 // background jobs without a signed-in account use it, and with it gone they
 // would have no rule left to pick one.
 //
 // Nightly backups (lib/backup.ts) still hold the data until they age out:
-// what is under the destroyed key unreadably once step 11 is done, and what
-// is under a key shared by everyone on this copy (k0 or an environment key)
-// readably, which the receipt dates from the map entry read at step 2. The
-// nightly run sweeps a destroyed container's prefix once more the night after
+// what is under the destroyed key unreadably once step 11 is done (unless a
+// rollback's archive holds the key), and what is under a key shared by
+// everyone on this copy (k0 or an environment key) readably, which the
+// receipt dates from the map entry read at step 2. The nightly run sweeps a
+// destroyed container's prefix once more the night after
 // (sweepDestroyedContainers), for a write that came later still.
 //
 // THE RECEIPT. The steps count what they do, and what is stored is counted
@@ -60,11 +64,11 @@
 
 import { redis, containerPrefix, getItems } from './storage';
 import { getContainer, isContainerId, registryKey, type ContainerId, type ContainerRecord, type Ctx } from './containers';
-import { ownersKey, DELETION_MARKER } from './owners';
+import { ownersKey, ownersOf, DELETION_MARKER } from './owners';
 import { dropConnectionsOf } from './sharing';
 import { isDemoUser } from './demo';
 import { decrypt, destroyContainerKeys, readContainerEntries, readContainerEntry, readTombstones, updateContainerEntry, ContainerKeyError, type ContainerKeyEntry } from './crypto';
-import { rewriteKeyArchivesAfterDeletion, type BackupStore } from './backup';
+import { listFormat1Archives, newestHoldingKey, rewriteKeyArchivesAfterDeletion, type BackupStore } from './backup';
 import { collectUserData, countAccounts, missingIds } from './user-export';
 import type { DeletionCounts, ReceiptKeys } from './deletion-receipt';
 
@@ -113,18 +117,30 @@ export type DeletionResult = {
  *     nightly archive found a value under a shared key since (`shared_in`);
  *   - one it was born with (`moved` its `since`): only what a nightly archive
  *     found, if any.
+ * And, from `format1` (when each format-1 archive in the backup folder was
+ * taken, oldest first; null when it couldn't be listed), the newest taken
+ * after its key was made (`key_in`), which holds the key itself. One the
+ * nightly run hasn't noted in the entry yet (a rollback since its last run)
+ * counts as it would have: `moved` no longer stands, since the release
+ * before may have written values under a shared key meanwhile; and so does
+ * a folder that couldn't be listed.
  * `entry` undefined: it couldn't be read (an earlier attempt destroyed it):
- * whether there was a key is told by the tombstones, and the date is the
- * deletion's, as if nothing said otherwise.
+ * whether there was a key is told by the tombstones, and the dates are the
+ * deletion's and the newest format-1 archive's, as if nothing said otherwise.
  */
-export function keyFactsOf(entry: ContainerKeyEntry | null | undefined, hadTombstone: boolean, now: Date): Omit<ReceiptKeys, 'key_backups'> {
+export function keyFactsOf(entry: ContainerKeyEntry | null | undefined, hadTombstone: boolean, now: Date, format1: string[] | null): Omit<ReceiptKeys, 'key_backups'> {
   const at = now.toISOString();
-  if (entry === undefined || (entry !== null && 'destroyed' in entry)) return { own_key: hadTombstone ? true : null, shared_from: at };
-  if (entry === null) return { own_key: false, shared_from: at };
-  const born = entry.moved !== undefined && entry.moved === entry.since;
-  const fromPass = born ? null : (entry.moved ?? at);
+  if (entry === undefined || (entry !== null && 'destroyed' in entry)) {
+    return { own_key: hadTombstone ? true : null, shared_from: at, key_in: format1 === null ? 'unchecked' : (format1.at(-1) ?? null) };
+  }
+  if (entry === null) return { own_key: false, shared_from: at, key_in: null };
+  const keyIn = format1 === null ? 'unchecked' : (newestHoldingKey(format1, entry.since) ?? null);
+  const unnoted = keyIn === 'unchecked' || (keyIn !== null && (entry.key_in === undefined || Date.parse(keyIn) > Date.parse(entry.key_in)));
+  const moved = unnoted ? undefined : entry.moved;
+  const born = moved !== undefined && moved === entry.since;
+  const fromPass = born ? null : (moved ?? at);
   const latest = [fromPass, entry.shared_in ?? null].filter((t): t is string => t !== null).sort().at(-1) ?? null;
-  return { own_key: true, shared_from: latest };
+  return { own_key: true, shared_from: latest, key_in: keyIn };
 }
 
 type StoredCounts = Pick<DeletionCounts, 'accounts' | 'earlier_accounts' | 'transactions' | 'investment_transactions' | 'history_days'>;
@@ -210,6 +226,12 @@ export async function deletionCheck(userId: string): Promise<{ allowed: true } |
   if (typeof id === 'string' && isContainerId(id)) {
     const rec = await getContainer(id as ContainerId);
     if (rec?.primary) return { allowed: false, reason: 'This is the primary account. Its data can’t be deleted from the app.' };
+    // A container the owners mapping gives to another account too (edited by
+    // hand, docs/authentication.md): deleting it would take that account's
+    // data, and its key, with this one's.
+    if ((await ownersOf(id as ContainerId)).some((other) => other !== userId)) {
+      return { allowed: false, reason: 'This account’s data belongs to another sign-in too, so it can’t be deleted from the app. Ask whoever runs this copy of Nya.' };
+    }
   }
   return { allowed: true };
 }
@@ -242,7 +264,7 @@ export async function deleteAccount(
   let signInDeleted = false;
   let stored = NOTHING_STORED;
   let resumed = false;
-  let facts: Omit<ReceiptKeys, 'key_backups'> | null = null;
+  let entryRead: KeyEntryRead | null = null;
   const counts = (): DeletionCounts => ({
     banks_disconnected: disconnected,
     banks_not_disconnected: notDisconnected,
@@ -264,7 +286,7 @@ export async function deleteAccount(
     // 2. What it holds, for the receipt, before any of it goes; never again
     // on a retry (see the header). And what its map entry says of its key.
     stored = resumed ? UNCOUNTED : await countStored({ container }, opts.countLimitMs ?? COUNT_LIMIT_MS);
-    facts = await readKeyFacts(container);
+    entryRead = await readKeyEntry(container);
   }
   try {
     if (container && !marked) {
@@ -313,12 +335,17 @@ export async function deleteAccount(
   } catch (err) {
     throw new DeletionIncomplete(counts(), err);
   }
-  // 11. The key archives, last. Never fails the deletion: the key is gone
-  // from the database, and the nightly run rewrites them if this can't.
+  // 11. The key archives, last, and any archive an older version took that
+  // holds the key. Never fails the deletion: the key is gone from the
+  // database, and the nightly run rewrites them if this can't.
   let keys: ReceiptKeys | null = null;
   if (container) {
-    const keyBackups = await rewriteKeyArchivesAfterDeletion(opts.keyArchives ?? null, container);
-    keys = { ...(facts ?? (await readKeyFacts(container))), key_backups: keyBackups };
+    const store = opts.keyArchives ?? null;
+    const keyBackups = await rewriteKeyArchivesAfterDeletion(store, container);
+    // No store, no backups: nothing an older version took is kept either.
+    const format1 = store ? await listFormat1Archives(store) : [];
+    const read = entryRead ?? (await readKeyEntry(container));
+    keys = { ...keyFactsOf(read.entry, read.hadTombstone, new Date(), format1), key_backups: keyBackups };
   }
   if (signInError) throw new SignInNotDeleted(counts(), signInError);
   return { disconnected, deletedKeys, counts: counts(), found_data: container !== null && !marked, resumed, keys };
@@ -338,9 +365,11 @@ export async function ownKeyOf(userId: string): Promise<boolean | null> {
   }
 }
 
-/** What the container's map entry says of its key, for the receipt
- *  (keyFactsOf). Never throws: a read that fails says nothing. */
-async function readKeyFacts(container: ContainerId): Promise<Omit<ReceiptKeys, 'key_backups'>> {
+type KeyEntryRead = { entry: ContainerKeyEntry | null | undefined; hadTombstone: boolean };
+
+/** The container's map entry, and whether a tombstone names it, for the
+ *  receipt (keyFactsOf). Never throws: a read that fails says nothing. */
+async function readKeyEntry(container: ContainerId): Promise<KeyEntryRead> {
   let entry: ContainerKeyEntry | null | undefined;
   try {
     entry = await readContainerEntry(container);
@@ -353,7 +382,7 @@ async function readKeyFacts(container: ContainerId): Promise<Omit<ReceiptKeys, '
   } catch {
     hadTombstone = false;
   }
-  return keyFactsOf(entry, hadTombstone, new Date());
+  return { entry, hadTombstone };
 }
 
 /**

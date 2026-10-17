@@ -520,7 +520,7 @@ export async function reencrypt(opts: {
   if (opts.afterRollback && !opts.dryRun) {
     const at = new Date(now()).toISOString();
     for (const c of registry) {
-      const e = await updateContainerEntry(c.id, (cur) => (cur && 'key' in cur ? { key: cur.key, since: cur.since, shared_in: at } : null));
+      const e = await updateContainerEntry(c.id, (cur) => (cur && 'key' in cur ? { key: cur.key, since: cur.since, shared_in: at, ...(cur.key_in !== undefined ? { key_in: cur.key_in } : {}) } : null));
       if (e) entries.set(c.id, e);
     }
   }

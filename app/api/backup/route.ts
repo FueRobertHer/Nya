@@ -56,7 +56,7 @@ export async function GET(req: Request) {
       `${result.bytes} bytes`,
       `${result.keys} keys`,
       `${result.pruned.length} pruned`,
-      `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned)`,
+      `key archive ${result.key_archive.pathname} (${result.key_archive.keys} keys, ${result.key_archive.carried.length} carried forward, ${result.key_archive.rewritten.length} rewritten, ${result.key_archive.pruned.length} pruned${result.key_archive.dropped.length > 0 ? `, ${result.key_archive.dropped.length} that didn't read back deleted` : ''})`,
       `${result.shared_in.length} container(s) under a shared key`,
       `${seconds}s`
     );

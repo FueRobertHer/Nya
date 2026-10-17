@@ -51,6 +51,12 @@ export type ReceiptKeys = {
   /** The latest time a copy can have held some of it under a key shared by
    *  everyone on this copy of Nya (an ISO time), or null for never. */
   shared_from: string | null;
+  /** When the newest backup still kept that an older version of Nya took (a
+   *  rollback's format-1 archive, which holds every key) was taken after its
+   *  key was made: that backup holds the key itself until it is deleted. An
+   *  ISO time; null for none; 'unchecked' when the backups couldn't be listed
+   *  to see. */
+  key_in: string | null | 'unchecked';
   /** The key backups: rewritten without its key, at a time; left for the
    *  next nightly backup; or none kept on this server. */
   key_backups: { rewritten_at: string } | { pending: true } | { none: true };
@@ -85,7 +91,7 @@ export function backupDaysAtMost(retention: { max_days: number }): number {
 export function keyDeletionText(input: { envelope: boolean; backups: BackupRetention; databaseDays: number | null }): { key: string[]; notReached: string[] } {
   if (!input.envelope) return { key: [], notReached: [] };
   const own =
-    'Each account made on this version of Nya has a data key of its own, and an account made before it has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
+    'Each account made on this version of Nya normally has a data key of its own from the start, and an account made before it (or one made while a key couldn’t be) has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
   const key = input.backups?.kept
     ? [
         own,
@@ -121,10 +127,12 @@ export type DeletionReceipt = {
     | { kept: true; keep_days: number; min_kept: number; until: string; stopped: boolean }
     /** The retention setting couldn't be read. */
     | null;
-  /** Its data key, when it had a container: what was destroyed, and until
-   *  when copies under a shared key stay readable (null: none do; absent
-   *  from a receipt the release before made). */
-  keys?: ReceiptKeys & { shared_until: string | null };
+  /** Its data key, when it had a container: what was destroyed, until when
+   *  copies under a shared key stay readable (null: none do), and until when
+   *  a backup an older version of Nya took holds the key (null: none does,
+   *  or its retention couldn't be read). Absent from a receipt the release
+   *  before made. */
+  keys?: ReceiptKeys & { shared_until: string | null; key_until: string | null };
   /** The database host's own backups (DATABASE_BACKUP_DAYS): kept that many
    *  days, each the whole database. Absent when they are off; null when the
    *  setting can't be read. */
@@ -149,11 +157,14 @@ export function buildDeletionReceipt(input: {
   const { retention } = input;
   const dbDays = input.database_days === undefined ? 0 : input.database_days;
   // A copy under a shared key is gone once the newest nightly copy that can
-  // hold it is: backupDaysAtMost after it was taken.
+  // hold it is: backupDaysAtMost after it was taken. So is a backup an older
+  // version took, which can be no newer than the deletion when it couldn't be
+  // checked.
   const sharedUntil = (from: string | null): string | null =>
     from === null || !retention?.kept ? null : new Date(Date.parse(from) + backupDaysAtMost(retention) * 86_400_000).toISOString();
+  const keyIn = (k: ReceiptKeys) => (k.key_in === 'unchecked' ? input.deleted_at.toISOString() : k.key_in);
   return {
-    ...(input.keys ? { keys: { ...input.keys, shared_until: sharedUntil(input.keys.shared_from) } } : {}),
+    ...(input.keys ? { keys: { ...input.keys, shared_until: sharedUntil(input.keys.shared_from), key_until: sharedUntil(keyIn(input.keys)) } } : {}),
     ...(dbDays === null ? { database: null } : dbDays > 0 ? { database: { days: dbDays, until: new Date(input.deleted_at.getTime() + dbDays * 86_400_000).toISOString() } } : {}),
     deleted_at: input.deleted_at.toISOString(),
     found_data: input.found_data,
@@ -260,12 +271,25 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
   const k = r.keys;
   if (k) {
     if (k.own_key === true) {
+      // A backup an older version of Nya took (a rollback's) holds the key
+      // itself: until it is deleted, nothing under the key is out of reach.
+      const keyIn = k.key_in ?? null;
+      const until = k.key_until ?? null;
+      const by = until !== null && Date.parse(until) > Date.parse(r.deleted_at) ? `until ${day(until)}` : 'until it is deleted';
+      const held = keyIn === null ? null : keyIn === 'unchecked' ? 'unchecked' : 'held';
+      const rollback =
+        held === 'held'
+          ? `a backup taken while an older version of Nya ran holds your key ${by}: until then, every copy of your data can be decrypted with this server’s master key.`
+          : `whether a backup taken while an older version of Nya ran holds your key couldn’t be checked: if one does, every copy of your data can be decrypted with this server’s master key ${by}.`;
       later.push(
         'Your data key: your data was encrypted under a key of its own, which was destroyed with your account. ' +
           ('rewritten_at' in k.key_backups
-            ? `The backups of the keys were rewritten without it at ${time(k.key_backups.rewritten_at)}, so nothing encrypted under it can be decrypted from any copy Nya keeps (a deleted backup can still be served from the storage’s cache for up to a minute).`
+            ? held === null
+              ? `The backups of the keys were rewritten without it at ${time(k.key_backups.rewritten_at)}, so nothing encrypted under it can be decrypted from any copy Nya keeps (a deleted backup can still be served from the storage’s cache for up to a minute).`
+              : `The backups of the keys were rewritten without it at ${time(k.key_backups.rewritten_at)}, but ${rollback}`
             : 'pending' in k.key_backups
-              ? 'The backups of the keys are rewritten without it by the next nightly backup that succeeds. Until then, a copy taken before the deletion can still be decrypted with this server’s master key.'
+              ? 'The backups of the keys are rewritten without it by the next nightly backup that succeeds. Until then, a copy taken before the deletion can still be decrypted with this server’s master key.' +
+                (held === null ? '' : ` Also, ${rollback}`)
               : 'This server keeps no backups of the keys, so it is gone everywhere Nya keeps one.')
       );
     } else if (k.own_key === false) {
@@ -294,6 +318,11 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
       : []),
     'Server logs: the host keeps them for a short time. Nya writes counts, dates and errors to them, not amounts or balances.',
     'Your downloads: a copy you saved with Download my data is yours, and deleting your account doesn’t reach it.',
+    ...(k?.own_key === true
+      ? [
+          'A backup of the keys downloaded by hand: deleting your account doesn’t reach one that whoever runs this copy of Nya downloaded before the deletion. It holds your key, so with it a copy of your data from before the deletion can still be decrypted, for as long as they keep it.',
+        ]
+      : []),
   ];
 
   return [

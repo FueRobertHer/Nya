@@ -1180,6 +1180,10 @@ export type ContainerKeyEntry =
       /** When the newest nightly data archive that held one of its values
        *  under k0 or an environment key was taken. */
       shared_in?: string;
+      /** When the newest format-1 archive taken after its key was made (a
+       *  rollback's: the release before's nightly backup, which holds the
+       *  whole key store) was taken. That archive holds the key itself. */
+      key_in?: string;
     }
   | {
       /** The day its key was destroyed with the account. */
@@ -1208,6 +1212,7 @@ export function parseContainerEntry(container: string, value: unknown): Containe
       since: e.since,
       ...(isIso(e.moved) ? { moved: e.moved } : {}),
       ...(isIso(e.shared_in) ? { shared_in: e.shared_in } : {}),
+      ...(isIso(e.key_in) ? { key_in: e.key_in } : {}),
     };
   }
   if (e && typeof e === 'object' && typeof e.destroyed === 'string') {

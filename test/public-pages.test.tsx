@@ -661,7 +661,8 @@ describe('API tokens, on both pages', () => {
 // pages read no stored data, so they say it conditionally, and never claim a
 // key of its own for an account made before it, until it is moved.
 describe('a data key per account, on both pages', () => {
-  const OWN = 'Each account made on this version of Nya has a data key of its own, and an account made before it has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
+  const OWN =
+    'Each account made on this version of Nya normally has a data key of its own from the start, and an account made before it (or one made while a key couldn’t be) has one once whoever runs this copy has moved it; until then, its data is under a key shared by everyone on this copy.';
   const DESTROYED =
     'Deleting an account destroys its own key, so nothing encrypted under it can be decrypted from any copy Nya keeps, normally within minutes of the deletion and at the latest after the next nightly backup that succeeds. The encrypted copies stay in backups, unreadable, until they are deleted, and the plain text in them stays readable until then. Copies under a shared key stay readable with it until they are deleted.';
 
@@ -678,6 +679,9 @@ describe('a data key per account, on both pages', () => {
     expect(sec).toContain('A record that the account existed: its random id and the day its key was destroyed, kept for good, so that a restored backup never brings the account back.');
     expect(sec).toContain('in a file of their own kept beside it, the data keys in their locked form');
     expect(sec).toContain('the last 7 nights’ are kept, each checked before an older one is deleted');
+    // Never more than is so: a key can be born late, and one gone from the database without a deletion is let go in time.
+    expect(sec).toContain('Each account made on this version of Nya normally has a data key of its own from the start');
+    expect(sec).toContain('A key leaves them when the account it belongs to is deleted, or, for one that has gone from the database without that, once no backup still kept can need it.');
     expect(sec).toContain('A value under one account’s key can’t be read as another’s, even copied into its place; values still under a shared key can, until they are moved.');
     const priv = privacy();
     expect(priv).toContain('A record that a deleted account existed Its random id and the day its key was destroyed: kept for good');

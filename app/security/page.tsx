@@ -101,10 +101,11 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
             one and leaves the data itself untouched, so a key change cannot damage it.
           </p>
           <p>
-            Each account made on this version of Nya has a data key of its own from the start, used for its data alone.
-            An account made before it is under a set of data keys shared by everyone on this copy of Nya until whoever
-            runs it moves the account to a key of its own. A value under one account’s key can’t be read as another’s,
-            even copied into its place; values still under a shared key can, until they are moved.
+            Each account made on this version of Nya normally has a data key of its own from the start, used for its data
+            alone. An account made before it, or one made at a moment its key couldn’t be (while the master key is being
+            changed, say), is under a set of data keys shared by everyone on this copy of Nya until whoever runs it moves
+            the account to a key of its own. A value under one account’s key can’t be read as another’s, even copied into
+            its place; values still under a shared key can, until they are moved.
           </p>
           <p className="info-aside">
             Values written before the master key was set up stay under Nya’s original single key (also AES-256-GCM, also
@@ -161,7 +162,8 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
         <p>
           The backups of the data keys are kept apart so that deleting an account can take its key out of every one of
           them without rewriting the data: the last {KEY_GENERATIONS} nights’ are kept, each checked before an older one is
-          deleted, and a key leaves them only when the account it belongs to is deleted.
+          deleted. A key leaves them when the account it belongs to is deleted, or, for one that has gone from the
+          database without that, once no backup still kept can need it.
         </p>
       )}
     </>

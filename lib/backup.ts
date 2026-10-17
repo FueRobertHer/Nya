@@ -23,11 +23,13 @@
 // archive of format 2 leaves the key store out; each run then writes a key
 // archive (lib/key-archive.ts), checks it, and keeps seven generations. A run
 // that can't write and check its key archive fails, its data archive kept.
-// The same run notes, in each container's map entry, the time of an archive
-// that holds one of its values under k0 or an environment key (`shared_in`),
-// read from the headers alone, and clears its `moved`; and the time of any
-// format-1 archive the release before took after the container's key was made
-// (a rollback), since that archive holds the key itself.
+// Before that, once the copy reads back, the same run notes in each
+// container's map entry the time of an archive that holds one of its values
+// under k0 or an environment key (`shared_in`), read from the headers alone,
+// and clears its `moved`; and, from the folder's listing, the time of the
+// newest format-1 archive the release before took after the container's key
+// was made (`key_in`: a rollback's, which holds the key itself), clearing
+// `moved` too.
 //
 // Each run records its outcome (backups:status, environment-wide), and the
 // dashboard says so when the last run failed or none has succeeded for two
@@ -72,7 +74,7 @@ export const MIN_KEPT = 7;
 
 /**
  * How long each step may take, in milliseconds. The longest path (export,
- * upload, read-back, the key archive, the count, list, prune) adds up to
+ * upload, read-back, the count, list, the key archive, prune) adds up to
  * 240s, a minute under the route's maxDuration of 300s, so a failure is still
  * recorded before Vercel ends the function. `discard` takes the place of the
  * rest when the read-back is wrong. A 1 MB archive takes seconds; these are
@@ -239,32 +241,78 @@ async function noteSharedKeys(records: Awaited<ReturnType<typeof verifyArchive>>
   const at = takenAt.toISOString();
   const noted: string[] = [];
   for (const c of shared) {
-    const e = await updateContainerEntry(c, (cur) => (cur && 'key' in cur && (cur.moved !== undefined || cur.shared_in !== at) ? { key: cur.key, since: cur.since, shared_in: at } : null));
+    const e = await updateContainerEntry(c, (cur) =>
+      cur && 'key' in cur && (cur.moved !== undefined || cur.shared_in !== at) ? { key: cur.key, since: cur.since, shared_in: at, ...(cur.key_in !== undefined ? { key_in: cur.key_in } : {}) } : null
+    );
     if (e && 'key' in e && e.shared_in === at) noted.push(c);
   }
   return noted;
 }
 
+/** When each format-1 archive in a listing of the backup folder was taken
+ *  (the release before's, holding the whole key store), oldest first. */
+export function format1Archives(listed: { pathname: string }[]): string[] {
+  return listed
+    .map((b) => dataArchiveName(b.pathname))
+    .filter((n): n is { taken: string; format1: boolean } => n !== null && n.format1)
+    .map((n) => n.taken)
+    .sort();
+}
+
+/** The newest of these format-1 archive times taken after a key was made
+ *  (`since`), or undefined: the archive that holds that key itself. */
+export function newestHoldingKey(format1: string[], since: string): string | undefined {
+  return format1.filter((t) => Date.parse(t) > Date.parse(since)).at(-1);
+}
+
 /**
  * Notes a rollback, seen in the store's own listing: a format-1 archive (the
  * release before's, holding the whole key store) taken after a container's
- * key was made holds that container readably. Its time goes in `shared_in`
- * (if later than what is there) and `moved` is cleared.
+ * key was made holds that key. Its time goes in `key_in` (if later than what
+ * is there) and `moved` is cleared, since the release before may have written
+ * the container's values under a shared key meanwhile.
  */
 async function noteRollbacks(listed: { pathname: string }[]): Promise<string[]> {
-  const format1 = listed.map((b) => dataArchiveName(b.pathname)).filter((n): n is { taken: string; format1: boolean } => n !== null && n.format1).map((n) => n.taken).sort();
+  const format1 = format1Archives(listed);
   if (format1.length === 0) return [];
   const noted: string[] = [];
   for (const [container, entry] of await readContainerEntries()) {
     if (entry instanceof ContainerKeyError || !('key' in entry)) continue;
-    const newest = format1.filter((t) => t > entry.since).at(-1);
-    if (!newest || (entry.shared_in !== undefined && entry.shared_in >= newest)) continue;
+    const newest = newestHoldingKey(format1, entry.since);
+    if (!newest || (entry.key_in !== undefined && Date.parse(entry.key_in) >= Date.parse(newest))) continue;
     const e = await updateContainerEntry(container, (cur) =>
-      cur && 'key' in cur && (cur.shared_in === undefined || cur.shared_in < newest) ? { key: cur.key, since: cur.since, shared_in: newest } : null
+      cur && 'key' in cur && (cur.key_in === undefined || Date.parse(cur.key_in) < Date.parse(newest))
+        ? { key: cur.key, since: cur.since, ...(cur.shared_in !== undefined ? { shared_in: cur.shared_in } : {}), key_in: newest }
+        : null
     );
-    if (e && 'key' in e && e.shared_in === newest) noted.push(container);
+    if (e && 'key' in e && e.key_in === newest) noted.push(container);
   }
   return noted;
+}
+
+/**
+ * When each format-1 archive in the backup folder was taken (format1Archives),
+ * for a deletion's receipt, which must not wait for the nightly run to have
+ * noted a rollback: one listing, within `limitMs`. Null when it can't be
+ * listed in that time. Never throws.
+ */
+export async function listFormat1Archives(store: BackupStore, limitMs = 5_000): Promise<string[] | null> {
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        reject(new Error(`took longer than ${limitMs / 1000}s`));
+      }, limitMs);
+    });
+    return format1Archives(await Promise.race([store.list(backupFolder(), controller.signal), timeout]));
+  } catch (err) {
+    console.error('Backups: the folder could not be listed for a deletion receipt, so it says what it couldn\'t check.', err instanceof Error ? err.message : typeof err);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export async function runBackup(
@@ -294,19 +342,27 @@ export async function runBackup(
     throw new Error(`The backup ${pathname} did not read back as written`);
   }
 
-  // The key archive, checked against what tonight's values name. A run that
-  // can't write and check it fails here: its data archive is kept, and
-  // nothing is pruned.
+  // The count, while the copy is known good: it is kept whatever follows.
+  const shared = await step('count', opts, () => noteSharedKeys(records, now));
+
+  // The folder's listing: what is kept, for the key archive and the prune,
+  // and any archive the release before took (a rollback), noted from it.
+  const { existing, rollbacks } = await step('list', opts, async (signal) => {
+    const existing = await store.list(backupFolder(), signal);
+    return { existing, rollbacks: await noteRollbacks(existing) };
+  });
+  const kept = [now.toISOString(), ...existing.map((b) => dataArchiveName(b.pathname)?.taken).filter((t): t is string => t !== undefined)];
+
+  // The key archive, checked against what tonight's values name and what the
+  // data archives kept may need. A run that can't write and check it fails
+  // here: its data archive is kept, and nothing is pruned.
   const named = namedKeyIds(keyIdsByContainer(records));
   const maxDays = Math.max(days + 1, MIN_KEPT);
   const keyArchive = await step('keys', opts, (signal) =>
-    writeKeyArchive(client, store, keysLock, { takenAt: now, named, maxDays, signal, ...(opts.keysLockWaitMs !== undefined ? { lockWaitMs: opts.keysLockWaitMs } : {}) })
+    writeKeyArchive(client, store, keysLock, { takenAt: now, named, kept, maxDays, signal, ...(opts.keysLockWaitMs !== undefined ? { lockWaitMs: opts.keysLockWaitMs } : {}) })
   );
-  const shared = await step('count', opts, () => noteSharedKeys(records, now));
 
   const cutoff = now.getTime() - days * 86_400_000;
-  const existing = await step('list', opts, (signal) => store.list(backupFolder(), signal));
-  const rollbacks = await noteRollbacks(existing);
   existing.sort((a, b) => (a.pathname < b.pathname ? 1 : -1)); // newest first
   const pruned = existing
     .slice(MIN_KEPT)
@@ -418,21 +474,27 @@ return 0`;
 
 const isIsoTime = (v: unknown): v is string => typeof v === 'string' && !Number.isNaN(Date.parse(v));
 
-async function readPending(): Promise<KeysPending | null> {
-  const raw = await redis().get<unknown>(KEYS_PENDING());
+/** The marker as stored, exactly, or null; and what it says, unless it can't
+ *  be read. */
+async function readMarker(): Promise<{ raw: string; pending: KeysPending | null } | null> {
+  const raw = await rawRedis().get(KEYS_PENDING());
   if (raw === null || raw === undefined) return null;
-  let v: unknown = raw;
-  if (typeof raw === 'string') {
-    try {
-      v = JSON.parse(raw);
-    } catch {
-      v = null;
-    }
+  const text = String(raw);
+  let p: { since?: unknown; containers?: unknown } | null;
+  try {
+    p = JSON.parse(text);
+  } catch {
+    p = null;
   }
-  const p = v as { since?: unknown; containers?: unknown } | null;
+  const readable = !!p && typeof p === 'object' && isIsoTime(p.since) && Array.isArray(p.containers) && p.containers.every((c) => typeof c === 'string');
+  return { raw: text, pending: readable ? { since: p!.since as string, containers: p!.containers as string[] } : null };
+}
+
+async function readPending(): Promise<KeysPending | null> {
+  const m = await readMarker();
+  if (m === null) return null;
   // One that can't be read still says a rewrite is owed.
-  if (!p || typeof p !== 'object' || !isIsoTime(p.since) || !Array.isArray(p.containers)) return { since: new Date(0).toISOString(), containers: [] };
-  return { since: p.since, containers: p.containers.filter((c): c is string => typeof c === 'string') };
+  return m.pending ?? { since: new Date(0).toISOString(), containers: [], unreadable: true };
 }
 
 export const keysLock: KeysLock = {
@@ -456,13 +518,21 @@ export const keysLock: KeysLock = {
   async markPending(container, now) {
     for (let attempt = 0; attempt < 3; attempt++) {
       const cur = await readPending();
-      const next: KeysPending = { since: cur?.since ?? now.toISOString(), containers: [...new Set([...(cur?.containers ?? []), container])].sort() };
+      const since = cur && !cur.unreadable ? cur.since : now.toISOString();
+      const next: KeysPending = { since, containers: [...new Set([...(cur?.containers ?? []), container])].sort() };
       await redis().set(KEYS_PENDING(), JSON.stringify(next));
       if ((await readPending())?.containers.includes(container)) return;
     }
   },
   async clearPendingIf(seen) {
-    await redis().eval(DELETE_IF_HOLDS, [KEYS_PENDING()], [JSON.stringify(seen)]);
+    // Deleted only if it still says what was read (one that couldn't be read,
+    // if it still can't: the run that read it rewrote everything all the
+    // same), and only while it is the same text, so a marker a deletion
+    // writes meanwhile stays.
+    const m = await readMarker();
+    if (m === null) return;
+    const same = m.pending === null ? seen.unreadable === true : !seen.unreadable && m.pending.since === seen.since && JSON.stringify(m.pending.containers) === JSON.stringify(seen.containers);
+    if (same) await redis().eval(DELETE_IF_HOLDS, [KEYS_PENDING()], [m.raw]);
   },
 };
 
