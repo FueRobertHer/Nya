@@ -224,8 +224,9 @@ const ended = (h: Pick<ConnectionHealth, 'ends_at'>, now: number) => !!h.ends_at
 
 /** A connection's problem in a few words, as the subject of a notice about it
  *  alone says it: also how the weekly summary names a connection that needs
- *  the person (lib/weekly-summary/compose.ts), so the two never word one
- *  differently. */
+ *  the person (lib/weekly-summary/compose.ts), so the two word one alike, but
+ *  for one that can't be repaired: the summary reads no cause, so it says
+ *  only what is true of both of this one's. */
 export function subjectFor(name: string, h: Pick<ConnectionHealth, 'state' | 'cause' | 'ends_at'>, now: number): string {
   switch (h.state) {
     case 'reconnect_soon':

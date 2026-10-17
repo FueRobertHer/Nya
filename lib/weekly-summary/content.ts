@@ -30,8 +30,11 @@
 //     them (lib/recurring.ts), on the dates they are expected (as the forecast
 //     and Home's reminders read them), never one the person said isn't
 //     recurring; and the expenses they planned (lib/planned.ts).
-//   GOALS at their target, and behind their target date, by the projection
-//     the Goals card shows (lib/goal-projection.ts), archived ones left out.
+//   GOALS that reached their target since the person was last told (the
+//     ids the last summary sent named, lib/weekly-summary/store.ts), and
+//     those behind their target date, every week while they are: by the
+//     projection the Goals card shows (lib/goal-projection.ts), archived ones
+//     left out. A goal that stays at its target is told of once, not weekly.
 //   CONNECTIONS that need the person, from what the daily job last found
 //     (lib/connection-notices.ts): a sign-in to redo, one to make again, a bank
 //     reporting no open accounts, an end Plaid warned of, and an outage once it
@@ -113,7 +116,14 @@ export type BillFact = {
   planned: boolean;
 };
 
-export type GoalFact = { reached: string[]; behind: string[] };
+export type GoalFact = {
+  /** Names of the goals at their target that the person hasn't been told of. */
+  reached: string[];
+  behind: string[];
+  /** Ids of every goal at its target now: what a summary that goes records
+   *  as told (job.ts recordSent). */
+  complete: string[];
+};
 
 /** The states a connection is told of in a summary. */
 export type ConnectionState = Extract<HealthState, 'reconnect_soon' | 'needs_reauth' | 'relink' | 'closed' | 'outage'>;
@@ -197,8 +207,10 @@ export function levelOf(week: number, usual: number): Level {
   return 'much_lower';
 }
 
-/** Money out that counts (as every total counts it) over [from, to]. */
-function moneyOut(rows: SpendingInput['rows'], from: string, to: string, currency: string | null): number {
+/** Money out that counts (as every total counts it, lib/totals.ts summarize)
+ *  over [from, to]: each split part and group net as the rows hold them, and
+ *  never a transaction of a group counted outside them (group_outside). */
+export function moneyOut(rows: SpendingInput['rows'], from: string, to: string, currency: string | null): number {
   let total = 0;
   for (const t of rows) if (t.date >= from && t.date <= to && t.amount > 0 && countsInTotals(t, currency)) total += t.amount;
   return total;
@@ -302,12 +314,20 @@ export function billsFact(input: { series: readonly RecurringSeries[]; dismissed
 
 /** A goal as the summary weighs it: as the Goals card and the API read it
  *  (lib/api-goals.ts). */
-export type GoalInput = { name: string; archived: boolean; state: string; status: ProjectionStatus | null };
+export type GoalInput = { id: string; name: string; archived: boolean; state: string; status: ProjectionStatus | null };
 
-/** The goals at their target and behind their target date (see GOALS). */
-export function goalsFact(goals: readonly GoalInput[]): GoalFact {
+/** The goals that reached their target since `told` (the ids the last
+ *  summary that went recorded; null before any, when every goal at its target
+ *  is news), and those behind their target date (see GOALS). */
+export function goalsFact(goals: readonly GoalInput[], told: readonly string[] | null = null): GoalFact {
   const counted = goals.filter((g) => !g.archived && g.state === 'tracked');
-  return { reached: counted.filter((g) => g.status === 'complete').map((g) => g.name), behind: counted.filter((g) => g.status === 'behind').map((g) => g.name) };
+  const complete = counted.filter((g) => g.status === 'complete');
+  const known = new Set(told ?? []);
+  return {
+    reached: complete.filter((g) => !known.has(g.id)).map((g) => g.name),
+    behind: counted.filter((g) => g.status === 'behind').map((g) => g.name),
+    complete: complete.map((g) => g.id),
+  };
 }
 
 // ---- Connections ----

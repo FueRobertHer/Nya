@@ -73,6 +73,9 @@ export type GatherOptions = {
   weekday: Weekday;
   /** The send day of the week to gather; this week's (week.ts sendDayOn) unless given. */
   sendDay?: string;
+  /** The goals the last summary that went said were at their target, by id
+   *  (lib/weekly-summary/store.ts goals_told), or null before any. */
+  goalsTold?: readonly string[] | null;
 };
 
 /** A time zone this runtime doesn't know: no day can be placed in it. */
@@ -139,7 +142,12 @@ export async function gatherWeekly(ctx: Ctx, opts: GatherOptions): Promise<Weekl
     spending,
     budgets: isUnread(budgets) ? UNREAD : budgetFact({ ix: budgets.ix, view: budgets.view, spent: budgets.spent, month, running: month === thisMonth }),
     bills,
-    goals: isUnread(goals) ? UNREAD : goalsFact(goals.goals.map((g) => ({ name: g.name, archived: g.archived, state: g.state, status: g.projection?.status ?? null }))),
+    goals: isUnread(goals)
+      ? UNREAD
+      : goalsFact(
+          goals.goals.map((g) => ({ id: g.id, name: g.name, archived: g.archived, state: g.state, status: g.projection?.status ?? null })),
+          opts.goalsTold ?? null
+        ),
     connections: isUnread(connections) ? UNREAD : connectionsFact({ ...connections, now: opts.now }),
     months: facts === null ? UNREAD : monthsFact([monthOf(first), month, thisMonth], facts),
     uncategorized: isUnread(activity) ? UNREAD : uncategorizedFact(activity.rows, first, last),

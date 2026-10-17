@@ -247,6 +247,44 @@ describe('send me one now', () => {
     expect(sent).toHaveLength(1);
   });
 
+  test('its footer says the day saved, never the sheet’s unsaved day, and a summary for another day isn’t the week’s', async () => {
+    await put({ enabled: true, weekday: 1, time_zone: 'UTC' });
+    await weeklySettingStore.set(TEST_CTX, { ...(await weeklySettingStore.get(TEST_CTX))!, updated_at: '2026-09-01T00:00:00.000Z' });
+    const saturday = Date.parse('2026-10-17T09:00:00.000Z');
+    // The sheet shows Friday, to look at it; Monday is what is saved.
+    expect(await sendNow(TEST_CTX, { weekday: 5, time_zone: 'UTC' }, { now: saturday, fetch: resend, sleep: async () => {} })).toEqual({ kind: 'sent', send_day: '2026-10-16' });
+    expect(sent[0].text).toContain('Your week in Nya: Friday, October 9 to Thursday, October 15.');
+    expect(sent[0].text).toContain("You asked Nya to send this now. It comes every Monday too, because you turned on the weekly summary.");
+    expect(sent[0].text).not.toContain('every Friday');
+    expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBeNull();
+  });
+
+  test('one that can’t say how the week’s spending went isn’t the week’s: the job’s full one still goes', async () => {
+    const { saveManualAccount } = await import('@/lib/manual');
+    const { manualTxnStore } = await import('@/lib/manual-txns');
+    const at = '2026-10-12T08:00:00.000Z';
+    await saveManualAccount(TEST_CTX, { account_id: 'manual_wallet', name: 'Wallet', institution_name: 'Cash', type: 'depository', subtype: 'cash', balance: 40, updated_at: at });
+    // One transaction this week and none before: too few weeks to compare.
+    await manualTxnStore.set(TEST_CTX, 'manual_wallet', {
+      version: 1,
+      rows: [{ id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_wallet', date: '2026-10-08', amount: 25, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: '', source: 'manual', source_id: null, created_at: at, updated_at: at }],
+    });
+    await put({ enabled: true, weekday: 1, time_zone: 'UTC' });
+    await weeklySettingStore.set(TEST_CTX, { ...(await weeklySettingStore.get(TEST_CTX))!, updated_at: '2026-09-01T00:00:00.000Z' });
+    const monday = Date.parse('2026-10-12T09:00:00.000Z');
+    expect(await sendNow(TEST_CTX, { weekday: 1, time_zone: 'UTC' }, { now: monday, fetch: resend, sleep: async () => {} })).toMatchObject({ kind: 'sent' });
+    expect(sent[0].text).toContain("Nya doesn't have enough weeks of transactions yet");
+    expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBeNull();
+    const out = await sendWeeklySummaries([{ id: ME, status: 'active', primary: true, created_at: '2026-01-01T00:00:00.000Z' }], {
+      clock: () => monday + 4 * 3_600_000,
+      fetch: resend,
+      sync: async () => {},
+      ready: () => true,
+    });
+    expect(out.get(ME)).toBe('sent');
+    expect(sent).toHaveLength(2);
+  });
+
   test(`at most ${SENDS_NOW_PER_DAY} a day, never a burst`, async () => {
     for (let i = 0; i < SENDS_NOW_PER_DAY; i++) expect((await sendNow(TEST_CTX, { weekday: 1, time_zone: 'UTC' }, { fetch: resend, sleep: async () => {} })).kind).toBe('sent');
     expect(await sendNow(TEST_CTX, { weekday: 1, time_zone: 'UTC' }, { fetch: resend })).toMatchObject({ kind: 'limited' });

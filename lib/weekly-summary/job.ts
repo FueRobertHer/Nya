@@ -20,11 +20,16 @@
 // never sent again by any run, nor, after a move of the day, one that would
 // mostly repeat it (week.ts). Each summary carries an idempotency key built
 // from the container and the week (hashed, so it names neither), which Resend
-// honours for 24 hours: one whose answer never arrived, sent again by the next
-// run, is not delivered twice. Resend refuses the same key with a different
-// email (the week's figures moved since), and that refusal says one went
-// under it: the week is recorded then too. One still being sent by another
-// invocation (a cron delivered twice) is left to it.
+// keeps for 24 hours (resend.com/docs/dashboard/emails/idempotency-keys): one
+// whose answer never arrived, sent again by the next run, is not delivered
+// twice. Resend refuses the same key with a different email (the week's facts
+// moved since) with a 409, invalid_idempotent_request
+// (resend.com/docs/api-reference/errors). Its docs don't say whether a key is
+// kept after a request it refused or failed, so that refusal counts as sent
+// only when an earlier try under the key got no answer at all, which the
+// record marks (`unanswered`): it may have gone. Otherwise the week waits for
+// the key to lapse, and goes then. One still being sent by another invocation
+// (concurrent_idempotent_requests, a cron delivered twice) is left to it.
 //
 // BROUGHT UP TO DATE FIRST. The snapshot fetches balances, not transactions,
 // which the app brings in when it is opened. So each due summary first brings
@@ -42,7 +47,11 @@
 // a time, at most two a second (Resend's default limit), and a 429 is waited
 // out once when its Retry-After is short. Whatever doesn't fit, and
 // everything after a failure of the email service itself, waits for the next
-// run, unrecorded.
+// run, unrecorded. A step that runs out of time says which, and how long it
+// had, in the log. A sync that ran out of time is still going: the run waits
+// for those, as long as its deadline allows (STRAGGLERS_MS at most), before
+// it ends, so none is left to write an older state once a later request
+// wakes the function again. The next sync puts right one that outlives that.
 //
 // WHO GETS IT: whom the connection notices go to (lib/notice-recipients.ts):
 // the verified owners of the container, never a demo account, and with the
@@ -68,6 +77,7 @@ import { weeklySettingStore, weeklyStateStore, type WeeklyState } from './store'
 import type { WeeklySetting } from './settings';
 import { dueSendDay, todayIn } from './week';
 import { gatherWeekly } from './gather';
+import { isUnread, type WeeklyFacts } from './content';
 import { checkedSummary, composeWeekly, FigureError } from './compose';
 import { linkExpiry, linkToken, newLinkKey, oneClickUrl, pageUrl } from './unsubscribe';
 
@@ -79,6 +89,8 @@ export const SYNC_TIMEOUT_MS = 20_000;
 export const GATHER_TIMEOUT_MS = 15_000;
 /** How many containers' settings are read at once. */
 const SETTINGS_AT_ONCE = 5;
+/** The longest the run waits, before it ends, for syncs that ran out of time. */
+export const STRAGGLERS_MS = 15_000;
 
 /** What became of a container's summary this run: none due, sent, mail off,
  *  no APP_URL, nobody to send it to, failed, deferred for want of time or
@@ -107,13 +119,25 @@ export type WeeklyRunOptions = {
 };
 
 const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
-const nameOf = (err: unknown) => (err instanceof Error ? err.name : typeof err);
+
+/** A step that ran out of time: its message says which, and how long it had,
+ *  and nothing else, so the log can carry it whole. */
+export class StepTimeoutError extends Error {
+  constructor(what: string, ms: number) {
+    super(`${what} took longer than ${ms} ms`);
+    this.name = 'StepTimeoutError';
+  }
+}
+
+/** What the log says of an error: a step's timeout whole, otherwise only its
+ *  name, which carries nothing of the person's. */
+const nameOf = (err: unknown) => (err instanceof StepTimeoutError ? err.message : err instanceof Error ? err.name : typeof err);
 
 /** Rejects after `ms`, so a slow step can't hold up the daily run. */
 function within<T>(p: Promise<T>, ms: number, what: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => reject(new Error(`${what} took longer than ${ms} ms`)), ms);
+    timer = setTimeout(() => reject(new StepTimeoutError(what, ms)), ms);
   });
   return Promise.race([p, timeout]).finally(() => clearTimeout(timer));
 }
@@ -137,11 +161,21 @@ export async function ensureState(ctx: Ctx): Promise<WeeklyState> {
   return state!;
 }
 
-/** Records that the week's summary went, unless a later one is recorded. */
-export async function recordSent(ctx: Ctx, sendDay: string, at: number): Promise<void> {
+/** Records that the week's summary went, unless a later one is recorded,
+ *  with the goals it found at their target (`goals`, null when it couldn't
+ *  read them: those told before stay told). */
+export async function recordSent(ctx: Ctx, sendDay: string, at: number, goals: readonly string[] | null = null): Promise<void> {
   await weeklyStateStore.update(ctx, (current) =>
-    current === null || (current.sent !== null && current.sent >= sendDay) ? current : { ...current, sent: sendDay, sent_at: new Date(at).toISOString() }
+    current === null || (current.sent !== null && current.sent >= sendDay)
+      ? current
+      : { ...current, sent: sendDay, sent_at: new Date(at).toISOString(), unanswered: null, ...(goals ? { goals_told: [...goals] } : {}) }
   );
+}
+
+/** Marks the week as sent without an answer: it may have gone (see ONE A
+ *  WEEK, NEVER TWICE). */
+async function markUnanswered(ctx: Ctx, sendDay: string): Promise<void> {
+  await weeklyStateStore.update(ctx, (current) => (current === null ? current : { ...current, unanswered: sendDay }));
 }
 
 /** The links and headers that turn a summary off (lib/weekly-summary/unsubscribe.ts). */
@@ -153,7 +187,7 @@ export function stopLinks(link: string, container: ContainerId, key: string, now
   };
 }
 
-type Due = { ctx: Ctx; setting: WeeklySetting; zone: string; sendDay: string };
+type Due = { ctx: Ctx; setting: WeeklySetting; zone: string; sendDay: string; state: WeeklyState | null };
 
 /** `fn` over every item, at most `limit` at a time. `fn` must not throw. */
 async function inPool<T>(items: T[], limit: number, fn: (item: T) => Promise<void>): Promise<void> {
@@ -204,7 +238,7 @@ export async function sendWeeklySummaries(
       }
       const state = await weeklyStateStore.get(ctx);
       const sendDay = dueSendDay(today, setting.weekday, state?.sent ?? null, todayIn(Date.parse(setting.updated_at), zone));
-      if (sendDay) found.push({ ctx, setting, zone, sendDay });
+      if (sendDay) found.push({ ctx, setting, zone, sendDay, state });
     } catch (err) {
       const unreadable = err instanceof StoredDataUnreadableError;
       console.error(`Weekly summary: the setting or record of container ${c.id} could not be read, so no summary goes for it.`, nameOf(err));
@@ -243,6 +277,8 @@ export async function sendWeeklySummaries(
 
   let stopped = false;
   let sent = 0;
+  // Syncs that ran out of time, still going (see TIME).
+  const stragglers: Promise<unknown>[] = [];
   for (const [i, d] of due.entries()) {
     const c = d.ctx.container;
     if (stopped || clock() + SEND_INTERVAL_MS + syncTimeout + gatherTimeout + lookupTimeout + sendTimeout > deadline) {
@@ -253,16 +289,24 @@ export async function sendWeeklySummaries(
     }
     // Brought up to date first; a failure only leaves it saying how fresh
     // its transactions are.
-    await within(sync(d.ctx), syncTimeout, 'Bringing transactions up to date').catch((err) =>
-      console.warn(`Weekly summary: the transactions of container ${c} could not all be brought up to date; its summary says how fresh they are.`, nameOf(err))
-    );
+    const syncing = Promise.resolve().then(() => sync(d.ctx));
+    await within(syncing, syncTimeout, 'Bringing transactions up to date').catch((err) => {
+      if (err instanceof StepTimeoutError) stragglers.push(syncing.catch(() => {}));
+      console.warn(`Weekly summary: the transactions of container ${c} could not all be brought up to date; its summary says how fresh they are.`, nameOf(err));
+    });
 
     let mail: Mail;
+    let facts: WeeklyFacts;
+    let state: WeeklyState;
     try {
-      const facts = await within(gather(d.ctx, { now, timeZone: d.zone, weekday: d.setting.weekday, sendDay: d.sendDay }), gatherTimeout, 'Reading the summary');
-      const state = await ensureState(d.ctx);
+      facts = await within(
+        gather(d.ctx, { now, timeZone: d.zone, weekday: d.setting.weekday, sendDay: d.sendDay, goalsTold: d.state?.goals_told ?? null }),
+        gatherTimeout,
+        'Reading the summary'
+      );
+      state = await ensureState(d.ctx);
       const stop = stopLinks(link, c, state.key, now);
-      const summary = checkedSummary(composeWeekly(facts, { link, unsubscribe: stop.page, requested: false, enabled: true, now }));
+      const summary = checkedSummary(composeWeekly(facts, { link, unsubscribe: stop.page, requested: false, schedule: d.setting.weekday, now }));
       const to = (await within(recipients(d.ctx), lookupTimeout, 'Finding the recipient')).filter(isEmailAddress);
       if (to.length === 0) {
         console.warn(`Weekly summary: nobody to email for container ${c} (see NOTIFY_EMAIL in docs/deployment.md).`);
@@ -287,8 +331,10 @@ export async function sendWeeklySummaries(
         result = await attempt(mail);
       }
     }
-    // Resend refusing the key for another email says one went under it.
-    const already = result instanceof MailError && result.status === 409 && result.code === 'invalid_idempotent_request';
+    // Resend refusing the key for another email: one went under it, if an
+    // earlier try under it got no answer (see ONE A WEEK, NEVER TWICE).
+    const refusedKey = result instanceof MailError && result.status === 409 && result.code === 'invalid_idempotent_request';
+    const already = refusedKey && state.unanswered === d.sendDay;
     if (result instanceof MailError && result.status === 409 && result.code === 'concurrent_idempotent_requests') {
       outcomes.set(c, 'deferred');
       continue;
@@ -297,9 +343,19 @@ export async function sendWeeklySummaries(
       outcomes.set(c, 'off');
       continue;
     }
+    if (refusedKey && !already) {
+      console.error(`Weekly summary: the email service refused this week's key for container ${c}, and no earlier try under it went unanswered, so nothing is recorded; it goes once the key lapses, a day after it was first used.`);
+      outcomes.set(c, 'failed');
+      continue;
+    }
     if (result !== 'sent' && !already) {
+      const unanswered = !(result instanceof MailError) || result.status === null;
       console.error(`Weekly summary: the summary for container ${c} was not sent; trying again next run.`, result instanceof MailError ? result.message : nameOf(result));
       outcomes.set(c, 'failed');
+      // No answer at all: it may have gone, under its key (see ONE A WEEK).
+      if (unanswered) {
+        await markUnanswered(d.ctx, d.sendDay).catch((err) => console.error(`Weekly summary: a summary that got no answer could not be marked for container ${c}.`, nameOf(err)));
+      }
       // The email service itself failing: the rest wait for the next run.
       if (!(result instanceof MailError) || result.status === null || result.status === 429 || result.status >= 500) {
         stopped = true;
@@ -309,7 +365,7 @@ export async function sendWeeklySummaries(
     }
     if (already) console.log(`Weekly summary: the summary for container ${c} went before under this week's key; recorded now.`);
     try {
-      await recordSent(d.ctx, d.sendDay, now);
+      await recordSent(d.ctx, d.sendDay, now, isUnread(facts.goals) ? null : facts.goals.complete);
     } catch (err) {
       // The key keeps a resend within a day from arriving twice.
       console.error(`Weekly summary: a sent summary could not be recorded for container ${c}.`, nameOf(err));
@@ -318,5 +374,13 @@ export async function sendWeeklySummaries(
     outcomes.set(c, 'sent');
   }
   if (sent > 0) console.log(`Weekly summary: emailed ${sent} summar${sent === 1 ? 'y' : 'ies'}.`);
+  if (stragglers.length > 0) {
+    const room = Math.min(STRAGGLERS_MS, Math.max(0, deadline - clock()));
+    const ended = await within(Promise.all(stragglers), room, 'Finishing the syncs that ran out of time').then(
+      () => true,
+      () => false
+    );
+    if (!ended) console.warn(`Weekly summary: ${stragglers.length} sync(s) that ran out of time were still going when the run ended; the next sync puts right what they write.`);
+  }
   return outcomes;
 }

@@ -2,17 +2,21 @@
 
 // The Weekly summary card, under Manage on the Accounts tab (mounted in
 // components/Dashboard.tsx): whether the weekly summary email is on, and a
-// sheet to turn it on or off, choose its day and time zone, see exactly what
-// this week's would say, and send one now (app/api/weekly-summary,
+// sheet to turn it on or off, choose its day and time zone, see what this
+// week's would say, and send one now (app/api/weekly-summary,
 // lib/weekly-summary/).
 //
 // OFF UNTIL TURNED ON. The time zone is this device's when it is turned on and
 // none was saved before, and can be changed: the week is the seven days before
-// the day it comes, on that zone's calendar.
+// the day it comes, on that zone's calendar. When it comes there is worked out
+// from the daily job's hour (lib/weekly-summary/when.ts), so the card and the
+// sheet say the hour it really comes in that zone.
 //
-// THE PREVIEW is the server's: the same text the daily job would send this
-// week, for the day and zone the sheet shows, saved or not. Only the link to
-// turn it off is left out, since each email's is made for it.
+// THE PREVIEW is the server's: what the daily job would send this week if it
+// went now, for the day and zone the sheet shows, saved or not, with the
+// summary on. The one that goes is worked out when it goes, after a sync, so
+// it can say more, and the link to turn it off is made for each email: the
+// sheet says both.
 //
 // A setting that can't be read is said, and nothing is offered to save over
 // it (the route refuses that too, lib/repo.ts).
@@ -20,6 +24,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { DEFAULT_WEEKDAY, SENDS_NOW_PER_DAY, WEEKDAY_NAMES, type Weekday, type WeeklySetting } from '@/lib/weekly-summary/settings';
+import { RUN_TEXT, nextDelivery, sameClock, timeOfDay } from '@/lib/weekly-summary/when';
 
 export type Loaded =
   | { kind: 'loading' }
@@ -59,9 +64,21 @@ export function statusLine(setting: WeeklySetting | null): string {
 /** A time zone's name as a person reads it: "America/New York". */
 export const zoneName = (zone: string) => zone.replaceAll('_', ' ');
 
-/** When it comes, in full, under the card's description. */
-export function whenLine(setting: WeeklySetting | null): string | null {
-  return setting?.enabled ? `Every ${WEEKDAY_NAMES[setting.weekday]}, on ${zoneName(setting.time_zone)} time.` : null;
+/** When it comes, in full, under the card's description: the day, and the
+ *  hour the daily job's run falls at in its zone. */
+export function whenLine(setting: WeeklySetting | null, now: number = Date.now()): string | null {
+  if (!setting?.enabled) return null;
+  const at = nextDelivery(setting.weekday, setting.time_zone, now);
+  return `Every ${WEEKDAY_NAMES[setting.weekday]}${at ? ` ${timeOfDay(at, true)}` : ''}, ${zoneName(setting.time_zone)} time.`;
+}
+
+/** What the sheet says of when it comes: the job's hour, and what that is on
+ *  the chosen day in the chosen zone. */
+export function comesText(weekday: Weekday, zone: string, now: number = Date.now()): string {
+  const at = nextDelivery(weekday, zone, now);
+  const when = at ? `${WEEKDAY_NAMES[weekday]}s ${timeOfDay(at)}` : null;
+  const here = when ? ` In ${zoneName(zone)}, that is ${when}${when.endsWith('.') ? '' : '.'}` : '';
+  return `It comes with Nya’s daily update, which runs once a day for everyone, at ${RUN_TEXT}, a little later if the update is held up.${here}`;
 }
 
 /** The draft the sheet opens with: what is saved, or Monday in this device's zone. */
@@ -243,6 +260,8 @@ export function WeeklySummarySheetBody(props: {
   onSendNow: () => void;
   zones: string[];
   device: string;
+  /** For tests: the time the sheet reads when the summary comes. */
+  now?: number;
 }) {
   const { draft, onDraft, saved, preview } = props;
   const unchanged = saved ? saved.enabled === draft.enabled && saved.weekday === draft.weekday && saved.time_zone === draft.time_zone : !draft.enabled;
@@ -279,13 +298,13 @@ export function WeeklySummarySheetBody(props: {
           ))}
         </select>
       </label>
-      {draft.time_zone !== props.device && (
+      {!sameClock(draft.time_zone, props.device, props.now) && (
         <button className="link-btn" onClick={() => set({ time_zone: props.device })} disabled={props.saving}>
           Use this device’s time zone ({zoneName(props.device)})
         </button>
       )}
       <p className="panel-note">
-        Each summary covers the seven days before its day, on this time zone’s calendar, and comes after Nya’s daily update that morning.
+        Each summary covers the seven days before its day, on this time zone’s calendar. {comesText(draft.weekday, draft.time_zone, props.now)}
       </p>
       {props.demo && <p className="stale-note">Demo accounts can’t get the weekly summary: everyone who tries the demo shares its data.</p>}
       <button onClick={props.onSave} disabled={props.saving || unchanged}>
@@ -301,8 +320,11 @@ export function WeeklySummarySheetBody(props: {
           <p className="weekly-preview-subject">{preview.subject}</p>
           <pre className="weekly-preview">{preview.text}</pre>
           <p className="panel-note">
-            Exactly what the email says, but for its link to turn the summary off, which is made for each email. Your email provider can read it, as it
-            can any email: the names of your budgets, bills, goals and banks are in it, and a name with a number in it is left out.
+            What the summary would say if it went now, for the day and time zone above, with the summary on. The one that goes is worked out when it
+            goes, after your transactions are brought up to date, so it can say more, and its link to turn the summary off is made for each email. Your
+            email provider can read it, as it can any email: it names your budgets, goals, bills, planned expenses and banks. A name of yours with a
+            digit, a currency or percent sign, a number or a currency written as an English word, or a letter outside the Latin alphabet in it is
+            counted instead of named; a bank’s, only for a digit or a currency or percent sign.
           </p>
         </>
       )}

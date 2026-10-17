@@ -5180,3 +5180,9 @@ button.cash-flow-show {
   border-radius: 12px;
   background: var(--bg);
 }
+
+/* Weekly summary: the unsubscribe page's live region takes no room while
+   it is empty, and stays in place, so its words are announced when they come. */
+.unsubscribe-card > p[role='status']:empty {
+  margin: 0;
+}

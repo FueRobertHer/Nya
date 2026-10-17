@@ -62,7 +62,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or whether you spent more or less than in a usual week and the names of your budgets and categories, your goals, your banks and the merchants your bills are from, never a balance, an amount or an account number.',
+          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.',
         ],
       ] as [string, string][])
     : []),
@@ -346,10 +346,15 @@ export default function SecurityPage() {
         <InfoSection title="The weekly summary">
           <p>
             If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a
-            balance, an amount, a percentage or an account number. It does name your budgets and categories, your goals,
-            your banks and the merchants your bills are from, which the email service and your own email provider can read,
-            as they can any email; a name with a number in it is left out. Before it goes, the whole email is checked again,
-            and one that would carry an amount or an account number isn’t sent.
+            balance, an amount, a percentage or an account number. It does name your budgets and categories over or close to
+            their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days, and
+            the banks that need you or whose transactions may be missing, which the email service and your own email provider
+            can read, as they can any email. A name of yours with a digit, a currency or percent sign, a number or a currency
+            written as an English word (such as fifty, thousand or dollars), or a letter outside the Latin alphabet in it is
+            counted instead of named; a bank’s name, which comes from Plaid or SimpleFIN, only when it has a digit or a
+            currency or percent sign. Before it goes, the whole email is checked again, and it isn’t sent if, outside its
+            links, its own wording and the banks’ names, it holds a number other than one of its days or counts, a currency or
+            percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.
           </p>
           <p>
             Each one has a link that turns it off without signing in. It works for {LINK_DAYS} days, can do nothing but turn

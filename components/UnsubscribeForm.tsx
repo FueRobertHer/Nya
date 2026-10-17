@@ -48,18 +48,15 @@ export default function UnsubscribeForm() {
   return <UnsubscribeView token={token} phase={phase} onTurnOff={turnOff} />;
 }
 
-/** What the page shows, for the address it was opened with. */
+/** What the page shows, for the address it was opened with. What came of
+ *  the button is said in one live region, there from the first render, so a
+ *  screen reader announces it when its words change (one that appears
+ *  already holding them often isn't). */
 export function UnsubscribeView({ token, phase, onTurnOff }: { token: string | null | undefined; phase: UnsubscribePhase; onTurnOff: () => void }) {
-  if (phase.kind === 'done') {
-    return (
-      <section className="card info-section" aria-live="polite">
-        <p className="status-note">{phase.message}</p>
-      </section>
-    );
-  }
+  const said = phase.kind === 'done' || phase.kind === 'error' ? phase.message : '';
   return (
     <section className="card info-section unsubscribe-card">
-      {token === undefined ? (
+      {phase.kind === 'done' ? null : token === undefined ? (
         <p className="panel-note">Loading…</p>
       ) : token === null || token === '' ? (
         <p className="panel-note">
@@ -72,9 +69,11 @@ export function UnsubscribeView({ token, phase, onTurnOff }: { token: string | n
           <button onClick={onTurnOff} disabled={phase.kind === 'busy'}>
             {phase.kind === 'busy' ? 'Turning it off…' : 'Turn off the weekly summary'}
           </button>
-          {phase.kind === 'error' && <div className="error">{phase.message}</div>}
         </>
       )}
+      <p role="status" className={said ? (phase.kind === 'error' ? 'error' : 'status-note') : undefined}>
+        {said}
+      </p>
     </section>
   );
 }

@@ -7,6 +7,7 @@ import {
   goalsFact,
   levelOf,
   median,
+  moneyOut,
   monthsFact,
   spendingFact,
   uncategorizedFact,
@@ -14,13 +15,28 @@ import {
   type SpendingInput,
   type WeeklyFacts,
 } from '@/lib/weekly-summary/content';
-import { checkedSummary, composeWeekly, dayText, figuresIn, FigureError, namesText, safeName, weekText, type ComposeOptions } from '@/lib/weekly-summary/compose';
+import {
+  checkedSummary,
+  composeWeekly,
+  dayText,
+  figuresIn,
+  FigureError,
+  namesText,
+  safeBankName,
+  safeName,
+  spellsFigure,
+  tidyName,
+  weekText,
+  type ComposeOptions,
+} from '@/lib/weekly-summary/compose';
 import { isWeeklySetting, parseWeeklyChoice, defaultSetting } from '@/lib/weekly-summary/settings';
 import { addDays, detectRecurring, type RecurringRow } from '@/lib/recurring';
 import { budgetsInMonth, setRollover, startMonths, NO_COVERAGE_GAPS, type CoverageFacts } from '@/lib/rollover';
 import { indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { Budgets } from '@/lib/budget-set';
 import { categoriesFor } from './category-fixture';
+import { summarize } from '@/lib/totals';
+import { leftOutByCurrency } from '@/lib/spending';
 
 // The weekly summary's pure parts (lib/weekly-summary/): which week a summary
 // covers and when it is due on the person's own calendar (midnight, a change
@@ -224,6 +240,35 @@ describe('spending against a usual week', () => {
     expect(spend([...base, row('2026-10-06', 900, { excluded: null })])).toMatchObject({ level: 'much_higher' });
   });
 
+  test('counts split parts, group nets and a group’s transactions counted elsewhere as every total does', () => {
+    // The week's rows as the read layer finishes them (lib/split-rows.ts):
+    // a split transaction's parts, one of them left out on its own; a group
+    // whose net is a refund; a transaction of a group counted on a day
+    // before what was read; and a split transaction in another currency.
+    const week = [
+      row('2026-10-06', 70, { split_of: 't-costco', split_index: 0, split_count: 2 }),
+      row('2026-10-06', 30, { split_of: 't-costco', split_index: 1, split_count: 2, excluded: true }),
+      row('2026-10-07', -40, { group_members: [{ transaction_id: 't-dinner' }, { transaction_id: 't-paid-back' }] }),
+      row('2026-10-08', 55, { group_outside: { id: 'g-old', name: 'Trip', date: '2025-01-01', category_id: 'c', here: 1, missing: 0 } }),
+      row('2026-10-09', 20, { split_of: 't-paris', split_index: 0, split_count: 2, iso_currency_code: 'EUR' }),
+      row('2026-10-09', 30, { split_of: 't-paris', split_index: 1, split_count: 2, iso_currency_code: 'EUR' }),
+      row('2026-10-10', 25),
+    ];
+    const inWeek = (d: string) => d >= '2026-10-05' && d <= '2026-10-11';
+    // The money out the summary weighs is the totals' own, to the cent.
+    expect(moneyOut(week, '2026-10-05', '2026-10-11', 'USD')).toBe(95);
+    expect(moneyOut(week, '2026-10-05', '2026-10-11', 'USD')).toBe(summarize(week as never, inWeek, 'USD').money_out);
+    // What it leaves out for its currency is counted in transactions: the
+    // two parts of the one in Paris are one.
+    expect(leftOutByCurrency(week, 'USD')).toEqual([{ currency: 'EUR', count: 1 }]);
+    // So against usual weeks of 95, the week is the same, and says EUR.
+    const usual = weeks([95, 95, 95, 95, 95, 95, 95, 95], 0);
+    expect(spend([...usual, ...week])).toEqual({ kind: 'compared', level: 'same', left_out: ['EUR'] });
+    // Were the part left out on its own counted, or the transaction counted
+    // through its group, the week would read higher than it is.
+    expect(moneyOut(week.map((t) => ({ ...t, excluded: undefined, group_outside: undefined })), '2026-10-05', '2026-10-11', 'USD')).toBe(180);
+  });
+
   test('says which currencies it couldn’t count, and converts nothing', () => {
     const rows = [...weeks([100, 100, 100, 100, 100, 100, 100, 100], 100), row('2026-10-08', 5000, { iso_currency_code: 'EUR' })];
     expect(spend(rows)).toEqual({ kind: 'compared', level: 'same', left_out: ['EUR'] });
@@ -383,15 +428,27 @@ describe('bills due in the next seven days', () => {
 // ---- Goals, connections, months ----
 
 describe('goals', () => {
+  const goals = [
+    { id: 'g-fund', name: 'Emergency fund', archived: false, state: 'tracked', status: 'complete' as const },
+    { id: 'g-trip', name: 'Trip', archived: false, state: 'tracked', status: 'behind' as const },
+    { id: 'g-old', name: 'Old trip', archived: true, state: 'tracked', status: 'behind' as const },
+    { id: 'g-car', name: 'Car', archived: false, state: 'tracked', status: 'on_track' as const },
+    { id: 'g-hidden', name: 'Hidden one', archived: false, state: 'hidden', status: null },
+  ];
+
   test('at their target and behind, as the Goals card says, never archived or untracked ones', () => {
-    const goals = [
-      { name: 'Emergency fund', archived: false, state: 'tracked', status: 'complete' as const },
-      { name: 'Trip', archived: false, state: 'tracked', status: 'behind' as const },
-      { name: 'Old trip', archived: true, state: 'tracked', status: 'behind' as const },
-      { name: 'Car', archived: false, state: 'tracked', status: 'on_track' as const },
-      { name: 'Hidden one', archived: false, state: 'hidden', status: null },
-    ];
-    expect(goalsFact(goals)).toEqual({ reached: ['Emergency fund'], behind: ['Trip'] });
+    expect(goalsFact(goals)).toEqual({ reached: ['Emergency fund'], behind: ['Trip'], complete: ['g-fund'] });
+  });
+
+  test('one at its target is told of once, behind ones every week', () => {
+    // Told last week: not again, though it is still there; still behind: again.
+    expect(goalsFact(goals, ['g-fund'])).toEqual({ reached: [], behind: ['Trip'], complete: ['g-fund'] });
+    // One that slipped below its target and reached it again is news again.
+    const slipped = goalsFact(goals.map((g) => (g.id === 'g-fund' ? { ...g, status: 'on_track' as const } : g)), ['g-fund']);
+    expect(slipped.complete).toEqual([]);
+    expect(goalsFact(goals, slipped.complete).reached).toEqual(['Emergency fund']);
+    // Before any summary went: every one at its target is news.
+    expect(goalsFact(goals, null).reached).toEqual(['Emergency fund']);
   });
 });
 
@@ -466,7 +523,7 @@ const quietFacts = (over: Partial<WeeklyFacts> = {}): WeeklyFacts => ({
   spending: { kind: 'compared', level: 'same', left_out: [] },
   budgets: null,
   bills: [],
-  goals: { reached: [], behind: [] },
+  goals: { reached: [], behind: [], complete: [] },
   connections: [],
   months: [],
   uncategorized: 0,
@@ -482,7 +539,7 @@ const richFacts = (over: Partial<WeeklyFacts> = {}): WeeklyFacts =>
       { name: 'Car insurance', day: '2026-10-15', late: false, planned: true },
       { name: 'Spotify', day: '2026-10-10', late: true, planned: false },
     ],
-    goals: { reached: ['Emergency fund'], behind: ['Trip 2027', 'New car'] },
+    goals: { reached: ['Emergency fund'], behind: ['Trip 2027', 'New car'], complete: ['g-fund'] },
     connections: [
       { name: 'Chase', state: 'needs_reauth', ends_at: null },
       { name: 'Ally', state: 'reconnect_soon', ends_at: '2026-10-20T03:00:00.000Z' },
@@ -494,22 +551,88 @@ const richFacts = (over: Partial<WeeklyFacts> = {}): WeeklyFacts =>
   });
 const LINK = 'https://nya.example.com';
 const STOP = `${LINK}/unsubscribe?t=0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b.20270110.${'A'.repeat(43)}`;
-const opts = (over: Partial<ComposeOptions> = {}): ComposeOptions => ({ link: LINK, unsubscribe: STOP, requested: false, enabled: true, now: NOW, ...over });
+const opts = (over: Partial<ComposeOptions> = {}): ComposeOptions => ({ link: LINK, unsubscribe: STOP, requested: false, schedule: 1, now: NOW, ...over });
+/** The check, as the senders run it on a composed summary. */
+const figures = (s: { subject: string; text: string; send_day?: string; banks?: string[] }) => figuresIn([s.subject, s.text], { sendDay: s.send_day ?? '2026-10-12', banks: s.banks });
+/** The check over one bit of text, in a week of October 2026. */
+const figuresOf = (text: string) => figuresIn([text], { sendDay: '2026-10-12' });
 
 describe('names', () => {
   test('carried only without a digit or a currency sign; one line, not too long', () => {
     expect(safeName('Groceries')).toBe('Groceries');
     expect(safeName('  Dining\nout  ')).toBe('Dining out');
-    for (const bad of ['Rent 1500', 'Transfer to 4821', 'Goal 5k', '$ Treats', '€uro trip', 'Trip ２０２７', 'Half ½', '']) expect([bad, safeName(bad)]).toEqual([bad, null]);
+    expect(safeName('Café crème')).toBe('Café crème');
+    for (const bad of ['Rent 1500', 'Transfer to 4821', 'Goal 5k', '$ Treats', '€uro trip', 'Trip ２０２７', 'Half ½', 'Ⅻ club', '①', '% off', 'Save 10%', '']) {
+      expect([bad, safeName(bad)]).toEqual([bad, null]);
+    }
     expect(safeName('word '.repeat(30))!.length).toBeLessThanOrEqual(60);
+  });
+
+  test('never one that spells out a number or a currency, in any case, plural or run together', () => {
+    for (const bad of [
+      'Fifty dollars a week',
+      'Ten thousand for the car',
+      'Rent: one thousand five hundred',
+      'Half my pay',
+      'Ten grand',
+      'Groceries (max fifty)',
+      'Emergency fund three months',
+      'Million dollar house',
+      'A dollar a day',
+      'A buck a day',
+      'TWENTY FIVE',
+      'Twenties for the kids',
+      'Fivehundred',
+      'fiftybucks',
+      'Tenk for the trip',
+      'Save hundreds',
+      'Pennies jar',
+      'fifteen percent',
+      'Fifteen per cent',
+      'Cinquante euros',
+      'Cincuenta dólares',
+      'Mil pesos',
+      'Twenty quid',
+      'Forty kronor',
+    ]) {
+      expect([bad, safeName(bad)]).toEqual([bad, null]);
+    }
+    // Words that only look like them.
+    for (const fine of ['Often', 'Tension', 'Phone bill', 'Someone else', 'Quarterly taxes', 'Starbucks', 'Kmart', 'Real estate', 'Network', 'Done', 'Bones']) {
+      expect([fine, safeName(fine)]).toEqual([fine, fine]);
+    }
+    expect(spellsFigure('the next seven days')).toBe(true);
+    expect(spellsFigure('Groceries and Dining out')).toBe(false);
+  });
+
+  test('never one with letters outside the Latin alphabet: no list of words can read them', () => {
+    for (const bad of ['五百元', 'Продукты', 'Οικογένεια', 'خمسون', 'Rent 五']) expect([bad, safeName(bad)]).toEqual([bad, null]);
+  });
+
+  test('control and format characters out, so nothing reorders or hides what is around it', () => {
+    expect(tidyName('Chase \u202Eknab')).toBe('Chase knab');
+    expect(safeName('Dining\u200Bout')).toBe('Diningout');
+    expect(safeName('\u2066Netflix\u2069 \u200Ebill\u200F')).toBe('Netflix bill');
+    expect(safeName('\u200B')).toBeNull();
+  });
+
+  test('a bank’s name, from Plaid or SimpleFIN, is held to digits and currency and percent signs only', () => {
+    for (const bank of ['Capital One', 'Five Star Bank', 'Dollar Bank', 'Fifth Third Bank']) expect([bank, safeBankName(bank)]).toEqual([bank, bank]);
+    for (const bad of ['1st Bank', '$ Bank', '']) expect([bad, safeBankName(bad)]).toEqual([bad, null]);
+    expect(safeBankName('Chase\u202E')).toBe('Chase');
   });
 
   test('a list says the others by count', () => {
     expect(namesText(['Groceries'], 'budget')).toBe('Groceries');
     expect(namesText(['Groceries', 'Dining out'], 'budget')).toBe('Groceries and Dining out');
     expect(namesText(['Groceries', 'Rent 1500'], 'budget')).toBe('Groceries and 1 other');
+    expect(namesText(['Groceries', 'Fifty a week'], 'budget')).toBe('Groceries and 1 other');
     expect(namesText(['Rent 1500', 'Car 2'], 'budget')).toBe('2 budgets');
     expect(namesText(['A', 'B', 'C', 'D', 'E', 'F', 'G'], 'budget')).toBe('A, B, C, D, E and 2 others');
+    // One name, however it is spaced or cased, is one.
+    expect(namesText(['Dining out', 'Dining  out', 'Dining\nout', 'dining out'], 'budget')).toBe('Dining out');
+    // One that is nothing once tidied is still a budget.
+    expect(namesText(['\u200B'], 'budget')).toBe('1 budget');
   });
 
   test('days and weeks in words, with years only across one', () => {
@@ -533,7 +656,9 @@ describe('the summary’s words', () => {
     expect(text).toContain('Goals behind their target date: New car and 1 other.');
     expect(text).toContain('- Chase needs reconnecting.');
     expect(text).toContain('- Reconnect Ally soon: Plaid says its connection ends around Monday, October 19.');
-    expect(text).toContain('- A bank needs connecting again.');
+    // A bank that can't be repaired, by what is true whether or not
+    // connecting it again would help, which the record doesn't say.
+    expect(text).toContain("- A bank's connection can't be repaired.");
     expect(text).toContain("October may be missing transactions: Chase hasn't synced since Thursday, October 8 and whether you excluded 3 transactions couldn't be read.");
     expect(text).toContain('2 transactions from SimpleFIN this week have no category, so they count as spending or income until you categorize them.');
     expect(text).toContain(`Open Nya to see the figures: ${LINK}/`);
@@ -543,18 +668,47 @@ describe('the summary’s words', () => {
   });
 
   test('never carries a figure: no amount, no balance, no account number, whatever the names hold', () => {
-    for (const f of [richFacts(), quietFacts(), richFacts({ send_day: '2027-01-04', first: '2026-12-28', last: '2027-01-03', today: '2027-01-05' })]) {
-      for (const o of [opts(), opts({ requested: true }), opts({ requested: true, enabled: false, unsubscribe: null })]) {
-        const { subject, text } = composeWeekly(f, o);
-        expect(figuresIn(subject, text)).toEqual([]);
+    const newYear = { send_day: '2027-01-04', first: '2026-12-28', last: '2027-01-03', today: '2027-01-05' };
+    const spelled = richFacts({
+      budgets: { month: '2026-10', running: true, over: ['Fifty dollars a week', 'Groceries'], close: ['Ten grand'] },
+      goals: { reached: ['One million'], behind: ['Ten thousand for the car'], complete: [] },
+      bills: [{ name: 'Rent fifteen hundred', day: '2026-10-13', late: false, planned: true }],
+    });
+    for (const f of [richFacts(), quietFacts(), richFacts(newYear), spelled]) {
+      for (const o of [opts(), opts({ requested: true }), opts({ requested: true, schedule: null, unsubscribe: null })]) {
+        const composed = composeWeekly(f, o);
+        const { subject, text } = composed;
+        expect(figures(composed)).toEqual([]);
         // Not any fragment of a name with a figure, either.
-        for (const leak of ['1500', '4821', '2027', '$', '1st']) expect([leak, `${subject}\n${text}`.replace(/https:\S+/g, '').replace(/January \d+, 2027/g, '').includes(leak)]).toEqual([leak, false]);
-        expect(checkedSummary({ subject, text })).toEqual({ subject, text });
+        const bare = `${subject}\n${text}`.replace(/https:\S+/g, '').replace(/January \d+, 2027/g, '');
+        for (const leak of ['1500', '4821', '2027', '$', '1st', 'Fifty', 'thousand', 'grand', 'million', 'fifteen']) expect([leak, bare.includes(leak)]).toEqual([leak, false]);
+        expect(checkedSummary(composed)).toEqual({ subject, text });
       }
     }
   });
 
-  test('the check finds every kind of figure, outside dates and links', () => {
+  test('a name that spells out an amount is counted, in the body and in the subject', () => {
+    const one = composeWeekly(
+      quietFacts({
+        budgets: { month: '2026-10', running: true, over: ['Fifty dollars a week'], close: [] },
+        goals: { reached: [], behind: ['Ten thousand for the car'], complete: [] },
+      }),
+      opts()
+    );
+    expect(one.subject).toBe('Your week in Nya: 1 budget over, 1 goal behind');
+    expect(one.text).toContain('Over budget in October: 1 budget.');
+    expect(one.text).toContain('Goals behind their target date: 1 goal.');
+    expect(one.text).not.toContain('Fifty');
+    expect(one.text).not.toContain('thousand');
+    // A bank's name is its bank's: named, though it holds a number word.
+    const bank = composeWeekly(quietFacts({ connections: [{ name: 'Capital One', state: 'needs_reauth', ends_at: null }] }), opts());
+    expect(bank.subject).toBe('Your week in Nya: Capital One needs reconnecting');
+    expect(bank.text).toContain('- Capital One needs reconnecting.');
+    expect(bank.banks).toEqual(['Capital One']);
+    expect(figures(bank)).toEqual([]);
+  });
+
+  test('the check finds every kind of figure, outside its own days, counts and links', () => {
     const cases: [string, string][] = [
       ['You spent $120 this week.', 'a currency sign by a number'],
       ['You spent 120 € this week.', 'a currency sign by a number'],
@@ -570,10 +724,87 @@ describe('the summary’s words', () => {
       ['Rent was 1500', 'a number of three digits or more'],
       ['Spent ٣ times', 'a digit that is not ASCII'],
     ];
-    for (const [text, kind] of cases) expect([text, figuresIn(text)]).toEqual([text, expect.arrayContaining([kind])]);
-    // Its own words pass: days, a year across one, counts, its links.
-    expect(figuresIn('Your week in Nya: 2 bills due', 'Monday, December 28, 2026 to Sunday, January 3, 2027. 12 transactions. October 2025 may be missing some.', STOP)).toEqual([]);
-    expect(() => checkedSummary({ subject: 'Your week', text: 'Spent $5' })).toThrow(FigureError);
+    for (const [text, kind] of cases) expect([text, figuresOf(text)]).toEqual([text, expect.arrayContaining([kind])]);
+    expect(() => checkedSummary({ subject: 'Your week', text: 'Spent $5', send_day: '2026-10-12', banks: [] })).toThrow(FigureError);
+  });
+
+  test('anything but its own days and counts is refused: every figure a blocklist missed', () => {
+    for (const text of [
+      '$1,234',
+      '1.234,56 €',
+      '12k',
+      'USD 40',
+      '40 dollars',
+      '40 usd',
+      '40 kr',
+      'kr 40',
+      'Fr. 40',
+      '5 grand',
+      'forty dollars',
+      'Spent 40 at Target',
+      'Rent for May 1500',
+      'June 1234.56',
+      'Paid October 12, 2500 to Chase',
+      '1 500',
+      '12 345',
+      '£40',
+      '40p',
+      '€40',
+      '40€',
+      'R$40',
+      'CHF40',
+      'EUR 1,234',
+      '15%',
+      '15 %',
+      'fifteen percent',
+      '½',
+      'x1234',
+      'xx12',
+      'acct 4821',
+      'Account 4821',
+      '...4821',
+      'ending 4821',
+      '#21',
+      'No. 21',
+      'Card 21',
+      'Fifty dollars a week over budget',
+      '五百元',
+      '% off',
+      // A date as it never writes one: a day without its weekday, a weekday
+      // that isn't the date's, a year far from the send day's.
+      'October 12',
+      // (October 12 is a Sunday in 2025, a Monday in 2026, a Tuesday in 2027.)
+      'Wednesday, October 12',
+      'Monday, October 12, 1999',
+      'Monday, October 12, 2037',
+      'May 1500',
+      // A count of something it never counts.
+      '12 dollars',
+      '2 cards',
+    ]) {
+      expect([text, figuresOf(text).length > 0]).toEqual([text, true]);
+    }
+    // Its own words pass: days, a year where one is in another year, months,
+    // counts, the week in the subject, its links and the next seven days.
+    for (const own of [
+      'Your week in Nya: 2 bills due, 1 budget over',
+      'Monday, December 28, 2026 to Sunday, January 3, 2027.',
+      'Saturday, January 2, 2027',
+      'Monday, October 12',
+      'October 2025 may be missing transactions',
+      '12 transactions from SimpleFIN',
+      'Restaurants and 1 other. 3 goals behind. over 99 bills due. 2 connections need you. 2 other reasons.',
+      'Your week in Nya: October 5 to 11',
+      `Open Nya to see the figures: ${LINK}/ ${STOP}`,
+      'Bills due in the next seven days:',
+    ]) {
+      expect([own, figuresOf(own)]).toEqual([own, []]);
+    }
+    // A bank's name is left to its own rule; a name of the person's isn't.
+    expect(figuresIn(['Capital One needs reconnecting.'], { sendDay: '2026-10-12', banks: ['Capital One'] })).toEqual([]);
+    expect(figuresIn(['Capital One needs reconnecting.'], { sendDay: '2026-10-12' })).toEqual(['a number or a currency written as a word']);
+    // The week of a summary sent on New Year's Day is in the year before.
+    expect(figuresIn(['Your week in Nya: Friday, December 25 to Thursday, December 31.'], { sendDay: '2027-01-01' })).toEqual([]);
   });
 
   test('a quiet week says so', () => {
@@ -647,7 +878,7 @@ describe('the summary’s words', () => {
     expect(one.subject).toBe('Your week in Nya: Groceries over budget, 2 bills due');
     expect(composeWeekly(quietFacts({ connections: [{ name: 'Chase', state: 'needs_reauth', ends_at: null }] }), opts()).subject).toBe('Your week in Nya: Chase needs reconnecting');
     expect(composeWeekly(quietFacts({ connections: [{ name: 'Ally', state: 'reconnect_soon', ends_at: '2026-10-20T03:00:00.000Z' }] }), opts()).subject).toBe('Your week in Nya: reconnect Ally soon');
-    expect(composeWeekly(quietFacts({ goals: { reached: [], behind: ['Trip'] } }), opts()).subject).toBe('Your week in Nya: Trip behind');
+    expect(composeWeekly(quietFacts({ goals: { reached: [], behind: ['Trip'], complete: [] } }), opts()).subject).toBe('Your week in Nya: Trip behind');
     // A name that can't be carried is counted, in the subject too.
     expect(composeWeekly(quietFacts({ budgets: { month: '2026-10', running: true, over: ['Rent 1500'], close: [] } }), opts()).subject).toBe('Your week in Nya: 1 budget over');
   });
@@ -656,7 +887,13 @@ describe('the summary’s words', () => {
     const asked = composeWeekly(quietFacts(), opts({ requested: true })).text;
     expect(asked).toContain('You asked Nya to send this now. It comes every Monday too, because you turned on the weekly summary.');
     expect(asked).toContain(`To stop these summaries, open ${STOP}`);
-    const off = composeWeekly(quietFacts(), opts({ requested: true, enabled: false, unsubscribe: null })).text;
+    // Asked for with the sheet on Friday while Monday is saved: the week
+    // before Friday, and the footer says Monday, the day it really comes.
+    const friday = composeWeekly(quietFacts({ weekday: 5, send_day: '2026-10-09', first: '2026-10-02', last: '2026-10-08' }), opts({ requested: true, schedule: 1 })).text;
+    expect(friday).toContain('Your week in Nya: Friday, October 2 to Thursday, October 8.');
+    expect(friday).toContain('It comes every Monday too, because you turned on the weekly summary.');
+    expect(friday).not.toContain('every Friday');
+    const off = composeWeekly(quietFacts(), opts({ requested: true, schedule: null, unsubscribe: null })).text;
     expect(off).toContain("You asked Nya to send this now. The weekly summary isn't on, so no other comes unless you turn it on in Nya, under Manage on the Accounts tab. It never includes balances, amounts or account numbers.");
     expect(off).not.toContain('/unsubscribe');
     // Without a link to the app, it says to open it.

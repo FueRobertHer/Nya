@@ -12,9 +12,14 @@
 //                                couldn't read. Encrypted, and in the data
 //                                download: it is the person's choice.
 //   weekly-summary-state         the service's bookkeeping: the key the links
-//                                to turn the summary off are signed with, and
-//                                the last week a summary went for, which keeps
-//                                a week from going twice. Encrypted, and never
+//                                to turn the summary off are signed with; the
+//                                last week a summary went for, which keeps a
+//                                week from going twice; a week whose summary
+//                                got no answer from the email service, which
+//                                is what lets a later refusal of its key count
+//                                as sent (job.ts); and the goals the last one
+//                                said were at their target, so each is told of
+//                                once (content.ts GOALS). Encrypted, and never
 //                                in the download: the key is credential
 //                                material, and the week is the job's record.
 //                                Backed up, so a restored copy doesn't send a
@@ -51,9 +56,19 @@ export type WeeklyState = {
   sent: string | null;
   /** When that summary was accepted by the email service, or null. */
   sent_at: string | null;
+  /** A week (its send day) whose summary was sent and got no answer at all:
+   *  it may have gone. Cleared once a week is recorded. Absent, or null, for
+   *  none. */
+  unanswered?: string | null;
+  /** The goals, by id, the last summary that went said were at their target
+   *  (or that were there when it went), so a goal is told of once. Absent
+   *  before the first. */
+  goals_told?: string[];
 };
 
-const STATE_KEYS: readonly string[] = ['v', 'key', 'sent', 'sent_at'];
+const STATE_KEYS: readonly string[] = ['v', 'key', 'sent', 'sent_at', 'unanswered', 'goals_told'];
+/** Goals a person can have (lib/goal-model.ts MAX_GOALS), with room. */
+const MAX_GOALS_TOLD = 100;
 const KEY = /^[A-Za-z0-9_-]{43}$/;
 const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const isInstant = (v: unknown): v is string => typeof v === 'string' && v.length <= 64 && Number.isFinite(Date.parse(v));
@@ -68,7 +83,10 @@ export function isWeeklyState(v: unknown): v is WeeklyState {
     typeof s.key === 'string' &&
     KEY.test(s.key) &&
     (s.sent === null || (typeof s.sent === 'string' && DAY.test(s.sent))) &&
-    (s.sent_at === null || isInstant(s.sent_at))
+    (s.sent_at === null || isInstant(s.sent_at)) &&
+    (s.unanswered === undefined || s.unanswered === null || (typeof s.unanswered === 'string' && DAY.test(s.unanswered))) &&
+    (s.goals_told === undefined ||
+      (Array.isArray(s.goals_told) && s.goals_told.length <= MAX_GOALS_TOLD && s.goals_told.every((id) => typeof id === 'string' && id.length > 0 && id.length <= 40)))
   );
 }
 

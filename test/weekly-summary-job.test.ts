@@ -30,7 +30,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 
-const { sendWeeklySummaries, weekKey, SYNC_TIMEOUT_MS, GATHER_TIMEOUT_MS } = await import('@/lib/weekly-summary/job');
+const { sendWeeklySummaries, weekKey, SYNC_TIMEOUT_MS, GATHER_TIMEOUT_MS, STRAGGLERS_MS } = await import('@/lib/weekly-summary/job');
 const { weeklySettingStore, weeklyStateStore } = await import('@/lib/weekly-summary/store');
 const { figuresIn } = await import('@/lib/weekly-summary/compose');
 const { parseLinkToken } = await import('@/lib/weekly-summary/unsubscribe');
@@ -80,7 +80,7 @@ const gather = async (_ctx: unknown, o: { sendDay?: string; weekday: number; tim
   spending: { kind: 'compared', level, left_out: [] },
   budgets: null,
   bills: [],
-  goals: { reached: [], behind: [] },
+  goals: { reached: [], behind: [], complete: [] },
   connections: [],
   months: [],
   uncategorized: 0,
@@ -191,18 +191,41 @@ describe('one summary per container per week', () => {
     await turnOn();
     mode = 'lose-answer';
     expect((await run(MONDAY)).get(ME)).toBe('failed');
-    expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBeNull();
+    // Not recorded, but marked: it may have gone.
+    expect(await weeklyStateStore.get(TEST_CTX)).toMatchObject({ sent: null, unanswered: '2026-10-12' });
     mode = 'ok';
     // The same email again: Resend answers for the one it has.
     expect((await run(MONDAY)).get(ME)).toBe('sent');
     expect(delivered).toHaveLength(1);
-    expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBe('2026-10-12');
+    expect(await weeklyStateStore.get(TEST_CTX)).toMatchObject({ sent: '2026-10-12', unanswered: null });
+  });
 
-    // And when the week's figures moved before the retry: Resend refuses the
-    // key for another email, which says one went under it.
-    await weeklyStateStore.set(TEST_CTX, { ...(await weeklyStateStore.get(TEST_CTX))!, sent: null, sent_at: null });
+  test('a key refused for another email counts as sent only after a try that got no answer', async () => {
+    await turnOn();
+    mode = 'lose-answer';
+    await run(MONDAY);
+    // The week's facts moved before the catch-up: Resend refuses the key for
+    // another email, which, after a try with no answer, says one went.
+    mode = 'ok';
     level = 'higher';
     expect((await run(MONDAY + 2 * HOUR)).get(ME)).toBe('sent');
+    expect(delivered).toHaveLength(1);
+    expect(await weeklyStateStore.get(TEST_CTX)).toMatchObject({ sent: '2026-10-12', unanswered: null });
+    expect(logs.join('\n')).toContain("went before under this week's key; recorded now");
+  });
+
+  test('a key refused when no try went unanswered is no proof one went: not recorded, and tried once it lapses', async () => {
+    await turnOn();
+    // Resend kept the key from a request that failed (its docs don't say it
+    // doesn't), and the email has changed since.
+    byKey.set(weekKey(ME, '2026-10-12'), { body: 'an earlier, different email', id: 'email_0' });
+    expect((await run(MONDAY)).get(ME)).toBe('failed');
+    expect(delivered).toEqual([]);
+    expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBeNull();
+    expect(logs.join('\n')).toContain("refused this week's key");
+    // A day later the key has lapsed, and the week goes, once.
+    byKey.clear();
+    expect((await run(MONDAY + DAY)).get(ME)).toBe('sent');
     expect(delivered).toHaveLength(1);
     expect((await weeklyStateStore.get(TEST_CTX))!.sent).toBe('2026-10-12');
   });
@@ -252,6 +275,35 @@ describe('when it is due', () => {
     expect(delivered).toEqual([]);
     await run(Date.parse('2026-10-12T04:30:00.000Z'));
     expect(delivered).toHaveLength(1);
+  });
+
+  test('east of UTC, it comes on its day too, in the first hours of it: never a day late', async () => {
+    // 13:00 UTC on Sunday is just after midnight on Monday in Sydney's
+    // summer, 2 a.m. in Auckland and 3 a.m. in Kiritimati: that run sends
+    // Monday's summary, and Monday's own run, Tuesday there, sends nothing.
+    const SUNDAY_RUN = Date.parse('2026-10-11T13:00:00.000Z');
+    for (const zone of ['Australia/Sydney', 'Pacific/Auckland', 'Pacific/Kiritimati']) {
+      fake.reset();
+      await registerTestContainer(fake);
+      delivered = [];
+      byKey = new Map();
+      await turnOn(TEST_CTX, { time_zone: zone });
+      expect([zone, (await run(SUNDAY_RUN)).get(ME)]).toEqual([zone, 'sent']);
+      expect([zone, delivered[0].key]).toEqual([zone, weekKey(ME, '2026-10-12')]);
+      expect(delivered[0].text).toContain('Monday, October 5 to Sunday, October 11');
+      await run(SUNDAY_RUN + DAY);
+      expect([zone, delivered.length]).toEqual([zone, 1]);
+    }
+    // West of UTC, the run on the day itself: 9 a.m. in New York, 3 a.m. in Pago Pago.
+    for (const zone of ['America/New_York', 'Pacific/Pago_Pago']) {
+      fake.reset();
+      await registerTestContainer(fake);
+      delivered = [];
+      byKey = new Map();
+      await turnOn(TEST_CTX, { time_zone: zone });
+      expect([zone, (await run(SUNDAY_RUN)).get(ME)]).toEqual([zone, undefined]);
+      expect([zone, (await run(SUNDAY_RUN + DAY)).get(ME)]).toEqual([zone, 'sent']);
+    }
   });
 
   test('a day missed is caught up the day after, once', async () => {
@@ -349,6 +401,32 @@ describe('time', () => {
     expect(logs.join('\n')).toContain('no time left for this run');
   });
 
+  test('a step that runs out of time says which in the log, and a sync still going is waited for before the run ends', async () => {
+    await turnOn();
+    let finished = false;
+    const slowSync = () =>
+      new Promise<void>((resolve) =>
+        setTimeout(() => {
+          finished = true;
+          resolve();
+        }, 40)
+      );
+    const out = await run(MONDAY, { sync: slowSync, syncTimeoutMs: 5 });
+    expect(out.get(ME)).toBe('sent');
+    expect(logs.join('\n')).toContain('Bringing transactions up to date took longer than 5 ms');
+    // Sent on time, and the sync it couldn't wait for ended before the run did.
+    expect(finished).toBe(true);
+    expect(STRAGGLERS_MS).toBeLessThanOrEqual(15_000);
+    // A read that runs out of time, too.
+    fake.reset();
+    await registerTestContainer(fake);
+    await turnOn();
+    logs = [];
+    const slowRead = () => new Promise<never>(() => {});
+    expect((await run(MONDAY, { gather: slowRead, gatherTimeoutMs: 5 })).get(ME)).toBe('failed');
+    expect(logs.join('\n')).toContain('Reading the summary took longer than 5 ms');
+  });
+
   test('the email service failing stops the rest until the next run', async () => {
     await turnOn();
     await turnOn(OTHER);
@@ -418,7 +496,7 @@ describe('a summary of a container with a bit of everything', () => {
     });
     expect(out.get(ME)).toBe('sent');
     const [{ subject, text }] = delivered;
-    expect(figuresIn(subject, text)).toEqual([]);
+    expect(figuresIn([subject, text], { sendDay: '2026-10-12' })).toEqual([]);
     const bare = `${subject}\n${text}`.replace(/https:\S+/g, '');
     // No amount the fixture holds, no account mask, no merchant's digits.
     for (const t of CHASE_TXNS) {
@@ -437,5 +515,92 @@ describe('a summary of a container with a bit of everything', () => {
     expect(text).toContain('Your week in Nya: Monday, October 5 to Sunday, October 11.');
     expect(text).toContain('It never includes balances, amounts or account numbers.');
     expect(subject.startsWith('Your week in Nya: ')).toBe(true);
+  });
+
+  test('a goal at its target is told of once, from the app’s own goals', async () => {
+    setSystemTime(new Date('2026-10-12T15:00:00.000Z'));
+    const { seedPerson } = await import('./api-fixture');
+    const { setGoals } = await import('@/lib/goals');
+    await seedPerson(fake);
+    const GOAL = '3f2b8c1d-5e6f-4a7b-9c8d-0e1f2a3b4c5d';
+    await setGoals(TEST_CTX, [{ id: GOAL, name: 'Emergency fund', target: 100, account_id: 'acc_chk' }]);
+    await turnOn(TEST_CTX, { time_zone: 'UTC' });
+    const send = () =>
+      sendWeeklySummaries(registry(TEST_CONTAINER), { clock: () => Date.now(), sleep: async () => {}, fetch: resend, recipients: async () => ['me@example.com'], sync: async () => {}, ready: () => true });
+    expect((await send()).get(ME)).toBe('sent');
+    expect(delivered[0].text).toContain('Goals at their target: Emergency fund.');
+    expect((await weeklyStateStore.get(TEST_CTX))!.goals_told).toEqual([GOAL]);
+    // A week on, still at its target: not said again.
+    setSystemTime(new Date('2026-10-19T15:00:00.000Z'));
+    expect((await send()).get(ME)).toBe('sent');
+    expect(delivered[1].text).not.toContain('Goals at their target');
+  });
+
+  test('its spending is the totals’ own over split parts, group nets and a group’s transactions counted elsewhere', async () => {
+    // The fixture's days are fixed when it is first imported, by whichever
+    // test file imports it first: this test reads them from it.
+    const { seedPerson, CHASE_TXNS } = await import('./api-fixture');
+    const { ensureTaxonomy } = await import('@/lib/category-store');
+    const { splitStore } = await import('@/lib/splits');
+    const { groupStore } = await import('@/lib/groups');
+    const { readActivity } = await import('@/lib/api-read');
+    const { summarize } = await import('@/lib/totals');
+    const { moneyOut } = await import('@/lib/weekly-summary/content');
+    const { leftOutByCurrency } = await import('@/lib/spending');
+    const { addDays } = await import('@/lib/recurring');
+    const dayOf = (id: string) => CHASE_TXNS.find((t) => t.transaction_id === id)!.date;
+    await seedPerson(fake);
+    const taxonomy = await ensureTaxonomy(TEST_CTX);
+    const cat = (name: string) => taxonomy.categories.find((c) => c.name === name)!.id;
+    const at = new Date().toISOString();
+    // Rent split, its second part left out on its own; the Paris charge, in
+    // EUR, split in two; lunch and the paycheck grouped, a net of money in;
+    // and the bank fee in a group counted on a day before what is read.
+    await splitStore.set(TEST_CTX, 't_rent', {
+      version: 1,
+      amount: 1200,
+      currency: 'USD',
+      parts: [
+        { id: 'p-rent', amount: 1000, category_id: cat('general merchandise') },
+        { id: 'p-shed', amount: 200, category_id: cat('home improvement'), excluded: true },
+      ],
+      updated_at: at,
+    });
+    await splitStore.set(TEST_CTX, 't_paris', {
+      version: 1,
+      amount: 50,
+      currency: 'EUR',
+      parts: [
+        { id: 'p-hotel', amount: 30, category_id: cat('general merchandise') },
+        { id: 'p-food', amount: 20, category_id: cat('food and drink') },
+      ],
+      updated_at: at,
+    });
+    await groupStore.set(TEST_CTX, 'g-payday', { version: 1, name: 'Payday lunch', category_id: cat('food and drink'), members: ['t_posted', 't_pay'], date: dayOf('t_pay'), currency: 'USD', created_at: at, updated_at: at });
+    await groupStore.set(TEST_CTX, 'g-old', { version: 1, name: 'Old fees', category_id: cat('general merchandise'), members: ['t_fee', 't_ancient'], date: dayOf('t_ancient'), currency: 'USD', created_at: at, updated_at: at });
+
+    const { rows } = await readActivity(TEST_CTX, false);
+    // The days from the Paris charge to lunch hold all of them.
+    const [first, last] = [dayOf('t_paris'), dayOf('t_posted')];
+    const week = rows.filter((t) => t.date >= first && t.date <= last);
+    // What the read layer made of them, so the test is about what it says.
+    expect(week.filter((t) => t.split_of === 't_rent').map((t) => [t.amount, t.excluded ?? null])).toEqual(expect.arrayContaining([[1000, null], [200, true]]));
+    expect(week.filter((t) => t.split_of === 't_paris')).toHaveLength(2);
+    expect(week.some((t) => Array.isArray(t.group_members) && t.amount < 0)).toBe(true);
+    expect(week.some((t) => t.transaction_id === 't_fee' && t.group_outside)).toBe(true);
+    // The money out the summary weighs is summarize's, over those days and the week before them.
+    const within = (from: string, to: string) => (d: string) => d >= from && d <= to;
+    expect(moneyOut(rows, first, last, 'USD')).toBeCloseTo(summarize(rows, within(first, last), 'USD').money_out, 6);
+    expect(moneyOut(rows, addDays(first, -7), addDays(first, -1), 'USD')).toBeCloseTo(summarize(rows, within(addDays(first, -7), addDays(first, -1)), 'USD').money_out, 6);
+    // And what it leaves out for its currency counts transactions: one in EUR.
+    expect(leftOutByCurrency(week, 'USD')).toEqual([{ currency: 'EUR', count: 1 }]);
+
+    // A summary of it goes today, and carries none of it.
+    await turnOn(TEST_CTX, { time_zone: 'UTC', weekday: new Date().getUTCDay() });
+    const out = await sendWeeklySummaries(registry(TEST_CONTAINER), { clock: () => Date.now(), sleep: async () => {}, fetch: resend, recipients: async () => ['me@example.com'], sync: async () => {}, ready: () => true });
+    expect(out.get(ME)).toBe('sent');
+    const [{ subject, text }] = delivered;
+    expect(figuresIn([subject, text], { sendDay: new Date().toISOString().slice(0, 10) })).toEqual([]);
+    for (const leak of ['1000', '200', '2988', 'Payday lunch', 'Old fees']) expect([leak, `${subject}\n${text}`.replace(/https:\S+/g, '').includes(leak)]).toEqual([leak, false]);
   });
 });

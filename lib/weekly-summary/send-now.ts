@@ -8,18 +8,26 @@
 // THE PREVIEW is the summary the daily job would send for this week (the week
 // whose send day is the latest one on or before today), worked out the same
 // way (gather.ts, compose.ts) from what is stored now, for the day and time
-// zone the sheet shows, saved or not. Only its link to turn the summary off is
-// left out ("..."), since each email's is made for it; the page says so.
+// zone the sheet shows, saved or not, as it would go with the summary on
+// that day. Only its link to turn the summary off is left out ("..."), since
+// each email's is made for it. The one that goes is worked out when it goes,
+// after its transactions are brought up to date, so it can say more; the page
+// says both.
 //
-// SEND ME ONE NOW sends exactly that, to the same people the daily job writes
-// to (lib/notice-recipients.ts), under the same rules: never a figure
-// (checkedSummary), never to a demo account, and at most SENDS_NOW_PER_DAY a
-// day per container (weekly-summary-sends), so it never makes a burst. One
-// retry, under the same idempotency key, after a rate limit, no answer, or the
-// email service's own error, as the download notices do. With the summary on,
-// for its own day and time zone, it counts as that week's: the daily job then
-// doesn't send the week again. Asked for while off, it carries no link to turn
-// it off, and says it isn't on.
+// SEND ME ONE NOW sends the summary for the day and time zone the sheet shows,
+// to the same people the daily job writes to (lib/notice-recipients.ts),
+// under the same rules: never a figure (checkedSummary), never to a demo
+// account, and at most SENDS_NOW_PER_DAY a day per container
+// (weekly-summary-sends), so it never makes a burst. One retry, under the same
+// idempotency key, after a rate limit, no answer, or the email service's own
+// error, as the download notices do. Its footer says when the next comes from
+// the setting as saved, never the sheet's day before it is saved. It counts as
+// the week's, so the daily job doesn't send the week again, only with the
+// summary on, for its own day and time zone, and only when it could say how
+// the week's spending went (compared, or none at all): one asked for before
+// a bank's transactions are in (a SimpleFIN bank is brought in by the daily
+// job alone) leaves the week's full one to come. Asked for while off, it
+// carries no link to turn it off, and says it isn't on.
 
 import { createHash } from 'node:crypto';
 import type { Ctx } from '../containers';
@@ -31,7 +39,8 @@ import { NOTICE_RECIPIENTS_TIMEOUT_MS } from '../download-notice';
 import { weeklySettingStore, weeklyStateStore, sendNowCount, SENDS_NOW_PER_DAY, type WeeklyState } from './store';
 import { WEEKLY_SETTING_VERSION, type WeeklyChoice, type WeeklySetting } from './settings';
 import { gatherWeekly } from './gather';
-import { checkedSummary, composeWeekly } from './compose';
+import { checkedSummary, composeWeekly, spendingKnown } from './compose';
+import { isUnread } from './content';
 import { ensureState, recordSent, stopLinks } from './job';
 import { newLinkKey } from './unsubscribe';
 
@@ -74,10 +83,11 @@ export type Preview = { send_day: string; first: string; last: string; subject: 
 
 /** This week's summary for `choice` (see THE PREVIEW). */
 export async function previewWeekly(ctx: Ctx, choice: Pick<WeeklyChoice, 'weekday' | 'time_zone'>, now: number = Date.now()): Promise<Preview> {
-  const facts = await gatherWeekly(ctx, { now, timeZone: choice.time_zone, weekday: choice.weekday });
+  const state = await weeklyStateStore.get(ctx);
+  const facts = await gatherWeekly(ctx, { now, timeZone: choice.time_zone, weekday: choice.weekday, goalsTold: state?.goals_told ?? null });
   const link = appUrl();
   const { subject, text } = checkedSummary(
-    composeWeekly(facts, { link, unsubscribe: link ? `${link}/unsubscribe?t=...` : null, requested: false, enabled: true, now })
+    composeWeekly(facts, { link, unsubscribe: link ? `${link}/unsubscribe?t=...` : null, requested: false, schedule: choice.weekday, now })
   );
   return { send_day: facts.send_day, first: facts.first, last: facts.last, subject, text };
 }
@@ -127,12 +137,14 @@ export async function sendNow(ctx: Ctx, choice: Pick<WeeklyChoice, 'weekday' | '
   const { count, secondsLeft } = await sendNowCount.take(ctx);
   if (count > SENDS_NOW_PER_DAY) return { kind: 'limited', retryAfterSeconds: secondsLeft };
 
-  const setting = await weeklySettingStore.get(ctx);
+  const [setting, state] = await Promise.all([weeklySettingStore.get(ctx), weeklyStateStore.get(ctx)]);
   const enabled = !!setting?.enabled;
-  const facts = await gatherWeekly(ctx, { now, timeZone: choice.time_zone, weekday: choice.weekday });
+  const facts = await gatherWeekly(ctx, { now, timeZone: choice.time_zone, weekday: choice.weekday, goalsTold: state?.goals_told ?? null });
   const link = appUrl()!;
   const stop = enabled ? stopLinks(link, ctx.container, (await ensureState(ctx)).key, now) : null;
-  const summary = checkedSummary(composeWeekly(facts, { link, unsubscribe: stop?.page ?? null, requested: true, enabled, now }));
+  const summary = checkedSummary(
+    composeWeekly(facts, { link, unsubscribe: stop?.page ?? null, requested: true, schedule: enabled ? setting!.weekday : null, now })
+  );
 
   let to: string[];
   try {
@@ -161,9 +173,10 @@ export async function sendNow(ctx: Ctx, choice: Pick<WeeklyChoice, 'weekday' | '
     return { kind: 'failed' };
   }
   if (!result.sent) return { kind: 'unable', why: cannotSend() ?? 'This copy of Nya isn’t set up to send email.' };
-  // This week's, for the summary's own day and time zone: the job won't send it again.
-  if (enabled && setting!.weekday === choice.weekday && setting!.time_zone === choice.time_zone) {
-    await recordSent(ctx, facts.send_day, now).catch((err) =>
+  // This week's, for the summary's own day and time zone, when it could say
+  // how the week's spending went: the job won't send it again.
+  if (enabled && setting!.weekday === choice.weekday && setting!.time_zone === choice.time_zone && spendingKnown(facts)) {
+    await recordSent(ctx, facts.send_day, now, isUnread(facts.goals) ? null : facts.goals.complete).catch((err) =>
       console.error('Weekly summary: a summary asked for now could not be recorded as the week’s.', err instanceof Error ? err.name : typeof err)
     );
   }
