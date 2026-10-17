@@ -15,9 +15,11 @@
 // keeping its sign and its currency where they would be ("-$•••", "••• €"),
 // so the page keeps its shape and nothing of the size. Only the page in the
 // browser ever turns it on (the switch in the header, remembered on the
-// device). The server never does, so the read-only API, the downloads and
-// every route's answer always carry the figures; a page that must show them
-// whatever the switch says (a report being printed) turns it off meanwhile.
+// device). Where there is no browser it can't be turned on at all
+// (setAmountsHidden), since there the flag would be the whole server
+// process's: the read-only API, the downloads, emails and every route's
+// answer always carry the figures. A page that must show them whatever the
+// switch says (a report being printed) turns it off meanwhile.
 
 /** What a hidden amount's figures are written as. */
 export const MASK = '•••';
@@ -25,8 +27,10 @@ export const MASK = '•••';
 let hidden = false;
 
 /** Turns hiding amounts on or off for this page. Only the browser's switch
- *  (components/hide-amounts.ts) calls it. */
+ *  (components/hide-amounts.ts) calls it, and only a browser's page can turn
+ *  it on: on the server it stays off, whatever calls it. */
 export function setAmountsHidden(on: boolean): void {
+  if (on && typeof window === 'undefined') return;
   hidden = on;
 }
 
@@ -77,12 +81,14 @@ export function hiddenFigure(text: string): string {
 
 // An amount in text written elsewhere (an answer from the server): a
 // currency's symbol before the figures (with a code's letters, "CA$12.00",
-// or an ISO code and a no-break space, "XAU 12.00"), or a symbol or a code
-// after them ("12,50 €", "12.50 DOGE"). The figures end on a digit, so a full
-// stop after an amount stays.
+// or an ISO code and a no-break space, "XAU 12.00"), a symbol after them
+// ("12,50 €"), or a code after figures with a fraction ("12.50 DOGE", as
+// formatMoney writes a code Intl refuses), never after a bare number
+// ("12:00 UTC", "2026 IRS"). The figures end on a digit, so a full stop
+// after an amount stays.
 const AMOUNT_IN_TEXT =
-  /[+\-−]?(?:(?:[A-Z]{0,3}\p{Sc}|\b[A-Z]{3} )[\s  ]?\d(?:[\d,.  ]*\d)?|\d(?:[\d,.  ]*\d)?[\s  ]?(?:\p{Sc}|[A-Z]{3,10}\b))/gu;
-const FIGURES_IN_TEXT = /\d(?:[\d,.  ]*\d)?/u;
+  /[+\-\u2212]?(?:(?:[A-Z]{0,3}\p{Sc}|\b[A-Z]{3}\u00a0)[\s\u00a0\u202f]?\d(?:[\d,.\u00a0\u202f]*\d)?|\d(?:[\d,.\u00a0\u202f]*\d)?[\s\u00a0\u202f]?\p{Sc}|\d(?:[\d,.\u00a0\u202f]*\d)?[.,]\d+[\s\u00a0\u202f]?[A-Z]{3,10}\b)/gu;
+const FIGURES_IN_TEXT = /\d(?:[\d,.\u00a0\u202f]*\d)?/u;
 
 /** Text written elsewhere (an error a route answers with, which names a
  *  balance) with each amount in it MASK'd while amounts are hidden, and as
@@ -91,10 +97,12 @@ export function hideAmountsIn(text: string): string {
   return hidden ? text.replace(AMOUNT_IN_TEXT, (m) => m.replace(FIGURES_IN_TEXT, MASK)) : text;
 }
 
-// A hidden amount as the formatters write it: its sign, its symbol before
-// MASK (with a code's letters, "CA$"), or an ISO code and a no-break space,
-// or its symbol or code after it. Never a word's letters before it.
-const HIDDEN_IN_TEXT = /[+\-−]?(?:[A-Z]{0,3}\p{Sc}[\s  ]?|\b[A-Z]{3} )?•••(?:[\s  ]?(?:\p{Sc}|[A-Z]{2,10}\b))?/gu;
+// A hidden amount as the formatters write it: its sign, and its symbol
+// before MASK (with a code's letters, "CA$") or an ISO code and a no-break
+// space; or MASK with its symbol or code after it ("••• €", "••• DOGE").
+// Never a word's letters before it, nor a word after one with a symbol
+// before it ("$••• IRA contribution" keeps its IRA).
+const HIDDEN_IN_TEXT = /[+\-\u2212]?(?:(?:[A-Z]{0,3}\p{Sc}[\s\u00a0\u202f]?|\b[A-Z]{3}\u00a0)•••|•••(?:[\s\u00a0\u202f]?(?:\p{Sc}|[A-Z]{2,10}\b))?)/gu;
 
 /** Text that may hold hidden amounts, as a screen reader is to say it: each
  *  one as "hidden" ("Groceries hidden of hidden"), never a row of bullets. */

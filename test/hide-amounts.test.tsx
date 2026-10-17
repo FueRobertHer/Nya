@@ -50,6 +50,20 @@ import { categoriesFor } from './category-fixture';
 
 const ROOT = join(import.meta.dir, '..');
 
+/** As in a browser's page: only there can amounts be hidden (lib/format.ts
+ *  setAmountsHidden refuses where there is no window). */
+function inBrowser<T>(fn: () => T): T {
+  const g = globalThis as Record<string, unknown>;
+  const none = g.window === undefined;
+  if (none) g.window = {};
+  try {
+    return fn();
+  } finally {
+    if (none) delete g.window;
+  }
+}
+const hideNow = () => inBrowser(() => setAmountsHidden(true));
+
 afterEach(() => {
   // The flag lives in lib/format.ts for the whole test run: never leave it on.
   setAmountsHidden(false);
@@ -58,7 +72,7 @@ afterEach(() => {
 
 /** Renders with amounts hidden, and as shown, for comparing the two. */
 function both(node: () => React.ReactElement): { hidden: string; shown: string } {
-  setAmountsHidden(true);
+  hideNow();
   try {
     return { hidden: renderToStaticMarkup(node()), shown: (setAmountsHidden(false), renderToStaticMarkup(node())) };
   } finally {
@@ -103,7 +117,7 @@ const shapes = (html: string) => [...html.matchAll(/\s(?:style|d|points|width|he
 
 describe('the formatters, with amounts hidden', () => {
   test('write the figures as one mask, whatever the size, with the sign and the currency where they go', () => {
-    setAmountsHidden(true);
+    hideNow();
     expect(formatMoney(1234.5, 'USD')).toBe('$•••');
     expect(formatMoney(7, 'USD')).toBe('$•••');
     expect(formatMoney(-12, 'USD')).toBe('-$•••');
@@ -136,17 +150,20 @@ describe('the formatters, with amounts hidden', () => {
   });
 
   test('a figure written without them is hidden too (a holding’s quantity, a rule’s amount)', () => {
-    setAmountsHidden(true);
+    hideNow();
     expect(hiddenFigure('12.345')).toBe(MASK);
   });
 
   test('text the server wrote, naming a balance, is hidden where it is shown, its other numbers kept', () => {
     const said = "Checking's balance changed to $1,234.56 since this form opened. Card (+$40.00) and Wallet (+12.50 DOGE), €3,40, 12,50 €, CA$12.00 and XAU 12.00 on Sep 12 at 3 pm, 2026.";
     expect(hideAmountsIn(said)).toBe(said);
-    setAmountsHidden(true);
+    hideNow();
     expect(hideAmountsIn(said)).toBe(
       "Checking's balance changed to $••• since this form opened. Card (+$•••) and Wallet (+••• DOGE), €•••, ••• €, CA$••• and XAU ••• on Sep 12 at 3 pm, 2026."
     );
+    // A code after a number that is no amount (a time, a year) is left alone.
+    expect(hideAmountsIn('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.')).toBe('Synced at 12:00 UTC, for the 2026 IRS form, at 21.24% APR.');
+    expect(hideAmountsIn('1.234,56 DOGE and 1,234.56 DOGE')).toBe('••• DOGE and ••• DOGE');
   });
 
   test('a screen reader hears "hidden" for each, never bullets, and an account’s last digits as they are', () => {
@@ -154,6 +171,8 @@ describe('the formatters, with amounts hidden', () => {
     expect(spoken('Spent •••, -€•••, +••• DOGE, ••• €, CA$•••, (¥•••)')).toBe('Spent hidden, hidden, hidden, hidden, hidden, (hidden)');
     expect(spoken('Checking ••1234')).toBe('Checking ••1234');
     expect(spoken('Nothing hidden here: $12.00')).toBe('Nothing hidden here: $12.00');
+    // A word after an amount with its symbol before is a word, said as one.
+    expect(spoken('+$••• IRA contribution, $••• OK, CHF\u00a0••• due')).toBe('hidden IRA contribution, hidden OK, hidden due');
   });
 
   test('Masked draws the text as it is, and gives a screen reader the spoken words', () => {
@@ -217,14 +236,14 @@ describe('remembered on this device', () => {
   test('kept in its storage, and read back as the page loads', () => {
     const storage = memory();
     expect(readHideAmounts(storage)).toBe(false);
-    expect(setHideAmounts(true, storage)).toBe(true);
+    expect(inBrowser(() => setHideAmounts(true, storage))).toBe(true);
     expect(storage.items.get(HIDE_AMOUNTS_KEY)).toBe('1');
     expect(amountsHidden()).toBe(true);
     expect(formatMoney(5, 'USD')).toBe('$•••');
     // A new page on the same device.
     loadHideAmountsForTests(null);
     expect(amountsHidden()).toBe(false);
-    loadHideAmountsForTests(storage);
+    inBrowser(() => loadHideAmountsForTests(storage));
     expect(amountsHidden()).toBe(true);
     // Turned off, nothing is kept: shown is the default.
     expect(setHideAmounts(false, storage)).toBe(true);
@@ -236,7 +255,7 @@ describe('remembered on this device', () => {
     expect(readHideAmounts(memory({ [HIDE_AMOUNTS_KEY]: '1' }, { read: true }))).toBe(false);
     expect(readHideAmounts(null)).toBe(false);
     const broken = memory({}, { write: true });
-    expect(setHideAmounts(true, broken)).toBe(false);
+    expect(inBrowser(() => setHideAmounts(true, broken))).toBe(false);
     expect(amountsHidden()).toBe(true);
     expect(writeHideAmounts(false, broken)).toBe(false);
     expect(writeHideAmounts(true, null)).toBe(false);
@@ -274,17 +293,21 @@ describe('remembered on this device', () => {
       stop();
       expect(listeners.has('storage')).toBe(false);
     } finally {
-      Object.assign(globalThis, was);
+      // Put back as it was: a window that wasn't there isn't left as undefined.
+      for (const [k, v] of Object.entries(was)) {
+        if (v === undefined) delete (globalThis as Record<string, unknown>)[k];
+        else Object.assign(globalThis, { [k]: v });
+      }
     }
   });
 
   test('printing shows the figures, whatever the switch says, and hides them again after', () => {
-    loadHideAmountsForTests(memory({ [HIDE_AMOUNTS_KEY]: '1' }));
+    inBrowser(() => loadHideAmountsForTests(memory({ [HIDE_AMOUNTS_KEY]: '1' })));
     expect(formatMoney(12, 'USD')).toBe('$•••');
     showFigures(true);
     expect(formatMoney(12, 'USD')).toBe('$12.00');
     expect(amountsHiddenNow()).toBe(false);
-    showFigures(false);
+    inBrowser(() => showFigures(false));
     expect(formatMoney(12, 'USD')).toBe('$•••');
   });
 });
@@ -579,8 +602,20 @@ describe('never the server, the API or a download', () => {
     expect(formatMoney(1234.5, 'USD')).toBe('$1,234.50');
   });
 
-  test('the report, shown again for printing, has its figures', () => {
+  test('where there is no browser nothing can turn it on, whatever calls it: there the flag would be the whole server’s', () => {
+    expect(typeof window).toBe('undefined');
+    setAmountsHidden(true);
+    expect(amountsHidden()).toBe(false);
+    expect(formatMoney(1234.5, 'USD')).toBe('$1,234.50');
+    // Even the page's switch, set as if a device said hide: nothing hides.
     loadHideAmountsForTests(memory({ [HIDE_AMOUNTS_KEY]: '1' }));
+    expect(amountsHidden()).toBe(false);
+    expect(renderToStaticMarkup(<ReportView report={report()} />)).toContain('$4,000.00');
+    loadHideAmountsForTests(null);
+  });
+
+  test('the report, shown again for printing, has its figures', () => {
+    inBrowser(() => loadHideAmountsForTests(memory({ [HIDE_AMOUNTS_KEY]: '1' })));
     try {
       expect(exposed(renderToStaticMarkup(<ReportView report={report()} />))).not.toMatch(AMOUNT);
       showFigures(true);
