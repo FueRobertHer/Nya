@@ -407,6 +407,40 @@ describe('the link that turns it off', () => {
     expect((await post(`${container}.${expires}.${mac.slice(0, -1)}${mac.endsWith('A') ? 'B' : 'A'}`)).status).toBe(400);
   });
 
+  test('a link whose container’s data key can’t be used is refused, or, once it checked out, told its data can’t be reached', async () => {
+    const c = await import('@/lib/crypto');
+    process.env.MASTER_KEY = Buffer.alloc(32, 71).toString('base64');
+    c.forgetActiveKey();
+    const lose = (id: string) => {
+      fake.hashes.get(c.keysHashKey())!.delete(id);
+      c.reloadKey(id);
+      c.forgetActiveKey();
+    };
+    try {
+      // Its record under its own key, gone from the store: the link can't be checked.
+      const p = (await c.prepareContainerKey(OTHER.container, { born: true }))!;
+      expect((await c.claimContainerKey(p)).outcome).toBe('made');
+      const link = await onWithLink(OTHER);
+      lose(p.id);
+      const res = await post(link);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: REFUSED_MESSAGE });
+      expect(await failuresOf()).toBe(1);
+      // Its records written before its key, not moved yet: the link checks
+      // out, but turning it off writes under the key that can't be used.
+      const mine = await onWithLink(TEST_CTX);
+      const q = (await c.prepareContainerKey(ME, { born: false }))!;
+      expect((await c.claimContainerKey(q)).outcome).toBe('made');
+      lose(q.id);
+      const later = await post(mine);
+      expect(later.status).toBe(503);
+      expect(await later.json()).toEqual({ error: 'Your data can’t be reached just now. Try the link again later.' });
+      expect(await failuresOf()).toBe(1);
+    } finally {
+      c.forgetActiveKey();
+    }
+  });
+
   test('a setting that can’t be read is left as it is, and said', async () => {
     const good = await onWithLink(TEST_CTX);
     await fake.set(ctxKey('weekly-summary'), 'damaged-but-maybe-recoverable-ciphertext-xx');

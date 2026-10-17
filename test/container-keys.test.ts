@@ -128,11 +128,6 @@ describe('each container encrypts under a key of its own', () => {
     }
   });
 
-  test('a value kept outside every container is never read under a container’s key', async () => {
-    await giveKey(B);
-    await expect(c.decryptOutsideContainers(await c.encrypt(ctxB, 'x'))).rejects.toBeInstanceOf(c.KeyNotForContainerError);
-  });
-
   test('the test double refuses, on every write, a value under one container’s key stored in another', async () => {
     await giveKey(B);
     const v = await c.encrypt(ctxB, 'x');
@@ -140,10 +135,16 @@ describe('each container encrypts under a key of its own', () => {
     await expect(fake.hset(ctxKey('plaid:items', ctxA), { i: JSON.stringify({ encrypted_access_token: v }) })).rejects.toThrow(/wrong Ctx/);
     await expect(fake.eval(`-- nya:history-set-if-absent\n`, [ctxKey('h', ctxA)], ['f', v])).rejects.toThrow(/wrong Ctx/);
     await fake.set(ctxKey('x', ctxB), v); // its own container: fine
+    // Recorded as well as thrown: a writer that catches the error still fails its test.
+    expect(fake.takeViolations()).toHaveLength(3);
     fake.checkCiphertext = false; // planted on purpose
     await fake.set(ctxKey('x', ctxA), v);
-    fake.reset();
+    expect(fake.takeViolations()).toEqual([]);
+    fake.checkCiphertext = true;
+    await fake.set(ctxKey('x', ctxA), v).catch(() => {});
+    expect(() => fake.reset()).toThrow(/broke the isolation check before this reset/);
     expect(fake.checkCiphertext).toBe(true);
+    expect(fake.takeViolations()).toEqual([]);
   });
 });
 

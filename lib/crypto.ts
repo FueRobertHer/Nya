@@ -484,9 +484,13 @@ type OpenedKey = { key: CryptoKey; container: string | null };
  * to their key, a cached key can never be confused with a different one.
  */
 const _dataKeys = new Map<string, Promise<OpenedKey>>();
+/** Every master a key has been opened with in this process (one, or two
+ *  across a rotation), so a key is forgotten without scanning the cache. */
+const _openedWith = new Set<string>();
 async function dataKey(keyId: string): Promise<OpenedKey> {
   const master = await masterKey();
   finishRotationSoon(master.fingerprint);
+  _openedWith.add(master.fingerprint);
   const cacheKey = `${master.fingerprint}:${keyId}`;
   const cached = _dataKeys.get(cacheKey);
   if (cached) return cached;
@@ -505,9 +509,11 @@ async function dataKey(keyId: string): Promise<OpenedKey> {
   return load;
 }
 
-/** Forget an opened key, so its next use reads it from the store again. */
+/** Forget an opened key, so its next use reads it from the store again. A
+ *  lookup per master it can have been opened with, never a scan of the cache:
+ *  it runs on every map entry's refresh, so once per container a minute. */
 function forgetDataKey(keyId: string): void {
-  for (const k of [..._dataKeys.keys()]) if (k.endsWith(`:${keyId}`)) _dataKeys.delete(k);
+  for (const fingerprint of _openedWith) _dataKeys.delete(`${fingerprint}:${keyId}`);
 }
 
 /** Forgets an opened key, so its next use reads it from the store again: for
@@ -1732,20 +1738,6 @@ export async function decrypt(ctx: Ctx, payload: string, context?: string): Prom
   }
   const plain = await open(key, p.keyId, p.body, v2Aad(p.header, bound ? context : undefined));
   return new TextDecoder().decode(plain);
-}
-
-/**
- * Decrypts a value that belongs to no container (a pre-container copy at the
- * environment's root), for the code that walks those: never one under a
- * container's key, which has no business there.
- */
-export async function decryptOutsideContainers(payload: string): Promise<string> {
-  const p = parse(payload);
-  const opened = await keyFor(p.keyId);
-  if (opened.container !== null) throw new KeyNotForContainerError(p.keyId, '(none)', opened.container);
-  if (p.version === 1) return new TextDecoder().decode(await open(opened.key, p.keyId, p.body));
-  if (p.flags.includes('c')) throw new DecryptFailedError(p.keyId, 'the value is bound to a context and none was given');
-  return new TextDecoder().decode(await open(opened.key, p.keyId, p.body, v2Aad(p.header, undefined)));
 }
 
 /**

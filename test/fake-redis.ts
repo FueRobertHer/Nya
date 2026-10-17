@@ -2,6 +2,7 @@
 // modules under test use. Enough to exercise the real encryption and the real
 // merge/retention logic without a network or a live database.
 
+import { afterEach } from 'bun:test';
 import { createHash } from 'node:crypto';
 
 type Hash = Map<string, string>;
@@ -111,7 +112,16 @@ export class FakeRedis {
    *   way; on for code that stores JSON and must cope with getting it back
    *   parsed, as production does.
    */
-  constructor(private readonly opts: { deserialize?: boolean } = {}) {}
+  constructor(private readonly opts: { deserialize?: boolean } = {}) {
+    // Each test fails on a write that broke the isolation check, even one a
+    // best-effort writer caught (checkCiphertext). Registered in the file
+    // that makes the fake, as its tests run.
+    try {
+      afterEach(() => this.failViolations('in this test'));
+    } catch {
+      // Made where no hook can be registered: reset() still fails them.
+    }
+  }
 
   private out(value: string | undefined): any {
     if (value === undefined) return null;
@@ -124,10 +134,27 @@ export class FakeRedis {
    * that names another means a call site was handed the wrong Ctx, which the
    * types can't catch since both are a Ctx (docs/architecture.md, "Per-container
    * data keys"). Checked on every write, across the whole suite, and thrown
-   * from it. A test that plants a value under another container's key on
-   * purpose turns it off for that write; reset() turns it on again.
+   * from it. Each one is recorded too, and fails the test it happened in at
+   * its end, so a best-effort writer that catches every error (a cache, a
+   * record of a showing) can't swallow one. A test that plants a value under
+   * another container's key on purpose turns it off for that write; reset()
+   * turns it on again. takeViolations() is for a test of the check itself.
    */
   checkCiphertext = true;
+
+  private violations: string[] = [];
+
+  /** The writes that broke the isolation check since the last call, cleared. */
+  takeViolations(): string[] {
+    const v = this.violations;
+    this.violations = [];
+    return v;
+  }
+
+  private failViolations(when: string): void {
+    const v = this.takeViolations();
+    if (v.length > 0) throw new Error(`${v.length} write(s) broke the isolation check ${when}, though something may have caught the error: ${v[0]}`);
+  }
 
   private checkWrite(key: string, field: string | undefined, value: string): void {
     if (!this.checkCiphertext || typeof value !== 'string') return;
@@ -143,9 +170,9 @@ export class FakeRedis {
         continue;
       }
       if (typeof owner === 'string' && owner !== m[1]) {
-        throw new Error(
-          `FakeRedis: a value under ${keyId}, the key of container ${owner}, was written into container ${m[1]} (${key}${field === undefined ? '' : ` field ${field}`}): a call site was handed the wrong Ctx.`
-        );
+        const message = `FakeRedis: a value under ${keyId}, the key of container ${owner}, was written into container ${m[1]} (${key}${field === undefined ? '' : ` field ${field}`}): a call site was handed the wrong Ctx.`;
+        this.violations.push(message);
+        throw new Error(message);
       }
     }
   }
@@ -863,6 +890,8 @@ export class FakeRedis {
   }
 
   reset(): void {
+    // Cleared all the same, so the tests after start clean.
+    const missed = this.violations.length;
     this.checkCiphertext = true;
     this.strings.clear();
     this.hashes.clear();
@@ -872,6 +901,7 @@ export class FakeRedis {
     this.ops = 0;
     this.pipelines = 0;
     this.pipelined = 0;
+    if (missed > 0) this.failViolations('before this reset');
   }
 }
 
