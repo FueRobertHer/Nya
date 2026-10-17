@@ -3,12 +3,15 @@
 // Imports nothing heavy: no engine, no data.
 
 import type { RuleKind } from '@/lib/fire/rules';
+import { amountsHidden, hiddenMoney } from '@/lib/format';
 import type { Method, Rebalance } from '@/lib/fire/simulate';
 
 /** Whole currency units: plan figures are estimates, and cents would claim
  *  a precision they don't have. */
 export function wholeMoney(n: number, currency: string | null): string {
   const value = Math.round(n) === 0 ? 0 : Math.round(n); // never "-$0"
+  // Hidden amounts (lib/format.ts) are written as the formatters write them.
+  if (amountsHidden()) return hiddenMoney(value, currency);
   if (currency) {
     try {
       return new Intl.NumberFormat(undefined, { style: 'currency', currency, maximumFractionDigits: 0, minimumFractionDigits: 0 }).format(value);

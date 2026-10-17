@@ -20,6 +20,7 @@
 // same in a test (test/report-view.test.tsx) as in the browser.
 
 import { formatMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import { endedBefore, type Report, type ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
@@ -124,15 +125,21 @@ export function ReportView({ report }: { report: Report }) {
           <div className="report-bottom-line">
             <div>
               <div className="total-label">Money in</div>
-              <div className="report-figure">{money(totals.money_in)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.money_in)}</Masked>
+              </div>
             </div>
             <div>
               <div className="total-label">Money out</div>
-              <div className="report-figure">{money(totals.money_out)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.money_out)}</Masked>
+              </div>
             </div>
             <div>
               <div className="total-label">Net</div>
-              <div className="report-figure">{money(totals.net)}</div>
+              <div className="report-figure">
+                <Masked>{money(totals.net)}</Masked>
+              </div>
             </div>
             <p className="report-note">
               {totals.counted} of {totals.transactions} transactions counted. {totalsNote(report)}
@@ -311,9 +318,9 @@ export function ReportView({ report }: { report: Report }) {
                       </>
                     ) : (
                       <>
-                        <td className="num">{money(m.money_in)}</td>
-                        <td className="num">{money(m.money_out)}</td>
-                        <td className="num">{money(m.net)}</td>
+                        <td className="num"><Masked>{money(m.money_in)}</Masked></td>
+                        <td className="num"><Masked>{money(m.money_out)}</Masked></td>
+                        <td className="num"><Masked>{money(m.net)}</Masked></td>
                         <td className="num">{m.transactions}</td>
                         <td>{m.gaps.length > 0 ? `May be missing transactions from ${m.gaps.join(', ')}` : m.uncertain ? 'May be incomplete' : ''}</td>
                       </>
@@ -345,15 +352,15 @@ export function ReportView({ report }: { report: Report }) {
                 {report.marked.categories.map((c) => (
                   <tr key={c.category}>
                     <td>{c.category}</td>
-                    <td className="num">{money(c.money_in)}</td>
-                    <td className="num">{money(c.money_out)}</td>
+                    <td className="num"><Masked>{money(c.money_in)}</Masked></td>
+                    <td className="num"><Masked>{money(c.money_out)}</Masked></td>
                     <td className="num">{c.transactions}</td>
                   </tr>
                 ))}
                 <tr className="report-total-row">
                   <td>All marked categories</td>
-                  <td className="num">{money(report.marked.money_in)}</td>
-                  <td className="num">{money(report.marked.money_out)}</td>
+                  <td className="num"><Masked>{money(report.marked.money_in)}</Masked></td>
+                  <td className="num"><Masked>{money(report.marked.money_out)}</Masked></td>
                   <td />
                 </tr>
               </tbody>
@@ -400,8 +407,10 @@ export function ReportView({ report }: { report: Report }) {
                         <td>
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
-                        <td className="num">{formatMoney(-r.amount || 0, r.currency)}</td>
-                        <td>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</td>
+                        <td className="num"><Masked>{formatMoney(-r.amount || 0, r.currency)}</Masked></td>
+                        <td>
+                          <Masked>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</Masked>
+                        </td>
                       </tr>
                     );
                   })}
@@ -431,7 +440,7 @@ function CategoryTable({ rows, money, empty }: { rows: Report['money_out']; mone
           {rows.map((c) => (
             <tr key={c.category}>
               <td>{c.category}</td>
-              <td className="num">{money(c.amount)}</td>
+              <td className="num"><Masked>{money(c.amount)}</Masked></td>
               <td className="num">{c.transactions}</td>
             </tr>
           ))}

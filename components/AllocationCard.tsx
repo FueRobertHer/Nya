@@ -46,7 +46,7 @@ import {
   tenthPct,
 } from './allocation-text';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
-import { compactMoney } from '@/lib/format';
+import { compactMoney, spoken } from '@/lib/format';
 import { isInvestmentType } from '@/lib/balance';
 import { instantDay } from '@/lib/local-date';
 import {
@@ -80,6 +80,7 @@ import {
 } from '@/lib/allocation/settings';
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { FirePlan } from '@/lib/fire/plan';
+import { Masked } from './HideAmounts';
 
 /** The local day recovered balances were observed: the local day of the
  *  instant when the server knew it, else the stored UTC day (as the Plan's
@@ -377,7 +378,7 @@ export function ShareTable<K extends string>({
   if (rows.length === 0) return <p className="empty-note">Nothing to show: no balance or position to count.</p>;
   return (
     <>
-      <div className="alloc-bar" role="img" aria-label={rows.map((r) => `${label(r.slot)} ${r.label ?? money(r.amount)}`).join(', ')}>
+      <div className="alloc-bar" role="img" aria-label={spoken(rows.map((r) => `${label(r.slot)} ${r.label ?? money(r.amount)}`).join(', '))}>
         {positive.map((r) => (
           <span key={r.slot} className="alloc-seg" style={{ flexGrow: r.amount, background: colors[r.slot] }} />
         ))}
@@ -390,7 +391,7 @@ export function ShareTable<K extends string>({
                 <span className="alloc-swatch" style={{ background: colors[r.slot] }} aria-hidden="true" />
                 {label(r.slot)}
               </td>
-              <td className="num">{money(r.amount)}</td>
+              <td className="num"><Masked>{money(r.amount)}</Masked></td>
               <td className="num alloc-share">{r.label ?? '--'}</td>
             </tr>
           ))}
@@ -398,7 +399,7 @@ export function ShareTable<K extends string>({
       </table>
       {negative.length > 0 && (
         <p className="panel-note">
-          {names(negative.map((r) => `${label(r.slot)} is below zero (${money(r.amount)})`))}: money owed, such as cash borrowed on margin or a short
+          <Masked>{names(negative.map((r) => `${label(r.slot)} is below zero (${money(r.amount)})`))}</Masked>: money owed, such as cash borrowed on margin or a short
           position, so the bar leaves {negative.length === 1 ? 'it' : 'them'} out
           {total > 0 ? ' and the shares are of everything held less what is owed' : ''}.
         </p>
@@ -415,11 +416,11 @@ function Row({ label, value, note, action }: { label: React.ReactNode; value: Re
     <div className="plan-row">
       <div className="plan-row-main">
         <span className="plan-row-label">{label}</span>
-        <span className="plan-row-value">{value}</span>
+        <span className="plan-row-value">{typeof value === 'string' ? <Masked>{value}</Masked> : value}</span>
       </div>
       {(note || action) && (
         <div className="plan-row-note">
-          <span>{note}</span>
+          <span>{typeof note === 'string' ? <Masked>{note}</Masked> : note}</span>
           {action}
         </div>
       )}
@@ -485,7 +486,9 @@ export function ClassView({
       <ShareTable totals={alloc.classes} order={SLOTS} colors={CLASS_COLORS} label={(s: Slot) => CLASS_NAMES[s]} money={money} />
       {(unclassifiedSecurities.length > 0 || gaps.length > 0) && (
         <>
-          <div className="plan-subhead">{isMoney(alloc.classes.unclassified) ? `Unclassified: ${money(alloc.classes.unclassified)}` : 'Account money no position explains'}</div>
+          <div className="plan-subhead">
+            <Masked>{isMoney(alloc.classes.unclassified) ? `Unclassified: ${money(alloc.classes.unclassified)}` : 'Account money no position explains'}</Masked>
+          </div>
           <p className="panel-note">
             Money Nya can&apos;t place in a class is shown as unclassified, never guessed at. Classify it to count it, here and in the plan&apos;s mix.
           </p>
@@ -621,7 +624,7 @@ export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n
     <>
       {lines.map((l) => (
         <div key={l} className="as-of stale">
-          {l}
+          <Masked>{l}</Masked>
         </div>
       ))}
     </>
@@ -695,7 +698,7 @@ export function DriftSection({
                         under" beside "on target". */}
                     {r.toTarget !== null && r.diff !== null && !onTarget(r.diff) && Math.abs(r.toTarget) >= 1 && (
                       <div className="alloc-sub">
-                        {money(Math.abs(r.toTarget))} {r.toTarget > 0 ? 'under' : 'over'}
+                        <Masked>{money(Math.abs(r.toTarget))}</Masked> {r.toTarget > 0 ? 'under' : 'over'}
                       </div>
                     )}
                   </td>
@@ -711,7 +714,7 @@ export function DriftSection({
           )}
           {isMoney(d.unclassified) && (
             <p className="panel-note">
-              {money(d.unclassified)} unclassified is left out of these shares: it could be in any class. Classify it to compare all of your money.
+              <Masked>{money(d.unclassified)}</Masked> unclassified is left out of these shares: it could be in any class. Classify it to compare all of your money.
             </p>
           )}
         </>
@@ -753,9 +756,13 @@ export function MixSection({
     <>
       <div className="plan-subhead">For your plan</div>
       <p className="panel-note">
-        {mixBasisText(mix, currency)}: <strong>{mixText(mix)}</strong>. {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
+        <Masked>{mixBasisText(mix, currency)}</Masked>: <strong>{mixText(mix)}</strong>. {same ? "Your plan's simulation already uses this mix." : `Your plan's simulation uses ${plans}.`}
       </p>
-      {left && <p className="panel-note">{left}</p>}
+      {left && (
+        <p className="panel-note">
+          <Masked>{left}</Masked>
+        </p>
+      )}
       {!same && (
         <button className="secondary" style={{ marginTop: 8 }} onClick={onUse} disabled={!editable}>
           Use my allocation in the plan
@@ -789,10 +796,14 @@ export function UseMixForm({
   return (
     <>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        Your plan&apos;s simulation uses <strong>{mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })}</strong>. {mixBasisText(mix, currency)}:{' '}
+        Your plan&apos;s simulation uses <strong>{mixText({ stocksPct: plan.stocksPct, bondsPct: plan.bondsPct })}</strong>. <Masked>{mixBasisText(mix, currency)}</Masked>:{' '}
         <strong>{mixText(mix)}</strong>.
       </p>
-      {left && <p className="panel-note">{left}</p>}
+      {left && (
+        <p className="panel-note">
+          <Masked>{left}</Masked>
+        </p>
+      )}
       <p className="panel-note">
         The plan keeps this mix until you change it: it doesn&apos;t follow your accounts. Stocks of every region count as stocks.
       </p>
@@ -892,7 +903,7 @@ export function SplitForm({
         {ASSET_CLASSES.map((c) => (
           <label key={c} className="field">
             {FIELD_NAMES[c]} %
-            <input type="number" inputMode="decimal" step="0.1" value={fields[c]} onChange={(e) => setFields((f) => ({ ...f, [c]: e.target.value }))} disabled={saving} />
+            <input type="number" inputMode="decimal" data-percent step="0.1" value={fields[c]} onChange={(e) => setFields((f) => ({ ...f, [c]: e.target.value }))} disabled={saving} />
           </label>
         ))}
       </div>
@@ -1317,7 +1328,7 @@ export function AllocationHistoryChart({
       <div className={`chart-readout chart-readout-stable alloc-readout${marked ? ' alloc-readout-marked' : ''}`}>
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
-          {dayName(day.date)} · {wholeMoney(day.total, currency)} counted
+          {dayName(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
           {isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}
           {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
@@ -1400,10 +1411,10 @@ export function AllocationHistoryChart({
                 <td>{dayName(d.date)}</td>
                 <td>
                   {dayMixText(d)}
-                  {isMoney(d.unlisted) && <div className="alloc-sub">{wholeMoney(d.unlisted, currency)} of it in no position</div>}
+                  {isMoney(d.unlisted) && <div className="alloc-sub"><Masked>{wholeMoney(d.unlisted, currency)}</Masked> of it in no position</div>}
                   {d.missing.length > 0 && <div className="alloc-sub">Leaves out {missingOn(d, answer, nameOf)}</div>}
                 </td>
-                <td className="num">{compactMoney(d.total, currency)}</td>
+                <td className="num"><Masked>{compactMoney(d.total, currency)}</Masked></td>
               </tr>
             ))}
           </tbody>

@@ -15,9 +15,12 @@ import { indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { ruleSentence, sortedRules, type Rule } from '@/lib/rules';
 import type { Tag } from '@/lib/tags';
 import { draftFromRule, newDraft, type RulesState } from './rules-state';
+import { hiddenFigure } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
-/** An amount in a rule: a size, in whatever currency the transaction is. */
-const size = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 8 });
+/** An amount in a rule: a size, in whatever currency the transaction is
+ *  (hidden while amounts are, lib/format.ts). */
+const size = (n: number) => hiddenFigure(n.toLocaleString(undefined, { maximumFractionDigits: 8 }));
 
 export default function RulesCard({
   rules,
@@ -105,7 +108,7 @@ export default function RulesCard({
                   {/* Each control names the rule it acts on: its number, and
                       its sentence as the description. */}
                   <div className="rule-sentence" id={`rule-${r.id}`}>
-                    {ruleSentence(r, names)}
+                    <Masked>{ruleSentence(r, names)}</Masked>
                   </div>
                   {rules.problems[r.id] && <div className="stale-note">{rules.problems[r.id]}</div>}
                   <div className="rule-row-actions">

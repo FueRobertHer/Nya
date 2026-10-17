@@ -25,7 +25,7 @@ export default function CategoriesCard({ categories, onChanged }: { categories: 
         <>
           <p className="panel-note" style={{ marginTop: 0 }}>
             {shown} categor{shown === 1 ? 'y' : 'ies'} in {taxonomy.groups.length} group{taxonomy.groups.length === 1 ? '' : 's'}
-            {archived > 0 ? `, and ${archived} archived` : ''}. Rename, regroup, archive or merge them: transactions, budgets and totals follow.
+            {archived > 0 ? `, and ${archived} archived` : ''}. Rename, regroup, archive or merge them, or start from a starter set: transactions, budgets and totals follow.
           </p>
           <button className="secondary" style={{ marginTop: 12 }} onClick={() => setOpen(true)}>
             Edit categories

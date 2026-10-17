@@ -33,7 +33,8 @@
 // the selection is announced.
 
 import { useId, useMemo, useRef, useState } from 'react';
-import { formatMoney, compactMoney } from '@/lib/format';
+import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import {
   availableRanges,
   axisTicks,
@@ -442,7 +443,9 @@ export default function NetWorthChart({
   return (
     <div>
       <div className="chart-readout chart-readout-stable">
-        <span className="chart-readout-value">{readValue}</span>
+        <span className="chart-readout-value">
+          <Masked>{readValue}</Masked>
+        </span>
         {readNote ? (
           <span className="chart-readout-date chart-readout-noted">
             <span className="chart-readout-day">{readDate}</span>
@@ -470,7 +473,7 @@ export default function NetWorthChart({
           scrubbing to a day without a split (or the data arriving late) moves
           nothing below it. */}
       {(splitText || reserveSplit || baselineFor) && (
-        <div className="chart-readout-split">{splitText || <>&nbsp;</>}</div>
+        <div className="chart-readout-split">{splitText ? <Masked>{splitText}</Masked> : <>&nbsp;</>}</div>
       )}
 
       <svg
@@ -478,7 +481,9 @@ export default function NetWorthChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}`}
+        aria-label={spoken(
+          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}`
+        )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
@@ -595,7 +600,7 @@ export default function NetWorthChart({
       )}
       <p className="visually-hidden" aria-live="polite">
         {chosenNote !== null && marked[chosenNote] && points[marked[chosenNote].index]
-          ? `${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`
+          ? spoken(`${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`)
           : ''}
       </p>
 

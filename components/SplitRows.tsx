@@ -12,10 +12,11 @@
 
 import type { Txn } from './MonthBreakdown';
 import CategoryPicker from './CategoryPicker';
+import { Masked } from './HideAmounts';
 import { signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
-import { PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
+import { bankRows, PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
 import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 
@@ -29,6 +30,14 @@ export function entryLabel(t: Pick<Txn, 'split_parts' | 'group_members' | 'group
     return `Group of ${n}`;
   }
   return null;
+}
+
+/** Each split transaction among the rows put back whole, every part of it
+ *  (lib/split-rows.ts bankRows), by its id: what a list showing only some of
+ *  its parts (a pick from the cash flow lists those in its node, #41) says
+ *  it is split into, and edits its split from. */
+export function wholeSplits(rows: readonly Txn[]): Map<string, Txn> {
+  return new Map(bankRows(rows.filter((t) => t.split_of !== undefined)).map((t) => [t.transaction_id, t]));
 }
 
 /** Whether the bank (through Plaid or SimpleFIN) keeps a row's amount: a
@@ -272,7 +281,7 @@ export function PartRows({
                 </div>
               )}
             </td>
-            <td className={`num${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}>{signedMoney(-p.amount, currency, { always: true })}</td>
+            <td className={`num${p.amount < 0 ? ' inflow' : ''}${p.excluded === true ? ' excluded' : ''}`}><Masked>{signedMoney(-p.amount, currency, { always: true })}</Masked></td>
           </tr>
         );
       })}
@@ -344,7 +353,7 @@ export function MemberRows({
                 </div>
               )}
             </td>
-            <td className={`num${m.amount < 0 ? ' inflow' : ''} excluded`}>{signedMoney(-m.amount, currency, { always: true })}</td>
+            <td className={`num${m.amount < 0 ? ' inflow' : ''} excluded`}><Masked>{signedMoney(-m.amount, currency, { always: true })}</Masked></td>
           </tr>
         );
       })}

@@ -23,8 +23,10 @@ export type NotedRow = { transaction_id: string; split_of?: string; group_member
 /** Under a month's totals on the Activity tab: how many of its transactions
  *  came from files imported into linked accounts rather than from the bank,
  *  or null. Transactions, not rows: a split one is one, its parts said by
- *  their transaction's id, and a group's are each one. */
-export function importedRowsNote(rows: readonly NotedRow[]): string | null {
+ *  their transaction's id, and a group's are each one. `period` names the
+ *  days the rows are of, for totals over others (the cash flow's,
+ *  lib/cash-flow.ts: "October", "this period"). */
+export function importedRowsNote(rows: readonly NotedRow[], period = 'this month'): string | null {
   const imported = new Set<string>();
   for (const t of rows) {
     for (const m of t.group_members ?? [t]) {
@@ -34,7 +36,7 @@ export function importedRowsNote(rows: readonly NotedRow[]): string | null {
   }
   const n = imported.size;
   if (n === 0) return null;
-  return `${n.toLocaleString('en-US')} of this month’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
 }
 
 /**
