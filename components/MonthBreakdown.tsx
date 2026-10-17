@@ -20,7 +20,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
 import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
-import { instantDay, localMonth } from "@/lib/local-date";
+import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
@@ -36,10 +36,12 @@ import TagFilter from "./TagFilter";
 import SpendByTag from "./SpendByTag";
 import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
 import { searchEntries } from "./txn-search";
+import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
+import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
-import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions } from "./SplitRows";
+import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
 
 /** What one side of a pair Nya worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers) is. */
@@ -392,6 +394,15 @@ export default function MonthBreakdown({
   // After a transaction is given another category: the offer to do the same
   // for every transaction with its name, as a rule (#36).
   const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
+  // A node of the cash flow tapped (#41): the list shows its transactions,
+  // from every month of its period, until it is cleared or a month is chosen.
+  // The chart's period is kept here beside it: a reload shows a spinner in
+  // the chart's place, and it must come back on the pick's period.
+  const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
+  const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");
+  const listRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef<HTMLDivElement>(null);
+  const pickedNow = useRef(false);
   // The split being made or changed, and the group (#39).
   const [splitting, setSplitting] = useState<Txn | null>(null);
   const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
@@ -526,9 +537,25 @@ export default function MonthBreakdown({
   // The search reads a row's tags and note too (#40), and the tag filter
   // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
   const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
+  // A tapped node's rows, worked out again as the rows change, in place of
+  // the month's; the search and the tag filter narrow them the same way.
+  const picked = useMemo(
+    () => (flowPick && taxonomy ? pickedRows(txns ?? [], flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }) : null),
+    [flowPick, txns, taxonomy, currency],
+  );
+  const listed = picked ?? monthTxns;
   // A split transaction is kept whole, every part of it, when any part is
   // (#39): its parts are listed under it, and its split edited from all.
-  const visible = useMemo(() => searchEntries(monthTxns, { query, tag: filterTag }, tags), [monthTxns, query, filterTag, tags]);
+  const visible = useMemo(() => searchEntries(listed, { query, tag: filterTag }, tags), [listed, query, filterTag, tags]);
+  // Once a pick has filled the list: the list into view, and focus on the
+  // line saying what it shows, so a pick made from the chart's table by
+  // keyboard goes on from the list rather than from the button left above.
+  useEffect(() => {
+    if (!flowPick || !pickedNow.current) return;
+    pickedNow.current = false;
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    shownRef.current?.focus({ preventScroll: true });
+  }, [flowPick]);
 
   // Group the visible rows into day sections, each carrying the day's net in
   // display terms (positive = money in) for each currency its rows are in, so
@@ -553,6 +580,12 @@ export default function MonthBreakdown({
     // figure above counts the parts and the nets, as every total does.
     return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
   }, [visible, currency]);
+  // Each split transaction whole, every part of it (#39), from all the rows:
+  // a pick from the cash flow lists only the parts in its node under it, but
+  // the transaction still says how many parts it has, and its split is edited
+  // from all of them, never from those the list happens to show.
+  const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
+  const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
 
   if (loading) {
     return (
@@ -629,6 +662,26 @@ export default function MonthBreakdown({
   return (
     <>
       {addCard}
+      {/* Where the money came from and went (#41), over a period of its own;
+          tapping a node lists its transactions below. */}
+      {taxonomy && (
+        <CashFlowSankey
+          txns={txns}
+          taxonomy={taxonomy}
+          currency={currency}
+          incomplete={incomplete}
+          stopped={stopped}
+          withoutTransactions={withoutTransactions}
+          notes={notes}
+          pick={flowPick}
+          onPick={(p) => {
+            pickedNow.current = p !== null;
+            setFlowPick(p);
+          }}
+          period={flowPeriod}
+          onPeriod={setFlowPeriod}
+        />
+      )}
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
@@ -642,7 +695,10 @@ export default function MonthBreakdown({
                 <button
                   key={m}
                   className={`trend-col${m === selected ? " active" : ""}`}
-                  onClick={() => setMonth(m)}
+                  onClick={() => {
+                    setMonth(m);
+                    setFlowPick(null);
+                  }}
                   aria-pressed={m === selected}
                   aria-label={`${monthLabel(m)}: net ${formatMoney(net, currency)}`}
                 >
@@ -798,15 +854,16 @@ export default function MonthBreakdown({
         </div>
       )}
 
-      <div className="card">
+      <div className="card" ref={listRef}>
         <div className="inst-header">
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
             {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
             {countTransactions(visible)}
-            {query || filterTag ? ` of ${countTransactions(monthTxns)}` : ""}
+            {query || filterTag ? ` of ${countTransactions(listed)}` : ""}
           </div>
         </div>
+        {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
         <input
           className="text-input search-input"
@@ -847,7 +904,9 @@ export default function MonthBreakdown({
           <p className="empty-note">
             {query || filterTag
               ? "No transactions match your search."
-              : "No transactions this month."}
+              : flowPick
+                ? "Nothing to list."
+                : "No transactions this month."}
           </p>
         ) : (
           <table className="txn-table">
@@ -908,7 +967,7 @@ export default function MonthBreakdown({
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
-                              {entryLabel(t) ? ` · ${entryLabel(t)}` : ""}
+                              {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
                               {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
                               {t.source ? ` · ${sourceLabel(t.source)}` : ""}
@@ -927,7 +986,7 @@ export default function MonthBreakdown({
                                 Couldn&apos;t read whether you excluded this
                               </div>
                             )}
-                            {entryNotice(t) && <div className="excluded-tag">{entryNotice(t)}</div>}
+                            {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -978,7 +1037,7 @@ export default function MonthBreakdown({
                               <SplitActions
                                 t={t}
                                 onSplit={(x) => {
-                                  setSplitting(x);
+                                  setSplitting(whole(x));
                                   setRecatId(null);
                                 }}
                                 onGroup={(x) => {
@@ -1126,7 +1185,7 @@ export default function MonthBreakdown({
                         onOpen={setRecatId}
                         onChanged={() => onSplitsChanged?.()}
                         onError={setSplitError}
-                        onEditSplit={setSplitting}
+                        onEditSplit={(x) => setSplitting(whole(x))}
                       />
                     )}
                     {t.group_members && (

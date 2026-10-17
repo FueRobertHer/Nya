@@ -4947,3 +4947,185 @@ button.split-small {
   flex-direction: column;
   overflow-wrap: anywhere;
 }
+
+/* --- cash flow (#41): the Activity tab's Sankey (components/CashFlowSankey.tsx,
+   laid out by lib/sankey.ts), its table, and the list showing a node's
+   transactions (components/MonthBreakdown.tsx). The app's own colors: money in
+   and what is left over in the up hue, spending in the accent, what came from
+   savings or debt in the down hue, the middle in the muted gray. --- */
+
+.cash-flow-period {
+  margin-top: 10px;
+}
+
+.cash-flow-summary {
+  margin-top: 12px;
+}
+
+.sankey-svg {
+  display: block;
+  width: 100%;
+  /* The labels' size follows the drawing's: on a wide screen it stops
+     growing at about one and a half times a phone's. */
+  max-width: 560px;
+  height: auto;
+  margin: 12px auto 0;
+  /* A tap selects; a drag still scrolls the page, and selects no label. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.sankey-link {
+  fill-opacity: 0.3;
+}
+
+.sankey-link.in,
+.sankey-link.left {
+  fill: var(--up);
+}
+
+.sankey-link.out {
+  fill: var(--accent);
+}
+
+.sankey-link.sub {
+  fill-opacity: 0.2;
+}
+
+.sankey-link.deficit {
+  fill: var(--down);
+}
+
+/* With a node's transactions listed, its own ribbons stand out. */
+.sankey-picking .sankey-link {
+  fill-opacity: 0.1;
+}
+
+.sankey-picking .sankey-link.lit {
+  fill-opacity: 0.5;
+}
+
+.sankey-bar {
+  fill: var(--muted);
+}
+
+.sankey-node.in .sankey-bar,
+.sankey-node.left .sankey-bar {
+  fill: var(--up);
+}
+
+.sankey-node.out .sankey-bar {
+  fill: var(--accent);
+}
+
+.sankey-node.deficit .sankey-bar {
+  fill: var(--down);
+}
+
+.sankey-node.picked .sankey-bar {
+  stroke: var(--text);
+  stroke-width: 1.5px;
+}
+
+/* Text in the text colors, never a node's; a halo in the card's color keeps
+   a label legible where it crosses a ribbon. */
+.sankey-label {
+  font-size: 10px;
+  fill: var(--text);
+  paint-order: stroke;
+  stroke: var(--card);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+}
+
+.sankey-amount {
+  fill: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.sankey-hit {
+  fill: transparent;
+}
+
+.sankey-node.tappable {
+  cursor: pointer;
+}
+
+@media (hover: hover) {
+  .sankey-node.tappable:hover .sankey-bar {
+    opacity: 0.8;
+  }
+}
+
+.cash-flow-table {
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.cash-flow-table summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+
+.cash-flow-table td,
+.cash-flow-table th {
+  padding: 6px 4px;
+  font-size: 12px;
+}
+
+.cash-flow-table td {
+  color: var(--text);
+}
+
+.cash-flow-section th {
+  padding-top: 12px;
+}
+
+.cash-flow-child td:first-child {
+  padding-left: 18px;
+}
+
+.cash-flow-total td {
+  font-weight: 600;
+}
+
+/* A flow's name opens its transactions: text, underlined, never a block. */
+button.cash-flow-show {
+  width: auto;
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--text);
+  font-size: inherit;
+  font-weight: 400;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--muted);
+  text-underline-offset: 3px;
+  border-radius: 4px;
+}
+
+.cash-flow-tag {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+/* Above the Activity list: which node's transactions it shows, and the way
+   back to the month. */
+.flow-shown {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.flow-shown button {
+  width: auto;
+  flex: none;
+  padding: 6px 12px;
+  font-size: 13px;
+}
