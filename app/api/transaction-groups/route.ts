@@ -6,7 +6,7 @@ import { categoryById, indexTaxonomy } from '@/lib/categories';
 import { ensureTaxonomy } from '@/lib/category-store';
 import { changeGroup, checkGroupName, checkMemberIds, checkMembers, createGroup, GroupError, groupStore, isGroupId, memberIndex, MIN_MEMBERS, removeGroup, type TxnGroup } from '@/lib/groups';
 import { splitStore } from '@/lib/splits';
-import { findTransactions, LookupUnreadableError, type FoundTxn } from '@/lib/txn-lookup';
+import { findTransactions, importedStoodFor, LookupUnreadableError, type FoundTxn } from '@/lib/txn-lookup';
 import { isSplitOrGroupId } from '@/lib/split-rows';
 
 // Groups of transactions that count as one net amount (#39, lib/groups.ts):
@@ -18,7 +18,11 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //   makes a group of two or more posted transactions, each stored, in one
 //   currency, within a year of each other, none split (its parts count on
 //   their own: a group would count it twice) and none in another group;
-//   its net is filed under the category (by id). Answers { id, group }.
+//   its net is filed under the category (by id). Answers { id, group }. A
+//   bank row standing for a row imported from a file that is split, or in a
+//   group, is split or in that group already (it shows that split, or counts
+//   in that group in its place), and refused as such: a group of its own
+//   would hide them.
 // PATCH { id, name?, category_id?, add?: [ids], remove?: [ids] }
 //   renames it, refiles it, or puts transactions in or takes them out, by
 //   the same rules; one that is no longer stored stays in it until the bank's
@@ -69,8 +73,12 @@ const quoted = (t: FoundTxn) => `“${t.name}”`;
 
 /**
  * Checks transactions joining a group (`group`, or a new one when absent):
- * each stored (404), not split (409), in no other group (409). Groups and
- * splits are read strictly: one that can't be read could hold any of them.
+ * each stored (404), not split (409), in no other group (409), and, for a
+ * posted bank row standing for a row imported from a file, that row neither
+ * split nor in any group, this one too (409: the bank row shows that split,
+ * or counts in that group in its place, lib/split-rows.ts, and a place of its
+ * own would hide them). Groups, splits and what a bank row stands for are
+ * read strictly: one that can't be read could hold any of them.
  */
 async function checkJoining(ctx: Ctx, ids: readonly string[], found: ReadonlyMap<string, FoundTxn>, group?: string): Promise<void> {
   if (ids.length === 0) return;
@@ -84,6 +92,29 @@ async function checkJoining(ctx: Ctx, ids: readonly string[], found: ReadonlyMap
   const inGroup = memberIndex(new Map([...groups].filter(([id]) => id !== group)));
   const taken = ids.find((id) => inGroup.has(id));
   if (taken) throw new GroupError(`${quoted(found.get(taken)!)} is already in the group “${groups.get(inGroup.get(taken)!)!.name}”: take it out of that group first.`, 409);
+  // A pending one is refused as pending (checkMembers).
+  const stood = await importedStoodFor(
+    ctx,
+    ids.map((id) => found.get(id)!).filter((t) => !t.pending)
+  );
+  if (stood.size === 0) return;
+  const carried = await splitStore.getMany(ctx, [...new Set([...stood.values()].flat())]);
+  const everyGroup = memberIndex(groups);
+  for (const [id, rows] of stood) {
+    if (rows.some((r) => carried.has(r))) {
+      throw new GroupError(
+        `${quoted(found.get(id)!)} is split as you split the row you imported for it from your bank’s file, and its parts count on their own, so a group would count it twice. Unsplit it first.`,
+        409
+      );
+    }
+    const held = rows.map((r) => everyGroup.get(r)).find((g) => g !== undefined);
+    if (held) {
+      throw new GroupError(
+        `${quoted(found.get(id)!)} is already in the group “${groups.get(held)!.name}”, in place of the row you imported for it from your bank’s file: take it out of that group first.`,
+        409
+      );
+    }
+  }
 }
 
 function failure(err: unknown, fallback: string): NextResponse {

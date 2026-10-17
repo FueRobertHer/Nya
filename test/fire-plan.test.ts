@@ -1,4 +1,5 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { readFileSync } from 'node:fs';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { FirePlan } from '@/lib/fire/plan';
@@ -18,7 +19,9 @@ const { declaredStore } = await import('@/lib/stores');
 const route = await import('@/app/api/fire-plan/route');
 const { classify } = await import('@/lib/reencrypt');
 const { DEFAULT_PLAN, enginePlan, fiView, isFirePlan, parsePlan, planYears, repairPlan, startAge, upgradePlan } = await import('@/lib/fire/plan');
-const { trailingFlows, investedAssets, planFlow, unreadTransactions, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import('@/lib/fire/inputs');
+const { trailingFlows, investedAssets, planFlow, unreadTransactions, unreadNotesOf, isWorkplacePlan, workplaceSavings, transfersOut, cashAccountIds, TRAILING_DAYS, MATCH_DAYS } = await import(
+  '@/lib/fire/inputs'
+);
 const { isTransfer } = await import('@/components/MonthBreakdown');
 const { fiNumber, yearsToTarget, coastFiNumber } = await import('@/lib/fire/fi');
 const { historicalCycles } = await import('@/lib/fire/simulate');
@@ -719,6 +722,32 @@ describe('spending and savings from the trailing year', () => {
       { institution: 'Chase', reason: 'needs to be reconnected' },
       { institution: null, reason: 'Could not load transactions.' },
     ]);
+  });
+
+  test('reads only the notes that say transactions are missing: never how a split, a group, a rule or a category applies', () => {
+    const answer = {
+      notes: [
+        'Chase: needs to be reconnected',
+        'How you split 1 transaction couldn’t be read, so it shows whole until it can be.',
+        '1 transaction in a group is split too, so its parts aren’t used and the group counts it whole.',
+        'Rules that name a category aren’t applied until your categories can be read.',
+        "Your account links couldn't be read, so a rule on an account applies only to that account's own transactions until they can be, not to an earlier account's linked to it.",
+      ],
+      unread_notes: ['Chase: needs to be reconnected'],
+    };
+    expect(unreadTransactions(unreadNotesOf(answer))).toEqual([{ institution: 'Chase', reason: 'needs to be reconnected' }]);
+    expect(unreadTransactions(unreadNotesOf({ ...answer, unread_notes: [] }))).toEqual([]);
+    // An answer made before the server sent them: each note taken as one.
+    expect(unreadNotesOf({ notes: ['Chase: needs to be reconnected'] })).toEqual(['Chase: needs to be reconnected']);
+    expect(unreadNotesOf({ unread_notes: ['Amex: could not fetch transactions', 7, null] })).toEqual(['Amex: could not fetch transactions']);
+    expect(unreadNotesOf(null)).toEqual([]);
+  });
+
+  test('the dashboard gives the Plan and its card on Home only those notes', () => {
+    const dashboard = readFileSync(new URL('../components/Dashboard.tsx', import.meta.url), 'utf8');
+    expect(dashboard.match(/txnNotes=\{txnUnread\}/g)).toHaveLength(2);
+    expect(dashboard).not.toContain('txnNotes={txnNotes}');
+    expect(dashboard).toContain('setTxnUnread(unreadNotesOf(data));');
   });
 });
 

@@ -191,8 +191,10 @@ export type PlanTabProps = {
   /** The dashboard's transactions, null until they load. */
   txns: Txn[] | null;
   txnsLoading: boolean;
-  /** /api/transactions' notes: institutions whose transactions couldn't all
-   *  be read ("Chase: needs to be reconnected"), or that the whole load failed. */
+  /** /api/transactions' notes that say transactions couldn't all be read
+   *  (lib/fire/inputs.ts unreadNotesOf: "Chase: needs to be reconnected"), or
+   *  that the whole load failed; never one that says how a rule, a category,
+   *  a split or a group applies. */
   txnNotes: string[];
   /** The connections that bring in no transactions (lib/no-transactions.ts):
    *  when none can bring in spending, the figures say so rather than waiting

@@ -47,7 +47,7 @@ import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
-import type { GroupOutside, SplitParent } from './split-rows';
+import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
 import { pruneSplitsAndGroups } from './split-gone';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
@@ -154,10 +154,10 @@ export type Txn = {
   // earlier account's row besides an exclusion; and on an imported or
   // SimpleFIN row, that its name is one the person gave it in the app
   // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
-  // And on a posted bank row standing for rows imported into its account
-  // (#52, lib/history-import/read.ts importedForActivity's `represents`),
-  // those rows' ids, earlier imports first: what was said about them carries
-  // to it.
+  // And on a bank row standing for rows imported into its account (#52,
+  // lib/history-import/read.ts importedForActivity's `represents`), those
+  // rows' ids, earlier imports first: what was said about them carries to it
+  // once it has posted (a pending one stands in for them until it posts).
   account_ref?: string;
   renamed_from?: string;
   carried?: CarriedRowFacts;
@@ -182,7 +182,9 @@ export type Txn = {
   // imported from a file (#52) takes that row's split, its parts naming the
   // row it is kept under (split_carried_from), and its place in a group, its
   // row there naming it the same way (group_carried_from), where an edit of
-  // them is made.
+  // them is made. A group's row says why its transactions that aren't
+  // counted in it aren't, where that is known (group_away: in another group,
+  // or a bank row standing for one still pending).
   split_of?: string;
   split_index?: number;
   split_count?: number;
@@ -196,6 +198,7 @@ export type Txn = {
   group_id?: string;
   group_members?: Txn[];
   group_carried_from?: string;
+  group_away?: GroupAway[];
   group_missing?: number;
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
