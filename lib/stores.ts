@@ -43,6 +43,7 @@ import './tags';
 import './timeline-notes';
 import './txn-annotations';
 import './vendor-default-store';
+import './weekly-summary/store';
 
 import { storesDeclaredSoFar, type Store } from './repo';
 

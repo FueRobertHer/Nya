@@ -1,20 +1,25 @@
 // lib/mail.ts
 //
-// Sending email, for the notices about bank connections (#51). Resend's HTTP
-// API through fetch, one POST per message, with no SDK. Configured by
-// RESEND_API_KEY and MAIL_FROM; with either unset, nothing is sent, the app's
-// connection health view is the only place a broken connection shows, and one
-// log line says mail is off.
+// Sending email, for the notices about bank connections (#51) and the weekly
+// summary. Resend's HTTP API through fetch, one POST per message, with no
+// SDK. Configured by RESEND_API_KEY and MAIL_FROM; with either unset, nothing
+// is sent, the app's connection health view is the only place a broken
+// connection shows, and one log line says mail is off.
 //
-// What goes in a message is the caller's to decide (lib/connection-notices.ts),
-// under a strict rule: the institution's name and what to do, never a balance,
-// an amount or an account number. This module never logs a message's text, its
-// recipients or the key: a failure is logged as Resend's HTTP status and its
-// error's name.
+// What goes in a message is the caller's to decide (lib/connection-notices.ts,
+// lib/weekly-summary/compose.ts), under a strict rule: names and what to do,
+// never a balance, an amount or an account number. This module never logs a
+// message's text, its recipients or the key: a failure is logged as Resend's
+// HTTP status and its error's name.
 //
 // A message can carry an idempotency key, which Resend honours for 24 hours:
 // the same key sent again is not delivered twice, so a retry after an answer
 // that never arrived cannot double an email.
+//
+// And headers of its own, which Resend's API takes as `headers`: the weekly
+// summary's List-Unsubscribe and List-Unsubscribe-Post (RFC 8058), so a mail
+// app can offer its own one-click unsubscribe (lib/weekly-summary/). Only
+// those two names are passed, each one line.
 
 const ENDPOINT = 'https://api.resend.com/emails';
 /** How long a send may take: Resend answers in well under a second. The daily
@@ -28,7 +33,25 @@ export type Mail = {
   text: string;
   /** At most 256 characters, per Resend. */
   idempotencyKey?: string;
+  /** Headers of the message itself, by name: only MESSAGE_HEADERS are sent. */
+  headers?: Partial<Record<MessageHeader, string>>;
 };
+
+/** The message headers a Mail may set (see the header). */
+export const MESSAGE_HEADERS = ['List-Unsubscribe', 'List-Unsubscribe-Post'] as const;
+export type MessageHeader = (typeof MESSAGE_HEADERS)[number];
+
+/** The message headers to send: the known names only, each a single line
+ *  that isn't too long; anything else is left out rather than sent. */
+function messageHeaders(headers: Mail['headers']): Record<string, string> | null {
+  if (!headers) return null;
+  const out: Record<string, string> = {};
+  for (const name of MESSAGE_HEADERS) {
+    const value = headers[name];
+    if (typeof value === 'string' && value.length > 0 && value.length <= 2000 && !/[\r\n]/.test(value)) out[name] = value;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
 
 /** Sent, with Resend's id for it; or not sent because mail is off. A failure
  *  throws MailError instead, so it can never be mistaken for either. */
@@ -36,12 +59,15 @@ export type MailResult = { sent: true; id: string | null } | { sent: false; reas
 
 /** A message that was not accepted. `status` is Resend's HTTP status, or null
  *  when no answer came (a timeout, the network, no usable recipient);
- *  `retryAfterMs` is how long a 429 asked to wait, when it said. */
+ *  `retryAfterMs` is how long a 429 asked to wait, when it said; `code` is
+ *  the short name Resend gave the error ("invalid_idempotent_request"), when
+ *  it gave one. */
 export class MailError extends Error {
   constructor(
     message: string,
     readonly status: number | null,
-    readonly retryAfterMs: number | null = null
+    readonly retryAfterMs: number | null = null,
+    readonly code: string | null = null
   ) {
     super(message);
     this.name = 'MailError';
@@ -118,6 +144,7 @@ export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch; timeout
   const to = [...new Set(mail.to)].filter(isEmailAddress);
   if (to.length === 0) throw new MailError('The email has no usable recipient.', null);
 
+  const headers = messageHeaders(mail.headers);
   let res: Response;
   try {
     res = await (opts.fetch ?? fetch)(ENDPOINT, {
@@ -127,7 +154,7 @@ export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch; timeout
         'Content-Type': 'application/json',
         ...(mail.idempotencyKey ? { 'Idempotency-Key': mail.idempotencyKey.slice(0, 256) } : {}),
       },
-      body: JSON.stringify({ from: config.from, to, subject: mail.subject, text: mail.text }),
+      body: JSON.stringify({ from: config.from, to, subject: mail.subject, text: mail.text, ...(headers ? { headers } : {}) }),
       signal: AbortSignal.timeout(opts.timeoutMs ?? MAIL_TIMEOUT_MS),
     });
   } catch (err) {
@@ -141,7 +168,7 @@ export async function sendMail(mail: Mail, opts: { fetch?: typeof fetch; timeout
       .then((b: any) => (typeof b?.name === 'string' && /^[a-z_]{1,60}$/.test(b.name) ? b.name : null))
       .catch(() => null);
     const wait = res.status === 429 ? retryAfterMs(res.headers.get('retry-after')) : null;
-    throw new MailError(`The email service refused the email (${res.status}${name ? `, ${name}` : ''}).`, res.status, wait);
+    throw new MailError(`The email service refused the email (${res.status}${name ? `, ${name}` : ''}).`, res.status, wait, name);
   }
   const id = await res
     .json()

@@ -1,6 +1,6 @@
 # Operations
 
-Runbooks for keeping the data safe: backups and restores, encryption keys, containers, and what a rollback must not undo. For setup see [deployment.md](deployment.md); for how the data is stored see [architecture.md](architecture.md).
+Runbooks for keeping the data safe: backups and restores, encryption keys, containers, email and the weekly summary, and what a rollback must not undo. For setup see [deployment.md](deployment.md); for how the data is stored see [architecture.md](architecture.md).
 
 Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 404 unless `OPS_ENABLED=1`, accepts POST only, and compares `OPS_SECRET` in constant time. Set `OPS_ENABLED=1` only while you run an operation, then remove it and redeploy, so a leaked `OPS_SECRET` is useless on its own.
 
@@ -15,6 +15,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Goals: plans and rolling back](#goals-plans-and-rolling-back)
 - [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
+- [Email and the weekly summary](#email-and-the-weekly-summary)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
 ## Backups
@@ -340,6 +341,35 @@ Rollover settings and the income setting themselves are as they were before the 
 Once `PLAID_BROKERAGE_LINK=1` is set and anyone has connected with **Connect a brokerage or retirement account** ([deployment.md](deployment.md#brokerage-and-retirement-connections)), **never roll back to a release from before the one that added it.** Those releases ask Plaid for every connection's transactions on every load, and on a connection made with the brokerage option that first call starts Plaid's Transactions product, billed monthly until the connection is removed, wherever the institution offers it. It can't be taken off a connection again. Turning the option off doesn't help: it only stops new connections. Rolling back to that release or any later one is safe.
 
 If you have to go back further, first find those connections. In the Upstash console, each container's `<prefix>:c:<id>:plaid:items` hash holds one record per connection, and the ones made with the brokerage option carry `"transactions_billed":false` (`null` means the lookup when it was linked failed, so it could be either). Disconnect each of them on the Accounts tab (**Manage**, then **Disconnect** on its card) before the rollback, and connect them again once you are back on a release with the check, linking each new account to the one it replaces ([features.md](features.md#removing-an-institution-and-adding-it-back)) so its history carries on. Or keep them, and accept the fee on each.
+
+## Email and the weekly summary
+
+**Turning email on.** Set `RESEND_API_KEY`, `MAIL_FROM` and `APP_URL`, and with the shared password `NOTIFY_EMAIL` ([deployment.md](deployment.md#email-notices) has the steps), then redeploy. That turns on every email at once: the connection notices, the download and API token notices, and the [weekly summary](features.md#the-weekly-summary), which stays off for each person until they turn it on under **Manage** on the Accounts tab. Nothing else is needed for it, and there is nothing to run. Its emails come from the daily snapshot, so only production sends them (crons run only there), but **Send me one now** works on any deployment with email and `APP_URL` set up, Preview's demo accounts excepted. The card says when this copy can't send one (no email, nobody to write to with the shared password, no `APP_URL`), and still shows what it would say.
+
+**Turning it off for everyone.** There is no switch of its own. Unsetting `APP_URL` stops every summary (each must carry its link to turn it off), and only leaves the other emails without their link; unsetting `RESEND_API_KEY` or `MAIL_FROM` stops every email. Each person's setting stays as it is, and the summaries start again when the setting comes back.
+
+**What the log tells you.** Every line starts `Weekly summary:`, names a container by its opaque id at most, and never carries an address, an amount or what the email said.
+
+| The line says | What it means, and what to do |
+| --- | --- |
+| `emailed N summaries.` | The run sent that many. |
+| `N summaries are due, but APP_URL is not set ...: none was sent` | Set `APP_URL`. They go with the next run that finds them due (the catch-up, or a day or two later). |
+| `no time left for this run's summaries; N container(s) wait for the next run.` | The run's mail deadline came first. Seen now and then, nothing to do: they go with the catch-up or the next day. Seen every send day, more summaries are due on one day than one run can send: see [architecture.md](architecture.md#the-weekly-summary). |
+| `the email service is failing, so N other container(s) wait for the next run.` | Resend gave no answer, a 5xx or a 429 twice. Its status is on the line before (`was not sent; trying again next run.`, with the status and Resend's error code). Check Resend's status page and the API key. A send that got no answer at all is marked in its container's record, as it may have gone. |
+| `the summary for container ... was not sent: The weekly summary would have carried ...` | The check before sending found what looks like a figure, and nothing went: a bug in the words, never something to put right by hand. Report it with the kinds the line names; the person's next week tries again. |
+| `the setting or record of container ... could not be read, so no summary goes for it.` | A damaged or unrecognised `weekly-summary` or `weekly-summary-state`. No summary goes for that person until it reads again: a backup to restore, or a bug. Deleting `<prefix>:c:<id>:weekly-summary-state` by hand only makes a new key (links in emails already sent stop working) and forgets the last week sent, so one may go again that day. Deleting `<prefix>:c:<id>:weekly-summary` turns the summary off, as if it was never set. |
+| `... could not be read for container ..., so that part is left out.` | One part of a summary (its transactions, budgets, goals, planned items or connection records) couldn't be read; the email said so, and the rest went. The same data is unreadable in the app. |
+| `the transactions of container ... could not all be brought up to date` | The sync before the summary failed, or ran out of time (`Bringing transactions up to date took longer than 20000 ms`). The summary said which connection's transactions aren't in, rather than comparing the week. |
+| `... could not be made; trying again next run. Reading the summary took longer than 15000 ms` | Reading what the summary says ran out of time, so none went for that person this run. Seen every week for one container, its data takes longer to read than the summary allows: report it, with the container. |
+| `N sync(s) that ran out of time were still going when the run ended` | A sync went on past its 20 seconds and the run's end. The next sync, the app's or the next run's, puts right whatever it writes. Seen often, Plaid is slow to answer. |
+| `the email service refused this week's key for container ..., and no earlier try under it went unanswered` | Resend kept the week's idempotency key from an earlier request that didn't go, and the summary has changed since. Nothing is recorded, and the week goes once the key lapses, a day after it was first used. |
+| `nobody to email for container ...` | With the shared password, set `NOTIFY_EMAIL`; with Clerk, the owner's address isn't verified or the account is no longer allowed in. |
+| `the time zone set for container ... is not one this runtime knows` | The runtime's time zone data lacks a zone saved earlier. The summary waits; it goes once the runtime knows it, or the person picks another. |
+| `turned off from its link.` | Someone used the link in an email. Nothing to do. |
+
+A flood of links that don't work is turned away by address, counted with the API's tokens that don't work (600 in 10 minutes, `lib/api-limits.ts`); nothing about it is logged per request.
+
+**Rolling back.** A release from before the weekly summary doesn't know its stores: it sends nothing, leaves them as they are, and its re-encryption pass names them under `unclassified` and leaves them alone, as for `goal-plans` ([above](#goals-plans-and-rolling-back)). It doesn't have the link's route or page either, so a link in an email already sent asks the person to sign in, and turns nothing off, until this release is back; no summary goes meanwhile. Rolled forward, every setting is as it was, and the summaries start again with the next send day: a week the rollback missed by more than two days isn't sent late.
 
 ## An address locked out of the login
 

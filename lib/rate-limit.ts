@@ -28,7 +28,10 @@
 //     READ_IN_WINDOW), and never backed up. A token
 //     not even in the right form costs nothing and isn't counted. Fails open,
 //     as the login's does: a limit that can't be read is no reason to refuse
-//     a good token.
+//     a good token. The links that turn a weekly summary off
+//     (app/api/weekly-summary/unsubscribe) are counted here too: a token of
+//     the same kind, checked before any session or container is known, by
+//     the same rules. An address flooding either is turned away from both.
 //
 // BY ADDRESS, from X-Forwarded-For's first entry. On Vercel the platform sets
 // that header, so the first entry is the client's address. Anywhere else, run
