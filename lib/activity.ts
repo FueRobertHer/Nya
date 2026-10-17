@@ -80,6 +80,8 @@ import { readGroupsForDisplay } from './groups';
 import { expandSplitsAndGroups } from './split-rows';
 import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
+import { readReviewBasics, readReviewParts } from './review-read';
+import { reviewLayerOf } from './review-layer';
 
 /**
  * How a rule's account condition knows an account now (lib/rules.ts): through
@@ -492,13 +494,20 @@ export async function finishActivity(
   /** The tags that exist (lib/tags.ts), each row's among them; null when
    *  none were ever saved or they couldn't be read (a note says which). */
   tags: TagSet | null;
+  /** The review queue (lib/review-store.ts): on from a day, or off, or its
+   *  settings unread; and, when those couldn't be read, the note that says
+   *  so, for a reader that shows what needs review (the app), not reports. */
+  review: { on: boolean; since: string | null; unread: boolean };
+  review_note: string | null;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   // The manual rows back to the earlier of the two: the history's first day,
   // and the transactions' own (a report's period can start before it).
   const readFrom = cutoff < since ? cutoff : since;
-  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle] = await Promise.all([
+  // With them, the review queue's settings and the merchants' defaults; the
+  // approvals once the rows are known (lib/review-read.ts).
+  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle, reviewBasics] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
@@ -506,6 +515,7 @@ export async function finishActivity(
     readSplitsForDisplay(ctx),
     readGroupsForDisplay(ctx),
     opts.keepEnded ? null : getEffectiveLifecycle(ctx, new Map()),
+    readReviewBasics(ctx),
   ]);
   const ended = lifecycle ? endDays(lifecycle) : new Map<string, string>();
   const manual = { ...read, txns: read.txns.filter((t) => !(t.account_id && ended.has(t.account_id) && t.date >= ended.get(t.account_id)!)) };
@@ -549,13 +559,15 @@ export async function finishActivity(
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
   const rows = [...transactions, ...candidates];
-  const filed = await filingSet(ctx, rows, { grow: !!opts.grow });
+  // The approvals of these rows only (lib/review-read.ts), beside the categories.
+  const [filed, reviewParts] = await Promise.all([filingSet(ctx, rows, { grow: !!opts.grow }), readReviewParts(ctx, rows, reviewBasics)]);
   const ix = indexTaxonomy(filed.taxonomy);
+  const review = reviewLayerOf(reviewParts, ix);
   const onAccount = rulesRead(ruleRead.set, (r) => r.conditions.some((c) => c.field === 'account'));
   const links = await ruleAccounts(ctx, onAccount || !!opts.followLinks);
   const account = links.account;
   const rules = compileRules(ruleRead.set, { ix, liveTags: liveTagIds(tagRead.set), account });
-  applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects });
+  applyLayers(rows, { records: annotations.records, unknown: annotations.unknown, tags: tagRead.set, rules, ix, account, subjects: opts.subjects, review: review.layer });
   fileRows(ix, rows);
   // Last, splits and groups (lib/split-rows.ts): each split transaction of
   // the year in its parts' place, each group's transactions in its net's, so
@@ -588,9 +600,11 @@ export async function finishActivity(
   // account has no connection, so it is never incomplete).
   return {
     transactions: expanded.rows,
-    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...expanded.notes],
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes],
     unread_notes: [...plaid.notes, ...manual.notes],
     tags_note: tagRead.note,
+    review: { on: !reviewParts.settingsUnread && !!reviewParts.settings?.on, since: reviewParts.settings?.since ?? null, unread: reviewParts.settingsUnread },
+    review_note: review.queueNote,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither

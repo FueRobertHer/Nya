@@ -10,11 +10,15 @@
 // not it counts now: a bank row standing for one today may be gone
 // tomorrow), and a transaction from before Plaid's values were kept; a
 // budget, by id; a rule, by id, in a condition or as the category it files
-// into (lib/rules.ts); and a part of a split transaction or a group of
+// into (lib/rules.ts); a part of a split transaction or a group of
 // transactions, by id (lib/splits.ts, lib/groups.ts: every one, of any
-// date). Every id is followed through a merge to where it went. Every read
-// here is strict: a store that can't be read refuses the delete rather than
-// letting a category go that something may use.
+// date); a transaction approved under it, by id (lib/review-store.ts: every
+// one, of any date, since an approved transaction stays filed where it was
+// approved); and a merchant's default category, by id
+// (lib/vendor-defaults.ts), which is cleared first. Every id is followed
+// through a merge to where it went. Every read here is strict: a store that
+// can't be read refuses the delete rather than letting a category go that
+// something may use.
 
 import type { Ctx } from './containers';
 import { assembleBankRows, finishActivity } from './activity';
@@ -28,6 +32,9 @@ import { readRuleSet, ruleCategories } from './rules';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 import { bankRows, GROUP_PREFIX, PART_PREFIX } from './split-rows';
+import { approvalStore } from './review-store';
+import { vendorDefaultsStore } from './vendor-default-store';
+import { defaultUses } from './vendor-defaults';
 
 /** How many transactions are filed under the category, and whether it has a
  *  budget. Reads the stored rows (no Plaid call), hidden accounts' too, and
@@ -40,7 +47,7 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   const words = new Set(c.provider_keys.filter((k) => k.provider === TEXT).map((k) => k.key));
   const uses = (text: string | null | undefined) => !!text && words.has(textKey(text));
 
-  const [bank, overrides, carried, books, imported, budgets, rules, splits, groups] = await Promise.all([
+  const [bank, overrides, carried, books, imported, budgets, rules, splits, groups, approvals, defaults] = await Promise.all([
     assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, keepEnded: true }),
     readOverridesStrict(ctx),
     readCarriedStrict(ctx),
@@ -50,6 +57,8 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
     readRuleSet(ctx),
     splitStore.getAll(ctx),
     groupStore.getAll(ctx),
+    approvalStore.getAll(ctx),
+    vendorDefaultsStore.get(ctx),
   ]);
   const shown = await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true });
   const ix = indexTaxonomy(taxonomy);
@@ -66,10 +75,12 @@ export async function categoryUsage(ctx: Ctx, taxonomy: Taxonomy, id: string): P
   // Every part and every group, of any date, under the ids their rows have.
   for (const record of splits.values()) for (const p of record.parts) if (isIt(p.category_id)) counted.add(`${PART_PREFIX}${p.id}`);
   for (const [gid, g] of groups) if (isIt(g.category_id)) counted.add(`${GROUP_PREFIX}${gid}`);
+  // Every transaction approved under it, of any date: it stays filed there.
+  for (const [tid, a] of approvals) if (a.category_id && isIt(a.category_id)) counted.add(tid);
   for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
   const placed = placeBudgets(budgets.budgets, indexTaxonomy(budgets.taxonomy));
   // A rule naming it, or a category merged into it.
   const ruleUses = (rules?.rules ?? []).filter((r) => ruleCategories(r).some(isIt)).length;
   // The keys counted for: the delete refuses if they change before it lands.
-  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), rules: ruleUses, keys: c.provider_keys };
+  return { transactions: counted.size + carriedRows, budget: placed.categories.has(id), rules: ruleUses, defaults: defaultUses(defaults, isIt), keys: c.provider_keys };
 }

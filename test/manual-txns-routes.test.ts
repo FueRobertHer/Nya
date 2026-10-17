@@ -579,7 +579,8 @@ describe('editing and deleting a transaction', () => {
     const t = await added();
     await writeCache(ctx, CacheKey.Transactions, { plaid_only: true, transactions: [], notes: [], as_of: 'then' });
     const recat = (body: unknown) => call(recategorize.POST, 'POST', body);
-    expect(await recat({ transaction_id: t.transaction_id, account_id: WALLET.account_id, category: 'Travel' })).toEqual({ status: 200, body: { success: true } });
+    // It answers what the row's category was, which an undo puts back (Card Mode).
+    expect(await recat({ transaction_id: t.transaction_id, account_id: WALLET.account_id, category: 'Travel' })).toEqual({ status: 200, body: { success: true, previous: { category: 'food and drink' } } });
     expect((await findManualTxn(ctx, t.transaction_id))!.row.category).toBe('travel');
     expect(fake.hashes.get(ctxKey('txn-category-overrides'))).toBeUndefined();
     expect(await readCache(ctx, CacheKey.Transactions)).not.toBeNull();
