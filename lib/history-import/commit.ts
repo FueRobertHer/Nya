@@ -155,6 +155,10 @@ export type HistoryCommitInput = {
   choices: HistoryChoices;
   /** The digest of the review the person saw (reviewDigest). */
   reviewed: string;
+  /** The import's id and one id per row, minted by a caller that records
+   *  them before the import is made (an import from another app,
+   *  lib/migration/commit.ts, whose Undo must find it however far it got). */
+  ids_minted?: { import_id: string; rows: readonly string[] };
   now?: Date;
 };
 
@@ -290,10 +294,10 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
   const first = checked(planFor(new Map<string, ImportedBook | null>(await importedTxnStore.getMany(ctx, ids))), input.reviewed);
   if (!changes(first)) return { import_id: null, plan: first, entry: null };
 
-  const import_id = newHistoryImportId();
+  const import_id = input.ids_minted?.import_id ?? newHistoryImportId();
   // One id per row, made once, so a retried compare-and-set writes the rows
   // the entry names.
-  const rowIds = input.rows.map(() => newImportedTxnId());
+  const rowIds = input.ids_minted && input.ids_minted.rows.length === input.rows.length ? [...input.ids_minted.rows] : input.rows.map(() => newImportedTxnId());
   const entry = entryOf(input, first, rowIds, at);
   await historyImportStore.set(ctx, import_id, entry);
   try {

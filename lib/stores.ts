@@ -33,6 +33,7 @@ import './holdings-history';
 import './import/store';
 import './lifecycle';
 import './manual-txns';
+import './migration/store';
 import './planned-store';
 import './rate-limit';
 import './report/store';

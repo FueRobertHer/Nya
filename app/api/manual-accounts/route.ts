@@ -5,7 +5,6 @@ import {
   getManualAccounts,
   getManualAccount,
   saveManualAccount,
-  removeManualAccount,
   normalizeInstitutionName,
   isManualId,
   newManualId,
@@ -17,11 +16,7 @@ import {
 import { isOwedType } from '@/lib/balance';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
-import { pruneHidden } from '@/lib/hidden';
-import { removeAccountTxns } from '@/lib/manual-txns';
-import { forgetAccountImports } from '@/lib/import/commit';
-import { forgetAnnotations } from '@/lib/txn-annotations';
-import { forgetSplitsAndGroups } from '@/lib/split-gone';
+import { deleteManualAccount } from '@/lib/manual-account-delete';
 import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
@@ -188,25 +183,9 @@ export async function DELETE(req: Request) {
     if (!account_id || !isManualId(account_id)) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
-    // Its transactions first (lib/manual-txns.ts), with what was said about
-    // them: if this fails part way the account is still there to delete again,
-    // rather than gone with its rows left behind where nothing shows them.
-    // Its imports' records and settings before the rows, while the rows can
-    // still say which imports were its (lib/import/commit.ts).
-    await forgetAccountImports(ctx, account_id);
-    const rows = await removeAccountTxns(ctx, account_id);
-    await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
-    await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
-    await removeManualAccount(ctx, account_id);
-    // Once more now that the account is gone: an add or a move that read it
-    // before it went can have written its book again meanwhile. Whatever
-    // writes after this finds the account gone and takes its row back out
-    // (app/api/manual-transactions).
-    const late = await removeAccountTxns(ctx, account_id);
-    if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
-    if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
-    // The account is gone, so a hidden entry naming it would linger forever.
-    await pruneHidden(ctx, [account_id]);
+    // Its imports, its transactions with what was said about them, then the
+    // account, in the order lib/manual-account-delete.ts says why.
+    await deleteManualAccount(ctx, account_id);
     await invalidate(ctx, true);
     return NextResponse.json({ success: true });
   } catch (err) {
