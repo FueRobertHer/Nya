@@ -72,7 +72,7 @@
 // what is stale or missing named.
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
@@ -232,8 +232,10 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     const d = dayNumber(t.date);
     return d >= start && d <= end; // also skips a malformed date
   });
-  const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && counts(planFlow(t))));
-  const leftOutBy = new Map<string, number>();
+  const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t))));
+  // Transactions, not rows: a split one's parts are one, a group as many as
+  // it holds (lib/spending.ts transactionCounter).
+  const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
   let cashEntered = 0;
   let unclearElsewhere = 0;
   const cashEnteredOn = new Set<string>();
@@ -247,25 +249,30 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     'unclear-loan': 0,
     transfer: 0,
   };
-  let count = 0;
-  let excludedCount = 0;
-  let hiddenCount = 0;
+  const counted = transactionCounter();
+  const excludedCount = transactionCounter();
+  const hiddenCount = transactionCounter();
   let uncategorized = 0;
   let earliest = end;
-  let largestRefund: TrailingFlows['largestRefund'] = null;
+  // Each refund whole: a split one's refunded parts added up (#39).
+  const refunds = new Map<string, { amount: number; date: string; name: string }>();
   for (const t of inWindow) {
     const d = dayNumber(t.date);
     if (d < earliest) earliest = d;
     if (isExcluded(t)) {
-      excludedCount++;
-      if (t.excluded_by_rule) hiddenCount++;
+      excludedCount.add(t);
+      if (t.excluded_by_rule) hiddenCount.add(t);
       continue;
     }
+    // Counted in a group on a day before what was read (lib/split-rows.ts).
+    if (t.group_outside) continue;
     const flow = planFlow(t);
     if (!inCurrency(t, currency)) {
       if (flow !== 'transfer' && flow !== 'card-payment') {
         const c = currencyOf(t)!;
-        leftOutBy.set(c, (leftOutBy.get(c) ?? 0) + 1);
+        const counter = leftOutBy.get(c) ?? transactionCounter();
+        counter.add(t);
+        leftOutBy.set(c, counter);
       }
       continue;
     }
@@ -278,11 +285,17 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
       cashEntered += t.amount;
       cashEnteredOn.add(t.account_id);
     }
-    if (flow === 'refund' && (largestRefund === null || -t.amount > largestRefund.amount)) {
-      largestRefund = { amount: -t.amount, date: t.date, name: t.name };
+    if (flow === 'refund') {
+      const key = t.split_of ?? t.transaction_id;
+      const r = refunds.get(key) ?? { amount: 0, date: t.date, name: t.name };
+      r.amount += -t.amount;
+      refunds.set(key, r);
     }
-    if (counts(flow)) count++;
+    if (counts(flow)) counted.add(t);
   }
+  let largestRefund: TrailingFlows['largestRefund'] = null;
+  for (const r of refunds.values()) if (largestRefund === null || r.amount > largestRefund.amount) largestRefund = r;
+  const count = counted.n;
   const days = end - earliest + 1;
   if (count === 0 || days < MIN_DAYS) return null;
   const scale = days < TRAILING_DAYS ? TRAILING_DAYS / days : 1;
@@ -310,10 +323,10 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     days,
     scaled: scale !== 1,
     count,
-    excludedCount,
-    hiddenCount,
+    excludedCount: excludedCount.n,
+    hiddenCount: hiddenCount.n,
     currency,
-    leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
     uncategorized,
   };
 }
@@ -327,9 +340,25 @@ export function cashAccountIds(institutions: AssetInstitution[]): Set<string> {
 }
 
 /** An institution whose transactions could not all be read, from
- *  /api/transactions' notes ("Chase: needs to be reconnected"). A note that
- *  names no institution ("Could not load transactions.") has none. */
+ *  /api/transactions' notes that say so (unreadNotesOf: "Chase: needs to be
+ *  reconnected"). A note that names no institution ("Could not load
+ *  transactions.") has none. */
 export type UnreadTransactions = { institution: string | null; reason: string };
+
+/**
+ * Of an /api/transactions answer, the notes that say transactions couldn't
+ * all be read or aren't all in (`unread_notes`: an institution's, the rows
+ * imported into a linked account that can't be shown, a manual account's),
+ * which the Plan weighs its figures by. Never the others, which say how
+ * something applies when part of it can't be read (a rule, a category, a
+ * split, a group) while every transaction is there. An answer made before
+ * the server sent them has `notes` only, each then taken as one.
+ */
+export function unreadNotesOf(payload: unknown): string[] {
+  const p = typeof payload === 'object' && payload !== null ? (payload as { notes?: unknown; unread_notes?: unknown }) : {};
+  const list = Array.isArray(p.unread_notes) ? p.unread_notes : Array.isArray(p.notes) ? p.notes : [];
+  return list.filter((n): n is string => typeof n === 'string');
+}
 
 export function unreadTransactions(notes: string[]): UnreadTransactions[] {
   return notes.map((note) => {

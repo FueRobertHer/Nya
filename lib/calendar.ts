@@ -25,6 +25,7 @@
 import { addDays, expectedDates, type Cadence, type RecurringSeries } from './recurring';
 import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { currencyOf, inCurrency, isExcluded } from './spending';
+import { bankRows } from './split-rows';
 import { minorScale } from './forecast';
 
 /** What the calendar reads of a transaction (the Activity tab's Txn). */
@@ -37,6 +38,15 @@ export type CalendarTxn = {
   iso_currency_code: string | null;
   unofficial_currency_code?: string | null;
   excluded?: boolean | null;
+  /** A part of a split transaction, or a group's row (lib/split-rows.ts):
+   *  what the calendar puts back together to list each charge once. */
+  split_of?: string;
+  split_parent?: unknown;
+  split_remainder?: unknown;
+  group_members?: readonly unknown[];
+  /** One of a group counted on a day before what was read: listed, not
+   *  counted (lib/split-rows.ts). */
+  group_outside?: { name: string; date: string };
 };
 
 /** A card or loan payment Plaid says is due (an account's liability). */
@@ -75,6 +85,14 @@ export type CalendarEntry = {
   /** Listed but not in the day's figure: another currency, a transaction the
    *  person excluded, or a payment due (see the header). */
   uncounted?: boolean;
+  /** Posted, split (#39): how many parts the person made, and, when some of
+   *  them are left out, what the day's figure counts of it instead of
+   *  `amount` (money in positive, as `amount`). */
+  parts?: number;
+  counted?: number;
+  /** Posted, in a group counted on a day before what was read: the group's
+   *  name and day (listed, never in the figure). */
+  group?: { name: string; date: string };
   /** Why an expected one isn't in the figure: another currency, an account
    *  that isn't cash (a card's charge) or whose type isn't known, or pay that
    *  varies too much to forecast. */
@@ -146,9 +164,16 @@ export function calendarMonth(opts: {
   const entries = new Map<string, CalendarEntry[]>(all.map((d) => [d, []]));
   const add = (e: CalendarEntry) => entries.get(e.date)?.push(e);
 
-  for (const t of opts.txns) {
+  // Each charge once, as the bank made it (lib/split-rows.ts bankRows): a
+  // split transaction whole, its parts that count making the day's figure;
+  // a group's net as one row, as every total counts it.
+  for (const t of bankRows(opts.txns, { groups: 'keep' })) {
     if (!entries.has(t.date)) continue;
-    const excluded = isExcluded(t);
+    const parts = t.split_parts;
+    const excluded = parts ? parts.every((p) => isExcluded(p)) : isExcluded(t);
+    const uncounted = excluded || !inCurrency(t, currency) || !!t.group_outside;
+    // What counts of a split one: all of it, unless a part is left out on its own.
+    const counted = parts && !uncounted ? -parts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : undefined;
     add({
       kind: 'posted',
       date: t.date,
@@ -158,7 +183,10 @@ export function calendarMonth(opts: {
       ref: t.transaction_id,
       ...(t.pending ? { pending: true } : {}),
       ...(excluded ? { excluded: true } : {}),
-      ...(excluded || !inCurrency(t, currency) ? { uncounted: true } : {}),
+      ...(uncounted ? { uncounted: true } : {}),
+      ...(parts ? { parts: parts.filter((p) => !p.split_remainder).length } : {}),
+      ...(t.group_outside ? { group: { name: t.group_outside.name, date: t.group_outside.date } } : {}),
+      ...(counted !== undefined && Math.round(counted * scale) !== Math.round(-t.amount * scale) ? { counted: counted || 0 } : {}),
     });
   }
 
@@ -234,7 +262,7 @@ export function calendarMonth(opts: {
     let expected: number | null = null;
     for (const e of list) {
       if (e.uncounted || e.amount === null) continue;
-      if (e.kind === 'posted') posted = (posted ?? 0) + Math.round(e.amount * scale);
+      if (e.kind === 'posted') posted = (posted ?? 0) + Math.round((e.counted ?? e.amount) * scale);
       else if (e.kind === 'expected') expected = (expected ?? 0) + Math.round(e.amount * scale);
     }
     days.set(date, { date, entries: list, posted: posted === null ? null : posted / scale, expected: expected === null ? null : expected / scale });

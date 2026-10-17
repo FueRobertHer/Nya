@@ -100,6 +100,7 @@ export function reportCsv(report: Report): string {
           i.connector ? i.connector.state : i.problem ? `${STATE_WORDS[i.problem.state] ?? i.problem.state} since ${i.problem.since}` : null,
           i.synced_at ? `transactions last brought in ${i.synced_at}` : 'when its transactions were last brought in isn’t known',
           i.first_date ? `transactions in Nya from ${i.first_date}` : null,
+          ...(i.imported ?? []).map((a) => `${a.account}’s imported from files from ${a.from}`),
           ...report.gaps.filter((g) => g.item_id === i.item_id).map((g) => gapShort(g, iso)),
           i.ended_by && endedBefore(i, period) ? endedConnection(i.ended_by, iso) : null,
         ];

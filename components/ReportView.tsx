@@ -24,6 +24,7 @@ import { Masked } from './HideAmounts';
 import { endedBefore, type Report, type ReportMonth } from '@/lib/report/build';
 import {
   appendixStatus,
+  appendixSplitWords,
   endedConnection,
   endedCounted,
   endedWords,
@@ -183,7 +184,11 @@ export function ReportView({ report }: { report: Report }) {
                                   : 'No problem recorded'}
                         </td>
                         <td>{i.no_transactions ? '' : i.synced_at ? reportTime(i.synced_at, tz) : 'Not known'}</td>
-                        <td>{i.first_date ? reportDay(i.first_date) : ''}</td>
+                        <td>
+                          {[i.first_date ? reportDay(i.first_date) : null, ...(i.imported ?? []).map((a) => `${a.account} from ${reportDay(a.from)}, imported from files`)]
+                            .filter(Boolean)
+                            .join('; ')}
+                        </td>
                         <td>
                           {gaps.length > 0
                             ? gaps.join('. ')
@@ -370,9 +375,9 @@ export function ReportView({ report }: { report: Report }) {
           <p className="report-note">
             Oldest first, in each one’s own currency. Money out is shown as a minus. A transaction the totals don’t count says why.
           </p>
-          {report.appendix.total > report.appendix.rows.length && (
+          {report.appendix.total > report.appendix.shown && (
             <p className="report-flag">
-              Showing the first {report.appendix.rows.length} of {report.appendix.total} transactions. The totals above count all of them; a shorter period lists
+              Showing the first {report.appendix.shown} of {report.appendix.total} transactions. The totals above count all of them; a shorter period lists
               them all.
             </p>
           )}
@@ -403,7 +408,7 @@ export function ReportView({ report }: { report: Report }) {
                           {r.institution}: {r.account} ({sourceName(r.source)})
                         </td>
                         <td className="num"><Masked>{formatMoney(-r.amount || 0, r.currency)}</Masked></td>
-                        <td>{[status, r.note].filter(Boolean).join('. ')}</td>
+                        <td>{[appendixSplitWords(r, (n) => formatMoney(Math.abs(n), r.currency)), status, r.note].filter(Boolean).join('. ')}</td>
                       </tr>
                     );
                   })}

@@ -1582,3 +1582,118 @@ export async function foldHiddenAccount(
 export async function dropFoldProgress(ctx: Ctx, tag: string): Promise<void> {
   await redis().del(FOLD_PROGRESS(ctx, tag));
 }
+
+// Estimated history drawn from imported transactions (#52)
+//
+// lib/history-import/extend.ts continues the estimated layer back from its
+// earliest point, through the transactions imported into linked accounts. It
+// reads that point here (readEarliestPoint) and writes only ESTIMATED dates
+// older than it (replaceEstimatedBefore): the real layer is never read for
+// writing, never written, and no point at or after the earliest one changes.
+// The points are the estimated layer's own (totals, walked balances and the
+// flat term), so hiding, forgetting, the per-account charts and the download
+// treat them as every other estimate.
+
+/** How many fields one write carries: years of daily points are thousands. */
+const EXTENSION_BATCH = 500;
+
+/** A map of balances read for the anchor, strictly: storage failing, a key
+ *  this deployment can't open, or a map damaged or not a map, throws. */
+async function anchorMap(blob: unknown): Promise<Record<string, number>> {
+  if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
+  const map = JSON.parse(await decrypt(blob));
+  if (!map || typeof map !== 'object' || Array.isArray(map)) throw new SyntaxError('a balance map is not a map');
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(map as Record<string, unknown>)) if (typeof v === 'number' && Number.isFinite(v)) out[id] = v;
+  return out;
+}
+
+/**
+ * The net-worth series' earliest point, recorded or estimated, leaving out
+ * the days `skip` names (an earlier drawing's own, [from, until)), with every
+ * account's balance it was made of: the recorded map for a recorded point;
+ * the walked map and the flat term for an estimate, with the accounts walked
+ * (`walked`: each one's balance there follows its transactions; the flat
+ * term's are held at the balance the estimate began from). Null when the
+ * series has no point. Strict: anything that can't be read throws, since an
+ * extension joined to a point read wrongly would be wrong for every day
+ * before it.
+ */
+export async function readEarliestPoint(
+  ctx: Ctx,
+  skip: { from: string; until: string } | null
+): Promise<{ date: string; total: number; balances: Record<string, number>; estimated: boolean; walked: string[] | null } | null> {
+  const [real, est] = await Promise.all([redis().hkeys(HISTORY_HASH(ctx)), redis().hkeys(ESTIMATED_HASH(ctx))]);
+  const today = new Date().toISOString().slice(0, 10);
+  const kept = (d: string) => d <= today && !(skip && d >= skip.from && d < skip.until);
+  const realDays = new Set(real.filter(kept));
+  const date = [...realDays, ...est.filter(kept)].sort()[0];
+  if (!date) return null;
+  const estimated = !realDays.has(date);
+  const totalBlob = await redis().hget<string>(estimated ? ESTIMATED_HASH(ctx) : HISTORY_HASH(ctx), date);
+  const total = Number(await decrypt(String(totalBlob)));
+  if (!Number.isFinite(total)) throw new SyntaxError('the earliest net-worth total is not a number');
+  if (!estimated) {
+    // A total recorded without its map (the two are separate writes) names
+    // no account: nothing can be walked from it.
+    const map = await redis().hget(ACCOUNTS_HASH(ctx), date);
+    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(map), estimated, walked: null };
+  }
+  const [walkedBlob, flatBlob] = await Promise.all([redis().hget(ACCOUNTS_EST_HASH(ctx), date), redis().hget(ACCOUNTS_EST_FLAT_BY_DATE(ctx), date)]);
+  const walked = walkedBlob === null || walkedBlob === undefined ? {} : await anchorMap(walkedBlob);
+  let flat: Record<string, number>;
+  if (flatBlob !== null && flatBlob !== undefined) flat = await anchorMap(flatBlob);
+  else {
+    // Points written before the per-date record: the single one applies.
+    const legacy = await redis().get(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+    flat = legacy === null || legacy === undefined ? {} : await anchorMap(legacy);
+  }
+  return { date, total, balances: { ...flat, ...walked }, estimated, walked: Object.keys(walked) };
+}
+
+/**
+ * Writes the estimated points drawn from imported history, all older than the
+ * earliest point they continue: each date's walked balances and flat term
+ * first, then its total (the order every writer of this layer keeps, so a
+ * fold reading between them sees a new breakdown beside an old total, never
+ * the reverse). The dates an earlier drawing wrote in `clear` ([from, until))
+ * that this one doesn't are deleted, totals first. A date with a recorded
+ * snapshot is never written, nor deleted from: the real layer is not this
+ * function's to touch, and its dates are read strictly so a failed read can't
+ * pass for none.
+ */
+export async function replaceEstimatedBefore(
+  ctx: Ctx,
+  opts: {
+    clear: { from: string; until: string } | null;
+    points: { date: string; total: number; walked: Record<string, number>; held: Record<string, number> }[];
+  }
+): Promise<void> {
+  const real = new Set(await redis().hkeys(HISTORY_HASH(ctx)));
+  const points = opts.points.filter((p) => !real.has(p.date));
+  const writing = new Set(points.map((p) => p.date));
+  if (opts.clear) {
+    const { from, until } = opts.clear;
+    const doomed = (dates: string[]) => dates.filter((d) => d >= from && d < until && !writing.has(d) && !real.has(d));
+    for (const key of [ESTIMATED_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)]) {
+      const gone = doomed(await redis().hkeys(key));
+      for (let i = 0; i < gone.length; i += EXTENSION_BATCH) await redis().hdel(key, ...gone.slice(i, i + EXTENSION_BATCH));
+    }
+  }
+  for (let i = 0; i < points.length; i += EXTENSION_BATCH) {
+    const batch = points.slice(i, i + EXTENSION_BATCH);
+    const walked: Record<string, string> = {};
+    const flat: Record<string, string> = {};
+    for (const p of batch) {
+      walked[p.date] = await encrypt(JSON.stringify(p.walked));
+      flat[p.date] = await encrypt(JSON.stringify(p.held));
+    }
+    await redis().hset(ACCOUNTS_EST_HASH(ctx), walked);
+    await redis().hset(ACCOUNTS_EST_FLAT_BY_DATE(ctx), flat);
+  }
+  for (let i = 0; i < points.length; i += EXTENSION_BATCH) {
+    const totals: Record<string, string> = {};
+    for (const p of points.slice(i, i + EXTENSION_BATCH)) totals[p.date] = await encrypt(String(p.total));
+    await redis().hset(ESTIMATED_HASH(ctx), totals);
+  }
+}

@@ -89,6 +89,7 @@ import {
   contentKey,
   type StoredAccount,
   type StoredTxn,
+  type Txn,
 } from './transactions';
 import { readInvStore, type InvStoreState } from './invstore';
 import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
@@ -102,8 +103,14 @@ import { apiTokenStore } from './api-token-store';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
-import { exportLayers, layerBankRow, layerManualRow, type Layered } from './export-layers';
-import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { historyImportStore, importedTxnStore, isHistoryImportEntry, isImportedBook, type ImportedTxn } from './history-import/store';
+import { settle, type BankRow } from './history-import/match';
+import { standsFor } from './history-import/read';
+import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Layered } from './export-layers';
+import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
+import { csvLinesWithSplits, splitInputsOf, type CsvLine } from './export-splits';
 import { rulesStore } from './rules';
 import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
@@ -1086,6 +1093,16 @@ const PART_WORDS: Record<string, PartWords> = {
     many: 'accounts',
     missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the transactions of ${counts}.`,
   },
+  // One entry per linked account rows were imported into: its book (#52).
+  // A bank's transaction standing for one of its rows can't be told, so it
+  // shows nothing said about that row either.
+  'imported-transactions': {
+    noun: 'transactions imported into linked accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) =>
+      `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}, and a transaction the bank sent that stands for one of them doesn’t show what you said about it.`,
+  },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
@@ -1136,7 +1153,7 @@ const PART_WORDS: Record<string, PartWords> = {
     many: 'entries',
     missing: missingFrom,
     inCsv: (counts) =>
-      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row.`,
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.`,
   },
   [carriedAnnotationStore.name]: {
     noun: carriedAnnotationStore.what,
@@ -1145,6 +1162,24 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: missingFrom,
     inCsv: (counts) =>
       `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
+  },
+  // What a split transaction's parts and a group's net are (lib/export-splits.ts):
+  // in a CSV, the rows that show whole instead.
+  [splitStore.name]: {
+    noun: splitStore.what,
+    one: 'split',
+    many: 'splits',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${splitStore.what} could be read: ${counts}. Those transactions are in this file whole, with no parts, and nya_amount counts each whole, as the app shows them until they can be read.`,
+  },
+  [groupStore.name]: {
+    noun: groupStore.what,
+    one: 'group',
+    many: 'groups',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${groupStore.what} could be read: ${counts}. Their transactions are in this file on their own, each counted in nya_amount, as the app counts them until they can be read.`,
   },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
@@ -1317,6 +1352,9 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       pfc_detailed: t.personal_finance_category?.detailed ?? null,
     };
   };
+  // The rows imported into linked accounts from files (#52), as the app files
+  // them: by a category chosen for one, else the file's own words.
+  const importedRows = importedRowsOf(data.sections.find(([key]) => key === importedTxnStore.name)?.[1]);
   // As the CSV lists them: a pair of SimpleFIN rows in the pair's words.
   const manualRows = withPairWords(
     manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]),
@@ -1326,7 +1364,11 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
   const filing = indexTaxonomy(
     growTaxonomy(
       data.taxonomy,
-      observedKeys([...data.stores.flatMap((s) => Object.values(s.txns).map(factsOf)), ...manualRows.map(manualFacts)]),
+      observedKeys([
+        ...data.stores.flatMap((s) => Object.values(s.txns).map(factsOf)),
+        ...manualRows.map(manualFacts),
+        ...importedRows.map((r) => importedFacts(r, data.overrides.get(r.id) ?? null)),
+      ]),
       () => `new:${++provisional}`,
       { limit: Infinity }
     ).taxonomy
@@ -1462,7 +1504,29 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     if (Object.hasOwn(doc, key)) throw new Error(`Two parts of the download are both called ${key}`);
     doc[key] = value;
   }
-  manualFilings.set(doc, filing);
+  // A bank row standing for rows imported into its account takes what the
+  // person said about them, unless they said otherwise on it, as the app
+  // does (lib/activity.ts, lib/txn-layers.ts): a category chosen for one
+  // (filed by it here, and shown as yours in the transactions CSV), an
+  // exclusion or an include, tags and a note. Laid on again once the file
+  // knows which rows those are.
+  const fromImports = importedTransactionsIn(doc);
+  for (const t of doc.transactions) {
+    const rows = fromImports.represents.get(t.transaction_id);
+    if (!rows) continue;
+    const words = data.overrides.has(t.transaction_id) ? undefined : fromImports.carried.get(t.transaction_id);
+    const facts = { ...factsOf(t), ...(words ? { category: words, category_set: true } : {}) };
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null, rows);
+    Object.assign(t, filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), {
+      tags: l.tags,
+      your_note: l.note,
+      nya_name: l.name,
+      excluded: l.excluded,
+      excluded_by_rule: l.excluded_by_rule,
+      rule_ids: l.rule_ids,
+    });
+  }
+  docFilings.set(doc, filing);
   return doc;
 }
 
@@ -1621,14 +1685,25 @@ export const TRANSACTION_COLUMNS = [
   'tags',
   'nya_name',
   'excluded',
+  // Added with splits and groups (#39), at the end too: what the app counts
+  // of each row, and which split or group a row is of (lib/export-splits.ts).
+  'nya_amount',
+  'split_of',
+  'split_index',
+  'group_id',
+  'group_name',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
 
-function transactionRow(t: ExportTransaction): CsvValue[] {
+/** Every column empty: what a row fills. */
+const blankCells = () => Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>;
+
+function transactionCells(t: ExportTransaction): Record<TransactionColumn, CsvValue> {
   const loc = t.location ?? null;
   const pay = t.payment_meta ?? null;
-  const cells: Record<TransactionColumn, CsvValue> = {
+  return {
+    ...blankCells(),
     date: t.date,
     account_name: t.account_name,
     institution_name: t.institution_name,
@@ -1686,7 +1761,6 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
     nya_name: t.nya_name,
     excluded: t.excluded,
   };
-  return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
 
 /**
@@ -1698,9 +1772,15 @@ function transactionRow(t: ExportTransaction): CsvValue[] {
  * and its note. What only a bank sends is empty, and so is item_id: a manual
  * account has no connection.
  */
-function manualTransactionRow(row: ManualTxn, account: { name: string | null; institution_name: string | null } | undefined, hidden: boolean, filed: NyaCategory, l: Layered): CsvValue[] {
-  const cells: Record<TransactionColumn, CsvValue> = {
-    ...(Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>),
+function manualTransactionCells(
+  row: ManualTxn,
+  account: { name: string | null; institution_name: string | null } | undefined,
+  hidden: boolean,
+  filed: NyaCategory,
+  l: Layered
+): Record<TransactionColumn, CsvValue> {
+  return {
+    ...blankCells(),
     date: row.date,
     account_name: account?.name ?? null,
     institution_name: account?.institution_name ?? null,
@@ -1724,7 +1804,6 @@ function manualTransactionRow(row: ManualTxn, account: { name: string | null; in
     nya_name: l.name,
     excluded: l.excluded,
   };
-  return TRANSACTION_COLUMNS.map((c) => cells[c]);
 }
 
 /** What a row is filed under, as the file says it (ExportTransaction's
@@ -1740,6 +1819,20 @@ function filedAs(ix: CategoryIndex, facts: CategoryFacts): NyaCategory {
 /** What files a manual row: its own words (lib/categories.ts resolveCategory). */
 const manualFacts = (r: ManualTxn): CategoryFacts => ({ category: r.category, source: r.source });
 
+/** What files a row imported into a linked account: the category chosen for
+ *  it (`yours`), else the file's own words, as for a manual row. */
+const importedFacts = (r: ImportedTxn, yours: string | null): CategoryFacts => ({ category: yours ?? r.category, category_set: yours !== null, source: r.source });
+
+/** The rows of the imported books as read for the file, for filing: any a
+ *  book holds that reads as one (importedTransactionsIn refuses the rest). */
+function importedRowsOf(entries: unknown): ImportedTxn[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    const book = (entry as { value?: unknown } | null)?.value;
+    return isImportedBook(book) ? book.rows : [];
+  });
+}
+
 /** The rows of the manual accounts' books as read for the file, for filing:
  *  any a book holds that reads as one, the CSV's writer refusing the rest. */
 function manualRowsOf(entries: unknown): ManualTxn[] {
@@ -1751,31 +1844,42 @@ function manualRowsOf(entries: unknown): ManualTxn[] {
 }
 
 /** For each document buildUserExport makes, the categories it files the
- *  bank's rows by, which file its manual rows too (see there). */
-const manualFilings = new WeakMap<UserExport, CategoryIndex>();
+ *  bank's rows by, which file the rows listed beside them too (see there). */
+const docFilings = new WeakMap<UserExport, CategoryIndex>();
 
 /**
- * The manual rows' categories, as the app files them (lib/categories.ts
- * resolveCategory), by their own words and the category a rule gives one:
- * as buildUserExport filed the bank's, for a document it made. For any
- * other, against the categories in it, grown in memory by any words no
- * category has yet (provisional, so their id is empty), or, without them,
- * the seed the app would make. With the categories it files by (`ix`), which
- * the rules are read against (lib/export-layers.ts).
+ * The categories the rows the files list beside the bank's (the manual
+ * accounts', and those imported into linked accounts) are filed by, as the
+ * app files them (lib/categories.ts resolveCategory): those buildUserExport
+ * filed the bank's by, for a document it made. For any other, the categories
+ * in it, grown in memory by any words of `facts` no category has yet
+ * (provisional, so their id is empty), or, without them, the seed the app
+ * would make.
  */
-function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
-  const ix = manualFilings.get(doc) ?? grownFiling(doc, rows);
-  return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
-}
-
-/** The categories in a document buildUserExport didn't make, grown by the
- *  manual rows' words (see manualFiling). */
-function grownFiling(doc: UserExport, rows: readonly ManualTxn[]): CategoryIndex {
+function docIndex(doc: UserExport, facts: readonly CategoryFacts[]): CategoryIndex {
+  const made = docFilings.get(doc);
+  if (made) return made;
   const stored = doc[taxonomyStore.name];
   let n = 0;
   const newId = () => `new:${++n}`;
   const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
-  return indexTaxonomy(growTaxonomy(base, observedKeys(rows.map(manualFacts)), newId, { limit: Infinity }).taxonomy);
+  return indexTaxonomy(growTaxonomy(base, observedKeys(facts), newId, { limit: Infinity }).taxonomy);
+}
+
+/**
+ * The manual rows' categories, by their own words and the category a rule
+ * gives one (see docIndex), with the categories they are filed by (`ix`),
+ * which the rules are read against (lib/export-layers.ts).
+ */
+function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
+  const ix = docIndex(doc, rows.map(manualFacts));
+  return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
+}
+
+/** The categories the document's rows are filed by (docIndex), for a writer
+ *  that names a split's parts (lib/ofx-export.ts). */
+export function docFiling(doc: UserExport): CategoryIndex {
+  return docIndex(doc, manualRowsOf(doc[manualTxnStore.name]).map(manualFacts));
 }
 
 /** Every row of the manual accounts' books in the file, once each: a book
@@ -1794,6 +1898,171 @@ export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
     }
   }
   return [...byId.values()];
+}
+
+/**
+ * The rows imported into linked accounts from files (#52, the
+ * `imported-transactions` part of the file) that count as transactions of
+ * their accounts, as the Activity tab counts them (lib/history-import/match.ts
+ * settle, over the file's own rows): not those standing for a transaction
+ * already there (a duplicate whose twin is in the file), nor those a bank row
+ * in the file now stands for, which are in the JSON file only, so no
+ * transaction is in transactions.csv twice. Each with the id its account is
+ * known by now, following the file's links. And, by the bank row's id, the
+ * imported rows it stands for, earlier imports first (`represents`), which
+ * take what was said about them to it, and the category you set on one
+ * (`carried`, the earliest import's first), which that row shows as yours, as
+ * the app does; and each imported row a bank row stands for, with that bank
+ * row's id (`stands`). `pending` false counts a row whose only look-alike at
+ * the bank is pending, as a statement of posted rows does
+ * (lib/ofx-export.ts); by default it stands in for it, as the app shows them.
+ */
+export function importedTransactionsIn(
+  doc: UserExport,
+  opts: { pending?: boolean } = {}
+): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string>; stands: Map<string, string>; represents: Map<string, string[]> } {
+  const entries = doc[importedTxnStore.name] ?? [];
+  if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const held = new Map<string, ImportedTxn[]>();
+  for (const entry of entries) {
+    const book = (entry as { value?: unknown } | null)?.value;
+    if (!isImportedBook(book)) throw new Error('A linked account’s imported transactions have an unexpected shape');
+    for (const row of book.rows) {
+      const current = resolveId(row.account_id, links);
+      held.set(current, [...(held.get(current) ?? []), row]);
+    }
+  }
+  const carried = new Map<string, string>();
+  const stands = new Map<string, string>();
+  const represents = new Map<string, string[]>();
+  if (held.size === 0) return { rows: [], carried, stands, represents };
+  // The bank's rows of those accounts, and where each connection's begin.
+  const banks = new Map<string, BankRow[]>();
+  const firstPosted = new Map<string, string>();
+  for (const t of doc.transactions) {
+    if (!t.pending && (!firstPosted.has(t.item_id) || t.date < firstPosted.get(t.item_id)!)) firstPosted.set(t.item_id, t.date);
+    const current = resolveId(t.account_id, links);
+    if (!held.has(current)) continue;
+    const list = banks.get(current) ?? [];
+    list.push({
+      transaction_id: t.transaction_id,
+      account_id: current,
+      date: t.date,
+      amount: t.amount,
+      currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
+      name: t.name,
+      merchant_name: t.merchant_name,
+      pending: t.pending,
+    });
+    banks.set(current, list);
+  }
+  const itemOf = new Map(doc.accounts.map((a) => [a.account_id, a.item_id]));
+  // The imports in the order they were made, earlier ones matched first, and
+  // the period each covers.
+  const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : []).filter(
+    (e): e is { id: string; value: { imported_at: string; covers: { from: string; to: string } } } => typeof e?.id === 'string' && isHistoryImportEntry(e.value)
+  );
+  const order = [...imports].sort((a, b) => byCodePoint(a.value.imported_at, b.value.imported_at) || byCodePoint(a.id, b.id)).map((e) => e.id);
+  const covers = new Map(imports.map((e) => [e.id, { from: e.value.covers.from, to: e.value.covers.to }]));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const out: { row: ImportedTxn; account_id: string }[] = [];
+  const importOf = new Map<string, string>();
+  for (const [account_id, rows] of held) {
+    const item = itemOf.get(account_id) ?? null;
+    const settled = settle(rows, banks.get(account_id) ?? [], order, { bankFrom: item ? (firstPosted.get(item) ?? null) : null, covers, pending: opts.pending ?? true });
+    for (const row of settled.counted) out.push({ row, account_id });
+    for (const row of rows) importOf.set(row.id, row.import_id);
+    for (const [rowId, bankId] of standsFor(settled)) {
+      stands.set(rowId, bankId);
+      represents.set(bankId, [...(represents.get(bankId) ?? []), rowId]);
+    }
+  }
+  // Earlier imports first, as the app takes them (lib/history-import/read.ts).
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
+  for (const [bankId, list] of represents) {
+    list.sort((x, y) => at(x) - at(y));
+    const category = list.map((id) => yours.get(id)).find((c) => !!c);
+    if (category) carried.set(bankId, category);
+  }
+  return { rows: out, carried, stands, represents };
+}
+
+/**
+ * A transaction imported into a linked account, in the same columns as a
+ * bank's: its own payee (and your name for its merchant, as for a bank's
+ * row), category (and yours over it), amount and currency, its account as
+ * `accounts` names it now, where it came from (`source`), and what the read
+ * layer puts on it, as the app shows it (layeredImportedRows): your note,
+ * else the file's, its tags, the name shown and whether it is excluded. What
+ * only a bank sends is empty.
+ */
+function importedTransactionCells(
+  row: ImportedTxn,
+  account_id: string,
+  account: ExportAccount | undefined,
+  yours: string | null,
+  hidden: boolean,
+  shown: { l: Layered; filed: NyaCategory; renamed: string | null }
+): Record<TransactionColumn, CsvValue> {
+  const { l, filed: nya, renamed } = shown;
+  return {
+    ...blankCells(),
+    date: row.date,
+    account_name: account?.name ?? null,
+    institution_name: account?.institution_name ?? null,
+    name: row.name,
+    your_merchant_name: renamed,
+    amount: row.amount,
+    iso_currency_code: row.currency,
+    category: row.category,
+    your_category: yours,
+    pending: false,
+    superseded_by_posted: false,
+    account_hidden: hidden,
+    transaction_code: row.transaction_code ?? null,
+    transaction_id: row.id,
+    account_id,
+    item_id: account?.item_id ?? null,
+    source: row.source,
+    note: l.note,
+    nya_category: nya.nya_category,
+    nya_category_id: nya.nya_category_id,
+    nya_group: nya.nya_group,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
+  };
+}
+
+/**
+ * The rows imported into linked accounts that count (importedTransactionsIn's
+ * `rows`) as the app shows them, for the transactions CSV and an OFX
+ * statement alike: for each, what the read layer puts on it (its rules, tags,
+ * note and exclusion: lib/export-layers.ts layerImportedRow, on its account as
+ * known now, at that account's institution), the category it is filed under
+ * (yours, else its own words, else a rule's) and your name for its merchant,
+ * where you renamed it.
+ */
+export function layeredImportedRows(
+  doc: UserExport,
+  rows: readonly { row: ImportedTxn; account_id: string }[]
+): (r: { row: ImportedTxn; account_id: string }) => { l: Layered; filed: NyaCategory; renamed: string | null } {
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const factsOf = (row: ImportedTxn) => importedFacts(row, yours.get(row.id) ?? null);
+  const ix = docIndex(doc, rows.map(({ row }) => factsOf(row)));
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const layers = exportLayers((key) => doc[key], { links, ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institution = new Map(doc.accounts.map((a) => [a.account_id, a.institution_name ?? '']));
+  const renames = new Map(doc.merchant_renames.map((r) => [r.vendor_key, r.name]));
+  return ({ row, account_id }) => {
+    const at = institution.get(account_id) ?? '';
+    const renamed = renames.get(vendorKey({ merchant_entity_id: null, merchant_name: null, name: row.name, institution_name: at })) ?? null;
+    const facts = factsOf(row);
+    const l = layerImportedRow(row, layers, { facts, renamed, account_id, institution: at });
+    return { l, filed: filedAs(ix, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), renamed };
+  };
 }
 
 /** The accounts the books' rows are on (the manual accounts' own, and those
@@ -1845,19 +2114,60 @@ export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r
   };
 }
 
+/** A row of the file as the read layer's function for splits and groups
+ *  reads it (lib/export-splits.ts): its id, day, amount, currency, whether it
+ *  is pending, and what the layers said of its exclusion and tags. */
+function splitFacts(t: { id: string; date: string; amount: number; currency: string | null; unofficial?: string | null; pending: boolean; l: Layered | ExportTransaction }): Txn {
+  return {
+    transaction_id: t.id,
+    date: t.date,
+    amount: t.amount,
+    pending: t.pending,
+    iso_currency_code: t.currency,
+    unofficial_currency_code: t.unofficial ?? null,
+    excluded: t.l.excluded === true ? true : t.l.excluded === null ? null : undefined,
+    ...(t.l.excluded_by_rule ? { excluded_by_rule: true } : {}),
+    tags: t.l.tags,
+  } as unknown as Txn;
+}
+/** Those facts of a bank's row, as the file has it. */
+const bankFacts = (t: ExportTransaction) =>
+  splitFacts({ id: t.transaction_id, date: t.date, amount: t.amount, currency: t.iso_currency_code, unofficial: t.unofficial_currency_code, pending: t.pending, l: t });
+/** Those facts of a book's row (a manual account's, or one SimpleFIN
+ *  brought), with the layers applied as the app applies them. */
+const bookFacts = (r: ManualTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
+/** Those facts of a row imported into a linked account, with the layers
+ *  applied as the app applies them. */
+const importedRowFacts = (r: ImportedTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
+
+/** Every row of the file, a bank's, a book's and one imported into a linked
+ *  account that counts (`imported`, as importedTransactionsIn settles them),
+ *  as the function for splits and groups reads them: for an OFX statement,
+ *  which lists one account's rows but says of a group what the app does
+ *  (lib/export-splits.ts appliedSplitsOf). */
+export function splitFactRows(doc: UserExport, imported: readonly { row: ImportedTxn; account_id: string }[]): Txn[] {
+  const book = layeredBookRows(doc);
+  const shown = layeredImportedRows(doc, imported);
+  return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l)), ...imported.map((r) => importedRowFacts(r.row, shown(r).l))];
+}
+
 /**
  * transactions.csv: one row per transaction, newest first: every one stored
- * from the banks, and every one on a manual account (manualTransactionRow).
- * In the order the bank's rows are listed in the file (then by the event
- * time, which a manual row doesn't have, then the id), so two downloads of
- * the same data are the same file.
+ * from the banks, every one on a manual account (manualTransactionCells),
+ * and every one imported into a linked account that counts
+ * (importedTransactionCells). In the order the bank's rows are listed in the
+ * file (then by the event time, which the others don't have, then the id),
+ * so two downloads of the same data are the same file.
  */
 export function* transactionsCsv(doc: UserExport): Generator<string> {
   yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
   // The books hold the rows SimpleFIN brought as well as the manual accounts'
   // own: each is named as `manual_accounts` or `accounts` names its account.
   const accounts = bookAccountsIn(doc);
+  const linked = new Map(doc.accounts.map((a) => [a.account_id, a]));
   const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const imported = importedTransactionsIn(doc);
   // A pair of SimpleFIN rows between two of the person's accounts (a card's
   // payment, a loan's, a move between them) is worked out each time the rows
   // are read, never stored: listed as the app shows it, each side in the
@@ -1865,20 +2175,56 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
   // the app does; and every row with the read layer's facts on it, as the
   // app shows them (layeredBookRows).
   const book = layeredBookRows(doc);
-  const rows: { date: string; time: string; id: string; cells: () => CsvValue[] }[] = [
-    ...doc.transactions.map((t) => ({ date: t.date, time: t.datetime ?? t.authorized_datetime ?? '', id: t.transaction_id, cells: () => transactionRow(t) })),
-    ...book.rows.map((r) => ({
-      date: r.date,
-      time: '',
-      id: r.id,
-      cells: () => {
-        const { l, filed } = book.shown(r);
-        return manualTransactionRow(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l);
-      },
-    })),
+  // The rows imported into linked accounts, filed as the bank's are, and as
+  // the app shows them.
+  const importedShown = layeredImportedRows(doc, imported.rows);
+  // Splits and groups, by the read layer's own function, from the file's own
+  // parts (lib/export-splits.ts): a split transaction's parts and a group's
+  // net beside the transactions, `nya_amount` what the app counts, and a
+  // bank's row standing for imported ones split and grouped as they were
+  // (`represents`). A row's read-layer facts are what that function reads of
+  // it.
+  const ix = manualFiling(doc, book.rows).ix;
+  const rows: CsvLine<Record<TransactionColumn, CsvValue>>[] = [
+    ...doc.transactions.map((t) => {
+      // A category set on an imported row this bank row now stands for is
+      // yours on it too, unless you set one on it.
+      const carried = t.your_category === null ? imported.carried.get(t.transaction_id) : undefined;
+      return {
+        date: t.date,
+        time: t.datetime ?? t.authorized_datetime ?? '',
+        id: t.transaction_id,
+        txn: bankFacts(t),
+        cells: () => transactionCells(carried ? { ...t, your_category: carried } : t),
+      };
+    }),
+    ...book.rows.map((r) => {
+      const { l, filed } = book.shown(r);
+      return {
+        date: r.date,
+        time: '',
+        id: r.id,
+        txn: bookFacts(r, l),
+        cells: () => manualTransactionCells(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l),
+      };
+    }),
+    ...imported.rows.map((r) => {
+      const shown = importedShown(r);
+      return {
+        date: r.row.date,
+        time: '',
+        id: r.row.id,
+        txn: importedRowFacts(r.row, shown.l),
+        cells: () =>
+          importedTransactionCells(r.row, r.account_id, linked.get(r.account_id), yours.get(r.row.id) ?? null, hidden.has(r.account_id) || hidden.has(r.row.account_id), shown),
+      };
+    }),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
-  for (const row of rows) yield csvRow(row.cells());
+  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix, imported.represents), blankCells)) {
+    const cells = row.cells();
+    yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
+  }
 }
 
 /** The columns of balances.csv, in order (docs/data-export.md). */
@@ -1975,19 +2321,25 @@ export type ExportFile = {
  */
 export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
   // The books of the manual accounts, the names of the accounts they are on
-  // (and the types a pair of SimpleFIN rows is worked out by), the categories
-  // every row is filed by (nya_category), and what the read layer puts on
-  // each row (lib/txn-layers.ts): the rules, the tags, what was said about it
-  // and what was carried to it (nya_name, tags, note, excluded).
+  // (and the types a pair of SimpleFIN rows is worked out by), the books of the
+  // rows imported into linked accounts, the categories every row is filed
+  // by (nya_category), and what the read layer lays on every row as the app
+  // shows it (lib/txn-layers.ts): what was said about each, what was carried
+  // from earlier accounts, the rules and the tags.
   'transactions-csv': [
     'manual-transactions',
     'manual_accounts',
+    'imported-transactions',
     connectorAccountsStore.name,
     taxonomyStore.name,
-    rulesStore.name,
-    tagStore.name,
     txnAnnotationStore.name,
     carriedAnnotationStore.name,
+    rulesStore.name,
+    tagStore.name,
+    // The splits and groups (lib/export-splits.ts): a part's and a group's
+    // rows, and nya_amount.
+    splitStore.name,
+    groupStore.name,
   ],
   // The days, the names of the manual accounts the rows are for, the
   // accounts' ends and the notes.

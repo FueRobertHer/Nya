@@ -77,6 +77,8 @@ describe('AccountLinksView', () => {
     expect(html).not.toContain('Same account as');
     expect(html).toContain('412 of 431 categorized transactions carried over so far');
     expect(html).toContain('1 of 1 categorized transaction carried over. 2 matched more than one transaction');
+    // What a link doesn't carry (#39): a disconnect takes splits and groups with it.
+    expect(html).toContain('Splits and groups don&#x27;t carry across: split or group those transactions again.');
   });
 
   test('shows the card for linking by hand alone', () => {

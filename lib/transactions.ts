@@ -47,6 +47,8 @@ import { rememberedKindsForItem } from './last-known';
 import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
+import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
+import { pruneSplitsAndGroups } from './split-gone';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
@@ -152,10 +154,55 @@ export type Txn = {
   // earlier account's row besides an exclusion; and on an imported or
   // SimpleFIN row, that its name is one the person gave it in the app
   // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
+  // And on a bank row standing for rows imported into its account (#52,
+  // lib/history-import/read.ts importedForActivity's `represents`), those
+  // rows' ids, earlier imports first: what was said about them carries to it
+  // once it has posted (a pending one stands in for them until it posts).
   account_ref?: string;
   renamed_from?: string;
   carried?: CarriedRowFacts;
   own_name?: true;
+  stands_for?: string[];
+
+  // Splits and groups (#39), applied last on read (lib/split-rows.ts),
+  // absent on every other row. A part of a split transaction, in its place:
+  // the transaction's id, the part's place among its parts (from 0) and how
+  // many there are, whether the part alone is left out of budgets and
+  // reports, on the part that holds what the bank changed since the split the
+  // amount it was split from, and the whole transaction's own values. A
+  // transaction whose split couldn't be read, or no longer fits (its
+  // currency changed), is shown whole and marked. A group's row, in its
+  // transactions' place: the group's id, its transactions as they are, and
+  // how many of them aren't here or were taken out when they went. A part
+  // carries when its split was saved (split_updated_at), so an edit says
+  // what it saw; a transaction of a group that no longer applies (its
+  // transactions' currencies differ now) says which (group_unapplied), and
+  // one of a group counted on a day before what was read says which, and
+  // counts in no total (group_outside). A bank row standing for a row
+  // imported from a file (#52) takes that row's split, its parts naming the
+  // row it is kept under (split_carried_from), and its place in a group, its
+  // row there naming it the same way (group_carried_from), where an edit of
+  // them is made. A group's row says why its transactions that aren't
+  // counted in it aren't, where that is known (group_away: in another group,
+  // or a bank row standing for one still pending).
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_updated_at?: string;
+  split_carried_from?: string;
+  split_unread?: true;
+  split_unapplied?: 'currency';
+  group_id?: string;
+  group_members?: Txn[];
+  group_carried_from?: string;
+  group_away?: GroupAway[];
+  group_missing?: number;
+  group_removed?: number;
+  group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -194,6 +241,7 @@ export type OlderTxn = Pick<
   | 'renamed_from'
   | 'carried'
   | 'own_name'
+  | 'stands_for'
 > &
   // The merchant behind a payment processor, where it differs from the name
   // (a rule's name condition reads it); absent when it doesn't.
@@ -281,6 +329,12 @@ type ItemState = {
   // says the rows aren't all here yet, as the sync's own `importing` does.
   // Gone once a sync gets to the end.
   importing?: true;
+  // Plaid said its first pull for the Item is done and its full history
+  // (the rest of the days asked for) is still on the way
+  // (INITIAL_UPDATE_COMPLETE): a fresh connection holds about a month until
+  // then. Gone once Plaid says the history is complete. Read by importing
+  // history into a linked account (lib/history-import/), which says so.
+  history_pending?: true;
 };
 
 // Trailing window callers display / reconstruct by default.
@@ -585,6 +639,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         synced_at: typeof parsed.synced_at === 'string' && !Number.isNaN(Date.parse(parsed.synced_at)) ? parsed.synced_at : null,
         ...(isRefusal(parsed.refused) ? { refused: parsed.refused } : {}),
         ...(parsed.importing === true ? { importing: true as const } : {}),
+        ...(parsed.history_pending === true ? { history_pending: true as const } : {}),
       };
     }
     // Older or unversioned: upgrade in place, keeping every row and the cursor.
@@ -693,13 +748,19 @@ export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null
  * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
  * transactions' records, and the stores are read only when one has one.
  * Never fails the sync: a record left is pruned by the next disconnect or
- * forget, and is never shown meanwhile, its transaction being gone.
+ * forget, and is never shown meanwhile, its transaction being gone. A split
+ * of one goes the same way, and one in a group leaves it (lib/split-gone.ts).
  */
 async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>): Promise<void> {
   try {
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the splits and groups of transactions the bank removed', err instanceof Error ? err.name : err);
   }
 }
 
@@ -729,9 +790,9 @@ export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: 
 export async function readStoredItem(
   ctx: Ctx,
   item_id: string
-): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn> }> {
-  const { accounts, txns } = await readState(ctx, item_id);
-  return { accounts, txns };
+): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; history_pending?: true }> {
+  const { accounts, txns, history_pending } = await readState(ctx, item_id);
+  return { accounts, txns, ...(history_pending ? { history_pending } : {}) };
 }
 
 /**
@@ -1081,6 +1142,8 @@ async function syncItem(ctx: Ctx,
     delete state.refused;
     if (hasMore) state.importing = true;
     else delete state.importing;
+    if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
+    else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
     const write = await writeState(ctx, item.item_id, state);
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.
@@ -1296,8 +1359,8 @@ export async function syncItemTransactions(ctx: Ctx,
   hiddenAccountIds?: Set<string>,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
-  opts: { withAccountIds?: boolean; since?: string; endedFrom?: ReadonlyMap<string, string>; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn'] } = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason }> {
+  opts: { withAccountIds?: boolean; since?: string; endedFrom?: ReadonlyMap<string, string>; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn']; withStored?: boolean } = {}
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn> }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
@@ -1314,7 +1377,10 @@ export async function syncItemTransactions(ctx: Ctx,
     endedFrom: opts.endedFrom,
   };
   const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
-  return { txns, older, note, coverage: importing ? 'importing' : 'complete' };
+  // `stored` (asked for with `withStored`): every row as the sync left it,
+  // for a reader of the same rows that would otherwise read them again
+  // (lib/history-import/read.ts).
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...(opts.withStored ? { stored: state.txns } : {}) };
 }
 
 /**
@@ -1361,7 +1427,8 @@ async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState
 export async function storedItemTransactions(
   ctx: Ctx,
   item: StoredItem,
-  inputs: DisplayInputs = {}
+  inputs: DisplayInputs = {},
+  opts: { withStored?: boolean } = {}
 ): Promise<{
   txns: Txn[];
   older: OlderTxn[];
@@ -1371,14 +1438,18 @@ export async function storedItemTransactions(
   first_date: string | null;
   noTransactions?: NoTransactionsReason;
   never_synced?: true;
+  stored?: Record<string, StoredTxn> | null;
 }> {
+  // `stored` (asked for with `withStored`): every row as read, null when the
+  // store can't be read, as syncItemTransactions gives it.
+  const stored = (rows: Record<string, StoredTxn> | null) => (opts.withStored ? { stored: rows } : {});
   let state: ItemState;
   try {
     state = await readState(ctx, item.item_id);
   } catch (err) {
     if (!(err instanceof StateUnreadableError)) throw err;
     console.error(err.message, err.kind);
-    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null };
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null, ...stored(null) };
   }
   if (state.cursor === '' && Object.keys(state.txns).length === 0) {
     const noTransactions = await storedNoTransactions(ctx, item, state);
@@ -1403,9 +1474,10 @@ export async function storedItemTransactions(
       coverage: 'importing',
       synced_at: state.synced_at,
       first_date,
+      ...stored(state.txns),
     };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...stored(state.txns) };
 }
 
 /** The oldest day among an Item's stored rows that would be shown in some

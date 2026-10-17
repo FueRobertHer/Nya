@@ -102,7 +102,7 @@ describe('in the download', () => {
 
   test('the CSV gives every row’s tags, a manual row’s too, and a bank row’s note', async () => {
     const [header, ...rows] = parseCsv([...exportFile(await download(), 'transactions-csv').pieces()].join(''));
-    expect(header.slice(-3)).toEqual(['tags', 'nya_name', 'excluded']);
+    expect(header.slice(-8, -5)).toEqual(['tags', 'nya_name', 'excluded']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[header.indexOf(name)];
     const by = Object.fromEntries(rows.map((r) => [col(r, 'transaction_id'), r]));
     expect([col(by.t_hotel, 'tags'), col(by.t_hotel, 'note')]).toEqual(['Work; Vacation 2026', 'Paid back in October']);
@@ -307,7 +307,7 @@ describe('rules, tags or what was said about a transaction that can’t be read'
     expect(file.incomplete.sort()).toEqual(['carried-annotations', 'transaction-annotations']);
     expect(file.notes).toEqual(
       expect.arrayContaining([
-        `Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too; a note written with one you entered or imported is on its row. The JSON download lists them under problems. ${unchanged}`,
+        `Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself. The JSON download lists them under problems. ${unchanged}`,
         `Not all of your notes, tags and exclusions carried from earlier accounts could be read: 1 entry whose stored data is damaged. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${unchanged}`,
       ])
     );

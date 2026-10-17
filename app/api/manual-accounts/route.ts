@@ -21,6 +21,7 @@ import { pruneHidden } from '@/lib/hidden';
 import { removeAccountTxns } from '@/lib/manual-txns';
 import { forgetAccountImports } from '@/lib/import/commit';
 import { forgetAnnotations } from '@/lib/txn-annotations';
+import { forgetSplitsAndGroups } from '@/lib/split-gone';
 import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
@@ -195,6 +196,7 @@ export async function DELETE(req: Request) {
     await forgetAccountImports(ctx, account_id);
     const rows = await removeAccountTxns(ctx, account_id);
     await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
+    await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
     await removeManualAccount(ctx, account_id);
     // Once more now that the account is gone: an add or a move that read it
     // before it went can have written its book again meanwhile. Whatever
@@ -202,6 +204,7 @@ export async function DELETE(req: Request) {
     // (app/api/manual-transactions).
     const late = await removeAccountTxns(ctx, account_id);
     if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
+    if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
     // The account is gone, so a hidden entry naming it would linger forever.
     await pruneHidden(ctx, [account_id]);
     await invalidate(ctx, true);

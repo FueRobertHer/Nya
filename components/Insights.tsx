@@ -24,6 +24,7 @@ import { spendingByCategory } from '@/lib/totals';
 import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
 import { withCarry, type Carries } from '@/lib/rollover';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { bankRows } from '@/lib/split-rows';
 
 /**
  * A connection Plaid says will end on a date (lib/connection-state.ts,
@@ -380,8 +381,13 @@ export default function Insights({
       }
 
       // --- biggest purchase this month ---
-      const purchases = txns.filter(
-        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && countsInTotals(t, displayCurrency)
+      // A split transaction is one purchase, whole, as the bank charged it,
+      // when any of its parts counts; a group, its net (#39, lib/split-rows.ts).
+      const purchases = bankRows(txns, { groups: 'keep' }).filter(
+        (t) =>
+          t.date.slice(0, 7) === thisMonth &&
+          t.amount > 0 &&
+          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, displayCurrency)) : countsInTotals(t, displayCurrency))
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));

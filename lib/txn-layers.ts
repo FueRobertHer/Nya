@@ -12,7 +12,10 @@
 //   1. the bank's data, or a manual or imported row's own;
 //   2. the rules (lib/rules.ts), in priority order;
 //   3. what the person said on an earlier account's row, carried across a
-//      re-link (lib/txn-annotations.ts carriedAnnotations);
+//      re-link (lib/txn-annotations.ts carriedAnnotations), and over it, on a
+//      bank row standing for rows imported into its account from files
+//      (#52, `stands_for`), what they said about those rows: what a bank row
+//      that took an imported row's place takes from it;
 //   4. what the person said on the row itself (lib/txn-annotations.ts), and
 //      their own category, carried category and merchant name, which the
 //      banks' part applies (lib/activity.ts assembleBankRows).
@@ -24,15 +27,21 @@
 // FIELD BY FIELD:
 //   - excluded: the row's own record (true or false), else unknown when that
 //     record can't be read (counted, and marked null: lib/spending.ts), else
-//     what was carried (an exclusion, already marked on the cached row, or an
-//     include), else a rule's hide (marked excluded_by_rule);
+//     what was said about the imported rows it stands for (any excluded
+//     excludes it; else one that can't be read leaves it unknown; else one
+//     put back puts it back), else what was carried (an exclusion, already
+//     marked on the cached row, or an include), else a rule's hide (marked
+//     excluded_by_rule);
 //   - tags: each layer takes off the tags it took off and puts on the tags it
 //     put on, over the one before; only tags that exist are shown, in the
 //     order they were made (lib/tags.ts);
-//   - note: on a bank's row, and on one SimpleFIN brought (kept as the bank
-//     gave it: lib/manual-txns.ts), the person's own (an empty one is a note
-//     cleared), else carried, else what the row came with; a row entered by
-//     hand or imported has its own, written with it;
+//   - note: on a bank's row, on one SimpleFIN brought (kept as the bank gave
+//     it: lib/manual-txns.ts), and on one imported into a linked account
+//     (kept as its file gave it: lib/history-import/), the person's own (an
+//     empty one is a note cleared), else the one they wrote on the imported
+//     rows it stands for (the earliest import's first), else carried, else
+//     what the row came with (a file's memo, say); a row entered by hand or
+//     imported into a manual account has its own, written with it;
 //   - category: a rule's only on a row with none of its own, marked
 //     category_by_rule, so an edit of a manual row never writes it into the
 //     row as the row's own (components/ManualTxnSheet.tsx); never on one side
@@ -48,7 +57,9 @@
 //     row starts from.
 //
 // The facts the assembly keeps for this (account_ref, renamed_from, carried,
-// own_name) go once applied: they are never sent.
+// own_name, stands_for) go once applied: they are never sent. The read layer
+// reads `stands_for` first: the splits and places in groups of the imported
+// rows it names are the bank row's too (lib/split-rows.ts).
 
 import type { Txn, OlderTxn } from './transactions';
 import type { TxnAnnotation, CarriedRowFacts } from './txn-annotations';
@@ -56,6 +67,7 @@ import { orderTagIds, type TagSet } from './tags';
 import { categoryById, choiceText, ownCategory, resolveCategory, type CategoryIndex } from './categories';
 import { evaluateRules, matchText, sourceKind, type CompiledRules, type RuleOutcome, type RuleSubject } from './rules';
 import { isConnectorKind } from './connectors/types';
+import { IMPORTED_TXN_PREFIX } from './history-import/view';
 
 /** One side of a pair worked out between two SimpleFIN accounts
  *  (lib/manual-txns.ts connectorTransfers): its category is the pair's. */
@@ -99,6 +111,28 @@ function renamable(t: Row): boolean {
   return kind === 'plaid' || kind === 'import' || kind === 'simplefin';
 }
 
+/** A row imported into a linked account from its bank's files (#52), which
+ *  stays as the file gave it: what the person says about it is kept beside
+ *  it, as on a bank's row (lib/txn-annotations.ts). */
+const isImportedIntoLinked = (t: Row): boolean => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX);
+
+/** What was said about the rows imported into its account that a posted bank
+ *  row stands for (`stands_for`, earlier imports first): their records, and
+ *  whether that leaves it excluded (any excluded), unknown (one that can't be
+ *  read), put back (one put back), or says nothing of it (undefined). */
+function importedSaid(t: Row, inputs: LayerInputs): { records: TxnAnnotation[]; excluded: boolean | null | undefined } {
+  const ids = ('pending' in t && t.pending) || !t.stands_for ? [] : t.stands_for;
+  const records = ids.map((id) => inputs.records.get(id)).filter((r): r is TxnAnnotation => r !== undefined);
+  const excluded = records.some((r) => r.excluded === true)
+    ? true
+    : ids.some((id) => inputs.unknown.has(id))
+      ? null
+      : records.some((r) => r.excluded === false)
+        ? false
+        : undefined;
+  return { records, excluded };
+}
+
 /** Takes off what a layer took off, then puts on what it put on. */
 function layer(set: Set<string>, l: { tags?: readonly string[]; untagged?: readonly string[] } | null | undefined): void {
   if (!l) return;
@@ -140,6 +174,7 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     const own = inputs.records.get(id);
     const unknown = inputs.unknown.has(id);
     const carried: CarriedRowFacts | undefined = t.carried;
+    const imported = importedSaid(t, inputs);
 
     // The rules, read against the row as it is before any of them.
     let outcome = NOTHING;
@@ -172,32 +207,42 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
       t.name = outcome.name.value;
     }
 
-    // Excluded. A carried exclusion is already on the cached row; a rule's
-    // hide is under everything the person said.
+    // Excluded. A carried exclusion is already on the cached row, and what
+    // was said about the imported rows a bank row stands for is over it; a
+    // rule's hide is under everything the person said.
     delete t.excluded_by_rule;
     if (own?.excluded === true) t.excluded = true;
     else if (own?.excluded === false) delete t.excluded;
     else if (unknown) t.excluded = null;
-    else if (carried?.excluded === false) delete t.excluded;
+    else if (imported.excluded === true) t.excluded = true;
+    else if (imported.excluded === false) delete t.excluded;
+    else if (imported.excluded === null) {
+      if (t.excluded !== true) t.excluded = null;
+    } else if (carried?.excluded === false) delete t.excluded;
     else if (t.excluded !== true && outcome.hide) {
       t.excluded = true;
       t.excluded_by_rule = true;
     }
 
     if (isListed(t)) {
-      // Tags, layer over layer: the rules', then carried, then the row's own.
+      // Tags, layer over layer: the rules', then carried, then what was said
+      // about the imported rows it stands for, then the row's own.
       const tags = new Set<string>(outcome.tags);
       layer(tags, carried);
+      for (const r of imported.records) layer(tags, r);
       layer(tags, own);
       const shown = orderTagIds(inputs.tags, tags);
       if (shown.length > 0) t.tags = shown;
       else delete t.tags;
 
-      // A note on a bank's row, or on one SimpleFIN brought: the person's
-      // own (an empty one cleared it), else carried, else the row's. None is
-      // absent on a bank's row and null on a book's, as each always was.
-      if (t.source === undefined || isConnectorKind(t.source)) {
-        const note = own?.note !== undefined ? own.note : (carried?.note ?? t.note);
+      // A note on a bank's row, on one SimpleFIN brought, or on one imported
+      // into a linked account: the person's own (an empty one cleared it),
+      // else theirs on the imported rows it stands for, else carried, else
+      // the row's. None is absent on a bank's row and null on a book's or an
+      // imported one's, as each always was.
+      if (t.source === undefined || isConnectorKind(t.source) || isImportedIntoLinked(t)) {
+        const said = imported.records.find((r) => r.note !== undefined)?.note;
+        const note = own?.note !== undefined ? own.note : said !== undefined ? said : (carried?.note ?? t.note);
         if (note) t.note = note;
         else if (t.source === undefined) delete t.note;
         else t.note = null;
@@ -208,5 +253,6 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     delete t.account_ref;
     delete t.renamed_from;
     delete t.own_name;
+    delete t.stands_for;
   }
 }

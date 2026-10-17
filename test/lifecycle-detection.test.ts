@@ -84,6 +84,31 @@ async function storedTxns(rows: { account_id: string; date: string }[]) {
 
 const points = (body: any) => body.history.map((p: any) => [p.date, p.value, !!p.estimated]);
 
+/** A row imported into a linked account from a file (#52): the person's own
+ *  history, never the bank's word on the account. */
+async function importedRow(account_id: string, date: string) {
+  const { importedTxnStore } = await import('@/lib/history-import/store');
+  await importedTxnStore.set(ctx, account_id, {
+    version: 1,
+    rows: [
+      {
+        id: `imported-txn:${account_id}-0000-0000`,
+        account_id,
+        date,
+        amount: 5,
+        currency: 'USD',
+        name: 'FROM A FILE',
+        category: null,
+        note: null,
+        source: 'import:csv',
+        source_id: 'x',
+        import_id: 'history-import:a1b2c3d4',
+        created_at: '2026-03-01T00:00:00.000Z',
+      },
+    ],
+  });
+}
+
 beforeEach(async () => {
   setSystemTime();
   fake.reset();
@@ -412,6 +437,15 @@ describe('an account that ended and that its bank still returns', () => {
     expect((await lifecycleStore.get(ctx, 'sav'))?.seen).toEqual({ balance: 10_000, through: '2026-03-22' });
   });
 
+  test('a row imported from a file dated after its end is no word from its bank: not asked about', async () => {
+    plaid.accounts = [SAV, CHK];
+    await load('2026-03-12');
+    await post({ account_id: 'sav', state: 'left', on: '2026-03-13' });
+    await storedTxns([]);
+    await importedRow('sav', '2026-03-20');
+    expect((await load('2026-03-21')).body.institutions[0].ended_reported).toBeUndefined();
+  });
+
   test('a transaction after its end asks about a left account; an untracked one is expected to move, and never is', async () => {
     plaid.accounts = [SAV, CHK];
     await load('2026-03-12');
@@ -555,6 +589,13 @@ describe('a balance at zero for weeks', () => {
     await withTxns([{ account_id: 'empty', date: '2026-03-02' }]);
     plaid.accounts = [CHK, EMPTY];
     expect(accountRow((await load('2026-03-13')).body, 'empty').question).toBeUndefined();
+  });
+
+  test('a row imported from a file since the zeros began is no word from the bank: still asked', async () => {
+    await measuredDays('2026-02-01', 40, { chk: 500, empty: 0 });
+    await importedRow('empty', '2026-03-02');
+    plaid.accounts = [CHK, EMPTY];
+    expect(accountRow((await load('2026-03-13')).body, 'empty').question?.kind).toBe('zero');
   });
 
   test('a transaction before the zeros doesn’t count against it', async () => {

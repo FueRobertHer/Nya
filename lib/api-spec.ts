@@ -305,6 +305,17 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     },
   },
   {
+    name: 'cash-flow',
+    summary: 'Where money came from and where it went, for a month or any range: money in by who paid it, money out by category group and category, and what was left over or came from savings or debt, in one currency.',
+    args: {
+      month: { kind: 'month', description: 'A month, YYYY-MM, instead of from and to. Defaults to this month (UTC).' },
+      from: TXN_FROM,
+      to: TXN_TO,
+      currency: { kind: 'currency', description: 'Total in this currency. Defaults to the one most transactions are in.' },
+      include_hidden: INCLUDE_HIDDEN,
+    },
+  },
+  {
     name: 'recurring',
     summary: 'Recurring bills detected from transactions, with how often each comes and its estimated next date.',
     args: { include_hidden: INCLUDE_HIDDEN },
@@ -405,7 +416,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'search_transactions',
     'transactions',
     'Search transactions',
-    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own.`,
+    `Transactions, newest first, filtered by text, dates, category (by name or id), tag (by name or id), amount and account, a page at a time (${MCP_DEFAULT_PAGE_SIZE} unless limit says otherwise, at most ${MCP_MAX_PAGE_SIZE}; pass next_cursor back as cursor for more). Amounts use Plaid’s sign: positive is money out. excluded marks one the person left out of budgets and reports; is_transfer one that moves money rather than spending it; tags and note are the person’s own. Each transaction is listed once, whole: splits holds the parts of one the person split, and transaction_group the group one is in, whose net is what totals count.`,
     'Ask for fewer at a time with limit, and page with cursor.',
     { limit: MCP_DEFAULT_PAGE_SIZE },
     {
@@ -422,6 +433,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'spending',
     'Spending by category',
     'Money in, money out and spending by category, by category group and by tag for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app totals it: transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added. A transaction with two tags counts under each.',
+    NARROW_HIDDEN
+  ),
+  fromOperation(
+    'get_cash_flow',
+    'cash-flow',
+    'Cash flow',
+    'Where money came from and where it went, for a month (this month by default) or from and to, in one currency (the one most transactions are in unless currency says), as the app’s cash flow chart draws it: money in by payer (the name on the transactions; a refund is money in, marked refund, never less spending), money out by category group and by category, and what was left over or, when more went out than came in, what came from savings or debt. Transfers, cash withdrawals, loan payments and what the person excluded are left out, and transactions in other currencies are counted in left_out, never added.',
     NARROW_HIDDEN
   ),
   fromOperation(

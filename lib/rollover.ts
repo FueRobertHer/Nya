@@ -91,6 +91,7 @@
 import { categoriesIn, categoryById, type CategoryIndex } from './categories';
 import { budgetMeters, isBudgetAmount, placeBudgets, type Budgets, type GroupMeter } from './budget-set';
 import { monthGaps, type Incomplete, type Stopped } from './month-coverage';
+import { filesCoverAll, type CoveredAccount } from './history-import/coverage';
 import { tidy } from './totals';
 
 // ---- Months ----
@@ -836,17 +837,30 @@ export type MonthGap =
  *  counts. From the month that day begins, it leaves no month short. */
 export type OfConnection = { until?: string | null };
 
+/** A fact about a connection whose transactions files imported into its
+ *  bank accounts and cards can stand for (#52): each account, with what its
+ *  files cover and its end, when it ended (lib/history-import/coverage.ts).
+ *  A month they cover for every one, each through the day before its end,
+ *  is complete whatever the fact says of the bank's own, as a report counts
+ *  it (lib/report/build.ts IMPORTED). Set only where the bank's own aren't
+ *  there: the days before its stored history begins (`first`), a connection
+ *  whose transactions don't come in (`without`), and one that hasn't synced
+ *  yet (`incomplete`, and `stopped` while it is broken); absent when its
+ *  accounts aren't known, and never for a connection that stopped after it
+ *  synced, which a report doesn't lift for files either. */
+export type Filed = { files?: readonly CoveredAccount[] };
+
 /** What says whether a month's transactions may be incomplete, gathered by
  *  lib/budget-month.ts from the read. An account's end is never one: it is
  *  the person's word that nothing of it counts from that day. */
 export type CoverageFacts = {
   /** Institutions whose transactions aren't all in the read (lib/month-coverage.ts). */
-  incomplete: Incomplete[];
+  incomplete: (Incomplete & Filed)[];
   /** Connections whose transactions stopped arriving, and when each last synced. */
-  stopped: (Stopped & OfConnection)[];
+  stopped: (Stopped & OfConnection & Filed)[];
   /** Each linked institution's first stored day. */
-  first: { institution: string; day: string }[];
-  without: ({ institution: string; reason: 'refused' | 'no_consent' } & OfConnection)[];
+  first: ({ institution: string; day: string } & Filed)[];
+  without: ({ institution: string; reason: 'refused' | 'no_consent' } & OfConnection & Filed)[];
   /** What couldn't be read, in words: every month may be short of it. */
   unread: ({ what: string } & OfConnection)[];
   /** Transactions whose exclusion couldn't be read, by month. */
@@ -855,22 +869,34 @@ export type CoverageFacts = {
 
 export const NO_COVERAGE_GAPS: CoverageFacts = { incomplete: [], stopped: [], first: [], without: [], unread: [], exclusionUnknown: new Map() };
 
+/** The last day of a month (YYYY-MM). */
+const lastDayOf = (month: string): string => {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+};
+
 /** Why a month's transactions may be incomplete: none when nothing says so. */
 export function monthGapsOf(month: string, facts: CoverageFacts): MonthGap[] {
+  const start = `${month}-01`;
   // A connection whose every account had ended by the month's first day has
   // nothing in that month to be missing, however it is doing.
-  const counts = <T extends OfConnection>(xs: readonly T[]): T[] => xs.filter((x) => !x.until || x.until > `${month}-01`);
-  const g = monthGaps(month, facts.incomplete, counts(facts.stopped));
+  const counts = <T extends OfConnection>(xs: readonly T[]): T[] => xs.filter((x) => !x.until || x.until > start);
+  // Files that cover the whole month for every bank account and card of a
+  // connection hold its transactions where they can stand for the bank's
+  // own (Filed), joined to the bank's own days from `bankFrom` on.
+  const filed = (x: Filed, bankFrom: string | null = null) => !!x.files && filesCoverAll(x.files, bankFrom, start, lastDayOf(month));
+  const unfiled = <T extends Filed>(xs: readonly T[]): T[] => xs.filter((x) => !filed(x));
+  const g = monthGaps(month, unfiled(facts.incomplete), unfiled(counts(facts.stopped)));
   const out: MonthGap[] = [
     ...g.missing.map((institution): MonthGap => ({ kind: 'missing', institution })),
     ...g.importing.map((institution): MonthGap => ({ kind: 'importing', institution })),
     ...g.stopped.map((s): MonthGap => ({ kind: 'stopped', institution: s.institution_name, since: s.last_ok_at })),
-    ...counts(facts.without).map((w): MonthGap => ({ kind: 'without', institution: w.institution, reason: w.reason })),
+    ...unfiled(counts(facts.without)).map((w): MonthGap => ({ kind: 'without', institution: w.institution, reason: w.reason })),
     ...counts(facts.unread).map((u): MonthGap => ({ kind: 'unread', what: u.what })),
   ];
   // An institution missing or still importing is said so already.
   const said = new Set([...g.missing, ...g.importing]);
-  for (const f of facts.first) if (!said.has(f.institution) && `${month}-01` < f.day) out.push({ kind: 'begins', institution: f.institution, first: f.day });
+  for (const f of facts.first) if (!said.has(f.institution) && start < f.day && !filed(f, f.day)) out.push({ kind: 'begins', institution: f.institution, first: f.day });
   const unknown = facts.exclusionUnknown.get(month) ?? 0;
   if (unknown > 0) out.push({ kind: 'exclusions', count: unknown });
   return out;

@@ -18,6 +18,7 @@ import type { Txn } from './MonthBreakdown';
 import type { ManualTxnTarget } from './ManualTxnSheet';
 import type { Incomplete } from '@/lib/month-coverage';
 import { noTransactionsView, type NoTransactionsView } from '@/lib/no-transactions';
+import { unreadNotesOf } from '@/lib/fire/inputs';
 import { categoryById, choiceText, groupOf, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
 import type { TagChange } from './TxnTagsNote';
@@ -95,6 +96,7 @@ export function useTransactionEdits({
   txns,
   setTxns,
   setTxnNotes,
+  setTxnUnread,
   setTxnIncomplete,
   setTxnWithout,
   loadTransactions,
@@ -106,6 +108,9 @@ export function useTransactionEdits({
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
   setTxnNotes: Dispatch<SetStateAction<string[]>>;
+  /** Of the notes, those that say transactions couldn't all be read (the
+   *  answer's `unread_notes`, lib/fire/inputs.ts unreadNotesOf). */
+  setTxnUnread?: Dispatch<SetStateAction<string[]>>;
   /** The institutions whose rows aren't all in the list (/api/transactions). */
   setTxnIncomplete: Dispatch<SetStateAction<Incomplete[]>>;
   /** The connections that bring in no transactions, as the same answer says
@@ -151,12 +156,13 @@ export function useTransactionEdits({
       if (changes.current !== at || !Array.isArray(data?.transactions)) return;
       setTxns(data.transactions);
       setTxnNotes(Array.isArray(data.notes) ? data.notes : []);
+      setTxnUnread?.(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout?.(noTransactionsView(data));
     } catch {
       // The list shown is the server's answer to the save; the next load reads it again.
     }
-  }, [setTxns, setTxnNotes, setTxnIncomplete, setTxnWithout]);
+  }, [setTxns, setTxnNotes, setTxnUnread, setTxnIncomplete, setTxnWithout]);
 
   /** After a save or delete: the row in the list, or out of it, at once, and
    *  when the balance moved too, net worth as after the account's Update form:
@@ -235,10 +241,22 @@ export function useTransactionEdits({
     async (t: Txn, excluded: boolean) => {
       setError(null);
       changes.current++;
-      // The person's choice now decides, over a rule's hide either way.
+      // The person's choice now decides, over a rule's hide either way; on a
+      // split transaction, every part (one left out on its own stays out).
       setTxns((prev) =>
         prev
-          ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined } : x))
+          ? prev.map((x) =>
+              x.transaction_id === t.transaction_id
+                ? { ...x, excluded: excluded ? true : undefined, excluded_by_rule: undefined }
+                : x.split_of === t.transaction_id && x.split_parent
+                  ? {
+                      ...x,
+                      excluded: excluded || x.split_excluded ? true : undefined,
+                      excluded_by_rule: undefined,
+                      split_parent: { ...x.split_parent, excluded: excluded ? true : undefined, excluded_by_rule: undefined },
+                    }
+                  : x
+            )
           : prev
       );
       let res: Response | null = null;
@@ -273,7 +291,8 @@ export function useTransactionEdits({
       setTxns((prev) =>
         prev
           ? prev.map((x) => {
-              if (x.transaction_id !== t.transaction_id) return x;
+              // A split transaction's parts carry its tags.
+              if (x.transaction_id !== t.transaction_id && x.split_of !== t.transaction_id) return x;
               const tags = [...(x.tags ?? []).filter((id) => !remove.includes(id)), ...add.filter((id) => !(x.tags ?? []).includes(id))];
               return { ...x, tags: tags.length > 0 ? tags : undefined };
             })
@@ -301,7 +320,7 @@ export function useTransactionEdits({
             setTxns((prev) =>
               prev
                 ? prev.map((x) =>
-                    x.transaction_id === t.transaction_id ? { ...x, tags: [...new Set([...(x.tags ?? []), ...put])] } : x
+                    x.transaction_id === t.transaction_id || x.split_of === t.transaction_id ? { ...x, tags: [...new Set([...(x.tags ?? []), ...put])] } : x
                   )
                 : prev
             );
@@ -316,14 +335,25 @@ export function useTransactionEdits({
     [setTxns, undo, onTagMade]
   );
 
-  /** Saves a transaction's note, or clears it: a manual or imported row's on
-   *  the row itself, a bank row's beside it. Shown at once. */
+  /** Saves a transaction's note, or clears it: one entered by hand or
+   *  imported into a manual account, on the row itself; any other (a bank's,
+   *  one SimpleFIN brought, one imported into a linked account), beside it.
+   *  Shown at once. */
   const saveNote = useCallback(
     async (t: Txn, note: string) => {
       setError(null);
       changes.current++;
+      // A split transaction's note is its own, kept beside its parts' (split_parent).
       setTxns((prev) =>
-        prev ? prev.map((x) => (x.transaction_id === t.transaction_id ? { ...x, note: note || (x.source ? null : undefined) } : x)) : prev
+        prev
+          ? prev.map((x) =>
+              x.transaction_id === t.transaction_id
+                ? { ...x, note: note || (x.source ? null : undefined) }
+                : x.split_of === t.transaction_id && x.split_parent
+                  ? { ...x, split_parent: { ...x.split_parent, note: note || (x.source ? null : undefined) } }
+                  : x
+            )
+          : prev
       );
       let res: Response | null = null;
       try {
@@ -341,5 +371,5 @@ export function useTransactionEdits({
     [setTxns, undo]
   );
 
-  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error };
+  return { sheet, openAdd, openEdit, closeSheet, onSaved, recategorize, toggleExcluded, changeTags, saveNote, error, refresh: refreshQuietly };
 }

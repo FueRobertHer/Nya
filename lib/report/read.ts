@@ -25,6 +25,10 @@
 //   - the categories the person marked (lib/report/store.ts), found among
 //     their categories as the rows were filed by them (finishActivity, which
 //     files without writing: the report never grows the stored categories);
+//   - the days the files imported into each linked account cover (#52,
+//     lib/history-import/read.ts importedCoverage), with each connection's
+//     bank accounts and cards, so where those files reach, the bank's own
+//     transactions needn't (lib/report/build.ts IMPORTED).
 //   - the accounts that ended (lib/lifecycle.ts), read by the assembly
 //     through the same links as the hidden set, strictly, as the Activity tab
 //     reads them: its rows come with theirs kept (keepEnded) and each row's
@@ -85,6 +89,7 @@ import { connectorBadge } from '../connectors/health';
 import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
 import type { TxnCoverage } from '../transactions';
+import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -161,7 +166,9 @@ export async function readReport(
   // out by buildReport, by the Activity tab's rule, and said.
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, since: period.start, withAccountIds: true, keepEnded: true });
   const [activity, facts, manual, items, settings, remembered, links, fed, letGo] = await Promise.all([
-    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true }),
+    // The ends too, so a split or a group leaves an ended account's later
+    // rows whole and out of its net, for buildReport to leave out and count.
+    finishActivity(ctx, bank.payload, bank.hidden, { since: period.start, keepEnded: true, endedFrom: endDays(bank.lifecycle) }),
     connectionFacts(ctx),
     // LENIENT, for this display only, as the API lists them: an account that
     // can't be read is left out here and named by the assembly's notes.
@@ -202,6 +209,12 @@ export async function readReport(
   // disconnect that stopped part way is in both stores, and is the manual one.
   const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
   const live = new Set(items.map((i) => i.item_id));
+  // LENIENT, for this display only: an import whose summary can't be read
+  // covers nothing here, so a report says no less than without it.
+  const covered = await importedCoverage(ctx, links).catch((err: unknown) => {
+    console.error('Report: what imported files cover could not be read', err instanceof Error ? err.name : typeof err);
+    return new Map<string, { from: string; to: string }[]>();
+  });
   // LENIENT, for this display only: a directory that can't be read is said on
   // the report (a gap), never read as no removals.
   const directory = await removedConnections(ctx, live).catch((err: unknown) => {
@@ -274,6 +287,11 @@ export async function readReport(
       problem: f.problem,
       records_unreadable: f.records_unreadable === true,
       holds: holds.get(s.item_id) ?? { investment: false, loans: false },
+      // Its bank accounts and cards, as it last reported them, and those
+      // that ended that it no longer reports (a bank stops returning a closed
+      // account), not hidden, with what files imported into each cover and
+      // the day each that ended stopped counting, up to which it needs them.
+      accounts: coveredAccountsOf(s.item_id, remembered.byItem[s.item_id] ?? [], bank.lifecycle, covered, hidden).map(({ name, covers, end }) => ({ name, covers, end })),
       ended_by: endedBy(s.item_id),
     };
   });
