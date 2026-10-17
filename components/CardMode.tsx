@@ -39,7 +39,7 @@ import { Masked } from './HideAmounts';
 import TagChips from './TagChips';
 import { cardKey, pickerKey, CARD_KEYS } from './review-keys';
 import { swipeMove, swipeOffset, swipeRelease, swipeStart, type Point, type Swipe } from './swipe';
-import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep, type Cards } from './card-mode-state';
+import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep, type Cards, type Picker } from './card-mode-state';
 import { approvedAsImported, changedSinceWords, defaultWords, doneWords, endWords, suggestionWords } from './review-text';
 
 /** What undoes a card's step: the approval's request, or the recategorize's. */
@@ -144,10 +144,16 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   const waits = (id: string) => byId.get(id)?.needs_review === true;
   const id = currentCard(cards, waits);
   const t = id ? (byId.get(id) ?? null) : null;
-  const [picking, setPicking] = useState(false);
-  // The category the picker shows: moving through the list chooses nothing
-  // (a select's arrows change its value); "Use" or Enter does.
-  const [draft, setDraft] = useState('');
+  // The category list: open on one card, with the category it shows (moving
+  // through the list chooses nothing, a select's arrows change its value;
+  // "Use" or Enter does). Open only on the card it was opened on (pickerOn),
+  // and closed when another card comes up under it (the effect on `id`), so
+  // a category picked for one card is never used on another.
+  const [picker, setPicker] = useState<Picker | null>(null);
+  const open = pickerOn(picker, id);
+  const picking = open !== null;
+  const draft = open?.draft ?? '';
+  const setDraft = (category_id: string) => setPicker((p) => (p ? { ...p, draft: category_id } : p));
   const [leaving, setLeaving] = useState<'right' | 'left' | 'down' | null>(null);
   const [offset, setOffset] = useState(0);
   const [said, setSaid] = useState('');
@@ -202,21 +208,21 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   const acting = useRef<string | null>(null);
   useEffect(() => {
     acting.current = null;
+    // Another card under the list (a failed approval dealing one back, a
+    // refresh passing over the one shown): what it showed was for the other.
+    setPicker(null);
   }, [id]);
 
   const act = async (kind: 'approve' | 'recategorize' | 'skip') => {
     if (!t || leaving || acting.current === t.transaction_id) return;
     if (kind === 'recategorize') {
       // A split transaction's parts have categories of their own.
-      if (!t.split_parts) {
-        setDraft(t.category_id ?? taxonomy?.uncategorized ?? '');
-        setPicking(true);
-      }
+      if (!t.split_parts) setPicker({ id: t.transaction_id, draft: t.category_id ?? taxonomy?.uncategorized ?? '' });
       return;
     }
     // Approved or skipped with the picker open: it closes, never left open
     // on the next card.
-    setPicking(false);
+    setPicker(null);
     const row = t;
     acting.current = row.transaction_id;
     await leave(kind === 'approve' ? 'right' : 'down');
@@ -237,10 +243,11 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   };
 
   const choose = async (category_id: string) => {
-    if (!t || !category_id || acting.current === t.transaction_id) return;
+    // Only from the list open on this card.
+    if (!t || !open || !category_id || acting.current === t.transaction_id) return;
     const row = t;
     acting.current = row.transaction_id;
-    setPicking(false);
+    setPicker(null);
     await leave('left');
     const undo = review.recategorizeAndApprove(row, category_id, taxonomy);
     const step = { id: row.transaction_id, kind: 'recategorized' as const, undo: undo as StepUndo };
@@ -255,7 +262,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     const { cards: next, step } = undoStep(cards);
     if (!step) return;
     setCards(next);
-    setPicking(false);
+    setPicker(null);
     // An approved one counts again once it is back; a skipped one never left.
     setSaid(doneWords('undone', byId.get(step.id)?.name ?? 'it', left(next) + (step.kind === 'skipped' ? 0 : 1)));
     if (step.kind === 'approved') {
@@ -294,7 +301,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
     if (!k) return;
     e.preventDefault();
     if (k === 'close') {
-      if (picking) setPicking(false);
+      if (picking) setPicker(null);
       else onClose();
     } else if (k === 'help') setHelp((h) => !h);
     else if (k === 'undo') void undoLast();
@@ -403,7 +410,7 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
                 useLabel={nameOf(draft)}
                 onDraft={setDraft}
                 onUse={() => void choose(draft)}
-                onCancel={() => setPicking(false)}
+                onCancel={() => setPicker(null)}
               />
             ) : (
               <div className="card-mode-category">{categoryText(t)}</div>

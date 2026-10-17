@@ -61,6 +61,18 @@ export function dealSkipped<U>(c: Cards<U>): Cards<U> {
   return { queue: c.queue, steps: c.steps.filter((s) => s.kind !== 'skipped') };
 }
 
+/** Card Mode's category list, open on one card, with the category it shows
+ *  (the view's draft: nothing is chosen until "Use"). */
+export type Picker = { id: string; draft: string };
+
+/** The list as the card `id` shown now has it: open only on the card it was
+ *  opened on, so a category picked for one card is never used on another
+ *  that comes up under it (a failed approval dealing a card back, a refresh
+ *  passing over the one shown). */
+export function pickerOn(p: Picker | null, id: string | null): Picker | null {
+  return p && id !== null && p.id === id ? p : null;
+}
+
 /** Which card this is of those dealt, from 1, and how many: "3 of 12". */
 export function cardPosition(c: Cards<unknown>, id: string | null): { at: number; of: number } {
   const done = new Set(c.steps.map((s) => s.id));

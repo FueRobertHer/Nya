@@ -11,8 +11,16 @@ import ReviewNote from '@/components/ReviewNote';
 import ReviewSettingsCard, { nearFull, startChoices } from '@/components/ReviewSettingsCard';
 import { FLING, SPEED_WINDOW, STOPPED, swipeEnd, swipeMove, swipeOffset, swipeRelease, swipeSpeed, swipeStart, SLOP, type Point } from '@/components/swipe';
 import { activityKey, cardKey, isTyping, pickerKey } from '@/components/review-keys';
-import { ACTIVITY_KEYS_KEY, readActivityKeys, writeActivityKeys } from '@/components/activity-keys';
-import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, undoStep, withoutStep, withStep } from '@/components/card-mode-state';
+import {
+  ACTIVITY_KEYS_KEY,
+  activityKeysNow,
+  forgetActivityKeysForTests,
+  readActivityKeys,
+  setActivityKeys,
+  subscribeActivityKeys,
+  writeActivityKeys,
+} from '@/components/activity-keys';
+import { cardCounts, cardPosition, currentCard, dealSkipped, openCards, pickerOn, undoStep, withoutStep, withStep } from '@/components/card-mode-state';
 import { withApproved, withUndone, reviewViewOf, type ReviewControls } from '@/components/review-state';
 import { approvedAsImported, changedSinceWords, changedWords, defaultListWords, defaultWords, doneWords, endWords, suggestionWords, toReviewWords } from '@/components/review-text';
 import { merchantOf, recategorizedRow } from '@/components/transaction-edits';
@@ -247,6 +255,21 @@ describe('the keys', () => {
 });
 
 describe('Card Mode’s cards', () => {
+  test('the category list is open only on the card it was opened on: a card dealt back under it never takes what was picked for another', () => {
+    // Opened on Blue Bottle and moved to Home improvement; then Costco's
+    // approval fails and Costco is dealt again under it.
+    const picker = { id: 't_blue', draft: 'c-home' };
+    expect(pickerOn(picker, 't_blue')).toBe(picker);
+    expect(pickerOn(picker, 't_costco')).toBeNull();
+    expect(pickerOn(picker, null)).toBeNull();
+    expect(pickerOn(null, 't_blue')).toBeNull();
+    // And the view closes it whenever the card's id changes (the effect on it),
+    // so Blue Bottle coming back shows its own category, not the old pick.
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'CardMode.tsx'), 'utf8');
+    expect(source).toMatch(/useEffect\(\(\) => \{\s*acting\.current = null;[\s\S]*?setPicker\(null\);\s*\}, \[id\]\);/);
+    expect(source).toMatch(/const open = pickerOn\(picker, id\);/);
+  });
+
   test('dealt, each done in turn, the last undone, the skipped dealt again, and the end', () => {
     const waiting = new Set(['a', 'b', 'c']);
     const waits = (id: string) => waiting.has(id);
@@ -401,6 +424,27 @@ describe('the Activity tab', () => {
     expect(nearFull({ kept: 39_999, max: 50_000, room: 10_000 })).toBe(false);
     expect(nearFull({ kept: 40_000, max: 50_000, room: 10_000 })).toBe(true);
     expect(nearFull({ kept: 50_000, max: 50_000, room: 10_000 })).toBe(true);
+  });
+
+  test('the keys’ switch is on the Review queue card too, always within reach, and both places show one value', () => {
+    // On the card while the queue is on, whatever the device: "?" and the
+    // help's link aren't there once the keys are off, or on a touch screen.
+    const card = renderToStaticMarkup(<ReviewSettingsCard review={controls()} toReview={2} />);
+    expect(text(card)).toContain('Keyboard shortcuts on the Activity tab (R, N, Shift+A, U), on this device');
+    expect(card).toMatch(/<label class="review-keys-switch"><input type="checkbox" checked=""/);
+    // One value for the page: turned off in one place, every place that shows it hears.
+    forgetActivityKeysForTests();
+    const heard: boolean[] = [];
+    const stop = subscribeActivityKeys(() => heard.push(activityKeysNow()));
+    try {
+      expect(activityKeysNow()).toBe(true);
+      setActivityKeys(false);
+      setActivityKeys(true);
+      expect(heard).toEqual([false, true]);
+    } finally {
+      stop();
+      forgetActivityKeysForTests();
+    }
   });
 
   test('Card Mode’s live region is left at one pixel, so the page never scrolls sideways', () => {

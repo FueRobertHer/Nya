@@ -5,10 +5,14 @@
 // keeps every approval; when its records can't be read, removing only the
 // damaged ones, once the person confirms (settings a later release wrote are
 // kept as they are, and said so); and, as approvals near the most Nya keeps
-// (MAX_APPROVALS), forgetting the oldest to make room, once confirmed.
+// (MAX_APPROVALS), forgetting the oldest to make room, once confirmed. While
+// the queue is on, the switch for the Activity tab's keys too
+// (components/activity-keys.ts): here it is always within reach, a keyboard
+// or none, as the keys' own help isn't once they are off.
 
 import { useEffect, useRef, useState } from 'react';
 import type { ReviewControls } from './review-state';
+import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { localDate } from '@/lib/local-date';
 
 /** The first days the queue can start from, as offered: today, a week back,
@@ -57,6 +61,7 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
   const [loadError, setLoadError] = useState<string | null>(null);
   const [reads, setReads] = useState(0);
   const view = review.view;
+  const keysOn = useActivityKeys();
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -184,6 +189,10 @@ export default function ReviewSettingsCard({ review, toReview }: { review: Revie
             Turn off
           </button>
           <p className="rename-hint">Turning it off keeps your approvals.</p>
+          <label className="review-keys-switch">
+            <input type="checkbox" checked={keysOn} onChange={(e) => setActivityKeys(e.target.checked)} />
+            Keyboard shortcuts on the Activity tab (R, N, Shift+A, U), on this device
+          </label>
         </>
       ) : (
         <>

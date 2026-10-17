@@ -18,7 +18,7 @@ import type { ApprovalTicket, ReviewControls } from './review-state';
 import { countToReview } from '@/lib/review-layer';
 import { bankRows } from '@/lib/split-rows';
 import { activityKey, ACTIVITY_KEYS, type ActivityKey } from './review-keys';
-import { readActivityKeys, writeActivityKeys } from './activity-keys';
+import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { toReviewWords } from './review-text';
 
 /** The whole transactions among listed rows that need review: a split one
@@ -83,34 +83,48 @@ export default function ReviewBar({
 }) {
   const [undoable, setUndoable] = useState<{ ticket: ApprovalTicket; n: number } | null>(null);
   const [help, setHelp] = useState(false);
-  // The keys, on until this device says otherwise (read once it is the
-  // browser's page, so the server's and the first render agree).
-  const [keysOn, setKeysOn] = useState(true);
-  useEffect(() => setKeysOn(readActivityKeys()), []);
+  // The keys, on until this device says otherwise: one value for the page,
+  // which the Review queue card's switch shows too (components/activity-keys.ts).
+  const keysOn = useActivityKeys();
   // Shift+A asks first: everything listed is approved only once confirmed.
   const [confirming, setConfirming] = useState(false);
   const confirmRef = useRef<HTMLButtonElement>(null);
   useEffect(() => {
     if (confirming) confirmRef.current?.focus();
   }, [confirming]);
+  // Once the question is answered, or the listed approved by the button,
+  // those buttons go, so focus moves to the count at once (never left to fall
+  // to the page), then to Undo when the approval is saved.
+  const countRef = useRef<HTMLSpanElement>(null);
+  const undoRef = useRef<HTMLButtonElement>(null);
+  const [focusUndo, setFocusUndo] = useState(false);
+  useEffect(() => {
+    if (!focusUndo || !undoable) return;
+    undoRef.current?.focus();
+    setFocusUndo(false);
+  }, [focusUndo, undoable]);
   const total = countToReview(all);
   const waiting = listedToReview(listed);
 
   const approveListed = async () => {
     setConfirming(false);
+    countRef.current?.focus();
     if (waiting.length === 0) return;
     const ticket = await review.approve(waiting);
-    if (ticket) setUndoable({ ticket, n: ticket.items.length });
+    if (ticket) {
+      setUndoable({ ticket, n: ticket.items.length });
+      setFocusUndo(true);
+    }
+  };
+  const cancelConfirm = () => {
+    setConfirming(false);
+    countRef.current?.focus();
   };
   const undo = async () => {
     if (!undoable) return;
     const u = undoable;
     setUndoable(null);
     await review.undo(u.ticket);
-  };
-  const turnKeys = (next: boolean) => {
-    setKeysOn(next);
-    writeActivityKeys(next);
   };
 
   // The shortcuts, read through a ref so the listener isn't added again each render.
@@ -143,7 +157,7 @@ export default function ReviewBar({
       <div className="review-bar-row">
         {/* Where focus comes back to when Card Mode closes and its way in is
             gone (nothing left to review). */}
-        <span className="review-count" aria-live="polite" tabIndex={-1} data-review-return="">
+        <span className="review-count" aria-live="polite" tabIndex={-1} data-review-return="" ref={countRef}>
           {toReviewWords(total)}
         </span>
         <button className="secondary" onClick={onReview} disabled={total === 0}>
@@ -159,14 +173,14 @@ export default function ReviewBar({
           role="group"
           aria-label="Approve what is listed"
           onKeyDown={(e) => {
-            if (e.key === 'Escape') setConfirming(false);
+            if (e.key === 'Escape') cancelConfirm();
           }}
         >
           <span className="panel-note">{waiting.length === 1 ? 'Approve the 1 transaction listed?' : `Approve the ${waiting.length} transactions listed?`}</span>
           <button ref={confirmRef} onClick={() => void approveListed()}>
             Approve
           </button>
-          <button className="secondary" onClick={() => setConfirming(false)}>
+          <button className="secondary" onClick={cancelConfirm}>
             Cancel
           </button>
         </div>
@@ -180,7 +194,7 @@ export default function ReviewBar({
       {undoable && (
         <div className="review-bar-row" role="status">
           <span className="panel-note">{undoable.n === 1 ? 'Approved 1 transaction.' : `Approved ${undoable.n} transactions.`}</span>
-          <button className="secondary" onClick={() => void undo()}>
+          <button className="secondary" ref={undoRef} onClick={() => void undo()}>
             Undo
           </button>
         </div>
@@ -189,7 +203,7 @@ export default function ReviewBar({
       <button className="review-keys-toggle" aria-expanded={help} onClick={() => setHelp((h) => !h)}>
         Keyboard shortcuts
       </button>
-      {help && <ActivityKeysHelp on={keysOn} onChange={turnKeys} />}
+      {help && <ActivityKeysHelp on={keysOn} onChange={setActivityKeys} />}
     </div>
   );
 }
