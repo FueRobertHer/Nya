@@ -33,7 +33,9 @@
 // load it without pulling in anything else.
 
 import { defineCounterStore, defineValueStore } from '../repo';
-import { isWeeklySetting, type WeeklySetting } from './settings';
+import { isWeeklySetting, SENDS_NOW_PER_DAY, type WeeklySetting } from './settings';
+
+export { SENDS_NOW_PER_DAY };
 
 /** The bookkeeping kept with a person's summary (see the header). */
 export type WeeklyState = {
@@ -70,8 +72,7 @@ export function isWeeklyState(v: unknown): v is WeeklyState {
   );
 }
 
-/** "Send me one now" in a day: enough to see one arrive, and try again. */
-export const SENDS_NOW_PER_DAY = 3;
+/** The window "Send me one now" is counted in (SENDS_NOW_PER_DAY, settings.ts). */
 export const SENDS_NOW_WINDOW_SECONDS = 24 * 60 * 60;
 /** Links that checked out, per container in an hour. */
 export const UNSUBSCRIBES_PER_HOUR = 10;

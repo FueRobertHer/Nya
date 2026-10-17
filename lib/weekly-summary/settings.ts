@@ -26,6 +26,10 @@ export type Weekday = 0 | 1 | 2 | 3 | 4 | 5 | 6;
 /** The day it comes on until the person picks another. */
 export const DEFAULT_WEEKDAY: Weekday = 1;
 
+/** "Send me one now" in a day (lib/weekly-summary/send-now.ts): enough to see
+ *  one arrive, and try again. Here, where the settings card can read it. */
+export const SENDS_NOW_PER_DAY = 3;
+
 export const WEEKDAY_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'] as const;
 
 export type WeeklySetting = {
