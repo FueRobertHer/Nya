@@ -103,7 +103,7 @@ import type { NoTransactionsReason } from './item-products';
 import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
-import { readBudgetMonth, windowStart } from './budget-month';
+import { readBudgetMonth, windowStart, type BudgetMonthRead } from './budget-month';
 import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
@@ -1465,7 +1465,14 @@ const monthList = (ms: readonly string[]): string =>
  */
 export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
   const today = new Date().toISOString().slice(0, 7);
-  const read = await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden });
+  return budgetsAnswer(await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden }), opts);
+}
+
+/** readBudgets' answer from a month already read: no reads, no writes. For a
+ *  reader that looks at the read first (a budgets share, lib/share-views.ts,
+ *  asks whether its transactions could all be read). */
+export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; includeHidden?: boolean }): ApiBudgets {
+  const today = read.today;
   const { ix, view, currency, activity } = read;
   const spent = new Map(Object.entries(read.spent));
   const describe = describer(ix);

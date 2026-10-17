@@ -8,6 +8,8 @@
 // catalogue (lib/stores.ts) loads the access log without loading
 // lib/sharing.ts, and the Plaid client with it.
 
+import type { ViewsRead } from './share-kinds';
+
 /** What an account's share shows, narrowest first: that it exists, its
  *  balance, or its balance and recent transactions. */
 export const LEVELS = ['exists', 'balance', 'transactions'] as const;
@@ -39,8 +41,10 @@ export const ACCESS_LOG_SLOT_MINUTES = 15;
  *  drawer gets it (lib/sharing.ts connectionRecords): how many times it was
  *  shown that day, and how many accounts were shown at each level, each
  *  account once, at the widest level shown that day. Counts, not ids, so a
- *  day is the same small size however many accounts were shown. */
-export type ShownDay = { day: string; times: number; levels: Record<Level, number> };
+ *  day is the same small size however many accounts were shown. `views`:
+ *  the other kinds of share shown that day, each at the widest detail
+ *  (lib/share-kinds.ts ViewsRead), when any was. */
+export type ShownDay = { day: string; times: number; levels: Record<Level, number>; views?: ViewsRead };
 
 /** How many of a record's days the drawer shows before "Show all", and so
  *  asks for first. */

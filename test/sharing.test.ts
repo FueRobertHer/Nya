@@ -210,7 +210,7 @@ describe('finding people: nobody can', () => {
     const mine = await connectionsOf('user_partner');
     const [conn] = mine.connections;
     expect(mine.connections).toEqual([
-      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, expires_at: null },
+      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, views: {}, expires_at: null },
     ]);
     // Its records of showings come on their own: a random id, begun when they connected, empty so far.
     const records = (await recordsOf('user_partner')).body;
