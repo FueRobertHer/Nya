@@ -6,13 +6,72 @@
 // (green positive, red negative). Below it, a two-line chart traces cumulative
 // income vs spend across the days of the selected month. Then a summary shows
 // money in / money out / net (transfers and loan payments excluded, so
-// credit-card payments don't double-count as both spending and income); top
-// spending categories draw as single-hue horizontal bars (magnitude lives in
-// length, not color); and finally the searchable transaction list.
+// credit-card payments don't double-count as both spending and income, and so
+// is anything the person excluded; every total is in one currency and says
+// what it left out in others: lib/spending.ts); top spending, rolled up to
+// your category groups (components/CategoryRollup.tsx), draws as single-hue
+// horizontal bars (magnitude lives in length, not color); and finally the
+// searchable transaction list, where a manual row can be edited, any row
+// given another of your categories, and any row excluded from budgets and
+// reports. Each row shows the name of the category it is filed under
+// (lib/categories.ts), so renaming a category renames it here at once.
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
-import { dominantCurrency } from "@/lib/format";
+import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { Masked } from "./HideAmounts";
+import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { instantDay, localDate, localMonth } from "@/lib/local-date";
+import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
+import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
+import { sourceLabel } from "@/lib/manual-txn-input";
+import { IMPORTED_TXN_PREFIX, importedChangedNote, importedRowsNote } from "@/lib/history-import/view";
+import { isConnectorKind } from "@/lib/connectors/types";
+import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
+import CategoryRollup from "./CategoryRollup";
+import CategoryPicker from "./CategoryPicker";
+import type { CategoryChoice } from "./transaction-edits";
+import type { Tag } from "@/lib/tags";
+import TagChips from "./TagChips";
+import TagFilter from "./TagFilter";
+import SpendByTag from "./SpendByTag";
+import TxnTagsNote, { type TagChange } from "./TxnTagsNote";
+import { searchEntries } from "./txn-search";
+import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
+import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
+import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
+import SplitSheet from "./SplitSheet";
+import GroupSheet from "./GroupSheet";
+import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
+import { needsReview, type ReviewMarks } from "@/lib/review-layer";
+import type { ReviewControls } from "./review-state";
+import ReviewBar from "./ReviewBar";
+import ReviewNote from "./ReviewNote";
+import CardMode from "./CardMode";
+
+/** What one side of a pair Nya worked out between two SimpleFIN accounts
+ *  (lib/manual-txns.ts connectorTransfers) is. */
+const PAIRED_WORDS: Readonly<Record<NonNullable<Txn["paired"]>, string>> = {
+  card: "Card payment between your accounts",
+  loan: "Loan payment between your accounts",
+  transfer: "Transfer between your accounts",
+};
+
+/** The mark on one side of a pair: what it is, worked out from the amounts,
+ *  and, while its category leaves it out of the totals, how to count it. It
+ *  counts once its category is moved into a spending group (lib/spending.ts
+ *  isTransfer: loan payments, say), and then says only what it is. */
+export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "category" | "category_kind">): string | null {
+  if (!t.paired) return null;
+  const what = `${PAIRED_WORDS[t.paired]}, worked out from the amounts`;
+  return isTransfer(t) ? `${what}: give it a category to count it` : what;
+}
+
+// Stable empty defaults, as in Insights: a fresh literal per render would be
+// a new identity each time.
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
+const NO_TAGS: Tag[] = [];
 
 export type Txn = {
   transaction_id: string;
@@ -21,9 +80,18 @@ export type Txn = {
   amount: number;
   pending: boolean;
   account_name: string;
+  // As in lib/transactions.ts: the account's type, for the cash forecast.
+  account_type?: string | null;
   institution_name: string;
+  // As in lib/transactions.ts: the category words the rules read, and, once
+  // filed into the person's categories, the category's id, the name to show
+  // (null for a row that says nothing) and the kind it counts as.
   category: string | null;
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
   iso_currency_code: string | null;
+  unofficial_currency_code?: string | null;
   vendor_key: string;
   logo_url: string | null;
   category_icon_url: string | null;
@@ -40,72 +108,97 @@ export type Txn = {
   counterparty: string | null;
   payment_processor: string | null;
   payment_reference: string | null;
-};
+  // As in lib/transactions.ts: on manual rows, and on rows the person excluded.
+  source?: string;
+  // As in lib/transactions.ts (#52): on a bank row standing for a row
+  // imported from the bank's file at another amount, that row's amount.
+  imported_amount?: number;
+  account_id?: string;
+  note?: string | null;
+  excluded?: boolean | null;
+  // As in lib/transactions.ts: the ids of the tags it carries (lib/tags.ts),
+  // the rules that match it (lib/rules.ts), whether a rule hid it, whether
+  // its category is a rule's, and the name it had before a rule named it.
+  tags?: string[];
+  rule_ids?: string[];
+  excluded_by_rule?: true;
+  category_by_rule?: true;
+  name_before_rules?: string;
+  // As in lib/transactions.ts: one side of a pair Nya worked out between two
+  // SimpleFIN accounts.
+  paired?: "card" | "loan" | "transfer";
+  // As in lib/transactions.ts (#39, lib/split-rows.ts): a part of a split
+  // transaction, in its place; a transaction whose split couldn't be read or
+  // no longer fits; a group's row, its transactions inside it. And, on a
+  // split transaction put back whole for the list (bankRows), its parts. A
+  // bank row standing for a row imported from a file is split or grouped as
+  // that row was, its parts or its place in the group naming that row, where
+  // an edit is made (split_carried_from, group_carried_from).
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_updated_at?: string;
+  split_carried_from?: string;
+  split_unread?: true;
+  split_unapplied?: "currency";
+  split_parts?: Txn[];
+  group_id?: string;
+  group_members?: Txn[];
+  group_missing?: number;
+  group_removed?: number;
+  group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
+  group_carried_from?: string;
+  // Why its transactions that aren't counted in it aren't, where known.
+  group_away?: GroupAway[];
+  // And, as in lib/transactions.ts, the review queue's marks
+  // (lib/review-layer.ts ReviewMarks): whether it needs review, when it was
+  // approved, what changed since, and the merchant's default that filed it.
+} & ReviewMarks;
 
-function fmtUsd(n: number): string {
-  return (
-    (n < 0 ? "-$" : "$") +
-    Math.abs(n).toLocaleString(undefined, {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  );
+/** The name rules match a row by: the one it had before any rule named it. */
+export const nameForRules = (t: Pick<Txn, "name" | "name_before_rules">) => t.name_before_rules ?? t.name;
+
+/**
+ * What a transaction's detail offers about leaving it out of budgets and
+ * reports: the button to exclude it or put it back ("toggle"), or why not yet
+ * ("wait"; "wait-rule" for one a rule hides). A pending row gets a new id
+ * when it posts, and an exclusion or an include is kept by id: offered once
+ * it has posted, so it can't quietly lapse.
+ */
+export function exclusionOffer(t: Pick<Txn, "pending" | "excluded" | "excluded_by_rule">): "toggle" | "wait" | "wait-rule" {
+  if (!t.pending) return "toggle";
+  if (t.excluded_by_rule) return "wait-rule";
+  return t.excluded === true ? "toggle" : "wait";
 }
 
-// Currency-aware amount, so a EUR/GBP/etc. charge isn't silently shown with a
-// "$". Falls back to the $ formatter for a null or unrecognized currency code.
-function fmtMoney(n: number, currency: string | null): string {
-  if (!currency) return fmtUsd(n);
-  try {
-    return new Intl.NumberFormat(undefined, {
-      style: "currency",
-      currency,
-    }).format(n);
-  } catch {
-    return fmtUsd(n);
-  }
-}
+// Amounts in their currency (lib/format.ts), never assumed to be dollars.
 
-// Compact, signed currency for the net-bar value labels: +$1.2K / -$340.
-function fmtCompactSigned(n: number): string {
-  const sign = n < 0 ? "-" : "+";
-  const abs = Math.abs(n);
-  return abs >= 1000
-    ? `${sign}$${(abs / 1000).toFixed(1)}K`
-    : `${sign}$${Math.round(abs)}`;
+// Compact, signed, for the net-bar value labels: +$1.2K / -$340.
+function fmtCompactSigned(n: number, currency: string | null): string {
+  return `${n < 0 ? "-" : "+"}${compactMoney(Math.abs(n), currency)}`;
 }
 
 // Plaid's convention: positive amounts are money leaving the account, so the
-// displayed value flips sign (positive = money in). Currency-aware.
+// displayed value flips sign (positive = money in).
 function fmtTxnAmount(amount: number, currency: string | null): string {
-  const display = amount === 0 ? 0 : -amount; // avoid -0 rendering as "-$0.00"
-  if (currency) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        style: "currency",
-        currency,
-        signDisplay: "always",
-      }).format(display);
-    } catch {
-      // fall through to the $ formatter
-    }
-  }
-  const abs = Math.abs(amount).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  return amount > 0 ? `-$${abs}` : `+$${abs}`;
+  return signedMoney(-amount, currency, { always: true });
 }
 
-// Signed currency for the per-day net summary, in display terms (positive =
-// net money in). Zero renders without a sign.
-function fmtSignedUsd(n: number): string {
-  const abs = Math.abs(n).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  });
-  const sign = n > 0 ? "+" : n < 0 ? "-" : "";
-  return `${sign}$${abs}`;
+// The per-day net, in display terms (positive = net money in), one figure per
+// currency the day's rows are in, the totals' first: never added across
+// currencies. Zero renders without a sign.
+function fmtDayNet(nets: Map<string | null, number>, currency: string | null): string {
+  return [...nets.keys()]
+    .sort((a, b) => (a === currency ? -1 : b === currency ? 1 : String(a) < String(b) ? -1 : 1))
+    .map((c) => {
+      const n = nets.get(c)!;
+      return signedMoney(Math.abs(n) < 0.005 ? 0 : n, c);
+    })
+    .join(" · ");
 }
 
 function fmtTxnDate(iso: string): string {
@@ -132,18 +225,11 @@ function isLowConfidence(t: Txn): boolean {
   return !!t.category_confidence && LOW_CONFIDENCE.has(t.category_confidence);
 }
 
-// Money moving between your own accounts isn't income or spending. Plaid's
-// transaction_code is the reliable signal (transfer / atm / bank charge / fee);
-// the category heuristic stays as a fallback for rows Plaid didn't code (older
-// data, or codes it never resolved).
-const TRANSFER_CODES = new Set(["transfer", "atm", "bank charge"]);
-export function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return (
-    !!t.category &&
-    (t.category.startsWith("transfer") || t.category === "loan payments")
-  );
-}
+// Money moving between your own accounts isn't income or spending, and a
+// transaction the person excluded counts in no total: both decided in
+// lib/spending.ts, which every total uses. isTransfer is re-exported for code
+// that imported it from here.
+export { isTransfer } from "@/lib/spending";
 
 // A short "HH:MM" from Plaid's ISO datetime, in the viewer's locale. Null when
 // the row carries only a posting date.
@@ -155,7 +241,7 @@ function fmtTime(iso: string | null): string | null {
 }
 
 // Base category options for recategorization, merged with whatever
-// categories appear in the data.
+// categories appear in the data (categoryOptions).
 const BASE_CATEGORIES = [
   "food and drink",
   "general merchandise",
@@ -173,11 +259,29 @@ const BASE_CATEGORIES = [
   "other",
 ];
 
+/** A row's category as the list shows it: the name of the category it is
+ *  filed under, or, on a row not filed (no categories loaded), its words. */
+export function categoryLabel(t: Pick<Txn, "category" | "category_name">): string | null {
+  const name = t.category_name !== undefined ? t.category_name : t.category;
+  return name ? displayName(name) : null;
+}
+
+/** The categories to choose from when the person's own couldn't be loaded:
+ *  the base ones and every one in the data, sorted, as before categories had
+ *  ids. Shared with the quick-add form (components/ManualTxnSheet.tsx). */
+export function categoryOptions(txns: Txn[] | null): string[] {
+  const set = new Set(BASE_CATEGORIES);
+  (txns ?? []).forEach((t) => {
+    if (t.category) set.add(t.category);
+  });
+  return [...set].sort();
+}
+
 // "What is this charge?" detail panel, shown inside the expanded row. Surfaces
 // the Plaid fields that answer the question — the real merchant behind a
 // processor, channel, place, time, website, reference/check numbers, and (for
 // joint accounts) the owner — skipping any the row doesn't carry.
-function TxnDetail({ t }: { t: Txn }) {
+function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
   const rows: { label: string; value: React.ReactNode }[] = [];
   const time = fmtTime(t.datetime);
 
@@ -209,6 +313,7 @@ function TxnDetail({ t }: { t: Txn }) {
     rows.push({ label: "Reference", value: t.payment_reference });
   if (t.check_number) rows.push({ label: "Check #", value: t.check_number });
   if (t.account_owner) rows.push({ label: "Owner", value: t.account_owner });
+  if (t.note && !noteEditor) rows.push({ label: "Note", value: t.note });
 
   if (rows.length === 0) return null;
 
@@ -228,27 +333,102 @@ export default function MonthBreakdown({
   txns,
   notes,
   loading,
+  taxonomy = null,
   onRecategorize,
   onRename,
+  onAddTransaction,
+  onImport,
+  onEditTransaction,
+  onToggleExcluded,
+  actionError = null,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  tags = NO_TAGS,
+  onChangeTags,
+  onSaveNote,
+  onCreateRule,
+  ruleSentenceOf,
+  onSplitsChanged,
+  review,
 }: {
   txns: Txn[] | null;
   notes: string[];
   loading: boolean;
-  onRecategorize: (transaction_id: string, category: string) => void;
+  /** Your categories (components/categories-state.ts): the list to choose
+   *  one from, and the groups top spending rolls up to. Null until loaded. */
+  taxonomy?: Taxonomy | null;
+  onRecategorize: (transaction_id: string, choice: CategoryChoice) => void;
   onRename: (vendor_key: string, name: string) => void;
+  /** Opens the quick-add form; left out when there is no manual account to
+   *  add to, which hides the button. */
+  onAddTransaction?: () => void;
+  /** Opens the import sheet (components/ImportSheet.tsx); left out, like the
+   *  quick-add form's, when there is no manual account to import into. */
+  onImport?: () => void;
+  /** Opens a manual row's edit form. */
+  onEditTransaction?: (t: Txn) => void;
+  /** Leaves a transaction out of budgets and reports, or puts it back. */
+  onToggleExcluded?: (t: Txn, excluded: boolean) => void;
+  /** Why the last change to a transaction didn't save. */
+  actionError?: string | null;
+  /** Connections that bring in no transactions (lib/no-transactions.ts): an
+   *  empty list says why rather than "no transactions", rows entered by hand
+   *  or imported name them under the month instead, and a bank account or
+   *  card whose transactions don't come in is named under every month. */
+  withoutTransactions?: NoTransactionsView;
+  /** Institutions whose rows this load lacks, or lacks the oldest of
+   *  (/api/transactions), and connections whose transactions have stopped
+   *  (their health): the month's totals say so (lib/month-coverage.ts). */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
+  /** Your tags (components/tags-state.ts): names and colors for each row's
+   *  tag ids, the filter, and spending by tag. */
+  tags?: Tag[];
+  /** Puts tags on a transaction or takes them off, or makes one as typed. */
+  onChangeTags?: (t: Txn, change: TagChange) => void;
+  /** Saves a transaction's note (empty clears it). */
+  onSaveNote?: (t: Txn, note: string) => void;
+  /** Opens the rule drawer on a rule made from a transaction, filing it
+   *  under `category_id` (the one just chosen) or the one it is under now. */
+  onCreateRule?: (t: Txn, category_id?: string) => void;
+  /** A rule, by id, in a sentence, for the rules a transaction matches. */
+  ruleSentenceOf?: (id: string) => string | null;
+  /** After a split or a group is saved or undone (components/SplitSheet.tsx,
+   *  components/GroupSheet.tsx): the list read again. Without it, nothing is
+   *  offered to split or group. */
+  onSplitsChanged?: () => void;
+  /** The review queue (components/review-state.ts): what needs review, its
+   *  filter, Card Mode and approving. Without it, none is shown. */
+  review?: ReviewControls;
 }) {
   const [month, setMonth] = useState<string | null>(null); // YYYY-MM; null = latest
   const [query, setQuery] = useState("");
   const [recatId, setRecatId] = useState<string | null>(null); // txn being edited
   const [renameDraft, setRenameDraft] = useState(""); // rename input for the open row
+  const [tagFilter, setTagFilter] = useState(""); // a tag's id; "" for every transaction
+  // After a transaction is given another category: the offer to do the same
+  // for every transaction with its name, as a rule (#36).
+  const [ruleOffer, setRuleOffer] = useState<{ t: Txn; category_id: string } | null>(null);
+  // A node of the cash flow tapped (#41): the list shows its transactions,
+  // from every month of its period, until it is cleared or a month is chosen.
+  // The chart's period is kept here beside it: a reload shows a spinner in
+  // the chart's place, and it must come back on the pick's period.
+  const [flowPick, setFlowPick] = useState<FlowPick | null>(null);
+  const [flowPeriod, setFlowPeriod] = useState<PeriodKey>("this-month");
+  const listRef = useRef<HTMLDivElement>(null);
+  const shownRef = useRef<HTMLDivElement>(null);
+  const pickedNow = useRef(false);
+  // The split being made or changed, and the group (#39).
+  const [splitting, setSplitting] = useState<Txn | null>(null);
+  const [grouping, setGrouping] = useState<{ start: Txn | null; group: Txn | null }>({ start: null, group: null });
+  const [splitError, setSplitError] = useState<string | null>(null);
+  // The review queue: the Needs review filter, and Card Mode, open.
+  const [reviewOnly, setReviewOnly] = useState(false);
+  const [cardsOpen, setCardsOpen] = useState(false);
+  const reviewing = reviewOnly && !!review?.view?.on;
 
-  const categoryOptions = useMemo(() => {
-    const set = new Set(BASE_CATEGORIES);
-    (txns ?? []).forEach((t) => {
-      if (t.category) set.add(t.category);
-    });
-    return [...set].sort();
-  }, [txns]);
+  const pickable = useMemo(() => categoryOptions(txns), [txns]);
 
   const months = useMemo(() => {
     const set = new Set<string>();
@@ -256,45 +436,68 @@ export default function MonthBreakdown({
     return [...set].sort().reverse().slice(0, 12);
   }, [txns]);
 
-  const selected = month ?? months[0] ?? null;
+  // The latest month not after this one: a row dated tomorrow, on the last
+  // day of a month, doesn't open the tab on the next.
+  const thisMonth = localMonth();
+  const selected = month ?? months.find((m) => m <= thisMonth) ?? months[0] ?? null;
 
   const monthTxns = useMemo(
     () => (txns ?? []).filter((t) => t.date.slice(0, 7) === selected),
     [txns, selected],
   );
 
-  // The month's summary figures sum amounts, which only makes sense in one
-  // currency; use the most common currency among the month's transactions to
-  // label them (a true multi-currency total would need FX conversion).
-  const monthCurrency = useMemo(() => dominantCurrency(monthTxns), [monthTxns]);
+  // Every total on the tab sums amounts in one currency, the one most of the
+  // transactions are in, the same for every month so the trend compares
+  // like with like; the month's rows in others are named, not added
+  // (lib/spending.ts).
+  const currency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
+  const leftOut = useMemo(() => leftOutText(leftOutByCurrency(monthTxns, currency), currency), [monthTxns, currency]);
+  // Rows imported into linked accounts from files (#52): the totals say so.
+  const importedNote = useMemo(() => importedRowsNote(monthTxns), [monthTxns]);
 
-  // Summing amounts across currencies isn't meaningful without FX conversion;
-  // flag it so the single-currency-labelled totals aren't read as exact.
-  const mixedCurrency = useMemo(() => {
-    const seen = new Set<string>();
-    for (const t of monthTxns) if (t.iso_currency_code) seen.add(t.iso_currency_code);
-    return seen.size > 1;
+  // Rows the person excluded, and rows whether they did couldn't be read
+  // (counted, so the total may include one): both said under the summary.
+  // A split transaction is one, however many of its parts are (#39).
+  const { excludedCount, hiddenCount, unknownCount } = useMemo(() => {
+    const excluded = new Set<string>();
+    const hidden = new Set<string>();
+    const unknown = new Set<string>();
+    for (const t of monthTxns) {
+      const id = t.split_of ?? t.transaction_id;
+      if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
+      else if (t.excluded === true) excluded.add(id);
+      else if (t.excluded === null) unknown.add(id);
+    }
+    return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size };
   }, [monthTxns]);
 
-  const { moneyIn, moneyOut, categories } = useMemo(() => {
+  const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
     let inflow = 0;
     let outflow = 0;
+    // By the words a row carries (no categories loaded), and by the id of
+    // the category it is filed under, for the rollup to groups.
     const byCategory: Record<string, number> = {};
+    const byCategoryId = new Map<string, number>();
+    const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
     for (const t of monthTxns) {
-      if (isTransfer(t)) continue;
+      if (!countsInTotals(t, currency)) continue;
       if (t.amount < 0) {
         inflow += -t.amount;
       } else {
         outflow += t.amount;
         const cat = t.category ?? "other";
         byCategory[cat] = (byCategory[cat] ?? 0) + t.amount;
+        if (ix) {
+          const id = filedId(ix, t);
+          byCategoryId.set(id, (byCategoryId.get(id) ?? 0) + t.amount);
+        }
       }
     }
     const categories = Object.entries(byCategory)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-    return { moneyIn: inflow, moneyOut: outflow, categories };
-  }, [monthTxns]);
+    return { moneyIn: inflow, moneyOut: outflow, categories, byCategoryId };
+  }, [monthTxns, currency, taxonomy]);
 
   // Online vs in-store spending, from Plaid's payment_channel. Only rows that
   // carry a channel count toward the split (unknown ones are left out rather
@@ -303,26 +506,26 @@ export default function MonthBreakdown({
     let online = 0;
     let inStore = 0;
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t)) continue;
+      if (t.amount <= 0 || !countsInTotals(t, currency)) continue;
       if (t.payment_channel === "online") online += t.amount;
       else if (t.payment_channel === "in store") inStore += t.amount;
     }
     return { online, inStore };
-  }, [monthTxns]);
+  }, [monthTxns, currency]);
 
   // Top places by spend, from transaction location. Disambiguates same-named
   // merchants and gives a light geo view without a map dependency.
   const topCities = useMemo(() => {
     const byCity: Record<string, number> = {};
     for (const t of monthTxns) {
-      if (t.amount <= 0 || isTransfer(t) || !t.city) continue;
+      if (t.amount <= 0 || !countsInTotals(t, currency) || !t.city) continue;
       const label = t.region ? `${t.city}, ${t.region}` : t.city;
       byCity[label] = (byCity[label] ?? 0) + t.amount;
     }
     return Object.entries(byCity)
       .sort((a, b) => b[1] - a[1])
       .slice(0, 5);
-  }, [monthTxns]);
+  }, [monthTxns, currency]);
 
   // Net per month (oldest → newest) for the trend columns. Bar height tracks
   // net magnitude and bar color tracks its sign (green positive, red negative),
@@ -334,13 +537,13 @@ export default function MonthBreakdown({
         let inflow = 0;
         let outflow = 0;
         for (const t of txns ?? []) {
-          if (t.date.slice(0, 7) !== m || isTransfer(t)) continue;
+          if (t.date.slice(0, 7) !== m || !countsInTotals(t, currency)) continue;
           if (t.amount < 0) inflow += -t.amount;
           else outflow += t.amount;
         }
         return { month: m, net: inflow - outflow };
       }),
-    [txns, months],
+    [txns, months, currency],
   );
 
   // Keep the newest month in view when the row overflows (older months scroll
@@ -351,34 +554,58 @@ export default function MonthBreakdown({
     if (el) el.scrollLeft = el.scrollWidth;
   }, [trend.length]);
 
-  const visible = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    if (!q) return monthTxns;
-    return monthTxns.filter(
-      (t) =>
-        t.name.toLowerCase().includes(q) ||
-        (t.category ?? "").includes(q) ||
-        t.account_name.toLowerCase().includes(q) ||
-        t.institution_name.toLowerCase().includes(q),
-    );
-  }, [monthTxns, query]);
+  // The search reads a row's tags and note too (#40), and the tag filter
+  // keeps the rows carrying one tag. A tag deleted meanwhile filters nothing.
+  const filterTag = tags.some((t) => t.id === tagFilter) ? tagFilter : "";
+  // A tapped node's rows, worked out again as the rows change, in place of
+  // the month's; the search and the tag filter narrow them the same way.
+  const picked = useMemo(
+    () => (flowPick && taxonomy ? pickedRows(txns ?? [], flowPick, { ix: indexTaxonomy(taxonomy), currency, today: localDate() }) : null),
+    [flowPick, txns, taxonomy, currency],
+  );
+  const listed = picked ?? monthTxns;
+  // A split transaction is kept whole, every part of it, when any part is
+  // (#39): its parts are listed under it, and its split edited from all.
+  const visible = useMemo(() => searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags), [listed, query, filterTag, reviewing, tags]);
+  // Once a pick has filled the list: the list into view, and focus on the
+  // line saying what it shows, so a pick made from the chart's table by
+  // keyboard goes on from the list rather than from the button left above.
+  useEffect(() => {
+    if (!flowPick || !pickedNow.current) return;
+    pickedNow.current = false;
+    listRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    shownRef.current?.focus({ preventScroll: true });
+  }, [flowPick]);
 
   // Group the visible rows into day sections, each carrying the day's net in
-  // display terms (positive = money in), so the sum of the rows shown matches
-  // the header's summary figure.
+  // display terms (positive = money in) for each currency its rows are in, so
+  // the header adds up the rows shown under it. A row the person excluded is
+  // left out of it, as of every total.
   const days = useMemo(() => {
-    const groups: { date: string; net: number; txns: Txn[] }[] = [];
+    const groups: { date: string; nets: Map<string | null, number>; txns: Txn[] }[] = [];
     for (const t of visible) {
       let g = groups[groups.length - 1];
       if (!g || g.date !== t.date) {
-        g = { date: t.date, net: 0, txns: [] };
+        g = { date: t.date, nets: new Map(), txns: [] };
         groups.push(g);
       }
       g.txns.push(t);
-      g.net += -t.amount;
+      // Not counted: excluded, or counted in a group dated before this year (#39).
+      if (isExcluded(t) || t.group_outside) continue;
+      const c = currencyOf(t) ?? currency;
+      g.nets.set(c, (g.nets.get(c) ?? 0) - t.amount);
     }
-    return groups;
-  }, [visible]);
+    // Listed as the bank has them: a split transaction once, with its parts
+    // under it; a group's row with its transactions under it (#39). The day's
+    // figure above counts the parts and the nets, as every total does.
+    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
+  }, [visible, currency]);
+  // Each split transaction whole, every part of it (#39), from all the rows:
+  // a pick from the cash flow lists only the parts in its node under it, but
+  // the transaction still says how many parts it has, and its split is edited
+  // from all of them, never from those the list happens to show.
+  const splitsWhole = useMemo(() => wholeSplits(txns ?? []), [txns]);
+  const whole = (t: Txn): Txn => (t.split_parts ? (splitsWhole.get(t.transaction_id) ?? t) : t);
 
   if (loading) {
     return (
@@ -392,19 +619,89 @@ export default function MonthBreakdown({
     );
   }
 
+  // Entering a transaction by hand or importing a file, on a manual account:
+  // first on the tab, where a phone reaches it without scrolling.
+  const addCard = onAddTransaction && (
+    <div className="card">
+      {onImport ? (
+        <div className="button-pair" style={{ marginTop: 0 }}>
+          <button onClick={onAddTransaction}>Add a transaction</button>
+          <button className="secondary" onClick={onImport}>
+            Import a file
+          </button>
+        </div>
+      ) : (
+        <button onClick={onAddTransaction}>Add a transaction</button>
+      )}
+      <p className="panel-note">
+        On one of your manual accounts: cash, or a bank Plaid can&apos;t reach, typed in or imported from the
+        bank&apos;s file. It doesn&apos;t change the account&apos;s balance unless you ask.
+      </p>
+    </div>
+  );
+
   if (!txns || (txns.length === 0 && notes.length === 0)) {
+    // Connections that can't bring any in are not an empty year.
+    const none = txns ? noSpending(withoutTransactions, txns.length) : null;
+    const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
-      <div className="card">
-        <p className="empty-note">No transactions in the last 12 months.</p>
-      </div>
+      <>
+        {addCard}
+        <div className="card">
+          <p className="empty-note">
+            {none
+              ? `${none.lead}, so there are no bank or card transactions to show. To see spending, ${none.remedy}${onAddTransaction ? (onImport ? ", or add a transaction by hand or import a file" : ", or add a transaction by hand") : ""}.`
+              : "No transactions in the last 12 months."}
+          </p>
+          {missing.map((n) => (
+            <div className="stale-note" key={n}>
+              {n}
+            </div>
+          ))}
+        </div>
+      </>
     );
   }
 
   const net = moneyIn - moneyOut;
   const maxCat = categories.length > 0 ? categories[0][1] : 1;
+  // A total that looks finished but may not be says so, under the total.
+  // SimpleFIN's rows come without categories: said while any counts.
+  const uncategorized = uncategorizedNote(uncategorizedFromConnector(monthTxns));
+  const gapNotes = selected
+    ? [
+        ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
+        ...missingMonthNotes(withoutTransactions),
+        ...(uncategorized ? [uncategorized] : []),
+      ]
+    : [];
+  // When only rows entered by hand are here, the connections that bring in
+  // none are named beside the totals: where they come from, not a warning.
+  const namedWithout = withoutNote(withoutTransactions, txns.length);
 
   return (
     <>
+      {addCard}
+      {/* Where the money came from and went (#41), over a period of its own;
+          tapping a node lists its transactions below. */}
+      {taxonomy && (
+        <CashFlowSankey
+          txns={txns}
+          taxonomy={taxonomy}
+          currency={currency}
+          incomplete={incomplete}
+          stopped={stopped}
+          withoutTransactions={withoutTransactions}
+          notes={notes}
+          pick={flowPick}
+          onPick={(p) => {
+            pickedNow.current = p !== null;
+            setFlowPick(p);
+          }}
+          period={flowPeriod}
+          onPeriod={setFlowPeriod}
+        />
+      )}
       {trend.length > 1 && (
         <div className="card">
           <div className="inst-header">
@@ -418,11 +715,16 @@ export default function MonthBreakdown({
                 <button
                   key={m}
                   className={`trend-col${m === selected ? " active" : ""}`}
-                  onClick={() => setMonth(m)}
+                  onClick={() => {
+                    setMonth(m);
+                    setFlowPick(null);
+                  }}
                   aria-pressed={m === selected}
-                  aria-label={`${monthLabel(m)}: net ${fmtUsd(net)}`}
+                  aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
                 >
-                  <span className="trend-val">{fmtCompactSigned(net)}</span>
+                  <span className="trend-val">
+                    <Masked>{fmtCompactSigned(net, currency)}</Masked>
+                  </span>
                   <span
                     className={`trend-bar${net >= 0 ? " up" : " down"}`}
                     style={{
@@ -443,7 +745,7 @@ export default function MonthBreakdown({
             <div className="inst-name">Income vs spend</div>
             <div className="inst-total">{monthLabel(selected)}</div>
           </div>
-          <MonthFlowChart txns={monthTxns} month={selected} />
+          <MonthFlowChart txns={monthTxns} month={selected} currency={currency} />
         </div>
       )}
 
@@ -452,29 +754,54 @@ export default function MonthBreakdown({
           <div>
             <div className="total-label">In</div>
             <div className="summary-value inflow">
-              {fmtMoney(moneyIn, monthCurrency)}
+              <Masked>{formatMoney(moneyIn, currency)}</Masked>
             </div>
           </div>
           <div>
             <div className="total-label">Out</div>
-            <div className="summary-value">{fmtMoney(moneyOut, monthCurrency)}</div>
+            <div className="summary-value">
+              <Masked>{formatMoney(moneyOut, currency)}</Masked>
+            </div>
           </div>
           <div>
             <div className="total-label">Net</div>
             <div
               className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
             >
-              {fmtMoney(net, monthCurrency)}
+              <Masked>{formatMoney(net, currency)}</Masked>
             </div>
           </div>
         </div>
         <div className="chart-note">
-          Transfers and loan payments excluded.
-          {mixedCurrency && " Totals mix currencies and aren't converted."}
+          Transfers and loan payments excluded
+          {excludedCount > 0 &&
+            `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
+          {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
+          .
+          {unknownCount > 0 &&
+            ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
+          {leftOut && ` ${leftOut}`}
+          {namedWithout && ` ${namedWithout}`}
+          {importedNote && ` ${importedNote}`}
         </div>
+        {gapNotes.map((n) => (
+          <div className="stale-note" key={n}>
+            {n}
+          </div>
+        ))}
       </div>
 
-      {categories.length > 0 && (
+      {taxonomy && byCategoryId.size > 0 && (
+        <div className="card">
+          <div className="inst-header">
+            <div className="inst-name">Top spending</div>
+            <div className="inst-total">by group</div>
+          </div>
+          <CategoryRollup taxonomy={taxonomy} byCategory={byCategoryId} currency={currency} />
+        </div>
+      )}
+
+      {!taxonomy && categories.length > 0 && (
         <div className="card">
           <div className="inst-header">
             <div className="inst-name">Top spending</div>
@@ -489,12 +816,16 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / maxCat) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
         </div>
       )}
+
+      <SpendByTag txns={monthTxns} tags={tags} currency={currency} />
 
       {(channelSplit.online > 0 || channelSplit.inStore > 0) && (
         <div className="card">
@@ -518,7 +849,9 @@ export default function MonthBreakdown({
                         style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
                       />
                     </div>
-                    <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                    <span className="cat-val">
+                      <Masked>{formatMoney(sum, currency)}</Masked>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -542,21 +875,25 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{fmtMoney(sum, monthCurrency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
         </div>
       )}
 
-      <div className="card">
+      <div className="card" ref={listRef}>
         <div className="inst-header">
           <div className="inst-name">Transactions</div>
           <div className="inst-total">
-            {visible.length}
-            {query ? ` of ${monthTxns.length}` : ""}
+            {/* Transactions, not rows: a split one is one, a group as many as it holds. */}
+            {countTransactions(visible)}
+            {query || filterTag || reviewing ? ` of ${countTransactions(listed)}` : ""}
           </div>
         </div>
+        {flowPick && <FlowShown pick={flowPick} count={countTransactions(picked ?? [])} onClear={() => setFlowPick(null)} focusRef={shownRef} />}
 
         <input
           className="text-input search-input"
@@ -565,12 +902,45 @@ export default function MonthBreakdown({
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
+        <TagFilter tags={tags} value={filterTag} onChange={setTagFilter} />
+        {/* The review queue, while it is on: its count, filter, Card Mode and approving what's listed. */}
+        {review && <ReviewBar review={review} all={txns} listed={visible} filtering={reviewing} onFilter={setReviewOnly} onReview={() => setCardsOpen(true)} />}
+
+        {actionError && <div className="error">{actionError}</div>}
+        {splitError && <div className="error">{splitError}</div>}
+        {ruleOffer && onCreateRule && (
+          <div className="rule-offer">
+            <p className="panel-note" style={{ marginTop: 0 }}>
+              Do the same for every transaction named “{nameForRules(ruleOffer.t)}”
+              {ruleOffer.t.name_before_rules !== undefined && ` (shown as “${ruleOffer.t.name}”)`}, past and future? A rule does it, and you can change or turn it off
+              later.
+            </p>
+            <div className="button-pair" style={{ marginTop: 0 }}>
+              <button
+                className="secondary"
+                onClick={() => {
+                  onCreateRule(ruleOffer.t, ruleOffer.category_id);
+                  setRuleOffer(null);
+                }}
+              >
+                Make a rule
+              </button>
+              <button className="secondary" onClick={() => setRuleOffer(null)}>
+                No thanks
+              </button>
+            </div>
+          </div>
+        )}
 
         {visible.length === 0 ? (
           <p className="empty-note">
-            {query
+            {reviewing && !query && !filterTag
+              ? "Nothing listed needs review."
+              : query || filterTag
               ? "No transactions match your search."
-              : "No transactions this month."}
+              : flowPick
+                ? "Nothing to list."
+                : "No transactions this month."}
           </p>
         ) : (
           <table className="txn-table">
@@ -579,12 +949,14 @@ export default function MonthBreakdown({
                 <Fragment key={g.date}>
                   <tr className="txn-date-header">
                     <td>{fmtTxnDate(g.date)}</td>
-                    <td className="num">{fmtSignedUsd(g.net)}</td>
+                    <td className="num">
+                      <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                    </td>
                   </tr>
-                  {g.txns.map((t, i) => (
+                  {g.entries.map((t, i) => (
+                    <Fragment key={t.transaction_id}>
                     <tr
-                      key={t.transaction_id}
-                      className={`acct-row${i === g.txns.length - 1 ? " last-in-day" : ""}`}
+                      className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
                       onClick={() => {
                         const opening = recatId !== t.transaction_id;
                         setRecatId(opening ? t.transaction_id : null);
@@ -624,12 +996,39 @@ export default function MonthBreakdown({
                                   · check category
                                 </span>
                               )}
+                              {t.note && (
+                                <span className="note-tag" title={t.note}> · note</span>
+                              )}
+                              {review?.view?.on && needsReview(t) && <span className="review-tag"> · to review</span>}
+                              <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
                               {t.institution_name} · {t.account_name}
-                              {t.category ? ` · ${t.category}` : ""}
+                              {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
+                              {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
+                              {t.source ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
+                            {t.excluded === true && (
+                              <div className="excluded-tag">
+                                {t.excluded_by_rule ? "Hidden by a rule: out of budgets and reports" : "Excluded from budgets and reports"}
+                              </div>
+                            )}
+                            {/* A pair Nya worked out between two SimpleFIN
+                                accounts (lib/manual-txns.ts): said, so a
+                                wrong one is seen and given a category. */}
+                            {t.paired && <div className="excluded-tag">{pairedWords(t)}</div>}
+                            {t.excluded === null && (
+                              <div className="excluded-tag">
+                                Couldn&apos;t read whether you excluded this
+                              </div>
+                            )}
+                            {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
+                            {/* A bank row standing for a row imported from
+                                its file, which the bank changed since (#52). */}
+                            {t.imported_amount !== undefined && (
+                              <div className="excluded-tag"><Masked>{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</Masked></div>
+                            )}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -637,21 +1036,83 @@ export default function MonthBreakdown({
                             className="txn-edit"
                             onClick={(e) => e.stopPropagation()}
                           >
-                            <select
-                              className="text-input recat-select"
-                              value={t.category ?? "other"}
-                              onChange={(e) => {
-                                onRecategorize(t.transaction_id, e.target.value);
-                                setRecatId(null);
-                              }}
-                              aria-label={`Category for ${t.name}`}
-                            >
-                              {categoryOptions.map((c) => (
-                                <option key={c} value={c}>
-                                  {c}
-                                </option>
-                              ))}
-                            </select>
+                            {/* Its review and its merchant's default (components/ReviewNote.tsx). */}
+                            {review && <ReviewNote t={whole(t)} taxonomy={taxonomy} review={review} onChanged={() => onSplitsChanged?.()} />}
+                            {/* Filed as its parts are, or as its group is (#39). */}
+                            {t.split_parts || t.group_outside ? null : taxonomy ? (
+                              <CategoryPicker
+                                taxonomy={taxonomy}
+                                className="text-input recat-select"
+                                value={t.category_id ?? taxonomy.uncategorized}
+                                onChange={(id) => {
+                                  if (id && id !== t.category_id && t.group_members) {
+                                    // A group's net is filed under the group's category.
+                                    void sendChange("/api/transaction-groups", "PATCH", { id: t.group_id, category_id: id }).then((failed) => {
+                                      setSplitError(failed);
+                                      onSplitsChanged?.();
+                                    });
+                                  } else if (id && id !== t.category_id) {
+                                    onRecategorize(t.transaction_id, { category_id: id });
+                                    setRuleOffer({ t, category_id: id });
+                                  }
+                                  setRecatId(null);
+                                }}
+                                label={`Category for ${t.name}`}
+                              />
+                            ) : t.group_members || t.group_outside ? null : (
+                              <select
+                                className="text-input recat-select"
+                                value={t.category ?? "other"}
+                                onChange={(e) => {
+                                  onRecategorize(t.transaction_id, { category: e.target.value });
+                                  setRecatId(null);
+                                }}
+                                aria-label={`Category for ${t.name}`}
+                              >
+                                {pickable.map((c) => (
+                                  <option key={c} value={c}>
+                                    {c}
+                                  </option>
+                                ))}
+                              </select>
+                            )}
+                            {/* Splitting it, or grouping it with others (#39). */}
+                            {onSplitsChanged && (
+                              <SplitActions
+                                t={t}
+                                onSplit={(x) => {
+                                  setSplitting(whole(x));
+                                  setRecatId(null);
+                                }}
+                                onGroup={(x) => {
+                                  setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null });
+                                  setRecatId(null);
+                                }}
+                                onUngroup={(id) => {
+                                  setRecatId(null);
+                                  void sendChange("/api/transaction-groups", "DELETE", { id }).then((failed) => {
+                                    setSplitError(failed);
+                                    onSplitsChanged?.();
+                                  });
+                                }}
+                              />
+                            )}
+                            {/* Not a row SimpleFIN brought nor one imported into
+                                a linked account: the bank's or the file's
+                                record, whose category alone is the person's. */}
+                            {t.source && !isConnectorKind(t.source) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX) && onEditTransaction && !t.group_members && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onEditTransaction(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Edit or delete
+                                </button>
+                              </div>
+                            )}
                             {t.vendor_key && (
                               <>
                                 <div className="rename-row">
@@ -682,14 +1143,99 @@ export default function MonthBreakdown({
                                 </div>
                               </>
                             )}
-                            <TxnDetail t={t} />
+                            {/* Offered once a pending row has posted
+                                (exclusionOffer), one a rule hides too. */}
+                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) !== "toggle" && (
+                              <div className="rename-hint">
+                                {exclusionOffer(t) === "wait-rule"
+                                  ? "A rule hides it. Once it posts, it can be put back in budgets and reports."
+                                  : "Once it posts, it can be excluded from budgets and reports."}
+                              </div>
+                            )}
+                            {onToggleExcluded && !t.group_members && !t.group_outside && exclusionOffer(t) === "toggle" && (
+                              <>
+                                <div className="rename-row">
+                                  <button
+                                    className="secondary"
+                                    onClick={() => {
+                                      onToggleExcluded(t, t.excluded !== true);
+                                      setRecatId(null);
+                                    }}
+                                  >
+                                    {t.excluded === true
+                                      ? "Include in budgets and reports"
+                                      : "Exclude from budgets and reports"}
+                                  </button>
+                                </div>
+                                <div className="rename-hint">
+                                  {t.excluded === true
+                                    ? "Puts it back in totals, budgets, insights, bills and the Plan."
+                                    : "For a one-off: it stays in this list, out of totals, budgets, insights, bills and the Plan."}
+                                </div>
+                              </>
+                            )}
+                            {onChangeTags && onSaveNote && !t.group_members && (
+                              <TxnTagsNote
+                                key={`${t.transaction_id}:${t.note ?? ""}`}
+                                t={t}
+                                tags={tags}
+                                onChangeTags={(change) => onChangeTags(t, change)}
+                                onSaveNote={(note) => onSaveNote(t, note)}
+                              />
+                            )}
+                            {onCreateRule && !t.group_members && (
+                              <div className="rename-row">
+                                <button
+                                  className="secondary"
+                                  onClick={() => {
+                                    onCreateRule(t);
+                                    setRecatId(null);
+                                  }}
+                                >
+                                  Create a rule from this
+                                </button>
+                              </div>
+                            )}
+                            {ruleSentenceOf && (t.rule_ids?.length ?? 0) > 0 && (
+                              <div className="rename-hint">
+                                {t.rule_ids!.length === 1 ? "A rule matches it" : "Rules match it"}, in the order they run (what you set here wins):
+                                <ul className="rule-matched">
+                                  {t.rule_ids!.map((id) => {
+                                    const sentence = ruleSentenceOf(id);
+                                    return sentence ? <li key={id}>{sentence}</li> : null;
+                                  })}
+                                </ul>
+                              </div>
+                            )}
+                            {!t.group_members && <TxnDetail t={t} noteEditor={!!(onChangeTags && onSaveNote) && !t.pending} />}
                           </div>
                         )}
                       </td>
-                      <td className={`num${t.amount < 0 ? " inflow" : ""}`}>
-                        {fmtTxnAmount(t.amount, t.iso_currency_code)}
+                      {/* A split transaction's own amount is the bank's; its parts below are what count (#39).
+                          One of a group counted before the transactions shown counts in no total here: dimmed as
+                          an excluded one is, its notice saying why. */}
+                      <td
+                        className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
+                      >
+                        <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
                       </td>
                     </tr>
+                    {t.split_parts && (
+                      <PartRows
+                        parent={t}
+                        last={i === g.entries.length - 1}
+                        taxonomy={taxonomy}
+                        open={recatId}
+                        onOpen={setRecatId}
+                        onChanged={() => onSplitsChanged?.()}
+                        onError={setSplitError}
+                        onEditSplit={(x) => setSplitting(whole(x))}
+                      />
+                    )}
+                    {t.group_members && (
+                      <MemberRows group={t} last={i === g.entries.length - 1} open={recatId} onOpen={setRecatId} onChanged={() => onSplitsChanged?.()} onError={setSplitError} />
+                    )}
+                    </Fragment>
                   ))}
                 </Fragment>
               ))}
@@ -703,6 +1249,38 @@ export default function MonthBreakdown({
           </div>
         ))}
       </div>
+
+      {/* Card Mode, over the tab: its Split and Group open the sheets below, over it. */}
+      {review && (
+        <CardMode
+          open={cardsOpen}
+          txns={txns}
+          taxonomy={taxonomy}
+          tags={tags}
+          currency={currency}
+          review={review}
+          onClose={() => {
+            setCardsOpen(false);
+            onSplitsChanged?.();
+          }}
+          onSplit={(x) => (onSplitsChanged ? setSplitting(whole(x)) : undefined)}
+          onGroup={(x) => (onSplitsChanged ? setGrouping(x.group_members ? { start: null, group: x } : { start: x, group: null }) : undefined)}
+        />
+      )}
+
+      {taxonomy && onSplitsChanged && (
+        <>
+          <SplitSheet t={splitting} taxonomy={taxonomy} onClose={() => setSplitting(null)} onSaved={() => { setSplitError(null); onSplitsChanged(); }} />
+          <GroupSheet
+            start={grouping.start}
+            group={grouping.group}
+            txns={txns}
+            taxonomy={taxonomy}
+            onClose={() => setGrouping({ start: null, group: null })}
+            onSaved={() => { setSplitError(null); onSplitsChanged(); }}
+          />
+        </>
+      )}
     </>
   );
 }

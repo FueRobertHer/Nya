@@ -19,6 +19,25 @@
 //    after a crash safe.
 // 4. READ IT ALL BACK. The target is exported again and compared record for
 //    record with the archive; only an exact match is reported as a restore.
+//
+// THE KEYS (docs/operations.md, "Per-container data keys"). A data archive of
+// format 2 keeps no key store: it is restored with a key archive
+// (lib/key-archive.ts), which planRestore() checks it against before anything
+// is written. A format-1 archive carries its keys inside and restores alone.
+// Either way:
+//   - the tombstones of the key archive (or of a format-1 archive) and those
+//     already in the target are taken together, and every container they
+//     name (a deleted account) is left out: its registry entry, its owners'
+//     entries, every key in it, and the sharing connections its account was
+//     in. A tombstoned key is never written back, and the map says the
+//     container's key was destroyed;
+//   - every value's header is read, and a key the key archive neither holds
+//     nor marks destroyed refuses the restore (use a newer key archive);
+//   - a container whose map entry names a key the key archive lacks, with
+//     nothing under it, is restored without its map entry, so it writes
+//     under the shared key until the migration pass gives it one;
+//   - the keys of containers the data archive doesn't have (made after it was
+//     taken) are left out of the live store.
 
 import { createHash } from 'node:crypto';
 import { envPrefix, kEnv } from './storage';
@@ -26,13 +45,17 @@ import { splitScoped } from './containers';
 import {
   byCodePoint,
   isExcluded,
-  EXPORT_FORMAT_VERSION,
+  isKeyStore,
+  READABLE_FORMATS,
   SCHEMA_ERA,
   exportLines,
   type ExportClient,
   type ExportHeader,
   type ExportRecord,
 } from './export';
+import { besideKey, readLiveKeyStore, BESIDE_KEYS, type KeyArchiveContent, type VerifiedKeyArchive } from './key-archive';
+import { keyIdsByContainer } from './archive-scan';
+import { keysHashKey, tombstonesKey, type Tombstone } from './crypto';
 
 /** A refusal: the archive or the target is not safe to restore. Distinct from
  *  an ordinary Error so the CLI can say "refused" rather than "crashed". */
@@ -132,8 +155,10 @@ export function verifyArchive(text: string): VerifiedArchive {
   if (lines.length < 2) refuse('The file has no footer; it is incomplete.');
 
   const header = parseLine(lines[0], 1);
-  if (!isPlainObject(header) || !('nya_export' in header)) refuse('Line 1 is not a Nya export header.');
-  if (header.nya_export !== EXPORT_FORMAT_VERSION) {
+  if (!isPlainObject(header) || !('nya_export' in header)) {
+    refuse(isPlainObject(header) && 'nya_keys' in header ? 'Line 1 is a key archive header: pass the data archive first, and this file with --keys.' : 'Line 1 is not a Nya export header.');
+  }
+  if (!(READABLE_FORMATS as readonly unknown[]).includes(header.nya_export)) {
     refuse(`Archive format ${JSON.stringify(header.nya_export)} is not one this code can read.`);
   }
   // An archive from another key layout would restore keys nothing reads.
@@ -158,6 +183,8 @@ export function verifyArchive(text: string): VerifiedArchive {
     const parsed = parseLine(lines[i], n);
     if (isPlainObject(parsed) && parsed.end === true) refuse(`Line ${n} is a footer before the end of the file.`);
     const record = checkRecord(parsed, n);
+    // Format 2 keeps the key store in key archives, never here.
+    if (header.nya_export !== 1 && isKeyStore(record.key)) refuse(`Line ${n} holds ${record.key}, which a data archive of this format never includes: it belongs in a key archive.`);
     if (seen.has(record.key)) refuse(`Line ${n} repeats ${record.key}.`);
     seen.add(record.key);
     // The raw line, exactly as read: re-serializing could reorder hash fields.
@@ -229,6 +256,204 @@ export function checkRegistry(archive: Set<string> | null, target: Set<string> |
       ? `The archive's containers (${[...archive].join(', ')}) are not the target's (${had}). Deployments name their container in CONTAINER_ID, which would then name one that does not exist. Pass --replace-registry to restore anyway, then set CONTAINER_ID to a container the archive lists.`
       : `The archive has no container registry (it predates containers), so restoring it would remove the target's (${had}), and CONTAINER_ID would name a container that does not exist. Pass --replace-registry to restore anyway, then create a container again and set CONTAINER_ID.`
   );
+}
+
+/** The key the map of container keys lives at, relative to the prefix
+ *  (lib/crypto.ts containerKeysKey). */
+const MAP = 'crypto:container-keys';
+const OWNERS = 'owners';
+const CONNECTIONS = 'connections';
+const DELETION_MARKER = 'deleted:';
+
+/** What a restore will write, and what it leaves out (planRestore). */
+export type RestorePlan = {
+  /** The data records to write, without the key store. */
+  records: ExportRecord[];
+  /** The key store to write. */
+  keyStore: KeyArchiveContent;
+  /** Containers left out: deleted accounts, named by their tombstones. */
+  left_out: string[];
+  /** Containers restored without their map entry: it names a key the key
+   *  archive lacks, with nothing under it. */
+  maps_dropped: string[];
+  /** Keys left out of the live store: their container isn't in the data
+   *  archive (made after it was taken). */
+  keys_left_out: string[];
+  /** A format-2 archive restored without a key archive (no value needs one). */
+  without_key_archive: boolean;
+};
+
+const containerOfRecord = (record: string): string | null => {
+  try {
+    const c = JSON.parse(record)?.container;
+    return typeof c === 'string' ? c : null;
+  } catch {
+    return null;
+  }
+};
+
+/** The key store a format-1 archive carries inside. */
+function keyStoreOfFormat1(records: ExportRecord[]): KeyArchiveContent {
+  const content: KeyArchiveContent = { keys: new Map(), tombstones: new Map(), beside: new Map() };
+  for (const r of records) {
+    if (r.key === 'crypto:keys' && r.type === 'hash') for (const [id, record] of Object.entries(r.value)) content.keys.set(id, { record });
+    else if (r.key === 'crypto:destroyed' && r.type === 'hash') {
+      for (const [id, raw] of Object.entries(r.value)) {
+        let t: { container?: unknown; on?: unknown } | null = null;
+        try {
+          t = JSON.parse(raw);
+        } catch {
+          t = null;
+        }
+        if (t && typeof t.container === 'string' && typeof t.on === 'string') content.tombstones.set(id, { container: t.container, on: t.on });
+        else refuse(`The archive's tombstone of ${id} can't be read.`);
+      }
+    } else if (r.type === 'string' && (BESIDE_KEYS as readonly string[]).includes(r.key)) content.beside.set(r.key, r.value);
+  }
+  return content;
+}
+
+/**
+ * What restoring `archive` with the key archive `keys` (or none) over a target
+ * holding `target`'s tombstones and key counter writes, by the rules in the
+ * header. Pure. Throws RestoreRefused when the two files don't go together.
+ */
+export function planRestore(
+  archive: VerifiedArchive,
+  keys: VerifiedKeyArchive | null,
+  target: { tombstones: Map<string, Tombstone>; keySeq: string | null }
+): RestorePlan {
+  const format1 = archive.header.nya_export === 1;
+  if (format1 && keys) refuse('A format-1 archive carries its own keys: restore it without --keys.');
+  const source: KeyArchiveContent = format1 ? keyStoreOfFormat1(archive.records) : keys ? keys : { keys: new Map(), tombstones: new Map(), beside: new Map() };
+
+  const tombstones = new Map<string, Tombstone>(source.tombstones);
+  for (const [id, t] of target.tombstones) if (!tombstones.has(id)) tombstones.set(id, t);
+  const destroyedOn = new Map<string, string>();
+  for (const t of tombstones.values()) {
+    const day = destroyedOn.get(t.container);
+    if (day === undefined || t.on < day) destroyedOn.set(t.container, t.on);
+  }
+
+  const data = archive.records.filter((r) => !isKeyStore(r.key));
+  const registry = data.find((r) => r.key === REGISTRY && r.type === 'hash') as Extract<ExportRecord, { type: 'hash' }> | undefined;
+  const leftOut = [...destroyedOn.keys()].filter((c) => registry !== undefined && c in registry.value || data.some((r) => splitScoped(r.key).container === c)).sort();
+  const deleted = new Set(destroyedOn.keys());
+  const kept = new Set(Object.keys(registry?.value ?? {}).filter((c) => !deleted.has(c)));
+
+  // Every key a value of a kept container (or outside them) names must come
+  // with the key archive, or be marked destroyed.
+  const byContainer = keyIdsByContainer(data.filter((r) => !deleted.has(splitScoped(r.key).container ?? '')));
+  const missing = new Set<string>();
+  for (const ids of byContainer.values()) for (const id of ids) if (id !== 'k0' && !source.keys.has(id) && !tombstones.has(id)) missing.add(id);
+  if (missing.size > 0) {
+    if (!format1 && !keys) refuse(`The archive's values need its key archive (they are under ${[...missing].sort().join(', ')}): pass --keys <file>.`);
+    refuse(`The archive has values under ${[...missing].sort().join(', ')}, which the key archive neither holds nor marks destroyed. Use a newer key archive.`);
+  }
+
+  // The live store: never a tombstoned key, nor one of a container the data
+  // archive doesn't have.
+  const keyStore: KeyArchiveContent = { keys: new Map(), tombstones, beside: new Map() };
+  const keysLeftOut: string[] = [];
+  for (const [id, e] of source.keys) {
+    if (tombstones.has(id)) continue;
+    const owner = containerOfRecord(e.record);
+    if (owner !== null && !kept.has(owner)) {
+      keysLeftOut.push(id);
+      continue;
+    }
+    keyStore.keys.set(id, { record: e.record });
+  }
+  for (const [name, value] of source.beside) {
+    if (name === 'crypto:active' && !keyStore.keys.has(value)) continue; // a new one is made on the next write
+    keyStore.beside.set(name, value);
+  }
+  const seq = Math.max(Number(source.beside.get('crypto:key-seq') ?? 0) || 0, Number(target.keySeq ?? 0) || 0);
+  if (seq > 0) keyStore.beside.set('crypto:key-seq', String(seq));
+
+  // The deleted accounts' sign-ins, from the archive's owners map.
+  const owners = data.find((r) => r.key === OWNERS && r.type === 'hash') as Extract<ExportRecord, { type: 'hash' }> | undefined;
+  const goneUsers = new Set(
+    Object.entries(owners?.value ?? {})
+      .filter(([, c]) => deleted.has(c) || (c.startsWith(DELETION_MARKER) && deleted.has(c.slice(DELETION_MARKER.length))))
+      .map(([user]) => user)
+  );
+
+  const mapsDropped: string[] = [];
+  const records: ExportRecord[] = [];
+  for (const r of data) {
+    const { container } = splitScoped(r.key);
+    if (container && deleted.has(container)) continue;
+    if (r.type !== 'hash') {
+      records.push(r);
+      continue;
+    }
+    let fields: [string, string][] = Object.entries(r.value);
+    if (r.key === REGISTRY) fields = fields.filter(([c]) => !deleted.has(c));
+    else if (r.key === OWNERS) fields = fields.filter(([user]) => !goneUsers.has(user));
+    else if (r.key === CONNECTIONS) {
+      const gone = new Set<string>();
+      for (const [field, value] of fields) {
+        if (field.includes('|')) continue;
+        try {
+          const users = JSON.parse(value)?.users;
+          if (Array.isArray(users) && users.some((u) => goneUsers.has(u))) gone.add(field);
+        } catch {
+          // Not a connection's record: kept as it is.
+        }
+      }
+      fields = fields.filter(([field]) => !gone.has(field.split('|')[0]));
+    } else if (r.key === MAP) {
+      const next: [string, string][] = [];
+      for (const [c, entry] of fields) {
+        if (deleted.has(c)) {
+          next.push([c, JSON.stringify({ destroyed: destroyedOn.get(c) })]);
+          continue;
+        }
+        let key: unknown;
+        try {
+          key = JSON.parse(entry)?.key;
+        } catch {
+          key = undefined;
+        }
+        if (typeof key === 'string' && !keyStore.keys.has(key) && !tombstones.has(key)) {
+          if (byContainer.get(c)?.has(key)) refuse(`Container ${c} has values under ${key}, which the key archive lacks. Use a newer key archive.`);
+          mapsDropped.push(c);
+          continue;
+        }
+        next.push([c, entry]);
+      }
+      // Deleted containers the map didn't list yet are marked too.
+      for (const [c, on] of destroyedOn) if (!next.some(([x]) => x === c)) next.push([c, JSON.stringify({ destroyed: on })]);
+      fields = next;
+    }
+    if (fields.length === 0) continue;
+    const value: Record<string, string> = Object.create(null);
+    for (const [f, v] of fields.sort(([a], [b]) => byCodePoint(a, b))) value[f] = v;
+    records.push({ ...r, value });
+  }
+  if (!records.some((r) => r.key === MAP) && destroyedOn.size > 0) {
+    const value: Record<string, string> = Object.create(null);
+    for (const [c, on] of [...destroyedOn].sort(([a], [b]) => byCodePoint(a, b))) value[c] = JSON.stringify({ destroyed: on });
+    records.push({ key: MAP, type: 'hash', ttl: null, value });
+    records.sort((a, b) => byCodePoint(a.key, b.key));
+  }
+
+  return {
+    records,
+    keyStore,
+    left_out: leftOut,
+    maps_dropped: mapsDropped.sort(),
+    keys_left_out: keysLeftOut.sort(),
+    without_key_archive: !format1 && !keys,
+  };
+}
+
+/** The target's tombstones and key counter, read before anything is
+ *  replaced, for planRestore. */
+export async function targetKeyFacts(client: ExportClient): Promise<{ tombstones: Map<string, Tombstone>; keySeq: string | null }> {
+  const live = await readLiveKeyStore(client);
+  return { tombstones: live.tombstones, keySeq: live.beside.get('crypto:key-seq') ?? null };
 }
 
 /** The storage commands a restore needs, on top of reading everything back. */
@@ -317,10 +542,20 @@ function comparable(record: ExportRecord): string {
   return JSON.stringify([record.key, 'hash', ttl, pairs]);
 }
 
-export type RestoreResult = { written: number; deleted: number };
+export type RestoreResult = { written: number; deleted: number; keys: number; plan: RestorePlan };
+
+/** The key store as a comparable list of lines. */
+function comparableKeyStore(c: KeyArchiveContent): string[] {
+  return [
+    ...[...c.keys].map(([id, e]) => JSON.stringify(['key', id, e.record])),
+    ...[...c.tombstones].map(([id, t]) => JSON.stringify(['tombstone', id, t.container, t.on])),
+    ...[...c.beside].map(([name, v]) => JSON.stringify(['beside', name, v])),
+  ].sort();
+}
 
 /**
- * Write a verified archive into this process's namespace.
+ * Write a verified archive into this process's namespace, with its key
+ * archive (`keys`) for format 2, by planRestore()'s rules.
  *
  * The target must be empty unless `overwrite` is set. When it holds anything,
  * `backedUp` must list exactly the keys the caller saved before calling, and
@@ -332,13 +567,15 @@ export type RestoreResult = { written: number; deleted: number };
 export async function restoreArchive(
   client: RestoreClient,
   archive: VerifiedArchive,
-  opts: { overwrite: boolean; backedUp?: string[]; replaceRegistry?: boolean }
+  opts: { overwrite: boolean; backedUp?: string[]; replaceRegistry?: boolean; keys?: VerifiedKeyArchive | null }
 ): Promise<RestoreResult> {
   const prefix = envPrefix();
   const existing = await targetKeys(client);
   if (existing.length > 0 && !opts.overwrite) {
     refuse(`The target holds ${existing.length} keys. Pass --overwrite to replace them.`);
   }
+  // Planned before anything is deleted: the target's tombstones count too.
+  const plan = planRestore(archive, opts.keys ?? null, await targetKeyFacts(client));
   if (existing.length > 0) {
     if (!opts.backedUp) refuse('The target holds data and no backup of it was taken.');
     const saved = new Set(opts.backedUp);
@@ -347,7 +584,7 @@ export async function restoreArchive(
     }
   }
 
-  checkRegistry(archiveRegistry(archive.records), await targetRegistry(client), opts.replaceRegistry ?? false);
+  checkRegistry(archiveRegistry(plan.records), await targetRegistry(client), opts.replaceRegistry ?? false);
 
   // Delete first: replace, don't merge. Includes caches, which would otherwise
   // show numbers computed from the data being replaced.
@@ -356,7 +593,7 @@ export async function restoreArchive(
     await client.del(...existing.slice(i, i + BATCH));
   }
 
-  for (const record of archive.records) {
+  for (const record of plan.records) {
     const full = prefix + record.key;
     if (record.type === 'string') {
       await client.set(full, record.value, record.ttl ? { ex: Math.max(record.ttl, MIN_RESTORED_TTL) } : undefined);
@@ -365,10 +602,18 @@ export async function restoreArchive(
       if (record.ttl) await client.expire(full, Math.max(record.ttl, MIN_RESTORED_TTL));
     }
   }
+  // The key store, as planned: never a tombstoned key.
+  const keyFields: Record<string, string> = Object.create(null);
+  for (const [id, e] of plan.keyStore.keys) keyFields[id] = e.record;
+  for (const chunk of chunkFields(keyFields)) await client.hset(keysHashKey(), chunk);
+  const stones: Record<string, string> = Object.create(null);
+  for (const [id, t] of plan.keyStore.tombstones) stones[id] = JSON.stringify({ container: t.container, on: t.on });
+  for (const chunk of chunkFields(stones)) await client.hset(tombstonesKey(), chunk);
+  for (const [name, value] of plan.keyStore.beside) await client.set(besideKey(name as (typeof BESIDE_KEYS)[number]), value);
 
   // Read back through the same code the export uses, so "identical" means
   // "a fresh export of the target would reproduce this archive".
-  const expected = archive.records.map(comparable);
+  const expected = plan.records.map(comparable);
   const actual: string[] = [];
   let footerSeen = false;
   for await (const line of exportLines(client)) {
@@ -394,6 +639,11 @@ export async function restoreArchive(
       `Read-back does not match the archive (${missing} records missing or different, ${extra} unexpected). The target is in an unknown state; restore from the pre-restore export.`
     );
   }
+  const keysBack = comparableKeyStore(await readLiveKeyStore(client));
+  const keysExpected = comparableKeyStore(plan.keyStore);
+  if (keysBack.length !== keysExpected.length || keysBack.some((k, i) => k !== keysExpected[i])) {
+    throw new Error('Read-back of the key store does not match what was restored. The target is in an unknown state; restore from the pre-restore pair.');
+  }
 
-  return { written: archive.records.length, deleted: existing.length };
+  return { written: plan.records.length, deleted: existing.length, keys: plan.keyStore.keys.size, plan };
 }

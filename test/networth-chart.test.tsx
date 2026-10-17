@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import NetWorthChart from '@/components/NetWorthChart';
 
@@ -161,6 +163,71 @@ describe('NetWorthChart when the baseline stops early', () => {
       />
     );
     expect(html).toContain('+$0.00 added · +$100.00 growth');
+  });
+});
+
+// Notes on the timeline (#50): a marker on each noted day, the note in the
+// readout on scrub, and a list under the chart for a keyboard and a screen
+// reader. The line itself never changes: a cliff stays a cliff.
+describe('NetWorthChart notes on the timeline', () => {
+  const pts: P[] = [
+    { date: '2026-09-01', value: 5000 },
+    { date: '2026-09-02', value: 5000 },
+    { date: '2026-09-03', value: 1000 },
+    { date: '2026-09-04', value: 1000 },
+  ];
+  const notes = [
+    { date: '2026-09-03', text: 'Ally Savings closed: moved to Chase' },
+    { date: '2026-09-03', text: 'Bought the house' },
+    { date: '2025-01-01', text: 'Before the chart begins' },
+  ];
+  const lines = (h: string) => [...h.matchAll(/<path [^>]*stroke-width="2"[^>]*>/g)].map((m) => m[0]);
+
+  test('a noted day gets one marker, and a button under the chart that a keyboard reaches', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} notes={notes} />);
+    expect(html.match(/class="chart-note-mark"/g)).toHaveLength(1);
+    expect(html).toContain('aria-label="Notes on this chart"');
+    expect(html).toMatch(/<button type="button" class="chart-note-btn" aria-pressed="false"><span class="chart-note-day">Sep 3<\/span> Ally Savings closed: moved to Chase; Bought the house<\/button>/);
+    // Only the notes in the range shown.
+    expect(html).not.toContain('Before the chart begins');
+    // The chart's own label says so, and the info says what the dotted lines are.
+    expect(html).toContain('One note is marked, listed below the chart.');
+    expect(html).toContain('Dotted lines mark your notes');
+    // The announcement waits for a note to be chosen.
+    expect(html).toContain('<p class="visually-hidden" aria-live="polite"></p>');
+  });
+
+  test('the line is untouched: the cliff stays a cliff', () => {
+    expect(lines(renderToStaticMarkup(<NetWorthChart points={pts} notes={notes} />))).toEqual(lines(renderToStaticMarkup(<NetWorthChart points={pts} />)));
+  });
+
+  test('a note on a day with no point marks the first point after it, where its step shows', () => {
+    const gap: P[] = [
+      { date: '2026-09-01', value: 5000 },
+      { date: '2026-09-05', value: 1000 },
+    ];
+    const html = renderToStaticMarkup(<NetWorthChart points={gap} notes={[{ date: '2026-09-03', text: 'Closed' }]} />);
+    expect(html.match(/class="chart-note-mark"/g)).toHaveLength(1);
+    expect(html).toContain('Sep 3</span> Closed');
+  });
+
+  test('on scrub the note keeps to the date’s one line, cut to fit, so the chart never moves under the finger', () => {
+    // The suite can't scrub or lay a page out: this holds the rules the
+    // readout relies on (a note of 110 characters moved the chart 44px at 320px
+    // before them), and the markup that uses them.
+    const css = readFileSync(join(import.meta.dir, '..', 'app', 'globals.css'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+    expect(css).toMatch(/\.chart-readout-noted \{[^}]*display: flex;[^}]*white-space: nowrap;/);
+    expect(css).toMatch(/\.chart-readout-note \{[^}]*overflow: hidden;[^}]*text-overflow: ellipsis;/);
+    const source = readFileSync(join(import.meta.dir, '..', 'components', 'NetWorthChart.tsx'), 'utf8');
+    expect(source).toContain('<span className="chart-readout-date chart-readout-noted">');
+    expect(source).toContain('<span className="chart-readout-note">');
+  });
+
+  test('no notes: no list, no markers, nothing announced', () => {
+    const html = renderToStaticMarkup(<NetWorthChart points={pts} notes={[]} />);
+    expect(html).not.toContain('chart-notes');
+    expect(html).not.toContain('chart-note-mark');
+    expect(html).not.toContain('Dotted lines');
   });
 });
 

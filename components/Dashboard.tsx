@@ -10,23 +10,88 @@ import NetWorthChart, { type HistoryPoint } from './NetWorthChart';
 import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
-import { instantDay } from '@/lib/local-date';
+import DownloadMyData from './DownloadMyData';
+import { downloadAccounts } from './DownloadOptions';
+import ReportsEntry from './ReportsEntry';
+import ApiTokens from './ApiTokens';
+import WeeklySummaryCard from './WeeklySummaryCard';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
+import { PLAID_PORTAL } from '@/lib/deletion-receipt';
 import { SharingDrawer, SharedWithMe } from './Sharing';
 import { Sheet } from './Sheet';
+import DebtPayoff from './DebtPayoff';
+import { CoverageNote, TrustLinks } from './TrustLinks';
+import ConnectButtons from './ConnectButtons';
+import { RedirectChoices } from './ConnectRedirect';
+import type { LinkKind } from '@/lib/item-products';
+import { noTransactionsView, quietItemIds, unallowedItemIds, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { unreadNotesOf } from '@/lib/fire/inputs';
 import { historyPausedSince } from '@/lib/history-status';
 import InvestmentActivity from './InvestmentActivity';
-import MonthBreakdown, { type Txn } from './MonthBreakdown';
+import HoldingsRecorded from './HoldingsRecorded';
+import MonthBreakdown, { nameForRules, type Txn } from './MonthBreakdown';
+import DisconnectSplitsNote from './DisconnectSplitsNote';
+import ManualTxnSheet from './ManualTxnSheet';
+import ImportSheet, { type ImportTarget } from './ImportSheet';
+import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
+import ImportedHistoryNote from './ImportedHistoryNote';
+import type { ImportedHistoryView } from '@/lib/history-import/view';
+import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
+import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
-import BudgetsTab, { type Budgets } from './BudgetsTab';
+import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
+import {
+  useAccountLifecycle,
+  AccountQuestions,
+  EndedAccounts,
+  LifecycleRepair,
+  lifecycleDamageOf,
+  type AccountQuestion,
+  type EndedAccount,
+  type EndedConnection,
+  type LifecycleDamage,
+  withEndedAccounts,
+} from './AccountLifecycle';
+import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
+import { totalNotes } from './total-notes';
+import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
+import type { ConnectionHealth as Health } from '@/lib/connection-state';
+import BudgetsTab from './BudgetsTab';
+import { EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { useCategories, useCategoriesForBudgets } from './categories-state';
+import { useBudgetMonth } from './budget-month-state';
+import CategoriesCard from './CategoriesCard';
+import { useTagList } from './tags-state';
+import TagsCard from './TagsCard';
+import { newDraft, useRules } from './rules-state';
+import RulesCard from './RulesCard';
+import ReviewSettingsCard from './ReviewSettingsCard';
+import VendorDefaultsCard from './VendorDefaultsCard';
+import { useReview } from './review-state';
+import { countToReview } from '@/lib/review-layer';
+import RuleSheet from './RuleSheet';
+import { indexTaxonomy } from '@/lib/categories';
+import { ruleSentence, sortedRules } from '@/lib/rules';
+import { detectRecurring, type RecurringRow } from '@/lib/recurring';
+import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { withAccountEnds } from '@/lib/goal-view';
+import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import { HideAmountsToggle, Masked } from './HideAmounts';
+import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
-import { isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
+// The Plan tab carries the projection engine, so its code is loaded only when
+// the tab is opened, and a failure to load or run it stays on that tab.
+import PlanTabLoader from './PlanTabLoader';
+// The FI card on Home works its figures out with the Plan's code, so it is
+// loaded the same way, after Home paints.
+import FiProgressLoader from './FiProgressLoader';
 
 type Account = {
   account_id: string;
@@ -45,6 +110,14 @@ type Account = {
   // what keeps the balance out of accountBalanceMap; the client only needs to
   // know the field exists so it survives the localStorage round trip.
   stale?: boolean;
+  // Investment accounts only: this load's holdings call failed for it, so its
+  // positions are unknown (lib/networth.ts markUnanswered).
+  holdings_unanswered?: boolean;
+  // Missing from its bank's answer, held at its last known balance until the
+  // person says whether it closed, and the question about it, which a zero
+  // for weeks raises too (#50, lib/lifecycle-questions.ts).
+  held?: { as_of: string | null; too_old?: string };
+  question?: AccountQuestion;
 };
 
 // Payment terms for a credit card or loan (see lib/liabilities.ts). Optional
@@ -79,6 +152,9 @@ type Holding = {
   ticker?: string | null;
   security_type?: string | null;
   is_cash_equivalent?: boolean | null;
+  // What `value` is in, for the Plan's allocation. Absent on payloads cached
+  // before it was sent: the account's currency is used then.
+  currency?: string | null;
 };
 
 type Institution = {
@@ -87,6 +163,9 @@ type Institution = {
   // Plaid's institution id, for recognizing a second connection to the same
   // institution (lib/existing-items.ts). Absent on older cached payloads.
   institution_id?: string | null;
+  // Which way it was linked (lib/item-products.ts linkedAs), for the sheet
+  // that stops a second connection to it (components/ConnectRedirect.tsx).
+  linked_as?: LinkKind;
   // Plaid found accounts at this Item the user hasn't added (lib/new-accounts.ts).
   new_accounts_available?: boolean;
   accounts: Account[];
@@ -126,6 +205,21 @@ type Institution = {
   // charted point for three days with nothing to explain it.
   unconfirmed_missing?: number;
   manual?: boolean; // synthetic grouping of manually-tracked accounts
+  // Set on the accounts SimpleFIN feeds (lib/connectors/), `manual` too: they
+  // are not Plaid's, and their balances aren't typed (components/Connectors.tsx).
+  connector?: string;
+  connection_id?: string;
+  // The connection's health: state, when it last synced, whose side a problem
+  // is on and what to do (lib/connection-state.ts). Optional: a payload
+  // cached before it existed has none, and nothing is said then.
+  health?: Health;
+  // The accounts a broken card can't show, by name, for the health view, with
+  // their kind and currency (absent on a payload from before they were sent).
+  unshown_accounts?: { account_id: string; name: string; mask: string | null; type?: string; currency?: string | null }[];
+  // Accounts that ended that its bank still returns, moved since: a copy of
+  // each row with its question, counted in nothing (#50,
+  // lib/lifecycle-questions.ts askAboutReportedEnds).
+  ended_reported?: Account[];
 };
 
 // One manually-tracked account as the API returns it (see lib/manual.ts).
@@ -147,15 +241,19 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
   balance: string;
 };
 
+// "cash" is a choice, not a type: saved as depository with the subtype
+// CASH_SUBTYPE (lib/balance.ts), which the Plan reads to count cash
+// withdrawals and the cash spending entered on the account once.
 const MANUAL_TYPE_LABELS: { value: string; label: string }[] = [
-  { value: 'depository', label: 'Cash (checking, savings)' },
+  { value: 'depository', label: 'Checking or savings' },
+  { value: 'cash', label: 'Cash on hand (a wallet)' },
   { value: 'investment', label: 'Investment (brokerage, 401k, HSA)' },
   { value: 'credit', label: 'Credit card' },
   { value: 'loan', label: 'Loan (mortgage, auto, student)' },
   { value: 'other', label: 'Other (property, crypto)' },
 ];
 
-type Tab = 'home' | 'accounts' | 'activity' | 'budgets';
+type Tab = 'home' | 'accounts' | 'activity' | 'budgets' | 'plan';
 
 // Last-known dashboard snapshot, kept on-device so the app paints instantly on
 // open (and shows something useful offline) while fresh data loads. Cleared on
@@ -198,10 +296,12 @@ function fmtGain(value: number, cost: number): string {
   const gain = value - cost;
   const sign = gain >= 0 ? '+' : '-';
   const pct = cost !== 0 ? ` · ${((Math.abs(gain) / Math.abs(cost)) * 100).toFixed(1)}%` : '';
-  return `${sign}$${Math.abs(gain).toLocaleString(undefined, {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}${pct}`;
+  return `${sign}$${hiddenFigure(
+    Math.abs(gain).toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    })
+  )}${pct}`;
 }
 
 // "Mar 4" from a YYYY-MM-DD. Parsed at local midnight, not UTC, so a due date
@@ -340,6 +440,11 @@ const TAB_ICONS: Record<Tab, React.ReactNode> = {
       <path d="M12 12V3M12 12l6.4 6.4" />
     </svg>
   ),
+  plan: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17l6-6 4 4 8-8M15 7h6v6" />
+    </svg>
+  ),
 };
 
 const TAB_LABELS: Record<Tab, string> = {
@@ -347,19 +452,27 @@ const TAB_LABELS: Record<Tab, string> = {
   accounts: 'Accounts',
   activity: 'Activity',
   budgets: 'Budgets',
+  plan: 'Plan',
 };
 
 export default function Dashboard({
   clerk = false,
   viewer,
   admin = false,
+  brokerageLink = false,
 }: {
   clerk?: boolean;
   viewer?: string;
   /** Set by the server (app/page.tsx): only the admin is sent the admin panel. */
   admin?: boolean;
+  /** Set by the server (app/page.tsx): whether to offer connecting a brokerage
+   *  or retirement account (PLAID_BROKERAGE_LINK, lib/item-products.ts). */
+  brokerageLink?: boolean;
 }) {
   const cacheKey = cacheKeyFor(viewer);
+  // Hiding amounts (components/hide-amounts.ts) changes what every formatter
+  // writes, so the whole dashboard draws again when the switch changes.
+  useAmountsHidden();
   const [tab, setTab] = useState<Tab>('home');
   const [linkToken, setLinkToken] = useState<string | null>(null);
   // 'update' re-authenticates or adds a product; 'accounts' is the account
@@ -377,13 +490,19 @@ export default function Dashboard({
   // Whether Link is on screen: a late SELECT_INSTITUTION must not redirect a
   // Link that already closed.
   const linkOpenRef = useRef(false);
-  // Set when a new connection was stopped at an institution already connected.
-  const [redirect, setRedirect] = useState<{ name: string; items: Institution[] } | null>(null);
+  // Which way the new connection in progress was started (components/ConnectButtons.tsx).
+  const connectKindRef = useRef<LinkKind>('bank');
+  // Set when a new connection was stopped at an institution already connected,
+  // with the way it was started, for connecting it separately after all.
+  const [redirect, setRedirect] = useState<{ name: string; items: Institution[]; kind: LinkKind } | null>(null);
   const shownRedirect = useLast(redirect);
   const [connected, setConnected] = useState(false);
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [netWorth, setNetWorth] = useState(0);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  // What the estimated history drawn from imported files covers (#52), for
+  // the note under the chart. Sent beside the payload, never cached with it.
+  const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null } | null>(null);
   const [loading, setLoading] = useState(true);
@@ -391,23 +510,62 @@ export default function Dashboard({
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
+  // Your categories (components/categories-state.ts): the lists to choose one
+  // from, the group rollups, and what budgets are set on.
+  const categories = useCategories();
+  const acceptCategories = categories.accept;
+  // Your tags (components/tags-state.ts), from each transactions load.
+  const tagList = useTagList();
+  const acceptTags = tagList.accept;
+  // Your rules (components/rules-state.ts), and the rule drawer.
+  const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // Of those, the ones that say transactions couldn't all be read, which the
+  // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
+  // that says how a rule, a category, a split or a group applies.
+  const [txnUnread, setTxnUnread] = useState<string[]>([]);
+  // Institutions whose transactions this load lacks, for Activity's month notes.
+  const [txnIncomplete, setTxnIncomplete] = useState<Incomplete[]>([]);
+  // Connections that bring in no transactions, so the spending views say why.
+  const [txnWithout, setTxnWithout] = useState<NoTransactionsView>(NO_CONNECTIONS_WITHOUT);
+  // The rows before the loaded year that recurring detection needs.
+  const [txnHistory, setTxnHistory] = useState<RecurringRow[]>([]);
   const [txnsLoading, setTxnsLoading] = useState(false);
+  // The last transactions load failed: the forecast and the calendar say so.
+  const [txnsFailed, setTxnsFailed] = useState(false);
+  // The balances shown are the ones saved on this device, not yet replaced
+  // by a load: the forecast says when they are from.
+  const [balancesSaved, setBalancesSaved] = useState(false);
+  // Connection health (components/ConnectionHealth.tsx): whether the server
+  // could read Plaid's warnings, and whether a notice email's link opened it.
+  const [healthUnavailable, setHealthUnavailable] = useState(false);
+  const [healthFocus, setHealthFocus] = useState(false);
+  const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
+  // The Item update mode is open on, so its success can be recorded
+  // (app/api/item-reconnected).
+  const reconnectingItemRef = useRef<string | null>(null);
   const [expandedAccounts, setExpandedAccounts] = useState<Set<string>>(new Set());
   const [expandedHoldings, setExpandedHoldings] = useState<Set<string>>(new Set());
   // Budgets and goals are each saved as one whole list, so their loading and
   // saving go through lib/whole-list-store.ts, which never lets an unloaded or
   // stale list be saved over what is stored.
-  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState({}));
+  const [budgetsState, setBudgetsState] = useState<ListState<Budgets>>(initialListState(EMPTY_BUDGETS));
   const [goalsState, setGoalsState] = useState<ListState<Goal[]>>(initialListState<Goal[]>([]));
   const budgetsStore = useMemo(
     () =>
       createWholeListStore<Budgets>({
         url: '/api/budgets',
-        field: 'budgets',
+        // By category and group id (lib/budget-set.ts).
+        field: 'budget_set',
         noun: 'budgets',
-        empty: {},
-        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        // The month a change is made in, as this page has it: the months
+        // before it keep their amounts (#37, app/api/budgets).
+        extra: () => ({ month: localMonth() }),
+        empty: EMPTY_BUDGETS,
+        isValid: (v): v is Budgets => {
+          const b = v as Budgets | null;
+          return !!b && typeof b.categories === 'object' && b.categories !== null && typeof b.groups === 'object' && b.groups !== null;
+        },
         onChange: setBudgetsState,
       }),
     []
@@ -421,10 +579,43 @@ export default function Dashboard({
         empty: [],
         isValid: (v): v is Goal[] => Array.isArray(v),
         onChange: setGoalsState,
+        // The server works out where a target date's line starts, and checks
+        // allocations on the balances it knows: keep what it says (#42).
+        adoptSaved: true,
+        showRefusal: true,
+        // What a save dates (an archive) is dated on the person's own day.
+        extra: () => ({ today: localDate() }),
+      }),
+    []
+  );
+  // The forecast's planned items and dismissals (lib/planned.ts), saved whole
+  // the same way.
+  const [plannedState, setPlannedState] = useState<ListState<Planned>>(initialListState<Planned>(EMPTY_PLANNED));
+  const plannedItemsStore = useMemo(
+    () =>
+      createWholeListStore<Planned>({
+        url: '/api/planned-items',
+        field: 'planned',
+        noun: 'planned items',
+        empty: EMPTY_PLANNED,
+        isValid: isPlanned,
+        onChange: setPlannedState,
       }),
     []
   );
   const budgets = budgetsState.value;
+  useCategoriesForBudgets(categories, budgets, budgetsState.status === 'ready');
+  // This month's budgets as the server works them out, with rollover (#37):
+  // for the Budgets tab, and Home's budget alerts. Once the transactions have
+  // loaded (a load syncs what the server reads), again whenever the budgets,
+  // the transactions or the categories change, never while a save is under
+  // way; with the stored history on the Budgets tab (its month picker).
+  const thisMonth = localMonth();
+  const budgetMonth = useBudgetMonth(
+    budgetsState.status === 'ready' && (txns !== null || txnsFailed) ? thisMonth : null,
+    [budgets, txns, categories.taxonomy],
+    { paused: budgetsState.saving, history: tab === 'budgets' }
+  );
   const goals = goalsState.value;
   // Accounts tab: disconnect buttons stay hidden until "Manage accounts" is
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
@@ -433,7 +624,12 @@ export default function Dashboard({
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
+  // The debt payoff planner, opened from the Accounts tab (components/DebtPayoff.tsx).
+  const [payoffOpen, setPayoffOpen] = useState(false);
+  const closePayoff = useCallback(() => setPayoffOpen(false), []);
   const [disconnectTarget, setDisconnectTarget] = useState<Institution | null>(null);
+  // What the SimpleFIN drawer is asked to do (components/Connectors.tsx).
+  const [connectorAsk, setConnectorAsk] = useState<ConnectorAsk | null>(null);
   const shownDisconnectTarget = useLast(disconnectTarget);
   const [disconnectInput, setDisconnectInput] = useState('');
   const [disconnecting, setDisconnecting] = useState(false);
@@ -460,6 +656,14 @@ export default function Dashboard({
     { account_id: string; type: string; label?: string; disconnected?: boolean }[]
   >([]);
   const [togglingHidden, setTogglingHidden] = useState<string | null>(null);
+  // The accounts that ended (#50, lib/lifecycle.ts), the stored set like
+  // hiddenMeta, for the Accounts that ended card; closures that
+  // couldn't be read, which stop the load rather than count a closed account;
+  // and the connection whose every account ended, which the disconnect sheet
+  // then offers to remove.
+  const [ended, setEnded] = useState<EndedAccount[]>([]);
+  const [lifecycleDamage, setLifecycleDamage] = useState<LifecycleDamage | null>(null);
+  const [endedOffer, setEndedOffer] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
   // keeps its own done-flag, so this only avoids redundant requests.
   const backfillTried = useRef(false);
@@ -485,18 +689,27 @@ export default function Dashboard({
       if (!res.ok) {
         // The server's reason when it gives one (no usable container, say),
         // so the cause shows on screen rather than only in the logs.
-        const reason = await res.json().then((b) => b?.error).catch(() => null);
-        setError(reason && res.status === 503 ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
+        // Closures that can't be read say so, with their repair (#50).
+        const body = await res.json().catch(() => null);
+        const reason = body?.error ?? null;
+        const damage = lifecycleDamageOf(res.status, body);
+        setLifecycleDamage(damage);
+        setError(reason && (res.status === 503 || damage) ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
         return;
       }
       const data = await res.json();
       setError('');
+      setLifecycleDamage(null);
       setInstitutions(data.institutions);
       setNetWorth(data.netWorth);
       setHistory(data.history ?? []);
       setHiddenMeta(data.hidden ?? []);
+      setImportedHistory(data.imported_history ?? null);
+      setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
       setAsOf(data.as_of ?? null);
+      setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
+      setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
 
       // First open with a near-empty chart: backfill estimated history from
@@ -524,6 +737,7 @@ export default function Dashboard({
             netWorth: data.netWorth,
             history: data.history ?? [],
             hidden: data.hidden ?? [],
+            lifecycle: data.lifecycle ?? [],
             as_of: data.as_of,
           })
         );
@@ -540,23 +754,41 @@ export default function Dashboard({
     }
   }, [requestBackfill]);
 
+  // The review queue (components/review-state.ts), from each transactions
+  // load; it reads the list again through the edits below.
+  const review = useReview({ setTxns, refresh: () => txnEdits.refresh(), reload: () => loadTransactions() });
+  const acceptReview = review.accept;
+
   const loadTransactions = useCallback(async (force = false) => {
     setTxnsLoading(true);
     try {
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnUnread(['Could not load transactions.']);
+        setTxnsFailed(true);
         return;
       }
       const data = await res.json();
       setTxns(data.transactions);
+      // The categories the rows were filed by, the tags they carry, and the queue.
+      acceptCategories(data.categories);
+      acceptTags(data.tags);
+      acceptReview(data.review);
       setTxnNotes(data.notes ?? []);
+      setTxnUnread(unreadNotesOf(data));
+      setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
+      setTxnWithout(noTransactionsView(data));
+      setTxnHistory(Array.isArray(data.recurring_history) ? data.recurring_history : []);
+      setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnUnread(['Could not load transactions.']);
+      setTxnsFailed(true);
     } finally {
       setTxnsLoading(false);
     }
-  }, []);
+  }, [acceptCategories, acceptTags, acceptReview]);
 
   // A session ended elsewhere (signed out everywhere, or the password changed)
   // makes every API call answer 401; send the dashboard to the login page instead
@@ -599,7 +831,9 @@ export default function Dashboard({
           setNetWorth(snap.netWorth ?? 0);
           setHistory(Array.isArray(snap.history) ? snap.history : []);
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
+          setEnded(Array.isArray(snap.lifecycle) ? snap.lifecycle : []);
           setAsOf(snap.as_of ?? null);
+          setBalancesSaved(true);
           setConnected(snap.institutions.length > 0);
           setLoading(false);
         }
@@ -610,6 +844,15 @@ export default function Dashboard({
     loadNetWorth();
   }, [loadNetWorth]);
 
+  // A notice email links to /?view=connections: open the Accounts tab at the
+  // connection health card, then drop the query, so a reload doesn't jump there.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('view') !== 'connections') return;
+    setTab('accounts');
+    setHealthFocus(true);
+    window.history.replaceState(null, '', window.location.pathname);
+  }, []);
+
   // Everything else loads in parallel with net worth (no waterfall): transactions
   // feed Activity and insights, budgets/goals feed the Budgets tab. All are cheap
   // on the server (cached or Redis-only) and empty when nothing is connected.
@@ -617,24 +860,8 @@ export default function Dashboard({
     loadTransactions();
     budgetsStore.load();
     goalsStore.load();
-  }, [loadTransactions, budgetsStore, goalsStore]);
-
-  const recategorize = useCallback(async (transaction_id: string, category: string) => {
-    // Optimistic local update; the server stores the override and clears its
-    // transactions cache so future loads agree.
-    setTxns((prev) =>
-      prev ? prev.map((t) => (t.transaction_id === transaction_id ? { ...t, category } : t)) : prev
-    );
-    try {
-      await fetch('/api/recategorize', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ transaction_id, category }),
-      });
-    } catch {
-      // Next refresh reverts if the write didn't land.
-    }
-  }, []);
+    plannedItemsStore.load();
+  }, [loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
 
   const renameVendor = useCallback(
     async (vendor_key: string, name: string) => {
@@ -664,26 +891,99 @@ export default function Dashboard({
     [loadTransactions]
   );
 
-  // `bypass` skips both duplicate checks for this run: the user has said the
-  // institution they already have is a different login.
-  const beginConnect = useCallback(async (bypass: boolean) => {
+  // What a rule can name of the accounts, and a rule as a sentence, for the
+  // Rules screen, the rule drawer and a transaction's detail: those that
+  // ended too, with their end (#50).
+  const ruleAccounts = useMemo(
+    () =>
+      withEndedAccounts(
+        institutions.flatMap((i) => i.accounts.map((a) => ({ id: a.account_id, label: `${i.institution_name} ${a.name}${a.mask ? ` ••${a.mask}` : ''}` }))),
+        ended
+      ),
+    [institutions, ended]
+  );
+  const ruleSentenceOf = useCallback(
+    (id: string) => {
+      const r = rules.set?.rules.find((x) => x.id === id);
+      if (!r) return null;
+      const ix = categories.taxonomy ? indexTaxonomy(categories.taxonomy) : null;
+      const account = (a: string) => ruleAccounts.find((x) => x.id === a)?.label ?? null;
+      return ruleSentence(r, { ix, tags: { version: 1, tags: tagList.tags }, account, money: (n) => hiddenFigure(n.toLocaleString(undefined, { maximumFractionDigits: 8 })) });
+    },
+    [rules.set, categories.taxonomy, tagList.tags, ruleAccounts]
+  );
+  const ruleUses = useMemo(() => {
+    const uses: Record<string, number> = {};
+    for (const r of sortedRules(rules.set)) for (const t of r.actions.add_tags ?? []) uses[t] = (uses[t] ?? 0) + 1;
+    return uses;
+  }, [rules.set]);
+
+  // Transactions entered by hand, categories and the exclude flag
+  // (components/transaction-edits.ts).
+  const txnEdits = useTransactionEdits({
+    txns,
+    setTxns,
+    setTxnNotes,
+    setTxnUnread,
+    setTxnIncomplete,
+    setTxnWithout,
+    loadTransactions,
+    loadNetWorth,
+    requestBackfill,
+    taxonomy: categories.taxonomy,
+    onTagMade: tagList.add,
+  });
+
+  // File import into a manual account (components/ImportSheet.tsx). After an
+  // import or an undo the list is read again, and when the statement's
+  // balance was set too, net worth as after the account's Update form.
+  const [importTarget, setImportTarget] = useState<ImportTarget | null>(null);
+  // Importing a linked account's history (components/HistoryImportSheet.tsx):
+  // its rows join the Activity tab, and the estimated history is drawn back
+  // through them, so both are read again.
+  const [historyTarget, setHistoryTarget] = useState<HistoryImportTarget | null>(null);
+  const onImported = useCallback(
+    async ({ balanceChanged }: { balanceChanged: boolean }) => {
+      loadTransactions();
+      if (balanceChanged) {
+        await loadNetWorth(true);
+        requestBackfill(() => loadNetWorth());
+      }
+    },
+    [loadTransactions, loadNetWorth, requestBackfill]
+  );
+
+  // `kind` is which way to connect (app/api/create-link-token). `bypass` skips
+  // both duplicate checks for this run: the user has said the institution they
+  // already have is a different login.
+  const beginConnect = useCallback(async (kind: LinkKind, bypass: boolean) => {
     setError('');
     setConnecting(true);
     bypassDuplicateRef.current = bypass;
     redirectingRef.current = false;
-    const res = await fetch('/api/create-link-token', { method: 'POST' });
-    const data = await res.json();
-    setConnecting(false);
-    if (data.link_token) {
-      setLinkMode('new');
-      setLinkToken(data.link_token);
-    } else {
+    connectKindRef.current = kind;
+    // Whatever happens (no network, an answer that isn't JSON), the buttons
+    // come back: left on "Starting…", nothing could be connected.
+    try {
+      const res = await fetch('/api/create-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.link_token) {
+        setLinkMode('new');
+        setLinkToken(data.link_token);
+      } else {
+        setError('Could not start connection.');
+      }
+    } catch {
       setError('Could not start connection.');
+    } finally {
+      setConnecting(false);
     }
   }, []);
-  // A wrapper, not beginConnect itself, since onClick would pass its event as
-  // `bypass`.
-  const startConnect = useCallback(() => beginConnect(false), [beginConnect]);
+  const startConnect = useCallback((kind: LinkKind) => beginConnect(kind, false), [beginConnect]);
 
   // Link's account picker on an existing Item, to add (or remove) accounts at an
   // institution already connected without creating a second Item.
@@ -720,10 +1020,41 @@ export default function Dashboard({
     const data = await res.json();
     setConnecting(false);
     if (data.link_token) {
+      reconnectingItemRef.current = item_id;
       setLinkMode('update');
       setLinkToken(data.link_token);
     } else {
       setError('Could not start reconnection.');
+    }
+  }, []);
+
+  // Asks for consent to share transactions on a connection whose transactions
+  // weren't allowed (lib/no-transactions.ts, no_consent): update mode with the
+  // consent request (app/api/create-update-link-token, allow_transactions).
+  // Its success goes the way of a Reconnect's: the server forgets the refusal
+  // (app/api/item-reconnected), and the reload asks Plaid again.
+  const startAllowTransactions = useCallback(async (item_id: string) => {
+    setError('');
+    setConnecting(true);
+    redirectingRef.current = false;
+    try {
+      const res = await fetch('/api/create-update-link-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ item_id, allow_transactions: true }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (data.link_token) {
+        reconnectingItemRef.current = item_id;
+        setLinkMode('update');
+        setLinkToken(data.link_token);
+      } else {
+        setError('Could not start allowing transactions.');
+      }
+    } catch {
+      setError('Could not start allowing transactions.');
+    } finally {
+      setConnecting(false);
     }
   }, []);
 
@@ -742,6 +1073,7 @@ export default function Dashboard({
     const data = await res.json();
     setConnecting(false);
     if (data.link_token) {
+      reconnectingItemRef.current = item_id;
       setLinkMode('update');
       setLinkToken(data.link_token);
     } else {
@@ -774,6 +1106,32 @@ export default function Dashboard({
     [loadNetWorth, loadTransactions, txns]
   );
 
+  // Notes on the timeline (#50), read again with each load.
+  const timeline = useTimelineNotes(asOf);
+  const reloadTimeline = timeline.reload;
+  // Ending, reopening or answering for an account (#50) reloads what it
+  // touches: the totals, its transactions from its end, its note.
+  const lifecycleChanged = useCallback(() => {
+    loadNetWorth(true);
+    if (txns !== null) loadTransactions(true);
+    reloadTimeline();
+  }, [loadNetWorth, loadTransactions, txns, reloadTimeline]);
+  // Its last open account ended: offer to remove the connection, through the
+  // same confirmation as any removal, since Plaid bills it until then.
+  const offerRemoval = useCallback(
+    (c: EndedConnection) => {
+      const target = institutions.find((i) => i.item_id === c.item_id) ?? { ...c, accounts: [], holdings: [], error: null, needs_reauth: false };
+      setEndedOffer(c.item_id);
+      setDisconnectInput('');
+      setDisconnectTarget(target);
+    },
+    [institutions]
+  );
+  const lifecycle = useAccountLifecycle({ onChanged: lifecycleChanged, onRemoveConnection: offerRemoval });
+  // Closures that can't be read stop the load: said with the load's error,
+  // wherever that shows, with the repair.
+  const lifecycleRepair = lifecycleDamage && <LifecycleRepair damage={lifecycleDamage} onRepaired={() => loadNetWorth(true)} />;
+
   /**
    * One manual-account mutation. Every call names a single account, so a stale
    * page can only affect the account it acted on: it can't delete accounts it
@@ -803,6 +1161,8 @@ export default function Dashboard({
         // is thin).
         await loadNetWorth(true);
         requestBackfill(() => loadNetWorth());
+        // Its transactions carry its name, and go with it when it is deleted.
+        loadTransactions();
         return true;
       } catch {
         setManualError('Could not reach the server.');
@@ -811,8 +1171,21 @@ export default function Dashboard({
         setSavingManual(false);
       }
     },
-    [loadNetWorth, requestBackfill]
+    [loadNetWorth, requestBackfill, loadTransactions]
   );
+
+  // After a change through SimpleFIN (components/Connectors.tsx): balances and
+  // transactions reload, and when accounts were added, retyped, kept or
+  // removed, the estimated history is rebuilt too, as after a manual save.
+  const connectorChanged = useCallback(
+    async (accountsChanged: boolean) => {
+      await loadNetWorth(true);
+      if (accountsChanged) requestBackfill(() => loadNetWorth());
+      if (txns !== null) loadTransactions(true);
+    },
+    [loadNetWorth, requestBackfill, loadTransactions, txns]
+  );
+  const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
 
   const startAddManual = useCallback(() => {
     setManualError('');
@@ -902,9 +1275,22 @@ export default function Dashboard({
       if (linkMode === 'update') {
         // Update mode re-authenticates the existing Item -- no new Item is
         // created and the access token doesn't change, so there's nothing
-        // to exchange. Just clear the token and refresh.
+        // to exchange. Clear the token, tell the server the connection was
+        // repaired (its "Reconnect soon" warning and any email about a break
+        // are done with), then refresh.
         setLinkToken(null);
+        const repaired = reconnectingItemRef.current;
+        reconnectingItemRef.current = null;
+        if (repaired) {
+          await fetch('/api/item-reconnected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ item_id: repaired }),
+          }).catch(() => null);
+        }
         loadNetWorth(true);
+        // Transactions allowed just now come in on this load.
+        if (txns !== null) loadTransactions(true);
         return;
       }
 
@@ -987,7 +1373,7 @@ export default function Dashboard({
       });
       if (items.length === 0) return;
       redirectingRef.current = true;
-      setRedirect({ name: metadata.institution_name || items[0].institution_name, items });
+      setRedirect({ name: metadata.institution_name || items[0].institution_name, items, kind: connectKindRef.current });
       exitLinkRef.current({ force: true });
     },
     [linkMode, institutions]
@@ -1048,39 +1434,38 @@ export default function Dashboard({
     if (goalsStore.get().status === 'error' && !goalsStore.get().saving) goalsStore.load();
   }, [loadNetWorth, loadTransactions, txns, budgetsStore, goalsStore]);
 
-  // Institutions showing recovered balances. Surfaced on the hero too, not just
-  // on their own cards: the number someone actually reads is the total, and
-  // "this is real but a few days old" is a caveat on the total.
-  const staleInstitutions = useMemo(
-    () => institutions.filter((i) => i.stale_as_of),
+  // What the hero total is missing, named (components/total-notes.ts). Surfaced
+  // on the hero, not just on the cards: the number someone actually reads is
+  // the total. In order: institutions showing recovered balances ("real but a
+  // few days old"); recovered but short some rows; accounts that answered
+  // before and didn't this time, at institutions otherwise fine (history is
+  // paused until that resolves); and institutions that failed and could NOT be
+  // recovered, so the total is short by all of each. Those last are MORE wrong
+  // than the stale ones, so every such case is said, with when it was last seen.
+  const missingNotes = useMemo(
+    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }),
     [institutions]
   );
 
-  // Institutions that failed and could NOT be recovered, so the hero is short by
-  // all of them. Every such case, not just ones with a named reason (too old,
-  // nothing remembered, ids changed at reauth): these are MORE wrong than the
-  // stale ones, and disclosing only the recovered case would be backwards.
-  const uncountedInstitutions = useMemo(
-    () => institutions.filter((i) => i.error && !i.stale_as_of),
+  // Connections Plaid says will end on a date, for the Home alert (Insights).
+  const reconnectSoon = useMemo(
+    () =>
+      institutions.flatMap((i) =>
+        i.health?.state === 'reconnect_soon' && i.health.ends_at
+          ? [{ item_id: i.item_id, institution_name: i.institution_name, ends_at: i.health.ends_at, ends_estimated: i.health.ends_estimated }]
+          : []
+      ),
     [institutions]
   );
-
-  // Recovered, but short some rows. Called out at the hero and not just on the
-  // card, because "short some rows" is a statement about the total, and the
-  // total is what someone actually reads.
-  const incompleteCount = useMemo(
-    () => institutions.reduce((n, i) => n + (i.stale_missing ?? 0), 0),
-    [institutions]
-  );
-
-  // Accounts that answered before and didn't this time, at institutions that are
-  // otherwise fine. Surfaced on the hero like the stale cases: the total is what
-  // gets read, and this caveat says it is short by what those accounts held, with
-  // the chart frozen until the absence resolves.
-  const vanishedCount = useMemo(
-    () => institutions.reduce((n, i) => n + (i.unconfirmed_missing ?? 0), 0),
-    [institutions]
-  );
+  // Connections whose transactions have stopped arriving, for Activity's months.
+  // Not a connection that holds no bank account or card: it brings no
+  // transactions in, so its lapse leaves no month short (lib/no-transactions.ts).
+  const stoppedTxns = useMemo(() => stoppedConnections(institutions, quietItemIds(txnWithout)), [institutions, txnWithout]);
+  // Recurring bills and income, detected once (lib/recurring.ts) for Home and
+  // the Budgets tab, from the year loaded and the rows before it.
+  const recurring = useMemo(() => (txns ? detectRecurring([...txns, ...txnHistory]) : null), [txns, txnHistory]);
+  // Connections whose transactions weren't allowed: their card offers to.
+  const unallowedIds = useMemo(() => unallowedItemIds(txnWithout), [txnWithout]);
 
   // The last recorded day, when recording has stalled (see lib/history-status.ts).
   const pausedSince = useMemo(() => historyPausedSince(history, asOf), [history, asOf]);
@@ -1102,8 +1487,25 @@ export default function Dashboard({
         new Date(`${base.date}T00:00:00Z`).getTime()) /
         (24 * 60 * 60 * 1000)
     );
-    return { value, pct, days };
+    return { value, pct, days, from: base.date, to: current.date };
   }, [history]);
+
+  // The stored hidden set's ids, and the notes the chart marks: not those
+  // about a hidden account, which moves no day of it (#50).
+  const hiddenIds = useMemo(() => new Set(hiddenMeta.map((h) => h.account_id)), [hiddenMeta]);
+  const chartNotes = useMemo(
+    () => timeline.notes.filter((n) => !(n.kind === 'auto' && n.account_id && hiddenIds.has(n.account_id))),
+    [timeline.notes, hiddenIds]
+  );
+  // Accounts that ended within the delta's days: its change includes their
+  // leaving, which is said, so it isn't read as a gain or a loss (#50).
+  const endedInDelta = useMemo(() => {
+    if (!heroDelta) return 0;
+    return ended.filter((e) => {
+      const day = e.lifecycle.state === 'untracked' ? e.lifecycle.from : e.lifecycle.on;
+      return day > heroDelta.from && day <= heroDelta.to && !hiddenIds.has(e.account_id);
+    }).length;
+  }, [heroDelta, ended, hiddenIds]);
 
   // Plaid returns institutions/accounts in no guaranteed order; sort by name so
   // the Accounts tab renders the same every load.
@@ -1279,6 +1681,38 @@ export default function Dashboard({
     return seen.size > 1;
   }, [allAccounts]);
 
+  // The institutions as the Plan reads them, with what went wrong at each, so
+  // a figure that may be short says so; hidden accounts too, which the Plan
+  // leaves out itself. One mapping for the Plan tab and the FI card on Home,
+  // so both read the same accounts.
+  const planInstitutions = useMemo(
+    () =>
+      institutions.map((i) => ({
+        name: i.institution_name,
+        item_id: i.manual ? null : i.item_id,
+        error: !!i.error || i.needs_reauth,
+        staleAsOf: i.stale_as_of ?? null,
+        staleAsOfAt: i.stale_as_of_at ?? null,
+        missing: (i.stale_missing ?? 0) + (i.unconfirmed_missing ?? 0),
+        accounts: i.accounts.map((a) => ({
+          account_id: a.account_id,
+          name: a.name,
+          type: a.type,
+          subtype: a.subtype,
+          balance: a.balance,
+          currency: a.currency,
+          hidden: a.hidden,
+          positionsFailed: a.holdings_unanswered === true,
+        })),
+        // What it can't show (no balance recovered), for allocation over
+        // time, which still expects the investment ones.
+        unshown: (i.unshown_accounts ?? []).map((a) => ({ account_id: a.account_id, name: a.name, type: a.type ?? null, currency: a.currency ?? null })),
+      })),
+    [institutions]
+  );
+  // Every position, with its account, for the Plan's allocation.
+  const planHoldings = useMemo(() => institutions.flatMap((i) => i.holdings), [institutions]);
+
   // Counts what's rendering, so hiding an institution's last account doesn't
   // leave "3 institutions connected" above two cards, and a fully hidden set
   // doesn't read "0 institutions connected" as if nothing were linked.
@@ -1304,6 +1738,7 @@ export default function Dashboard({
             <p className="sub">{subtitle}</p>
           </div>
           <div className="top-actions">
+            <HideAmountsToggle />
             {connected && !loading && (
               <button
                 className="secondary icon-btn"
@@ -1348,9 +1783,8 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <button onClick={startConnect} disabled={connecting}>
-                {connecting ? 'Starting…' : 'Connect an account'}
-              </button>
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+              <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
@@ -1371,7 +1805,10 @@ export default function Dashboard({
                 update it whenever you like; it counts toward net worth and builds its own history.
               </p>
               {error && <div className="error">{error}</div>}
+              {lifecycleRepair}
             </div>
+            {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
+            <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
             {clerk && <SharedWithMe refreshKey={asOf} />}
           </>
@@ -1382,12 +1819,13 @@ export default function Dashboard({
                 <div className="card">
                   <div className="total-label">Net Worth</div>
                   <div className={`total-value${netWorth < 0 ? ' negative' : ''}`}>
-                    {fmt(netWorth, accountCurrency)}
+                    <Masked>{fmt(netWorth, accountCurrency)}</Masked>
                   </div>
                   {heroDelta && (
                     <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
-                      {heroDelta.value >= 0 ? '▲' : '▼'} {fmt(Math.abs(heroDelta.value), accountCurrency)} (
+                      {heroDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(heroDelta.value), accountCurrency)}</Masked> (
                       {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
+                      {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
                     </div>
                   )}
                   {mixedAccountCurrency && (
@@ -1401,35 +1839,11 @@ export default function Dashboard({
                       {refreshing ? ' · refreshing…' : ''}
                     </div>
                   )}
-                  {staleInstitutions.length > 0 && (
-                    <div className="as-of stale">
-                      {staleInstitutions.length === 1
-                        ? `${staleInstitutions[0].institution_name} ${
-                            staleInstitutions[0].needs_reauth ? 'needs reconnecting' : "couldn't refresh"
-                          }; its balances are from ${fmtStaleDay(staleInstitutions[0].stale_as_of!, staleInstitutions[0].stale_as_of_at)}`
-                        : `${staleInstitutions.length} institutions couldn't refresh; showing their last known balances`}
+                  {missingNotes.map((note) => (
+                    <div className="as-of stale" key={note}>
+                      {note}
                     </div>
-                  )}
-                  {incompleteCount > 0 && (
-                    <div className="as-of stale">
-                      {incompleteCount} account{incompleteCount === 1 ? '' : 's'} couldn&apos;t be
-                      shown, so this total is incomplete
-                    </div>
-                  )}
-                  {vanishedCount > 0 && (
-                    <div className="as-of stale">
-                      {vanishedCount} account{vanishedCount === 1 ? '' : 's'} stopped reporting, so
-                      this total is short by {vanishedCount === 1 ? 'it' : 'them'} · history is
-                      paused until that settles
-                    </div>
-                  )}
-                  {uncountedInstitutions.length > 0 && (
-                    <div className="as-of stale">
-                      {uncountedInstitutions.length === 1
-                        ? `${uncountedInstitutions[0].institution_name} couldn't be reached and isn't counted in this total`
-                        : `${uncountedInstitutions.length} institutions couldn't be reached and aren't counted in this total`}
-                    </div>
-                  )}
+                  ))}
                 </div>
 
                 <div className="card">
@@ -1437,7 +1851,10 @@ export default function Dashboard({
                     <div className="inst-name">Over time</div>
                   </div>
                   {history.length >= 2 ? (
-                    <NetWorthChart points={history} />
+                    <>
+                      <NetWorthChart points={history} notes={chartNotes} />
+                      {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
+                    </>
                   ) : (
                     <p className="empty-note">
                       History builds as you use the app — check back tomorrow for your first
@@ -1460,32 +1877,62 @@ export default function Dashboard({
                   )}
                 </div>
 
+                {/* What the chart marks (#50): the person's own notes, and
+                    the ones Nya writes when an account ends. */}
+                <TimelineNotesCard notes={timeline.notes} problem={timeline.problem} onChanged={timeline.reload} />
+
                 <Insights
                   txns={txns}
                   budgets={budgets}
+                  taxonomy={categories.taxonomy}
+                  budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}
                   idleCash={idleCashAccounts}
+                  reconnectSoon={reconnectSoon}
+                  withoutTransactions={txnWithout}
+                  series={recurring ?? undefined}
+                  dismissed={plannedState.status === 'ready' ? plannedState.value.dismissed : undefined}
+                  incomplete={txnIncomplete}
+                  stopped={stoppedTxns}
                   accounts={institutions.flatMap((i) =>
                     i.accounts
                       .filter((a) => !a.hidden)
                       .map((a) => ({
                         name: a.name,
                         type: a.type,
+                        subtype: a.subtype,
                         balance: a.balance,
                         currency: a.currency,
                         liability: a.liability,
                       }))
                   )}
                 />
+
+                {/* The Plan's FI number, years to FI and savings rate, from
+                    the same inputs and plan as the Plan tab. Below the
+                    insights: it appears only once its inputs are in, so
+                    nothing above it moves when it does. */}
+                <FiProgressLoader
+                  txns={txns}
+                  txnsLoading={txnsLoading}
+                  txnNotes={txnUnread}
+                  txnWithout={txnWithout}
+                  institutions={planInstitutions}
+                  currency={accountCurrency}
+                  onOpenPlan={() => {
+                    window.scrollTo(0, 0);
+                    setTab('plan');
+                  }}
+                />
                 {error && <div className="error">{error}</div>}
+                {lifecycleRepair}
               </>
             )}
 
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <button onClick={startConnect} disabled={connecting}>
-                    {connecting ? 'Starting…' : 'Connect an account'}
-                  </button>
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+                  <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
@@ -1499,13 +1946,63 @@ export default function Dashboard({
                         Sharing
                       </button>
                     )}
+                    {/* Whenever there is a card or loan on screen to plan. */}
+                    {allAccounts.some((a) => isOwedType(a.type)) && (
+                      <button className="secondary" onClick={() => setPayoffOpen(true)}>
+                        <ActionIcon d="M22 17 13.5 8.5l-5 5L2 7M16 17h6v-6" />
+                        Payoff plan
+                      </button>
+                    )}
                     <button className="secondary" onClick={() => setManageMode((m) => !m)} aria-pressed={manageMode}>
                       <ActionIcon d={manageMode ? 'M20 6 9 17l-5-5' : 'M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z'} />
                       {manageMode ? 'Done' : 'Manage'}
                     </button>
                   </div>
                   {error && <div className="error">{error}</div>}
+                  {lifecycleRepair}
+                  {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
                 </div>
+
+                {/* Every linked institution's health, last good sync and the
+                    action for it, in one place. Open whenever one needs
+                    attention, and from a notice email's link. */}
+                <ConnectionHealth
+                  institutions={institutions}
+                  unavailable={healthUnavailable}
+                  connecting={connecting}
+                  focus={healthFocus}
+                  onFocused={clearHealthFocus}
+                  onReconnect={startReconnect}
+                  onManageAccounts={startManageAccounts}
+                  onRemove={(item_id) => {
+                    const target = institutions.find((i) => i.item_id === item_id);
+                    if (!target) return;
+                    setDisconnectInput('');
+                    setEndedOffer(null);
+                    setDisconnectTarget(target);
+                  }}
+                  questions={(h) => {
+                    // The same questions as on the institution's card (#50).
+                    const inst = institutions.find((i) => i.item_id === h.item_id);
+                    return inst ? (
+                      <AccountQuestions
+                        accounts={[...inst.accounts, ...(inst.ended_reported ?? [])]}
+                        institution={inst.institution_name}
+                        busy={lifecycle.busy}
+                        onOpen={lifecycle.open}
+                        onStillOpen={lifecycle.stillOpen}
+                        onConfirmEnd={lifecycle.confirmEnd}
+                        onReopen={lifecycle.reopen}
+                      />
+                    ) : null;
+                  }}
+                  onConnector={setConnectorAsk}
+                />
+
+                {/* Each SimpleFIN connection: when it last answered, what it
+                    reported in its own words, Refresh, Choose accounts and
+                    Disconnect. Nothing when there is none. */}
+                <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
 
                 {/* Behind Manage accounts, like the other account upkeep, so
                     it doesn't take space in the everyday view; mounting only
@@ -1533,15 +2030,22 @@ export default function Dashboard({
                   );
                   const instMixed =
                     new Set(inst.accounts.map((a) => a.currency).filter(Boolean)).size > 1;
+                  // Every row, hidden ones too, for the questions about them
+                  // (#50), and whether each one held was answered Still open.
+                  const allRows = institutions.find((i) => i.item_id === inst.item_id)?.accounts ?? inst.accounts;
+                  const heldRows = allRows.filter((a) => a.held);
+                  const heldStillOpen = heldRows.length > 0 && heldRows.every((a) => a.question?.still_open);
                   return (
                     <div className="card" key={inst.item_id}>
                       <div className="inst-header">
                         <div className="inst-name">
                           {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">Manual</span>}
+                          {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
-                          <div className="inst-total">{fmt(instTotal, instCurrency)}</div>
+                          <div className="inst-total">
+                            <Masked>{fmt(instTotal, instCurrency)}</Masked>
+                          </div>
                           {/* Manual groupings aren't Plaid Items, so there's
                               nothing to disconnect; they're removed per account. */}
                           {manageMode && !inst.manual && (
@@ -1549,6 +2053,7 @@ export default function Dashboard({
                               className="disconnect-btn"
                               onClick={() => {
                                 setDisconnectInput('');
+                                setEndedOffer(null);
                                 setDisconnectTarget(inst);
                               }}
                               aria-label={`Disconnect ${inst.institution_name}`}
@@ -1598,7 +2103,18 @@ export default function Dashboard({
                                         typed one has to say when it was set. */}
                                     {inst.manual && a.updated_at && (
                                       <div className="manual-updated">
-                                        Updated {fmtAsOf(a.updated_at)}
+                                        {/* SimpleFIN's balance is as of the day the bank gave it. */}
+                                        {inst.connector ? `Balance as of ${fmtInstantDay(a.updated_at)}` : `Updated ${fmtAsOf(a.updated_at)}`}
+                                      </div>
+                                    )}
+                                    {/* Missing from its bank's answer, held
+                                        until the question below is answered
+                                        (#50): said, not passed off as now. */}
+                                    {a.held && (
+                                      <div className="manual-updated">
+                                        {a.held.as_of
+                                          ? `Last known balance, from ${fmtDay(a.held.as_of)}`
+                                          : 'No recent balance, so not counted'}
                                       </div>
                                     )}
                                     {util != null && (
@@ -1610,7 +2126,7 @@ export default function Dashboard({
                                           />
                                         </div>
                                         <span className="util-label">
-                                          {Math.round(util * 100)}% of {fmt(a.limit, a.currency)} limit
+                                          {Math.round(util * 100)}% of <Masked>{fmt(a.limit, a.currency)}</Masked> limit
                                         </span>
                                       </div>
                                     )}
@@ -1634,7 +2150,7 @@ export default function Dashboard({
                                         {cash.flagged && (
                                           <span className="cash-dot" aria-hidden="true" />
                                         )}
-                                        {fmt(cash.cash, a.currency)}
+                                        <Masked>{fmt(cash.cash, a.currency)}</Masked>
                                         {cash.flagged ? ' uninvested' : ' in cash'}
                                         {/* "of holdings", not "of this
                                             account": the denominator is the
@@ -1651,15 +2167,15 @@ export default function Dashboard({
                                     )}
                                   </td>
                                   <td className="num">
-                                    {fmt(signedBalance(a), a.currency)}
-                                    {(inst.manual || manageMode) && (
+                                    <Masked>{a.held && a.balance == null ? '--' : fmt(signedBalance(a), a.currency)}</Masked>
+                                    {((inst.manual && !inst.connector) || manageMode) && (
                                       // stopPropagation so tapping an action
                                       // doesn't also toggle the history chart.
                                       <div
                                         className="manual-row-actions"
                                         onClick={(e) => e.stopPropagation()}
                                       >
-                                        {inst.manual && (
+                                        {inst.manual && !inst.connector && (
                                           <button
                                             className="link-btn"
                                             disabled={savingManual || togglingHidden !== null}
@@ -1677,10 +2193,23 @@ export default function Dashboard({
                                             Update
                                           </button>
                                         )}
+                                        {inst.manual && !inst.connector && (
+                                          <button className="link-btn" onClick={() => txnEdits.openAdd(a.account_id)}>
+                                            Add transaction
+                                          </button>
+                                        )}
+                                        {inst.manual && !inst.connector && !a.hidden && (
+                                          <button className="link-btn" onClick={() => setImportTarget({ account_id: a.account_id })}>
+                                            Import
+                                          </button>
+                                        )}
                                         {/* Hiding works on any account, linked
                                             or manual: it only stops the account
-                                            counting, it doesn't remove it. */}
-                                        {manageMode && (
+                                            counting, it doesn't remove it. Not
+                                            on a row held for an answer: its
+                                            bank isn't returning it, so there is
+                                            nothing to hide yet (#50). */}
+                                        {manageMode && !a.held && (
                                           <button
                                             className="link-btn"
                                             disabled={togglingHidden !== null}
@@ -1689,7 +2218,34 @@ export default function Dashboard({
                                             {togglingHidden === a.account_id ? 'Hiding…' : 'Hide'}
                                           </button>
                                         )}
-                                        {inst.manual && manageMode && (
+                                        {/* Closed, no longer theirs, or not
+                                            tracked from a day (#50): unlike
+                                            Hide, every day before it counts. */}
+                                        {manageMode && (
+                                          <button
+                                            className="link-btn"
+                                            disabled={lifecycle.busy}
+                                            aria-label={`${a.name}: closed, no longer yours, or stop following`}
+                                            onClick={() =>
+                                              lifecycle.open({
+                                                account_id: a.account_id,
+                                                name: a.name,
+                                                mask: a.mask,
+                                                institution: inst.institution_name,
+                                                ...(a.question ? { day: a.question.end } : {}),
+                                                // What it shows, so the sheet
+                                                // can say what ending it does.
+                                                balance: a.balance,
+                                                type: a.type,
+                                                currency: a.currency,
+                                                lastKnown: !!a.held,
+                                              })
+                                            }
+                                          >
+                                            Close…
+                                          </button>
+                                        )}
+                                        {inst.manual && !inst.connector && manageMode && (
                                           <button
                                             className="link-btn danger-link"
                                             disabled={savingManual || togglingHidden !== null}
@@ -1726,6 +2282,12 @@ export default function Dashboard({
                                             : undefined
                                         }
                                       />
+                                      {/* Since when its positions have been
+                                          kept (lib/holdings-history.ts). A
+                                          manual account has none to keep. */}
+                                      {isInvestmentType(a.type) && !inst.manual && (
+                                        <HoldingsRecorded accountId={a.account_id} />
+                                      )}
                                       <LiabilityDetail liability={a.liability} currency={a.currency} />
                                       {/* Not for manual accounts: they're typed
                                           by hand, and their synthetic
@@ -1738,6 +2300,24 @@ export default function Dashboard({
                                           accountId={a.account_id}
                                           itemId={inst.item_id}
                                         />
+                                      )}
+                                      {/* Years of a linked account's history
+                                          from its bank's own files (#52). */}
+                                      {!inst.manual && (
+                                        <button
+                                          className="link-btn history-import-link"
+                                          onClick={() =>
+                                            setHistoryTarget({
+                                              account_id: a.account_id,
+                                              name: a.name,
+                                              institution_name: inst.institution_name,
+                                              type: a.type,
+                                              currency: a.currency ?? null,
+                                            })
+                                          }
+                                        >
+                                          Import history from a file
+                                        </button>
                                       )}
                                     </td>
                                   </tr>
@@ -1768,14 +2348,11 @@ export default function Dashboard({
                                   Cash label in the list below. */}
                               {instCash.cash > 0 && (
                                 <span className={`cash-chip${instCash.flagged ? ' idle' : ''}`}>
-                                  {fmt(instCash.cash, instCurrency)}{' '}
+                                  <Masked>{fmt(instCash.cash, instCurrency)}</Masked>{' '}
                                   {instCash.flagged ? 'uninvested' : 'cash'}
                                 </span>
                               )}
-                              {fmt(
-                                inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0),
-                                instCurrency
-                              )}
+                              <Masked>{fmt(inst.holdings.reduce((sum, h) => sum + (h.value ?? 0), 0), instCurrency)}</Masked>
                               <svg
                                 className={`chevron${expandedHoldings.has(inst.item_id) ? ' open' : ''}`}
                                 viewBox="0 0 24 24"
@@ -1822,9 +2399,9 @@ export default function Dashboard({
                                       </span>
                                     )}
                                   </td>
-                                  <td className="num">{h.quantity?.toFixed(3) ?? '--'}</td>
+                                  <td className="num">{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</td>
                                   <td className="num">
-                                    {fmt(h.value)}
+                                    <Masked>{fmt(h.value)}</Masked>
                                     {/* No gain/loss on a cash line: a money
                                         market fund holds its $1 NAV, so the
                                         figure is a permanent "+$0.00 · 0.0%"
@@ -1834,7 +2411,7 @@ export default function Dashboard({
                                       <div
                                         className={`gain${h.value - h.cost_basis >= 0 ? ' inflow' : ' loss'}`}
                                       >
-                                        {fmtGain(h.value, h.cost_basis)}
+                                        <Masked>{fmtGain(h.value, h.cost_basis)}</Masked>
                                       </div>
                                     )}
                                   </td>
@@ -1846,6 +2423,10 @@ export default function Dashboard({
                           )}
                         </>
                       )}
+
+                      {/* Plaid's week of notice that this connection will end:
+                          the badge, the date and Reconnect, while it still works. */}
+                      <ReconnectSoonNote inst={inst} connecting={connecting} onReconnect={startReconnect} />
 
                       {/* Recovering the balances adds a date to the error; it
                           does not replace the error. The distinction matters:
@@ -1900,12 +2481,28 @@ export default function Dashboard({
                           {inst.unconfirmed_missing} account
                           {inst.unconfirmed_missing === 1 ? '' : 's'} this institution used to
                           report {inst.unconfirmed_missing === 1 ? "isn't" : "aren't"} in its latest
-                          response · this subtotal is short by{' '}
-                          {inst.unconfirmed_missing === 1 ? 'it' : 'them'}, and history is paused
-                          until the {inst.unconfirmed_missing === 1 ? 'account' : 'accounts'} either
-                          come back or stay gone
+                          response · {inst.unconfirmed_missing === 1 ? 'it is' : 'they are'} held at{' '}
+                          {inst.unconfirmed_missing === 1 ? 'its' : 'their'} last known balance
+                          {/* Answered Still open: held for the account, two weeks at most. */}
+                          {heldStillOpen
+                            ? ` until ${inst.unconfirmed_missing === 1 ? 'it comes' : 'they come'} back, two weeks from your answer at most, and history is paused until then`
+                            : ` until you say whether ${inst.unconfirmed_missing === 1 ? 'it' : 'they'} closed, and history is paused until then`}
                         </div>
                       )}
+
+                      {/* The questions about its accounts (#50): missing
+                          from its answer, at zero for weeks, or ended and
+                          still reported. From every row, a hidden one's too:
+                          its absence holds every total all the same. */}
+                      <AccountQuestions
+                        accounts={[...allRows, ...(inst.ended_reported ?? [])]}
+                        institution={inst.institution_name}
+                        busy={lifecycle.busy}
+                        onOpen={lifecycle.open}
+                        onStillOpen={lifecycle.stillOpen}
+                        onConfirmEnd={lifecycle.confirmEnd}
+                        onReopen={lifecycle.reopen}
+                      />
 
                       {/* Tells someone who just tapped Enable why the button
                           vanished without any payment details appearing. */}
@@ -1921,16 +2518,33 @@ export default function Dashboard({
                         </p>
                       )}
 
+                      {unallowedIds.has(inst.item_id) && (
+                        <p className="empty-note">
+                          You didn&apos;t allow Nya to see transactions from the bank or card accounts here.
+                        </p>
+                      )}
+
                       {/* One container, independent actions. Enable must NOT
                           sit inside a needs_reauth gate: a healthy institution
                           is exactly the case it exists for. */}
                       {(inst.needs_reauth ||
                         canEnableLiabilities(inst) ||
+                        unallowedIds.has(inst.item_id) ||
                         (!inst.manual && (manageMode || inst.new_accounts_available))) && (
                         <div className="card-actions">
                           {inst.needs_reauth && (
-                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting}>
+                            <button onClick={() => startReconnect(inst.item_id)} disabled={connecting} aria-label={`Reconnect ${inst.institution_name}`}>
                               Reconnect
+                            </button>
+                          )}
+                          {unallowedIds.has(inst.item_id) && (
+                            <button
+                              className="secondary"
+                              onClick={() => startAllowTransactions(inst.item_id)}
+                              disabled={connecting}
+                              aria-label={`Allow transactions from ${inst.institution_name}`}
+                            >
+                              Allow transactions
                             </button>
                           )}
                           {canEnableLiabilities(inst) && (
@@ -1991,7 +2605,10 @@ export default function Dashboard({
                       <>
                         <p className="empty-note">
                           These accounts still sync, but are left out of net worth, transactions,
-                          budgets and insights. Unhiding restores their history in full.
+                          budgets and insights, on every day, past ones too. Unhiding restores their
+                          history in full. To stop counting one only from a day on, unhide it, then use
+                          Close… on it (under Manage) and choose Stop following: every day before then
+                          still counts.
                         </p>
                         <table>
                           <tbody>
@@ -2028,6 +2645,85 @@ export default function Dashboard({
                   </div>
                 )}
 
+                {/* Accounts that ended (#50), from the
+                    stored set, with when each ended, to change or reopen. */}
+                <EndedAccounts
+                  ended={ended}
+                  hidden={hiddenIds}
+                  busy={lifecycle.busy}
+                  onOpen={lifecycle.open}
+                  onReopen={lifecycle.reopen}
+                  onStillOpen={lifecycle.stillOpen}
+                  onImportHistory={(e) =>
+                    setHistoryTarget({
+                      account_id: e.account_id,
+                      name: e.label.name || 'Account',
+                      institution_name: e.label.institution,
+                      type: e.type ?? 'other',
+                      currency: null,
+                    })
+                  }
+                  importable={new Set(institutions.filter((i) => !i.manual).map((i) => i.item_id))}
+                />
+
+                {/* Download my data, with the rest of the account upkeep
+                    behind Manage accounts; after the accounts, so it doesn't
+                    push them down. It asks for a fresh sign-in itself. The
+                    accounts are what an OFX statement can be of: the live
+                    ones, and those that ended, which the live list no longer
+                    holds, labelled with their end. */}
+                {manageMode && (
+                  <DownloadMyData
+                    clerk={clerk}
+                    accounts={downloadAccounts(
+                      institutions.flatMap((i) =>
+                        i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, institution_name: i.institution_name, type: a.type, mask: a.mask }))
+                      ),
+                      ended
+                    )}
+                  />
+                )}
+
+                {/* Reports for an accountant (app/reports), beside the other
+                    ways to take your data out. */}
+                {manageMode && <ReportsEntry />}
+
+                {/* API tokens for the read-only API and the MCP server, with
+                    the rest of the account upkeep (components/ApiTokens.tsx). */}
+                {manageMode && <ApiTokens clerk={clerk} />}
+
+                {/* The weekly summary email, off until turned on, with what
+                    this week's would say (components/WeeklySummaryCard.tsx). */}
+                {manageMode && <WeeklySummaryCard clerk={clerk} />}
+
+                {/* Your categories and their groups (components/CategoriesCard.tsx):
+                    a change shows on the next read of the transactions and budgets. */}
+                {manageMode && (
+                  <CategoriesCard
+                    categories={categories}
+                    onChanged={() => {
+                      loadTransactions();
+                      budgetsStore.load();
+                    }}
+                  />
+                )}
+
+                {/* Your tags (components/TagsCard.tsx): applied after the
+                    server's cache, so a change shows on the next read. */}
+                {manageMode && <TagsCard tags={tagList.tags} ruleUses={ruleUses} onChanged={acceptTags} />}
+
+                {/* Your rules (components/RulesCard.tsx): applied on every
+                    read, so a change shows when the transactions are read again. */}
+                {manageMode && (
+                  <RulesCard rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
+                )}
+
+                {/* Merchants' default categories, beside the rules
+                    (components/VendorDefaultsCard.tsx), and the review queue
+                    (components/ReviewSettingsCard.tsx): both applied on read. */}
+                {manageMode && <VendorDefaultsCard taxonomy={categories.taxonomy} onChanged={() => loadTransactions()} />}
+                {manageMode && <ReviewSettingsCard review={review} toReview={countToReview(txns ?? [])} />}
+
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
@@ -2040,15 +2736,51 @@ export default function Dashboard({
                 txns={txns}
                 notes={txnNotes}
                 loading={txnsLoading}
-                onRecategorize={recategorize}
+                taxonomy={categories.taxonomy}
+                onRecategorize={txnEdits.recategorize}
                 onRename={renameVendor}
+                // Only with a manual account to add to (hidden ones aren't offered).
+                onAddTransaction={
+                  institutions.some((i) => i.manual && !i.connector && i.accounts.some((a) => !a.hidden)) ? () => txnEdits.openAdd() : undefined
+                }
+                onImport={() => setImportTarget({ account_id: null })}
+                onEditTransaction={txnEdits.openEdit}
+                onToggleExcluded={txnEdits.toggleExcluded}
+                tags={tagList.tags}
+                onChangeTags={txnEdits.changeTags}
+                onSaveNote={txnEdits.saveNote}
+                // Prefilled from the row as rules read it: the name it had
+                // before any rule named it, which a new rule's condition
+                // matches (a rule never reads another's changes).
+                onCreateRule={(t, category_id) =>
+                  rules.open(
+                    newDraft({
+                      conditions: [{ field: 'name', op: 'equals', value: nameForRules(t), value2: '', direction: '' }],
+                      set_category: category_id ?? t.category_id ?? '',
+                    })
+                  )
+                }
+                ruleSentenceOf={ruleSentenceOf}
+                // Splits and groups (#39): applied after the server's cache,
+                // so the list is read again quietly after a change.
+                onSplitsChanged={txnEdits.refresh}
+                review={review}
+                actionError={txnEdits.error}
+                incomplete={txnIncomplete}
+                stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
               />
             )}
+
+            {/* Reports for an accountant (app/reports), under the transactions. */}
+            {tab === 'activity' && <ReportsEntry />}
 
             {tab === 'budgets' && (
               <BudgetsTab
                 txns={txns}
                 budgets={budgets}
+                taxonomy={categories.taxonomy}
+                categoriesError={categories.error}
                 budgetsStatus={budgetsState.status}
                 budgetsError={budgetsState.error}
                 budgetsSaveError={budgetsState.saveError}
@@ -2058,30 +2790,72 @@ export default function Dashboard({
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
                 onSaveGoals={goalsStore.save}
-                // Hidden accounts stay in this list: GoalsCard needs them to tell
-                // "you hid this account" from "this account was disconnected". It
-                // excludes them from the picker itself.
-                accounts={institutions.flatMap((i) =>
-                  i.accounts.map((a) => ({
-                    account_id: a.account_id,
-                    name: a.name,
-                    institution: i.institution_name,
-                    balance: a.balance,
-                    currency: a.currency,
-                    hidden: a.hidden,
-                  }))
+                // Hidden accounts stay in this list, and those that ended join
+                // it with their end (#50): GoalsCard needs them to tell "you hid
+                // this account" or "it closed" from "this account was
+                // disconnected". It excludes them from the picker itself.
+                accounts={withAccountEnds(
+                  institutions.flatMap((i) =>
+                    i.accounts.map((a) => ({
+                      account_id: a.account_id,
+                      name: a.name,
+                      institution: i.institution_name,
+                      balance: a.balance,
+                      currency: a.currency,
+                      hidden: a.hidden,
+                      type: a.type,
+                    }))
+                  ),
+                  ended
                 )}
                 loading={txnsLoading}
+                incomplete={txnIncomplete}
+                stopped={stoppedTxns}
+                withoutTransactions={txnWithout}
+                // The forecast, the calendar and the recurring list.
+                series={recurring}
+                txnsFailed={txnsFailed && txns === null}
+                institutions={institutions}
+                balancesAsOf={asOf}
+                balancesSaved={balancesSaved}
+                planned={plannedState.value}
+                plannedStatus={plannedState.status}
+                plannedError={plannedState.error}
+                plannedSaveError={plannedState.saveError}
+                onSavePlanned={plannedItemsStore.save}
+                budgetMonth={budgetMonth}
+                onCategories={(t) => {
+                  categories.accept(t);
+                  loadTransactions();
+                  budgetsStore.load();
+                }}
+              />
+            )}
+
+            {tab === 'plan' && (
+              <PlanTabLoader
+                txns={txns}
+                txnsLoading={txnsLoading}
+                txnNotes={txnUnread}
+                txnWithout={txnWithout}
+                institutions={planInstitutions}
+                holdings={planHoldings}
+                balancesAsOf={asOf}
+                currency={accountCurrency}
               />
             )}
           </>
         )}
+        {/* At the foot of every tab: how the data is protected, and who can read it. */}
+        <TrustLinks />
       </main>
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
+      {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
+      <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
-          {(['home', 'accounts', 'activity', 'budgets'] as const).map((t) => (
+          {(['home', 'accounts', 'activity', 'budgets', 'plan'] as const).map((t) => (
             <button
               key={t}
               className={tab === t ? 'active' : ''}
@@ -2138,8 +2912,16 @@ export default function Dashboard({
               <label className="field">
                 Type
                 <select
-                  value={shownManualDraft.type}
-                  onChange={(e) => setManualDraft({ ...shownManualDraft, type: e.target.value })}
+                  value={isCashOnHand(shownManualDraft) ? 'cash' : shownManualDraft.type}
+                  onChange={(e) => {
+                    const cash = e.target.value === 'cash';
+                    setManualDraft({
+                      ...shownManualDraft,
+                      type: cash ? 'depository' : e.target.value,
+                      // Cash only when chosen; another subtype is kept as it was.
+                      subtype: cash ? CASH_SUBTYPE : shownManualDraft.subtype === CASH_SUBTYPE ? null : shownManualDraft.subtype,
+                    });
+                  }}
                   disabled={savingManual}
                 >
                   {MANUAL_TYPE_LABELS.map((t) => (
@@ -2210,8 +2992,8 @@ export default function Dashboard({
         {shownDeleteTarget && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
-              This account&apos;s balance history is <strong>not recoverable</strong>. Re-adding it
-              creates a new account with an empty history.
+              This account&apos;s balance history, and any transactions entered on it, are{' '}
+              <strong>not recoverable</strong>. Re-adding it creates a new account with an empty history.
             </p>
             {manualError && <div className="error">{manualError}</div>}
             <div className="button-pair" style={{ marginTop: 16 }}>
@@ -2230,59 +3012,104 @@ export default function Dashboard({
         )}
       </Sheet>
 
+      <ManualTxnSheet
+        target={txnEdits.sheet}
+        institutions={institutions}
+        txns={txns}
+        taxonomy={categories.taxonomy}
+        onClose={txnEdits.closeSheet}
+        onSaved={txnEdits.onSaved}
+        onBalanceStale={() => loadNetWorth(true)}
+      />
+
+      <ImportSheet target={importTarget} institutions={institutions} onClose={() => setImportTarget(null)} onImported={onImported} />
+      <HistoryImportSheet
+        target={historyTarget}
+        onClose={() => setHistoryTarget(null)}
+        onImported={() => {
+          loadTransactions();
+          // The backfill draws it, running again first when rows after its
+          // earliest point changed (lib/history-import/extend.ts).
+          requestBackfill(() => loadNetWorth());
+          void loadNetWorth();
+        }}
+      />
+      <ConnectorSheet ask={connectorAsk} onClose={() => setConnectorAsk(null)} onChanged={connectorChanged} />
+
+      {/* The rule drawer (#36), from the Rules screen or a transaction. */}
+      <RuleSheet rules={rules} taxonomy={categories.taxonomy} tags={tagList.tags} accounts={ruleAccounts} onChanged={() => loadTransactions()} />
+
       <Sheet
         open={!!redirect}
         title={shownRedirect ? `${shownRedirect.name} is already connected` : 'Already connected'}
         onClose={() => setRedirect(null)}
       >
         {shownRedirect && (
-          <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              To add more {shownRedirect.name} accounts, add them to the connection you already have.
-              Connecting it again would create a duplicate connection with the same accounts. If it&apos;s a
-              different login (a joint or business login, say), connect it separately.
-            </p>
-            <div className="button-stack" style={{ marginTop: 16 }}>
-              {shownRedirect.items.map((inst) => (
-                <button
-                  key={inst.item_id}
-                  disabled={connecting}
-                  onClick={() => {
-                    setRedirect(null);
-                    startManageAccounts(inst.item_id);
-                  }}
-                >
-                  {shownRedirect.items.length > 1
-                    ? `Add to ${inst.institution_name} (${inst.accounts.length} account${inst.accounts.length === 1 ? '' : 's'})`
-                    : 'Add accounts to existing connection'}
-                </button>
-              ))}
-              <button
-                className="secondary"
-                disabled={connecting}
-                onClick={() => {
-                  setRedirect(null);
-                  beginConnect(true);
-                }}
-              >
-                It&apos;s a different login
-              </button>
-            </div>
-          </>
+          <RedirectChoices
+            name={shownRedirect.name}
+            items={shownRedirect.items}
+            kind={shownRedirect.kind}
+            connecting={connecting}
+            onAdd={(item_id) => {
+              setRedirect(null);
+              startManageAccounts(item_id);
+            }}
+            onConnectAgain={() => {
+              setRedirect(null);
+              beginConnect(shownRedirect.kind, true);
+            }}
+          />
         )}
       </Sheet>
 
+      {lifecycle.sheet}
+
       <Sheet
         open={!!disconnectTarget}
-        title={shownDisconnectTarget ? `Disconnect ${shownDisconnectTarget.institution_name}?` : 'Disconnect'}
+        title={
+          shownDisconnectTarget
+            ? endedOffer === shownDisconnectTarget.item_id
+              ? 'Remove this connection?'
+              : `Disconnect ${shownDisconnectTarget.institution_name}?`
+            : 'Disconnect'
+        }
         onClose={() => !disconnecting && setDisconnectTarget(null)}
       >
         {shownDisconnectTarget && (
           <>
-            <p className="panel-note" style={{ marginTop: 0 }}>
-              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya. You can
-              reconnect it later. Type <strong>{shownDisconnectTarget.institution_name}</strong> below to
-              confirm.
+            {/* Every account of it ended (#50): the connection still syncs
+                nothing of use, and Plaid bills it until it is removed. */}
+            {endedOffer === shownDisconnectTarget.item_id && (
+              <p className="panel-note" style={{ marginTop: 0 }}>
+                Every account at {shownDisconnectTarget.institution_name} has ended, but the connection is still
+                open, and Plaid charges for it until it is removed. Their history, and when each ended, are kept.
+              </p>
+            )}
+            <p className="panel-note" style={endedOffer === shownDisconnectTarget.item_id ? undefined : { marginTop: 0 }}>
+              This removes {shownDisconnectTarget.institution_name} and its accounts from Nya, and ends the
+              connection at Plaid. You can reconnect it later. Type{' '}
+              <strong>{shownDisconnectTarget.institution_name}</strong> below to confirm.
+            </p>
+            {/* What adding it back doesn't bring back (#39). */}
+            <DisconnectSplitsNote itemId={shownDisconnectTarget.item_id} />
+            {/* Disconnecting is about the connection; closing is about an
+                account (#50). Only the person knows which happened. */}
+            {endedOffer !== shownDisconnectTarget.item_id && (
+              <p className="panel-note">
+                Disconnecting doesn&apos;t say an account closed. If one did, mark it instead (Manage, then Close… on
+                the account): it then stops counting from that day, and the chart marks it.
+              </p>
+            )}
+            {/* What Plaid itself keeps is beyond a disconnect's reach (the
+                deletion receipt says the same, lib/deletion-receipt.ts): say
+                where people can see and delete it. */}
+            <p className="panel-note">
+              Plaid keeps its own records of what it collected, under its own privacy policy. See and delete
+              them at the{' '}
+              <a href={PLAID_PORTAL} target="_blank" rel="noreferrer">
+                Plaid Portal
+              </a>
+              .
             </p>
             <label className="field" style={{ marginTop: 12 }}>
               Institution name

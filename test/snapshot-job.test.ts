@@ -1,5 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, unscopedDataKeys } from './fake-redis';
+import { startRedis, type RealRedis } from './real-redis';
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
@@ -38,6 +39,34 @@ beforeEach(() => {
 afterEach(() => {
   process.env = { ...saved };
   console.error = errors;
+});
+
+describe('the records of showings, pruned in each container’s run', () => {
+  test('first, before the snapshot, never failing it, and with the emails still sent after every container', async () => {
+    const { accessLogStore, slotOf } = await import('@/lib/access-log');
+    const { PRUNE_BUDGET_MS, START_BUDGET_MS, MAIL_DEADLINE_MS } = await import('@/lib/snapshot-job');
+    const registry = await register([[A, 'active'], [B, 'active']]);
+    // Records whose connections have ended (there are none), in both containers.
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
+    for (const container of [A, B]) await accessLogStore.set({ container }, 'e'.repeat(32), record);
+    // B's records can't even be reached: its run goes on as if they weren't there.
+    const hgetall = fake.hgetall.bind(fake);
+    (fake as any).hgetall = (key: string) => (key === kc({ container: B }, 'sharing-access-log') ? Promise.reject(new Error('down')) : hgetall(key));
+    try {
+      const report = await runSnapshots(registry, { scheduledFor: DATE });
+      expect(report.results.map((r) => [r.container, r.status])).toEqual([
+        [A, 'empty'],
+        [B, 'empty'],
+      ]);
+    } finally {
+      delete (fake as any).hgetall;
+    }
+    expect(await accessLogStore.get({ container: A }, 'e'.repeat(32))).toBeNull();
+    expect(await accessLogStore.get({ container: B }, 'e'.repeat(32))).toEqual(record);
+    // Its time comes off the start budget, so the last container ends when it would without it.
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS).toBe(180_000);
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + 101_000).toBeLessThan(MAIL_DEADLINE_MS);
+  });
 });
 
 describe('the fan-out', () => {
@@ -169,6 +198,60 @@ describe('the fan-out', () => {
       work: async () => ({ status: 'recorded' }),
     });
     expect(report.results.map((r) => r.status)).toEqual(['failed', 'recorded']);
+  });
+});
+
+// A day's positions can't be fetched later (lib/holdings-history.ts), so a
+// day recorded while its holdings write failed is the catch-up's to finish.
+describe('a day recorded with positions that could not be written', () => {
+  const failedOnce = async () => {
+    const registry = await register([[A, 'active']]);
+    await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 2 }) });
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+    return registry;
+  };
+
+  test('is run again by the catch-up, and a clean run clears the count', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(1);
+    expect(report.results).toEqual([{ container: A, status: 'recorded', ms: expect.any(Number) }]);
+    const run = await readRun({ container: A }, DATE);
+    expect(run).toMatchObject({ status: 'recorded', attempts: 1 });
+    expect(run).not.toHaveProperty('holdings_failed');
+    // Done: not run a third time.
+    const third = await runSnapshots(registry, { scheduledFor: DATE, work: async () => (ran++, { status: 'recorded' }) });
+    expect([ran, third.results[0].status]).toEqual([1, 'already']);
+  });
+
+  test('a run again that still fails some is counted again', async () => {
+    const registry = await failedOnce();
+    const report = await runSnapshots(registry, { scheduledFor: DATE, work: async () => ({ status: 'recorded', holdings_failed: 1 }) });
+    expect(report.results).toEqual([{ container: A, status: 'recorded', holdings_failed: 1, ms: expect.any(Number) }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 1 });
+  });
+
+  test('a run again that comes back worse keeps the day as recorded, and says so', async () => {
+    for (const work of [async () => ({ status: 'unclean', reason: 'Not every account could be read.' }) as const, async () => Promise.reject(new Error('Plaid is down'))]) {
+      fake.reset();
+      const registry = await failedOnce();
+      const report = await runSnapshots(registry, { scheduledFor: DATE, work });
+      expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+      expect(report.failed).toBe(0);
+      expect(nothingSnapshotted(report)).toBe(false);
+      expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2, attempts: 1 });
+      expect(await fake.get(kc({ container: A }, 'snapshot:lock'))).toBeNull();
+    }
+  });
+
+  test('past the start budget it waits for the next run, and is reported as recorded', async () => {
+    const registry = await failedOnce();
+    let ran = 0;
+    const report = await runSnapshots(registry, { scheduledFor: DATE, budgetMs: -1, work: async () => (ran++, { status: 'recorded' }) });
+    expect(ran).toBe(0);
+    expect(report.results).toEqual([{ container: A, status: 'already', holdings_failed: 2 }]);
+    expect(await readRun({ container: A }, DATE)).toMatchObject({ status: 'recorded', holdings_failed: 2 });
   });
 });
 
@@ -342,24 +425,21 @@ describe('a run where nothing was snapshotted', () => {
 
 const hasRedis = Bun.which('redis-server') !== null;
 describe.skipIf(!hasRedis && !process.env.CI)('the lock release script, on a real Redis', () => {
-  const port = 30000 + Math.floor(Math.random() * 20000);
-  let server: ReturnType<typeof Bun.spawn> | null = null;
-  let client: InstanceType<typeof Bun.RedisClient>;
+  // Started by test/real-redis.ts, before the test rather than inside it: it
+  // tries another port when one is taken and bounds every wait, so a server
+  // that won't start fails here rather than hanging the test.
+  let real: RealRedis | null = null;
+  beforeEach(async () => {
+    real ??= await startRedis();
+    await real.client.send('FLUSHALL', []);
+  });
   afterAll(() => {
-    server?.kill();
+    real?.stop();
+    real = null;
   });
 
   test("deletes the lock only while it holds the caller's token", async () => {
-    server = Bun.spawn(['redis-server', '--port', String(port), '--save', '', '--appendonly', 'no'], { stdout: 'ignore', stderr: 'ignore' });
-    client = new Bun.RedisClient(`redis://127.0.0.1:${port}`);
-    for (let i = 0; i < 50; i++) {
-      try {
-        await client.send('PING', []);
-        break;
-      } catch {
-        await Bun.sleep(50);
-      }
-    }
+    const client = real!.client;
     const release = (token: string) => client.send('EVAL', [RELEASE_LOCK, '1', 'lock', token]);
     await client.send('SET', ['lock', 'mine']);
     expect(await release('theirs')).toBe(0);
@@ -479,5 +559,51 @@ describe('rate limits', () => {
     expect(isRateLimited({ response: { status: 400, data: { error_type: 'RATE_LIMIT_EXCEEDED' } } })).toBe(true);
     expect(isRateLimited({ code: 'ECONNABORTED' })).toBe(false);
     expect(isRateLimited(undefined)).toBe(false);
+  });
+});
+
+// A data key per container (docs/architecture.md, "Per-container data keys"):
+// each container's run opens its own key first, so one that can't be opened
+// fails that container alone, before anything reads leniently.
+describe('each container’s run, under its own key', () => {
+  test('a container whose key can’t be opened fails alone, saying so without the key; the others write under theirs', async () => {
+    const c = await import('@/lib/crypto');
+    const { accessLogStore, slotOf } = await import('@/lib/access-log');
+    process.env.MASTER_KEY = Buffer.alloc(32, 97).toString('base64');
+    c.forgetActiveKey();
+    const registry = await register([[A, 'active'], [B, 'active'], [C, 'active']]);
+    const keyOf: Record<string, string> = {};
+    for (const id of [A, B, C]) {
+      const p = (await c.prepareContainerKey(id, { born: true }))!;
+      await c.claimContainerKey(p);
+      keyOf[id] = p.id;
+    }
+    await fake.hdel(c.keysHashKey(), keyOf[C]);
+    c.forgetActiveKey();
+    const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
+    try {
+      const report = await runSnapshots(registry, {
+        scheduledFor: DATE,
+        work: async (ctx) => {
+          await accessLogStore.set(ctx, 'f'.repeat(32), record);
+          return { status: 'recorded' };
+        },
+      });
+      expect(report.results.map((r) => [r.container, r.status])).toEqual([
+        [A, 'recorded'],
+        [B, 'recorded'],
+        [C, 'failed'],
+      ]);
+      const failed = report.results.find((r) => r.container === C) as any;
+      expect(failed.reason).toBe('The container’s data key can’t be used just now.');
+      expect(JSON.stringify(report)).not.toContain(keyOf[C]);
+      for (const id of [A, B]) {
+        const stored = fake.hashes.get(kc({ container: id }, 'sharing-access-log'))!.get('f'.repeat(32))!;
+        expect(c.formatOf(stored).keyId).toBe(keyOf[id]);
+      }
+      expect(fake.hashes.get(kc({ container: C }, 'sharing-access-log'))).toBeUndefined();
+    } finally {
+      c.forgetActiveKey();
+    }
   });
 });

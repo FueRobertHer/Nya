@@ -18,10 +18,12 @@
 //   - Redis unreachable       -> the Redis error, also never "empty"
 
 import { redis } from './storage';
+import type { Ctx } from './containers';
 import {
   encrypt,
   decrypt,
   DecryptFailedError,
+  KeyNotForContainerError,
   MalformedCiphertextError,
   MasterKeyError,
   UnknownKeyError,
@@ -46,21 +48,26 @@ export class StoredDataUnreadableError extends Error {
 /** Errors that mean the stored value itself cannot be read. Anything else (a
  *  missing encryption key in the environment, a database error while loading
  *  a data key) is a problem with this deployment, not with the data, so it is
- *  left to surface as an ordinary server error. */
+ *  left to surface as an ordinary server error. A value under another
+ *  container's key is read as unreadable too (a 409, and nothing here offers to
+ *  remove anything); a container whose own key can't be used is a
+ *  ContainerKeyError, which is left to surface as the container being
+ *  unavailable. */
 function isUnreadable(err: unknown): boolean {
   return (
     err instanceof SyntaxError ||
     err instanceof MalformedCiphertextError ||
     err instanceof DecryptFailedError ||
+    err instanceof KeyNotForContainerError ||
     err instanceof UnknownKeyError ||
     err instanceof MasterKeyError
   );
 }
 
-async function parse<T>(blob: string, what: string, isValid: (v: unknown) => v is T): Promise<T> {
+async function parse<T>(ctx: Ctx, blob: string, what: string, isValid: (v: unknown) => v is T): Promise<T> {
   let value: unknown;
   try {
-    value = JSON.parse(await decrypt(blob));
+    value = JSON.parse(await decrypt(ctx, blob));
   } catch (err) {
     if (isUnreadable(err)) throw new StoredDataUnreadableError(what, err);
     throw err;
@@ -75,15 +82,26 @@ export function describeUnreadable(err: StoredDataUnreadableError): string {
   return c instanceof Error ? `${c.name}: ${c.message}` : String(c);
 }
 
-/** The stored value, or null when nothing has ever been saved. */
+/** The stored value, or null when nothing has ever been saved. `ctx` is the
+ *  container `key` is in. */
 export async function readEncryptedJson<T>(
+  ctx: Ctx,
   key: string,
   what: string,
   isValid: (v: unknown) => v is T
 ): Promise<T | null> {
   const blob = await redis().get<string>(key);
   if (blob === null || blob === undefined || blob === '') return null;
-  return parse(String(blob), what, isValid);
+  return parse(ctx, String(blob), what, isValid);
+}
+
+/** What is stored under the key, as the client hands it back, or null when
+ *  nothing has ever been saved (as readEncryptedJson reads it): for a reader
+ *  that opens it by the storage seam's rules and names what it can't use
+ *  instead of stopping (lib/repo.ts openStoredJson). */
+export async function readStoredValue(key: string): Promise<unknown> {
+  const blob = await redis().get<unknown>(key);
+  return blob === null || blob === undefined || blob === '' ? null : blob;
 }
 
 /**
@@ -92,11 +110,12 @@ export async function readEncryptedJson<T>(
  * empty list.
  */
 export async function writeEncryptedJson<T>(
+  ctx: Ctx,
   key: string,
   what: string,
   value: T,
   isValid: (v: unknown) => v is T
 ): Promise<void> {
-  await readEncryptedJson(key, what, isValid);
-  await redis().set(key, await encrypt(JSON.stringify(value)));
+  await readEncryptedJson(ctx, key, what, isValid);
+  await redis().set(key, await encrypt(ctx, JSON.stringify(value)));
 }

@@ -22,12 +22,14 @@ import {
   unlinkAccount,
 } from '@/lib/links';
 import { clearCaches } from '@/lib/cache';
+import { linksChanged } from '@/lib/history-import/extend';
 import { contentKey, readStoredTxns } from '@/lib/transactions';
 import { carriedCategories, carryCounts, getCarried, getOverrides } from '@/lib/overrides';
 import { rememberedIdsByItem } from '@/lib/last-known';
 import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
+import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -202,6 +204,10 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
   );
   // Cached payloads carry per-account history and hidden subtraction.
   await clearCaches(ctx);
+  // An import into the earlier account is matched against this one's bank
+  // rows now, and walks with it (#52): the backfill runs again, then the
+  // drawing.
+  await linksChanged(ctx);
   return NextResponse.json({ linked: true });
 }
 
@@ -213,19 +219,27 @@ export async function POST(req: Request) {
     const to = id(body?.to);
     const action = body?.action;
 
-    // Forget an earlier account for good: its balances, name and carried
-    // categories (lib/links.ts forgetEarlierAccount re-checks it may).
+    // Forget an earlier account for good: its balances, holdings history, name
+    // and carried categories (lib/links.ts forgetEarlierAccount re-checks it may).
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
       return await locked(ctx, async () => {
         try {
-          const { unreadableDates } = await forgetEarlierAccount(ctx, old);
-          // Days whose records are damaged beyond reading, left as they are.
-          return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+          const { unreadableDates, holdingsDamaged } = await forgetEarlierAccount(ctx, old);
+          // Days whose records are damaged beyond reading, and whether
+          // holdings records that could hold the account are: left as they
+          // are. The second only when it is so, so the usual answer is what
+          // it always was.
+          return NextResponse.json({
+            forgotten: true,
+            unreadable_days: unreadableDates.length,
+            ...(holdingsDamaged ? { damaged_holdings: true } : {}),
+          });
         } finally {
           // Even a forget that stopped part way changed totals: a payload
           // cached before it (or while it ran) must not outlive it.
           await clearCaches(ctx).catch(() => {});
+          await linksChanged(ctx);
         }
       });
     }
@@ -261,6 +275,22 @@ export async function POST(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
+    // What a store refused, in its own words (lib/repo.ts): for a forget,
+    // holdings records this version can't read that could hold the account,
+    // or a month that kept changing while it was being forgotten. Running the
+    // forget again finishes it once they can be read.
+    if (err instanceof StoredDataUnreadableError) {
+      console.error('Account links: stored data unreadable:', describeUnreadable(err));
+      return NextResponse.json(
+        {
+          error: err.message,
+          unreadable: true,
+          ...(err instanceof UnreadableEntriesError ? { unreadable_ids: err.unreadable, unrecognised_ids: err.unrecognised } : {}),
+        },
+        { status: 409 }
+      );
+    }
+    if (err instanceof StoreRefusedError) return NextResponse.json({ error: err.message }, { status: err.status });
     console.error(err);
     return NextResponse.json({ error: 'Failed to update account links' }, { status: 500 });
   }
@@ -275,6 +305,7 @@ export async function DELETE(req: Request) {
     return await locked(ctx, async () => {
       await unlinkAccount(ctx, old);
       await clearCaches(ctx);
+      await linksChanged(ctx);
       return NextResponse.json({ unlinked: true });
     });
   } catch (err) {

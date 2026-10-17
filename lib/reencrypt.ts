@@ -1,149 +1,133 @@
 // lib/reencrypt.ts
 //
-// The re-encryption pass: moves every stored value that is not under the active
-// data key (all of k0, and any older data key) to it.
+// The migration pass: gives every container a data key of its own and moves
+// each container's values to it (docs/architecture.md, "Per-container data
+// keys"; docs/operations.md says when to run it).
 //
-// Until this runs, everything written before data keys existed is still under k0
-// (PLAID_ENCRYPTION_KEY). Moving it is what lets a data key be replaced after a
-// leak, and what would let k0 be retired one day.
+// Until it has run, a container made before per-container keys keeps every
+// value under the environment's keys: k0 (PLAID_ENCRYPTION_KEY) and the
+// environment's data keys, which every container can read. Moving them is what
+// makes deleting the container make its copies unreadable, and what would let
+// those keys be retired one day.
 //
 // HOW IT STAYS SAFE WHILE THE APP IS RUNNING:
 //
-//   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified below: a string or
-//     hash of ciphertext, the Plaid items (whose access token is one field of a
-//     JSON value), or known plaintext. An unlisted key is reported and left
-//     alone, so a store added later can't be missed silently (a test checks every
-//     key name in lib/ is listed).
-//   - COMPARE-AND-SET. Each value is written back by a small Lua script only if
-//     it still hashes to what was read. A save landing mid-pass wins; the pass
-//     reports it as changed meanwhile and picks it up next time.
+//   - EXPLICIT LIST, NOT GUESSWORK. Every key is classified by the lists in
+//     lib/key-families.ts: a string or hash of ciphertext, the Plaid items (whose
+//     access token is one field of a JSON value), or known plaintext. A store
+//     declared through the storage seam (lib/repo.ts) is classified by its
+//     declaration, found through the catalogue in lib/stores.ts. An unlisted key
+//     is reported and left alone, so a store added later can't be missed
+//     silently (a test checks every key name in lib/ is listed).
+//   - A CONTAINER AT A TIME, FROM A CURSOR. Containers are walked in id order,
+//     each call starting after the last one the call before finished
+//     (`after`), so it reaches every container however many there are. Only
+//     active ones: one being restored is about to be replaced, and one archived
+//     is being deleted.
+//   - KEYS ONLY WHERE NOTHING SAYS OTHERWISE. A container with no key gets one
+//     (lib/crypto.ts claimContainerKey: one Lua step, which answers a key made
+//     meanwhile and refuses during a master rotation) only when every value it
+//     holds is under k0 or an environment key. A value under a container key
+//     the store doesn't hold means its key was lost, not that it is new: that
+//     container is reported as damaged and left alone. A container whose map
+//     entry is missing while its key's record names it gets the entry back.
+//   - COMPARE-AND-SET, GUARDED BY THE MAP. Each value is written back by a small
+//     Lua script only if it still hashes to what was read, and only while the
+//     container's map entry still names the key and the key is still stored. A
+//     save landing mid-pass wins; the pass reports it as changed meanwhile. A
+//     container whose entry changes mid-walk (deleted meanwhile) ends its walk,
+//     and the pass goes on to the next.
+//   - CHECKED AFTER WRITING. Each value written is read back and decrypted
+//     under its container, with the key loaded fresh from the store.
 //   - SAME PLAINTEXT, SAME READERS. Only the encryption changes; every reader
 //     already handles both formats and every key.
-//   - NEVER k0. It writes with the active key only (activeKeyForReencryption),
-//     never through encrypt(), which could fall back.
-//   - RESUMABLE. It keeps no state: each call walks from the start, skips what is
-//     already done cheaply, and stops at a time limit. Call it until it reports
-//     complete.
-//   - ONLY WHILE THE KEY STILL EXISTS. Each write also checks, in the same step,
-//     that its key is still the active one and still in the key store. A restore
-//     that replaced the key store mid-pass stops the pass instead of leaving
-//     values under a key that exists nowhere. (Don't run it during a restore
-//     anyway.)
-//   - A CHECK WRITES NOTHING. Not even the first data key: only a run creates
-//     that, after the database has been shown to support the scripts.
+//   - MOVED, ONLY FROM A CLEAN WALK. A container is recorded as moved (`moved`
+//     in its map entry, the time its walk began) only when one call walked the
+//     whole of it, its key was made at least ACTIVE_CACHE_MS before (instances
+//     pick a new key up within it), and the walk found nothing to move and
+//     nothing unreadable, unclassified or changed meanwhile. A run skips moved
+//     containers; the nightly backup's count clears `moved` where a value under
+//     a shared key turns up again (lib/key-archive.ts).
+//   - NEVER OUTSIDE CONTAINERS. The pre-container copies at the environment's
+//     root are counted (on a call starting from the beginning) and never
+//     written: they are due to be deleted.
+//   - A CHECK WRITES NOTHING. Not even a key.
 //
-// "Complete" is a snapshot. An instance that can't get the active key writes k0
-// (and logs it), and one that hasn't noticed a change of active key keeps writing
-// the old one for up to a minute; either shows up on the next call. Values are
-// never decrypted into the report: it carries key names, field names, counts and
-// error types only.
+// Values are never decrypted into the report: it carries container ids, key
+// names, field names, counts and error types only.
 
 import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';
-import { splitScoped, isEnvWide } from './containers';
+import { splitScoped, isEnvWide, listContainers, type ContainerId, type Ctx } from './containers';
+import { declaredStore } from './stores';
+import type { Store } from './repo';
+import { listedKind, type Kind } from './key-families';
 import {
-  activeKeyForReencryption,
-  activeKeyName,
-  activeKeyStatus,
-  keysHashKey,
-  legacyKeyProblem,
+  ACTIVE_CACHE_MS,
+  claimContainerKey,
+  containerKeysBlocked,
+  containerKeysKey,
   decrypt,
   encryptV2,
+  forgetContainerKey,
   formatOf,
+  keysHashKey,
+  legacyKeyProblem,
+  masterKeyConfigured,
+  prepareContainerKey,
+  readContainerEntries,
+  readKeyRecords,
+  reloadKey,
+  updateContainerEntry,
+  ContainerKeyError,
   DecryptFailedError,
+  KeyNotForContainerError,
   MalformedCiphertextError,
   MasterKeyError,
   UnknownKeyError,
+  type ContainerKeyEntry,
+  type StoredDataKey,
 } from './crypto';
 
-/** How a key's values are stored. */
-export type Kind =
-  | 'string' // the whole value is ciphertext
-  | 'hash' // every field's value is ciphertext
-  | 'cipher' // either of those, whichever type the key has (the caches)
-  | 'items' // plaid:items: JSON values whose encrypted_access_token is ciphertext
-  | 'plain'; // no ciphertext (checked: a v2 value in one is reported)
+// How a key's values are stored, and the frozen lists of key families stored
+// the old way: lib/key-families.ts.
+export type { Kind } from './key-families';
 
-const EXACT: Record<string, Kind> = {
-  goals: 'string',
-  budgets: 'string',
-  'history:accounts:est:flat': 'string',
+/** How each shape of store the seam declares keeps its values. */
+const SEAM_KINDS: Record<Store['kind'], Kind> = { value: 'string', map: 'hash', counter: 'plain', 'counter-map': 'plain' };
 
-  'history:net-worth': 'hash',
-  'history:net-worth:est': 'hash',
-  'history:accounts': 'hash',
-  'history:accounts:est': 'hash',
-  'history:accounts:est:ext': 'hash',
-  'history:accounts:partial': 'hash',
-  'history:accounts:est:flatd': 'hash',
-  'accounts:vanished': 'hash',
-  'accounts:meta': 'hash',
-  'accounts:directory': 'hash',
-  'account-links': 'hash',
-  'txn-category-overrides': 'hash',
-  'txn-category-carry': 'hash',
-  'account-links:lock': 'plain',
-  'txn-vendor-renames': 'hash',
-  'manual:accounts': 'hash',
-  'hidden:accounts': 'hash',
-
-  'plaid:items': 'items',
-
-  'history:backfill-done': 'plain',
-  'history:backfill-pending': 'plain',
-  'account-links:dismissed': 'plain',
-  'plaid:new-accounts': 'plain', // item id -> when Plaid reported new accounts (lib/new-accounts.ts)
-
-  containers: 'plain', // the container registry
-  owners: 'plain', // which Clerk account owns which container (lib/owners.ts)
-  grants: 'plain', // sharing's first version (#88), no longer read or written
-  connections: 'plain', // who is connected, and what each shares (lib/sharing.ts)
-};
-
-const PREFIXES: [string, Kind][] = [
-  ['txns:', 'string'],
-  ['invtxns:', 'string'],
-  ['txns-blocked:', 'plain'],
-  ['invtxns-lock:', 'plain'],
-  ['txns-unsaved:', 'plain'],
-  ['history:forgetting:', 'plain'],
-  ['ratelimit:', 'plain'],
-  ['sessions:', 'plain'], // a container's session epoch (lib/sessions.ts)
-  ['move:', 'plain'], // the data move's record (lib/move.ts)
-  ['snapshot:', 'plain'], // the daily snapshot's outcomes and lock (lib/snapshot-job.ts)
-  ['cache:', 'cipher'], // disposable, but moved too so "complete" means every value
-  ['crypto:', 'plain'], // the key store itself: wrapped keys, not data
-  ['backups:', 'plain'], // the nightly backup's last outcome (lib/backup.ts)
-  ['invites:', 'plain'], // unused invite links, hashed (lib/sharing.ts)
-];
-
-/** How a key (without the environment prefix) is stored, or null if it is not
- *  on the list. */
+/** How a key (without the environment prefix) is stored, or null if it is
+ *  neither on the lists nor a declared store's. */
 export function classify(key: string): Kind | null {
   // A key inside a container is stored like the same key outside one, except
   // that environment-wide stores never belong in one, and containers never
   // nest: either means a key was built wrongly, so it is reported.
   const scoped = splitScoped(key);
-  if (scoped.container) {
-    if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
-    return classify(scoped.key);
-  }
-  if (Object.hasOwn(EXACT, key)) return EXACT[key];
-  for (const [prefix, kind] of PREFIXES) if (key.startsWith(prefix)) return kind;
-  return null;
+  if (!scoped.container) return listedKind(key);
+  if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
+  // Then a store declared through the seam: a value store is one string of
+  // ciphertext, a map store a hash of it, a counter store a plain integer, a
+  // counter map store a hash of plain counts.
+  // Only inside a container, where the seam keeps everything; the same name
+  // outside one was built wrongly, so it is reported. The seam refuses a name
+  // the lists claim, so this changes nothing on them.
+  const store = declaredStore(scoped.key);
+  return listedKind(scoped.key) ?? (store === null ? null : SEAM_KINDS[store.kind]);
 }
 
 // The compare-and-set scripts. The value read is compared by SHA-1, so an
 // 8 MiB transaction blob is not sent twice. The first line names the script
 // for the test double. A key's expiry is kept.
 //
-// KEYS[2] and KEYS[3] are crypto:active and crypto:keys: the write happens only
-// if the key it was encrypted with is still active and still stored.
+// KEYS[2] and KEYS[3] are the map of container keys and crypto:keys: the write
+// happens only while the container's map entry still names the key it was
+// encrypted with, and that key is still stored.
 //
-// Answers: 1 written; 0 the value changed; -1 the value is gone; -2 the key it
-// was encrypted with is no longer the active one, or no longer stored.
-export const CAS_STRING = `-- nya:cas-string
-if redis.call('GET', KEYS[2]) ~= ARGV[3] or redis.call('HEXISTS', KEYS[3], ARGV[3]) == 0 then return -2 end
+// Answers: 1 written; 0 the value changed; -1 the value is gone; -2 the
+// container's entry no longer names the key, or the key is no longer stored.
+export const CAS_STRING = `-- nya:cas-string-container
+local entry = redis.call('HGET', KEYS[2], ARGV[4])
+if not entry or not string.find(entry, '"key":"' .. ARGV[3] .. '"', 1, true) or redis.call('HEXISTS', KEYS[3], ARGV[3]) == 0 then return -2 end
 local cur = redis.call('GET', KEYS[1])
 if not cur then return -1 end
 if redis.sha1hex(cur) ~= ARGV[1] then return 0 end
@@ -152,8 +136,9 @@ redis.call('SET', KEYS[1], ARGV[2])
 if ttl > 0 then redis.call('PEXPIRE', KEYS[1], ttl) end
 return 1`;
 
-export const CAS_HASH = `-- nya:cas-hash
-if redis.call('GET', KEYS[2]) ~= ARGV[4] or redis.call('HEXISTS', KEYS[3], ARGV[4]) == 0 then return -2 end
+export const CAS_HASH = `-- nya:cas-hash-container
+local entry = redis.call('HGET', KEYS[2], ARGV[5])
+if not entry or not string.find(entry, '"key":"' .. ARGV[4] .. '"', 1, true) or redis.call('HEXISTS', KEYS[3], ARGV[4]) == 0 then return -2 end
 local cur = redis.call('HGET', KEYS[1], ARGV[1])
 if not cur then return -1 end
 if redis.sha1hex(cur) ~= ARGV[2] then return 0 end
@@ -183,31 +168,50 @@ export type ReencryptClient = {
 };
 
 export type ReencryptReport = {
-  /** The key values are moved to. Null in a check made before the first data
-   *  key exists: then everything counts as still to move. */
-  active_key: string | null;
   dry_run: boolean;
-  /** Reached the end of the database before the time limit. */
+  /** The container this call started after (null: from the beginning). */
+  after: string | null;
+  /** The last container this call finished: send it as `after` next time.
+   *  Null when it finished none (then send `after` again). */
+  next_after: string | null;
+  /** Reached the last container before the time limit. */
   walked_all: boolean;
-  /** Values moved to the active key by this call. */
+  /** Values moved to their container's key by this call. */
   moved: number;
-  /** In a check: values still under another key, by key id (k0 is the legacy
-   *  key). A run moves them instead. */
+  /** In a check: values still under another key than their container's, by
+   *  key id (k0 is the legacy key). A run moves them instead. */
   to_move: Record<string, number>;
+  /** Values outside any container (the pre-container copies), by key id:
+   *  counted on a call from the beginning, never written. */
+  outside_containers: Record<string, number>;
+  /** Containers this call gave a key, mapped again from their key's record,
+   *  or recorded as moved. */
+  keys_made: string[];
+  maps_restored: string[];
+  marked_moved: string[];
+  /** Containers left alone because something says their key was lost, or
+   *  their entry can't be read. */
+  damaged: { container: string; reason: string }[];
+  /** Containers not walked: not active, destroyed, deleted mid-walk, or a key
+   *  that can't be made just now. */
+  skipped: { container: string; reason: string }[];
+  /** Containers walked by this call that are not moved yet. */
+  not_moved: string[];
   /** Values the app saved while they were being moved, so were left for next
    *  time. */
   changed_meanwhile: number;
   /** Values deleted while being moved. Nothing to do. */
   deleted_meanwhile: number;
   /** Values left alone because they cannot be moved: not decryptable, a key
-   *  of the wrong type, bound to a context, an item that is not JSON, and so
-   *  on. Listed up to a limit, with the reason. */
+   *  of the wrong type, bound to a context, under another container's key, an
+   *  item that is not JSON, and so on. Listed up to a limit, with the reason. */
   unreadable: { key: string; field?: string; reason: string }[];
   unreadable_count: number;
   /** Keys not on the list in this file. Nothing was done with them. */
   unclassified: string[];
-  /** Every value is under the active key: walked_all, and nothing to move,
-   *  changed, unreadable or unclassified. */
+  /** Every active container has a key and is moved: from a call that walked
+   *  to the last container, with nothing damaged, skipped for a key that
+   *  couldn't be made, unreadable or unclassified. */
   complete: boolean;
 };
 
@@ -223,7 +227,9 @@ function reasonFor(err: unknown): string {
     err instanceof UnknownKeyError ||
     err instanceof MasterKeyError ||
     err instanceof DecryptFailedError ||
-    err instanceof MalformedCiphertextError
+    err instanceof MalformedCiphertextError ||
+    err instanceof KeyNotForContainerError ||
+    err instanceof ContainerKeyError
   ) {
     return `${err.name}: ${err.message}`;
   }
@@ -236,38 +242,17 @@ class Unreadable extends Error {
   }
 }
 
-/** The ciphertext re-encrypted under `active`, or null if it already is.
- *  With no active key (a check before the first one exists), everything is
- *  still to move. Throws Unreadable for a value that cannot be moved. */
-async function moved(
-  ciphertext: string,
-  active: string | null,
-  dryRun: boolean,
-  legacyProblem: string | null
-): Promise<{ from: string; next: string | null } | null> {
-  let format;
-  try {
-    format = formatOf(ciphertext);
-  } catch (err) {
-    throw new Unreadable(reasonFor(err));
-  }
-  if (format.keyId === active) return null;
-  // Bound values need their context to be read, which only their owner knows.
-  // None exist yet; when they do, their owner moves them.
-  if (format.flags.includes('c')) throw new Unreadable('bound to a context; its owner must move it');
-  if (format.keyId === 'k0' && legacyProblem) throw new Unreadable(legacyProblem);
-  let plain: string;
-  try {
-    plain = await decrypt(ciphertext);
-  } catch (err) {
-    throw new Unreadable(reasonFor(err));
-  }
-  if (dryRun || active === null) return { from: format.keyId, next: null };
-  const next = await encryptV2(plain, active);
-  // Proven before it is written: the new value must read back as the old one.
-  if ((await decrypt(next)) !== plain) throw new Error('A re-encrypted value did not read back.');
-  return { from: format.keyId, next };
-}
+/** Why a container was given no key, as the report says it. */
+const NO_KEY_BECAUSE = {
+  unregistered: 'it left the registry',
+  rotation: 'a master rotation is pending',
+  master: "this deployment's master is not the current one",
+  taken: 'the key id was taken',
+} as const;
+
+/** The container's walk ended early: its map entry no longer names the key
+ *  (deleted meanwhile). */
+class WalkEnded extends Error {}
 
 /** The database must run the scripts; anything else it answers is an error
  *  about something else (a network or auth failure), and is thrown as is. */
@@ -304,43 +289,62 @@ async function listKeys(client: ReencryptClient, prefix: string): Promise<string
   const keys = new Set<string>();
   let cursor: string | number = 0;
   do {
-    const [next, page] = await client.scan(cursor, { match: `${prefix}*`, count: 200 });
+    const [next, page] = await client.scan(cursor, { match: `${prefix}*`, count: 1000 });
     for (const key of page) if (key.startsWith(prefix)) keys.add(key);
     cursor = next;
   } while (String(cursor) !== '0');
   return [...keys].sort();
 }
 
+/** One ciphertext found by a walk: the full key it is in, its hash field
+ *  (none for a string), the ciphertext, how to put a replacement back where it
+ *  was (an item's token is one field of its JSON), and the stored text read. */
+type Found = { full: string; field: string | undefined; ciphertext: string; wrap: (next: string) => string; read: string };
+
 /**
- * One call of the pass: walk every key until done or `budgetMs` runs out.
- * With `dryRun`, reads and checks everything and writes nothing at all.
+ * One call of the pass: gives keys to active containers that have none, and
+ * moves values to their container's key, a container at a time from `after`,
+ * until done or `budgetMs` runs out. With `dryRun`, reads and checks
+ * everything and writes nothing at all. `afterRollback` (a run, for data
+ * archives taken by hand while rolled back, which the backups can't see)
+ * first clears every container's `moved` and dates its `shared_in` now.
  */
-export async function reencrypt(
-  opts: { dryRun: boolean; budgetMs: number; now?: () => number; client?: ReencryptClient }
-): Promise<ReencryptReport> {
+export async function reencrypt(opts: {
+  dryRun: boolean;
+  budgetMs: number;
+  after?: string | null;
+  afterRollback?: boolean;
+  now?: () => number;
+  client?: ReencryptClient;
+}): Promise<ReencryptReport> {
   const client = opts.client ?? (rawRedis() as unknown as ReencryptClient);
   const now = opts.now ?? Date.now;
   const deadline = now() + opts.budgetMs;
+  const after = opts.after ?? null;
 
   await probe(client);
-  // A check only reads the active key; a run creates the first one if needed.
-  let active: string | null;
-  if (opts.dryRun) {
-    const status = await activeKeyStatus();
-    if (status.active_key_problem) throw new MasterKeyError(status.active_key_problem);
-    active = status.active_key;
-  } else {
-    active = await activeKeyForReencryption();
+  if (!opts.dryRun && !masterKeyConfigured()) {
+    throw new MasterKeyError('MASTER_KEY is not set, so no container can be given a data key.');
   }
-  const guard = [activeKeyName(), keysHashKey()];
   const legacyProblem = await legacyKeyProblem();
+  // Read once: while a rotation waits, no container is given a key, and none
+  // of the key numbers is used up asking.
+  const blocked = opts.dryRun ? null : await containerKeysBlocked();
 
   const report: ReencryptReport = {
-    active_key: active,
     dry_run: opts.dryRun,
+    after,
+    next_after: null,
     walked_all: false,
     moved: 0,
     to_move: {},
+    outside_containers: {},
+    keys_made: [],
+    maps_restored: [],
+    marked_moved: [],
+    damaged: [],
+    skipped: [],
+    not_moved: [],
     changed_meanwhile: 0,
     deleted_meanwhile: 0,
     unreadable: [],
@@ -348,147 +352,409 @@ export async function reencrypt(
     unclassified: [],
     complete: false,
   };
+  let keyless = 0; // containers left without a key this call: never complete
+  const listed = <T>(list: T[], item: T) => {
+    if (list.length < MAX_LISTED) list.push(item);
+  };
   const unreadable = (key: string, field: string | undefined, reason: string) => {
     report.unreadable_count++;
     if (report.unreadable.length < MAX_LISTED) report.unreadable.push(field === undefined ? { key, reason } : { key, field, reason });
   };
-  const pending = (from: string) => {
-    report.to_move[from] = (report.to_move[from] ?? 0) + 1;
-  };
-  /**
-   * Counts one compare-and-set. `reread` fetches the value again: when the
-   * script said it changed but it reads back identical, either it changed and
-   * changed back, or the two sides hash different bytes (a value that is not
-   * valid UTF-8), which would never move. Reported rather than counted as a
-   * plain change, so a value stuck that way is visible.
-   */
-  const settle = async (answer: unknown, key: string, field: string | undefined, read: string, reread: () => Promise<unknown>) => {
-    if (answer === 1) report.moved++;
-    else if (answer === -1) report.deleted_meanwhile++;
-    else if (answer === -2) {
-      throw new MasterKeyError(
-        'The active data key changed or left the key store during the pass (a restore?), so it stopped. Whatever was moved stays moved; call it again.'
-      );
-    } else if ((await reread()) === read) {
-      unreadable(key, field, 'could not be compared (it changed and changed back, or is not valid UTF-8 text); tried again next call');
-    }
-    else report.changed_meanwhile++;
-  };
 
   const prefix = envPrefix();
   const keys = await listKeys(client, prefix);
+  const byContainer = new Map<string, string[]>();
+  const outside: string[] = [];
   for (const full of keys) {
-    if (now() >= deadline) return finish(report);
-    const key = full.slice(prefix.length);
-    const kind = classify(key);
-    if (kind === null) {
-      report.unclassified.push(key);
-      continue;
-    }
+    const { container } = splitScoped(full.slice(prefix.length));
+    if (container) byContainer.set(container, [...(byContainer.get(container) ?? []), full]);
+    else outside.push(full);
+  }
 
-    const type = await client.type(full);
-    if (type === 'none') continue; // deleted since the scan
+  // What each key record says: which container it is for (null for the
+  // environment's keys), so a value's key can be told apart without opening it.
+  const records = await readKeyRecords();
+  /** null: k0 or an environment key; a container id: that container's key;
+   *  undefined: not in the store (or unreadable there). */
+  const keyOwner = (keyId: string): string | null | undefined => {
+    if (keyId === 'k0') return null;
+    const r = records.get(keyId);
+    if (r === undefined || r instanceof MasterKeyError) return undefined;
+    return r.container ?? null;
+  };
 
-    if (kind === 'plain') {
-      // Checked, not trusted: a v2 value here means the list is wrong.
-      if (type === 'string') {
-        // Plaintext values are small (markers, counters), so read whole.
-        if (looksEncrypted(await client.get(full))) unreadable(key, undefined, 'listed as plaintext but holds encrypted data');
-      } else if (type === 'hash') {
-        let cursor: string | number = 0;
-        do {
-          const [next, flat] = await client.hscan(full, cursor, { count: PAGE });
-          for (let i = 0; i + 1 < flat.length; i += 2) {
-            if (looksEncrypted(flat[i + 1])) unreadable(key, String(flat[i]), 'listed as plaintext but holds encrypted data');
-          }
-          cursor = next;
-        } while (String(cursor) !== '0');
-      }
-      continue;
-    }
-
-    const expected = kind === 'string' ? 'string' : kind === 'cipher' ? type : 'hash';
-    if (type !== expected || (type !== 'string' && type !== 'hash')) {
-      unreadable(key, undefined, `expected a ${kind === 'cipher' ? 'string or hash' : expected}, found a ${type}`);
-      continue;
-    }
-
-    if (type === 'string') {
-      const peek = await client.getrange(full, 0, PEEK - 1);
-      if (active && typeof peek === 'string' && peek.startsWith(`v2.${active}.`)) continue;
-      const value = await client.get(full);
-      if (value === null || value === undefined) continue;
-      if (typeof value !== 'string') {
-        unreadable(key, undefined, 'not stored as text');
+  /**
+   * Visits every ciphertext under these keys (one container's, or the
+   * root's). `skip` is a header (a container's own key) whose string values
+   * are passed over from a peek, without reading them whole. Plaintext keys
+   * are checked, not trusted: ciphertext in one means the list is wrong.
+   * Unclassified keys are reported. Answers false when it ran out of time.
+   */
+  const walk = async (
+    fulls: string[],
+    counted: { unclassified: number; unreadable: number },
+    visit: (found: Found) => Promise<void>,
+    skip?: string
+  ): Promise<boolean> => {
+    for (const full of fulls) {
+      if (now() >= deadline) return false;
+      const key = full.slice(prefix.length);
+      const kind = classify(key);
+      if (kind === null) {
+        counted.unclassified++;
+        if (!report.unclassified.includes(key)) listed(report.unclassified, key);
         continue;
       }
-      try {
-        const m = await moved(value, active, opts.dryRun, legacyProblem);
-        if (!m) continue;
-        if (opts.dryRun) pending(m.from);
-        else {
-          const answer = await client.eval(CAS_STRING, [full, ...guard], [sha1(value), m.next!, active!]);
-          await settle(answer, key, undefined, value, () => client.get(full));
+      const type = await client.type(full);
+      if (type === 'none') continue; // deleted since the scan
+      const flag = (field: string | undefined, reason: string) => {
+        counted.unreadable++;
+        unreadable(key, field, reason);
+      };
+
+      if (kind === 'plain') {
+        if (type === 'string') {
+          // Plaintext values are small (markers, counters), so read whole.
+          if (looksEncrypted(await client.get(full))) flag(undefined, 'listed as plaintext but holds encrypted data');
+        } else if (type === 'hash') {
+          let cursor: string | number = 0;
+          do {
+            const [next, flat] = await client.hscan(full, cursor, { count: PAGE });
+            for (let i = 0; i + 1 < flat.length; i += 2) {
+              if (looksEncrypted(flat[i + 1])) flag(String(flat[i]), 'listed as plaintext but holds encrypted data');
+            }
+            cursor = next;
+          } while (String(cursor) !== '0');
         }
-      } catch (err) {
-        if (!(err instanceof Unreadable)) throw err;
-        unreadable(key, undefined, err.message);
+        continue;
       }
+
+      const expected = kind === 'string' ? 'string' : kind === 'cipher' ? type : 'hash';
+      if (type !== expected || (type !== 'string' && type !== 'hash')) {
+        flag(undefined, `expected a ${kind === 'cipher' ? 'string or hash' : expected}, found a ${type}`);
+        continue;
+      }
+
+      if (type === 'string') {
+        if (skip) {
+          const peek = await client.getrange(full, 0, PEEK - 1);
+          if (typeof peek === 'string' && peek.startsWith(`v2.${skip}.`)) continue;
+        }
+        const value = await client.get(full);
+        if (value === null || value === undefined) continue;
+        if (typeof value !== 'string') {
+          flag(undefined, 'not stored as text');
+          continue;
+        }
+        try {
+          await visit({ full, field: undefined, ciphertext: value, wrap: (n) => n, read: value });
+        } catch (err) {
+          if (!(err instanceof Unreadable)) throw err;
+          flag(undefined, err.message);
+        }
+        continue;
+      }
+
+      let cursor: string | number = 0;
+      do {
+        if (now() >= deadline) return false;
+        const [next, flat] = await client.hscan(full, cursor, { count: PAGE });
+        const fields: [string, unknown][] = [];
+        for (let i = 0; i + 1 < flat.length; i += 2) fields.push([String(flat[i]), flat[i + 1]]);
+        await inBatches(fields, async ([field, value]) => {
+          if (typeof value !== 'string') return flag(field, 'not stored as text');
+          try {
+            if (kind !== 'items') return await visit({ full, field, ciphertext: value, wrap: (n) => n, read: value });
+            // An item: only its access token is ciphertext.
+            let item: Record<string, unknown>;
+            try {
+              item = JSON.parse(value);
+            } catch {
+              throw new Unreadable('not valid JSON');
+            }
+            const token = item?.encrypted_access_token;
+            if (typeof token !== 'string') throw new Unreadable('has no encrypted_access_token');
+            await visit({ full, field, ciphertext: token, wrap: (n) => JSON.stringify({ ...item, encrypted_access_token: n }), read: value });
+          } catch (err) {
+            if (!(err instanceof Unreadable)) throw err;
+            flag(field, err.message);
+          }
+        });
+        cursor = next;
+      } while (String(cursor) !== '0');
+    }
+    return true;
+  };
+
+  /** The format a value claims, or Unreadable. */
+  const formatOrUnreadable = (ciphertext: string) => {
+    try {
+      return formatOf(ciphertext);
+    } catch (err) {
+      throw new Unreadable(reasonFor(err));
+    }
+  };
+
+  // The values outside any container: counted, never written. Only on a call
+  // from the beginning, so a sequence of calls counts them once.
+  if (after === null) {
+    const counted = { unclassified: 0, unreadable: 0 };
+    const whole = await walk(outside, counted, async ({ ciphertext }) => {
+      const f = formatOrUnreadable(ciphertext);
+      report.outside_containers[f.keyId] = (report.outside_containers[f.keyId] ?? 0) + 1;
+    });
+    if (!whole) return finish(report, false);
+  }
+
+  const entries = await readContainerEntries();
+  const registry = (await listContainers()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  // Keys under a container the registry doesn't list (one deleted, with
+  // something written after its last sweep): never walked, but named, once.
+  if (after === null) {
+    const registered = new Set(registry.map((c) => c.id as string));
+    for (const id of [...byContainer.keys()].sort()) {
+      if (!registered.has(id)) listed(report.skipped, { container: id, reason: 'it holds keys but is not in the registry' });
+    }
+  }
+
+  if (opts.afterRollback && !opts.dryRun) {
+    const at = new Date(now()).toISOString();
+    for (const c of registry) {
+      const e = await updateContainerEntry(c.id, (cur) => (cur && 'key' in cur ? { key: cur.key, since: cur.since, shared_in: at, ...(cur.key_in !== undefined ? { key_in: cur.key_in } : {}) } : null));
+      if (e) entries.set(c.id, e);
+    }
+  }
+
+  for (const c of registry) {
+    if (after !== null && c.id <= after) continue;
+    if (now() >= deadline) return finish(report, false);
+    const id = c.id;
+    const ctx: Ctx = { container: id as ContainerId };
+    const fulls = byContainer.get(id) ?? [];
+    const done = () => {
+      report.next_after = id;
+    };
+    if (c.status !== 'active') {
+      listed(report.skipped, { container: id, reason: `the container is ${c.status}` });
+      done();
+      continue;
+    }
+    let entry: ContainerKeyEntry | null;
+    const stored = entries.get(id);
+    if (stored instanceof ContainerKeyError) {
+      listed(report.damaged, { container: id, reason: 'its entry in the map of container keys is unreadable' });
+      done();
+      continue;
+    }
+    entry = stored ?? null;
+    if (entry && 'destroyed' in entry) {
+      listed(report.skipped, { container: id, reason: 'its key was destroyed' });
+      done();
+      continue;
+    }
+    if (entry && entry.moved) {
+      done();
       continue;
     }
 
-    let cursor: string | number = 0;
-    do {
-      if (now() >= deadline) return finish(report);
-      const [next, flat] = await client.hscan(full, cursor, { count: PAGE });
-      const fields: [string, unknown][] = [];
-      for (let i = 0; i + 1 < flat.length; i += 2) fields.push([String(flat[i]), flat[i + 1]]);
-      await inBatches(fields, async ([field, value]) => {
-        if (typeof value !== 'string') return unreadable(key, field, 'not stored as text');
-        const write = async (rewritten: string) => {
-          const answer = await client.eval(CAS_HASH, [full, ...guard], [field, sha1(value), rewritten, active!]);
-          await settle(answer, key, field, value, () => client.hget(full, field));
-        };
-        try {
-          if (kind !== 'items') {
-            const m = await moved(value, active, opts.dryRun, legacyProblem);
-            if (!m) return;
-            if (opts.dryRun) pending(m.from);
-            else await write(m.next!);
+    // No map entry: does a key's record name it (the entry was lost), or does
+    // a value say it had a key? Neither: it never had one, and gets one.
+    if (entry === null) {
+      const named = [...records].filter(([, r]) => !(r instanceof MasterKeyError) && (r as StoredDataKey).container === id) as [string, StoredDataKey][];
+      if (named.length > 1) {
+        listed(report.damaged, { container: id, reason: `several keys name it (${named.map(([k]) => k).join(', ')}) and its map entry is missing` });
+        keyless++;
+        done();
+        continue;
+      }
+      if (named.length === 1) {
+        const [keyId, record] = named[0];
+        if (opts.dryRun) {
+          listed(report.damaged, { container: id, reason: `its map entry is missing; ${keyId} names it, and a run restores the entry` });
+          done();
+          continue;
+        }
+        entry = await updateContainerEntry(id, (e) => (e === null ? { key: keyId, since: record.created_at } : null));
+        listed(report.maps_restored, id);
+      } else {
+        // Every value must be under k0 or an environment key.
+        const counted = { unclassified: 0, unreadable: 0 };
+        const tally: Record<string, number> = {};
+        let lost: string | null = null;
+        const whole = await walk(fulls, counted, async ({ ciphertext }) => {
+          const f = formatOrUnreadable(ciphertext);
+          const owner = keyOwner(f.keyId);
+          if (owner === undefined) lost ??= `a value is under ${f.keyId}, which the key store doesn't hold`;
+          else if (owner !== null) lost ??= `a value is under ${f.keyId}, the key of container ${owner}`;
+          else tally[f.keyId] = (tally[f.keyId] ?? 0) + 1;
+        });
+        if (!whole) return finish(report, false);
+        if (lost) {
+          listed(report.damaged, { container: id, reason: `${lost}, so it gets no key` });
+          keyless++;
+          done();
+          continue;
+        }
+        if (opts.dryRun) {
+          for (const [k, n] of Object.entries(tally)) report.to_move[k] = (report.to_move[k] ?? 0) + n;
+          listed(report.not_moved, id);
+          keyless++;
+          done();
+          continue;
+        }
+        if (blocked) {
+          listed(report.skipped, { container: id, reason: `no key was made: ${NO_KEY_BECAUSE[blocked]}` });
+          keyless++;
+          done();
+          continue;
+        }
+        const prepared = await prepareContainerKey(id as ContainerId, { born: false, now: now() });
+        if (!prepared) {
+          listed(report.skipped, { container: id, reason: 'no key could be made: key numbers are at the most the id format allows' });
+          keyless++;
+          done();
+          continue;
+        }
+        const claim = await claimContainerKey(prepared);
+        if (claim.outcome === 'made') listed(report.keys_made, id);
+        else if (claim.outcome !== 'have') {
+          listed(report.skipped, { container: id, reason: `no key was made: ${NO_KEY_BECAUSE[claim.outcome]}` });
+          keyless++;
+          done();
+          continue;
+        }
+        entry = claim.entry;
+      }
+    }
+    if (!entry || !('key' in entry)) {
+      listed(report.skipped, { container: id, reason: 'it has no key' });
+      keyless++;
+      done();
+      continue;
+    }
+    if (entry.moved) {
+      done();
+      continue;
+    }
+
+    // Move what isn't under the container's key.
+    const own = entry.key;
+    const since = entry.since;
+    const walkStart = now();
+    // The key as stored now, not as some earlier read left it in memory.
+    reloadKey(own);
+    forgetContainerKey(id);
+    const counted = { unclassified: 0, unreadable: 0 };
+    let found = 0;
+    let changed = 0;
+    let ended = false;
+    try {
+      const whole = await walk(
+        fulls,
+        counted,
+        async ({ full, field, ciphertext, wrap, read }) => {
+          const f = formatOrUnreadable(ciphertext);
+          if (f.keyId === own) return;
+          const owner = keyOwner(f.keyId);
+          if (owner !== null && owner !== undefined) throw new Unreadable(`under ${f.keyId}, the key of container ${owner}; left as it is`);
+          // Bound values need their context to be read, which only their owner
+          // knows. None exist yet; when they do, their owner moves them.
+          if (f.flags.includes('c')) throw new Unreadable('bound to a context; its owner must move it');
+          if (f.keyId === 'k0' && legacyProblem) throw new Unreadable(legacyProblem);
+          found++;
+          if (opts.dryRun) {
+            report.to_move[f.keyId] = (report.to_move[f.keyId] ?? 0) + 1;
             return;
           }
-          // An item: only its access token is ciphertext.
-          let item: Record<string, unknown>;
+          let plain: string;
           try {
-            item = JSON.parse(value);
-          } catch {
-            throw new Unreadable('not valid JSON');
+            plain = await decrypt(ctx, ciphertext);
+          } catch (err) {
+            throw new Unreadable(reasonFor(err));
           }
-          const token = item?.encrypted_access_token;
-          if (typeof token !== 'string') throw new Unreadable('has no encrypted_access_token');
-          const m = await moved(token, active, opts.dryRun, legacyProblem);
-          if (!m) return;
-          if (opts.dryRun) pending(m.from);
-          else await write(JSON.stringify({ ...item, encrypted_access_token: m.next }));
-        } catch (err) {
-          if (!(err instanceof Unreadable)) throw err;
-          unreadable(key, field, err.message);
-        }
-      });
-      cursor = next;
-    } while (String(cursor) !== '0');
+          const next = await encryptV2(plain, own);
+          // Proven before it is written: the new value must read back as the old one.
+          if ((await decrypt(ctx, next)) !== plain) throw new Error('A re-encrypted value did not read back.');
+          const written = wrap(next);
+          const answer =
+            field === undefined
+              ? await client.eval(CAS_STRING, [full, containerKeysKey(), keysHashKey()], [sha1(read), written, own, id])
+              : await client.eval(CAS_HASH, [full, containerKeysKey(), keysHashKey()], [field, sha1(read), written, own, id]);
+          if (answer === -2) throw new WalkEnded();
+          if (answer === -1) {
+            report.deleted_meanwhile++;
+            return;
+          }
+          if (answer !== 1) {
+            // Changed meanwhile, unless it reads back identical: then either it
+            // changed and changed back, or the two sides hash different bytes
+            // (a value that is not valid UTF-8), which would never move.
+            // Reported rather than counted as a plain change, so a value stuck
+            // that way is visible.
+            const again = field === undefined ? await client.get(full) : await client.hget(full, field);
+            if (again === read) throw new Unreadable('could not be compared (it changed and changed back, or is not valid UTF-8 text); tried again next call');
+            changed++;
+            report.changed_meanwhile++;
+            return;
+          }
+          report.moved++;
+          // Checked after writing: read back, and decrypted under its container.
+          const back = field === undefined ? await client.get(full) : await client.hget(full, field);
+          if (back !== written) {
+            changed++;
+            report.changed_meanwhile++;
+            return;
+          }
+          if ((await decrypt(ctx, next)) !== plain) throw new Error(`A moved value of container ${id} did not read back after it was written.`);
+        },
+        own
+      );
+      if (!whole) return finish(report, false);
+    } catch (err) {
+      if (!(err instanceof WalkEnded)) throw err;
+      ended = true;
+    }
+    if (ended) {
+      listed(report.skipped, { container: id, reason: 'its key changed during the walk (deleted meanwhile?)' });
+      done();
+      continue;
+    }
+
+    const clean = found === 0 && changed === 0 && counted.unreadable === 0 && counted.unclassified === 0;
+    const settled = walkStart >= Date.parse(since) + ACTIVE_CACHE_MS;
+    if (!opts.dryRun && clean && settled) {
+      const at = new Date(walkStart).toISOString();
+      const marked = await updateContainerEntry(id, (e) => (e && 'key' in e && e.key === own ? { ...e, moved: at } : null));
+      if (marked && 'key' in marked && marked.moved === at) listed(report.marked_moved, id);
+      else listed(report.not_moved, id);
+    } else {
+      listed(report.not_moved, id);
+    }
+    done();
   }
-  report.walked_all = true;
-  return finish(report);
+  return finish(report, true, keyless);
 }
 
-function finish(report: ReencryptReport): ReencryptReport {
-  const toMove = Object.values(report.to_move).reduce((a, b) => a + b, 0);
+/**
+ * Seals the report. `complete` only from a call that walked to the last
+ * container: every active container is moved (read again now), and nothing
+ * was damaged, left without a key, unreadable or unclassified in this call.
+ */
+async function finish(report: ReencryptReport, walkedAll: boolean, keyless = 0): Promise<ReencryptReport> {
+  report.walked_all = walkedAll;
+  if (!walkedAll) return report;
+  const entries = await readContainerEntries();
+  const active = (await listContainers()).filter((c) => c.status === 'active');
+  const allMoved = active.every((c) => {
+    const e = entries.get(c.id);
+    return e !== undefined && !(e instanceof ContainerKeyError) && 'key' in e && !!e.moved;
+  });
   report.complete =
-    report.walked_all &&
-    toMove === 0 &&
-    report.changed_meanwhile === 0 &&
+    allMoved &&
+    keyless === 0 &&
+    report.damaged.length === 0 &&
     report.unreadable_count === 0 &&
-    report.unclassified.length === 0;
+    report.unclassified.length === 0 &&
+    Object.keys(report.to_move).length === 0;
   return report;
 }

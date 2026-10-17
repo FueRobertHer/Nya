@@ -1,90 +1,98 @@
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
-import { getItems } from '@/lib/storage';
+import { dataCtx } from '@/lib/data-ctx';
 import { readCache, writeCache, CacheKey } from '@/lib/cache';
-import { getOverrides, getCarried, carriedCategories } from '@/lib/overrides';
-import { getRenames } from '@/lib/renames';
-import { syncItemTransactions, type Txn } from '@/lib/transactions';
-import { getEffectiveHidden, type Link } from '@/lib/links';
+import { getHiddenAccounts } from '@/lib/hidden';
+import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
+import { storeFailure } from '@/lib/store-failure';
 
-type TransactionsPayload = {
-  transactions: Txn[];
-  notes: string[]; // per-institution problems, shown to the user
-  as_of: string;
-};
-
-/**
- * Categories carried across a re-link (lib/overrides.ts), by the key of the
- * row they apply to. Follows the ACTIVE links the hidden check already read,
- * and reads only the linked earlier accounts' records. Carries nothing when
- * the links or the live accounts couldn't be read: a paused link must not
- * carry, and without the live set a paused link looks active. Best effort
- * throughout: a failure shows Plaid's categories, never an error.
- */
-async function carriedFor(ctx: Awaited<ReturnType<typeof dataCtx>>, links: Map<string, Link> | null, liveOk: boolean) {
-  if (!links || links.size === 0 || !liveOk) return new Map<string, string>();
-  return carriedCategories(await getCarried(ctx, [...links.keys()]), links);
-}
+// The Activity tab's transactions: every linked institution's, synced with
+// Plaid, and the rows entered on manual accounts, with what the person said
+// about each (lib/txn-annotations.ts). Assembled by lib/activity.ts, which the
+// read-only API shares, reading stored rows instead of syncing.
+//
+// ONLY PLAID'S PART IS CACHED. Syncing every Item is the slow part, so its
+// result (categories, renames and exclusions carried across a re-link
+// applied) is cached; the manual rows and what the person said about each row
+// are read on every request and merged after it. So entering a transaction,
+// editing one or excluding one never drops the cache or waits on Plaid, a row
+// added while a load was running can't be cached away, and a record that
+// can't be read is only marked on its row, never a reason to stop caching.
+//
+// BEFORE THE YEAR. A yearly charge is seen twice only in two years, so the
+// rows from before the lookback that recurring detection can use go beside
+// the year's, as `recurring_history` (lib/activity.ts, lib/recurring.ts
+// olderRowsForDetection): compact, from merchants charged this year only once
+// or twice, at an amount charged this year too, with the same categories,
+// renames and exclusions. The cache keeps a wider set, chosen before the
+// person's own exclusions are applied, and each answer narrows it after them,
+// so an excluded row never keeps another from being sent. Only recurring
+// detection reads them, here and in the read-only API (lib/api-read.ts).
+//
+// ACCOUNT TYPES. Every row carries its account's name and type (depository,
+// credit, loan, investment), so the cash forecast counts only what leaves or
+// reaches checking and savings, never a card's own charges beside the card's
+// payment (lib/forecast.ts).
+//
+// CATEGORIES. Every row is filed into the person's categories after the
+// cache (lib/activity.ts finishActivity): this route seeds them on the first
+// load and grows them by any category a row carries that none has yet, and
+// sends the set it filed by (`categories`), which the pickers and the group
+// rollups read, so renaming or regrouping a category needs no cache dropped.
+//
+// TAGS AND NOTES are applied after the cache too (lib/txn-layers.ts), with
+// the tags that exist sent beside the rows (`tags`): a tag put on, a note
+// written or a tag renamed shows on the next load with nothing dropped.
 
 export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
-    if (!refresh) {
-      const cached = await readCache<TransactionsPayload>(ctx, CacheKey.Transactions);
-      if (cached) return NextResponse.json({ ...cached, from_cache: true });
+    const cached = refresh ? null : await readCache<unknown>(ctx, CacheKey.Transactions);
+
+    let plaid: PlaidPayload;
+    let hidden: Set<string>;
+    const fromCache = isPlaidPayload(cached);
+    if (isPlaidPayload(cached)) {
+      plaid = cached;
+      // Only the manual accounts' part of the hidden set is needed now (they
+      // are never linked, lib/links.ts): one read, and a failure throws, as
+      // in the assembly, rather than showing rows the person hid.
+      hidden = new Set((await getHiddenAccounts(ctx)).keys());
+    } else {
+      const assembled = await assembleBankRows(ctx, { sync: true });
+      plaid = assembled.payload;
+      hidden = assembled.hidden;
+      if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const items = await getItems(ctx);
-    // Read the hidden set first: rows from hidden accounts are filtered out
-    // inside the sync (the only place account_id still exists), so they're
-    // never shipped to the client. A read failure throws to the catch below
-    // rather than silently surfacing transactions the user hid.
-    const { hidden, links, liveOk } = await getEffectiveHidden(ctx);
-    const hiddenIds = new Set(hidden.keys());
-    // Read alongside the syncs: each one waits for it only once Plaid answered.
-    const carried = carriedFor(ctx, links, liveOk);
-    const [results, overrides, renames] = await Promise.all([
-      Promise.all(items.map((item) => syncItemTransactions(ctx, item, hiddenIds, carried))),
-      getOverrides(ctx),
-      getRenames(ctx),
-    ]);
-
-    // Newest first. Within a day the posting `date` is equal, so fall back to
-    // the true event `datetime` when Plaid provides it for a precise order.
-    const transactions = results
-      .flatMap((r) => r.txns)
-      .sort((a, b) => {
-        if (a.date !== b.date) return a.date < b.date ? 1 : -1;
-        const at = a.datetime ?? '';
-        const bt = b.datetime ?? '';
-        return at < bt ? 1 : at > bt ? -1 : 0;
-      });
-
-    // Manual overrides win over Plaid's data: recategorization by transaction,
-    // vendor rename by vendor key (so it covers every row from that merchant).
-    for (const t of transactions) {
-      const manual = overrides[t.transaction_id];
-      if (manual) t.category = manual;
-      const renamed = renames[t.vendor_key];
-      if (renamed) t.name = renamed;
-    }
-    const notes = results.map((r) => r.note).filter((n): n is string => n !== null);
-
-    const payload: TransactionsPayload = { transactions, notes, as_of: new Date().toISOString() };
-
-    // Same rule as net-worth: only cache clean payloads, so syncing/reauth
-    // institutions get re-checked on the next load instead of hiding for
-    // the TTL.
-    if (notes.length === 0) {
-      await writeCache(ctx, CacheKey.Transactions, payload);
-    }
-
-    return NextResponse.json({ ...payload, from_cache: false });
+    const { transactions, notes: read, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const notes = [...read, ...(tags_note ? [tags_note] : []), ...(review_note ? [review_note] : [])];
+    // The connections without transactions are Plaid's part too: a manual
+    // account is not a connection. The views that count spending weigh them
+    // against these rows, manual ones included (lib/no-transactions.ts).
+    return NextResponse.json({
+      transactions,
+      notes,
+      // Of those, the ones that say transactions couldn't all be read, which
+      // the Plan weighs its figures by (never a rule's, a category's, a
+      // split's or a group's, which mean nothing is missing).
+      unread_notes,
+      incomplete,
+      without_transactions: plaid.without_transactions ?? [],
+      ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
+      recurring_history: history,
+      categories: taxonomy,
+      // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
+      tags: tags?.tags ?? [],
+      // The review queue (lib/review-store.ts): on from a day, or off; what
+      // needs review is marked on each row (lib/review-layer.ts).
+      review,
+      as_of: plaid.as_of,
+      from_cache: fromCache,
+    });
   } catch (err: any) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
-    return NextResponse.json({ error: 'Failed to fetch transactions' }, { status: 500 });
+    // Account closures that can't be read (lib/lifecycle.ts) are a 409 with
+    // their ids, never rows of a closed account counted (lib/store-failure.ts).
+    return storeFailure(err, 'Failed to fetch transactions');
   }
 }

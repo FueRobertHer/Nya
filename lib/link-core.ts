@@ -25,7 +25,7 @@ export async function readLinks(ctx: Ctx): Promise<{ links: Map<string, Link>; u
   await Promise.all(
     Object.entries(raw).map(async ([old, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as Link;
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as Link;
         if (typeof parsed?.to !== 'string' || typeof parsed?.linked_at !== 'string') throw new Error('malformed');
         links.set(old, parsed);
       } catch {
@@ -59,7 +59,7 @@ export function effectiveLinks(links: Map<string, Link>, liveIds: Set<string>): 
 /** The id an account is known by now, following links. Stops at any repeat,
  *  so a cycle anywhere in a chain ends instead of looping, and follows chains
  *  of any realistic length. */
-export function resolveId(id: string, links: Map<string, Link>): string {
+export function resolveId(id: string, links: ReadonlyMap<string, Pick<Link, 'to'>>): string {
   const seen = new Set([id]);
   let current = id;
   for (let i = 0; i < 50; i++) {

@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatMoney } from '@/lib/format';
+import { Masked } from './HideAmounts';
 
 type Suggestion = {
   old: string;
@@ -73,6 +74,21 @@ export function refusalText(action: string | undefined, body: { error?: unknown 
   return action === 'forget' ? 'Could not forget that account' : 'Could not update the link';
 }
 
+/** What to say after a forget left damaged records as they were: days of
+ *  balance history, and holdings history that could have held the account.
+ *  Null when nothing was. */
+export function forgottenNotice(body: { unreadable_days?: unknown; damaged_holdings?: unknown }): string | null {
+  const n = Number(body.unreadable_days) || 0;
+  const damaged = [n > 0 ? `${n} day${n === 1 ? '' : 's'} of history` : null, body.damaged_holdings === true ? 'some holdings history' : null].filter(
+    (s): s is string => s !== null
+  );
+  if (damaged.length === 0) return null;
+  const one = damaged.length === 1 && n <= 1;
+  const what = damaged.join(' and ');
+  const them = one ? 'it was' : 'they were';
+  return `Forgotten. ${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? 'is' : 'are'} damaged and can't be read, so ${them} left as ${them}.`;
+}
+
 function fmtDay(iso: string | null): string {
   if (!iso) return 'unknown';
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
@@ -122,23 +138,17 @@ export default function AccountLinks({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(refusalText(body.action, j));
-        // A forget that stopped part way may have changed some things already.
-        if (body.action === 'forget' && res.status >= 500) {
+        // A forget that stopped part way may have changed some things already
+        // (a 409 too: a record that kept changing, say).
+        if (body.action === 'forget' && (res.status === 409 || res.status >= 500)) {
           await load();
           onChanged();
         }
         return;
       }
       if (body.action === 'forget') {
-        const j = await res.json().catch(() => ({}));
-        const n = Number(j.unreadable_days) || 0;
-        if (n > 0) {
-          setNotice(
-            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
-              n === 1 ? 'it was' : 'they were'
-            } left as ${n === 1 ? 'it was' : 'they were'}.`
-          );
-        }
+        const notice = forgottenNotice(await res.json().catch(() => ({})));
+        if (notice) setNotice(notice);
       }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the
@@ -253,9 +263,11 @@ export function AccountLinksView({
           </p>
           <p className="chart-note">
             {s.evidence.persistent_match ? 'Plaid identifies them as the same account. ' : ''}
-            {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
-              ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
-              : ''}
+            <Masked>
+              {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
+                ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
+                : ''}
+            </Masked>
           </p>
           <div className="manual-row-actions">
             {previewButton(s.old, s.to)}
@@ -279,7 +291,7 @@ export function AccountLinksView({
             <p>
               {u.old_label ? <strong>{u.old_label}</strong> : 'Balance history'} from {fmtDay(u.first)} to{' '}
               {fmtDay(u.last)}
-              {u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''} isn&apos;t
+              <Masked>{u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''}</Masked> isn&apos;t
               attached to any current account. It may be one you reconnected.
             </p>
             <p className="chart-note">
@@ -412,8 +424,9 @@ export function AccountLinksView({
           {earlierOpen && (
             <>
               <p className="chart-note">
-                Accounts of institutions you disconnected. Forget one to delete its balance history, its name
-                and the categories saved for it, for good. Past net-worth totals don&apos;t change.
+                Accounts of institutions you disconnected. Forget one to delete its balance history, its name,
+                the categories saved for it and the transactions imported into it from files, for good. Past
+                net-worth totals don&apos;t change.
               </p>
               {earlier.map((e) => {
                 const name = e.label ?? 'Balance history';
@@ -431,7 +444,7 @@ export function AccountLinksView({
                         const sure =
                           typeof window === 'undefined' ||
                           window.confirm(
-                            `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
+                            `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
                           );
                         if (sure) onAct('POST', { action: 'forget', old: e.id });
                       }}
@@ -468,7 +481,8 @@ export function AccountLinksView({
       {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
-        matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
+        matching transactions. Splits and groups don&apos;t carry across: split or group those transactions again.
+        Nothing stored is changed, and Unlink puts it back as it was.
       </p>
     </div>
   );

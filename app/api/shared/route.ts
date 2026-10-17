@@ -4,6 +4,9 @@ import { sharedWithMe } from '@/lib/sharing';
 
 // What my connections share with me, read-only and already filtered to what
 // they chose (lib/sharing.ts). Never cached: a revoke must take effect at once.
+// Each share it returns is counted as shown in its sharer's record, which both
+// of us see (lib/sharing.ts recordShowing), so the app asks for it only when
+// that part of the Accounts tab is on screen (components/Sharing.tsx).
 
 export async function GET() {
   try {

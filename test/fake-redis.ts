@@ -2,6 +2,7 @@
 // modules under test use. Enough to exercise the real encryption and the real
 // merge/retention logic without a network or a live database.
 
+import { afterEach } from 'bun:test';
 import { createHash } from 'node:crypto';
 
 type Hash = Map<string, string>;
@@ -14,10 +15,14 @@ export type FakeCommand =
   | 'incr'
   | 'del'
   | 'hset'
+  | 'hsetnx'
   | 'hget'
   | 'hdel'
   | 'hkeys'
   | 'hgetall'
+  | 'hmget'
+  | 'hlen'
+  | 'hexists'
   | 'expire'
   | 'scan'
   | 'hscan'
@@ -49,6 +54,56 @@ function upstashParse(value: string): unknown {
   }
 }
 
+/** The key ids of the v2 ciphertexts a stored value holds: the value itself,
+ *  or an access token inside an item's JSON (lib/storage.ts StoredItem). */
+function keyIdsIn(value: string): string[] {
+  const out: string[] = [];
+  for (const m of value.matchAll(/(?:^|")v2\.(k[0-9]+-[0-9a-f]{8})\./g)) out.push(m[1]);
+  return out;
+}
+
+/**
+ * A Map that tells its owner of every value written to it, so the fake can
+ * hold every write to one rule however the write reaches it (a command or a
+ * script).
+ */
+class Watched extends Map<string, string> {
+  private onSet: ((field: string, value: string) => void) | null = null;
+  /** The key a hash is watched as, so one moved to another key is watched
+   *  again under it. */
+  owner: string | undefined;
+  watch(onSet: (field: string, value: string) => void, owner?: string): this {
+    this.onSet = onSet;
+    this.owner = owner;
+    return this;
+  }
+  override set(field: string, value: string): this {
+    this.onSet?.(field, value);
+    return super.set(field, value);
+  }
+}
+
+/**
+ * The fake's hashes. A hash put in from outside (a test planting a Map, a
+ * rename) is copied into a watched one, its fields checked as they go in, so
+ * no way of writing escapes the rule. Keep the stored hash, `get(key)`, to
+ * change it later: the Map handed in is not kept.
+ */
+class Hashes extends Map<string, Map<string, string>> {
+  private check: ((key: string, field: string, value: string) => void) | null = null;
+  watch(check: (key: string, field: string, value: string) => void): this {
+    this.check = check;
+    return this;
+  }
+  override set(key: string, h: Map<string, string>): this {
+    if (h instanceof Watched && h.owner === key) return super.set(key, h);
+    const check = this.check;
+    const w = new Watched().watch((field, value) => check?.(key, field, value), key);
+    for (const [field, value] of h) w.set(field, value);
+    return super.set(key, w);
+  }
+}
+
 export class FakeRedis {
   /**
    * @param opts.deserialize read values back the way Upstash's default client
@@ -57,16 +112,77 @@ export class FakeRedis {
    *   way; on for code that stores JSON and must cope with getting it back
    *   parsed, as production does.
    */
-  constructor(private readonly opts: { deserialize?: boolean } = {}) {}
+  constructor(private readonly opts: { deserialize?: boolean } = {}) {
+    // Each test fails on a write that broke the isolation check, even one a
+    // best-effort writer caught (checkCiphertext). Registered in the file
+    // that makes the fake, as its tests run.
+    try {
+      afterEach(() => this.failViolations('in this test'));
+    } catch {
+      // Made where no hook can be registered: reset() still fails them.
+    }
+  }
 
   private out(value: string | undefined): any {
     if (value === undefined) return null;
     return this.opts.deserialize ? upstashParse(value) : value;
   }
 
-  strings = new Map<string, string>();
-  hashes = new Map<string, Hash>();
+  /**
+   * Every ciphertext written under a container (`test:c:<id>:`) must be under
+   * k0, an environment key, or a key whose record names that container: one
+   * that names another means a call site was handed the wrong Ctx, which the
+   * types can't catch since both are a Ctx (docs/architecture.md, "Per-container
+   * data keys"). Checked on every write, across the whole suite, and thrown
+   * from it. Each one is recorded too, and fails the test it happened in at
+   * its end, so a best-effort writer that catches every error (a cache, a
+   * record of a showing) can't swallow one. A test that plants a value under
+   * another container's key on purpose turns it off for that write; reset()
+   * turns it on again. takeViolations() is for a test of the check itself.
+   */
+  checkCiphertext = true;
+
+  private violations: string[] = [];
+
+  /** The writes that broke the isolation check since the last call, cleared. */
+  takeViolations(): string[] {
+    const v = this.violations;
+    this.violations = [];
+    return v;
+  }
+
+  private failViolations(when: string): void {
+    const v = this.takeViolations();
+    if (v.length > 0) throw new Error(`${v.length} write(s) broke the isolation check ${when}, though something may have caught the error: ${v[0]}`);
+  }
+
+  private checkWrite(key: string, field: string | undefined, value: string): void {
+    if (!this.checkCiphertext || typeof value !== 'string') return;
+    const m = /^test:c:([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}):/.exec(key);
+    if (!m) return;
+    for (const keyId of keyIdsIn(value)) {
+      const record = this.hashes.get('test:crypto:keys')?.get(keyId);
+      if (record === undefined) continue; // a key this store doesn't hold: nothing to tell
+      let owner: unknown;
+      try {
+        owner = JSON.parse(record).container;
+      } catch {
+        continue;
+      }
+      if (typeof owner === 'string' && owner !== m[1]) {
+        const message = `FakeRedis: a value under ${keyId}, the key of container ${owner}, was written into container ${m[1]} (${key}${field === undefined ? '' : ` field ${field}`}): a call site was handed the wrong Ctx.`;
+        this.violations.push(message);
+        throw new Error(message);
+      }
+    }
+  }
+
+  strings: Map<string, string> = new Watched().watch((key, value) => this.checkWrite(key, undefined, value));
+  hashes: Map<string, Hash> = new Hashes().watch((key, field, value) => this.checkWrite(key, field, value));
   ttls = new Map<string, number>();
+  /** Hash fields planted as raw bytes (hsetBytes): the bytes Redis would hold,
+   *  beside the text the client reads, while the field still holds that text. */
+  private rawFields = new Map<string, Map<string, { text: string; bytes: Uint8Array }>>();
   /** Commands issued since the last reset. Lets a test assert that a path
    *  which should cost nothing actually touches Redis zero times. */
   ops = 0;
@@ -75,9 +191,34 @@ export class FakeRedis {
   private failing = new Map<FakeCommand, number>();
 
   private hash(key: string): Hash {
-    let h = this.hashes.get(key);
-    if (!h) this.hashes.set(key, (h = new Map()));
-    return h;
+    if (!this.hashes.has(key)) this.hashes.set(key, new Map());
+    return this.hashes.get(key)!;
+  }
+
+  /**
+   * Plants raw bytes in a hash field, as `redis-cli -x HSET` would: the client
+   * reads them decoded as UTF-8, with U+FFFD for any sequence that isn't, as
+   * Upstash's client (and Bun's) decodes every answer, while a script sees the
+   * bytes themselves (redis.sha1hex hashes those). Not a client command:
+   * nothing is counted or can be armed to fail.
+   */
+  hsetBytes(key: string, field: string, bytes: Uint8Array): void {
+    const text = new TextDecoder().decode(bytes);
+    this.hash(key).set(field, text);
+    let raw = this.rawFields.get(key);
+    if (!raw) this.rawFields.set(key, (raw = new Map()));
+    raw.set(field, { text, bytes: new Uint8Array(bytes) });
+  }
+
+  /** Redis's SHA-1 of a field's stored bytes (redis.sha1hex): of the raw
+   *  bytes planted there while the field still holds them, else of its text. */
+  storedSha1(key: string, field: string): string | null {
+    const value = this.hashes.get(key)?.get(field);
+    if (value === undefined) return null;
+    const raw = this.rawFields.get(key)?.get(field);
+    return createHash('sha1')
+      .update(raw && raw.text === value ? raw.bytes : Buffer.from(value, 'utf8'))
+      .digest('hex');
   }
 
   /**
@@ -157,6 +298,14 @@ export class FakeRedis {
     const h = this.hash(key);
     for (const [f, v] of Object.entries(fields)) h.set(f, v);
   }
+  /** Sets one field only if the hash doesn't have it: 1 if it was set, 0 if
+   *  it was there already (lib/sharing.ts, a connection's access log id). */
+  async hsetnx(key: string, field: string, value: string): Promise<number> {
+    this.gate('hsetnx');
+    if (this.hashes.get(key)?.has(field)) return 0;
+    this.hash(key).set(field, value);
+    return 1;
+  }
 
   async hget<T>(key: string, field: string): Promise<T | null> {
     this.gate('hget');
@@ -191,6 +340,32 @@ export class FakeRedis {
     const h = this.hashes.get(key);
     if (!h || h.size === 0) return null; // Upstash returns null, not {}
     return Object.fromEntries([...h].map(([f, v]) => [f, this.out(v)])) as T;
+  }
+
+  /** The fields asked for, as Upstash answers HMGET: an object of each
+   *  field's value (null for one the hash doesn't have), or null when it has
+   *  none of them. */
+  async hmget<T>(key: string, ...fields: string[]): Promise<T | null> {
+    this.gate('hmget');
+    if (fields.length === 0) throw new Error('ERR wrong number of arguments for HMGET');
+    const h = this.hashes.get(key);
+    if (!fields.some((f) => h?.has(f))) return null;
+    return Object.fromEntries(fields.map((f) => [f, this.out(h?.get(f))])) as T;
+  }
+
+  /** Fields in a hash; 0 for a missing key. A string there is Redis's
+   *  WRONGTYPE, as for strlen. */
+  async hlen(key: string): Promise<number> {
+    this.gate('hlen');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.size ?? 0;
+  }
+
+  /** 1 if the hash has the field, else 0: a number, as Upstash answers. */
+  async hexists(key: string, field: string): Promise<number> {
+    this.gate('hexists');
+    if (this.strings.has(key)) throw new Error('WRONGTYPE');
+    return this.hashes.get(key)?.has(field) ? 1 : 0;
   }
 
   async expire(key: string, seconds: number): Promise<void> {
@@ -358,9 +533,15 @@ export class FakeRedis {
     const sha1 = (s: string) => createHash('sha1').update(s, 'utf8').digest('hex');
     const name = script.split('\n', 1)[0];
     if (name === '-- nya:probe') return sha1('nya');
-    const guardOk = (active: string) => this.strings.get(keys[1]) === active && (this.hashes.get(keys[2])?.has(active) ?? false);
-    if (name === '-- nya:cas-string') {
-      if (!guardOk(args[2])) return -2;
+    const exists = (key: string | undefined) => key !== undefined && (this.strings.has(key) || this.hashes.has(key));
+    // The migration pass's (lib/reencrypt.ts): a write only while the
+    // container's map entry still names the key, and the key is still stored.
+    const ownGuard = (keyId: string, container: string) => {
+      const entry = this.hashes.get(keys[1])?.get(container);
+      return entry !== undefined && entry.includes(`"key":"${keyId}"`) && (this.hashes.get(keys[2])?.has(keyId) ?? false);
+    };
+    if (name === '-- nya:cas-string-container') {
+      if (!ownGuard(args[2], args[3])) return -2;
       if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
       const cur = this.strings.get(keys[0]);
       if (cur === undefined) return -1;
@@ -368,12 +549,82 @@ export class FakeRedis {
       this.strings.set(keys[0], args[1]);
       return 1;
     }
-    if (name === '-- nya:cas-hash') {
-      if (!guardOk(args[3])) return -2;
+    if (name === '-- nya:cas-hash-container') {
+      if (!ownGuard(args[3], args[4])) return -2;
       if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
       const cur = this.hashes.get(keys[0])?.get(args[0]);
       if (cur === undefined) return -1;
       if (sha1(cur) !== args[1]) return 0;
+      this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
+    // lib/crypto.ts: a key number from its counter, started past a given one.
+    if (name === '-- nya:key-seq') {
+      if (!this.strings.has(keys[0])) {
+        if (args[0] === '') return -1;
+        this.strings.set(keys[0], args[0]);
+      }
+      const n = Number(this.strings.get(keys[0])) + 1;
+      if (!Number.isSafeInteger(n)) throw new Error('ERR value is not an integer or out of range');
+      this.strings.set(keys[0], String(n));
+      return n;
+    }
+    // lib/container-key-lua.ts birthKeyLua, with k, a and c counted from 0.
+    const birthKey = (k: number, a: number, c: number) => {
+      if (!args[a]) return;
+      if (exists(keys[k + 2]) || exists(keys[k + 3])) return;
+      if (this.hashes.get(keys[k + 1])?.has(args[a]) || this.hashes.get(keys[k])?.has(args[c])) return;
+      const master = this.strings.get(keys[k + 4]);
+      if (master !== undefined && master !== args[a + 3]) return;
+      if (master === undefined) this.strings.set(keys[k + 4], args[a + 3]);
+      this.hash(keys[k + 1]).set(args[a], args[a + 1]);
+      this.hash(keys[k]).set(args[c], args[a + 2]);
+    };
+    // lib/crypto.ts claimContainerKey.
+    if (name === '-- nya:container-key-create') {
+      const have = this.hashes.get(keys[0])?.get(args[0]);
+      if (have !== undefined) return ['have', `v${have}`];
+      if (!this.hashes.get(keys[5])?.has(args[0])) return ['unregistered', ''];
+      if (exists(keys[2]) || exists(keys[3])) return ['rotation', ''];
+      const master = this.strings.get(keys[4]);
+      if (master !== undefined && master !== args[4]) return ['master', ''];
+      if (this.hashes.get(keys[1])?.has(args[1])) return ['taken', ''];
+      if (master === undefined) this.strings.set(keys[4], args[4]);
+      this.hash(keys[1]).set(args[1], args[2]);
+      this.hash(keys[0]).set(args[0], args[3]);
+      return ['made', `v${args[3]}`];
+    }
+    // lib/crypto.ts destroyContainerKeys.
+    if (name === '-- nya:container-key-destroy') {
+      if (this.hashes.get(keys[2])?.has(args[0])) return -1;
+      const mark = `"container":"${args[0]}"`;
+      const stone = `{"container":"${args[0]}","on":"${args[1]}"}`;
+      const out: string[] = [];
+      for (const id of args.slice(2)) {
+        const record = this.hashes.get(keys[1])?.get(id);
+        const tomb = this.hashes.get(keys[3])?.get(id);
+        if (record !== undefined) {
+          if (!record.includes(mark)) continue;
+          this.hdelNow(keys[1], [id]);
+          if (tomb === undefined) this.hash(keys[3]).set(id, stone);
+          out.push(id);
+        } else if (tomb === undefined) {
+          this.hash(keys[3]).set(id, stone);
+          out.push(id);
+        } else if (tomb.includes(mark)) {
+          out.push(id);
+        }
+      }
+      const cur = this.hashes.get(keys[0])?.get(args[0]);
+      if (cur === undefined || !cur.includes('"destroyed"')) this.hash(keys[0]).set(args[0], `{"destroyed":"${args[1]}"}`);
+      return out;
+    }
+    if (name === '-- nya:container-entry-read') {
+      const v = this.hashes.get(keys[0])?.get(args[0]);
+      return v === undefined ? '' : `v${v}`;
+    }
+    if (name === '-- nya:container-entry-update') {
+      if ((this.hashes.get(keys[0])?.get(args[0]) ?? '') !== args[1]) return 0;
       this.hash(keys[0]).set(args[0], args[2]);
       return 1;
     }
@@ -385,6 +636,22 @@ export class FakeRedis {
     if (name === '-- nya:history-set-if-absent') {
       if (this.hashes.get(keys[0])?.has(args[0])) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
+      return 1;
+    }
+    if (name === '-- nya:sharing-delete-orphan-log') {
+      // lib/sharing.ts DELETE_ORPHAN_LOG: the log field, only while the connection's record field is absent.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      if (h?.has(args[0]) || !h?.has(args[1])) return 0;
+      this.hdelNow(keys[0], [args[1]]);
+      return 1;
+    }
+    if (name === '-- nya:sharing-delete-log-if') {
+      // lib/sharing.ts DELETE_LOG_IF: the field, only while it holds the log id.
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.hashes.get(keys[0])?.get(args[0]);
+      if (value === undefined || !value.includes(args[1])) return 0;
+      this.hdelNow(keys[0], [args[0]]);
       return 1;
     }
     if (name === '-- nya:history-delete-if') {
@@ -479,24 +746,162 @@ export class FakeRedis {
       if (this.hashes.get(keys[1])?.has(args[2])) throw new Error('container id already registered');
       this.hash(keys[1]).set(args[2], args[3]);
       this.hash(keys[0]).set(args[0], args[2]);
+      birthKey(2, 4, 2);
       return args[2];
     }
     if (name === '-- nya:container-create-first') {
       if ((this.hashes.get(keys[0])?.size ?? 0) !== 0) return 0;
       this.hash(keys[0]).set(args[0], args[1]);
+      birthKey(1, 2, 0);
       return 1;
+    }
+    // The storage seam's (lib/repo.ts). A string at the key is Redis's
+    // WRONGTYPE, as HMGET and HGET answer it.
+    if (name === '-- nya:repo-read-entries') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      return args.map((field) => {
+        const value = this.hashes.get(keys[0])?.get(field);
+        return value === undefined ? '' : `v${value}`;
+      });
+    }
+    // Hashing what is stored as Redis does: the bytes, where raw ones were
+    // planted (hsetBytes).
+    if (name === '-- nya:repo-read-entry-hashed') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.hashes.get(keys[0])?.get(args[0]);
+      return value === undefined ? ['', ''] : [`v${value}`, `v${this.storedSha1(keys[0], args[0])}`];
+    }
+    if (name === '-- nya:repo-update-entry') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      if ((this.storedSha1(keys[0], args[0]) ?? '') !== args[1]) return 0;
+      if (args[2] === '') this.hdelNow(keys[0], [args[0]]);
+      else this.hash(keys[0]).set(args[0], args[2]);
+      return 1;
+    }
+    // A value store's key, read and changed exactly (ValueStore.update). A
+    // hash at the key is WRONGTYPE, as GET answers it; SET drops an expiry.
+    if (name === '-- nya:repo-read-value') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.strings.get(keys[0]);
+      return value === undefined ? '' : `v${value}`;
+    }
+    if (name === '-- nya:repo-update-value') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const cur = this.strings.get(keys[0]);
+      if ((cur === undefined ? '' : sha1(cur)) !== args[0]) return 0;
+      if (args[1] === '') this.strings.delete(keys[0]);
+      else this.strings.set(keys[0], args[1]);
+      this.ttls.delete(keys[0]);
+      return 1;
+    }
+    // Several fields at once (MapStore.updateMany): every one compared, then
+    // all written, or none. "" deletes a field, "=" leaves it as it is.
+    if (name === '-- nya:repo-update-entries') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      for (let i = 0; i < args.length; i += 3) {
+        const cur = this.hashes.get(keys[0])?.get(args[i]);
+        if ((cur === undefined ? '' : sha1(cur)) !== args[i + 1]) return 0;
+      }
+      for (let i = 0; i < args.length; i += 3) {
+        if (args[i + 2] === '') this.hdelNow(keys[0], [args[i]]);
+        else if (args[i + 2] !== '=') this.hash(keys[0]).set(args[i], args[i + 2]);
+      }
+      return 1;
+    }
+    // How much a map store holds (MapStore.size): HKEYS, then HSTRLEN of
+    // each, in bytes as Redis counts them (the raw ones, where planted), the
+    // lowest field name winning a tie for the largest.
+    if (name === '-- nya:repo-size') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      if (!h || h.size === 0) return [0, 0, '', 0];
+      let chars = 0;
+      let largest = '';
+      let most = -1;
+      for (const [field, value] of h) {
+        const raw = this.rawFields.get(keys[0])?.get(field);
+        const n = raw && raw.text === value ? raw.bytes.length : Buffer.byteLength(value, 'utf8');
+        chars += Buffer.byteLength(field, 'utf8') + n;
+        if (n > most || (n === most && field < largest)) {
+          largest = field;
+          most = n;
+        }
+      }
+      return [h.size, chars, `v${largest}`, most];
+    }
+    // A counter store's: GET or INCR, and the expiry, as one step. Like
+    // Redis, INCR refuses a value that is not an integer, and a hash at the
+    // key is WRONGTYPE.
+    if (name === '-- nya:repo-counter-read' || name === '-- nya:repo-counter-take') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      let value = this.strings.get(keys[0]);
+      if (name === '-- nya:repo-counter-read' && value === undefined) return ['', 0];
+      if (name === '-- nya:repo-counter-take') {
+        if (value !== undefined && !/^(0|[1-9][0-9]*)$/.test(value)) throw new Error('ERR nya: the stored count is not a count');
+        value = String(Number(value ?? 0) + 1);
+        this.strings.set(keys[0], value);
+      }
+      let ttl = this.ttls.get(keys[0]) ?? -1;
+      if (ttl < 0) {
+        ttl = Number(args[0]);
+        this.ttls.set(keys[0], ttl);
+      }
+      return name === '-- nya:repo-counter-read' ? [`v${value}`, ttl] : [Number(value), ttl];
+    }
+    // A counter map store's: one id's count and the end of its window, as one
+    // step, the hash kept two windows past it (lib/repo.ts COUNTERS_TAKE).
+    if (name === '-- nya:repo-counters-take') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const [id, now, window] = [args[0], Number(args[1]), Number(args[2])];
+      const raw = this.hashes.get(keys[0])?.get(id);
+      let [count, ends] = [0, 0];
+      if (raw !== undefined) {
+        const m = /^([1-9][0-9]*):([1-9][0-9]*)$/.exec(raw);
+        if (!m) {
+          if ((this.ttls.get(keys[0]) ?? -1) < 0) this.ttls.set(keys[0], 2 * window);
+          throw new Error('ERR nya: the stored count is not a count');
+        }
+        [count, ends] = [Number(m[1]), Number(m[2])];
+      }
+      if (ends <= now || ends - now > 2 * window) [count, ends] = [0, now + window];
+      count++;
+      this.hash(keys[0]).set(id, `${count}:${ends}`);
+      this.ttls.set(keys[0], 2 * window);
+      return [count, ends - now];
+    }
+    // The rate limits counted by address (lib/rate-limit.ts): INCR or GET,
+    // with the window as the expiry wherever the count has none. Like Redis,
+    // INCR refuses what is not an integer as it writes them, and a hash at the
+    // key is WRONGTYPE.
+    if (name === '-- nya:ratelimit-count' || name === '-- nya:ratelimit-read') {
+      if (this.hashes.has(keys[0])) throw new Error('WRONGTYPE');
+      const value = this.strings.get(keys[0]);
+      if (name === '-- nya:ratelimit-read' && value === undefined) return 0;
+      let answer: unknown = this.out(value);
+      if (name === '-- nya:ratelimit-count') {
+        if (value !== undefined && !/^(0|-?[1-9][0-9]*)$/.test(value)) throw new Error('ERR value is not an integer or out of range');
+        answer = Number(value ?? 0) + 1;
+        this.strings.set(keys[0], String(answer));
+      }
+      if ((this.ttls.get(keys[0]) ?? -1) < 0) this.ttls.set(keys[0], Number(args[0]));
+      return answer;
     }
     throw new Error(`FakeRedis: unknown script ${name}`);
   }
 
   reset(): void {
+    // Cleared all the same, so the tests after start clean.
+    const missed = this.violations.length;
+    this.checkCiphertext = true;
     this.strings.clear();
     this.hashes.clear();
     this.ttls.clear();
+    this.rawFields.clear();
     this.failing.clear();
     this.ops = 0;
     this.pipelines = 0;
     this.pipelined = 0;
+    if (missed > 0) this.failViolations('before this reset');
   }
 }
 

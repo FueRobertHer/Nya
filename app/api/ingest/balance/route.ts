@@ -7,6 +7,7 @@ import { recordDirectory } from '@/lib/links';
 import { computeNetWorth, recordFetch } from '@/lib/networth';
 import { clearCaches } from '@/lib/cache';
 import { secretsMatch } from '@/lib/auth';
+import { loggable } from '@/lib/log-safe';
 
 // Machine-writable balance updates for manual accounts, so anything that can make
 // an HTTP request can feed Nya: a SimpleFIN puller, an OFX cron, a scraper on your
@@ -110,7 +111,7 @@ export async function POST(req: Request) {
         await setManualBalance(ctx, account_id, balance);
         results.push({ account_id, status: 'updated' });
       } catch (err) {
-        console.error(`Ingest failed for ${account_id}`, err);
+        console.error(`Ingest failed for ${account_id}`, loggable(err));
         results.push({ account_id, status: 'error', reason: 'Could not read or write this account' });
       }
     }
@@ -132,8 +133,8 @@ export async function POST(req: Request) {
         // published response shape. True means the TOTAL landed: a failed
         // per-account write doesn't report the chart as un-updated when the point
         // is in it. (A partly failed read still records the accounts that
-        // answered, but that isn't what this field is about.)
-        const recorded = (await recordFetch(ctx, institutions, netWorth)) !== null;
+        // answered, and their holdings, but that isn't what this field is about.)
+        const recorded = (await recordFetch(ctx, institutions, netWorth)).date !== null;
         // Record how to draw these accounts, as /api/snapshot does: this read may
         // be the only clean one of the day, and an account it learned about would
         // otherwise sit in the snapshot with nothing to render it from.
@@ -143,7 +144,7 @@ export async function POST(req: Request) {
       } catch (err) {
         // The balances did land; only the snapshot failed. Say so rather than
         // reporting a failure that would make a script retry the write.
-        console.error('Ingest snapshot failed', err);
+        console.error('Ingest snapshot failed', loggable(err));
         return NextResponse.json({ updated, recorded: false, results });
       }
     }
@@ -152,7 +153,7 @@ export async function POST(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Ingest failed' }, { status: 500 });
   }
 }

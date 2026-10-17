@@ -1,0 +1,905 @@
+# Downloading your data
+
+Everything Nya stores about you can be downloaded, decrypted, in open formats: one JSON file with all of it, CSV files of your transactions and your balance history for a spreadsheet, or one bank account's or card's transactions as an OFX statement for another money app. Any of them can be protected with a passphrase. This page says how to get it, what is in it field by field, what is left out and why, and how to open a protected file. The code is `lib/user-export.ts` (with `lib/ofx-export.ts` for OFX and `lib/protected-download.ts` for the passphrase), the route `app/api/my-data/route.ts`, and the card `components/DownloadMyData.tsx`.
+
+- [Getting a copy](#getting-a-copy)
+- [What is not in it](#what-is-not-in-it)
+- [Conventions](#conventions)
+- [The JSON file](#the-json-file)
+- [The CSV files](#the-csv-files)
+- [One account as OFX](#one-account-as-ofx)
+- [Protecting the file with a passphrase](#protecting-the-file-with-a-passphrase)
+- [Every stored key, and where it goes](#every-stored-key-and-where-it-goes)
+- [How it differs from the operator backup](#how-it-differs-from-the-operator-backup)
+- [Adding a store](#adding-a-store)
+
+## Getting a copy
+
+On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pick a format:
+
+| Format | File | What it holds |
+| --- | --- | --- |
+| Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, those SimpleFIN brought, those on manual accounts, entered by hand or imported, and those imported into linked accounts from your bank's files. |
+| Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
+| Bank or card statement (OFX) | `nya-<institution>-<account>-<date>.ofx` | One bank account's or card's posted transactions, for another money app, or to import into Nya again ([below](#one-account-as-ofx)). |
+
+Any of them can be **protected with a passphrase**: it is then saved encrypted, with `.age` at the end of its name ([below](#protecting-the-file-with-a-passphrase)).
+
+**A fresh sign-in comes first.** With Clerk, the download needs a sign-in verified in the last ten minutes (Clerk's "strict" level: the second factor if the account has one, the first otherwise). If yours is older, Clerk's own window asks you to confirm it is you, and the download carries on. With the shared password, the card asks for the password again; wrong ones count against the same limit as the login page (10 per IP per 15 minutes), so this can't be used to guess the password faster.
+
+**Five downloads an hour**, per account, whatever the format, protected or not. A sixth is refused with how long to wait. The number is `DOWNLOADS_PER_WINDOW` in `lib/download-limit.ts`, which both the limit and the card's text read.
+
+**An email each time.** With email set up ([deployment.md](deployment.md#email-notices)), each download emails the owner (with Clerk, the account's verified address; with the shared password, `NOTIFY_EMAIL`): when it happened, in UTC, which format, whether a passphrase protects it, and what to do if it wasn't them (sign out every session, and change the password). Never a balance, an amount, an account number, the name of an account or a bank, or anything from the file: a download nobody asked for means someone else has signed in, and the email says only that. The download never waits for the email and never fails because of it: the email is started as the file is, and one that can't be sent is logged with the email service's status alone, never the address or the text. Each download's email has an idempotency key of its own, so the one retry (after a rate limit, no answer, or an error of the email service's own) is delivered once. Making an API token sends the same kind of email (`lib/download-notice.ts`). Without email set up, nothing is sent.
+
+**Nothing missing without a word.** Every store is read before the first byte is sent, and what can't be read is named, not quietly left out (with the two exceptions below). What happens when something can't be read depends on why:
+
+- **The deployment can't read it** (the database out of reach, an encryption key missing or unavailable): nothing is downloaded, and the error says which part, as when anything else goes wrong. Try again later.
+- **An entry is damaged, or saved in a form this version of Nya doesn't know** (by a later version, say): the download goes ahead with everything else, and the file names what it is missing under [`problems`](#problems), by part and id, and says so in words under `notes`. The response says so too (**When the file is incomplete**, below), and the card says plainly that the file is incomplete, with what is missing. One damaged record would otherwise stop the download for good, with nothing in the app to clear it. That holds for every store on the [storage seam](#stores-built-on-the-storage-seam), for your balance history (`net_worth_history`, `account_history`), your manual accounts (`manual_accounts`), your budgets (`budgets` and `group_budgets`, read together, so both then `null`) and goals (then `null`), your categories (then `null`, with every transaction filed by the category it came with), and for the records in [`sharing`](#sharing), each marked where it belongs.
+- **An entry of an older store the rest of the file is read against is damaged**: nothing is downloaded, and the error says which part, because left out, such an entry would read as something else elsewhere in the file. Your linked institutions and accounts (an account's balances and transactions with no account to belong to), transactions and investment transactions (the categories, names and exclusions you set on a row pointing at nothing), categories and merchant names (a transaction without the one you set on it), links (one account read as two) and hidden accounts (a hidden account shown as not hidden). These stores join the rest as they move onto the storage seam.
+
+The two exceptions are older readers that pass over, without a word, what they can't parse, as the app itself does, so the file holds what the app shows: sharing's (a connection whose record doesn't parse is left out, a share that doesn't parse reads as sharing nothing, and an account shared at a level this version doesn't know is left out of what you share), and the accounts each bank last reported (a record in the shape used before they were kept per bank, which the app no longer reads, and an account in one without an id or a type). Neither is named under `problems` yet.
+
+Nothing is removed or changed either way: what can't be read stays stored as it was, and the download only reports it. Without `MASTER_KEY` ([deployment.md](deployment.md#3-environment-variables)), a damaged value can't be told from a replaced `PLAID_ENCRYPTION_KEY`, which would make every value fail alike, so it stops the download as the deployment's problem rather than being reported as damage.
+
+**A whole file or none.** Before sending anything, the route writes the file out once only to count its bytes, keeping none of them, then streams it, and says how many bytes to expect twice: `Content-Length`, and `X-Nya-Export-Bytes`, the same number, which is the one the page checks (a proxy that compresses the response changes or drops `Content-Length`, and leaves this one alone). The page counts what arrives and saves the file only when that count is there and matches; otherwise it saves nothing and says the download was cut off, to try again. So a connection that drops part way, or a response ended early by the platform or a proxy, never leaves a short file that looks whole. The route may run for up to 300 seconds, for a large file over a slow connection.
+
+**When the file is incomplete.** The response carries `X-Nya-Export-Incomplete`: the parts of the JSON file this file is made from that are missing something, by their keys, separated by commas (`manual_accounts, holdings:history`), and `X-Nya-Export-Notes`, the notes that say what is missing in words (a URL-encoded JSON list, as the caveats travel). Both are there for a CSV and an OFX statement too, which have nowhere inside to say it, and for a protected file, which can't be read until it is opened, but only for the parts the file is made from: a transactions CSV is never called incomplete for a holdings record it doesn't hold. A CSV's notes say what that CSV lacks (for a manual account that can't be read, the name on its rows; for an account from SimpleFIN, that and the category of its payments to your other accounts; for rules or tags that can't be read, that none is applied or shown; for what you said about a transaction, or what was carried to it from an earlier account, the rows without it, a bank's transaction standing for one you imported into a linked account among them) and point to the JSON download for the list. Neither header is sent with a whole file. The card shows the notes, after a line saying the file is incomplete.
+
+**How big.** About 1.7 KB of JSON per transaction, and about 0.6 KB in the transactions CSV; history adds little. An account with 60,000 transactions and ten years of daily balances for 20 accounts comes to about 106 MB of JSON, 34 MB of transactions CSV and 7 MB of balance history CSV.
+
+**Never written down.** The stores are read and decrypted in memory, and the file's text is written out a piece at a time as it streams to your browser (encrypted as it goes, when a passphrase protects it), never held whole on the server. Nothing writes it to storage, a log or a blob store on the way, and the response tells caches not to keep it. Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe.
+
+**Not built yet.** Bringing a download into another copy of Nya, or into a new account: restoring from this file is planned (#43). Until then, an OFX statement imports into a manual account ([features.md](features.md#importing-files)).
+
+## What is not in it
+
+The JSON file lists these itself, under `not_included`.
+
+- **Bank access tokens.** The credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya.
+- **The access a SimpleFIN account gives Nya.** The Access URL Nya keeps when you connect SimpleFIN ([features.md](features.md#bring-your-own-sync)): a credential that reads your accounts there, not your data. Remove Nya in your SimpleFIN account to end it.
+- **Your API tokens themselves.** Nya never keeps a token's secret, only a hash of it to check it against, and the hash is credential material too, so neither is in the file, and nor is the token's id, which is part of the token. Each token's name and dates are in, under [`api_tokens`](#api_tokens).
+- **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
+- **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **The balances an estimate held flat.** For an account the estimate could not walk back through its transactions (investments, loans, manual accounts), estimated net-worth totals use that account's balance on the day the estimate was made. That copied balance is part of the estimated totals, but it is not a history of the account, so it is not listed as one.
+- **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves. Their record of each time what they share was shown to you is in, under `sharing`: it is about you, and the same one they see.
+- **Unused invite links.** They work for 72 hours and are then gone.
+
+## Conventions
+
+- **Amounts** are plain numbers in the account's currency. Nothing is converted between currencies.
+- **Transaction signs** follow Plaid: positive is money leaving the account (a purchase), negative is money coming in (a refund, a paycheck). Investment transactions are the same: positive when cash is debited (a buy).
+- **Balances** of credit cards and loans are positive amounts owed. Net worth adds every other account and subtracts those.
+- **Dates.** History is kept per UTC day (`YYYY-MM-DD`). Times (`..._at`, `datetime`) are ISO 8601 instants in UTC, except `investment_transactions[].seen_at`, which is a UTC day. `first_seen` and `last_seen` are days too.
+- **`null`** means not known or never stored, never zero. A time Nya never recorded is `null`, not a made-up date.
+- **Ids** are Plaid's (`account_id`, `item_id` for a connection, `transaction_id`) or Nya's own (`manual_...` for manual accounts and for the accounts SimpleFIN keeps up to date, `conn_...` for a connection to SimpleFIN). They tie the parts of the file together.
+
+## The JSON file
+
+One object, UTF-8, laid out to be read: each top-level field starts a line, its lists run an entry per line, and each record (an account, a transaction, one day's balance) is on a line of its own, with everything it holds. Any JSON reader reads it the same as any other layout. Indenting every field as well would make the file about a third bigger, and much slower to write. Its top-level fields, in order:
+
+| Field | What it is |
+| --- | --- |
+| `format` | Always `"nya-export"`. |
+| `version` | `2`. It goes up when a field is removed or changes meaning; an added field leaves it alone. Version 2 is the file that names what it couldn't read under `problems` instead of not being made at all: since then a part can be short, and `budgets`, `goals` and a value store's field can be `null`, because something couldn't be read, which only `problems` tells apart. A reader written for version 1, which was whole or not made, could take such a file as whole. |
+| `exported_at` | When the file was made. |
+| `documentation` | A link to this page. |
+| `not_included` | What the file leaves out, and why ([above](#what-is-not-in-it)). |
+| `notes` | Caveats about this download, if any: for example that the newest transactions from an institution could not be saved, so they may be missing, or that part of the file is missing what couldn't be read (one note for each such part). Usually empty. |
+| `problems` | What is stored but couldn't be read into the file ([below](#problems)). Usually empty. |
+| `institutions` | Your linked connections: Plaid's, and your connections to SimpleFIN. |
+| `accounts` | Every account the file mentions anywhere, apart from the manual accounts you have now. |
+| `manual_accounts` | Accounts you track by hand. |
+| `hidden_accounts` | Accounts you hid. |
+| `net_worth_history` | Your net worth by day. |
+| `account_history` | Each account's balance by day. |
+| `transactions` | Every transaction stored from your banks through Plaid. Those on manual accounts, entered by hand or imported, and those SimpleFIN brought are in `manual-transactions`, and those imported into linked accounts from files in `imported-transactions`. |
+| `category_overrides` | Every category you set on a transaction. |
+| `merchant_renames` | Every merchant you renamed. |
+| `investment_transactions` | Every stored investment transaction. |
+| `investment_history_coverage` | Which days the stored investment transactions are known to be complete for. |
+| `account_links` | Accounts you linked across a reconnect, offers you declined, and categories carried across. |
+| `budgets` | Your monthly budgets on categories. |
+| `group_budgets` | Your monthly budgets on category groups. |
+| `goals` | Your savings goals, each with its plan: its allocation, monthly target, target date and whether it is archived. |
+| `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
+| `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `review-settings`, `rules`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+
+### `problems`
+
+Empty when the file has everything. Otherwise one entry for each part of the file that is missing something, and each reason, in the order the parts come:
+
+```json
+{ "section": "holdings:history", "problem": "unreadable", "ids": ["4f6c0d2e-...", "9a1b..."] }
+```
+
+| Field | Meaning |
+| --- | --- |
+| `section` | The part of the file: its field, such as `manual_accounts`, `account_history` or `holdings:history`. |
+| `problem` | `unreadable`: the stored data is damaged, so nothing in it can be read, by this version of Nya or any other. `unrecognised`: it looks intact, but was saved in a form this version of Nya doesn't know (a later version may have written it); it is kept as it is, and a version that knows it reads it. In `sharing`, also `unavailable` and `record_id_unreadable` ([below](#sharing)). |
+| `ids` | What is missing, by the id it is stored under, in order: an entry's `id` for a store on the storage seam, a UTC day (`YYYY-MM-DD`) for `net_worth_history` and `account_history`, an account's id for `manual_accounts`. Absent for a part that is one value (`budgets`, `group_budgets`, `goals`, `allocation-settings`, `budget-months`, `categories`, `fire-plan`, `income-carryover`, `planned-items`, `rules`, `tags`), which is then `null` in the file, for `sharing`, which names no ids and marks each record it can't give where it belongs, and for `api_tokens`, which has `count` instead. |
+| `count` | How many are missing, in place of `ids`, for a part whose ids are kept out of the file: `api_tokens`, since a token's id is part of the token. |
+
+A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
+
+Nothing in `problems` was removed: it is all still stored as it was. Nya doesn't offer to clear damaged records from here. What removing one would do differs from store to store (an exclusion record gone puts a transaction back in your totals; a record of an email gone may send the email again; an import's record gone loses its undo), so a repair belongs where the record is used, as holdings history's is ([architecture.md](architecture.md#holdings-history)) and sharing's is (the Sharing drawer).
+
+### `institutions[]`
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | Plaid's id for the connection, or Nya's (`conn_...`) for a connection to SimpleFIN. |
+| `institution_name` | The bank's name, as Plaid Link gave it. For a connection to SimpleFIN, `SimpleFIN` and the host it reaches, in brackets: the banks behind it are on its accounts. |
+| `institution_id` | Plaid's id for the bank, or `null` for a connection made before it was stored, and for a connection to SimpleFIN. |
+| `provider` | `"plaid"`, or `"simplefin"`. |
+
+### `accounts[]`
+
+Every account the file mentions anywhere, apart from the manual accounts you have now (those are in `manual_accounts`): connected ones, those SimpleFIN keeps up to date, earlier ones whose institution you disconnected (kept for their history), and any id known only from its balance history, a link, a declined offer, a goal or something you share. Each detail comes from the freshest record that has it: what the last good balance fetch remembered, then the directory of every account seen, then the transaction store, then the investment store.
+
+| Field | Meaning |
+| --- | --- |
+| `account_id` | Plaid's id for the account, or Nya's (`manual_...`) for one SimpleFIN keeps up to date, or a manual account you removed. |
+| `provider` | `"plaid"`; `"simplefin"` for one SimpleFIN keeps up to date, or kept up to date until you removed it; `"manual"` for a manual account you removed, which only its history (or a goal or share naming it) still mentions; `null` when nothing stored says. |
+| `item_id` | The connection it belongs to, or `null` if unknown. |
+| `institution_name`, `institution_id` | Its bank. |
+| `connected` | Whether its connection is still linked. |
+| `name`, `official_name` | Its names at the bank. |
+| `type`, `subtype` | Plaid's kind of account: `depository`, `credit`, `loan`, `investment` or `other`, and for example `checking`. |
+| `mask` | The last digits of the account number. |
+| `currency` | Its currency code, when known. |
+| `credit_limit` | A card's credit line, when known. |
+| `persistent_account_id` | Plaid's id for the account across reconnects, where the bank offers one. |
+| `first_seen`, `last_seen` | The first and last day Nya knew the account. |
+| `hidden`, `hidden_at` | Whether you hid it, and when. Hiding one id of an account you linked hides every id it has had. |
+| `latest_balance` | `{ balance, date }`: its newest recorded balance (never an estimate) and the UTC day it was recorded, or `null`. A recorded day that can't be read is passed over ([`problems`](#problems)), so the date says which day it is. |
+| `lifecycle` | When it ended ([features.md](features.md#accounts-that-end)), or `null` while it is open: `state` (`closed`, `left` for no longer yours, or `untracked` for no longer followed), `date` (the day it stopped counting, `YYYY-MM-DD`), `note` (what you wrote, or `null`) and `assumed` (`true` when Nya assumed it closed because nobody answered whether it had). An end set on one id of an account you linked applies to every id it has had, as in the app. What is stored, under the id it was set on, is in [`account-lifecycle`](#account-lifecycle). |
+
+An account known only by its id has `null` for everything Nya never learned about it. One known only from its end is listed too.
+
+One SimpleFIN keeps up to date is described from its entry in [`connector-accounts`](#connector-accounts): `type` is what you said it is, `currency` SimpleFIN's, `connected` whether its connection is still there, `first_seen` the day you started tracking it and `last_seen` the day of the latest balance an answer held for it. SimpleFIN gives no `official_name`, `mask`, `credit_limit` or `persistent_account_id`, so those are `null`. Kept as a manual account when you disconnected, it is in `manual_accounts` instead, under the same id. Removed, and still mentioned by its balance history (or a goal or share naming it), it is described from its record in [`connector-ended`](#connector-ended), until you forget that record: `connected` is `false`, `first_seen` the day you started tracking it and `last_seen` the day you let it go.
+
+### `manual_accounts[]`
+
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code. A manual account that can't be read is named under [`problems`](#problems) instead.
+
+### `hidden_accounts[]`
+
+What you hid, as stored: `account_id`, `type` (kept so a hidden account can be taken out of past totals even while its bank is unreachable), `hidden_at`.
+
+### `net_worth_history`
+
+```json
+{ "includes_hidden_accounts": true, "points": [{ "date": "2026-01-01", "total": 1000, "kind": "recorded" }] }
+```
+
+One point per day. `kind` is `recorded` for a total Nya measured that day, or `estimated` for one reconstructed from your transactions for a day before it started recording (or a day it couldn't record). Where a day has both, the recorded total is given and the estimate, superseded, is not. A day whose total can't be read is named under [`problems`](#problems), and has no point.
+
+**Totals include hidden accounts.** Hiding takes an account out of what the app shows, not out of what was recorded, so unhiding brings it back exactly. On a recorded day, the total the app charts is this total minus each hidden account's balance that day from `account_history` (plus it, for a hidden credit card or loan, whose balance was subtracted). On an estimated day the app also takes out a balance the estimate held flat, which is not in this file; it leaves out a day where it can't tell what a hidden account held; and it draws a straight line between two recorded days in place of the estimates between them. So the chart can differ from these totals on estimated days. (Forgetting a hidden earlier account takes it out of the stored totals for good, so a forgotten account is in neither.)
+
+### `account_history[]`
+
+```json
+{ "account_id": "...", "points": [{ "date": "2026-01-01", "balance": 1500, "kind": "recorded" }] }
+```
+
+Each account's own balance by day, one point per day, by the same rules the app's account chart uses: a balance measured on a day one of your banks failed (so no total was recorded) counts as recorded, and comes before the recorded map for that day; then the recorded map; then the estimate (the newer of the two estimate layers first). A day whose recorded map doesn't name the account has no point: it wasn't there that day. Accounts you linked across a reconnect keep their own ids here; the app joins them using `account_links.links`. A day whose balances can't all be read is named under [`problems`](#problems).
+
+### `transactions[]`
+
+Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions), and those imported into linked accounts from your bank's files in [`imported-transactions`](#imported-transactions)):
+
+| Field | Meaning |
+| --- | --- |
+| `transaction_id` | Plaid's id. |
+| `pending_transaction_id` | On a posted transaction, the pending one it replaced. |
+| `account_id` | The account. |
+| `amount` | Plaid's sign: positive is money out. |
+| `iso_currency_code`, `unofficial_currency_code` | Its currency (the second for ones without an ISO code, such as crypto). |
+| `date` | The posting date. |
+| `authorized_date`, `authorized_datetime`, `datetime` | When it happened, where the bank says. |
+| `name` | The bank's own description of it. |
+| `merchant_name`, `merchant_entity_id`, `website`, `logo_url` | The merchant as Plaid identified it. |
+| `personal_finance_category` | Plaid's category: `primary`, `detailed` and `confidence_level`. |
+| `personal_finance_category_icon_url` | Its icon. |
+| `pending` | Not yet posted. |
+| `payment_channel` | `online`, `in store` or `other`. |
+| `transaction_code`, `transaction_type` | The bank's kind of transaction, where given. |
+| `check_number`, `account_owner` | Where given. |
+| `location` | `address`, `city`, `region`, `postal_code`, `country`, `lat`, `lon`, `store_number`. |
+| `payment_meta` | `reference_number`, `ppd_id`, `payee`, `by_order_of`, `payer`, `payment_method`, `payment_processor`, `reason`. |
+| `counterparties` | Who was on the other side: each with `name`, `type` (`merchant`, `payment_app`...), `entity_id`, `website`, `logo_url`, `confidence_level`. |
+| `category` | Plaid's primary category, in words (`food and drink`). |
+| `account_name`, `institution_name` | As they were when the transaction was stored. |
+
+Transactions stored before Nya kept every field carry only the date, description, amount, pending flag, category and names; the rest is `null`.
+
+And what Nya adds, your own edits beside the bank's, never over them:
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | The connection it came from. |
+| `vendor_key` | The merchant's key for renames: `mid:<merchant id>`, or `nm:<institution>::<name>` without one. |
+| `your_category` | A category you set on this transaction, or `null`. |
+| `your_category_from_earlier_account` | A category you set on the same transaction under an earlier account you linked to this one, or `null`. |
+| `nya_category` | The name of the category it is filed under now (one of your [`categories`](#categories)), or `null` when nothing says what it is (it is then filed under the uncategorized one). |
+| `nya_category_id` | That category's id, or `null` until the app has stored your categories. |
+| `nya_group` | Its group's name. |
+| `your_merchant_name` | Your name for this merchant, or `null`. |
+| `superseded_by_posted` | A pending transaction its posted one replaced. The app hides these so nothing counts twice. |
+| `account_hidden` | Its account is hidden. |
+| `tags` | The names of the [`tags`](#tags) it carries, in the order you made them: put on by you, carried from an earlier account or from a transaction you imported that it now stands for, or added by one of your [`rules`](#rules). Empty for none. |
+| `your_note` | Your note on it, or on a transaction you imported that it now stands for, or `null`. |
+| `nya_name` | The name the app shows: `your_merchant_name`, else a rule's, else `merchant_name`, else `name`. |
+| `excluded` | Left out of budgets and reports, as the app counts it: by you, carried from an earlier account or from a transaction you imported that it now stands for, or hidden by a rule; `null` when what you said about it (or about such an imported transaction) couldn't be read (it counts then, and `problems` names it). |
+| `excluded_by_rule` | `true` when it is excluded because a rule hides it, rather than by you. |
+| `rule_ids` | The ids of your rules that match it, in the order they run. |
+
+The app files a transaction by `your_category`, else a category you set on a transaction imported into its account from a file that it now stands for ([`imported-transactions`](#imported-transactions)), else `your_category_from_earlier_account`, else a rule's, else Plaid's category, and shows the name that category has now, `nya_category`, which says so here too (`your_category` stays empty: you set none on it); and it shows `nya_name`. Rules, tags and exclusions are applied exactly as the app applies them (`lib/txn-layers.ts`, the same function), from the parts of this file: [`rules`](#rules), [`tags`](#tags), [`transaction-annotations`](#transaction-annotations) and [`carried-annotations`](#carried-annotations).
+
+A transaction you split or grouped is here whole, as stored, filed as it would be without the split; its parts and its group are in [`transaction-splits`](#transaction-splits) and [`transaction-groups`](#transaction-groups), which the [transactions CSV](#nya-transactions-datecsv) applies as the app does.
+
+### `category_overrides[]` and `merchant_renames[]`
+
+Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
+
+### `investment_transactions[]`
+
+Every stored investment transaction, newest first, with every field Plaid sent (`investment_transaction_id`, `account_id`, `security_id`, `date`, `name`, `quantity`, `price`, `amount`, `fees`, `type`, `subtype`, `iso_currency_code`, `unofficial_currency_code`, `cancel_transaction_id`), and:
+
+| Field | Meaning |
+| --- | --- |
+| `item_id` | The connection it came from. |
+| `security` | The security as Plaid described it: `name`, `ticker_symbol`, `type`, `is_cash_equivalent`, `cusip`, `isin`, `iso_currency_code`; or `null`. |
+| `seen_at` | The last day a sync returned it. |
+| `missing_since` | When a complete check of its dates first didn't return it, or `null`. |
+| `excluded` | The app leaves it out: two complete checks a day apart didn't return it, or the bank cancelled it. It is kept, not deleted, and comes back if the bank returns it. |
+| `cancelled` | The bank sent a cancellation for it. |
+
+### `investment_history_coverage[]`
+
+`item_id`, `account_id`, `from`, `through`: the days for which the stored investment transactions of that account were checked complete. Outside them, a quiet month and an unfetched one look the same.
+
+### `account_links`
+
+| Field | Meaning |
+| --- | --- |
+| `links[]` | `earlier_account_id`, `account_id` (what it is linked to), `linked_at`, and `evidence` (what the offer was based on when you linked it). |
+| `declined_suggestions[]` | `earlier_account_id`, `account_id` (the offer you said wasn't the same account, or `null` for "None of these"), `declined_at`. |
+| `carried_categories[]` | For each earlier account: `rows[]` of `date`, `amount`, `description` (the bank's, lower-cased) and `category`, the categories you set before it was reconnected. `category` is `null` where two identical transactions were categorized differently, so nothing carries. |
+
+### `budgets[]` and `goals[]`
+
+Budgets, on a category each: `category` (its name now), `monthly_amount`, `category_id` (`null` until the app has stored your categories), `group` (its group's name) and `rollover`. Group budgets (`group_budgets`), on a group as a whole: `group`, `monthly_amount`, `group_id` and `rollover`. `rollover` is `null` for a budget that doesn't roll over this month; for one that does ([features.md](features.md#budget-rollover-and-income-carryover)), what rolls into the month the file is made in (UTC), worked out from your transactions as the Budgets tab and the API work it out, never stored: `from`, the month its carry counts from, `why` it counts from then (`start`, the month rollover was turned on from; `reset`; `data`, the first month with transactions; `budget`, the first month with this budget since its rollover began; `none`, no transactions yet), `start`, the month its rollover began, `carry` (positive what was left, negative what was overspent) and `uncertain_months`, the months it counts whose transactions may be incomplete. It is `null` for every budget when your budgets by month can't be read (`problems` names `budget-months`). What each budget had in past months, and the months it rolled over, are in [`budget-months`](#budget-months). A budget on a category or group since deleted has only its id, with the names `null`. How a group's budget and its categories' combine is in [features.md](features.md#budgets-on-categories-and-groups). They are kept by id in the `budget-set` store; the `budgets` key holds a copy of the category budgets by name, for the release before this one ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)). Goals, in your order, archived ones too: `id`, `name`, `target`, and `account_id` (the account it tracks, or `null`), as every version of the file has had them; then each goal's plan ([features.md](features.md#savings-goals)) as the app applies it: `allocation` (the part of its account's balance it claims, in that account's currency, or `null` when it counts what the allocations leave), `monthly_target`, `target_date` (`YYYY-MM-DD`), `archived` (`true` or `false`), `archived_on` and `archived_amount` (the day it was archived and what it held then, `null` when that wasn't known), and `plan_start` (`{ "date", "amount" }`: the day its target date was set, or it moved to the account it tracks, and what it held then, where its "where you should be" line starts), each `null` when not set. An allocation, or a line's start, set on an account the goal no longer tracks (the release before moved the goal, after a rollback) is left out, as the app leaves it out; [`goal-plans`](#goal-plans) has it as stored. A goal whose account ended keeps its plan here as set, its allocation included, as the app keeps it for if the account is reopened; from the account's end it counts and claims nothing (the end is in the accounts' `lifecycle` and in [`account-lifecycle`](#account-lifecycle)). A goal whose plan can't be read has all of these `null`, `archived` too, never a plan with nothing set, and `goal-plans` names it under `problems`. How each goal is going (what it counts, its pace, when it will be reached) is worked out each time, never stored, so it is not in the file: the API's `goals` endpoint gives it. Budgets and goals are each stored as one value: saved but unreadable, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems) (`{ "section": "budgets", "problem": "unreadable" }`), and the rest of the file is still in it. Never saved is an empty list. Budgets on categories and on groups are read together, from `budget-set` and the `budgets` copy it is checked against, so when either can't be used both parts are `null`, each named under `problems`, and one note says so. Categories that can't be read leave the budgets in the file, each by its category's or group's id alone, with the names `null` (`problems` names `categories`).
+
+### `api_tokens[]`
+
+The tokens you made for the read-only API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. A token whose record can't be read is left out and counted under [`problems`](#problems), never named by its id (`{ "section": "api_tokens", "problem": "unreadable", "count": 1 }`), and the rest of the file is still in it. The API tokens card lists it too, and can remove a damaged one.
+
+### `sharing`
+
+`null` with the shared password, unless records of showings from when it had accounts are still stored (then only `unmatched` has anything in it). With Clerk, your side of each connection, never theirs, and both records of when what was shared on it was shown (`lib/access-log.ts`): yours, and theirs of showings to you, which is about you, and the same one they see.
+
+| Field | Meaning |
+| --- | --- |
+| `connections[]` | `name` (what you call them), `my_introduction` (the name you gave when connecting), `connected_at`, `shared[]` (`account_id` and `level`: `exists`, `balance` or `transactions`), `shared_updated_at`, `shared_until` (when what you share with them ends, a time that may have passed, from which on they see none of it, or `null` for no end), `record_since` (when the records on it began, or `null` before the first showing on a connection from before records, or when its record id can't be read), `shown_to_them` (each time what you share was shown to them: your record) and `shown_to_me` (each time what they share was shown to you: their record). |
+| `blocked[]` | `name`: people you blocked, by what you called them. |
+| `unmatched[]` | Records of yours that no connection in the file is matched to: `shown_to_them`, or `null` with `problem`. Either a connection's that has ended, until the nightly pass deletes it (a removal deletes its records at once; one that stopped part way leaves them to that pass), or the record of a connection whose record id can't be read, which that connection says (`record_id_unreadable`): which record is its can't be known then, so it is here rather than called ended. |
+
+Each record is a list, oldest first, of the quarter hours (UTC) in which something was shown: `at` (the quarter hour's start), `times` (how many times it was shown in it) and `read` (what was shown: each account's id, at the widest level shown in that quarter hour). It holds what was counted, and only since `record_since`: an empty list means nothing was recorded, not that nothing was looked at. A record that can't be read is `null`, with `shown_to_them_problem`, `shown_to_me_problem` or `problem` saying why: `unreadable` (damaged), `unrecognised` (saved by a version of Nya this one doesn't know), `unavailable` (their container couldn't be reached: being deleted or restored), or `record_id_unreadable` (the connection's record id is damaged, so its records can't be found by it; yours, if there is one, is among `unmatched`). A record holds the last 90 days at most: a showing drops older quarter hours from its record, and so does the nightly pass. What is still stored is in the file, all of it. Each kind of record sharing can't give is also named once under [`problems`](#problems) (`{ "section": "sharing", "problem": "unreadable" }`), so the response can say the file is incomplete.
+
+No id is in it. A connection's id is made from the two people's sign-in ids, so it stays in the app, and the records are kept under a random id each connection gets, which says nothing either; each record is beside the connection it belongs to.
+
+### Stores built on the storage seam
+
+Newer stores are built on the storage seam (`lib/repo.ts`, see [architecture.md](architecture.md#storage-seam)), and each one declares whether it belongs in this download. Each that does is a field of its own, named after the store, after `sharing`: a store holding one value has that value (`null` if you never saved one), and a store holding one value per id has a list of `{ "id": ..., "value": ... }`, in id order. Values are as the store keeps them. An entry that is damaged, or saved in a form this version doesn't know, is left out and named under [`problems`](#problems) (a store holding one value is then `null`), and everything else is in the file; storage that can't be reached stops the download, naming the store. They are in the JSON file only, but for `manual-transactions`, whose transactions are in the transactions CSV too.
+
+#### `account-lifecycle`
+
+When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts-that-end)), as stored: one entry per account under the id it was set on (`accounts[].lifecycle` gives each account's end through its links). An account with no entry is open. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `lifecycle` | `{ "state": "closed", "on": "2026-03-12", "note": "Moved to Chase" }` (`note` is optional), the same with `left` (no longer yours), `{ "state": "untracked", "from": "2026-03-12" }`, or `{ "state": "active" }` with `answered` below. The day is the first day it doesn't count. |
+| `type` | Its kind (`depository`, `credit`, `loan`, `investment`, `other`), kept so it can be taken out of the totals after its end even once its bank is gone; `null` when it wasn't known. |
+| `label` | `name`, `institution` and `mask`, as it was when it ended, so it can be named after its institution is gone. |
+| `item_id` | Its connection, or `null` for a manual account. |
+| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; US dollars for a manual account), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
+| `set_at` | When this was saved. |
+| `assumed` | `true` when Nya assumed it closed: its bank stopped returning it and nobody answered within three days. Absent otherwise. |
+| `answered` | `{ "kind": "missing" or "zero", "since": day }`: you said it is still open, answering the question about it going missing or sitting at zero from that day. Absent otherwise. |
+| `seen` | Only with `closed` and `left`: `{ "balance": number or null, "through": day }`, the balance it showed when you set or last confirmed its end, and that UTC day. A bank still returning it with another balance, or a transaction after that day, asks about it again. Its transactions are read for that at most once a day: `checked` is the UTC day they last were, and `txn` the newest found after `through` then (absent when none was). Absent when it wasn't known. |
+| `missed` | `[{ "from": day, "to": day, "note": id }]`: the days it was missing from its bank's answer and assumed closed, before it came back, and the id its note in [`timeline-notes`](#timeline-notes) is kept under (`missed.` and a random id). The totals saved on those days are short of it, so the app leaves them out of the chart (they stay in `net_worth_history` as saved). Any state; absent when there were none. |
+
+An entry that can't be read is named under [`problems`](#problems) by the id it is stored under, which is the account's: that account's `lifecycle` in `accounts` is then `null`, and its rows in the balances CSV have no `account_state`, although it may have ended. The notes say so, in the JSON file and in the balances CSV.
+
+#### `allocation-settings`
+
+What you set under Allocation on the Plan tab ([features.md](features.md#allocation)), or `null` if you never set anything: only your choices, never an allocation Nya worked out.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `buckets[]` | The tax bucket you gave an account, over what its type says: `account_id`, and `bucket`, one of `taxable`, `tax-deferred`, `roth`, `hsa` or `education`. |
+| `funds[]` | The split you gave a security: `ticker` (as Plaid sends it, upper case, up to 40 characters), or `name` for one with no ticker (up to 200), and `split`. |
+| `accounts[]` | The split you gave an account's money that no position it lists explains (a manual investment account, say): `account_id` and `split`. |
+| `target` | Your target allocation, a `split`, or `null`. |
+
+A `split` is percents by asset class, each above 0 with at most one decimal, adding up to 100: `us-stocks`, `intl-stocks`, `stocks` (stocks of any region), `bonds`, `cash`, `real-estate`, `crypto` and `other`. A class it doesn't name holds none: `{ "us-stocks": 60, "bonds": 40 }`.
+
+#### `budget-months`
+
+Your budgets by month and their rollover ([features.md](features.md#budget-rollover-and-income-carryover), `lib/rollover.ts`), kept beside your budgets (`budgets`, `group_budgets`), or `null` until the app first kept it. Only what you set and what your budgets were: no carry is stored, since a carry is worked out from your transactions each time.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `since` | The month Nya began keeping budgets by month (`YYYY-MM`). A budget's amount in a month before it is taken to be its earliest one here. |
+| `categories` | By category `id` (as in `categories`): what is kept of that category's budget. |
+| `groups` | By group `id`: what is kept of that group's own budget. |
+
+Each holds `seen`, the budget's amount when Nya last read your budgets (`null` for none); `amounts`, its amounts in past months, oldest first, each an `amount` (`null` for no budget) for the months before `until` (`YYYY-MM`), back to the entry before; and `rollover`, the months it rolled over, oldest first, each `from` the month it was turned on (or `reset`, `true`, when that month began with its carry set to zero) to the month before `to`, the month it was turned off (absent while it is on). A budget's amount in a month is the first entry whose `until` is later than the month, else its amount now. A category merged into another has its entry moved there, its amounts added month by month; a category or group deleted has its entry removed.
+
+#### `categories`
+
+Your categories and their groups ([features.md](features.md#categories-and-groups), `lib/categories.ts`), or `null` until the app has first stored them. Every transaction is filed under one of these, by the rule in [architecture.md](architecture.md#categories). Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and the rest of the file is still in it: each transaction's `nya_category` is then the category it came with, its `nya_category_id` is `null`, and each budget is listed by its category's id alone. The transactions CSV, filed by them too, then says it is incomplete.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `groups[]` | `id` (random), `name`, `kind` (how its categories count: `expense`, `income` or `transfer`, which the month's totals and budgets leave out) and `order` (lowest first). |
+| `categories[]` | `id` (random), `name`, `group` (its group's `id`), `icon` (absent for none), `archived` (absent unless `true`: hidden from the lists to choose from), and `provider_keys[]`, what files a transaction under it: each a `provider` and a `key`. `plaid` keys are Plaid's personal finance categories (`FOOD_AND_DRINK`, or a detailed one); `text` keys are a category as words, lower case, the way a category is stored on what was saved before categories had ids and still is: one you chose for a transaction, one carried across a re-link, one on a transaction you entered or imported, and the name a budget was saved under (`food and drink`). A key is on one category only. |
+| `uncategorized` | The `id` of the category a transaction that says nothing about its category is filed under. |
+| `merged` | Each category merged into another, by `id`, and the `id` it went into, so a budget saved on it meanwhile still finds it. Absent until a merge. |
+
+A category you choose for a transaction is stored by its first `text` key, which a rename doesn't change, so the release before this one reads it ([operations.md](operations.md#category-ids-the-migration-and-rolling-back)).
+
+#### `connection-notices`
+
+The record of each problem with one of your bank connections that Nya kept for its emails (#51): one entry per connection that has a problem now, under the connection's `item_id`. It goes once the connection works again, or is reconnected or removed.
+
+| Field | Meaning |
+| --- | --- |
+| `episode` | An id Nya made for this problem, which the email's idempotency key is built from. |
+| `since` | When the daily job first saw it. |
+| `state` | What it was when last seen: `reconnect_soon`, `needs_reauth`, `outage`, `relink` or `closed` ([Connection health](features.md#connection-health)). |
+| `side` | Whose side it was on then: `you`, `bank`, `plaid`, `nya` or `unknown`. Absent from a record kept before it was. |
+| `notified_at` | When Nya last emailed you about it, or `null` if it hasn't. |
+| `reminded_at` | When it sent that email's one reminder, or `null`. |
+| `told` | The states its emails were about, in order. Absent from a record kept before it was. |
+| `due_since` | When its next email first became due, while it hasn't gone. |
+| `held_at` | When that email was held back, because the same problem reached several accounts at once and looked like a fault in Nya's setup or at Plaid. It goes three days later if the problem is still there. |
+
+#### `connection-syncs`
+
+When each of your bank connections last answered without an error, under its `item_id`: `at`, a time. It is the "Last synced" date on the Connection health card. It goes when the connection is removed.
+
+#### `connection-warnings`
+
+Plaid's warnings that a working connection is going to end, under its `item_id`, as Nya recorded them from Plaid's webhook. It goes once the connection is reconnected or removed, or answers past the end it named.
+
+| Field | Meaning |
+| --- | --- |
+| `kind` | `pending_expiration`: the consent you gave the bank runs out. `pending_disconnect`: the bank is ending the connection. |
+| `received_at` | When the first warning arrived. |
+| `ends_at` | When the connection ends: Plaid's time for a pending expiration; for a pending disconnect, which carries none, Nya's estimate, a week after the warning. |
+| `ends_estimated` | Whether `ends_at` is Nya's estimate. |
+| `reason` | Plaid's reason for a pending disconnect (`INSTITUTION_MIGRATION`), or `null`. |
+
+#### `connector-accounts`
+
+The accounts SimpleFIN keeps up to date ([features.md](features.md#bring-your-own-sync)), one entry per account you track: `id` is the account's id (as in `accounts`), and `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `account_id` | The account's id, as `id`. |
+| `connection_id` | Its connection, in `connector-connections` and `institutions`. |
+| `connector` | `simplefin`. |
+| `remote_id` | SimpleFIN's own id for the account. |
+| `name`, `institution_name` | Its name and its bank's, as SimpleFIN gave them. |
+| `institution_key` | SimpleFIN's key for the bank, which groups its accounts: the bank's id there, else its web domain, else its name. |
+| `institution_ref` | The id the accounts of one bank on one connection share, its card's id on the Accounts tab: 16 hex characters of a SHA-256 of the connection's id and the bank's key, never its name. |
+| `type`, `subtype` | What you said it is (`depository`, `credit`, `loan`, `investment` or `other`), and `null`: SimpleFIN says neither. |
+| `sign` | For a card or a loan whose balance came positive, how you said to read it: `as_reported` (money held), or `owed_positive` (SimpleFIN reports what you owe as positive). Absent or `null` until you said; until then that balance isn't counted. |
+| `currency` | Its currency's ISO 4217 code. |
+| `reported_balance`, `reported_available` | The balance and available balance as SimpleFIN reported them: by the protocol's rule money held is positive and money owed negative, unless `sign` says this server reports what you owe as positive (`accounts` and `account_history` give it in Nya's sign, a card's debt positive). `null` until an answer held one. |
+| `balance_at` | When the bank says that balance was, or `null` if it didn't say. |
+| `fetched_at` | When Nya received it. |
+| `ok_at` | When the bank last synced it cleanly: the time of the balance from the latest answer that reported no problem about it. Absent or `null` before one. |
+| `left_out[]` | For an account that [ended](features.md#accounts-that-end), which holds nothing at its bank: the days answers that moved its connection's history on left it out of (or reported a problem with it alone in), so its own transactions from them may be missing: `from` and `to`, UTC days, both included, `to` `null` while the latest answers still leave it out. An older window adds the days it reached; a recent answer, the days from the last one the history had reached. An answer that holds it again takes the days it covers off (a recent one, every day from its own start). Absent when there are none. A report says those it counts on (before its end, or every day once it is reopened) may be missing, and so does its OFX statement. |
+| `created_at` | When you started tracking it. |
+
+It goes when you stop tracking the account or disconnect: kept as a manual account, it moves to `manual_accounts`.
+
+#### `connector-connections`
+
+Your connections to SimpleFIN, one entry per connection: `id` is its id (as `item_id` in `institutions`), and `value` holds what Nya knows about it, never the access it gives Nya:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `connector` | `simplefin`. |
+| `host` | The server it reaches, without the credentials. |
+| `created_at` | When you connected it. |
+| `last_fetch` | What the latest request for balances came to, or `null`: `at`, when Nya asked; `failure`, `null` when an answer came, else `kind`, `side` (whose side it was on), `message` (in words for you, SimpleFIN's own among them) and `status` (the HTTP status, or `null`); `problems`, what SimpleFIN reported beside its answer, each `message` as it sent it, `side`, and `accounts`, the tracked accounts it concerns (`null`: any of them); `missing`, tracked accounts the answer didn't hold; `added`, `updated`, the transactions it added and brought up to date; `pending` and `unreadable`, the pending transactions it left out and those it couldn't read; and `note`, something about the answer Nya couldn't keep, if any. |
+| `last_answer_at` | When an answer last came, whatever it reported, or `null`. |
+| `tracked[]` | The accounts you track: `remote_id`, SimpleFIN's id, and `account_id`, Nya's. |
+| `available[]` | The accounts SimpleFIN offers that you don't track, names only, never a balance: `remote_id`, `name`, `institution`, `institution_key`, `currency` (`null` for one Nya doesn't know) and `currency_text`, the currency as SimpleFIN wrote it. |
+| `history` | How much history has been fetched, or `null` before the first: `from` and `to`, UTC days with no gap between them, `complete` once two whole answers in a row had nothing older or two years were fetched, `failed`, when the last try at an older window got no whole answer, and `empty`, how many whole answers in a row brought nothing older. |
+
+It goes when you disconnect.
+
+#### `connector-ended`
+
+The accounts SimpleFIN kept up to date that you stopped tracking or disconnected, one entry per account under its id, kept so a [report](features.md#reports) on a period it was tracked in can say its transactions may be gone, or since then only the ones you entered, until you forget it (**Accounts you stopped tracking** on the Reports page). `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `connector` | `simplefin`. |
+| `connection_id` | The connection it came through (gone, after a disconnect). |
+| `host` | The server that connection reached, without the credentials, or `null` when the connection was already gone. |
+| `remote_id` | SimpleFIN's own id for the account. |
+| `name`, `institution_name`, `type` | Its name, its bank's and what you said it was. |
+| `currency` | Its currency's ISO 4217 code. |
+| `tracked_at` | When you started tracking it. |
+| `history_from` | The first day of transactions Nya had fetched for its connection, or `null` before any. Kept by hand, a report on a period its connection's history has since reached back to says you stopped tracking it before its transactions from the days before this one came in, and so does its OFX statement. |
+| `left_out[]` | Its `left_out` from `connector-accounts` when you let it go, if it had any: read as there, up to the day you let it go. |
+| `ended_at` | When you let it go. |
+| `kept` | `true` when it was kept as a manual account, its transactions with it; `false` when it was removed, with them. |
+
+#### `fire-plan`
+
+The Plan tab's saved assumptions (`lib/fire/plan.ts`), or `null` if you never saved any. Only what you chose or typed: nothing Nya measures, and no result. A plan saved by an earlier release comes with any field added since filled in, as the tab reads it.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `age`, `targetAge` | Your age and the age you plan to stop working, or `null`. |
+| `spending`, `savings`, `assets` | A figure you typed over Nya's, or `null` to use what Nya measures. |
+| `includeCash` | Whether checking and savings count as invested. |
+| `withdrawalRate`, `realReturn`, `taxRate` | Fractions: `0.04` is 4%. |
+| `partTimeIncome` | Barista FI's part-time income a year, after tax; 0 leaves it out. |
+| `method`, `rule`, `start`, `startBalance`, `horizon` | The simulation: `historical` or `monte-carlo`, the withdrawal rule, where it starts (`fi-number`, `assets`, or `custom` with `startBalance`), and its length in years (`null` runs to age 95). |
+| `stocksPct`, `bondsPct`, `rebalance`, `fee`, `floor`, `ceiling` | The mix in whole percents (cash is the rest), how often it is rebalanced, the fund fee, and the floor and ceiling rule's bounds. |
+| `income[]` | `id`, `label`, `amount` a year after tax, `fromAge`, `inflationAdjusted`. |
+| `expenses[]` | `id`, `label`, `amount`, `atAge`. |
+| `planFunding[]` | How you said each workplace plan is paid into: `account_id`, and `paidFrom`, `payroll` or `bank`. A plan not listed is not set. |
+
+#### `goal-plans`
+
+Each goal's plan as stored (`lib/goal-plans.ts`), one entry per goal that has one: `id` is the goal's id, as in [`goals`](#budgets-and-goals), and `value` holds `v` (the shape's version: 1), `save`, `plan`, `core` and `before`. A goal with no plan has no entry. The goals part gives each plan as the app applies it; this is what is kept.
+
+| Field | Meaning |
+| --- | --- |
+| `plan.allocation` | The part of the account's balance the goal claims: `amount`, in that account's currency, and `account_id`, the account it was set on. It counts only while the goal tracks that account (following account links). Absent when the goal counts what the allocations leave. |
+| `plan.monthly_target` | What you mean to put in each month. Absent when not set. |
+| `plan.target_date` | When you mean to reach it, `YYYY-MM-DD`. Absent when not set. |
+| `plan.plan_start` | Set by Nya when the target date was set, or the goal moved to another account: `date`, `amount`, what the goal held then (`null` when its balance wasn't known), and `account_id`, the account it held it on. Where its "where you should be" line starts; it applies only while the goal tracks that account (following account links). |
+| `plan.archived` | Set by Nya when it was archived: `on`, the day, and `amount`, what it held then (`null` when not known). Absent while it isn't archived. |
+| `core` | The goal's `name`, `target` and `account_id` as the save that wrote this entry left them in `goals`: how a read tells a save that finished from one that stopped part way, and both from a change the release before made after a rollback ([operations.md](operations.md#goals-plans-and-rolling-back)). |
+| `save` | A random id of the save that wrote this entry, which tells one save's write from another's when two devices save at once. |
+| `before` | While the save that wrote this entry hasn't finished, the goal as it read before it, `core` and `plan`: what it reads as when that save stopped between its writes. `null` once it finished, and for a goal that save added. |
+
+After a rollback, a download from the release before has each goal's four fields only, and no `goal-plans` part: that release doesn't know the store, but leaves it as it is. Back on this release, the file has both again, each plan where it belongs: a goal the release before renamed or moved keeps its plan (an allocation only on the account it was set on), one it added has none, and the entry of one it deleted belongs to no goal, is never read as one's, and the app's next save deletes it ([operations.md](operations.md#goals-plans-and-rolling-back)).
+
+#### `holdings:history`
+
+What each investment account held, day by day, as recorded from Plaid's holdings (see [architecture.md](architecture.md#holdings-history)): one entry per month, under a random id, with the month inside it. Plaid keeps no past holdings, so this starts on the day Nya first recorded them.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `month` | The month, `YYYY-MM`. |
+| `securities[]` | Every security a position that month names, once each: `security_id` (Plaid's), `ticker`, `name`, `security_type` and `is_cash_equivalent`, as last described that month, each `null` where Plaid gave none. A position names its security by its place in this list, counting from 0. |
+| `days` | Each recorded UTC day (`YYYY-MM-DD`), and in each, every account recorded that day by its id: `observed_at` (when that day's latest observation was taken) and `positions[]`. |
+| `positions[]` | `security` (its place in `securities`), `quantity`, `price` (the institution's), `price_as_of` (the day that price was current, when the institution says), `value`, `cost_basis`, `currency` (the ISO code), and `unofficial_currency` only when Plaid gave one (a cryptocurrency, say). A figure Plaid didn't give is `null`. |
+
+An account with an empty `positions[]` was listed by that day's holdings answer with no positions, which is not to say it held nothing: money an institution doesn't list as a position (cash, often) has none, and the account's balance that day is in `account_history`. A day missing for an account was not recorded: its institution couldn't be reached, say, or its answer was incomplete, which is never recorded as a whole day. Hidden accounts are here like the others (see `hidden_accounts`). Account ids are as recorded: positions recorded under an account's earlier id, before a reconnect, keep that id, and `account_links` says which ids are the same account.
+
+#### `imports`
+
+Each file you imported into a manual account ([Importing files](features.md#importing-files)): one entry per import, `id` the import's own (`import:` and a random id, the `import_id` of the transactions it added in [`manual-transactions`](#manual-transactions)), and `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `account_id` | The manual account it was imported into. |
+| `format`, `source` | `ofx` (OFX or QFX), `csv` or `qif`, and the `source` its transactions carry (`import:ofx`, `import:csv`, `import:qif`). |
+| `file_name`, `file_bytes`, `encoding` | The file's name as your device gave it, its size in bytes, and how its text was read: `utf-8`, `utf-16le`, `utf-16be` or `windows-1252`. The file itself is not kept. |
+| `imported_at` | When it was imported. |
+| `currency`, `first_date`, `last_date` | The currency most of its transactions are in, and the days they cover. |
+| `counts` | `imported` (added), `present` (already in the account), `repeated` (listed twice in the file) and `unreadable` (lines that couldn't be read), and when there were any, `replaced` (transactions already here replaced with the file's version) and `skipped` (rows skipped as you chose). |
+| `read` | How it was read: `options`, what you chose (the statement, a CSV's columns by number, how money out is written, the order of the dates, the decimal mark, the currency, whether amounts were read the other way round), and what was found: `date_order`, `date_style` (how most dates were written: `iso`, `compact`, `named`, `mdy` or `dmy`), `decimal`, and a CSV's `delimiter`, `header_line` and the lines `skipped` above it. |
+| `statement` | For an OFX file, the statement imported: `kind` (`bank` or `creditcard`), `label`, `bank_id` (its routing number), `mask` (the account number's last four characters: the whole number is never kept), `type`, `currency`, `start` and `end` (the days it covers), and `ledger` (`amount` as the file wrote it, which on a card is negative while money is owed, and `as_of`). For a QIF file holding several accounts, the one chosen (its `label`). `null` otherwise. |
+| `columns` | A CSV file's column names, or `null`. |
+| `balance_update` | When the import also set the account's balance to the statement's: `from`, `to`, and the statement's `as_of`. Absent otherwise. |
+| `records[]` | Every transaction the file held, in file order: `line` (where it starts in the file), `outcome` (`imported`, `present`, `replaced`, `skipped`, `repeated` or `unreadable`), `row_id` (the transaction it became, the one it was found as, the one it replaced, or the one whose bank id it shared when it was skipped), `before` (for `replaced`, that transaction as it was before: `date`, `amount`, `currency`, `name`, `category`, `note` and `transaction_code`, which undoing the import puts back), `reason` (why it couldn't be read, or was skipped), and `raw`, the record as the file had it: an OFX transaction's fields by their tags (`TRNTYPE`, `DTPOSTED`, `TRNAMT`, `FITID`, `NAME`, `MEMO` and any others; an account number in one, a transfer's other account, keeps only its last four characters), a CSV line's cells, or a QIF record's lines, as the file had them. |
+
+A field over 1,000 characters is cut to that length in `raw` (its line wasn't read). Undoing the import deletes its entry, and so does deleting the account. The list of past imports reads a summary of each entry kept beside it (`import-summaries`), which isn't in the download: it holds nothing the entry doesn't, but for `taken_over`, how many transactions an earlier import added were kept for this one when that one was undone, which the transactions themselves show (their `import_id` is this import's).
+
+#### `import-settings`
+
+How the last file imported into each account was read, a manual account or a linked one, so the next one from the same bank needs no questions: one entry per account (`id` its account id), with `version` (1), `updated_at`, and for each format imported into it:
+
+- `csv`: `columns` (`date`, `description`, `amount` or `debit` and `credit`, `category`, `note` and `currency`, each the name of the column it was read from), `sign` (`negative-out` or `positive-out`: how money out was written in one amount column), `decimal`, `date_order` (`mdy` or `dmy`, or `null` when the dates didn't depend on one), `delimiter` and `currency`.
+- `ofx`: `statement`, the account the statement was for (`kind`, `bank_id`, `mask` and `type`, so a file for another account is caught), `flip`, whether amounts were read the other way round, and `currency`, the one chosen for a statement that didn't say its own (absent until then).
+- `qif`: `date_order`, `decimal`, `flip` and `currency`.
+
+Deleting a manual account deletes its entry, and so does forgetting an earlier linked account.
+
+#### `income-carryover`
+
+Income carryover, for income that doesn't arrive every month ([features.md](features.md#income-carryover)), or `null` if you never turned it on: `version` (1), `enabled` (whether it is on: turned off, the month stays) and `start`, the month its pool counts from (`YYYY-MM`). The pool itself is worked out from your transactions each time, so it isn't here.
+
+#### `manual-transactions`
+
+Transactions on manual accounts (`lib/manual-txns.ts`), entered by hand or imported from a file, and those SimpleFIN brought to the accounts it keeps up to date, all of them, not just the year the Activity tab shows. One entry per account: `id` is the account's id (as in `manual_accounts`, or in `accounts` for one SimpleFIN keeps up to date), and `value` holds `version` (the shape's version: 1) and `rows`, the account's transactions in the order they were added:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The transaction's id: `manual-txn:` and a random id. It is its `transaction_id` in the app, and the key of anything said about it in `transaction-annotations`. |
+| `account_id` | The account. |
+| `date` | The day it happened, as you entered it. |
+| `amount` | Plaid's sign: positive is money out. |
+| `currency` | Its currency's ISO 4217 code. |
+| `name` | Who was paid, or who paid you. |
+| `category` | Its category, or `null`. |
+| `note` | Your note, or `null`. |
+| `source` | Where it came from: `manual` for one entered in the app; `import:ofx`, `import:csv` or `import:qif` for one imported from a file; `simplefin` for one SimpleFIN brought from your bank. |
+| `source_id` | The source's own id for it, which is how a later file or fetch recognizes it: SimpleFIN's id for one it brought; an OFX file's FITID; for a CSV or QIF file, which have no ids, what the file said when it was imported (its date, currency, amount in the currency's smallest unit and its description, lower-cased with only letters and digits, joined by `\|`). `null` for one entered by hand. |
+| `source_key` | For one imported from an OFX file, the same summary of what the file said, hashed to 16 characters: with the FITID, it tells a later file's version of it that is exactly what was imported, however you changed it since. Absent otherwise. |
+| `transaction_code` | Plaid's code for what its file said it was, when the file says so outright: `atm` for an OFX file's ATM transaction, which the spending rules read as they read a bank's. Absent otherwise. |
+| `import_id` | The import it came in with (in [`imports`](#imports)), so that import can be taken out whole; absent or `null` for one entered by hand. |
+| `balance_update` | When adding it also updated the account's balance: `from`, the balance the form showed, `to`, the one it became, and `account_id`, the account whose balance it was (absent on one noted before that was kept). Absent otherwise. |
+| `named` | On one imported from a file: the name you gave it in the app, while it is still its `name`. No [rule](#rules) renames it then; a rule does rename one whose name came with it, as it renames a bank's, and every one SimpleFIN brought, whose payee stays the bank's. Absent otherwise (one entered by hand is always named by you). |
+| `created_at`, `updated_at` | When it was entered, and last changed in the app. An import that replaces it with its file's version, and the undo of that, leave `updated_at` as it was: neither is your change. |
+
+Adding one doesn't change the account's balance unless you asked, so the rows need not add up to it: the balance is in `manual_accounts`, its history in `account_history`. Each row is also a row of the [transactions CSV](#nya-transactions-datecsv). A payment between two of your SimpleFIN accounts that the app shows as a card payment, a loan payment or a transfer is worked out each time the rows are read, so nothing here marks it: its rows here have no category, and the [transactions CSV](#nya-transactions-datecsv) lists them as the app shows them.
+
+#### `imported-transactions`
+
+Transactions imported into linked accounts from your bank's files ([Importing history into a linked account](features.md#importing-history-into-a-linked-account)), all of them: those counted, those kept as a duplicate of a transaction already there (the bank's, or one an earlier file brought in), and those a transaction the bank sent later now stands for. One entry per account they were imported into: `id` is that account's id then (an account re-added after a reconnect has a new id, and `account_links` says which ids are the same account), and `value` holds `version` (1) and `rows`, in the order they were added:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | The transaction's id: `imported-txn:` and a random id. It is its `transaction_id` in the app, and the key of what you said about it in `category_overrides` and `transaction-annotations`, of its split in [`transaction-splits`](#transaction-splits), and its id in a group's `members` ([`transaction-groups`](#transaction-groups)). |
+| `account_id` | The account it was imported into (the entry's id). |
+| `date`, `amount`, `currency`, `name` | As the file said: the day, the amount in Plaid's sign (positive is money out, whatever the file's), its currency's ISO 4217 code, and who was paid or who paid you. |
+| `category`, `note` | The file's own category, lower-cased (a CSV category column, a QIF category), and its note (a CSV note column, or an OFX or QIF memo that says more than the payee); `null` when it has none. A category you set is in `category_overrides`; your note, its tags and whether you excluded it are in [`transaction-annotations`](#transaction-annotations), under its `id`, and your note shows in place of the file's. |
+| `source`, `source_id`, `source_key`, `transaction_code` | As for a manual account's imported rows ([`manual-transactions`](#manual-transactions)): `import:ofx`, `import:csv` or `import:qif`; the FITID, or what a file without ids said; an OFX row's hashed summary; and Plaid's code where the file said what it was outright. |
+| `import_id` | The import it came in with ([`history-imports`](#history-imports)). |
+| `same_as` | Present when you said it is the bank's own transaction: that one, by its day, amount in thousandths and the bank's own description (lower-cased, with anything but letters and digits as a space), joined by `\|`. Such a row isn't counted, nor in the transactions CSV, while the bank has that transaction: the bank's is. Once the bank no longer has it, the row counts again. |
+| `same_as_row` | Present when you said it is a transaction an earlier file brought in: that row's `id`. Not counted while that row is kept; counted again once its import is undone. |
+| `distinct_from` | Present when you said it is a transaction of its own though the bank had one like it: those bank transactions, written the same way, never matched with it again. |
+| `created_at` | When it was imported. |
+
+Which rows count is worked out from `transactions` each time, by the rule the review proposes by (the same amount and currency, posted, at most five days apart, never across the edge of the bank's days or of the period the row's file covers), with the pairs the sync kept once made first ([`imported-twins`](#imported-twins)): a bank transaction that stood for a row stands for it while the bank has it, whatever the bank changed on it since. Undoing an import takes its rows out, with their splits and their places in groups; forgetting the earlier account deletes its entry, with those too, but for rows a later import into another account found already there, which move to that account's entry and keep theirs. Each row that counts is also a row of the [transactions CSV](#nya-transactions-datecsv), those of an account that [ended](features.md#accounts-that-end) dated from its end too, as the bank's are, although the app counts them in nothing.
+
+#### `imported-twins`
+
+Which of the bank's transactions stood for which of the rows you imported into linked accounts, kept by the sync before it saves what the bank changed, so a transaction the bank modifies later (Plaid keeps its id: a tip added, a currency settled, a merchant's name corrected) keeps standing for the row it stood for, whatever its amount becomes, and the row never counts beside it ([When the bank sends the same transactions](features.md#when-the-bank-sends-the-same-transactions)). One entry per connection, under its Plaid Item id: `value` holds `version` (1) and `twins`, each imported row's `id` ([`imported-transactions`](#imported-transactions)) to the `transaction_id` of the bank's transaction standing for it ([`transactions`](#transactions)), one to one. Pairs are kept by a sync that brings a change to one of the connection's transactions, before it saves it, every pair at its accounts then; until then they are worked out from the amounts each time, as the app does, and aren't listed. A pair goes when the bank removes its transaction (the row counts again, as it was), or, once its row is gone (its import undone), with the next sync that changes one of the connection's transactions. Disconnecting the institution moves its pairs to [`carried-imported-twins`](#carried-imported-twins) and deletes its entry. An entry that can't be read is named under [`problems`](#problems): the transactions CSV and an OFX statement then match those rows by what each says now, so one the bank changed since may be listed beside the bank's own, and say so.
+
+#### `carried-imported-twins`
+
+The pairs of an institution you have since disconnected ([`imported-twins`](#imported-twins)), kept so that linking a re-added account to the old one pairs those imported rows with its transactions again ([features.md](features.md#when-the-bank-sends-the-same-transactions), `lib/history-import/twins.ts`). One entry per earlier account: `id` is its account id, and `value` holds `version` (1) and `twins`, each imported row's `id` ([`imported-transactions`](#imported-transactions)) to the bank's transaction it was paired with, written as `carried-annotations` writes one: its account, date, amount in cents and the bank's own description (lower-cased), joined by `|`. A pair goes once the re-added connection's sync has made it again, with the transaction that has exactly that; forgetting the earlier account deletes its entry. The app counts nothing by it until then, and nor does this file.
+
+#### `history-imports`
+
+Each file you imported into a linked account: one entry per import, `id` the import's own (`history-import:` and a random id, the `import_id` of its rows in [`imported-transactions`](#imported-transactions)), and `value`, which has the fields of a manual account's import ([`imports`](#imports)), but for `balance_update` (an import into a linked account never sets a balance), with these differences:
+
+| Field | Meaning |
+| --- | --- |
+| `account_id` | The linked account it was imported into, by its id then. |
+| `covers` | The days the file covers, which the estimated history may be drawn across: `from` and `to` (its statement's period, otherwise its first to last day, never narrower than its rows), `stated`, `true` when you gave a longer period, and `whole`, `true` when you said the lines that couldn't be read aren't transactions (without it, a file with such lines isn't used to draw the estimated history). |
+| `bank_from` | The day the bank's own transactions for the connection began when the file was reviewed, or `null`. |
+| `counts` | `imported` (added and counted), `duplicates` (kept as the bank's own), `already` (kept as rows an earlier file brought in), `present` (already imported into this account), `repeated`, `skipped` and `unreadable`. |
+| `records[]` | Every transaction the file held, in file order: `line`, `outcome` (`imported`, `duplicate`, `present`, `repeated`, `skipped` or `unreadable`), `row_id` (the row it became, the one it was found already imported as, or, for one skipped, the one whose bank id it shared), `twin` (the transaction it was shown beside: `kind`, `bank` or `imported`, its `id` (the bank's `transaction_id`, or the earlier file's row), `date`, `name` and `amount`, how many `days` apart, the `confidence`, `high`, `medium` or `low`, `edge` when it was only possibly the same across the edge of the bank's days (`before-bank`), of this file's (`outside-file`) or of the earlier file's (`outside-import`), and what you `chose`, `same` or `new`), `reason` (why it couldn't be read, or was skipped), and `raw`, the record as the file had it, always. |
+
+Undoing the import deletes its entry, and so does forgetting the earlier account. The list of past imports reads a summary of each entry kept beside it (`history-import-summaries`), which isn't in the download; nor is what the estimated history drawn from imports covers (`imported-history-walk`), whose points are in `net_worth_history` and `account_history`.
+
+#### `planned-items`
+
+What you told the cash forecast (`lib/planned.ts`, [Recurring bills and the cash forecast](features.md#recurring-bills-and-the-cash-forecast)), or `null` if you never saved any: `version` (the shape's version: 1), `items`, `dismissed` and `threshold`. The forecast itself is never stored, so it is not here.
+
+| Field | Meaning |
+| --- | --- |
+| `items[]` | Each expense or income you planned: `id` (random), `name`, `kind` (`expense` or `income`), `amount` (positive, in `currency`), `currency` (its ISO 4217 code), `date` (the day it falls on, or the first day of one that repeats) and `cadence` (`once`, `weekly`, `biweekly`, `monthly`, `quarterly`, `semiannual` or `yearly`). |
+| `dismissed[]` | The detected bills and income you marked not recurring, each as the series was when you did: its kind, institution, account, merchant (lower-cased), currency and amount in cents, joined by `\|`, the amount marked `=` when the series was one of a merchant's subscriptions told apart by amount. Each applies to the series of that account and merchant nearest its amount, or its price before a change: exactly when either is marked so, otherwise within 25% or 50 cents, so it holds as a bill's amount moves. |
+| `threshold` | The figure the forecast warns below, as `amount` and the `currency` it was set in (`null` for one saved before currencies were kept, read in the forecast's), or `null` for the default (100 in the forecast's currency). |
+
+#### `report-settings`
+
+The categories you marked as mattering for your taxes on the report page ([features.md](features.md#reports)), or `null` if you never marked any: only your choice. Nya never marks a category itself.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
+#### `timeline-notes`
+
+The notes on your net-worth timeline (`lib/timeline-notes.ts`, [features.md](features.md#notes-on-the-timeline)): yours under random ids, and the ones Nya writes when an account ends, under `lifecycle.` and the account's id, and when an account it assumed closed came back, under `missed.` and a random id, which its window in [`account-lifecycle`](#account-lifecycle) keeps (`missed[].note`), since a day is never part of an id. Each `value`: `date` (the day it marks), `text` (up to 200 characters), `kind` (`user` for yours, `auto` for Nya's), `account_id` (the account an `auto` note is about; absent on yours), `created_at`, and `updated_at` once it changed. They are also rows of the [balances CSV](#nya-balances-datecsv).
+
+#### `rules`
+
+Your rules ([features.md](features.md#rules), `lib/rules.ts`), or `null` if you never made one. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no rule is applied to the transactions in this file, as the app applies none until they can be read.
+
+| Field | Meaning |
+| --- | --- |
+| `version` | 1. |
+| `rules[]` | Each rule: `id` (random), `enabled`, `priority` (1 runs first), `conditions[]`, `actions`, `created_at` and `updated_at`. |
+| `rules[].conditions[]` | All must match. Each has a `field` and an `op`: `name` with `contains`, `equals` or `starts_with` and the text; `amount` with `gt`, `lt` or `between`, `value` (and `value2` for between): sizes, never negative, in the transaction's own currency, with `direction` `out` (money out) or `in`, absent for either; `account` (an account id), `institution` (its name), `category` (a category's id, the one it is filed under before any rule) and `source` (`plaid`, `manual`, `import` or `simplefin`), each with `equals`. Text is matched in any case, with accents, repeated spaces and the kind of apostrophe or quote ignored. |
+| `rules[].actions` | What it does: `set_category` (a category's id), `set_name`, `add_tags` (tags' ids) and `hide` (`true`: left out of budgets and reports, still listed). Empty for a rule whose only tags were deleted: it does nothing. |
+
+When two rules set a transaction's category or its name, the one that runs first decides it; tags come from every rule that matches, and any can hide. Anything you set on one transaction yourself wins over every rule.
+
+#### `tags`
+
+Your tags ([features.md](features.md#tags-and-notes), `lib/tags.ts`), or `null` if you never made one: `version` (1) and `tags[]`, each with `id` (random), `name`, `color` and `created_at`, in the order you made them. A tag being deleted when the file was made is listed under `deleting` by id until it has been taken off everything ([architecture.md](architecture.md#tags-notes-and-rules)); no transaction in the file carries one. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no transaction in the file has tags.
+
+#### `transaction-annotations`
+
+What you said about a transaction (`lib/txn-annotations.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, a manual one's, as in `manual-transactions`, or one imported into a linked account, as in `imported-transactions`, whose entry goes with it when its import is undone), and `value` holds what you said and `updated_at`:
+
+| Field | Meaning |
+| --- | --- |
+| `excluded` | `true` when you left it out of budgets and reports, `false` when you put it back (which beats an exclusion carried from an earlier account, and a rule that hides it). Absent when you said nothing. |
+| `tags` | The [`tags`](#tags) you put on it, by id. |
+| `untagged` | Tags you took off it, by id: a rule that would add one, or one carried from an earlier account, doesn't put it back. |
+| `note` | Your note on a bank's transaction, or on one SimpleFIN brought or one imported into a linked account, which stay as the bank or the file gave them (one entered by hand or imported into a manual account has its own, in [`manual-transactions`](#manual-transactions)). Empty when you cleared one, which keeps a note carried from an earlier account, or an imported file's own, away. |
+
+A transaction you said nothing about has no entry. One whose transaction the bank removed goes once a sync saves the removal, as do those of an institution you disconnect, after what they said is kept in `carried-annotations`; none goes while a store of transactions can't be read, and one saved by a version of Nya this one doesn't know is kept for it.
+
+#### `carried-annotations`
+
+What you said about transactions at an institution you have since disconnected, kept so that linking a re-added account to the old one says it again (`lib/txn-annotations.ts`, as categories carry: `account_links.carried_categories`). One entry per earlier account: `id` is its account id, and `value` holds `version` (1) and `rows`, keyed by the transaction's account, date, amount in cents and the bank's own description (lower-cased), joined by `|`, each with what carries: `excluded` (`true` or `false`), `tags` and `untagged` (by id), and `note`; or `null` where two identical transactions were given different ones, so nothing carries. Forgetting the earlier account deletes its entry.
+
+#### `transaction-groups`
+
+Your groups of transactions that count as one net amount ([features.md](features.md#grouping-transactions), `lib/groups.ts`), one entry per group: `id` is random, and `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | 1. |
+| `name` | Its name, up to 60 characters. |
+| `category_id` | The category its net is filed under, one of your [`categories`](#categories) by id (a merged one's id leads to where it went). |
+| `members` | Its transactions, by id (a bank's, as in `transactions`, one in [`manual-transactions`](#manual-transactions), or one in [`imported-transactions`](#imported-transactions)), in the order they were added: two to 50. |
+| `date` | The day its net counts on: its earliest transaction's when it was saved. |
+| `currency` | The currency its transactions are all in, or `null` for rows that say none. |
+| `removed` | How many of its transactions went since (the bank removed one, you deleted one, its institution was disconnected, the import that brought one was undone). Absent when none did. |
+| `created_at`, `updated_at` | When it was made and last changed. |
+
+The app counts a group as one row at its net, the sum of the amounts of its transactions it has, filed under `category_id`, and its transactions not on their own. A transaction leaves its group when it goes, once a sync saves the bank's removal (nothing goes while a store of transactions can't be read), and one imported into a linked account when its import is undone or that account is forgotten; a group with none left goes. One imported into a linked account that a transaction the bank sent later stands for stays in `members`, and the app counts the bank's in its place, unless the bank's is in a group of its own. A group that can't be read, or that a version of Nya this one doesn't know saved, is named under [`problems`](#problems) and left out: its transactions count on their own in the CSV, as the app shows them then.
+
+#### `transaction-splits`
+
+Your split transactions ([features.md](features.md#splitting-a-transaction), `lib/splits.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, one in [`manual-transactions`](#manual-transactions), or one in [`imported-transactions`](#imported-transactions)), and `value` holds:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | 1. |
+| `amount`, `currency` | The transaction's amount (Plaid's sign) and currency when it was split, so a change the bank makes later can be told. |
+| `parts[]` | Its parts, two to 20, in order, adding up to `amount` exactly in the currency's minor units: each with `id` (random), `amount` (Plaid's sign, the transaction's), `category_id` (one of your [`categories`](#categories) by id, a merged one's leading to where it went), `note` (up to 500 characters, when there is one) and `excluded` (`true` when that part alone is left out of budgets and reports; absent otherwise). |
+| `updated_at` | When it was last changed. |
+
+The app counts a split transaction as its parts, never as itself. When the transaction's amount is no longer `amount` (the bank changed it), the difference counts as a part of its own, under the transaction's own category, until the split is edited. A split goes with its transaction, once a sync saves the bank's removal (nothing goes while a store of transactions can't be read), and one on a row imported into a linked account when its import is undone or that account is forgotten. One on a row imported into a linked account that a transaction the bank sent later stands for stays under the imported row's id, and the app splits the bank's as it says, unless the bank's is split itself. One that can't be read, or that a version of Nya this one doesn't know saved, is named under [`problems`](#problems) and left out: its transaction is whole in the CSV, as the app shows it then.
+
+#### `review-settings`
+
+Your review queue ([features.md](features.md#reviewing-new-transactions), `lib/review-store.ts`), or `null` if you never turned it on: `version` (1), `on` (whether it is on), `since` (the first day, YYYY-MM-DD, whose transactions need review, by the day each is dated) and `updated_at`. Turned off, `since` stays as it was. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and the app marks nothing to review until it can be read.
+
+#### `transaction-approvals`
+
+The transactions you approved ([features.md](features.md#reviewing-new-transactions), `lib/review-store.ts`), one entry per transaction: `id` is its transaction id (a bank's, as in `transactions`, one in [`manual-transactions`](#manual-transactions), or one in [`imported-transactions`](#imported-transactions)), and `value` holds the transaction as you saw it when you approved it:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | 1. |
+| `approved_at` | When you approved it. |
+| `amount`, `currency` | Its amount (Plaid's sign) and currency then. When the transaction's amount is no longer `amount`, the app shows it as needing review again, saying what it was approved at. |
+| `category_id` | The category it was filed under then, one of your [`categories`](#categories) by id (a merged one's id leads to where it went), or `null` when it showed none the app had stored. Unless you give the transaction a category of your own, the app keeps it filed there, whatever a rule, a default or the bank says later, and offers theirs instead. |
+| `name` | The merchant's name as it was shown then. |
+| `pending` | `true` when you approved it while the bank still had it pending: the posted transaction that replaced it took this entry over, under its own id. Absent otherwise. |
+
+A split transaction has one entry, under its own id; each transaction of a group has its own. One goes with its transaction once a sync saves the bank's removal (nothing goes while a store of transactions can't be read), and one on a transaction you entered or imported when you delete it or undo its import. One that can't be read, or that a version of Nya this one doesn't know saved, is named under [`problems`](#problems) and left out: its transaction is filed in the CSV as the app files it then, by its rules, defaults and bank.
+
+#### `vendor-defaults`
+
+Your merchants' default categories ([features.md](features.md#merchant-defaults), `lib/vendor-defaults.ts`), or `null` if you never categorized a merchant's transaction: `version` (1) and `vendors[]`, one per merchant you categorized:
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Random: what the Defaults card clears it by. |
+| `vendor_key` | The merchant, as the app keys it: `mid:` and the merchant's id at Plaid, or `nm:`, the institution's name, `::` and the merchant's name, lower-cased (as in `transactions[].vendor_key` and `merchant_renames`). |
+| `name` | The merchant's name as shown when you last categorized one of its transactions. |
+| `votes[]` | Your last three categorizations of it, oldest first: each `category_id` (one of your [`categories`](#categories), a merged one's id leading to where it went) and `at`. |
+| `default` | Its default, once two of the last three agreed: `category_id`, `since` (the first day, YYYY-MM-DD, whose transactions it files under that category), `set_at` (when it was last set to that category) and, once it has moved, `previous[]`: the categories it had before, oldest first, each `category_id`, `since` and `until` (the day the next began, not included), so the transactions of those days stay filed as they were. Absent until then. |
+| `updated_at` | When it last changed. |
+
+The app files a merchant's transaction dated on or after `since` under the default, and one dated in an earlier category's days under that one, when it has no category of your own, none you approved it under and none from a rule. Clearing a default removes its entry, and with it what it filed. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems), and no default files a transaction in the CSV, as in the app then.
+
+#### `weekly-summary`
+
+Your weekly summary setting ([features.md](features.md#the-weekly-summary), `lib/weekly-summary/settings.ts`), or `null` if you never saved one, which is off. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems).
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `enabled` | `true` while the summary is on. Turned off with the link in an email, it is `false`. |
+| `weekday` | The day it comes on: 0 for Sunday to 6 for Saturday (1, Monday, unless you picked another). |
+| `time_zone` | The time zone your week is counted in, as an IANA name (`America/New_York`): your browser's when you turned it on, or the one you chose. |
+| `updated_at` | When it was last changed, as an ISO time. |
+
+The summaries themselves are not kept: each is made when it is sent. The key its links are signed with, the last week one went for, and which goals it last found at their target are kept beside the setting but left out of this file (`weekly-summary-state`, [below](#every-stored-key-and-where-it-goes)).
+
+## The CSV files
+
+Both follow RFC 4180: a header row, records ending in CRLF, and a field holding a comma, a double quote or a line break enclosed in double quotes, with quotes inside doubled. UTF-8, starting with a byte order mark (the bytes `EF BB BF`), which is how Excel on Windows knows the file is UTF-8 and shows accented and non-Latin merchant names as they are. Spreadsheets and most CSV readers skip the mark; in Python, open the file with `encoding="utf-8-sig"`.
+
+**Formula guard.** A spreadsheet runs a cell that starts with `=`, `+`, `-` or `@` as a formula, and a leading tab or carriage return can smuggle one in too. Merchant names and bank descriptions come from outside, so any cell that starts with one of those and isn't a number gets a `'` in front of it, which makes the spreadsheet treat it as text. The `'` is not part of the data (the JSON file has the value as stored). Negative amounts are numbers and are left alone.
+
+### `nya-transactions-<date>.csv`
+
+One row per transaction, newest first: every one stored from your banks, with the [transaction fields](#transactions) flattened, every one SimpleFIN brought or on a manual account, entered by hand or imported ([`manual-transactions`](#manual-transactions)), and every one imported into a linked account that counts ([`imported-transactions`](#imported-transactions)), in the same columns. Columns, in order:
+
+`date`, `account_name`, `institution_name`, `name`, `merchant_name`, `your_merchant_name`, `amount`, `iso_currency_code`, `category`, `your_category`, `your_category_from_earlier_account`, `category_detailed`, `category_confidence`, `pending`, `superseded_by_posted`, `account_hidden`, `authorized_date`, `datetime`, `authorized_datetime`, `payment_channel`, `transaction_code`, `transaction_type`, `check_number`, `account_owner`, `website`, `location_address`, `location_city`, `location_region`, `location_postal_code`, `location_country`, `location_lat`, `location_lon`, `location_store_number`, `payment_reference`, `payment_processor`, `payment_payee`, `payment_payer`, `payment_method`, `counterparties` (each as `name (type)`, separated by `; `), `unofficial_currency_code`, `transaction_id`, `pending_transaction_id`, `account_id`, `item_id`, `merchant_entity_id`, `vendor_key`, `logo_url`, `category_icon_url`, `source`, `note`, `nya_category`, `nya_category_id`, `nya_group`, `tags` (the names of the tags it carries, separated by `; `), `nya_name` (the name the app shows: a rule's for one imported or from SimpleFIN that you didn't name yourself, never for one you entered by hand), `excluded` (left out of budgets and reports, by you or by a rule; empty when that couldn't be read), and, for [splits and groups](#splits-and-groups-in-the-csv), `nya_amount`, `split_of`, `split_index`, `group_id` and `group_name`. Rules, tags and exclusions are applied as the app applies them, and so are what you approved and your merchants' defaults ([`transaction-approvals`](#transaction-approvals), [`vendor-defaults`](#vendor-defaults): an approved transaction filed where you approved it, one a default files under the default), so `nya_category`, `nya_name`, `tags` and `excluded` are what the Activity tab shows (a rule's institution condition reads an account's institution as the app shows it: a manual account's, `Manual` when it has none, and for an account from SimpleFIN, the bank's as SimpleFIN names it). `note` is your note: the one written with a transaction on a manual account, or one you put on a bank's, on one SimpleFIN brought or on one imported into a linked account (kept beside it in `transaction-annotations`, since such a row stays as the bank or its file gave it; for an imported one, the file's own note until you write one).
+
+`source` says where a row came from: `plaid` for a bank's through Plaid, `simplefin` for one SimpleFIN brought (filled in like a manual account's row, with its account's names as `accounts` gives them); for one on a manual account, `manual` (entered in the app), or `import:ofx`, `import:csv` or `import:qif` (imported from a file). A manual account's row has its own `name` (who was paid, or who paid you), `amount`, `iso_currency_code` (its currency), `category` (its own, so `your_category` is empty, and `nya_category`, `nya_category_id` and `nya_group` say where it is filed by its own words, among the same categories as a bank's row, so a category has one name throughout) and `note`, the `transaction_code` its file gave (`atm`) where it gave one, and its account's `account_name`, `institution_name`, `account_id` and `account_hidden`, as in `manual_accounts`; the columns only a bank fills are empty, and so is `item_id`, since a manual account has no connection. A row SimpleFIN brought that the app pairs with one on another of your accounts ([features.md](features.md#where-its-accounts-live)), a card's payment, a loan's or a move between them, is listed as the app shows it: `category` is the pair's words (`loan payments`, or `transfer out` and `transfer in`), and `nya_category`, `nya_category_id` and `nya_group` file it by them, under Transfers as seeded, so leaving out your transfer groups leaves it out as the app does. It is worked out from the file's rows, by the account types in `accounts` and `manual_accounts`, never stored, and a category you gave either side wins, as in the app. On the same day, rows with a time come first. A manual account that can't be read leaves its rows' account names empty, an account from SimpleFIN that can't be read leaves its rows' account names empty and its payments to your other accounts without a category, and a book of rows that can't be read leaves those rows out. [Rules](#rules) that can't be read are applied to no row, and [tags](#tags) that can't be read are on none, as the app shows them then; a record of what you said about a transaction ([`transaction-annotations`](#transaction-annotations)) that can't be read leaves that row without the tags you put on it (a rule's, and those carried from an earlier account, are there), and without your note if the bank or SimpleFIN brought it or it was imported into a linked account (whose file's own note, if it had one, is there instead; a note written with a transaction you entered, or imported into a manual account, is on its row), with `excluded` empty (it counts); a bank's transaction standing for one you imported into a linked account whose record can't be read is without the tags and note you put on that one, with `excluded` empty unless you excluded or included the bank's itself; and a record carried from an earlier account ([`carried-annotations`](#carried-annotations)) leaves the rows it carries to without it. Each way the response says the file is incomplete ([above](#getting-a-copy)), naming the part.
+
+A row imported into a linked account is on its account as it is known now (following `account_links`), with that account's `account_name`, `institution_name`, `account_id`, `item_id` and `account_hidden`, its own `name`, `amount`, `iso_currency_code` and `category` (the file's), your name for its merchant (`your_merchant_name`) and `your_category` when you gave one, `nya_category`, `nya_category_id` and `nya_group` (filed by `your_category`, else its own `category`, else a rule's, among the same categories as every other row), its `source` (`import:ofx`, `import:csv` or `import:qif`), the `transaction_code` its file gave, and what the app shows of it, as for any row: `note` (yours, else the file's), `tags`, `nya_name` (your name for its merchant, else a rule's, else its own) and `excluded`; the columns only a bank fills are empty. Only those that count are rows: not one you said is a transaction already there while that one is, nor one a transaction the bank sent later now stands for, so no transaction is in the file twice. A bank's transaction that stands for imported rows takes what you said about them, unless you said otherwise on it, as the app does: the category you set on one as its `your_category`, filed by it in its `nya_` columns, and that you excluded one or put it back, its tags and your note, in `excluded`, `tags` and `note`; and how you split one, or its place in a group ([below](#splits-and-groups-in-the-csv)).
+
+`amount` keeps Plaid's sign (positive is money out). To total your spending, leave out rows where `superseded_by_posted` is `true`.
+
+#### Splits and groups in the CSV
+
+Every transaction is a row of its own, with its own `amount`, whether you split it, grouped it or neither. Beside them, the parts of a split transaction and a group's net are rows of their own, with `amount` empty, so **adding up `amount` counts each transaction once, as the money moved, and no part or net**. `nya_amount` is the amount the app counts: a transaction's own, a part's, or a group's net, and empty on a split transaction and on a grouped one (they count through their parts and their group), and on a pending one its posted one replaced (the app doesn't list it). So **adding up `nya_amount` counts nothing twice either**, and by `nya_category` it gives the app's spread: split a $150 charge into $100 of groceries and $50 of household things, and its row has `amount` 150 and `nya_amount` empty, and its two parts have `nya_amount` 100 and 50 under those categories.
+
+- **A part's row** comes right after its transaction's, newest first, and repeats its date, account, names, currency, source and tags. Its `transaction_id` is `split:` and the part's id (`split-rest:` and the transaction's id for the part that holds what the bank changed the amount by since the split, filed as the transaction would be, its `category` and `nya_` columns the transaction's), `split_of` is the transaction's id, `split_index` its place from 0, and `category`, `nya_category`, `nya_category_id`, `nya_group`, `note` and `excluded` its own. The transaction's own row keeps its own category, as if it weren't split.
+- **A group's row** is on the group's day: its `transaction_id` is `group:` and the group's id, `name` and `nya_name` its name, `nya_amount` its net (the sum of the `amount` of its transactions in the file), `category` and the `nya_` columns its category, and its account columns its first transaction's. Its transactions' rows, and its own, carry `group_id` and `group_name`.
+- **A bank's transaction standing for one you imported into a linked account** (the bank sent it later, or you said it is the bank's) is split and grouped as that one was, as the app does it, unless it is split or in a group of its own: its parts' `split_of` is the bank's transaction's id, and it is listed in that one's group. The split, and the group's `members`, keep the imported row's id in [`transaction-splits`](#transaction-splits) and [`transaction-groups`](#transaction-groups); the imported row itself isn't a row of the CSV while the bank's stands for it.
+
+The file has every row, of every date, on hidden accounts and on accounts after they [ended](features.md#accounts-that-end), so a group's net here is of all its transactions; the app leaves out one on a hidden account, or one dated from its account's end, as it leaves those rows out. When [`transaction-splits`](#transaction-splits) or [`transaction-groups`](#transaction-groups) can't be read, those transactions are whole, or on their own, with `nya_amount` their own amount, as the app shows them then, and the response says the file is incomplete ([above](#getting-a-copy)).
+
+### `nya-balances-<date>.csv`
+
+Oldest day first; on each day the net-worth row comes before the accounts. Columns:
+
+| Column | Meaning |
+| --- | --- |
+| `date` | The UTC day. |
+| `record` | `net_worth` for the day's total, `account` for one account's balance. |
+| `account_id`, `account_name`, `institution_name`, `account_type` | The account (empty on `net_worth` rows). |
+| `balance` | The total, or the account's balance (positive is owed for credit and loans). |
+| `currency` | The account's currency, when known. |
+| `kind` | `recorded` or `estimated`. |
+| `account_hidden` | The account is hidden (empty on `net_worth` rows). |
+| `account_state`, `account_state_date` | On `account` rows of an account that ended: `closed`, `left` or `untracked`, and the day it stopped counting (as [`accounts[].lifecycle`](#accounts)). Empty otherwise. |
+| `note` | On `note` rows: the note's text. |
+
+`record` is `note` for a [note on the timeline](#timeline-notes), after the day's balances: its `kind` is `auto` or `user`, and an `auto` note names its account in the account columns.
+
+`net_worth` rows include hidden accounts, as [stored](#net_worth_history), and accounts after their end, as recorded: the app takes an ended account out of each day from its end, so to see what it shows, subtract the `account` rows of an ended account from `account_state_date` on (as a debt, add a credit card's or loan's back). Don't add `account` rows to `net_worth` rows: the total already counts them. A manual account that can't be read keeps its `account` rows, under its id, with its name empty; when it is hidden, `account_type` and `account_hidden` are still filled in, from `hidden_accounts`. The response says the file is incomplete ([above](#getting-a-copy)).
+
+## One account as OFX
+
+`nya-<institution>-<account>-<date>.ofx`: one bank account's or credit card's transactions as an OFX statement (`lib/ofx-export.ts`), the format most banks let you download, for another money app or to import into Nya again. Choose the account under the format: the card lists your bank accounts and cards, linked, kept up to date through SimpleFIN, and manual, hidden ones too, and ones that [ended](features.md#accounts-that-end), each labelled with its end ("Closed Sep 1"). An ended account's statement is like any other, every transaction Nya stored included (those imported into it from its bank's files too), and its first note says when it ended in Nya, how many of its transactions are dated from then (which Nya counts in nothing), and the day of the balance it gives: "This account was closed in Nya on Sep 1, 2026: the statement still lists every transaction Nya stored for it, 2 of them dated from then, which Nya leaves out of every total, and its balance is the newest Nya recorded, from Oct 8, 2026." For a closure Nya noticed by the account's absence, that balance is from before it.
+
+**Which OFX, and why.** OFX 1.0.2 in SGML, written as banks write it: the headers, then one tag a line, values without end tags, lines ending CRLF, in Windows-1252 (`ENCODING:USASCII`, `CHARSET:1252`). It is what most banks' downloads are (Quicken's QFX is the same with a tag of its own), so it is what money apps' importers are built and tested against; an app that reads OFX 2 (XML) reads it too, while some readers read only 1.x.
+
+| App | What to expect |
+| --- | --- |
+| GnuCash | Imports it (File, Import, Import OFX/QFX), and asks once which of its accounts the file's account is. |
+| Actual Budget | Imports it into an account, and uses each transaction's FITID to leave out what it already has. |
+| YNAB | Its file import takes OFX and QFX files. |
+| Quicken | Imports these files only from banks it works with, which it tells by an id their files carry, so it may refuse this one. |
+| Monarch | Its import takes CSV files: use the transactions CSV. |
+| Nya | Imports it into a manual account, as any bank's file ([below](#bringing-it-back-into-nya)). |
+
+**Which accounts.** A bank account (`depository`) is a bank statement, with `ACCTTYPE` `SAVINGS` for a savings account, `MONEYMRKT` for a money market account and `CHECKING` for every other kind of bank account. An account SimpleFIN keeps up to date, and a manual account, say only that they are bank accounts (you chose "Checking or savings"), so they are `CHECKING`: Nya doesn't guess a savings account from its name, and an app that cares lets you choose on import. A credit card is a card statement. A loan has no statement in OFX 1.0.2, and an investment account's statement lists holdings, trades and the securities they are in, which Nya doesn't write, so neither is offered as OFX rather than passed off as a bank account: their history is in the JSON file, and the route refuses them with a 400 that says so.
+
+**What is in it.**
+
+| | |
+| --- | --- |
+| Transactions | The account's posted transactions, oldest first: from the bank, through Plaid or SimpleFIN, or on a manual account entered by hand or imported. A linked account's include the history [imported into it](features.md#importing-history-into-a-linked-account) from its bank's files, as the CSV and JSON files have it: each one that counts as its own, never one you said is a transaction already there, nor one the bank's own now stands for, so no transaction is in it twice, and each as the app shows it (your rules, tags, notes and exclusions on it); a bank's transaction that stands for imported ones takes what you said about them (excluded or put back, your note, its tags), as the app reads it. Pending ones are left out, and the notes say how many: a bank gives a transaction a new id when it posts, so an app that imported it pending would count it twice (an imported one whose only look-alike at the bank is still pending is in, as its own). While SimpleFIN is still bringing in older transactions, a few months each night, the notes say the statement may be missing some from before the day it has reached (the connection's, which starts again when you track another account, so the statement may already go back further). |
+| `FITID` | The transaction's own id: Plaid's transaction id, or a manual transaction's `manual-txn:...` id, which a transaction SimpleFIN brought has too, or an imported one's `imported-txn:...` id. It doesn't change from one download to the next (until a bank is removed and added back: see `ACCTID`), so importing the same file twice, into Nya or any app that honours FITIDs, adds nothing. One exception, which the notes say when the statement holds imported transactions: where the bank later sends the same transaction as one imported from a file, a later statement lists the bank's in its place, with the bank's id, so an app that matches by FITID may add it again. |
+| `TRNAMT` | OFX's sign, the account holder's: positive is money in, on a card as on a bank account. Nya keeps Plaid's (positive is money out), so each amount is negated. Written with the currency's decimals (two for dollars, none for yen), or more where the amount has them: never rounded. |
+| `TRNTYPE` | `CREDIT` or `DEBIT` by that sign, unless the bank said more, through Plaid's transaction code: `ATM`, `FEE` (a bank charge), `XFER` (a transfer), `CHECK` (with `CHECKNUM`, where there is a check number), `INT`, `DIRECTDEBIT` or `REPEATPMT`. Never a guess from a category. A payment or a move the app works out between two of your SimpleFIN accounts ([features.md](features.md#where-its-accounts-live)) is typed as a bank's file types it, as the transactions CSV files it: a card's or a loan's payment `PAYMENT` on both sides, any other move `XFER`. |
+| `DTPOSTED`, `DTUSER` | The day it posted, and the day it happened where Plaid says and it differs, as the bank's days, written at 10:59 with no time zone (`20260905105900`). OFX reads a time without a zone as GMT, and 10:59 GMT is the same day everywhere from UTC-10 to UTC+13, so an app that turns it into its own time zone still shows the bank's day, from Hawaii to New Zealand, Tonga and Samoa. Only at UTC-11 (American Samoa, Niue) or past UTC+13 (Kiribati's Line Islands, the Chatham Islands in summer) can such an app show the day before or after; an app that reads the date as written shows it everywhere. |
+| `NAME` | The payee as the app shows it, with your [rules](#rules) applied as the app applies them: your name for the merchant (or for a transaction you imported), else a rule's, else Plaid's, else the bank's own words. OFX allows 32 characters; a longer name is cut there, and given whole in the memo. |
+| `MEMO` | Up to 255 characters, in order: "Excluded from budgets and reports in Nya" for a transaction you excluded (or one an exclusion was carried to), or "Hidden from budgets and reports by a rule in Nya" for one a rule hides; the whole name if it was cut; the bank's own words where they aren't the name (a rule's name keeps the bank's here); your note, on a bank's transaction, one SimpleFIN brought or one imported into a linked account (the file's own until you write one) as on one you entered; its tags ("Tags: Work, Vacation 2026"); and, for one you split, its parts ("Split in Nya: Groceries 100.00; Household 50.00", with "the bank added 10.00 since" when the bank changed the amount, or "10.00 added since" when you edited one you entered or imported), or, for one in a group, the group ("In the group Dinner with Sam in Nya"), each as the app applies them (never a split of a transaction pending or in another currency now, nor a group whose transactions' currencies differ now): one imported into a linked account as you split or grouped it, and a bank's transaction standing for one as that one was. The transaction is listed once, whole, as on a bank's statement, so its amounts still add up to the balance; when the parts don't fit in the memo with the rest, they are left out of it and the notes say how many were. A transaction left out is still listed, marked: the money did move, and a statement without it wouldn't add up to the balance. A memo longer than 255 characters is cut there, and the notes say how many were, since the end of one (your note, its tags) is then missing; the CSV and JSON files have them whole. |
+| Currencies | One statement per currency the account's transactions are in, for the same account: its own currency first (with its balance, even when none of its transactions are in it, as the notes then say), then the others. OFX has one currency per statement, and a rate to convert at isn't Nya's to invent, so nothing is converted. |
+| `LEDGERBAL` | The latest balance Nya knows, with the day it is as of (`DTASOF`), as a day where you are: the card sends your device's time zone, and without one the day is UTC's. For a linked account, its newest recorded balance, never an estimate, on the day Nya recorded it; Nya keeps balance history by UTC day, so it is that UTC day where Nya didn't keep the time, or measured the balance on a day only some banks answered. For an account SimpleFIN keeps up to date, the balance it last gave, as of the bank's own day for it (SimpleFIN's balance date); while Nya holds it, as the Accounts tab does (a card whose sign you haven't said, or a bank whose latest answer through SimpleFIN isn't whole and current), there is none, and the notes say why. For a manual account, its balance as you last set it, in its currency (US dollars, or the currency SimpleFIN fed it in, for an account kept on a disconnect), on the day you set it. A card's is negative while money is owed, as OFX writes it. It is in the statement of its own currency only; with none known, there is none, and the notes say why. OFX asks every statement for one, so an app that insists may refuse such a file. |
+| `ACCTID` | An id Nya makes for the account, since it never has the full account number: `NYA-`, 12 characters derived from the id Nya first knew the account by, and its last digits where the bank gave them (`NYA-3F9A1C2B7D4E-1111`). When a bank is removed and added back and you link the new account to the old one ([features.md](features.md#removing-an-institution-and-adding-it-back)), the file keeps the old account's id, so an app files it with the same account. The bank gives every transaction a new id then, though, so their FITIDs change: an app that matches transactions by FITID may add again what a file from before gave it. Import from the day after your last import, or let the app's own duplicate check catch them. |
+| `BANKID` | `NYA`, in a bank statement. It is not a routing number, which Nya doesn't know, but OFX requires one there, and a strict reader refuses a bank statement without it. A card statement has none. |
+
+**Characters.** A character Windows-1252 lacks is written as its plain letter where it has one (an accent it lacks dropped, `ł` as `l`), and as `?` otherwise, such as letters of non-Latin scripts; the notes count the transactions that touched. The JSON and CSV files have every character. Control characters become spaces, and `&`, `<` and `>` are escaped.
+
+**Not in it.** Categories: OFX has no field for them (the CSV and JSON files have them, a rule's among them). Tags have none either, so they are in the memo, as words. Investment transactions, and loans' and investment accounts' balances: in the JSON file.
+
+**When something couldn't be read.** A manual account, or one SimpleFIN keeps up to date, whose transactions can't be read gives a statement without them, as does a linked account whose imported transactions can't be read (`imported-transactions`: a transaction the bank sent that stands for one of them then doesn't show what you said about it); a transaction whose record of what you said can't be read isn't marked as excluded either way, and the tags you put on it aren't in its memo (those a rule adds, or carried from an earlier account, still are), nor your note on it if the bank or SimpleFIN brought it, or it was imported into a linked account (whose file's own note, if it had one, is there instead; a note written with a transaction you entered, or imported into a manual account, is its own, and is there); and a bank's transaction standing for one you imported whose record can't be read is without the tags and note you put on that one, and isn't marked as excluded either way unless you excluded or included the bank's itself. What was carried from an earlier account that can't be read is missing from the transactions it carries to. Rules that can't be read are applied to none of its transactions (their names, and which are marked as left out, are as the bank and you have them), and tags that can't be read are in no memo, as the app shows them then. Splits and groups that can't be read leave those transactions' memos without their parts or their group, a bank's transaction standing for one you imported from a file among them when it is that one's split that can't be read. Each is said in the notes, and the response calls the file incomplete (`manual-transactions`, `imported-transactions`, `transaction-annotations`, `carried-annotations`, `rules`, `tags`, `transaction-splits` or `transaction-groups`), as for the CSV files. When what Nya keeps about the SimpleFIN connection an account comes through can't be read, its statement still lists its transactions, says that whether older ones are still arriving isn't known, has no balance, as the Accounts tab holds it, and is called incomplete (`connector-connections`). An account SimpleFIN keeps up to date whose own record can't be read is refused with a 409 that says so, as a manual account's is, and one you stopped tracking and removed, with its transactions, with a 400.
+
+### Bringing it back into Nya
+
+Import it into a manual account ([features.md](features.md#importing-files)): every transaction comes back with its date, amount, sign and currency, and its FITID as the source id, so importing the same file again, or another download that overlaps it, adds nothing. The memo becomes the note; a name longer than 32 characters comes back cut, with the whole name in the note; categories don't come back, except what the bank's code said (an ATM withdrawal, a fee, a transfer, a card statement's payment), which Nya reads from any bank's file: so a move between your SimpleFIN accounts comes back as transfer out or in, and a card's payment received as loan payments, while a payment from a bank account, which may pay any bill, comes back without one. Imported into the manual account it was made from, a transaction is recognized only by its date, amount, currency and name, so one whose name OFX had to cut or change would be added a second time: import it into another account. The test suite holds this round trip, through Nya's own OFX parser, for every row.
+
+## Protecting the file with a passphrase
+
+Tick **Protect the file with a passphrase** on the card and type one twice, of at least 12 characters: four or more words you'll remember that don't belong together, with spaces between them, make one that is strong and easy to type. The file, whatever its format, is then saved encrypted, with `.age` at the end of its name: `nya-data-2026-10-10.json.age`.
+
+**Nya never keeps the passphrase.** It goes to the server with the request, over HTTPS, is used once to lock the file's key, and is never stored, logged, sent anywhere else, or put in the email. A lost passphrase can't be recovered, by you or by whoever runs Nya, and the file can't be opened without it: download it again with a new one.
+
+### Opening it
+
+- **In your browser**, on Nya's **Open a protected download** page (`/open-download` on your Nya, linked from the card): choose the file, type the passphrase, and the opened file is saved. The page opens it on your device and never uploads it, and needs no sign-in, so a file still opens after the account it came from is deleted. Unlocking takes a few seconds, on purpose, and about 256 MB of memory. The page reads the file a few megabytes at a time, and hands what it has opened to the browser a few megabytes at a time rather than holding it all itself, but an older phone may still stop the page, or say it can't spare the memory: open a large file on a computer.
+- **With the age app**, without Nya at all: `age -d -o nya-data-2026-10-10.json nya-data-2026-10-10.json.age` asks for the passphrase and writes the opened file. age runs on macOS (`brew install age`), Linux (`apt install age` on Debian and Ubuntu) and Windows (`winget install --id FiloSottile.age`), and other implementations of the format open it too. The test suite opens Nya's files with the age command where it is installed, and opens the age command's own files with Nya's page code.
+
+### The format
+
+A protected download is an [age](https://age-encryption.org/v1) file, version 1, locked with a passphrase: an existing, documented format with free tools on every platform, built only from standard primitives (scrypt, HKDF-SHA256, HMAC-SHA256 and ChaCha20-Poly1305). `lib/age/age.ts` writes and reads it. The server derives the key with Node's own scrypt (`lib/protected-download.ts`), and the browser page with `lib/age/scrypt.ts`; ChaCha20-Poly1305 is `lib/age/chacha20poly1305.ts`, since Web Crypto has none. The test suite holds them to their RFCs' test vectors and to the age project's own. Byte by byte:
+
+1. A text header, each line ending in a line feed:
+
+   ```
+   age-encryption.org/v1
+   -> scrypt <salt> 18
+   <the sealed file key>
+   --- <the MAC>
+   ```
+
+   Base64 is the standard alphabet without padding. The salt is 16 random bytes (22 characters). 18 is the work factor: scrypt's N is 2^18, with r = 8 and p = 1, about a second of a computer's time and 256 MB of memory for each guess at a passphrase, which is age's own setting. The file key is 16 random bytes, sealed with ChaCha20-Poly1305 under a nonce of 12 zero bytes and the key scrypt(passphrase, salt = `age-encryption.org/v1/scrypt` followed by the 16 salt bytes): 32 bytes (43 characters). The MAC is HMAC-SHA256 of the header up to and including `---`, keyed with HKDF-SHA256 of the file key, with no salt and the info `header`: 32 bytes (43 characters). A protected download's header is always 150 bytes.
+2. A nonce: 16 random bytes.
+3. The file's bytes, in chunks of 64 KiB (65,536 bytes; the last may be shorter, and is empty only when the whole file is), each sealed with ChaCha20-Poly1305 under the payload key, HKDF-SHA256 of the file key, salted with the nonce, with the info `payload`. Each chunk's 12-byte nonce is its number, counting from 0, as 11 bytes big-endian, then a byte that is 1 for the last chunk and 0 for every other. Each sealed chunk is the chunk and its 16-byte tag.
+
+So a protected file is 150 + 16 + the file's size + 16 for each chunk, which is how its size is announced before the first byte, and the download is still streamed: each chunk is sealed as the file is written out. A chunk changed, cut short, swapped with another, moved, or taken from another file fails its tag, and a file that ends without its last chunk, or goes on after it, fails too, so a file opens whole or not at all: the page saves nothing until every chunk has opened.
+
+## Every stored key, and where it goes
+
+Each key a person's container can hold, and what the download does with it. The same list is `STORED_KEYS` in `lib/user-export.ts`, and a test fails if the code builds a container key that isn't on it, so a new store can't go missing from downloads unnoticed.
+
+| Key | In the download |
+| --- | --- |
+| `plaid:items` | `institutions` (the access token in each record is left out) |
+| `accounts:meta`, `accounts:directory` | `accounts` |
+| `manual:accounts` | `manual_accounts` |
+| `hidden:accounts` | `hidden_accounts`, and `accounts[].hidden` |
+| `history:net-worth`, `history:net-worth:est` | `net_worth_history` (recorded, estimated) |
+| `history:accounts`, `history:accounts:partial` | `account_history` (recorded) |
+| `history:accounts:est`, `history:accounts:est:ext` | `account_history` (estimated) |
+| `history:accounts:est:flatd`, `history:accounts:est:flat` | Left out: balances an estimate held flat (see above) |
+| `txns:<connection>` | `transactions` (the sync cursor, and when Plaid last refused its transactions, are left out) |
+| `invtxns:<connection>` | `investment_transactions`, `investment_history_coverage` |
+| `txn-category-overrides` | `category_overrides`, and `transactions[].your_category` |
+| `txn-vendor-renames` | `merchant_renames`, and `transactions[].your_merchant_name` |
+| `txn-category-carry` | `account_links.carried_categories`, and `transactions[].your_category_from_earlier_account` |
+| `account-links`, `account-links:dismissed` | `account_links.links`, `account_links.declined_suggestions` |
+| `budgets`, `goals` | `budgets` (a copy of your category budgets by name, for the release before; the budgets themselves are in `budget-set`), `goals` |
+| `txns-blocked:`, `txns-unsaved:` | `notes`, when a store is behind what the app showed |
+| `cache:`, `accounts:vanished`, `plaid:new-accounts`, `history:backfill-done`, `history:backfill-pending`, `history:forgetting:`, `invtxns-lock:`, `account-links:lock`, `sessions:`, `snapshot:`, `move:` | Left out: the app's machinery |
+| Stores built on the storage seam (`lib/stores.ts`) | Each one declared exportable: a field of its own ([above](#stores-built-on-the-storage-seam)), unless a part of the file above has it already: `sharing-access-log`, your records of when what you share was shown, is in [`sharing`](#sharing), and `budget-set`, your budgets by category and group id, is in [`budgets` and `group_budgets`](#budgets-and-goals). The others are left out: `api-tokens`, whose hashes are credential material (each token's name and dates are in [`api_tokens`](#api_tokens) instead), `connector-secrets`, the access each connection to SimpleFIN gives Nya (a credential), `api-requests`, `connector-requests`, `connector-claims` and `download-count`, the counters behind each API token's requests a minute, the eight requests a day to SimpleFIN, the ten tokens tried an hour and the five downloads an hour, `import-requests` and `import-reads`, the counters behind the hundred file imports and previews and the three hundred reads of the list of imports an hour, `import-summaries` and `history-import-summaries`, each import's entry without its records, which `imports` and `history-imports` hold whole, `imported-history-walk`, what the estimated history drawn from imported transactions covers, whose points are in `net_worth_history` and `account_history`, `weekly-summary-state`, the key the links that turn off your weekly summary are signed with (credential material), the last week one went for (and one that got no answer) and the goals the last one found at their target, by id, `weekly-summary-sends` and `weekly-summary-unsubscribes`, the counters behind the three summaries you can ask for in a day and the ten uses of its links an hour, and `holdings:history:index`, which says only which id each month of `holdings:history` is stored under and the first and last day each account was recorded, both of which the months themselves hold. |
+
+Sharing settings are not in your container (connections are between two people) and are read as your side only. Your records of when what you share was shown are in your container (`sharing-access-log`, a store on the seam); the other person's record of when what they share was shown to you is in theirs, and read from there, as they see it.
+
+## How it differs from the operator backup
+
+There are two exports, and they are kept apart on purpose (#55): one that did both jobs would be too decrypted to be safe, or too complete to be portable.
+
+| | Download my data | Operator export and nightly backup |
+| --- | --- | --- |
+| For | You, to keep or take elsewhere | Whoever runs Nya, to recover from losing the database |
+| Covers | One person | The whole environment, every person |
+| Values | Decrypted, in documented fields | Encrypted, byte for byte as stored, and unreadable without the keys; dates, account and transaction ids, bank names and the merchant names you renamed are in plain text ([operations.md](operations.md#taking-a-backup-by-hand)) |
+| Formats | JSON, CSV, OFX, any of them protected with your passphrase if you choose | NDJSON of raw database keys, with a checksum |
+| Leaves out | Credentials and the app's machinery | Only what would be wrong after a restore (caches, locks, counters, job records), and the access a SimpleFIN connection gives Nya, which works on its own and must never come back after a disconnect |
+| Restores | Not yet: restoring from this file is planned (#43). An OFX statement from it, or a file from your bank, can be imported into a manual account ([features.md](features.md#importing-files)) or a linked one ([features.md](features.md#importing-history-into-a-linked-account)) | `bun run restore` ([operations.md](operations.md#restoring-a-backup)) |
+| Gets it | You, after a fresh sign-in, 5 an hour | The operator, with `OPS_SECRET`, or the nightly cron |
+
+Deleting your account deletes your data now, and the nightly backups expire it later; the receipt at the end gives the date ([authentication.md](authentication.md#deleting-an-account)). A file you downloaded is yours, and deleting your account doesn't reach it.
+
+## Adding a store
+
+A new store is built on the storage seam (`lib/repo.ts`), and declaring it `exportable: true` is all it takes to be in this download: `declaredSections()` in `lib/user-export.ts` gives it a field of its own and reads it with the seam's reports (`getAllReport`, `getReport`), so an entry it can't read is named under `problems` rather than stopping the download, unless an entry of `SECTIONS` exports it itself and names it in `covers` (as `sharing` does `sharing-access-log`, to put each record beside its connection). Describe what it holds on this page. Its name must not be one the file already uses (`notes`, `accounts`), which would fail every download; `test/user-export.test.ts` checks that.
+
+The older stores are read by hand. One that stands alone (nothing else needs to read it to build the file) is an entry in `SECTIONS`: its key in the file, its name for errors, a reader that returns the store already in its exported shape and throws on anything that says nothing about the data (storage, keys), and either throws on an entry it can't read or names it (`problems`, by the seam's rules: `openStored` in `lib/repo.ts`), and, if it names accounts, which ids it names, so `accounts` lists them. Its key goes in `STORED_KEYS`. A store the core sections cross-reference (accounts, history, transactions) is read in `collectUserData` and built in `buildUserExport`.

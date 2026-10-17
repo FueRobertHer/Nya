@@ -184,7 +184,7 @@ export async function checkItemUsage(
   const webhook = webhookUrlFor(ctx) ?? null;
 
   for (const item of items) {
-    const usage = await checkOne(item, parseUsage(stored[item.item_id], stamp), { now, days, stamp, run, hidden, webhook });
+    const usage = await checkOne(ctx, item, parseUsage(stored[item.item_id], stamp), { now, days, stamp, run, hidden, webhook });
     if (usage.flagged) report.flagged++;
     try {
       await redis().hset(usageKey(ctx), { [item.item_id]: JSON.stringify(usage) });
@@ -207,13 +207,14 @@ export async function checkItemUsage(
 }
 
 async function checkOne(
+  ctx: Ctx,
   item: StoredItem,
   usage: Usage,
   o: { now: number; days: number; stamp: string; run: string; hidden: Map<string, unknown> | null; webhook: string | null }
 ): Promise<Usage> {
   let access_token: string;
   try {
-    access_token = await decrypt(item.encrypted_access_token);
+    access_token = await decrypt(ctx, item.encrypted_access_token);
   } catch {
     return usage; // can't be checked: left exactly as it was
   }

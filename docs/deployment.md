@@ -9,6 +9,10 @@ Nya runs on Vercel, with Upstash Redis for storage and Plaid for bank data. Bun 
 - [5. Local development](#5-local-development)
 - [6. Deploy](#6-deploy)
 - [7. Install on your phone](#7-install-on-your-phone)
+- [Email notices](#email-notices)
+- [Brokerage and retirement connections](#brokerage-and-retirement-connections)
+- [Bring your own sync](#bring-your-own-sync)
+- [Security headers and the Content-Security-Policy](#security-headers-and-the-content-security-policy)
 - [Preview deployments](#preview-deployments)
 
 ## 1. Get Plaid API keys
@@ -42,14 +46,20 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `INGEST_SECRET` | optional | Authenticates scripted balance pushes to manual accounts. Unset keeps `/api/ingest/balance` closed. |
 | `OPS_SECRET`, `OPS_ENABLED` | optional | Backups and other operations, only while you run one. |
 | `BLOB_READ_WRITE_TOKEN` | optional | Set for you when a private Blob store is connected; turns on nightly backups. |
-| `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). |
+| `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The deletion receipt and the public Security and Privacy pages read it (and whether a Blob store is connected), so what they say follows it. |
+| `DATABASE_BACKUP_DAYS` | optional | The days the database host's own backups keep a copy (Upstash's Daily Backup keeps each for 1 or 3 days); `0`, the default, means they are off. Each holds the whole database, keys included, so the deletion receipt and the public pages add it to how long a deleted account's copies stay readable. See [operations.md](operations.md#per-container-data-keys). |
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |
 | `PLAID_UNUSED_DAYS` | optional | Days before an unused connection is flagged (default 60, minimum 14). |
+| `PLAID_BROKERAGE_LINK` | optional | `1` offers **Connect a brokerage or retirement account** beside the bank option. Off by default, and turned on only after this release has run for a while. See [Brokerage and retirement connections](#brokerage-and-retirement-connections). |
 | `MAX_TXN_BLOB_CHARS` | optional | Ceiling on one institution's stored transactions (default 8,388,608 characters). See [architecture.md](architecture.md#storage-and-encryption). |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_ALLOWED_USER_IDS` | optional | Sign in with Clerk instead of the shared password. See [authentication.md](authentication.md). |
+| `CSP_MODE` | optional | How pages send their Content-Security-Policy: `report-only` (the default), `enforce` or `off`. See [Security headers](#security-headers-and-the-content-security-policy). |
 | `CONTAINER_ID` | optional | Which container this deployment serves. See [operations.md](operations.md#containers). |
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
 | `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
+| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, and about each download of someone's data or new API token, and the weekly summary for those who turn it on, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
+| `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
+| `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link, and no weekly summary goes: each must carry its link to turn it off. |
 
 ## 4. Scheduled jobs
 
@@ -57,8 +67,8 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 
 | Time (UTC) | Route | Job |
 | --- | --- | --- |
-| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot. |
-| 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked. |
+| 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, fetching from the [SimpleFIN connections](#bring-your-own-sync) people made beside Plaid, and sends the [email notices](#email-notices) about its connections, then the weekly summaries due that day. |
+| 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked, and sends the weekly summaries still due. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
 
@@ -91,6 +101,8 @@ vercel deploy --prod
 
 Vercel gives you a free HTTPS domain automatically.
 
+**Memory.** A download protected with a passphrase works out its key on the server with scrypt at age's own setting, which holds 256 MB for about a second (`lib/protected-download.ts`), on top of the decrypted data every download is made from. Downloads are few (five an hour per container), but protected ones that meet on one function instance add up, so leave the functions' memory at Vercel's default or above.
+
 **One Plaid-specific step:** in the [Plaid Dashboard](https://dashboard.plaid.com), under Team Settings > API, add your deployed URL to the allowed redirect URIs. Some bank logins use OAuth screens that redirect back to a registered domain.
 
 ## 7. Install on your phone
@@ -98,6 +110,98 @@ Vercel gives you a free HTTPS domain automatically.
 **iPhone (Safari):** open your deployed URL, tap the Share icon, then **Add to Home Screen**.
 
 **Android (Chrome):** open your deployed URL, open the menu, then **Install app**.
+
+## Email notices
+
+When a bank connection needs you (a sign-in to redo, a connection to remove and make again, Plaid's warning that it will end, or an outage that has lasted three days), the daily snapshot emails once, again only if what it needs changes, and once more a week later if it still needs you. How that is decided is in [features.md](features.md#email-notices). Email goes through [Resend](https://resend.com)'s HTTP API, with no SDK (`lib/mail.ts`).
+
+1. Create a Resend account and verify the domain you will send from (Resend's Domains page lists the DNS records to add).
+2. Create an API key with sending access only, and set it as `RESEND_API_KEY` (mark it Sensitive in Vercel).
+3. Set `MAIL_FROM` to an address on that domain, on its own or with a name: `Nya <alerts@example.com>`.
+4. Set `APP_URL` to the app's public address, so each email links straight to the Connection health card.
+5. With the shared password, set `NOTIFY_EMAIL` to the address to tell. With Clerk, nothing to set: each account's notices go to its primary email address once Clerk has verified it, and to nobody else. Preview's demo accounts are never emailed.
+
+The notices come from the daily snapshot, and crons run only on the production deployment ([Scheduled jobs](#4-scheduled-jobs)), so only production sends them. The record of what was sent is in the backups, so a restored copy doesn't send those again.
+
+An email names the institution and what to do, and for a connection about to end, the day it ends as a UTC date, which is why it says "around". It never carries a balance, an amount or an account number. A send that fails is logged with Resend's status (never the message or the address) and tried again by the next run, at most one email per container per run; one that has nobody to go to is logged as that. Without `RESEND_API_KEY` and `MAIL_FROM`, nothing is sent and the Connection health card on the Accounts tab is the only place a broken connection shows.
+
+The emails go once every container's snapshot has run, so they never use the snapshots' time. They have 30 seconds in all, ending at the latest 285 seconds into the run (inside its 300-second limit), and each is started only if finding the recipient (3 seconds at most) and the send (4 seconds at most) can both end in time. They go one at a time, at most two a second (Resend's default rate limit); a 429 is waited out once when Resend asks for 2 seconds or less. What doesn't fit, and everything after Resend itself fails (no answer, a 5xx, still rate limited), waits for the next run, unmarked: the catch-up two hours later for an account whose snapshot came back unclean, which a broken connection's does, otherwise the next day.
+
+**What the log tells you.** Problems on Nya's side are never emailed to anyone, so the log is where they show: each run lists the connections that fail for a reason on Nya's side, with Plaid's codes (`Connection notices: N connection(s) in M container(s) fail for a reason on Nya's side (INVALID_ACCESS_TOKEN (12))`). `INVALID_ACCESS_TOKEN` across every connection means `PLAID_ENV`, `PLAID_CLIENT_ID` or `PLAID_SECRET` is not the set the connections were made with, a Preview value on Production, say; `INVALID_API_KEYS`, that the client id and secret don't match. Put the settings back and the connections work as before: don't remove them, which would delete their stored transactions and leave them live, and billed, at Plaid. When emails about a cause on Plaid's side or one Nya can't place first become due on the same run in three or more containers with the same Plaid code, the run holds them back and says so, with the code and the day they go (`... those 3 email(s) are held back until October 7 (UTC), and go with that day's run if the problem is still there`); each later run says what is still held. Fix the setup in those three days and the breaks end with nothing sent; otherwise each email goes once, and is never held again. Holds are recorded within the run's mail deadline, a few at a time: one left unrecorded only means that email isn't held, and it goes with the next run. An email about a sign-in or a bank's own problem is never held.
+
+**The weekly summary.** Each person can turn on one email a week about their week, under **Manage** on the Accounts tab ([features.md](features.md#the-weekly-summary)); it is off until they do. It needs `APP_URL` as well as `RESEND_API_KEY` and `MAIL_FROM`: every summary carries a link that turns it off without signing in (`/unsubscribe`), and the `List-Unsubscribe` and `List-Unsubscribe-Post` headers that let a mail app offer one-click unsubscribe, both on that address. Without it no summary goes, and the log says why once a run. It goes to the same address as the connection notices, never to a demo account, and comes from the daily snapshot, after the notices, within what is left of the same 285 seconds, at most 120 of them ([architecture.md](architecture.md#the-weekly-summary)); one that doesn't fit goes with the catch-up, or a day or two later. Like the notices, it never carries a balance, an amount or an account number. What to watch for in the log is in [operations.md](operations.md#email-and-the-weekly-summary).
+
+**Downloads and API tokens.** Each download of someone's data, and each API token they make, sends them one email of its own, to the same address as the connection notices: when it happened (in UTC), the format and whether a passphrase protects it (for a download), and what to do if it wasn't them ([data-export.md](data-export.md#getting-a-copy), `lib/download-notice.ts`). It is sent as the download starts, or as the token is made, and never waited for: a failing or slow email service never holds up or fails either, and a send that fails is logged with Resend's status alone (`Download notice: not sent (email service status 503).`), tried once more under the same idempotency key after a rate limit, no answer, or an error of Resend's own (a 5xx), and not tried again after that. One that has nobody to go to is logged as that, and without `RESEND_API_KEY` and `MAIL_FROM` none is sent.
+
+## Brokerage and retirement connections
+
+**Connect a brokerage or retirement account** reaches 401(k) and IRA recordkeepers that the bank option can't list, since those offer Investments but not Transactions ([features.md](features.md#connecting-accounts)). Connections made with it have no Transactions, and the app decides alone whether one ever gets it: a first call for a connection's transactions starts Plaid's Transactions product, billed monthly until the connection is removed, so the transactions sync makes that call only for a connection holding a bank account or a card ([Keeping Plaid costs down](features.md#keeping-plaid-costs-down)).
+
+A release from before this one has no such check, and calls for every connection's transactions on every load. So the option ships turned off, and the release that checks runs for a while before any connection without Transactions exists:
+
+1. Deploy with `PLAID_BROKERAGE_LINK` unset. Only **Connect a bank or card** shows, and the route refuses a brokerage link token.
+2. Leave it a week or so, through the daily snapshots. Connect one bank in that time, and check in the Upstash console that its record in `<prefix>:c:<id>:plaid:items` carries `"transactions_billed":true`: the link recorded what Plaid bills.
+3. On a Preview deployment with `PLAID_ENV=sandbox`, set `PLAID_BROKERAGE_LINK=1`, connect a Sandbox brokerage with the new option, and check what nothing in Plaid's reference states: that update mode takes `additional_consented_products`, which **Allow transactions** relies on (a connection's card offers it once its first transactions call answered `ADDITIONAL_CONSENT_REQUIRED`). Signed in, run this in the browser console with the connection's id (its `item_id` in the `/api/net-worth` response):
+
+   ```js
+   await (await fetch('/api/create-update-link-token', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ item_id: '<item_id>', allow_transactions: true }) })).json()
+   ```
+
+   It must answer with a `link_token`, and the function log must not show an error just before it: that would be Plaid refusing the field, and the button falling back to a plain update that asks for nothing. Where a card does offer **Allow transactions**, press it too: Link must ask for consent to transactions, and the next load brings them in. Until this holds, keep the option off in Production.
+4. Set `PLAID_BROKERAGE_LINK=1` on Production and redeploy. Any other value counts as off.
+5. Connect a real 401(k) or IRA, and a brokerage account, with the new option. Each one's record should carry `"transactions_billed":false`: Plaid isn't billing Transactions on it. Its card on the Accounts tab shows its holdings and no error, and nothing on the Activity tab names it as failing.
+
+From then on, never roll back to a release from before this one: see [operations.md](operations.md#rolling-back-once-the-brokerage-option-is-on). Turning the option off again hides the button and refuses new brokerage link tokens; connections already made with it keep working.
+
+## Bring your own sync
+
+**Connect with SimpleFIN** ([features.md](features.md#bring-your-own-sync)) needs no environment variable and nothing set up: it is offered to everyone beside the Plaid buttons, and each person brings and pays for their own SimpleFIN account. It costs the deployment nothing, and there is no setting to turn it off.
+
+- **Outbound HTTPS.** The server reaches the host a person's Setup Token names, to claim it, and the host of the access that claim returns, to read their accounts (SimpleFIN Bridge, Redbark or another that speaks the protocol), at public addresses only ([architecture.md](architecture.md#connectors)). Vercel's functions reach the internet as they are; where outbound traffic is restricted, allow HTTPS to the servers your people use. The browser never talks to SimpleFIN, so the Content-Security-Policy needs nothing for it.
+- **The daily fetch** runs inside `/api/snapshot`, beside Plaid's fetch, within 60 seconds per container (each request at most 20). The day's total waits only for each connection's recent window; older history goes on while the snapshot is recorded and its emails are prepared, and the container's run waits for it before it ends. Beside Plaid's fetch it adds no time unless SimpleFIN is the slower, and 60 seconds is under Plaid's own worst case, so the email notices keep their time. A container with only SimpleFIN connections, which used to take a second or two, can take up to a minute when SimpleFIN is slow, so on a busy night more containers may be left to the catch-up run. Crons run only on production, so elsewhere a connection is fetched only when someone chooses its accounts or presses **Refresh**.
+- **Requests** are bounded per person: at most 8 a day to SimpleFIN for all their connections together (SimpleFIN allows 24 per connection), and 10 tokens claimed an hour.
+- **The access each connection gives** (its Access URL, which holds the credentials) is encrypted like a Plaid access token and stored through the storage seam (`connector-secrets`), never in a person's download, a log or an error message, and never in a backup: it works on its own, so a backup must neither carry it nor bring one back after the person disconnected. A restore therefore ends every SimpleFIN access, and each person connects again with a new Setup Token; their accounts, history and transactions carry on. The counts of requests and claims are left out of backups too. Deleting an account deletes the access; ending it on SimpleFIN's side is the person's to do there.
+
+## Security headers and the Content-Security-Policy
+
+Every response carries the same security headers, set in `next.config.js` so they also reach static files and the routes `proxy.ts` never sees: `Strict-Transport-Security` (two years, subdomains included, not preloaded), `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`, a `Permissions-Policy` that turns off device features the app never uses, `X-Frame-Options: DENY`, and `Cross-Origin-Opener-Policy: same-origin-allow-popups` (not `same-origin`, which would cut a bank's sign-in pop-up off from Plaid Link). HSTS covers subdomains of the host Nya is served from: on `*.vercel.app` or a subdomain such as `nya.example.com` that is nothing else, but served at a bare domain it would require HTTPS on every subdomain of it.
+
+Every page also gets a Content-Security-Policy, built per request in `proxy.ts` (`lib/security-headers.ts`, which says where each host in it comes from). Scripts run only with that request's nonce, or when loaded by one that has it (`'strict-dynamic'`); that is how Plaid Link's script, Clerk's scripts and Cloudflare's bot check arrive. Every page already renders per request (the root layout awaits `connection()`), so the nonce costs no static rendering. A browser sent to an `/api/` path that doesn't exist is shown the HTML 404 page, so any request that asks for HTML gets the policy; API calls answered with JSON get none.
+
+It is the only Content-Security-Policy the app sends. A browser enforces every policy it is sent, and how Vercel combines a header from `next.config.js` with one of the same name from the proxy is not documented, so `next.config.js` sends none: framing is forbidden on every response by `X-Frame-Options`, and the enforced page policy says `frame-ancestors 'none'` as well. The report-only policy leaves `frame-ancestors` out, since browsers ignore it there and Chrome logs an error for it on every page.
+
+`CSP_MODE` says how it is sent:
+
+| `CSP_MODE` | Header | Effect |
+| --- | --- | --- |
+| unset or `report-only` | `Content-Security-Policy-Report-Only` | The browser logs in its console what the policy would block, and blocks nothing. |
+| `enforce` | `Content-Security-Policy` | The browser blocks it. |
+| `off` | none | No page policy. Framing stays forbidden by `X-Frame-Options`. |
+
+Any other value counts as `report-only` and is logged once per instance, so a typo can never enforce by accident. The Security page (`/security`) says which mode the deployment is in.
+
+### Checking it with a live session, then enforcing it
+
+Plaid Link and Clerk load scripts, frames and connections that only a live session shows, so the policy ships in report-only mode. Check it once on a deployment that uses both, before enforcing it:
+
+1. Deploy with `CSP_MODE` unset, Clerk keys set, and the Plaid environment you will run. Preview with `sandbox` first, then Production.
+2. Open the deployment in Chrome in a window without extensions (a guest profile, or Incognito with extensions off), open DevTools on the **Console** tab, and tick **Preserve log**, so messages survive the redirects of signing in.
+3. In the **Network** tab, click the request for the page itself and check its response headers include `content-security-policy-report-only` with a `'nonce-...'` and `'strict-dynamic'`.
+4. Go through every flow:
+   - sign out, open `/sign-in` and sign in with each method turned on in Clerk, including any bot check it shows, and on Preview with a demo button too;
+   - open the account menu, **Manage account**, each page of the account window (Data & privacy included), then sign out from it;
+   - **Connect a bank or card** and finish Plaid Link with an ordinary institution (in sandbox: any, with `user_good` / `pass_good`) and with one that signs in on the bank's own site in a pop-up (in sandbox: Platypus OAuth Bank), then, with `PLAID_BROKERAGE_LINK=1`, **Connect a brokerage or retirement account** once too;
+   - **Reconnect** and **Add or remove accounts** on a connected institution;
+   - the Activity tab (merchant logos and category icons) and the Budgets tab;
+   - the **Application** tab: the service worker is registered.
+5. Read the console. Each violation is a line starting `[Report Only] Refused to load ...` (or `... to connect to`, `... to frame`) naming the URL and the directive. A clean pass has none. For each one from Plaid, Clerk or the app itself, add its host to the matching directive in `lib/security-headers.ts`, saying where it comes from, deploy, and go through the flows again.
+
+   On Preview, the Vercel Toolbar (`vercel.live`) adds its own script and frame to the page, and its lines in the console are not the app's. Turn the toolbar off for the check (in the project's settings, or for your session from the toolbar's own menu), or skip the lines that name `vercel.live`. Never add it to the policy: Production shares it. Once Preview enforces the policy, the toolbar no longer loads there.
+6. Do the same pass on an iPhone, the app's main platform: in Safari, and in the app installed to the Home Screen. Turn on Web Inspector on the phone (Settings, Safari, Advanced), connect it to a Mac, and open the page from Safari's Develop menu there; its console shows report-only violations too. Sign in, connect the pop-up bank, and open each tab.
+7. When a pass is clean on Production too, set `CSP_MODE=enforce` on Production and Preview and redeploy. In the page's response headers, check that `content-security-policy` is there and that it contains `'nonce-` and `'strict-dynamic'`: that is the policy that protects the scripts, and the Security page should now say this copy enforces it. There should be exactly one `content-security-policy` header. If something in front of the app adds a second, the browser enforces both, so check the second only narrows what the first allows. Then go through the flows once more, on both platforms: anything missed now fails (Link doesn't open, sign-in stalls) with a `Refused to ...` error in the console.
+8. If anything breaks after that, set `CSP_MODE=report-only` (or `off`) and redeploy. Nothing else changes.
+
+There is no reporting endpoint: violations go only to the console of the browser that met them.
 
 ## Preview deployments
 

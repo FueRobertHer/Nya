@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, registerTestContainer, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -64,7 +64,7 @@ mock.module('@/lib/plaid', () => ({
 }));
 
 const { encrypt } = await import('@/lib/crypto');
-ITEM.encrypted_access_token = await encrypt('access-token');
+ITEM.encrypted_access_token = await encrypt(TEST_CTX, 'access-token');
 const { syncInvestments, readInvStore, nextWindow, clearInvestmentStore } = await import('@/lib/invstore');
 const { encodeJsonBlob } = await import('@/lib/blob');
 
@@ -289,7 +289,7 @@ describe('storage failures never overwrite', () => {
   });
 
   test('a blob from a newer schema is never written over', async () => {
-    const newer = await encodeJsonBlob({ schema_version: 99, txns: {}, accounts: {}, coverage: {}, securities: {} });
+    const newer = await encodeJsonBlob(TEST_CTX, { schema_version: 99, txns: {}, accounts: {}, coverage: {}, securities: {} });
     await fake.set(key, newer);
     plaid.rows = [row('a', '2026-09-01')];
     await syncInvestments(ctx, ITEM, { now: NOW });
@@ -529,6 +529,99 @@ describe('/api/investment-activity', () => {
     expect(body.txns.map((t: any) => t.investment_transaction_id)).toEqual(['b', 'a']); // newest first
   });
 
+  // The Plan tab's savings (lib/fire/inputs.ts): new money into the account
+  // over the trailing year, not rollovers or dividends.
+  test('reports the trailing year of contributions, from the later of a year ago and what it knows', async () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+    plaid.rows = [
+      row('old', daysAgo(500)), // before the year: not counted
+      row('a', daysAgo(100)),
+      row('b', daysAgo(50), { name: 'Rollover from 401k' }), // moved, not saved
+      row('c', daysAgo(30), { subtype: 'dividend', amount: -20 }), // growth, not saved
+      row('d', daysAgo(10), { amount: -250 }),
+    ];
+    const body = await get();
+    expect(body.contributions_12m).toBe(750);
+    expect(body.contributions_12m_from).toBe(daysAgo(364));
+    expect(body.contributions_12m_partial).toBe(false);
+    expect(body.contributions_12m_activity_from).toBeNull(); // activity from before the year
+    // Each one, oldest first, so the tab can leave out one a bank transfer paid for.
+    expect(body.contributions_12m_rows).toEqual([
+      { date: daysAgo(100), amount: 500 },
+      { date: daysAgo(10), amount: 250 },
+    ]);
+  });
+
+  // Whether the year was cut short is decided against the verified coverage,
+  // not the account's oldest row: an account with little activity is still
+  // covered for the whole year.
+  test('says when its record cuts the year short, and only then', async () => {
+    const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+    plaid.rows = [row('a', daysAgo(100))];
+    const quiet = await get();
+    expect(quiet.contributions_12m).toBe(500);
+    expect(quiet.contributions_12m_from).toBe(daysAgo(364));
+    expect(quiet.contributions_12m_partial).toBe(false);
+    // But the institution's own history may be shorter than the record, so
+    // the first day it has activity, inside the year, is said too.
+    expect(quiet.contributions_12m_activity_from).toBe(daysAgo(100));
+
+    // A record that starts 100 days ago (the sync is fresh, so it stays so).
+    const state = await readInvStore(ctx, 'item1');
+    state.coverage.ira = { from: daysAgo(100), through: state.coverage.ira.through };
+    await fake.set(key, await encodeJsonBlob(TEST_CTX, state));
+    const { clearCaches } = await import('@/lib/cache');
+    await clearCaches(ctx);
+    const short = await get();
+    expect(short.from_cache).toBe(false);
+    expect(short.contributions_12m_partial).toBe(true);
+    expect(short.contributions_12m_from).toBe(daysAgo(100));
+  });
+
+  // 8pm on Oct 8 in California is already Oct 9 in UTC: the route's "a year
+  // ago" is a day later than the viewer's. The route decides, so a plan
+  // covered all year is never called partial in the evening.
+  test('an evening in the Americas never makes a covered year read as partial', async () => {
+    setSystemTime(new Date('2026-10-09T03:00:00Z'));
+    try {
+      plaid.rows = [row('a', '2026-09-01')];
+      const body = await get();
+      expect(body.contributions_12m_from).toBe('2025-10-10');
+      expect(body.contributions_12m_partial).toBe(false);
+      // As the Plan tab reads it, on its own day (Oct 8), with no date compared.
+      const { workplaceSavings } = await import('@/lib/fire/inputs');
+      const w = workplaceSavings(
+        [
+          {
+            account_id: 'ira',
+            name: '401(k)',
+            institution: 'Fidelity',
+            amount: body.contributions_12m,
+            from: body.contributions_12m_from,
+            partial: body.contributions_12m_partial,
+            rows: body.contributions_12m_rows,
+            activityFrom: body.contributions_12m_activity_from,
+            note: body.note,
+          },
+        ],
+        { transfersOut: [], funding: [] }
+      );
+      expect(w.partial).toEqual([]);
+      expect(w.total).toBe(500);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('an answer cached before the figures existed is not served', async () => {
+    const { writeAccountCache } = await import('@/lib/cache');
+    await writeAccountCache(ctx, 'item1:ira', { txns: [], ytd_contributions: 0, contributions_12m: 0, contributions_12m_from: null, note: null });
+    plaid.rows = [row('a', new Date(Date.now() - 5 * DAY).toISOString().slice(0, 10))];
+    const body = await get();
+    expect(body.from_cache).toBe(false);
+    expect(body.contributions_12m).toBe(500);
+  });
+
   test('during an outage it serves saved rows with a note, and caches nothing', async () => {
     plaid.rows = [row('a', '2026-09-01')];
     // Synced an hour ago, so the route's sync is due and meets the outage.
@@ -640,7 +733,7 @@ describe('third review: route and shape details', () => {
   });
 
   test('a stored `cancelled` that is not an object makes the store unreadable, not a crash', async () => {
-    await fake.set(key, await encodeJsonBlob({ schema_version: 1, txns: {}, accounts: {}, coverage: {}, securities: {}, cancelled: 'x' }));
+    await fake.set(key, await encodeJsonBlob(TEST_CTX, { schema_version: 1, txns: {}, accounts: {}, coverage: {}, securities: {}, cancelled: 'x' }));
     plaid.rows = [row('a', '2026-09-01')];
     const sync = await syncInvestments(ctx, ITEM, { now: NOW });
     expect(sync.storeNote).toBe('Saved investment history could not be read');

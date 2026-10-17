@@ -18,6 +18,7 @@
 // (resolveCtx), never by picking one from the registry.
 
 import { redis, kEnv } from './storage';
+import { birthKeyLua } from './container-key-lua';
 
 declare const containerBrand: unique symbol;
 /** A container id: a lowercase UUID v4, checked. The brand keeps an arbitrary
@@ -67,7 +68,12 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
 }
 
 /** Stores that belong to the whole environment (see kEnv in lib/storage.ts),
- *  so never appear inside a container. */
+ *  so never appear inside a container. "ratelimit:" is the rate limits that
+ *  count by address, before anyone is known: the login's (lib/rate-limit.ts)
+ *  and the demo sign-in's (app/api/demo/sign-in). A limit on something a person
+ *  does once signed in (downloading their data) is a counter store on the
+ *  storage seam, inside their container, never under this prefix
+ *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds). */
 export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:'] as const;
 
 export function isEnvWide(key: string): boolean {
@@ -109,21 +115,40 @@ export async function getContainer(id: ContainerId): Promise<ContainerRecord | n
   return value === null || value === undefined ? null : parseRecord(id, value);
 }
 
-/** Writes the first entry only if the registry is empty, in one step. The
- *  first line names the script for the test double. */
+/** Writes the first entry only if the registry is empty, in one step, with the
+ *  container's data key when one is given (KEYS from 2, ARGV from 3: see
+ *  lib/container-key-lua.ts). The first line names the script for the test
+ *  double. */
 export const CREATE_FIRST = `-- nya:container-create-first
 if redis.call('HLEN', KEYS[1]) ~= 0 then return 0 end
 redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+${birthKeyLua(2, 3, 1)}
 return 1`;
+
+/** A data key for a container about to be registered, as the registering
+ *  script takes it: lib/crypto.ts's containerKeyScriptKeys() and
+ *  containerKeyScriptArgs(). Made by the caller, since this module can't
+ *  import lib/crypto.ts (which imports it). */
+export type BirthKey = { keys: string[]; args: string[] };
+
+/** No key: the container is registered without one. */
+const NO_BIRTH_KEY: BirthKey = { keys: ['', '', '', '', ''], args: ['', '', '', ''] };
 
 /**
  * Create the first container, as the primary one. Refuses if any container
- * exists: two racing creators would each mint one and split the data.
+ * exists: two racing creators would each mint one and split the data. `key`
+ * makes its data key, which is written in the same step; without one it is
+ * registered without a key, and the migration pass makes it one later.
  */
-export async function createFirstContainer(now: number = Date.now()): Promise<ContainerId> {
+export async function createFirstContainer(
+  now: number = Date.now(),
+  key?: (id: ContainerId) => Promise<BirthKey>
+): Promise<ContainerId> {
   const id = asContainerId(crypto.randomUUID());
   const record: ContainerRecord = { status: 'active', primary: true, created_at: new Date(now).toISOString() };
-  const created = await redis().eval(CREATE_FIRST, [registryKey()], [id, JSON.stringify(record)]);
+  const birth = key ? await key(id) : NO_BIRTH_KEY;
+  if (birth.keys.length !== 5 || birth.args.length !== 4) throw new Error('A container key comes as five keys and four arguments.');
+  const created = await redis().eval(CREATE_FIRST, [registryKey(), ...birth.keys], [id, JSON.stringify(record), ...birth.args]);
   if (created !== 1) {
     const existing = (await listContainers()).map((c) => c.id).join(', ');
     throw new ContainerError(`A container already exists (${existing}); only one is supported for now.`);

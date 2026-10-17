@@ -1,0 +1,2431 @@
+// lib/user-export.ts
+//
+// Download my data: everything Nya stores about one person, decrypted at the
+// boundary and handed over in open formats (#43). The route is
+// app/api/my-data; the format is documented, field by field, in
+// docs/data-export.md.
+//
+// NOT THE OPERATOR EXPORT. lib/export.ts copies a whole environment as
+// ciphertext, for restoring it; this decrypts one person's data, for them to
+// keep or take elsewhere. #55 keeps the two apart: an export that did both
+// would be too decrypted to be safe or too complete to be portable.
+//
+// THE RULES:
+//
+// 1. NOTHING MISSING WITHOUT A WORD. Every store is read before the first byte
+//    is sent, never a file with a gap in it that looks complete: a partial
+//    download presented as whole is a lie about what Nya holds. Two kinds of
+//    failure, kept apart as the storage seam keeps them (lib/repo.ts, READS):
+//      - one that says nothing about the data (storage out of reach, a key
+//        this deployment can't load, a failed decrypt under k0) fails the
+//        download with the store's name (ExportReadError), as ever;
+//      - an entry that is damaged, or saved in a form this version doesn't
+//        know, never does. Everything else is in the file, and `problems`
+//        names what is missing, by part and id, a note says it in words, and
+//        the route's headers say the file is incomplete. One damaged record
+//        would otherwise stop the download for good, with nothing in the app
+//        to clear it (stores on the seam, balance history, manual accounts,
+//        budgets and goals), or nothing the person could do about it at all
+//        (the other person's record of showings to me, in sharing, which
+//        marks each where it belongs).
+//    Nothing is removed here: what can't be read stays stored exactly as it
+//    was, and only reported. Budgets and goals, one value each that no other
+//    part is read against, are null and named, as a value store on the seam
+//    is. The older stores the rest of the file is read against are still
+//    read whole, since an entry of theirs left out would read as something
+//    else elsewhere in the file: institutions and accounts (an account's
+//    balances and transactions with no account to belong to), transactions
+//    and investment transactions (the categories, names and exclusions set
+//    on a row pointing at nothing), categories and merchant names (a
+//    transaction shown without the one set on it), links (one account read
+//    as two) and hidden accounts (a hidden account shown as not hidden). One
+//    of theirs that can't be read still stops the download, naming the
+//    store. Two older readers still pass over what they can't parse without
+//    a word, as the app does, and docs/data-export.md says so: sharing's (a
+//    connection or a share whose record doesn't parse, an account at a level
+//    this version doesn't know) and the remembered accounts' (a record in
+//    the old shape, an account without an id or a type).
+// 2. ONLY THIS PERSON'S. Everything is read through their container's Ctx,
+//    and sharing as their own side of each connection (lib/sharing.ts
+//    mySharing): never another person's data. The one thing read from
+//    someone else's container is their record of showings to this person:
+//    about them, and the same record both see.
+// 3. NO CREDENTIALS, NO MACHINERY. Plaid access tokens are left out: they are
+//    credentials, not data. So are internal ids, caches, locks, cursors,
+//    counters and the records of scheduled jobs: they are about running the
+//    app, not about the person. The file says what it leaves out
+//    (notIncluded).
+// 4. AS STORED, AND MARKED. Every history point says whether it was recorded
+//    or estimated. The person's own edits (a category, a merchant's name) sit
+//    beside what the bank sent, never over it.
+// 5. NEVER WRITTEN DOWN. The file is built in memory and streamed to the
+//    browser. Nothing here writes it to storage, a log or a blob.
+//
+// The version (EXPORT_VERSION) goes up when a field is removed or changes
+// meaning; a field added leaves it alone.
+
+import type { Ctx } from './containers';
+import { getItems } from './storage';
+import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
+import {
+  readDirectoryStrict,
+  readDismissedStrict,
+  liveAccountIds,
+  expandHidden,
+  getLinks,
+  effectiveLinks,
+  resolveId,
+  PROVIDER,
+  type DirectoryEntry,
+  type Link,
+} from './links';
+import { getManualAccountsReport, isManualId, ManualAccountsUnavailableError, normalizeInstitutionName, type ManualAccount } from './manual';
+import { getHiddenAccounts, type HiddenAccount, type HiddenMap } from './hidden';
+import {
+  readStoredItem,
+  storeIsBehind,
+  supersededPendingIds,
+  vendorKey,
+  contentKey,
+  type StoredAccount,
+  type StoredTxn,
+  type Txn,
+} from './transactions';
+import { readInvStore, type InvStoreState } from './invstore';
+import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
+import { readRenamesStrict } from './renames';
+import { readHistoryForExport, type StoredPoint } from './history';
+import { getGoalsReport } from './goals';
+import { exportedGoals } from './goal-export';
+import { mySharing } from './sharing';
+import { accessLogStore, type Showing } from './access-log';
+import { apiTokenStore } from './api-token-store';
+import { declaredStores, declaredStore } from './stores';
+import type { MapStore, ValueStore } from './repo';
+import { csvRow, UTF8_BOM, type CsvValue } from './csv';
+import { historyImportStore, importedTwinsStore, importedTxnStore, isHistoryImportEntry, isImportedBook, isImportedTwins, type ImportedTxn } from './history-import/store';
+import { settle, type BankRow } from './history-import/match';
+import { standsFor, twinsOf } from './history-import/read';
+import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Layered } from './export-layers';
+import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
+import { csvLinesWithSplits, splitInputsOf, type CsvLine } from './export-splits';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
+import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
+import { connectorOf } from './connectors/registry';
+import type { ConnectorKind } from './connectors/types';
+import { taxonomyReport, taxonomyStore } from './category-store';
+import { budgetSetStore, budgetsReport } from './budget-store';
+import { placeBudgets } from './budget-set';
+import { budgetMonthsStore } from './budget-months-store';
+import { readBudgetMonth } from './budget-month';
+import type { Carries, Carry, CarryFrom } from './rollover';
+import { StoredDataUnreadableError } from './repo';
+import {
+  groupOf,
+  growTaxonomy,
+  indexTaxonomy,
+  isProvisionalId,
+  isTaxonomy,
+  observedKeys,
+  resolveCategory,
+  seedTaxonomy,
+  type CategoryFacts,
+  type CategoryIndex,
+  type Taxonomy,
+} from './categories';
+import { manualTxnStore, isManualTxnBook, withPairWords, type ManualTxn } from './manual-txns';
+import { lifecycleStore, effectiveLifecycle, lifecycleOf, endOf, isLifecycleEntry, type LifecycleEntry, type LifecycleView } from './lifecycle';
+import { timelineNotesStore, isTimelineNote, type TimelineNote } from './timeline-notes';
+
+export const EXPORT_FORMAT = 'nya-export';
+/** 2 since a part that can't be read is named under `problems` instead of
+ *  stopping the download (rule 1): a part can be short, and budgets, goals
+ *  and a value store's field null, for a reason only `problems` tells apart,
+ *  where version 1 was whole or not made at all (docs/data-export.md). */
+export const EXPORT_VERSION = 2;
+export const EXPORT_DOCUMENTATION = 'https://github.com/FueRobertHer/Nya/blob/main/docs/data-export.md';
+
+export const EXPORT_FORMATS = ['json', 'transactions-csv', 'balances-csv'] as const;
+export type ExportFormat = (typeof EXPORT_FORMATS)[number];
+
+/** Who the download is for. `userId` is the signed-in Clerk account, or null
+ *  with the shared password, which has no people (so no sharing). */
+export type ExportSource = { ctx: Ctx; userId: string | null };
+
+/**
+ * A store that could not be read for a reason that says nothing about its
+ * data (storage, keys), or an older store read whole with an entry it can't
+ * read (rule 1): the download stops before anything is sent. `what` names it
+ * for the person, and the message is theirs to read: it holds nothing stored
+ * but, at most, an institution's name, which is theirs. `store` is the kind
+ * of store alone ("transactions"), for the server's log, which must not say
+ * which bank someone uses.
+ */
+export class ExportReadError extends Error {
+  constructor(
+    readonly what: string,
+    cause: unknown,
+    readonly store: string = what
+  ) {
+    super(
+      `Your ${what} could not be read, so nothing was downloaded: a file without them would look complete and not be. Nothing was changed. Try again later; if it keeps happening, whoever runs this Nya needs to look at it.`,
+      { cause }
+    );
+    this.name = 'ExportReadError';
+  }
+}
+
+/**
+ * Every key a container holds (an exact name, or a prefix ending in ":"), and
+ * what the download does with it: where it goes, or why it is left out.
+ * test/user-export.test.ts checks every key the code builds inside a
+ * container is listed here, so a new store can't be missing from the download
+ * without someone having decided it should be. docs/data-export.md carries
+ * the same list for people. A store declared through the storage seam is not
+ * listed: its declaration says whether it is exported (declaredSections).
+ */
+export const STORED_KEYS: readonly (readonly [key: string, where: string])[] = [
+  ['plaid:items', 'institutions (the access token in each record is left out)'],
+  ['accounts:meta', 'accounts'],
+  ['accounts:directory', 'accounts'],
+  ['manual:accounts', 'manual_accounts'],
+  ['hidden:accounts', 'hidden_accounts, and accounts[].hidden'],
+  ['history:net-worth', 'net_worth_history (recorded)'],
+  ['history:net-worth:est', 'net_worth_history (estimated)'],
+  ['history:accounts', 'account_history (recorded)'],
+  ['history:accounts:partial', 'account_history (recorded on a day no total was)'],
+  ['history:accounts:est', 'account_history (estimated)'],
+  ['history:accounts:est:ext', 'account_history (estimated)'],
+  ['history:accounts:est:flatd', 'left out: balances an estimate held flat, part of the estimated totals, not an account history'],
+  ['history:accounts:est:flat', 'left out: the same, from before they were kept per day'],
+  ['txns:', 'transactions'],
+  ['invtxns:', 'investment_transactions, investment_history_coverage'],
+  ['txn-category-overrides', 'category_overrides, and transactions[].your_category'],
+  ['txn-vendor-renames', 'merchant_renames, and transactions[].your_merchant_name'],
+  ['txn-category-carry', 'account_links.carried_categories, and transactions[].your_category_from_earlier_account'],
+  ['account-links', 'account_links.links'],
+  ['account-links:dismissed', 'account_links.declined_suggestions'],
+  ['budgets', 'budgets'],
+  ['goals', 'goals'],
+  ['txns-blocked:', 'notes: a transaction store too large to save'],
+  ['txns-unsaved:', 'notes: a transaction store whose last save failed'],
+  ['cache:', 'left out: copies of other data, kept for minutes or hours'],
+  ['accounts:vanished', 'left out: when an account went missing from a bank’s answer, held while the snapshot waits to be sure'],
+  ['plaid:new-accounts', 'left out: a prompt to add accounts Plaid found'],
+  ['history:backfill-done', 'left out: which version of the estimate was last built'],
+  ['history:backfill-pending', 'left out: a retry count for the estimate'],
+  ['history:forgetting:', 'left out: the progress of forgetting an account'],
+  ['invtxns-lock:', 'left out: a lock'],
+  ['account-links:lock', 'left out: a lock'],
+  ['sessions:', 'left out: the sign-out-everywhere counter'],
+  ['snapshot:', 'left out: the scheduled snapshot’s log, lock and timings, and its checks on connections'],
+  ['move:', 'left out: the record of a one-time data move'],
+];
+
+/** Whether STORED_KEYS says what happens to a key. */
+export function storedKeyListed(key: string): boolean {
+  return STORED_KEYS.some(([k]) => key === k || (k.endsWith(':') && key.startsWith(k)));
+}
+
+// ---- What a part of the file is missing ----
+
+/** Why something stored is not in the file (docs/data-export.md, "problems"):
+ *  `unreadable`, its stored bytes are damaged; `unrecognised`, intact as far
+ *  as this version can tell, but saved in a form it doesn't know (a later
+ *  version's, say), and kept as it is. Sharing has two more of its own
+ *  (lib/share-rules.ts RecordProblem): `unavailable` and
+ *  `record_id_unreadable`. */
+export type ProblemKind = 'unreadable' | 'unrecognised' | 'unavailable' | 'record_id_unreadable';
+
+/** One part of the file, missing what it says, for one reason. */
+export type ExportProblem = {
+  /** The part: its key in the JSON file. */
+  section: string;
+  problem: ProblemKind;
+  /** What is missing, by the id it is stored under, in id order: an entry's
+   *  id for a store on the seam, a UTC day for the balance histories, an
+   *  account's id for manual accounts. Absent for a part that is one value
+   *  (then null in the file), for sharing, which names no ids and marks each
+   *  record it can't give where it belongs, and for api_tokens, whose ids are
+   *  part of each token, so never in the file (`count` instead). */
+  ids?: string[];
+  /** How many are missing, for a part that can't name them (api_tokens). */
+  count?: number;
+};
+
+/** A list of ids that can't be used, by why, as problems of one part. */
+function idProblems(section: string, named: { unreadable: string[]; unrecognised: string[] }): ExportProblem[] {
+  return [
+    ...(named.unreadable.length > 0 ? [{ section, problem: 'unreadable' as const, ids: named.unreadable }] : []),
+    ...(named.unrecognised.length > 0 ? [{ section, problem: 'unrecognised' as const, ids: named.unrecognised }] : []),
+  ];
+}
+
+/** The same, counted, for a part whose ids must not be in the file. */
+function countedProblems(section: string, named: { unreadable: string[]; unrecognised: string[] }): ExportProblem[] {
+  return idProblems(section, named).map(({ ids, ...p }) => ({ ...p, count: ids?.length ?? 0 }));
+}
+
+// ---- Stores with nothing to say about the others ----
+
+/** A part of the file as read: what goes under its key, and what it is
+ *  missing (ExportProblem), for `problems`. */
+export type SectionRead = { value: unknown; problems: ExportProblem[] };
+
+/**
+ * A store that stands alone: one small function from the person to what goes
+ * in the file under its key, already in the shape it is exported in. A new
+ * store of that kind adds an entry here and a section to docs/data-export.md.
+ * Its reader throws on anything that says nothing about the data, like every
+ * reader here, and either throws on an entry it can't read (an older store,
+ * read whole) or names it among its problems (rule 1).
+ *
+ * These are the stores that predate the storage seam (lib/repo.ts). A store
+ * built on the seam needs no entry: declared exportable, it is a section of
+ * its own (declaredSections, below), unless an entry here exports it already
+ * (covers). Stores that the core sections below cross-reference (accounts,
+ * history, transactions) stay in collectUserData.
+ */
+export type ExportSection = {
+  /** Its key in the JSON file. */
+  key: string;
+  /** What it is, for "Your ___ could not be read". */
+  what: string;
+  read: (src: ExportSource) => Promise<SectionRead>;
+  /** The account ids what it read names, so that `accounts` lists each one
+   *  (a goal can still point at an account since forgotten). */
+  mentions?: (value: unknown) => Iterable<unknown>;
+  /** Stores on the seam whose contents this section exports itself, so they
+   *  get no section of their own: "sharing" puts each record of showings
+   *  beside the connection it belongs to, where a person can read it. */
+  covers?: readonly string[];
+};
+
+/** An entry of SECTIONS, typed by what it reads: `problems` says what the
+ *  value it read is missing, for one that marks that inside itself. */
+function section<T>(s: {
+  key: string;
+  what: string;
+  read: (src: ExportSource) => Promise<T>;
+  problems?: (value: T) => ExportProblem[];
+  mentions?: (value: T) => Iterable<unknown>;
+  covers?: readonly string[];
+}): ExportSection {
+  return {
+    key: s.key,
+    what: s.what,
+    read: async (src) => {
+      const value = await s.read(src);
+      return { value, problems: s.problems?.(value) ?? [] };
+    },
+    ...(s.mentions ? { mentions: s.mentions as (value: unknown) => Iterable<unknown> } : {}),
+    ...(s.covers ? { covers: s.covers } : {}),
+  };
+}
+
+/** A budget's rollover into the month the file is made in (UTC), as the
+ *  read-only API answers it: worked out from the transactions, never stored. */
+type ExportedRollover = { from: string; why: CarryFrom; start: string; carry: number; uncertain_months: string[] } | null;
+
+/** The budgets by name, as the app has them now (lib/budget-store.ts): each
+ *  category's with its id and group, each group's with its id. A budget on a
+ *  category or group since deleted is kept, by its id alone, and so is every
+ *  one when the categories can't be read (the `categories` part names that).
+ *  Ids are null for a category the app hasn't stored yet. Budgets that can't
+ *  be used are `problem`, for both parts, as getBudgetsReport's rules have
+ *  it: damaged or unrecognised data is named, never a reason to stop, and a
+ *  deployment problem throws. */
+type ExportedBudgets =
+  | { problem: 'unreadable' | 'unrecognised' }
+  | {
+      problem: null;
+      categories: { category: string | null; monthly_amount: number; category_id: string | null; group: string | null; rollover: ExportedRollover }[];
+      groups: { group: string | null; monthly_amount: number; group_id: string | null; rollover: ExportedRollover }[];
+    };
+
+/**
+ * What rolls into this month (UTC) for each budget that rolls over, worked
+ * out as the Budgets tab and the API work it out (lib/budget-month.ts), from
+ * the stored transactions; read only when some budget rolls over at all.
+ * Null when the record of budgets by month (or what it is worked out from)
+ * can't be used: the `budget-months` part of the file names that, and every
+ * budget's rollover is then null. What says nothing about the data throws.
+ */
+async function exportedCarries(ctx: Ctx): Promise<Carries | null> {
+  const record = await budgetMonthsStore.getReport(ctx);
+  if (record.unreadable || record.unrecognised) return null;
+  const targets = record.value ? [...Object.values(record.value.categories), ...Object.values(record.value.groups)] : [];
+  if (!targets.some((t) => t.rollover && t.rollover.length > 0)) return { categories: {}, groups: {} };
+  const month = new Date().toISOString().slice(0, 7);
+  try {
+    return (await readBudgetMonth(ctx, { month, today: month, pool: false })).view.carries;
+  } catch (err) {
+    if (err instanceof StoredDataUnreadableError) return null;
+    throw err;
+  }
+}
+
+const exportedRollover = (c: Carry | undefined): ExportedRollover =>
+  c ? { from: c.from, why: c.why, start: c.start, carry: c.carry, uncertain_months: c.uncertain } : null;
+
+async function exportBudgets(ctx: Ctx): Promise<ExportedBudgets> {
+  const read = await budgetsReport(ctx, (await taxonomyReport(ctx)).taxonomy);
+  if (read.problem !== null) return { problem: read.problem };
+  const { budgets, taxonomy } = read;
+  const ix = indexTaxonomy(taxonomy);
+  const placed = placeBudgets(budgets, ix);
+  const carries = await exportedCarries(ctx);
+  const shown = (id: string) => (isProvisionalId(id) ? null : id);
+  const gone = (kind: 'category' | 'group') => placed.orphans.filter((o) => o.kind === kind);
+  return {
+    problem: null,
+    categories: [
+      ...[...placed.categories].map(([id, monthly_amount]) => {
+        const c = ix.byId.get(id)!;
+        return { category: c.name as string | null, monthly_amount, category_id: shown(id), group: groupOf(ix, c).name as string | null, rollover: exportedRollover(carries?.categories[id]) };
+      }),
+      ...gone('category').map((o) => ({ category: null, monthly_amount: o.amount, category_id: o.id, group: null, rollover: null })),
+    ].sort((a, b) => byText(a.category, b.category) || byText(a.category_id, b.category_id)),
+    groups: [
+      ...[...placed.groups].map(([id, monthly_amount]) => ({ group: ix.groupById.get(id)!.name as string | null, monthly_amount, group_id: shown(id), rollover: exportedRollover(carries?.groups[id]) })),
+      ...gone('group').map((o) => ({ group: null, monthly_amount: o.amount, group_id: o.id, rollover: null })),
+    ].sort((a, b) => byText(a.group, b.group) || byText(a.group_id, b.group_id)),
+  };
+}
+
+/** The budgets, read once for each download (exportBudgets): both parts of
+ *  the file come from one read, so they can't disagree. */
+const budgetsRead = new WeakMap<ExportSource, ReturnType<typeof exportBudgets>>();
+function budgetsOnce(src: ExportSource): ReturnType<typeof exportBudgets> {
+  let read = budgetsRead.get(src);
+  if (!read) budgetsRead.set(src, (read = exportBudgets(src.ctx)));
+  return read;
+}
+/** One value's problem, if it has one, for a part that is null without it. */
+const valueProblems = (section: string, problem: ProblemKind | null): ExportProblem[] => (problem ? [{ section, problem }] : []);
+
+export const SECTIONS: readonly ExportSection[] = [
+  // Budgets and goals are one value each, which no other part of the file is
+  // read against: saved but unusable, each is null and named among the
+  // problems (rule 1), as a value store on the seam is. A goal names an
+  // account, which `accounts` lists; with the goals null, nothing names it.
+  {
+    key: 'budgets',
+    what: 'budgets',
+    // Monthly, per category, by its name now (exportBudgets).
+    read: async (src) => {
+      const read = await budgetsOnce(src);
+      return read.problem !== null ? { value: null, problems: valueProblems('budgets', read.problem) } : { value: read.categories, problems: [] };
+    },
+    covers: [budgetSetStore.name],
+  },
+  {
+    key: 'group_budgets',
+    what: 'budgets',
+    // Monthly, per category group: a cap on everything in it. From the same
+    // read as the budgets on categories, so null and named with them.
+    read: async (src) => {
+      const read = await budgetsOnce(src);
+      return read.problem !== null ? { value: null, problems: valueProblems('group_budgets', read.problem) } : { value: read.groups, problems: [] };
+    },
+  },
+  {
+    key: 'goals',
+    what: 'goals',
+    // Each goal's four stored fields, then its plan as the app applies it
+    // (lib/goal-export.ts). The plans are also a section of their own,
+    // `goal-plans`, as stored; one that can't be read is named there, and
+    // leaves its goal's plan fields null here, never a plan unset.
+    read: async ({ ctx }) => {
+      const { goals, problem } = await getGoalsReport(ctx);
+      return { value: goals && (await exportedGoals(ctx, goals)), problems: valueProblems('goals', problem) };
+    },
+    mentions: (goals) => ((goals as { account_id: string | null }[] | null) ?? []).map((g) => g.account_id),
+  },
+  {
+    key: 'api_tokens',
+    what: 'API tokens',
+    // Each token's name and dates: what the person called it, and when it was
+    // made and last read their data. Never its secret, which Nya doesn't keep,
+    // nor the hash it keeps of it (a credential, so the store itself is not
+    // exportable), nor its id, which is part of the token. Read with the
+    // seam's report, as every store on it is: a token whose record can't be
+    // used is counted among the problems, never named by its id, and never a
+    // reason to stop (rule 1).
+    read: async ({ ctx }) => {
+      const report = await apiTokenStore.getAllReport(ctx);
+      return {
+        value: [...report.entries.values()]
+          .map((t) => ({ label: t.label, created_at: t.created_at, last_used_at: t.last_used_at }))
+          .sort((a, b) => byCodePoint(a.created_at, b.created_at) || byCodePoint(a.label, b.label)),
+        problems: countedProblems('api_tokens', report),
+      };
+    },
+  },
+  section({
+    key: 'sharing',
+    what: 'sharing settings',
+    // With the shared password there is nobody to share with: null, unless
+    // records of showings are still stored here.
+    read: async ({ ctx, userId }) => mySharing(userId, ctx),
+    // A record it can't give is marked where it belongs (the connection's
+    // `shown_to_them_problem` and `shown_to_me_problem`, or `problem` in
+    // `unmatched`), and named once for each reason here, so the file's
+    // problems and its headers say sharing is incomplete too.
+    problems: (sharing) => {
+      const kinds = new Set<ProblemKind>();
+      for (const c of sharing?.connections ?? []) {
+        if (c.shown_to_them_problem) kinds.add(c.shown_to_them_problem);
+        if (c.shown_to_me_problem) kinds.add(c.shown_to_me_problem);
+      }
+      for (const e of sharing?.unmatched ?? []) if (e.shown_to_them === null) kinds.add(e.problem);
+      return [...kinds].sort().map((problem) => ({ section: 'sharing', problem }));
+    },
+    // My own accounts: what I share, and what my records say was shown of
+    // them. Not shown_to_me: those are theirs.
+    mentions: (sharing) => [
+      ...(sharing?.connections.flatMap((c) => [...c.shared.map((s) => s.account_id), ...readIds(c.shown_to_them)]) ?? []),
+      ...(sharing?.unmatched.flatMap((e) => readIds(e.shown_to_them)) ?? []),
+    ],
+    covers: [accessLogStore.name],
+  }),
+];
+
+/** The account ids a record of showings names. */
+const readIds = (shown: Showing[] | null) => (shown ?? []).flatMap((s) => Object.keys(s.read));
+
+/**
+ * The sections the storage seam's catalogue adds (lib/stores.ts): one for each
+ * store declared with exportable: true, under its own name, after SECTIONS, in
+ * name order, except a store an entry of SECTIONS exports itself (covers). A
+ * value store's section is its value (null if never saved, or if it can't be
+ * used); a map store's is its entries as { id, value }, in id order, each one
+ * that can be used. Read with the seam's reports (getReport, getAllReport):
+ * an entry that is damaged or not recognised is named among the problems,
+ * never a reason to stop (rule 1), and a deployment problem stops the download
+ * as every reader's does. Declaring a store exportable is the whole decision:
+ * nothing else has to remember to add it.
+ */
+export function declaredSections(): ExportSection[] {
+  const covered = new Set(SECTIONS.flatMap((s) => s.covers ?? []));
+  return declaredStores().flatMap((store): ExportSection[] =>
+    store.exportable && store.kind !== 'counter' && store.kind !== 'counter-map' && !covered.has(store.name)
+      ? [{ key: store.name, what: store.what, read: ({ ctx }) => readDeclared(store, ctx) }]
+      : []
+  );
+}
+
+async function readDeclared(store: ValueStore<unknown> | MapStore<unknown>, ctx: Ctx): Promise<SectionRead> {
+  if (store.kind === 'value') {
+    const report = await store.getReport(ctx);
+    const problem = report.unreadable ? 'unreadable' : report.unrecognised ? 'unrecognised' : null;
+    return { value: report.value, problems: problem ? [{ section: store.name, problem }] : [] };
+  }
+  const report = await store.getAllReport(ctx);
+  return { value: [...report.entries].map(([id, value]) => ({ id, value })), problems: idProblems(store.name, report) };
+}
+
+/** SECTIONS, then the seam's. */
+const allSections = (): ExportSection[] => [...SECTIONS, ...declaredSections()];
+
+// ---- Reading ----
+
+export type DeclinedOffer = { earlier_account_id: string; account_id: string | null; declined_at: string };
+
+/** Everything read for one download, each store strictly. */
+export type UserData = {
+  /** The signed-in account's own download (Clerk), or the shared password's. */
+  people: boolean;
+  items: { item_id: string; institution_name: string; institution_id: string | null }[];
+  remembered: Record<string, RememberedAccount[]>;
+  directory: Map<string, DirectoryEntry>;
+  manual: ManualAccount[];
+  /** The connections to SimpleFIN, and the accounts each feeds
+   *  (lib/connectors/store.ts). */
+  connections: Map<string, ConnectorConnection>;
+  connected: Map<string, ConnectorAccount>;
+  /** The accounts SimpleFIN fed that the person let go (connector-ended):
+   *  what names a removed one that some part of the file still mentions. */
+  ended: Map<string, EndedAccount>;
+  hidden: HiddenMap;
+  stores: { item_id: string; accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; behind: boolean }[];
+  investments: { item_id: string; state: InvStoreState }[];
+  overrides: Map<string, string>;
+  renames: Map<string, string>;
+  links: Map<string, Link>;
+  /** The account ids live now, which pause a link whose old id came back. */
+  live: Set<string>;
+  declined: DeclinedOffer[];
+  carried: Carried;
+  history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> };
+  /** The person's categories (lib/category-store.ts), as stored or, before
+   *  the app has stored them, as it would seed them: what each transaction is
+   *  filed under. */
+  taxonomy: Taxonomy;
+  /** SECTIONS and the seam's (declaredSections), read, in order. */
+  sections: (readonly [string, unknown])[];
+  /** What was stored but couldn't be read into the file (rule 1), in the
+   *  file's order: the manual accounts, the balance histories, then the
+   *  sections'. */
+  problems: ExportProblem[];
+};
+
+/** The ids of what a part of the file is missing, whatever the reason. */
+export function missingIds(problems: readonly ExportProblem[], section: string): string[] {
+  return problems.flatMap((p) => (p.section === section ? (p.ids ?? []) : []));
+}
+
+/** A linked institution's record, without its access token: that never
+ *  leaves the record (notIncluded). */
+async function readItems(ctx: Ctx): Promise<UserData['items']> {
+  return (await getItems(ctx)).map((item) => {
+    if (!item || typeof item.item_id !== 'string' || typeof item.institution_name !== 'string') {
+      throw new Error('A linked institution’s record has an unexpected shape');
+    }
+    return {
+      item_id: item.item_id,
+      institution_name: item.institution_name,
+      institution_id: typeof item.institution_id === 'string' ? item.institution_id : null,
+    };
+  });
+}
+
+/** Declined link offers ("<old>><new>", or "<old>>*" for "None of these"). */
+async function readDeclined(ctx: Ctx): Promise<DeclinedOffer[]> {
+  return [...(await readDismissedStrict(ctx))].map(([key, at]) => {
+    const i = key.indexOf('>');
+    if (i <= 0) throw new Error('A declined link offer has an unexpected shape');
+    const to = key.slice(i + 1);
+    return { earlier_account_id: key.slice(0, i), account_id: to === '*' ? null : to, declined_at: at };
+  });
+}
+
+/**
+ * Reads everything one person has, every store at once. Throws ExportReadError
+ * naming the first store that couldn't be read for a reason that says nothing
+ * about its data, or an older store read whole that holds an entry it can't
+ * read; nothing is returned in part. Every other entry that can't be read is
+ * named in `problems` (rule 1).
+ */
+export async function collectUserData(src: ExportSource): Promise<UserData> {
+  const { ctx } = src;
+  const read = <T>(what: string, fn: () => Promise<T>, store: string = what): Promise<T> =>
+    fn().catch((err: unknown) => {
+      throw err instanceof ExportReadError ? err : new ExportReadError(what, err, store);
+    });
+
+  const items = await read('linked institutions', () => readItems(ctx));
+  const [remembered, directory, manual, connections, connected, ended, hidden, stores, investments, overrides, renames, links, live, declined, carried, history, taxonomy, sections] =
+    await Promise.all([
+      read('accounts', () => rememberedAccountsByItem(ctx)),
+      read('accounts', () => readDirectoryStrict(ctx)),
+      read('manual accounts', async () => {
+        const report = await getManualAccountsReport(ctx);
+        // Sealed under a key this deployment can't use: its problem, never
+        // the accounts', so it stops the download as storage out of reach
+        // does, and is never named in a file as missing data.
+        if (report.unavailable.length > 0) throw new ManualAccountsUnavailableError(report.unavailable);
+        return report;
+      }),
+      // Read again here to name each account and bank in `accounts` and
+      // `institutions`: the entries that can be used. One that can't is named
+      // under its own section's problems (declaredSections), never a reason
+      // to stop the download.
+      read(connectionsStore.what, async () => (await connectionsStore.getAllReport(ctx)).entries),
+      read(connectorAccountsStore.what, async () => (await connectorAccountsStore.getAllReport(ctx)).entries),
+      read(endedAccountsStore.what, async () => (await endedAccountsStore.getAllReport(ctx)).entries),
+      read('hidden accounts', () => getHiddenAccounts(ctx)),
+      Promise.all(
+        items.map((item) =>
+          read(
+            `transactions from ${item.institution_name}`,
+            async () => {
+              const [stored, behind] = await Promise.all([readStoredItem(ctx, item.item_id), storeIsBehind(ctx, item.item_id)]);
+              return { item_id: item.item_id, ...stored, behind };
+            },
+            'transactions'
+          )
+        )
+      ),
+      Promise.all(
+        items.map((item) =>
+          read(
+            `investment transactions from ${item.institution_name}`,
+            async () => ({ item_id: item.item_id, state: await readInvStore(ctx, item.item_id) }),
+            'investment transactions'
+          )
+        )
+      ),
+      read('categories', () => readOverridesStrict(ctx)),
+      read('merchant names', () => readRenamesStrict(ctx)),
+      read('account links', () => getLinks(ctx)),
+      read('account links', () => liveAccountIds(ctx, { strict: true, readOnly: true })),
+      read('account links', () => readDeclined(ctx)),
+      read('categories', () => readCarriedStrict(ctx)),
+      read('balance history', () => readHistoryForExport(ctx)),
+      // What the rows are filed by. Categories that can't be used file them
+      // by what they came with, in a seed made in memory, as the app does:
+      // the `categories` part names the problem (declaredSections), once.
+      read('categories', async () => (await taxonomyReport(ctx)).taxonomy),
+      Promise.all(allSections().map(async (s) => [s.key, await read(s.what, () => s.read(src))] as const)),
+    ]);
+  return {
+    people: src.userId !== null,
+    items,
+    remembered,
+    directory,
+    manual: manual.accounts,
+    connections,
+    connected,
+    ended,
+    hidden,
+    stores,
+    investments,
+    overrides,
+    renames,
+    links,
+    live,
+    declined,
+    carried,
+    history: { totals: history.totals, accounts: history.accounts },
+    taxonomy,
+    sections: sections.map(([key, r]) => [key, r.value] as const),
+    problems: [
+      ...idProblems('manual_accounts', manual),
+      ...idProblems('net_worth_history', history.problems.totals),
+      ...idProblems('account_history', history.problems.accounts),
+      ...sections.flatMap(([, r]) => r.problems),
+    ],
+  };
+}
+
+// ---- The document ----
+
+export type Kind = 'recorded' | 'estimated';
+
+/** A connection: a Plaid Item, or a connection to SimpleFIN (`item_id` its
+ *  connection's id, `institution_name` "SimpleFIN" and the host it reaches). */
+export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' | ConnectorKind };
+
+export type ExportAccount = {
+  account_id: string;
+  /** "plaid"; "simplefin" for an account SimpleFIN keeps up to date; "manual"
+   *  for a manual account since removed, known now only by what still names
+   *  it; null when nothing stored says. */
+  provider: string | null;
+  item_id: string | null;
+  institution_name: string | null;
+  institution_id: string | null;
+  connected: boolean;
+  name: string | null;
+  official_name: string | null;
+  type: string | null;
+  subtype: string | null;
+  mask: string | null;
+  currency: string | null;
+  credit_limit: number | null;
+  persistent_account_id: string | null;
+  first_seen: string | null;
+  last_seen: string | null;
+  hidden: boolean;
+  hidden_at: string | null;
+  latest_balance: { balance: number; date: string } | null;
+  /** When it ended (lib/lifecycle.ts), following account links, or null. */
+  lifecycle: ExportLifecycle | null;
+};
+
+/** An account's end, as accounts[] and manual_accounts[] give it: the same
+ *  shape the read-only API gives (lib/api-read.ts ApiLifecycle). What was
+ *  stored, under the id it was set on, is in the account-lifecycle part. */
+export type ExportLifecycle = { state: 'closed' | 'left' | 'untracked'; date: string; note: string | null; assumed: boolean };
+
+export type ExportManualAccount = {
+  account_id: string;
+  name: string;
+  institution_name: string;
+  type: string;
+  subtype: string | null;
+  balance: number;
+  /** Only on an account SimpleFIN fed in another currency, kept as a manual
+   *  account on a disconnect: its currency code. Every other manual balance
+   *  carries none, and is in US dollars. */
+  currency?: string;
+  updated_at: string | null;
+  hidden: boolean;
+  hidden_at: string | null;
+  lifecycle: ExportLifecycle | null;
+};
+
+export type ExportTransaction = StoredTxn & {
+  item_id: string;
+  vendor_key: string;
+  your_category: string | null;
+  your_category_from_earlier_account: string | null;
+  /** The person's category it is filed under now, as the app files it
+   *  (lib/categories.ts), its id (null for one the app hasn't stored yet),
+   *  and its group's name. The name is null for a row that says nothing of
+   *  its category. */
+  nya_category: string | null;
+  nya_category_id: string | null;
+  nya_group: string;
+  your_merchant_name: string | null;
+  superseded_by_posted: boolean;
+  account_hidden: boolean;
+  /** The tags it carries, by name, as the app shows them (lib/txn-layers.ts):
+   *  put on by the person, carried from an earlier account, or added by a
+   *  rule. */
+  tags: string[];
+  /** The person's note on it, or null. */
+  your_note: string | null;
+  /** The name the app shows: the person's for its merchant, else a rule's,
+   *  else the bank's. */
+  nya_name: string;
+  /** Left out of budgets and reports, as the app counts it: by the person,
+   *  carried from an earlier account, or hidden by a rule (excluded_by_rule);
+   *  null when the person's record couldn't be read (it counts then). */
+  excluded: boolean | null;
+  excluded_by_rule: boolean;
+  /** The person's rules that match it, in the order they run (lib/rules.ts). */
+  rule_ids: string[];
+};
+
+export type ExportInvestmentTransaction = Record<string, unknown> & {
+  investment_transaction_id: string;
+  account_id: string;
+  date: string;
+  item_id: string;
+  security: InvStoreState['securities'][string] | null;
+  seen_at: string;
+  missing_since: string | null;
+  excluded: boolean;
+  cancelled: boolean;
+};
+
+export type UserExport = {
+  format: typeof EXPORT_FORMAT;
+  version: typeof EXPORT_VERSION;
+  exported_at: string;
+  documentation: string;
+  not_included: string[];
+  /** Caveats about this download, in words: a store behind what the app
+   *  showed, and a note for each part that is missing something (problems). */
+  notes: string[];
+  /** What is stored but couldn't be read into the file (rule 1): empty when
+   *  the file has everything. */
+  problems: ExportProblem[];
+  institutions: ExportInstitution[];
+  accounts: ExportAccount[];
+  manual_accounts: ExportManualAccount[];
+  hidden_accounts: { account_id: string; type: string; hidden_at: string | null }[];
+  net_worth_history: { includes_hidden_accounts: true; points: { date: string; total: number; kind: Kind }[] };
+  account_history: { account_id: string; points: { date: string; balance: number; kind: Kind }[] }[];
+  transactions: ExportTransaction[];
+  category_overrides: { transaction_id: string; category: string }[];
+  merchant_renames: { vendor_key: string; name: string }[];
+  investment_transactions: ExportInvestmentTransaction[];
+  investment_history_coverage: { item_id: string; account_id: string; from: string; through: string }[];
+  account_links: {
+    links: { earlier_account_id: string; account_id: string; linked_at: string; evidence: Record<string, unknown> }[];
+    declined_suggestions: DeclinedOffer[];
+    carried_categories: { earlier_account_id: string; rows: { date: string; amount: number | null; description: string; category: string | null }[] }[];
+  };
+  /** SECTIONS, by key. */
+  [section: string]: unknown;
+};
+
+/** What the file leaves out, in plain words: the file says so itself. */
+export function notIncluded(people: boolean): string[] {
+  return [
+    'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
+    'The Access URL SimpleFIN gave Nya when you connected it: a credential, which reads your accounts there, not your data. Remove Nya at SimpleFIN to end it.',
+    'Your API tokens themselves, and the hashes Nya keeps to check them: credentials, not your data. Each token’s name and when it was made and last used are in, under api_tokens.',
+    people
+      ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
+      : 'The app password: a credential, not your data.',
+    'Internal ids and the machinery of the app: your storage container’s id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections and on accounts a bank stopped reporting). They are about running the app, not about you.',
+    'The balances an estimate held flat: for an account the estimate could not walk back through its transactions, estimated net-worth totals use that account’s balance on the day the estimate was made. That copied balance is part of the estimated totals, and is not listed as the account’s own history.',
+    'What other people share with you, what they call you and how they introduced themselves: that is their data. Their record of each time what they share was shown to you is in, under sharing: it is about you, and they see the same one.',
+    'Unused invite links: they work for 72 hours and are then gone.',
+    ...(people ? [] : ['Sharing: with one shared password there are no separate people to share with.']),
+  ];
+}
+
+/** "1970-01-01T00:00:00.000Z" is what a reader fills in when a record has no
+ *  time of its own (lib/hidden.ts, lib/manual.ts): not a time to pass off as
+ *  one. */
+const realTime = (iso: string | undefined | null): string | null => (iso && Date.parse(iso) > 0 ? iso : null);
+
+const byText = (a: string | null, b: string | null) => (a ?? '￿').localeCompare(b ?? '￿');
+const byCodePoint = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+const kindOf = (p: StoredPoint): Kind => (p.estimated ? 'estimated' : 'recorded');
+
+/** A carried row's content key (lib/transactions.ts contentKey) in parts:
+ *  "<account>|<date>|<cents>|<descriptor>". Total: an unexpected key still
+ *  gives every part it has. */
+function carriedRow(key: string, account_id: string) {
+  const rest = key.startsWith(`${account_id}|`) ? key.slice(account_id.length + 1) : key.split('|').slice(1).join('|');
+  const [date = '', cents = '', ...description] = rest.split('|');
+  const amount = cents === '' ? NaN : Number(cents) / 100;
+  return { date, amount: Number.isFinite(amount) ? amount : null, description: description.join('|') };
+}
+
+/** Every account id the file mentions anywhere, so `accounts` can name each
+ *  one (manual ones are in `manual_accounts`), the SECTIONS' included. */
+function mentionedAccountIds(data: UserData): Set<string> {
+  const ids = new Set<string>();
+  const add = (id: unknown) => {
+    if (typeof id === 'string' && id) ids.add(id);
+  };
+  for (const accounts of Object.values(data.remembered)) for (const a of accounts) add(a.account_id);
+  for (const id of data.directory.keys()) add(id);
+  for (const s of data.stores) {
+    for (const id of Object.keys(s.accounts)) add(id);
+    for (const t of Object.values(s.txns)) add(t.account_id);
+  }
+  for (const inv of data.investments) {
+    for (const id of Object.keys(inv.state.accounts)) add(id);
+    for (const row of Object.values(inv.state.txns)) add(row?.raw?.account_id);
+  }
+  for (const id of data.history.accounts.keys()) add(id);
+  for (const id of data.hidden.keys()) add(id);
+  for (const [old, l] of data.links) {
+    add(old);
+    add(l.to);
+  }
+  for (const d of data.declined) {
+    add(d.earlier_account_id);
+    add(d.account_id);
+  }
+  for (const id of data.carried.keys()) add(id);
+  // The accounts SimpleFIN keeps up to date, whatever else names them.
+  for (const id of data.connected.keys()) add(id);
+  const read = new Map(data.sections);
+  for (const s of SECTIONS) if (s.mentions && read.has(s.key)) for (const id of s.mentions(read.get(s.key))) add(id);
+  // The stores on the seam that name accounts: an account's end, and the
+  // notes Nya wrote about one. A note of the person's own may carry any id,
+  // which says nothing about an account.
+  for (const id of storedLifecycles(data).keys()) add(id);
+  for (const note of storedNotes(data)) if (note.kind === 'auto') add(note.account_id);
+  return ids;
+}
+
+/** The section a map store on the seam was read into, as { id, value }. */
+function storeSection(data: UserData, name: string): { id: string; value: unknown }[] {
+  const value = data.sections.find(([key]) => key === name)?.[1];
+  return Array.isArray(value) ? (value as { id: string; value: unknown }[]) : [];
+}
+
+/** The account closures read into the file (lib/lifecycle.ts), by stored id. */
+function storedLifecycles(data: UserData): Map<string, LifecycleEntry> {
+  return new Map(storeSection(data, lifecycleStore.name).flatMap((e) => (isLifecycleEntry(e.value) ? [[e.id, e.value] as const] : [])));
+}
+
+/** The timeline notes read into the file (lib/timeline-notes.ts). */
+function storedNotes(data: UserData): TimelineNote[] {
+  return storeSection(data, timelineNotesStore.name).flatMap((e) => (isTimelineNote(e.value) ? [e.value] : []));
+}
+
+/** An account's end, following the links that apply, or null. */
+function exportLifecycle(view: LifecycleView, id: string): ExportLifecycle | null {
+  const entry = lifecycleOf(view, id);
+  const l = entry?.lifecycle;
+  const date = l ? endOf(l) : null;
+  if (!entry || !l || l.state === 'active' || date === null) return null;
+  return { state: l.state, date, note: (l.state === 'closed' || l.state === 'left') && l.note ? l.note : null, assumed: entry.assumed === true };
+}
+
+/**
+ * How many accounts the person had, as they would count them, for the receipt
+ * an account deletion ends with (lib/account-deletion.ts):
+ *   - `accounts`: the accounts of the banks still connected, and the manual
+ *     accounts, those that couldn't be read included (they are still stored,
+ *     and deleted with the rest);
+ *   - `earlier`: the accounts of banks they disconnected, kept for their
+ *     history, apart from those.
+ * An account linked across a reconnect (lib/links.ts) is one account, under
+ * however many ids. An id known only from balance history, a link or a
+ * declined offer is not an account of its own here: `accounts` in the
+ * download lists those ids, which is a different question.
+ */
+export function countAccounts(data: UserData): { accounts: number; earlier: number } {
+  const links = effectiveLinks(data.links, data.live);
+  const connected = new Set(data.items.map((i) => i.item_id));
+  const current = new Set<string>();
+  const add = (into: Set<string>, id: string) => {
+    if (!isManualId(id)) into.add(resolveId(id, links));
+  };
+  for (const [item_id, accounts] of Object.entries(data.remembered)) {
+    if (connected.has(item_id)) for (const a of accounts) add(current, a.account_id);
+  }
+  // A connected bank's stores name its accounts too, including one it has
+  // stopped reporting (a closed card with stored transactions).
+  for (const s of data.stores) for (const id of Object.keys(s.accounts)) add(current, id);
+  for (const inv of data.investments) for (const id of Object.keys(inv.state.accounts)) add(current, id);
+  const earlier = new Set<string>();
+  for (const [id, entry] of data.directory) {
+    if (!connected.has(entry.item_id)) add(earlier, id);
+  }
+  for (const id of current) earlier.delete(id);
+  // The accounts SimpleFIN keeps up to date (manual ids, so not counted above),
+  // apart from one already counted as the manual account it was kept as.
+  const manualIds = new Set([...data.manual.map((m) => m.account_id), ...missingIds(data.problems, 'manual_accounts')]);
+  const fed = [...data.connected.keys()].filter((id) => !manualIds.has(id)).length;
+  return { accounts: current.size + manualIds.size + fed, earlier: earlier.size };
+}
+
+/** The newest recorded balance in a series (never an estimate), with its day. */
+function latestRecorded(points: StoredPoint[] | undefined): { balance: number; date: string } | null {
+  for (let i = (points?.length ?? 0) - 1; i >= 0; i--) {
+    const p = points![i];
+    if (!p.estimated) return { balance: p.value, date: p.date };
+  }
+  return null;
+}
+
+/** An account SimpleFIN keeps up to date, as `accounts` lists it: what its
+ *  entry in connector-accounts says, and its newest recorded balance. */
+function fedAccount(c: ConnectorAccount, data: UserData, hidden: HiddenMap, lifecycle: LifecycleView): ExportAccount {
+  const h = hidden.get(c.account_id);
+  return {
+    account_id: c.account_id,
+    provider: c.connector,
+    item_id: c.connection_id,
+    institution_name: c.institution_name,
+    institution_id: null,
+    connected: data.connections.has(c.connection_id),
+    name: c.name,
+    official_name: null,
+    type: c.type,
+    subtype: c.subtype,
+    mask: null,
+    currency: c.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: c.created_at.slice(0, 10),
+    last_seen: c.fetched_at ? c.fetched_at.slice(0, 10) : null,
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(c.account_id)),
+    lifecycle: exportLifecycle(lifecycle, c.account_id),
+  };
+}
+
+/** An account SimpleFIN kept up to date that the person let go and removed,
+ *  which some part of the file still mentions (its balance history, say), as
+ *  `accounts` lists it: what its record in connector-ended says. One kept is
+ *  a manual account, in `manual_accounts`. */
+function endedAccount(id: string, e: EndedAccount, data: UserData, hidden: HiddenMap, lifecycle: LifecycleView): ExportAccount {
+  const h = hidden.get(id);
+  return {
+    account_id: id,
+    provider: e.connector,
+    item_id: e.connection_id,
+    institution_name: e.institution_name,
+    institution_id: null,
+    connected: false,
+    name: e.name,
+    official_name: null,
+    type: e.type,
+    subtype: null,
+    mask: null,
+    currency: e.currency,
+    credit_limit: null,
+    persistent_account_id: null,
+    first_seen: e.tracked_at.slice(0, 10),
+    last_seen: e.ended_at.slice(0, 10),
+    hidden: !!h,
+    hidden_at: realTime(h?.hidden_at),
+    latest_balance: latestRecorded(data.history.accounts.get(id)),
+    lifecycle: exportLifecycle(lifecycle, id),
+  };
+}
+
+/** How a core part of the file that can be missing something says so in
+ *  words: what it holds, what it counts, and the sentence. A store on the
+ *  seam is named by its declaration (`what`) and counts entries. */
+type PartWords = {
+  noun: string;
+  one: string;
+  many: string;
+  missing: (noun: string, counts: string) => string;
+  /** Where the person finds what is missing: the JSON file, unless said. */
+  listed?: string;
+  /** The sentence in a CSV made from this part (CSV_SOURCES), where what the
+   *  CSV lacks is not what the JSON file lacks: `counts` as for `missing`. */
+  inCsv?: (counts: string) => string;
+  /** For a part that is one value (null in the file): what else that leaves
+   *  out of the JSON file, said after it, and the sentence in a CSV made from
+   *  it (`why`, why it couldn't be read). */
+  alsoInJson?: string;
+  valueInCsv?: (why: string) => string;
+  /** A part read with another, and missing only when that one is: that one's
+   *  note says it for both, so it isn't said twice. */
+  saidWith?: string;
+};
+const missingFrom = (noun: string, counts: string) => `Not all of your ${noun} could be read, so this file is missing ${counts}.`;
+const PART_WORDS: Record<string, PartWords> = {
+  manual_accounts: {
+    noun: 'manual accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `${missingFrom(noun, counts)} Any balance history they have is still in account_history, under their ids.`,
+    // A CSV's rows of such an account are all there, under its id: only its
+    // name is missing from them.
+    inCsv: (counts) => `Not all of your manual accounts could be read: ${counts}. Their rows in this file are under their account ids, with no account name.`,
+  },
+  // An account SimpleFIN keeps up to date: in a CSV, what names its rows and
+  // the type a pair of them is worked out by (transactionsCsv).
+  [connectorAccountsStore.name]: {
+    noun: connectorAccountsStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${connectorAccountsStore.what} could be read: ${counts}. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category.`,
+  },
+  // One entry per manual account: its book.
+  'manual-transactions': {
+    noun: 'manual transactions',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing the transactions of ${counts}.`,
+  },
+  // One entry per linked account rows were imported into: its book (#52).
+  // A bank's transaction standing for one of its rows can't be told, so it
+  // shows nothing said about that row either.
+  'imported-transactions': {
+    noun: 'transactions imported into linked accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) =>
+      `Not all of your ${noun} could be read, so this file is missing the imported transactions of ${counts}, and a transaction the bank sent that stands for one of them doesn’t show what you said about it.`,
+  },
+  // One entry per connection: which of its bank rows stand for which
+  // imported rows, kept by the sync (lib/history-import/twins.ts).
+  'imported-twins': {
+    noun: 'pairs of imported and bank transactions',
+    one: 'connection',
+    many: 'connections',
+    missing: (noun, counts) =>
+      `Not all of your ${noun} could be read, so the transactions imported into the accounts of ${counts} are matched to the bank’s by what each says now: one the bank changed since they were paired may be listed beside the bank’s own.`,
+  },
+  // One entry per earlier account: the pairs of a connection since
+  // disconnected, by the content of its bank rows, kept for a re-link.
+  'carried-imported-twins': {
+    noun: 'pairs of imported and bank transactions carried from earlier accounts',
+    one: 'account',
+    many: 'accounts',
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing those of ${counts}.`,
+  },
+  net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
+  // Counted, never named: a token's id is part of the token.
+  api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
+  account_history: {
+    noun: 'account balance history',
+    one: 'day',
+    many: 'days',
+    // A day's maps hold every account's balance, and another layer may still
+    // have some of them that day.
+    missing: (noun, counts) => `Not all of your ${noun} could be read, so this file may be missing balances on ${counts}.`,
+  },
+  // Read from the same stores as the budgets on categories: when those can't
+  // be read, neither can these, and the budgets' note says it.
+  group_budgets: { noun: 'budgets on category groups', one: 'budget', many: 'budgets', missing: missingFrom, saidWith: 'budgets' },
+  // An entry is about the account whose id it is stored under: that account's
+  // lifecycle (and its account_state in the balances CSV) can't say it ended.
+  'account-lifecycle': {
+    noun: 'account closures',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    listed: 'The JSON file lists them under problems, each by the id of the account it is about, whose lifecycle in this file is then null although it may have ended.',
+    inCsv: (counts) => `Not all of your account closures could be read: ${counts}. An account one of them is about has no account_state in this file, although it may have ended.`,
+  },
+  'timeline-notes': { noun: 'timeline notes', one: 'note', many: 'notes', missing: missingFrom },
+  // What the read layer puts on each transaction (lib/txn-layers.ts): in a
+  // CSV, what each row's nya_name, tags, note and excluded lack.
+  [rulesStore.name]: {
+    noun: 'rules',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No rule is applied to the transactions in this file, as the app applies none until they can be read.',
+    valueInCsv: (why) =>
+      `Your rules could not be read (${why}), so no rule is applied to the transactions in this file: their names, categories, tags and whether they count are as the bank and you have them, as the app shows them until they can be read.`,
+  },
+  [tagStore.name]: {
+    noun: 'tags',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'No transaction in this file has tags, as the app shows none until they can be read.',
+    valueInCsv: (why) => `Your tags could not be read (${why}), so no transaction in this file has tags, as the app shows none until they can be read.`,
+  },
+  [txnAnnotationStore.name]: {
+    noun: txnAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.`,
+  },
+  [carriedAnnotationStore.name]: {
+    noun: carriedAnnotationStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${carriedAnnotationStore.what} could be read: ${counts}. The transactions they carry to are in this file without them (an exclusion, tags, a note), as the app shows them until they can be read.`,
+  },
+  // What a split transaction's parts and a group's net are (lib/export-splits.ts):
+  // in a CSV, the rows that show whole instead.
+  [splitStore.name]: {
+    noun: splitStore.what,
+    one: 'split',
+    many: 'splits',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${splitStore.what} could be read: ${counts}. Those transactions are in this file whole, with no parts, and nya_amount counts each whole, as the app shows them until they can be read.`,
+  },
+  [groupStore.name]: {
+    noun: groupStore.what,
+    one: 'group',
+    many: 'groups',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${groupStore.what} could be read: ${counts}. Their transactions are in this file on their own, each counted in nya_amount, as the app counts them until they can be read.`,
+  },
+  // What the transactions are filed by (nya_category), and the budgets named by.
+  categories: {
+    noun: 'categories',
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'Each transaction’s nya_category is the category it came with, its nya_category_id is empty, and each budget is listed by its category’s id alone.',
+    valueInCsv: (why) => `Your categories could not be read (${why}), so each transaction’s nya_category is the category it came with, and its nya_category_id is empty.`,
+  },
+};
+
+/**
+ * One note in words for each part of the file that is missing something, in
+ * the order the parts come: what it is missing, why, and that nothing was
+ * changed. From the problems alone, so a file made from only some parts (a
+ * CSV, exportFile) says the same of those, in its own words where what it
+ * lacks differs (PartWords inCsv), and pointing to the JSON download for the
+ * list.
+ */
+export function problemNotes(problems: readonly ExportProblem[], format: ExportFormat = 'json'): string[] {
+  const unchanged = 'Nothing was changed: what could not be read is still stored as it was.';
+  const csv = format !== 'json';
+  const sections = new Set(problems.map((p) => p.section));
+  return [...sections].flatMap((section) => {
+    const mine = problems.filter((p) => p.section === section);
+    const saidWith = PART_WORDS[section]?.saidWith;
+    if (saidWith && sections.has(saidWith)) return [];
+    if (section === 'sharing') {
+      return 'Some records of when shared accounts were shown could not be read or reached, so they are not in this file: each one is marked where it belongs, under sharing, with why.';
+    }
+    const words = PART_WORDS[section] ?? { noun: declaredStore(section)?.what ?? section, one: 'entry', many: 'entries', missing: missingFrom };
+    const why = (p: ExportProblem) => (p.problem === 'unrecognised' ? 'saved in a form this version of Nya does not know' : 'whose stored data is damaged');
+    if (mine.every((p) => p.ids === undefined && p.count === undefined)) {
+      // A part that is one value, null in the file.
+      const whyNot = mine[0].problem === 'unrecognised' ? 'they were saved in a form this version of Nya does not know' : 'the stored data is damaged';
+      if (csv && words.valueInCsv) return `${words.valueInCsv(whyNot)} ${unchanged}`;
+      return `Your ${words.noun} could not be read (${whyNot}), so this file does not have them.${words.alsoInJson ? ` ${words.alsoInJson}` : ''} ${unchanged}`;
+    }
+    const counts = mine
+      .map((p) => {
+        const n = p.ids?.length ?? p.count ?? 0;
+        return `${n} ${n === 1 ? words.one : words.many} ${why(p)}`;
+      })
+      .join(' and ');
+    const said = csv && words.inCsv ? words.inCsv(counts) : words.missing(words.noun, counts);
+    const listed = csv ? 'The JSON download lists them under problems.' : (words.listed ?? 'The JSON file lists them under problems.');
+    return `${said} ${listed} ${unchanged}`;
+  });
+}
+
+/**
+ * The document, from what was read. Pure. Every account any part of the file
+ * mentions is in `accounts` (or `manual_accounts`); what is known about each
+ * comes from the freshest record that has it: what the last good balance
+ * fetch remembered, then the directory of every account ever seen, then the
+ * transaction store, then the investment store.
+ */
+export function buildUserExport(data: UserData, now: Date): UserExport {
+  const items = new Map(data.items.map((i) => [i.item_id, i]));
+  // A manual account that couldn't be read is still one (problems names it):
+  // never listed in `accounts` as one since removed.
+  const unreadableManual = missingIds(data.problems, 'manual_accounts');
+  const manualIds = new Set([...data.manual.map((m) => m.account_id), ...unreadableManual]);
+  const effective = effectiveLinks(data.links, data.live);
+  // Hiding one id of an account hides every id it has had, as the app reads it.
+  const hidden = expandHidden(data.hidden, effective);
+  // And an account's end reaches every id it has had, the same way.
+  const lifecycle = effectiveLifecycle(storedLifecycles(data), effective);
+
+  const remembered = new Map<string, { item_id: string; a: RememberedAccount }>();
+  for (const [item_id, accounts] of Object.entries(data.remembered)) for (const a of accounts) remembered.set(a.account_id, { item_id, a });
+  const synced = new Map<string, { item_id: string; a: StoredAccount }>();
+  const rowFacts = new Map<string, { item_id: string; account_name: string; institution_name: string }>();
+  for (const s of data.stores) {
+    for (const [id, a] of Object.entries(s.accounts)) synced.set(id, { item_id: s.item_id, a });
+    for (const t of Object.values(s.txns)) {
+      if (!rowFacts.has(t.account_id)) rowFacts.set(t.account_id, { item_id: s.item_id, account_name: t.account_name, institution_name: t.institution_name });
+    }
+  }
+  const invested = new Map<string, { item_id: string; a: InvStoreState['accounts'][string] }>();
+  for (const inv of data.investments) for (const [id, a] of Object.entries(inv.state.accounts)) invested.set(id, { item_id: inv.item_id, a });
+
+  const accounts: ExportAccount[] = [...mentionedAccountIds(data)]
+    .filter((id) => !manualIds.has(id))
+    .map((id): ExportAccount => {
+      const c = data.connected.get(id);
+      if (c) return fedAccount(c, data, hidden, lifecycle);
+      const e = data.ended.get(id);
+      if (e) return endedAccount(id, e, data, hidden, lifecycle);
+      const m = remembered.get(id);
+      const d = data.directory.get(id);
+      const s = synced.get(id);
+      const v = invested.get(id);
+      const r = rowFacts.get(id);
+      const item_id = m?.item_id ?? d?.item_id ?? s?.item_id ?? r?.item_id ?? v?.item_id ?? null;
+      const item = item_id ? items.get(item_id) : undefined;
+      const h = hidden.get(id);
+      return {
+        account_id: id,
+        // The directory records it (older entries without it are Plaid's), and
+        // every other record here is Plaid's. A removed manual account's id
+        // names its kind; an id nothing describes is unknown, not a guess.
+        provider: isManualId(id) ? 'manual' : d ? (d.provider ?? PROVIDER) : m || s || v || r ? PROVIDER : null,
+        item_id,
+        institution_name: item?.institution_name ?? d?.institution_name ?? r?.institution_name ?? null,
+        institution_id: item?.institution_id ?? d?.institution_id ?? null,
+        connected: !!item,
+        name: m?.a.name || d?.name || s?.a.name || v?.a.name || r?.account_name || null,
+        official_name: m?.a.official_name ?? d?.official_name ?? s?.a.official_name ?? v?.a.official_name ?? null,
+        type: m?.a.type ?? d?.type ?? s?.a.type ?? v?.a.type ?? null,
+        subtype: m?.a.subtype ?? d?.subtype ?? s?.a.subtype ?? v?.a.subtype ?? null,
+        mask: m?.a.mask ?? d?.mask ?? s?.a.mask ?? v?.a.mask ?? null,
+        currency: m?.a.currency ?? s?.a.balances?.iso_currency_code ?? null,
+        credit_limit: m?.a.limit ?? s?.a.balances?.limit ?? null,
+        persistent_account_id: d?.persistent_account_id ?? null,
+        first_seen: d?.first_seen ?? null,
+        last_seen: d?.last_seen ?? null,
+        hidden: !!h,
+        hidden_at: realTime(h?.hidden_at),
+        latest_balance: latestRecorded(data.history.accounts.get(id)),
+        lifecycle: exportLifecycle(lifecycle, id),
+      };
+    })
+    .sort((a, b) => byText(a.institution_name, b.institution_name) || byText(a.name, b.name) || byCodePoint(a.account_id, b.account_id));
+
+  const manual_accounts: ExportManualAccount[] = data.manual.map((m) => {
+    const h = hidden.get(m.account_id);
+    return {
+      account_id: m.account_id,
+      name: m.name,
+      institution_name: m.institution_name,
+      type: m.type,
+      subtype: m.subtype,
+      balance: m.balance,
+      ...(m.currency ? { currency: m.currency } : {}),
+      updated_at: realTime(m.updated_at),
+      hidden: !!h,
+      hidden_at: realTime(h?.hidden_at),
+      lifecycle: exportLifecycle(lifecycle, m.account_id),
+    };
+  });
+
+  // Each account's series, in the order the accounts are listed; then those
+  // of manual accounts that couldn't be read, whose balances still read.
+  const order = [...accounts.map((a) => a.account_id), ...manual_accounts.map((m) => m.account_id), ...unreadableManual];
+  const account_history = order
+    .filter((id) => (data.history.accounts.get(id)?.length ?? 0) > 0)
+    .map((id) => ({
+      account_id: id,
+      points: data.history.accounts.get(id)!.map((p) => ({ date: p.date, balance: p.value, kind: kindOf(p) })),
+    }));
+
+  // Categories carried across a re-link, by the key of the row they apply to,
+  // following the links that apply now (as /api/transactions does).
+  const carried = carriedCategories(data.carried, effective);
+  // Each row filed as the app files it: the person's own choice, else the
+  // carried one, else Plaid's, by the categories as stored, grown in memory by
+  // any the rows carry that they lack (with provisional ids, shown as null).
+  // The manual accounts' rows are filed by the same set (their words grow it
+  // too), for the transactions CSV, which lists them beside the bank's: so a
+  // category is named alike everywhere in the download, before the app has
+  // stored the categories too (a budget's name, say, as it was saved).
+  const factsOf = (t: StoredTxn): CategoryFacts => {
+    const own = data.overrides.get(t.transaction_id) ?? carried.get(contentKey(t.account_id, t));
+    return {
+      category: own ?? t.category,
+      category_set: own !== undefined,
+      pfc_primary: t.personal_finance_category?.primary ?? null,
+      pfc_detailed: t.personal_finance_category?.detailed ?? null,
+    };
+  };
+  // The rows imported into linked accounts from files (#52), as the app files
+  // them: by a category chosen for one, else the file's own words.
+  const importedRows = importedRowsOf(data.sections.find(([key]) => key === importedTxnStore.name)?.[1]);
+  // As the CSV lists them: a pair of SimpleFIN rows in the pair's words.
+  const manualRows = withPairWords(
+    manualRowsOf(data.sections.find(([key]) => key === manualTxnStore.name)?.[1]),
+    new Map([...[...data.connected.values()].map((c) => [c.account_id, c.type] as const), ...data.manual.map((m) => [m.account_id, m.type] as const)])
+  );
+  let provisional = 0;
+  const filing = indexTaxonomy(
+    growTaxonomy(
+      data.taxonomy,
+      observedKeys([
+        ...data.stores.flatMap((s) => Object.values(s.txns).map(factsOf)),
+        ...manualRows.map(manualFacts),
+        ...importedRows.map((r) => importedFacts(r, data.overrides.get(r.id) ?? null)),
+      ]),
+      () => `new:${++provisional}`,
+      { limit: Infinity }
+    ).taxonomy
+  );
+  // The rules, what the person said about each row, and what was carried
+  // across a re-link, from the file's own parts, as the app applies them; and
+  // each row filed with its rule's category among the rest.
+  const sectionOf = new Map(data.sections);
+  const layers = exportLayers((key) => sectionOf.get(key), { links: effective, ix: filing, unknown: missingIds(data.problems, txnAnnotationStore.name) });
+  const shown = (t: StoredTxn) => {
+    const facts = factsOf(t);
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null);
+    return { l, filed: filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }) };
+  };
+  const transactions: ExportTransaction[] = data.stores
+    .flatMap((s) => {
+      const superseded = supersededPendingIds(s.txns);
+      return Object.values(s.txns).map((t): ExportTransaction => {
+        const { l, filed } = shown(t);
+        return {
+          ...t,
+          item_id: s.item_id,
+          vendor_key: vendorKey(t),
+          your_category: data.overrides.get(t.transaction_id) ?? null,
+          your_category_from_earlier_account: carried.get(contentKey(t.account_id, t)) ?? null,
+          ...filed,
+          your_merchant_name: data.renames.get(vendorKey(t)) ?? null,
+          superseded_by_posted: superseded.has(t.transaction_id),
+          account_hidden: hidden.has(t.account_id),
+          tags: l.tags,
+          your_note: l.note,
+          nya_name: l.name,
+          excluded: l.excluded,
+          excluded_by_rule: l.excluded_by_rule,
+          rule_ids: l.rule_ids,
+        };
+      });
+    })
+    // Newest first, as the app lists them; then by the event time, then the id,
+    // so two downloads of the same data are the same file.
+    .sort(
+      (a, b) =>
+        byCodePoint(b.date, a.date) ||
+        byCodePoint(b.datetime ?? b.authorized_datetime ?? '', a.datetime ?? a.authorized_datetime ?? '') ||
+        byCodePoint(a.transaction_id, b.transaction_id)
+    );
+
+  const investment_transactions: ExportInvestmentTransaction[] = data.investments
+    .flatMap(({ item_id, state }) =>
+      Object.entries(state.txns).map(([id, row]): ExportInvestmentTransaction => {
+        const raw = row?.raw as unknown as Record<string, unknown> | undefined;
+        if (!raw || typeof raw.investment_transaction_id !== 'string') {
+          throw new ExportReadError('investment transactions', new Error('A stored investment transaction has an unexpected shape'));
+        }
+        const security_id = typeof raw.security_id === 'string' ? raw.security_id : null;
+        return {
+          // Every field Plaid sent, as it sent it.
+          ...raw,
+          investment_transaction_id: raw.investment_transaction_id,
+          account_id: String(raw.account_id ?? ''),
+          date: String(raw.date ?? ''),
+          item_id,
+          security: security_id ? (state.securities[security_id] ?? null) : null,
+          seen_at: row.seen_at,
+          missing_since: row.missing_since ?? null,
+          excluded: !!row.excluded,
+          cancelled: !!state.cancelled?.[id],
+        };
+      })
+    )
+    .sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(a.investment_transaction_id, b.investment_transaction_id));
+
+  // A Set: two connections to the same bank, both behind, are one caveat.
+  const notes = new Set<string>();
+  for (const s of data.stores) {
+    if (!s.behind) continue;
+    const name = items.get(s.item_id)?.institution_name ?? 'one institution';
+    notes.add(
+      `Nya could not save the newest transactions from ${name} (a storage limit, or a write that failed), so ones the app showed recently may be missing from this file. They are saved again once a sync can store them.`
+    );
+  }
+
+  const doc: UserExport = {
+    format: EXPORT_FORMAT,
+    version: EXPORT_VERSION,
+    exported_at: now.toISOString(),
+    documentation: EXPORT_DOCUMENTATION,
+    not_included: notIncluded(data.people),
+    // Each part that is missing something says so in words too, after the
+    // caveats (problemNotes).
+    notes: [...notes, ...problemNotes(data.problems)],
+    problems: data.problems,
+    institutions: [
+      ...data.items.map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' })),
+      ...[...data.connections].map(([id, c]): ExportInstitution => ({ item_id: id, institution_name: `${connectorOf(c.connector).label} (${c.host})`, institution_id: null, provider: c.connector })),
+    ].sort((a, b) => byText(a.institution_name, b.institution_name) || byCodePoint(a.item_id, b.item_id)),
+    accounts,
+    manual_accounts,
+    hidden_accounts: [...data.hidden]
+      .map(([account_id, entry]: [string, HiddenAccount]) => ({ account_id, type: entry.type, hidden_at: realTime(entry.hidden_at) }))
+      .sort((a, b) => byCodePoint(a.account_id, b.account_id)),
+    net_worth_history: {
+      includes_hidden_accounts: true,
+      points: data.history.totals.map((p) => ({ date: p.date, total: p.value, kind: kindOf(p) })),
+    },
+    account_history,
+    transactions,
+    category_overrides: [...data.overrides]
+      .map(([transaction_id, category]) => ({ transaction_id, category }))
+      .sort((a, b) => byCodePoint(a.transaction_id, b.transaction_id)),
+    merchant_renames: [...data.renames].map(([vendor_key, name]) => ({ vendor_key, name })).sort((a, b) => byCodePoint(a.vendor_key, b.vendor_key)),
+    investment_transactions,
+    investment_history_coverage: data.investments
+      .flatMap(({ item_id, state }) => Object.entries(state.coverage).map(([account_id, c]) => ({ item_id, account_id, from: c.from, through: c.through })))
+      .sort((a, b) => byCodePoint(a.account_id, b.account_id)),
+    account_links: {
+      links: [...data.links]
+        .map(([old, l]) => ({ earlier_account_id: old, account_id: l.to, linked_at: l.linked_at, evidence: l.evidence ?? {} }))
+        .sort((a, b) => byCodePoint(a.earlier_account_id, b.earlier_account_id)),
+      declined_suggestions: [...data.declined].sort((a, b) => byCodePoint(a.earlier_account_id, b.earlier_account_id) || byCodePoint(a.account_id ?? '', b.account_id ?? '')),
+      carried_categories: [...data.carried]
+        .map(([earlier_account_id, rows]) => ({
+          earlier_account_id,
+          rows: Object.entries(rows)
+            .map(([key, category]) => ({ ...carriedRow(key, earlier_account_id), category }))
+            .sort((a, b) => byCodePoint(a.date, b.date) || byCodePoint(a.description, b.description)),
+        }))
+        .sort((a, b) => byCodePoint(a.earlier_account_id, b.earlier_account_id)),
+    },
+  };
+  for (const [key, value] of data.sections) {
+    // A section named like a core one would replace it without a word.
+    if (Object.hasOwn(doc, key)) throw new Error(`Two parts of the download are both called ${key}`);
+    doc[key] = value;
+  }
+  // A bank row standing for rows imported into its account takes what the
+  // person said about them, unless they said otherwise on it, as the app
+  // does (lib/activity.ts, lib/txn-layers.ts): a category chosen for one
+  // (filed by it here, and shown as yours in the transactions CSV), an
+  // exclusion or an include, tags and a note. Laid on again once the file
+  // knows which rows those are.
+  const fromImports = importedTransactionsIn(doc);
+  for (const t of doc.transactions) {
+    const rows = fromImports.represents.get(t.transaction_id);
+    if (!rows) continue;
+    const words = data.overrides.has(t.transaction_id) ? undefined : fromImports.carried.get(t.transaction_id);
+    const facts = { ...factsOf(t), ...(words ? { category: words, category_set: true } : {}) };
+    const l = layerBankRow(t, layers, facts, data.renames.get(vendorKey(t)) ?? null, rows);
+    Object.assign(t, filedAs(filing, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), {
+      tags: l.tags,
+      your_note: l.note,
+      nya_name: l.name,
+      excluded: l.excluded,
+      excluded_by_rule: l.excluded_by_rule,
+      rule_ids: l.rule_ids,
+    });
+  }
+  docFilings.set(doc, filing);
+  return doc;
+}
+
+// ---- Writing it out ----
+
+/** Pieces are gathered up to about this many characters before one is handed
+ *  to the stream: one per value would make thousands of tiny writes. */
+const CHUNK_CHARS = 64 * 1024;
+
+function* gathered(pieces: Iterable<string>): Generator<string> {
+  let buffer = '';
+  for (const piece of pieces) {
+    buffer += piece;
+    if (buffer.length >= CHUNK_CHARS) {
+      yield buffer;
+      buffer = '';
+    }
+  }
+  if (buffer) yield buffer;
+}
+
+/** Which objects are laid out over several lines, by where each sits in the
+ *  document: the keys and indexes that lead to it. */
+export type JsonLayout = (path: readonly (string | number)[]) => boolean;
+
+/** Every object over several lines: the text of JSON.stringify(value, null, 2). */
+export const EVERY_OBJECT: JsonLayout = () => true;
+
+/**
+ * The download's layout: one record per line. The document and each of its
+ * sections are laid out a field per line and every list an entry per line,
+ * while each record (an institution, an account, a transaction, one day's
+ * balance, a link) takes one line of its own. The two records that hold long
+ * lists themselves (one account's history, one earlier account's carried
+ * categories) are laid out too, so their lists run an entry per line.
+ *
+ * Readable in a text editor at about the size of compact JSON. Indenting every
+ * field cost 38% more (146 MB against 106 MB for an account with 60,000
+ * transactions and ten years of history) and several times the time to write,
+ * which a slow connection pays again.
+ */
+export const ONE_RECORD_PER_LINE: JsonLayout = (path) =>
+  path.length <= 1 ||
+  (path.length === 2 && path[0] === 'account_history') ||
+  (path.length === 3 && path[0] === 'account_links' && path[1] === 'carried_categories');
+
+const isPlainObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value) && typeof (value as { toJSON?: unknown }).toJSON !== 'function';
+
+/**
+ * A JSON value as text, a piece at a time, without ever holding all of it, so
+ * a long history doesn't become one string the size of the file. Lists are
+ * written an entry per line; an object `layout` doesn't lay out is written on
+ * one line, as JSON.stringify writes it. Whatever the layout, the text parses
+ * to exactly what JSON.stringify(value) does.
+ */
+export function* jsonPieces(value: unknown, layout: JsonLayout = EVERY_OBJECT, path: (string | number)[] = [], indent = ''): Generator<string> {
+  if (Array.isArray(value)) {
+    if (value.length === 0) {
+      yield '[]';
+      return;
+    }
+    const inner = indent + '  ';
+    yield '[\n';
+    for (let i = 0; i < value.length; i++) {
+      yield inner;
+      // As JSON.stringify writes them: nothing representable in an array is null.
+      const v = value[i];
+      yield* jsonPieces(v === undefined || typeof v === 'function' || typeof v === 'symbol' ? null : v, layout, [...path, i], inner);
+      yield i < value.length - 1 ? ',\n' : '\n';
+    }
+    yield `${indent}]`;
+    return;
+  }
+  if (isPlainObject(value)) {
+    if (!layout(path)) {
+      yield JSON.stringify(value);
+      return;
+    }
+    const entries = Object.entries(value).filter(([, v]) => v !== undefined && typeof v !== 'function' && typeof v !== 'symbol');
+    if (entries.length === 0) {
+      yield '{}';
+      return;
+    }
+    const inner = indent + '  ';
+    yield '{\n';
+    for (let i = 0; i < entries.length; i++) {
+      yield `${inner}${JSON.stringify(entries[i][0])}: `;
+      yield* jsonPieces(entries[i][1], layout, [...path, entries[i][0]], inner);
+      yield i < entries.length - 1 ? ',\n' : '\n';
+    }
+    yield `${indent}}`;
+    return;
+  }
+  yield JSON.stringify(value) ?? 'null';
+}
+
+/** The columns of transactions.csv, in order (docs/data-export.md). */
+export const TRANSACTION_COLUMNS = [
+  'date',
+  'account_name',
+  'institution_name',
+  'name',
+  'merchant_name',
+  'your_merchant_name',
+  'amount',
+  'iso_currency_code',
+  'category',
+  'your_category',
+  'your_category_from_earlier_account',
+  'category_detailed',
+  'category_confidence',
+  'pending',
+  'superseded_by_posted',
+  'account_hidden',
+  'authorized_date',
+  'datetime',
+  'authorized_datetime',
+  'payment_channel',
+  'transaction_code',
+  'transaction_type',
+  'check_number',
+  'account_owner',
+  'website',
+  'location_address',
+  'location_city',
+  'location_region',
+  'location_postal_code',
+  'location_country',
+  'location_lat',
+  'location_lon',
+  'location_store_number',
+  'payment_reference',
+  'payment_processor',
+  'payment_payee',
+  'payment_payer',
+  'payment_method',
+  'counterparties',
+  'unofficial_currency_code',
+  'transaction_id',
+  'pending_transaction_id',
+  'account_id',
+  'item_id',
+  'merchant_entity_id',
+  'vendor_key',
+  'logo_url',
+  'category_icon_url',
+  // Added with the rows of manual accounts, at the end, so every column
+  // before them keeps its place.
+  'source',
+  'note',
+  'nya_category',
+  'nya_category_id',
+  'nya_group',
+  // Added with tags (#40) and rules (#36), at the end too.
+  'tags',
+  'nya_name',
+  'excluded',
+  // Added with splits and groups (#39), at the end too: what the app counts
+  // of each row, and which split or group a row is of (lib/export-splits.ts).
+  'nya_amount',
+  'split_of',
+  'split_index',
+  'group_id',
+  'group_name',
+] as const;
+
+type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
+
+/** Every column empty: what a row fills. */
+const blankCells = () => Object.fromEntries(TRANSACTION_COLUMNS.map((c) => [c, null])) as Record<TransactionColumn, CsvValue>;
+
+function transactionCells(t: ExportTransaction): Record<TransactionColumn, CsvValue> {
+  const loc = t.location ?? null;
+  const pay = t.payment_meta ?? null;
+  return {
+    ...blankCells(),
+    date: t.date,
+    account_name: t.account_name,
+    institution_name: t.institution_name,
+    name: t.name,
+    merchant_name: t.merchant_name,
+    your_merchant_name: t.your_merchant_name,
+    amount: t.amount,
+    iso_currency_code: t.iso_currency_code,
+    category: t.category,
+    your_category: t.your_category,
+    your_category_from_earlier_account: t.your_category_from_earlier_account,
+    category_detailed: t.personal_finance_category?.detailed ?? null,
+    category_confidence: t.personal_finance_category?.confidence_level ?? null,
+    pending: t.pending,
+    superseded_by_posted: t.superseded_by_posted,
+    account_hidden: t.account_hidden,
+    authorized_date: t.authorized_date,
+    datetime: t.datetime,
+    authorized_datetime: t.authorized_datetime,
+    payment_channel: t.payment_channel,
+    transaction_code: t.transaction_code,
+    transaction_type: t.transaction_type,
+    check_number: t.check_number,
+    account_owner: t.account_owner,
+    website: t.website,
+    location_address: loc?.address ?? null,
+    location_city: loc?.city ?? null,
+    location_region: loc?.region ?? null,
+    location_postal_code: loc?.postal_code ?? null,
+    location_country: loc?.country ?? null,
+    location_lat: loc?.lat ?? null,
+    location_lon: loc?.lon ?? null,
+    location_store_number: loc?.store_number ?? null,
+    payment_reference: pay?.reference_number ?? null,
+    payment_processor: pay?.payment_processor ?? null,
+    payment_payee: pay?.payee ?? null,
+    payment_payer: pay?.payer ?? null,
+    payment_method: pay?.payment_method ?? null,
+    counterparties: (t.counterparties ?? []).map((c) => (c.type ? `${c.name} (${c.type})` : c.name)).join('; '),
+    unofficial_currency_code: t.unofficial_currency_code,
+    transaction_id: t.transaction_id,
+    pending_transaction_id: t.pending_transaction_id,
+    account_id: t.account_id,
+    item_id: t.item_id,
+    merchant_entity_id: t.merchant_entity_id,
+    vendor_key: t.vendor_key,
+    logo_url: t.logo_url,
+    category_icon_url: t.personal_finance_category_icon_url,
+    source: PROVIDER,
+    note: t.your_note,
+    nya_category: t.nya_category,
+    nya_category_id: t.nya_category_id,
+    nya_group: t.nya_group,
+    tags: t.tags.join('; '),
+    nya_name: t.nya_name,
+    excluded: t.excluded,
+  };
+}
+
+/**
+ * A transaction on a manual account, entered by hand or imported (the
+ * `manual-transactions` part of the file), in the same columns as a bank's:
+ * its own payee, category (its own, so nothing is in your_category), amount
+ * and currency, its account as `manual_accounts` names it (empty for one that
+ * couldn't be read, which `problems` names), where it came from (`source`)
+ * and its note. What only a bank sends is empty, and so is item_id: a manual
+ * account has no connection.
+ */
+function manualTransactionCells(
+  row: ManualTxn,
+  account: { name: string | null; institution_name: string | null } | undefined,
+  hidden: boolean,
+  filed: NyaCategory,
+  l: Layered
+): Record<TransactionColumn, CsvValue> {
+  return {
+    ...blankCells(),
+    date: row.date,
+    account_name: account?.name ?? null,
+    institution_name: account?.institution_name ?? null,
+    name: row.name,
+    amount: row.amount,
+    iso_currency_code: row.currency,
+    category: row.category,
+    pending: false,
+    superseded_by_posted: false,
+    account_hidden: hidden,
+    // Plaid's code for what its file said it was ("atm"), where it said so.
+    transaction_code: row.transaction_code ?? null,
+    transaction_id: row.id,
+    account_id: row.account_id,
+    source: row.source,
+    // The person's note: the row's own, or, on one SimpleFIN brought, the one
+    // kept beside it (lib/txn-layers.ts).
+    note: l.note,
+    ...filed,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
+  };
+}
+
+/** What a row is filed under, as the file says it (ExportTransaction's
+ *  nya_ fields): the name of the category, null for a row that says nothing
+ *  of its category; its id, null for one the app hasn't stored; its group. */
+type NyaCategory = Pick<ExportTransaction, 'nya_category' | 'nya_category_id' | 'nya_group'>;
+
+function filedAs(ix: CategoryIndex, facts: CategoryFacts): NyaCategory {
+  const { category, said } = resolveCategory(ix, facts);
+  return { nya_category: said ? category.name : null, nya_category_id: isProvisionalId(category.id) ? null : category.id, nya_group: groupOf(ix, category).name };
+}
+
+/** What files a manual row: its own words (lib/categories.ts resolveCategory). */
+const manualFacts = (r: ManualTxn): CategoryFacts => ({ category: r.category, source: r.source });
+
+/** What files a row imported into a linked account: the category chosen for
+ *  it (`yours`), else the file's own words, as for a manual row. */
+const importedFacts = (r: ImportedTxn, yours: string | null): CategoryFacts => ({ category: yours ?? r.category, category_set: yours !== null, source: r.source });
+
+/** The rows of the imported books as read for the file, for filing: any a
+ *  book holds that reads as one (importedTransactionsIn refuses the rest). */
+function importedRowsOf(entries: unknown): ImportedTxn[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    const book = (entry as { value?: unknown } | null)?.value;
+    return isImportedBook(book) ? book.rows : [];
+  });
+}
+
+/** The rows of the manual accounts' books as read for the file, for filing:
+ *  any a book holds that reads as one, the CSV's writer refusing the rest. */
+function manualRowsOf(entries: unknown): ManualTxn[] {
+  if (!Array.isArray(entries)) return [];
+  return entries.flatMap((entry) => {
+    const book = (entry as { value?: unknown } | null)?.value;
+    return isManualTxnBook(book) ? book.rows : [];
+  });
+}
+
+/** For each document buildUserExport makes, the categories it files the
+ *  bank's rows by, which file the rows listed beside them too (see there). */
+const docFilings = new WeakMap<UserExport, CategoryIndex>();
+
+/**
+ * The categories the rows the files list beside the bank's (the manual
+ * accounts', and those imported into linked accounts) are filed by, as the
+ * app files them (lib/categories.ts resolveCategory): those buildUserExport
+ * filed the bank's by, for a document it made. For any other, the categories
+ * in it, grown in memory by any words of `facts` no category has yet
+ * (provisional, so their id is empty), or, without them, the seed the app
+ * would make.
+ */
+function docIndex(doc: UserExport, facts: readonly CategoryFacts[]): CategoryIndex {
+  const made = docFilings.get(doc);
+  if (made) return made;
+  const stored = doc[taxonomyStore.name];
+  let n = 0;
+  const newId = () => `new:${++n}`;
+  const base = isTaxonomy(stored) ? stored : seedTaxonomy([], newId);
+  return indexTaxonomy(growTaxonomy(base, observedKeys(facts), newId, { limit: Infinity }).taxonomy);
+}
+
+/**
+ * The manual rows' categories, by their own words and the category a rule
+ * gives one (see docIndex), with the categories they are filed by (`ix`),
+ * which the rules are read against (lib/export-layers.ts).
+ */
+function manualFiling(doc: UserExport, rows: readonly ManualTxn[]): { ix: CategoryIndex; filed: (row: ManualTxn, rule_category?: string) => NyaCategory } {
+  const ix = docIndex(doc, rows.map(manualFacts));
+  return { ix, filed: (r, rule_category) => filedAs(ix, { ...manualFacts(r), ...(rule_category ? { rule_category } : {}) }) };
+}
+
+/** The categories the document's rows are filed by (docIndex), for a writer
+ *  that names a split's parts (lib/ofx-export.ts). */
+export function docFiling(doc: UserExport): CategoryIndex {
+  return docIndex(doc, manualRowsOf(doc[manualTxnStore.name]).map(manualFacts));
+}
+
+/** Every row of the manual accounts' books in the file, once each: a book
+ *  restored from a backup could repeat one, which counts once, the copy
+ *  saved last, as the app shows it (lib/manual-txns.ts). */
+export function manualTransactionsIn(doc: UserExport): ManualTxn[] {
+  const entries = doc[manualTxnStore.name] ?? [];
+  if (!Array.isArray(entries)) throw new Error('The manual transactions in the file have an unexpected shape');
+  const byId = new Map<string, ManualTxn>();
+  for (const entry of entries) {
+    const book = (entry as { value?: unknown } | null)?.value;
+    if (!isManualTxnBook(book)) throw new Error('A manual account’s transactions have an unexpected shape');
+    for (const row of book.rows) {
+      const seen = byId.get(row.id);
+      if (!seen || row.updated_at > seen.updated_at) byId.set(row.id, row);
+    }
+  }
+  return [...byId.values()];
+}
+
+/**
+ * The rows imported into linked accounts from files (#52, the
+ * `imported-transactions` part of the file) that count as transactions of
+ * their accounts, as the Activity tab counts them (lib/history-import/match.ts
+ * settle, over the file's own rows): not those standing for a transaction
+ * already there (a duplicate whose twin is in the file), nor those a bank row
+ * in the file now stands for, which are in the JSON file only, so no
+ * transaction is in transactions.csv twice; a bank row the sync kept as
+ * standing for one (the file's imported-twins part) stands for it whatever
+ * its amount became, as in the app (match.ts KEPT ONCE MADE). Each with the
+ * id its account is known by now, following the file's links. And, by the bank row's id, the
+ * imported rows it stands for, earlier imports first (`represents`), which
+ * take what was said about them to it, and the category you set on one
+ * (`carried`, the earliest import's first), which that row shows as yours, as
+ * the app does; and each imported row a bank row stands for, with that bank
+ * row's id (`stands`). `pending` false counts a row whose only look-alike at
+ * the bank is pending, as a statement of posted rows does
+ * (lib/ofx-export.ts); by default it stands in for it, as the app shows them.
+ */
+export function importedTransactionsIn(
+  doc: UserExport,
+  opts: { pending?: boolean } = {}
+): { rows: { row: ImportedTxn; account_id: string }[]; carried: Map<string, string>; stands: Map<string, string>; represents: Map<string, string[]> } {
+  const entries = doc[importedTxnStore.name] ?? [];
+  if (!Array.isArray(entries)) throw new Error('The imported transactions in the file have an unexpected shape');
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const held = new Map<string, ImportedTxn[]>();
+  for (const entry of entries) {
+    const book = (entry as { value?: unknown } | null)?.value;
+    if (!isImportedBook(book)) throw new Error('A linked account’s imported transactions have an unexpected shape');
+    for (const row of book.rows) {
+      const current = resolveId(row.account_id, links);
+      held.set(current, [...(held.get(current) ?? []), row]);
+    }
+  }
+  const carried = new Map<string, string>();
+  const stands = new Map<string, string>();
+  const represents = new Map<string, string[]>();
+  if (held.size === 0) return { rows: [], carried, stands, represents };
+  // The bank's rows of those accounts, and where each connection's begin.
+  const banks = new Map<string, BankRow[]>();
+  const firstPosted = new Map<string, string>();
+  for (const t of doc.transactions) {
+    if (!t.pending && (!firstPosted.has(t.item_id) || t.date < firstPosted.get(t.item_id)!)) firstPosted.set(t.item_id, t.date);
+    const current = resolveId(t.account_id, links);
+    if (!held.has(current)) continue;
+    const list = banks.get(current) ?? [];
+    list.push({
+      transaction_id: t.transaction_id,
+      account_id: current,
+      date: t.date,
+      amount: t.amount,
+      currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
+      name: t.name,
+      merchant_name: t.merchant_name,
+      pending: t.pending,
+    });
+    banks.set(current, list);
+  }
+  const itemOf = new Map(doc.accounts.map((a) => [a.account_id, a.item_id]));
+  // Which bank row each connection kept as standing for which imported row.
+  // An entry the file lists under problems instead pairs nothing here: those
+  // rows are matched by what they say, as before anything was kept, and the
+  // file's notes say so.
+  const kept = new Map<string, Map<string, string>>();
+  for (const e of Array.isArray(doc[importedTwinsStore.name]) ? (doc[importedTwinsStore.name] as { id?: unknown; value?: unknown }[]) : []) {
+    if (typeof e?.id === 'string' && isImportedTwins(e.value)) kept.set(e.id, twinsOf(e.value));
+  }
+  // The imports in the order they were made, earlier ones matched first, and
+  // the period each covers.
+  const imports = (Array.isArray(doc[historyImportStore.name]) ? (doc[historyImportStore.name] as { id?: unknown; value?: unknown }[]) : []).filter(
+    (e): e is { id: string; value: { imported_at: string; covers: { from: string; to: string } } } => typeof e?.id === 'string' && isHistoryImportEntry(e.value)
+  );
+  const order = [...imports].sort((a, b) => byCodePoint(a.value.imported_at, b.value.imported_at) || byCodePoint(a.id, b.id)).map((e) => e.id);
+  const covers = new Map(imports.map((e) => [e.id, { from: e.value.covers.from, to: e.value.covers.to }]));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const out: { row: ImportedTxn; account_id: string }[] = [];
+  const importOf = new Map<string, string>();
+  for (const [account_id, rows] of held) {
+    const item = itemOf.get(account_id) ?? null;
+    const settled = settle(rows, banks.get(account_id) ?? [], order, {
+      bankFrom: item ? (firstPosted.get(item) ?? null) : null,
+      covers,
+      pending: opts.pending ?? true,
+      twins: (item ? kept.get(item) : undefined) ?? new Map(),
+    });
+    for (const row of settled.counted) out.push({ row, account_id });
+    for (const row of rows) importOf.set(row.id, row.import_id);
+    for (const [rowId, bankId] of standsFor(settled)) {
+      stands.set(rowId, bankId);
+      represents.set(bankId, [...(represents.get(bankId) ?? []), rowId]);
+    }
+  }
+  // Earlier imports first, as the app takes them (lib/history-import/read.ts).
+  const rank = new Map(order.map((id, i) => [id, i]));
+  const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
+  for (const [bankId, list] of represents) {
+    list.sort((x, y) => at(x) - at(y));
+    const category = list.map((id) => yours.get(id)).find((c) => !!c);
+    if (category) carried.set(bankId, category);
+  }
+  return { rows: out, carried, stands, represents };
+}
+
+/**
+ * A transaction imported into a linked account, in the same columns as a
+ * bank's: its own payee (and your name for its merchant, as for a bank's
+ * row), category (and yours over it), amount and currency, its account as
+ * `accounts` names it now, where it came from (`source`), and what the read
+ * layer puts on it, as the app shows it (layeredImportedRows): your note,
+ * else the file's, its tags, the name shown and whether it is excluded. What
+ * only a bank sends is empty.
+ */
+function importedTransactionCells(
+  row: ImportedTxn,
+  account_id: string,
+  account: ExportAccount | undefined,
+  yours: string | null,
+  hidden: boolean,
+  shown: { l: Layered; filed: NyaCategory; renamed: string | null }
+): Record<TransactionColumn, CsvValue> {
+  const { l, filed: nya, renamed } = shown;
+  return {
+    ...blankCells(),
+    date: row.date,
+    account_name: account?.name ?? null,
+    institution_name: account?.institution_name ?? null,
+    name: row.name,
+    your_merchant_name: renamed,
+    amount: row.amount,
+    iso_currency_code: row.currency,
+    category: row.category,
+    your_category: yours,
+    pending: false,
+    superseded_by_posted: false,
+    account_hidden: hidden,
+    transaction_code: row.transaction_code ?? null,
+    transaction_id: row.id,
+    account_id,
+    item_id: account?.item_id ?? null,
+    source: row.source,
+    note: l.note,
+    nya_category: nya.nya_category,
+    nya_category_id: nya.nya_category_id,
+    nya_group: nya.nya_group,
+    tags: l.tags.join('; '),
+    nya_name: l.name,
+    excluded: l.excluded,
+  };
+}
+
+/**
+ * The rows imported into linked accounts that count (importedTransactionsIn's
+ * `rows`) as the app shows them, for the transactions CSV and an OFX
+ * statement alike: for each, what the read layer puts on it (its rules, tags,
+ * note and exclusion: lib/export-layers.ts layerImportedRow, on its account as
+ * known now, at that account's institution), the category it is filed under
+ * (yours, else its own words, else a rule's) and your name for its merchant,
+ * where you renamed it.
+ */
+export function layeredImportedRows(
+  doc: UserExport,
+  rows: readonly { row: ImportedTxn; account_id: string }[]
+): (r: { row: ImportedTxn; account_id: string }) => { l: Layered; filed: NyaCategory; renamed: string | null } {
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const factsOf = (row: ImportedTxn) => importedFacts(row, yours.get(row.id) ?? null);
+  const ix = docIndex(doc, rows.map(({ row }) => factsOf(row)));
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const layers = exportLayers((key) => doc[key], { links, ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institution = new Map(doc.accounts.map((a) => [a.account_id, a.institution_name ?? '']));
+  const renames = new Map(doc.merchant_renames.map((r) => [r.vendor_key, r.name]));
+  return ({ row, account_id }) => {
+    const at = institution.get(account_id) ?? '';
+    const renamed = renames.get(vendorKey({ merchant_entity_id: null, merchant_name: null, name: row.name, institution_name: at })) ?? null;
+    const facts = factsOf(row);
+    const l = layerImportedRow(row, layers, { facts, renamed, account_id, institution: at });
+    return { l, filed: filedAs(ix, { ...facts, ...(l.rule_category ? { rule_category: l.rule_category } : {}) }), renamed };
+  };
+}
+
+/** The accounts the books' rows are on (the manual accounts' own, and those
+ *  SimpleFIN brought), as `manual_accounts` or `accounts` describes each. */
+function bookAccountsIn(doc: UserExport): Map<string, { name: string | null; institution_name: string | null; type: string | null }> {
+  return new Map<string, { name: string | null; institution_name: string | null; type: string | null }>([
+    ...doc.accounts.filter((a) => a.provider !== 'plaid').map((a) => [a.account_id, a] as const),
+    ...doc.manual_accounts.map((m) => [m.account_id, m] as const),
+  ]);
+}
+
+/** Each book account's type, as the file says it: what a pair of SimpleFIN
+ *  rows between two of them is worked out by (lib/manual-txns.ts
+ *  knownPairs), in the transactions CSV and an OFX statement alike. */
+export function bookAccountTypes(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].flatMap(([id, a]) => (a.type ? [[id, a.type] as const] : [])));
+}
+
+/** Each book account's institution as the Activity tab shows it
+ *  (lib/manual-txns.ts, lib/manual.ts toInstitutions), which a rule's
+ *  institution condition reads: a manual account's, `Manual` when it has
+ *  none, and an account SimpleFIN feeds, its bank's as SimpleFIN names it. */
+export function bookInstitutions(doc: UserExport): Map<string, string> {
+  return new Map([...bookAccountsIn(doc)].map(([id, a]) => [id, normalizeInstitutionName(a.institution_name ?? '') || 'Manual']));
+}
+
+/**
+ * The books' rows (a manual account's own, and those SimpleFIN brought) as
+ * the app shows them: each side of a pair between two SimpleFIN accounts in
+ * the pair's words (lib/manual-txns.ts withPairWords), and for each, what the
+ * read layer puts on it (its rules, tags, note and exclusion:
+ * lib/export-layers.ts layerManualRow, by its account's institution as the
+ * app shows it) and the category it is filed under. For the transactions CSV
+ * and an OFX statement alike, so the two and the app never disagree.
+ */
+export function layeredBookRows(doc: UserExport): { rows: ManualTxn[]; shown: (r: ManualTxn) => { l: Layered; filed: NyaCategory } } {
+  const rows = withPairWords(manualTransactionsIn(doc), bookAccountTypes(doc));
+  const filing = manualFiling(doc, rows);
+  // A book's rows carry nothing from an earlier account, and its account is
+  // never linked: no links needed.
+  const layers = exportLayers((key) => doc[key], { links: new Map(), ix: filing.ix, unknown: missingIds(doc.problems, txnAnnotationStore.name) });
+  const institutionOf = bookInstitutions(doc);
+  return {
+    rows,
+    shown: (r) => {
+      const l = layerManualRow(r, layers, institutionOf.get(r.account_id) ?? 'Manual');
+      return { l, filed: filing.filed(r, l.rule_category) };
+    },
+  };
+}
+
+/** A row of the file as the read layer's function for splits and groups
+ *  reads it (lib/export-splits.ts): its id, day, amount, currency, whether it
+ *  is pending, and what the layers said of its exclusion and tags. */
+function splitFacts(t: { id: string; date: string; amount: number; currency: string | null; unofficial?: string | null; pending: boolean; l: Layered | ExportTransaction }): Txn {
+  return {
+    transaction_id: t.id,
+    date: t.date,
+    amount: t.amount,
+    pending: t.pending,
+    iso_currency_code: t.currency,
+    unofficial_currency_code: t.unofficial ?? null,
+    excluded: t.l.excluded === true ? true : t.l.excluded === null ? null : undefined,
+    ...(t.l.excluded_by_rule ? { excluded_by_rule: true } : {}),
+    tags: t.l.tags,
+  } as unknown as Txn;
+}
+/** Those facts of a bank's row, as the file has it. */
+const bankFacts = (t: ExportTransaction) =>
+  splitFacts({ id: t.transaction_id, date: t.date, amount: t.amount, currency: t.iso_currency_code, unofficial: t.unofficial_currency_code, pending: t.pending, l: t });
+/** Those facts of a book's row (a manual account's, or one SimpleFIN
+ *  brought), with the layers applied as the app applies them. */
+const bookFacts = (r: ManualTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
+/** Those facts of a row imported into a linked account, with the layers
+ *  applied as the app applies them. */
+const importedRowFacts = (r: ImportedTxn, l: Layered) => splitFacts({ id: r.id, date: r.date, amount: r.amount, currency: r.currency, pending: false, l });
+
+/** Every row of the file, a bank's, a book's and one imported into a linked
+ *  account that counts (`imported`, as importedTransactionsIn settles them),
+ *  as the function for splits and groups reads them: for an OFX statement,
+ *  which lists one account's rows but says of a group what the app does
+ *  (lib/export-splits.ts appliedSplitsOf). */
+export function splitFactRows(doc: UserExport, imported: readonly { row: ImportedTxn; account_id: string }[]): Txn[] {
+  const book = layeredBookRows(doc);
+  const shown = layeredImportedRows(doc, imported);
+  return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l)), ...imported.map((r) => importedRowFacts(r.row, shown(r).l))];
+}
+
+/**
+ * transactions.csv: one row per transaction, newest first: every one stored
+ * from the banks, every one on a manual account (manualTransactionCells),
+ * and every one imported into a linked account that counts
+ * (importedTransactionCells). In the order the bank's rows are listed in the
+ * file (then by the event time, which the others don't have, then the id),
+ * so two downloads of the same data are the same file.
+ */
+export function* transactionsCsv(doc: UserExport): Generator<string> {
+  yield UTF8_BOM + csvRow(TRANSACTION_COLUMNS);
+  // The books hold the rows SimpleFIN brought as well as the manual accounts'
+  // own: each is named as `manual_accounts` or `accounts` names its account.
+  const accounts = bookAccountsIn(doc);
+  const linked = new Map(doc.accounts.map((a) => [a.account_id, a]));
+  const hidden = new Set(doc.hidden_accounts.map((h) => h.account_id));
+  const yours = new Map(doc.category_overrides.map((o) => [o.transaction_id, o.category]));
+  const imported = importedTransactionsIn(doc);
+  // A pair of SimpleFIN rows between two of the person's accounts (a card's
+  // payment, a loan's, a move between them) is worked out each time the rows
+  // are read, never stored: listed as the app shows it, each side in the
+  // pair's words and filed by them, so the file leaves out of a total what
+  // the app does; and every row with the read layer's facts on it, as the
+  // app shows them (layeredBookRows).
+  const book = layeredBookRows(doc);
+  // The rows imported into linked accounts, filed as the bank's are, and as
+  // the app shows them.
+  const importedShown = layeredImportedRows(doc, imported.rows);
+  // Splits and groups, by the read layer's own function, from the file's own
+  // parts (lib/export-splits.ts): a split transaction's parts and a group's
+  // net beside the transactions, `nya_amount` what the app counts, and a
+  // bank's row standing for imported ones split and grouped as they were
+  // (`represents`). A row's read-layer facts are what that function reads of
+  // it.
+  const ix = manualFiling(doc, book.rows).ix;
+  const rows: CsvLine<Record<TransactionColumn, CsvValue>>[] = [
+    ...doc.transactions.map((t) => {
+      // A category set on an imported row this bank row now stands for is
+      // yours on it too, unless you set one on it.
+      const carried = t.your_category === null ? imported.carried.get(t.transaction_id) : undefined;
+      return {
+        date: t.date,
+        time: t.datetime ?? t.authorized_datetime ?? '',
+        id: t.transaction_id,
+        txn: bankFacts(t),
+        cells: () => transactionCells(carried ? { ...t, your_category: carried } : t),
+      };
+    }),
+    ...book.rows.map((r) => {
+      const { l, filed } = book.shown(r);
+      return {
+        date: r.date,
+        time: '',
+        id: r.id,
+        txn: bookFacts(r, l),
+        cells: () => manualTransactionCells(r, accounts.get(r.account_id), hidden.has(r.account_id), filed, l),
+      };
+    }),
+    ...imported.rows.map((r) => {
+      const shown = importedShown(r);
+      return {
+        date: r.row.date,
+        time: '',
+        id: r.row.id,
+        txn: importedRowFacts(r.row, shown.l),
+        cells: () =>
+          importedTransactionCells(r.row, r.account_id, linked.get(r.account_id), yours.get(r.row.id) ?? null, hidden.has(r.account_id) || hidden.has(r.row.account_id), shown),
+      };
+    }),
+  ];
+  rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
+  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix, imported.represents), blankCells)) {
+    const cells = row.cells();
+    yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
+  }
+}
+
+/** The columns of balances.csv, in order (docs/data-export.md). */
+export const BALANCE_COLUMNS = [
+  'date',
+  'record',
+  'account_id',
+  'account_name',
+  'institution_name',
+  'account_type',
+  'balance',
+  'currency',
+  'kind',
+  'account_hidden',
+  'account_state',
+  'account_state_date',
+  'note',
+] as const;
+
+/**
+ * balances.csv: the net-worth total for each day ("net_worth" rows, every
+ * account, hidden ones too, as recorded), each account's own balance
+ * ("account" rows, with the account's end, if it ended: closed, left or
+ * untracked, and the day), and each note on the timeline ("note" rows, kind
+ * auto or user), oldest day first: the total, then the accounts, then the
+ * notes.
+ */
+export function* balancesCsv(doc: UserExport): Generator<string> {
+  yield UTF8_BOM + csvRow(BALANCE_COLUMNS);
+  type About = { name: string | null; institution: string | null; type: string | null; currency: string | null; hidden: boolean; lifecycle: ExportLifecycle | null };
+  const about = new Map<string, About>();
+  for (const a of doc.accounts) about.set(a.account_id, { name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, hidden: a.hidden, lifecycle: a.lifecycle });
+  for (const m of doc.manual_accounts) about.set(m.account_id, { name: m.name, institution: m.institution_name, type: m.type, currency: m.currency ?? null, hidden: m.hidden, lifecycle: m.lifecycle });
+  // A manual account that couldn't be read is in neither list (problems names
+  // it). When it is hidden, hidden_accounts still holds its type and says it
+  // is hidden, as transactions.csv reads it there too.
+  for (const h of doc.hidden_accounts) {
+    if (!about.has(h.account_id)) about.set(h.account_id, { name: null, institution: null, type: h.type, currency: null, hidden: true, lifecycle: null });
+  }
+
+  type Row = { date: string; rank: number; cells: CsvValue[] };
+  const rows: Row[] = doc.net_worth_history.points.map((p) => ({
+    date: p.date,
+    rank: -1,
+    cells: [p.date, 'net_worth', null, null, null, null, p.total, null, p.kind, null, null, null, null],
+  }));
+  doc.account_history.forEach((series, rank) => {
+    const a = about.get(series.account_id);
+    for (const p of series.points) {
+      rows.push({
+        date: p.date,
+        rank,
+        cells: [p.date, 'account', series.account_id, a?.name ?? null, a?.institution ?? null, a?.type ?? null, p.balance, a?.currency ?? null, p.kind, a?.hidden ?? false, a?.lifecycle?.state ?? null, a?.lifecycle?.date ?? null, null],
+      });
+    }
+  });
+  // The notes on the timeline (lib/timeline-notes.ts), after the day's balances.
+  const notes = (doc[timelineNotesStore.name] as { id: string; value: TimelineNote }[] | null | undefined) ?? [];
+  for (const { value: n } of notes) {
+    const a = n.account_id ? about.get(n.account_id) : undefined;
+    rows.push({
+      date: n.date,
+      rank: Number.MAX_SAFE_INTEGER,
+      cells: [n.date, 'note', n.account_id ?? null, a?.name ?? null, a?.institution ?? null, a?.type ?? null, null, null, n.kind, a ? a.hidden : null, null, null, n.text],
+    });
+  }
+  rows.sort((x, y) => byCodePoint(x.date, y.date) || x.rank - y.rank);
+  for (const row of rows) yield csvRow(row.cells);
+}
+
+/**
+ * One download: its name, its type, its text a piece at a time, and what the
+ * person should know about it, which the route sends as headers (a CSV has
+ * nowhere inside to say it): `notes`, its caveats in words, and `incomplete`,
+ * the parts of the JSON file it is made from that are missing something
+ * (problems), by key, empty when it is whole.
+ */
+export type ExportFile = {
+  filename: string;
+  contentType: string;
+  pieces: () => Iterable<string>;
+  notes: string[];
+  incomplete: string[];
+  /** How a piece becomes bytes: UTF-8, unless the format says otherwise (an
+   *  OFX statement is Windows-1252, lib/ofx-export.ts). */
+  encode?: (piece: string) => Uint8Array;
+};
+
+/**
+ * The parts of the JSON file each CSV is made from, of those that can be
+ * missing something (problems): what any other part is missing leaves the CSV
+ * whole, so its download never says otherwise. The JSON file is made from
+ * every part.
+ */
+export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonly string[]>> = {
+  // The books of the manual accounts, the names of the accounts they are on
+  // (and the types a pair of SimpleFIN rows is worked out by), the books of the
+  // rows imported into linked accounts, the categories every row is filed
+  // by (nya_category), and what the read layer lays on every row as the app
+  // shows it (lib/txn-layers.ts): what was said about each, what was carried
+  // from earlier accounts, the rules and the tags.
+  'transactions-csv': [
+    'manual-transactions',
+    'manual_accounts',
+    'imported-transactions',
+    // Which bank row stands for which imported row, as the app counts them.
+    'imported-twins',
+    connectorAccountsStore.name,
+    taxonomyStore.name,
+    txnAnnotationStore.name,
+    carriedAnnotationStore.name,
+    rulesStore.name,
+    tagStore.name,
+    // The splits and groups (lib/export-splits.ts): a part's and a group's
+    // rows, and nya_amount.
+    splitStore.name,
+    groupStore.name,
+  ],
+  // The days, the names of the manual accounts the rows are for, the
+  // accounts' ends and the notes.
+  'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts', 'account-lifecycle', 'timeline-notes'],
+};
+
+export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
+  const day = doc.exported_at.slice(0, 10);
+  // What this file is missing, and its notes: the caveats, then a note for
+  // each part it is made from that is missing something (problemNotes, which
+  // the document's own notes end with, for every part).
+  const problems = format === 'json' ? doc.problems : doc.problems.filter((p) => CSV_SOURCES[format].includes(p.section));
+  const everyPart = new Set(problemNotes(doc.problems));
+  const notes = [...doc.notes.filter((n) => !everyPart.has(n)), ...problemNotes(problems, format)];
+  const about = { notes, incomplete: [...new Set(problems.map((p) => p.section))] };
+  switch (format) {
+    case 'json':
+      return {
+        filename: `nya-data-${day}.json`,
+        contentType: 'application/json; charset=utf-8',
+        pieces: () =>
+          gathered(
+            (function* () {
+              yield* jsonPieces(doc, ONE_RECORD_PER_LINE);
+              yield '\n';
+            })()
+          ),
+        ...about,
+      };
+    case 'transactions-csv':
+      return { filename: `nya-transactions-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(transactionsCsv(doc)), ...about };
+    case 'balances-csv':
+      return { filename: `nya-balances-${day}.csv`, contentType: 'text/csv; charset=utf-8', pieces: () => gathered(balancesCsv(doc)), ...about };
+  }
+}
+
+/** The file as UTF-8 bytes, a chunk at a time: what the route streams. */
+export function* fileChunks(file: ExportFile): Generator<Uint8Array> {
+  const encoder = new TextEncoder();
+  const encode = file.encode ?? ((piece: string) => encoder.encode(piece));
+  for (const piece of file.pieces()) yield encode(piece);
+}
+
+/**
+ * How many bytes the file is, from a pass over it that keeps none of them.
+ * The route sends the count ahead of the body, so the page can tell a whole
+ * file from one cut short. The document is wholly in memory before this pass,
+ * and the writers depend on nothing else, so the pass that streams it
+ * afterwards writes exactly the same bytes (test/user-export.test.ts checks).
+ */
+export function fileByteLength(file: ExportFile): number {
+  let bytes = 0;
+  for (const chunk of fileChunks(file)) bytes += chunk.byteLength;
+  return bytes;
+}

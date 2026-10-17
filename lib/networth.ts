@@ -14,6 +14,14 @@ import { normalizeLiabilities } from './liabilities';
 import { isOwedType, isInvestmentType, signedContribution } from './balance';
 import { loadVanishedInputs, applyVanished } from './vanished';
 import { recordSnapshot, recordPartialAccounts } from './history';
+import { CAUSES, classifyFailure, isoTime, reconnectFixes, type ConnectionHealth, type Failure } from './connection-state';
+import { observeHoldings, recordHoldings, type HoldingsObservation, type HoldingsRecorded } from './holdings-history';
+import { linkedAs, type LinkKind } from './item-products';
+import type { UnshownAccount } from './last-known';
+import { loggable } from './log-safe';
+import { connectorInstitutions, unreadableConnectorInstitution } from './connectors/institutions';
+import { endedNowIds } from './lifecycle';
+import type { ConnectorKind } from './connectors/types';
 
 /**
  * Whether this Item can serve /liabilities/get, and if not, whether asking the
@@ -38,8 +46,21 @@ export type InstitutionResult = {
    *  a disconnect and re-add, unlike item_id and the display name (which is
    *  whatever the client sent at link time); lib/links.ts matches on it. */
   institution_id?: string | null;
+  /** Which way the Item was linked, from its record (lib/item-products.ts
+   *  linkedAs): the duplicate-institution sheet says when a connection made
+   *  the other way may not offer the accounts someone came to add. Absent when
+   *  the lookup at link failed. */
+  linked_as?: LinkKind;
   accounts: any[];
   holdings: any[];
+  /**
+   * What this fetch's holdings call answered, in the shape holdings history
+   * records it (lib/holdings-history.ts). Set only when the call answered, so
+   * its absence is what keeps a failed call (or a failed fetch) from being
+   * recorded as accounts holding nothing. Server-only: /api/net-worth deletes
+   * it before the payload is sent or cached.
+   */
+  holdings_observed?: HoldingsObservation;
   error: string | null;
   needs_reauth: boolean;
   liabilities: LiabilitiesState;
@@ -68,8 +89,14 @@ export type InstitutionResult = {
    * discloses it rather than presenting an incomplete figure as merely dated.
    */
   stale_missing?: number;
-  /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid. */
+  /** True for manually-tracked accounts (lib/manual.ts) rather than Plaid,
+   *  and for the accounts a connector feeds, which Nya keeps the same way. */
   manual?: boolean;
+  /** For accounts a connector the person brought feeds (lib/connectors/):
+   *  which connector, and the connection. Such an institution is `manual`
+   *  too: it is not a Plaid Item (lib/connectors/institutions.ts). */
+  connector?: ConnectorKind;
+  connection_id?: string;
   /**
    * HOW MANY accounts this institution is known to own that were absent from an
    * otherwise successful fetch, and have not been absent long enough to accept
@@ -85,9 +112,30 @@ export type InstitutionResult = {
    * keeps them encrypted).
    */
   unconfirmed_missing?: number;
+  /** The ids behind `unconfirmed_missing`, for the dashboard to hold each at
+   *  its last known balance with its question (lib/lifecycle-questions.ts).
+   *  Server-only: /api/net-worth deletes it before the payload is sent or
+   *  cached, where the held rows say the same. */
+  missing_ids?: string[];
   /** Plaid has found accounts at this Item that the user hasn't shared yet
    *  (lib/new-accounts.ts). Set by /api/net-worth only. */
   new_accounts_available?: boolean;
+  /** Why the fetch failed, set alongside `error` for a Plaid Item: the cause,
+   *  whose side it is on, and Plaid's error code (lib/connection-state.ts). */
+  failure?: Failure;
+  /** When the Item's consent at the bank expires, as Plaid reported it on this
+   *  fetch (an ISO time), for the institutions that have one. */
+  consent_expires_at?: string | null;
+  /** The connection's health (lib/connection-state.ts). Set by /api/net-worth
+   *  on the response only, never stored in the cache, for the reason
+   *  new_accounts_available isn't: a webhook can change it at any time. */
+  health?: ConnectionHealth;
+  /** The accounts this institution is known to have that its card can't show
+   *  (no balance could be recovered for them), by name and mask, so the health
+   *  view can say which accounts a failure affects, with their kind and
+   *  currency, so allocation over time still expects the investment ones.
+   *  Set by fillFromLastKnown. */
+  unshown_accounts?: UnshownAccount[];
 };
 
 /**
@@ -100,13 +148,14 @@ export function isRecordable(inst: InstitutionResult): boolean {
   return !inst.error && !inst.unconfirmed_missing;
 }
 
-export async function fetchInstitution(item: StoredItem): Promise<InstitutionResult> {
+export async function fetchInstitution(ctx: Ctx, item: StoredItem): Promise<InstitutionResult> {
   const result: InstitutionResult = {
     institution_name: item.institution_name,
     item_id: item.item_id,
     // The stored id, so an Item that fails below still carries one; a
     // successful fetch overwrites it with what Plaid reports.
     institution_id: item.institution_id ?? null,
+    ...(linkedAs(item) ? { linked_as: linkedAs(item) } : {}),
     accounts: [],
     holdings: [],
     error: null,
@@ -116,9 +165,10 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
 
   let access_token: string;
   try {
-    access_token = await decrypt(item.encrypted_access_token);
+    access_token = await decrypt(ctx, item.encrypted_access_token);
   } catch {
     result.error = 'Could not decrypt stored credentials';
+    result.failure = { cause: 'credentials', side: 'nya', code: null };
     return result;
   }
 
@@ -130,10 +180,16 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
     const balanceRes = await withRateLimitRetry(() => plaidClient.accountsGet({ access_token }));
     // Served from what Plaid holds, a broken Item may answer 200 with the problem
     // on the Item instead of failing. Treat that as the failure it is, or the
-    // reconnect prompt would never appear.
-    const itemError = balanceRes.data.item?.error?.error_code;
-    if (itemError === 'ITEM_LOGIN_REQUIRED') throw { response: { data: { error_code: itemError } } };
+    // reconnect prompt would never appear: any of the codes that mean the person
+    // must sign in again (lib/connection-state.ts), ITEM_LOGIN_REQUIRED first.
+    const itemError = balanceRes.data.item?.error;
+    if (itemError && CAUSES[classifyFailure({ code: itemError.error_code, type: itemError.error_type, responded: true }).cause].state === 'needs_reauth') {
+      throw { response: { data: { error_code: itemError.error_code, error_type: itemError.error_type } } };
+    }
     result.institution_id = balanceRes.data.item?.institution_id ?? result.institution_id;
+    // Where the bank's consent runs out on a date (some OAuth institutions), so
+    // the health view can say "reconnect soon" even without Plaid's webhook.
+    result.consent_expires_at = isoTime(balanceRes.data.item?.consent_expiration_time);
     result.accounts = balanceRes.data.accounts.map((a) => ({
       account_id: a.account_id,
       name: a.name,
@@ -150,13 +206,13 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
       persistent_account_id: a.persistent_account_id ?? null,
     }));
   } catch (err: any) {
-    const code = err?.response?.data?.error_code;
-    if (code === 'ITEM_LOGIN_REQUIRED') {
-      result.needs_reauth = true;
-      result.error = 'This account needs to be reconnected';
-    } else {
-      result.error = 'Could not fetch balances';
-    }
+    // One mapping of Plaid's codes (lib/connection-state.ts) decides both the
+    // Reconnect button and what the health view says. No answer at all (a
+    // timeout, the network) has no response.
+    const data = err?.response?.data;
+    result.failure = classifyFailure({ code: data?.error_code, type: data?.error_type, responded: err?.response !== undefined });
+    result.needs_reauth = reconnectFixes(result.failure.cause);
+    result.error = result.needs_reauth ? 'This account needs to be reconnected' : 'Could not fetch balances';
     // Balances failed -- holdings would fail identically (same access token/item), skip the extra call.
     return result;
   }
@@ -181,12 +237,37 @@ export async function fetchInstitution(item: StoredItem): Promise<InstitutionRes
   return result;
 }
 
+/** Plaid's answers to the holdings call that mean the connection has no
+ *  positions to give at all: the institution doesn't offer them, the person
+ *  didn't consent to them, or the deployment can't ask. Its investment
+ *  accounts list no positions, like a manual one, rather than failing. */
+const NO_HOLDINGS_CODES: ReadonlySet<string> = new Set(['PRODUCTS_NOT_SUPPORTED', 'ADDITIONAL_CONSENT_REQUIRED', 'NO_INVESTMENT_ACCOUNTS', 'INVALID_PRODUCT']);
+
+/**
+ * Marks the investment accounts whose positions this fetch's holdings call
+ * did not answer for (`holdings_unanswered: true` on the account, sent to the
+ * client): the call failed this time, or its answer left the account out.
+ * The allocation (lib/allocation/allocation.ts) counts such an account's
+ * balance as unclassified whole, since what it holds isn't known, and never
+ * spreads it by the split the person set for money no position explains.
+ * Not set when the connection has no positions to give at all
+ * (NO_HOLDINGS_CODES): there the account lists none, as a manual one does.
+ */
+function markUnanswered(result: InstitutionResult, answered: ReadonlySet<string> | null): void {
+  for (const a of result.accounts) {
+    if (isInvestmentType(a.type) && !answered?.has(a.account_id)) a.holdings_unanswered = true;
+  }
+}
+
 /** Investment holdings. Only called for Items that actually hold securities (see
  *  the gate in fetchInstitution); still swallows its own errors, because an Item
  *  can have an investment account without the investments product enabled. */
 async function fetchHoldings(access_token: string, result: InstitutionResult): Promise<void> {
   try {
     const holdingsRes = await plaidClient.investmentsHoldingsGet({ access_token });
+    // The investment accounts the answer speaks for; any other's positions
+    // didn't come.
+    markUnanswered(result, new Set((holdingsRes.data.accounts || []).map((a) => a.account_id)));
     const securities: Record<string, any> = {};
     (holdingsRes.data.securities || []).forEach((s) => (securities[s.security_id] = s));
     result.holdings = (holdingsRes.data.holdings || []).map((h) => ({
@@ -205,9 +286,22 @@ async function fetchHoldings(access_token: string, result: InstitutionResult): P
       ticker: securities[h.security_id]?.ticker_symbol ?? null,
       security_type: securities[h.security_id]?.type ?? null,
       is_cash_equivalent: securities[h.security_id]?.is_cash_equivalent ?? null,
+      // What `value` is in: Plaid's ISO code, or its unofficial one (a
+      // cryptocurrency) when there is no ISO code. The allocation
+      // (lib/allocation/allocation.ts) leaves a position in another currency
+      // out rather than add it unconverted.
+      currency: h.iso_currency_code ?? h.unofficial_currency_code ?? null,
     }));
-  } catch {
-    // not a brokerage account, or investments not supported -- fine, skip
+    // For holdings history, from Plaid's own fields rather than the display
+    // ones above. Only here, where the call answered, and only for a whole
+    // answer (observeHoldings): a call that failed, or an answer that is not
+    // whole, leaves it unset, and nothing is recorded for this institution.
+    const observed = observeHoldings(holdingsRes.data);
+    if (observed) result.holdings_observed = observed;
+  } catch (err: any) {
+    // Investments not offered here: the accounts list no positions. Anything
+    // else is a call that failed this time: their positions didn't come.
+    if (!NO_HOLDINGS_CODES.has(err?.response?.data?.error_code)) markUnanswered(result, null);
   }
 }
 
@@ -245,9 +339,19 @@ async function fetchLiabilities(access_token: string, result: InstitutionResult)
   }
 }
 
-export async function computeNetWorth(ctx: Ctx): Promise<{
+export async function computeNetWorth(
+  ctx: Ctx,
+  /** `connectorsReady`: the daily fetch from connectors (lib/connectors/sync.ts),
+   *  which the snapshot job runs beside Plaid's: their accounts are read once
+   *  it is over. A dashboard load reads what was stored, asking no connector. */
+  opts: { connectorsReady?: Promise<unknown> } = {}
+): Promise<{
   institutions: InstitutionResult[];
   netWorth: number;
+  /** An account's lifecycle changed during the fetch: an assumed closure was
+   *  recorded or lifted (lib/vanished.ts). A reader of it started before the
+   *  fetch reads it again. */
+  lifecycleChanged: boolean;
 }> {
   const items = await getItems(ctx);
 
@@ -256,8 +360,21 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
   // fan-out rather than after it (same reasoning as eager() in
   // app/api/net-worth/route.ts).
   const vanishedReads = loadVanishedInputs(ctx);
+  // The accounts a connector feeds, read from what its fetch stored, alongside
+  // the Plaid fan-out. Settled here, so a failure is handled below, never an
+  // unhandled rejection while Plaid answers.
+  const connected = (opts.connectorsReady ?? Promise.resolve())
+    .catch(() => {})
+    // An account that ended holds no bank (lib/connectors/institutions.ts);
+    // closures that can't be read end none, which only holds more.
+    .then(() => vanishedReads.then((v) => (v.lifecycle ? endedNowIds(v.lifecycle) : new Set<string>()), () => new Set<string>()))
+    .then((ended) => connectorInstitutions(ctx, Date.now(), ended))
+    .then(
+      (list) => ({ ok: true as const, list }),
+      (err: unknown) => ({ ok: false as const, err })
+    );
 
-  const institutions = await Promise.all(items.map(fetchInstitution));
+  const institutions = await Promise.all(items.map((item) => fetchInstitution(ctx, item)));
 
   // An account missing from a SUCCESSFUL fetch is either a closure or a provider
   // glitch, and until that resolves the total isn't a measurement of everything
@@ -266,15 +383,20 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
   // vanishing.
   const healthy = institutions.filter((i) => !i.error);
   const vanished = await applyVanished(ctx, healthy, await vanishedReads);
+  let lifecycleChanged = false;
   for (const inst of healthy) {
     const res = vanished[inst.item_id];
     if (!res) continue;
-    if (res.unconfirmed.length > 0) inst.unconfirmed_missing = res.unconfirmed.length;
+    if (res.accepted.length > 0 || (res.lifted?.length ?? 0) > 0) lifecycleChanged = true;
+    if (res.unconfirmed.length > 0) {
+      inst.unconfirmed_missing = res.unconfirmed.length;
+      inst.missing_ids = res.unconfirmed;
+    }
     // Counts only: account ids are encrypted at rest everywhere else, and which
     // bank someone uses is at least as identifying. The stale-balance warning in
     // /api/net-worth logs a count and a date for the same reason.
     console.warn(
-      `net-worth: an institution is missing ${res.unconfirmed.length} account(s) pending confirmation, ${res.accepted.length} accepted as closed`
+      `net-worth: an institution is missing ${res.unconfirmed.length} account(s) held for an answer, ${res.accepted.length} now assumed closed`
     );
   }
 
@@ -287,8 +409,11 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
   // the error blocks the write. (A broken Plaid item thus freezes manual history
   // too, since one gate covers the snapshot; splitting it would corrupt the
   // total series.)
+  let manualIds: Set<string> | null = null;
   try {
-    institutions.push(...toInstitutions(await getManualAccounts(ctx)));
+    const manual = await getManualAccounts(ctx);
+    manualIds = new Set(manual.map((a) => a.account_id));
+    institutions.push(...toInstitutions(manual));
   } catch (err) {
     console.error('Manual accounts read failed', err);
     institutions.push({
@@ -303,6 +428,21 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
     });
   }
 
+  // The accounts a connector feeds (lib/connectors/institutions.ts), on the
+  // same terms: one that can't be read is an error that holds the gate, never
+  // an empty list. An account kept as a manual one on a disconnect that
+  // stopped part way is in both stores under one id: the manual one is it.
+  const read = await connected;
+  if (read.ok) {
+    for (const inst of read.list) {
+      const accounts = manualIds ? inst.accounts.filter((a) => !manualIds!.has(a.account_id)) : inst.accounts;
+      if (accounts.length > 0) institutions.push({ ...inst, accounts });
+    }
+  } else {
+    console.error('Connector accounts read failed', loggable(read.err));
+    institutions.push(unreadableConnectorInstitution());
+  }
+
   // Net worth = sum of depository/investment/other balances minus credit/loan balances.
   // Holdings values are already reflected in the parent investment account's balance,
   // so they aren't added again here.
@@ -314,7 +454,7 @@ export async function computeNetWorth(ctx: Ctx): Promise<{
     });
   });
 
-  return { institutions, netWorth };
+  return { institutions, netWorth, lifecycleChanged };
 }
 
 /**
@@ -348,25 +488,40 @@ export function measuredBalanceMap(institutions: InstitutionResult[]): Record<st
   return accountBalanceMap(institutions.filter((inst) => !inst.error));
 }
 
+export type RecordedFetch = {
+  /** The date the TOTAL landed on, or null if it didn't. */
+  date: string | null;
+  /** The accounts whose positions went into holdings history, and those whose
+   *  write failed. Never part of `date`. */
+  holdings: HoldingsRecorded;
+};
+
 /**
  * Writes what a fetch measured to history, and returns the date the TOTAL landed
- * on, or null if it didn't. The one place the recording rule lives, so
- * /api/net-worth, /api/snapshot and /api/ingest/balance agree.
+ * on (null if it didn't) with what holdings history recorded. The one place the
+ * recording rule lives, so /api/net-worth, /api/snapshot and /api/ingest/balance
+ * agree.
  *
  * A clean, non-empty fetch records a real snapshot. Otherwise (or if that write
  * failed) the measured accounts still go to the partial per-account layer, so one
  * broken bank doesn't turn every other account's chart into an estimate. Run it
  * before fillFromLastKnown: recovered balances must never be written as measured.
+ *
+ * Each institution whose holdings call answered also has its positions recorded
+ * (lib/holdings-history.ts), whether or not the total lands. That runs beside
+ * the snapshot, not before it, and never throws, so it can neither hold up nor
+ * change what the snapshot records: a failed holdings write is only counted.
  */
 export async function recordFetch(
   ctx: Ctx,
   institutions: InstitutionResult[],
   netWorth: number
-): Promise<string | null> {
+): Promise<RecordedFetch> {
+  const holdings = recordHoldings(ctx, institutions);
   const recorded =
     institutions.length > 0 && institutions.every(isRecordable)
       ? await recordSnapshot(ctx, netWorth, accountBalanceMap(institutions))
       : null;
   if (recorded === null) await recordPartialAccounts(ctx, measuredBalanceMap(institutions));
-  return recorded;
+  return { date: recorded, holdings: await holdings };
 }

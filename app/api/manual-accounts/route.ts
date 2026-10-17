@@ -18,6 +18,11 @@ import { isOwedType } from '@/lib/balance';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { pruneHidden } from '@/lib/hidden';
+import { removeAccountTxns } from '@/lib/manual-txns';
+import { forgetAccountImports } from '@/lib/import/commit';
+import { forgetAnnotations } from '@/lib/txn-annotations';
+import { forgetSplitsAndGroups } from '@/lib/split-gone';
+import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
 //
@@ -93,7 +98,7 @@ export async function GET() {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to load manual accounts' }, { status: 500 });
   }
 }
@@ -127,7 +132,7 @@ export async function POST(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to add manual account' }, { status: 500 });
   }
 }
@@ -152,6 +157,9 @@ export async function PATCH(req: Request) {
     const balanceChanged = existing.balance !== result.value.balance;
     const account: ManualAccount = {
       ...result.value,
+      // The form doesn't change the currency: an account kept from a
+      // connector in another currency stays in it (lib/manual.ts).
+      ...(existing.currency ? { currency: existing.currency } : {}),
       account_id,
       // Only stamp updated_at when the balance actually moved, so the "Updated
       // ..." line reflects the last real balance change rather than a rename.
@@ -163,15 +171,15 @@ export async function PATCH(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to update manual account' }, { status: 500 });
   }
 }
 
-/** Removes one account. Its balance history is intentionally left in place:
- *  history is keyed by date, not account, and rewriting past dates is something
- *  this app never does. The orphaned series is unreachable once the account is
- *  gone. */
+/** Removes one account, and the transactions entered on it. Its balance history
+ *  is intentionally left in place: history is keyed by date, not account, and
+ *  rewriting past dates is something this app never does. The orphaned series
+ *  is unreachable once the account is gone. */
 export async function DELETE(req: Request) {
   try {
     const ctx = await dataCtx();
@@ -180,7 +188,23 @@ export async function DELETE(req: Request) {
     if (!account_id || !isManualId(account_id)) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
+    // Its transactions first (lib/manual-txns.ts), with what was said about
+    // them: if this fails part way the account is still there to delete again,
+    // rather than gone with its rows left behind where nothing shows them.
+    // Its imports' records and settings before the rows, while the rows can
+    // still say which imports were its (lib/import/commit.ts).
+    await forgetAccountImports(ctx, account_id);
+    const rows = await removeAccountTxns(ctx, account_id);
+    await forgetAnnotations(ctx, rows).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
+    await forgetSplitsAndGroups(ctx, rows).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
     await removeManualAccount(ctx, account_id);
+    // Once more now that the account is gone: an add or a move that read it
+    // before it went can have written its book again meanwhile. Whatever
+    // writes after this finds the account gone and takes its row back out
+    // (app/api/manual-transactions).
+    const late = await removeAccountTxns(ctx, account_id);
+    if (late.length > 0) await forgetAnnotations(ctx, late).catch((err) => console.warn('manual-accounts: exclusions were left behind', loggable(err)));
+    if (late.length > 0) await forgetSplitsAndGroups(ctx, late).catch((err) => console.warn('manual-accounts: splits or groups were left behind', loggable(err)));
     // The account is gone, so a hidden entry naming it would linger forever.
     await pruneHidden(ctx, [account_id]);
     await invalidate(ctx, true);
@@ -188,7 +212,7 @@ export async function DELETE(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to remove manual account' }, { status: 500 });
   }
 }
