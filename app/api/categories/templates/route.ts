@@ -48,6 +48,12 @@ import {
 // drops a cache: transactions are filed into categories after the cache
 // (lib/activity.ts), so a change shows on the next load of the list.
 
+// Each read of what uses a category is every stored row (lib/category-usage.ts),
+// made a few at once: up to three for an apply, and up to eleven for undoing
+// Freelancer, which a long history makes slow. A literal, as route segment
+// config requires.
+export const maxDuration = 120;
+
 const MAX_BODY_CHARS = 64 * 1024;
 const BASIS = /^[0-9a-f]{64}$/;
 
@@ -140,7 +146,8 @@ export async function POST(req: Request) {
       if (!undo) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
       const start = await ensureTaxonomy(ctx);
       const { budgets } = await loadBudgets(ctx);
-      const added = undo.added.categories.filter((a) => start.categories.some((c) => c.id === a.id)).map((a) => a.id);
+      // Only those still as the apply made them can go: one changed since stays.
+      const added = undo.added.categories.filter((a) => start.categories.some((c) => c.id === a.id && c.name === a.name && c.group === a.group)).map((a) => a.id);
       const usage = await usageOf(ctx, start, added);
       const done: { kept: UndoKept[] } = { kept: [] };
       const after = await changeTaxonomy(ctx, (t) => {
