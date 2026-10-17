@@ -398,6 +398,15 @@ describe('goals', () => {
     expect(rainy.target).toBeUndefined();
   });
 
+  test('a goals share whose every goal chosen is on a hidden account shows nothing, as a share of hidden accounts does, and records nothing', async () => {
+    await saveGoals();
+    await shareViews({ goals: { detail: 'progress', goals: [GOAL(2)] } });
+    expect(await partnerSees()).toEqual([]);
+    expect((await previewOf()).body).toEqual({ connection: pair, view: null });
+    const log = await fake.hget<any>(testKey('connections'), `${pair}|log`);
+    expect(await accessLogStore.get(ctx, log.id)).toBeNull();
+  });
+
   test('only goals of the owner’s, not archived, can be chosen; one already chosen stays chosen', async () => {
     await saveGoals();
     expect((await shareViews({ goals: { detail: 'progress', goals: ['someone-elses-goal'] } })).status).toBe(409);
@@ -515,6 +524,19 @@ describe('the preview', () => {
     expect(said('goal_contribution')).toBe('From the progress of Retire and when it is projected to be reached, they can work out about how much goes into it a month.');
     // Theirs only: never in what they are sent.
     expect(JSON.stringify(seen)).not.toContain('inferences');
+  });
+
+  test('when what they could work out can’t be worked out, it says so, and still shows what they see', async () => {
+    await saveGoals();
+    await shareViews({ goals: { detail: 'progress', goals: [GOAL(1)] } });
+    // A manual account's record damaged: the goals still read (that account's
+    // goal says it can't be), but the accounts the warnings go by can't.
+    await fake.hset(ctxKey('manual:accounts'), { manual_wallet: 'garbage' });
+    const preview = await quietly(() => previewOf());
+    expect(preview.status).toBe(200);
+    expect(preview.body.inferences_unavailable).toBe(true);
+    expect(preview.body.view.views.goals.goals.map((g: any) => g.name)).toEqual(['Rainy day']);
+    expect(preview.body.view.views).toEqual((await quietly(partnerSees))[0].views);
   });
 
   test('records nothing, and changes nothing in the owner’s container', async () => {

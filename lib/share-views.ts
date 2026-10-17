@@ -393,13 +393,16 @@ function goalLine(g: ApiGoal, s: GoalsShare): GoalLine {
 }
 
 /** The goals as shared, and what the preview's warnings go by of each
- *  (never sent to the one they are shared with). */
-async function goalsView(theirs: Ctx, s: GoalsShare): Promise<{ view: GoalsView; facts: FactGoal[] }> {
+ *  (never sent to the one they are shared with); null when none of those
+ *  chosen is shown, so the share says nothing of goals, as one whose
+ *  accounts are all hidden says nothing of accounts. */
+async function goalsView(theirs: Ctx, s: GoalsShare): Promise<{ view: GoalsView; facts: FactGoal[] } | null> {
   const read = await readGoals(theirs);
   const chosen = new Set(s.goals);
   // A goal deleted since is gone; an archived one counts nothing and is left
   // out; one on a hidden account is left out while it is hidden.
   const goals = read.goals.filter((g) => chosen.has(g.id) && !g.archived && g.state !== 'hidden');
+  if (goals.length === 0) return null;
   const lines = goals.map((g) => goalLine(g, s));
   return {
     view: { detail: s.detail, goals: lines },
@@ -415,9 +418,10 @@ export type ProjectedViews = { views: SharedViews; goalFacts: FactGoal[] };
 
 /**
  * Each kind `views` shares, projected from the owner's data (see the
- * header), all at once. Undefined when it shares none. A kind whose data
- * can't be read is Unreadable, and the rest are shown; anything else (storage
- * out of reach) throws.
+ * header), all at once. Undefined when it shares none, or none shows
+ * anything (goals whose every one chosen is archived, gone or on a hidden
+ * account). A kind whose data can't be read is Unreadable, and the rest are
+ * shown; anything else (storage out of reach) throws.
  */
 export async function projectViews(theirs: Ctx, views: ShareViews, now: number): Promise<ProjectedViews | undefined> {
   const kinds = sharedKinds(views);
@@ -441,8 +445,10 @@ export async function projectViews(theirs: Ctx, views: ShareViews, now: number):
           break;
         case 'goals': {
           const goals = await goalsView(theirs, views.goals!);
-          out.goals = goals.view;
-          goalFacts = goals.facts;
+          if (goals) {
+            out.goals = goals.view;
+            goalFacts = goals.facts;
+          }
           break;
         }
       }
@@ -455,7 +461,7 @@ export async function projectViews(theirs: Ctx, views: ShareViews, now: number):
   await Promise.all(kinds.map(read));
   const ordered: SharedViews = {};
   for (const kind of VIEW_KINDS) if (out[kind]) (ordered as Record<string, unknown>)[kind] = out[kind];
-  return { views: ordered, goalFacts };
+  return Object.keys(ordered).length > 0 ? { views: ordered, goalFacts } : undefined;
 }
 
 // ---- For the owner's own settings ----

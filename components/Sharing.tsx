@@ -129,7 +129,7 @@ export type SharedView = { accounts: SharedAccount[]; expires_at: string | null;
 export type SharedPayload = { shared: (SharedView & { connection: string; label: string })[] };
 /** "What they see" (lib/sharing.ts previewShare): `view` null when they see
  *  nothing; `inferences`, what they could work out from all of it. */
-export type SharePreview = { connection: string; view: SharedView | null; unreadable?: true; inferences?: Inference[] };
+export type SharePreview = { connection: string; view: SharedView | null; unreadable?: true; inferences?: Inference[]; inferences_unavailable?: true };
 export type Invite = { url: string; expires_at: string } | null;
 
 const LEVEL_LABEL: Record<Choice, string> = {
@@ -792,7 +792,11 @@ export function PreviewView({
             }
           />
           {/* What they could work out from all of it: every warning needs another kind shared. */}
-          {preview.view.views && <InferenceNotes found={preview.inferences ?? []} />}
+          {preview.inferences_unavailable ? (
+            <p className="stale-note">What they could work out from all of this couldn’t be worked out just now. Try again later.</p>
+          ) : (
+            preview.view.views && <InferenceNotes found={preview.inferences ?? []} />
+          )}
         </>
       ) : (
         <p className="empty-note">{nothing}</p>

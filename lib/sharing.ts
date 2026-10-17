@@ -131,15 +131,14 @@ import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
 import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
-import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
+import { UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
 import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
 import { parseViews, sharedKinds, viewsChangeProblem, viewsOfChange, viewsReadOf, isUnreadable, type ShareViews, type SharedViews } from './share-kinds';
 import { inferences, type FactAccount, type FactGoal, type Inference } from './share-inference';
-// Whether an error says the owner's stored data can't be decoded (so their
-// own read fails the same way and they see nothing), as opposed to storage or
-// another service being out of reach for a moment: one rule for the accounts
-// here and the other kinds there.
+// dataUnreadable: whether an error says the owner's stored data can't be
+// decoded, as opposed to storage being out of reach; one rule for the
+// accounts here and the other kinds there.
 import { dataUnreadable, investmentAccountIds, projectViews, shareableGoals } from './share-views';
 
 export type { Level } from './share-rules';
@@ -1125,8 +1124,9 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
  *  `unreadable` when my shared data can't be decoded: they see nothing then
  *  either. `inferences`: what they could work out from all of what they are
  *  shown together, beyond what it shows (lib/share-inference.ts); mine only,
- *  never part of what they are sent. */
-export type SharePreview = { connection: string; view: ShareView | null; unreadable?: true; inferences?: Inference[] };
+ *  never part of what they are sent. `inferences_unavailable` when that
+ *  couldn't be worked out just now (what they see is still shown). */
+export type SharePreview = { connection: string; view: ShareView | null; unreadable?: true; inferences?: Inference[]; inferences_unavailable?: true };
 
 export async function previewShare(me: string, id: string, now: number = Date.now()): Promise<SharePreview> {
   const c = await connectionOf(me, id);
@@ -1134,8 +1134,14 @@ export async function previewShare(me: string, id: string, now: number = Date.no
   try {
     const shown = await projectShare(c, me, now);
     if (!shown) return { connection: c.id, view: null };
-    const found = await inferencesOf(shown, c.shares[me]!);
-    return { connection: c.id, view: shown.view, ...(found.length > 0 ? { inferences: found } : {}) };
+    // What they could work out is said beside what they see, never instead
+    // of it: when it can't be worked out, the preview says so and still shows
+    // what they see.
+    const found = await inferencesOf(shown, c.shares[me]!).catch((err) => {
+      console.error('Sharing: what they could work out could not be worked out for a preview', err instanceof Error ? err.name : err);
+      return null;
+    });
+    return { connection: c.id, view: shown.view, ...(found === null ? { inferences_unavailable: true as const } : found.length > 0 ? { inferences: found } : {}) };
   } catch (err) {
     // Anything else (storage, Clerk) says nothing of what they see: the
     // route answers it as an error.

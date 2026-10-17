@@ -315,6 +315,17 @@ describe('the preview', () => {
     expect(page).toContain('they can estimate your income');
   });
 
+  test('when what they could work out couldn’t be worked out, says so beside what they see', () => {
+    const page = text(
+      renderToStaticMarkup(
+        <PreviewView who="Pat" expiresAt={null} preview={{ connection: 'c1', view: { accounts: [], expires_at: null, views: VIEWS }, inferences_unavailable: true }} error="" unsaved={false} />
+      )
+    );
+    expect(page).toContain('What they could work out from all of this couldn’t be worked out just now.');
+    expect(page).toContain('Rainy day');
+    expect(page).not.toContain('Any total says something');
+  });
+
   test('with amounts hidden, no figure', () => {
     const html = hidden(() =>
       renderToStaticMarkup(<PreviewView who="Pat" expiresAt={null} preview={{ connection: 'c1', view: { accounts: [], expires_at: null, views: VIEWS } }} error="" unsaved={false} />)
