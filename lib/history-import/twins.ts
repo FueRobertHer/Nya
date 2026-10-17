@@ -38,7 +38,7 @@ import { effectiveLinks, getLinks } from '../link-core';
 import { liveAccountIds } from '../links';
 import { loggable } from '../log-safe';
 import { countedRows, readImported } from './read';
-import { importedTwinsStore, type ImportedTwins } from './store';
+import { importedTwinsStore, importedTxnStore, type ImportedTwins } from './store';
 
 /**
  * A connection's pairs as they should be kept now: those kept before, less
@@ -85,10 +85,14 @@ const samePairs = (a: ImportedTwins | null, b: ImportedTwins | null): boolean =>
  */
 export async function keepImportedTwins(ctx: Ctx, item: StoredItem, before: Record<string, StoredTxn>, after: Record<string, StoredTxn>): Promise<void> {
   try {
+    // Nothing imported into any account, and nothing kept for this
+    // connection: nothing to keep or drop, found by two small reads.
+    const [books, kept] = await Promise.all([importedTxnStore.count(ctx), importedTwinsStore.has(ctx, item.item_id)]);
+    if (books === 0 && !kept) return;
     const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
     const read = await readImported(ctx, { items: [item], links: effectiveLinks(links, live), bankStates: new Map([[item.item_id, before]]) });
-    // Nothing imported, or nothing on this connection: nothing to keep, and
-    // nothing kept here can still pair.
+    // What decides the rule's pairs can't be read: nothing is kept, and the
+    // pairs stay as they were.
     if (read.unresolved || read.summariesUnreadable.length > 0) return;
     const observed = new Map<string, string>();
     for (const a of read.accounts) {
@@ -101,6 +105,6 @@ export async function keepImportedTwins(ctx: Ctx, item: StoredItem, before: Reco
     if (samePairs(nextTwins(current, observed, after, held), current)) return;
     await importedTwinsStore.update(ctx, item.item_id, (now) => nextTwins(now, observed, after, held));
   } catch (err) {
-    console.warn(`history import: which of ${item.institution_name}'s transactions stand for imported ones could not be kept`, loggable(err));
+    console.warn('history import: which of a connection’s transactions stand for imported ones could not be kept', loggable(err));
   }
 }
