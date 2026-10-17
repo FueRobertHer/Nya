@@ -585,6 +585,9 @@ describe('the summary’s words', () => {
     expect(subject).toBe('Your week in Nya: October 5 to 11');
     expect(text).toContain("This week's spending isn't compared, as not all of its transactions are in: Chase's last came in on Saturday, October 10 and Amex's haven't come in.");
     expect(text).not.toContain('Nothing needs your attention');
+    // Those that never came in, together; a name that can't be carried as "a bank".
+    const never = quietFacts({ spending: { kind: 'behind', sources: [{ name: 'Broker', since: null }, { name: 'NewBank', since: null }, { name: '5th Bank', since: '2026-10-09' }] } });
+    expect(composeWeekly(never, opts()).text).toContain("not all of its transactions are in: a bank's last came in on Friday, October 9 and Broker's and NewBank's haven't come in.");
     for (const [kind, words] of [
       [{ kind: 'too_early', why: 'history' }, "Nya doesn't have enough weeks of transactions yet"],
       [{ kind: 'too_early', why: 'importing' }, 'Nya is still bringing in older transactions'],

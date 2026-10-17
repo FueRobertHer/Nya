@@ -127,10 +127,10 @@ function spendingText(s: SpendingFact, year: string): string {
         ? "Nya is still bringing in older transactions, so this week's spending isn't compared with a usual week yet."
         : "Nya doesn't have enough weeks of transactions yet to say how this week's spending compares with a usual week.";
     case 'behind': {
-      const parts = s.sources.map((src) => {
-        const name = nameOr(src.name, 'a bank');
-        return src.since ? `${name}'s last came in on ${dayText(src.since, year)}` : `${name}'s haven't come in`;
-      });
+      // Each that came in on a day, by itself; those that never did, together.
+      const dated = s.sources.filter((src) => src.since).map((src) => `${nameOr(src.name, 'a bank')}'s last came in on ${dayText(src.since!, year)}`);
+      const never = [...new Set(s.sources.filter((src) => !src.since).map((src) => `${nameOr(src.name, 'a bank')}'s`))];
+      const parts = [...dated, ...(never.length > 0 ? [`${joined(never)} haven't come in`] : [])];
       return `This week's spending isn't compared, as not all of its transactions are in: ${joined(parts)}.`;
     }
     case 'none_come_in':
