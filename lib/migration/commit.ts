@@ -225,6 +225,7 @@ export async function commitMigration(
           order: context.order,
           imports,
           bank_from: context.bank_from,
+          twins: context.twins,
           choices: t.choices,
           reviewed: reviewDigest(t.linked!.review),
           ids_minted: ids,

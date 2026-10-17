@@ -18,13 +18,14 @@
 
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
-import { compactMoney, formatMoney, signedMoney } from "@/lib/format";
+import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
+import { Masked } from "./HideAmounts";
 import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
 import { monthGapNotes, type Incomplete, type Stopped } from "@/lib/month-coverage";
 import { missingEmptyNotes, missingMonthNotes, noSpending, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from "@/lib/no-transactions";
 import { sourceLabel } from "@/lib/manual-txn-input";
-import { IMPORTED_TXN_PREFIX, importedRowsNote } from "@/lib/history-import/view";
+import { IMPORTED_TXN_PREFIX, importedChangedNote, importedRowsNote } from "@/lib/history-import/view";
 import { isConnectorKind } from "@/lib/connectors/types";
 import { displayName, filedId, indexTaxonomy, type CategoryKind, type Taxonomy } from "@/lib/categories";
 import CategoryRollup from "./CategoryRollup";
@@ -104,6 +105,9 @@ export type Txn = {
   payment_reference: string | null;
   // As in lib/transactions.ts: on manual rows, and on rows the person excluded.
   source?: string;
+  // As in lib/transactions.ts (#52): on a bank row standing for a row
+  // imported from the bank's file at another amount, that row's amount.
+  imported_amount?: number;
   account_id?: string;
   note?: string | null;
   excluded?: boolean | null;
@@ -700,9 +704,11 @@ export default function MonthBreakdown({
                     setFlowPick(null);
                   }}
                   aria-pressed={m === selected}
-                  aria-label={`${monthLabel(m)}: net ${formatMoney(net, currency)}`}
+                  aria-label={spoken(`${monthLabel(m)}: net ${formatMoney(net, currency)}`)}
                 >
-                  <span className="trend-val">{fmtCompactSigned(net, currency)}</span>
+                  <span className="trend-val">
+                    <Masked>{fmtCompactSigned(net, currency)}</Masked>
+                  </span>
                   <span
                     className={`trend-bar${net >= 0 ? " up" : " down"}`}
                     style={{
@@ -732,19 +738,21 @@ export default function MonthBreakdown({
           <div>
             <div className="total-label">In</div>
             <div className="summary-value inflow">
-              {formatMoney(moneyIn, currency)}
+              <Masked>{formatMoney(moneyIn, currency)}</Masked>
             </div>
           </div>
           <div>
             <div className="total-label">Out</div>
-            <div className="summary-value">{formatMoney(moneyOut, currency)}</div>
+            <div className="summary-value">
+              <Masked>{formatMoney(moneyOut, currency)}</Masked>
+            </div>
           </div>
           <div>
             <div className="total-label">Net</div>
             <div
               className={`summary-value${net < 0 ? " negative" : net > 0 ? " inflow" : ""}`}
             >
-              {formatMoney(net, currency)}
+              <Masked>{formatMoney(net, currency)}</Masked>
             </div>
           </div>
         </div>
@@ -792,7 +800,9 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / maxCat) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{formatMoney(sum, currency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
@@ -823,7 +833,9 @@ export default function MonthBreakdown({
                         style={{ width: `${total > 0 ? (sum / total) * 100 : 0}%` }}
                       />
                     </div>
-                    <span className="cat-val">{formatMoney(sum, currency)}</span>
+                    <span className="cat-val">
+                      <Masked>{formatMoney(sum, currency)}</Masked>
+                    </span>
                   </div>
                 ))}
               </div>
@@ -847,7 +859,9 @@ export default function MonthBreakdown({
                     style={{ width: `${(sum / topCities[0][1]) * 100}%` }}
                   />
                 </div>
-                <span className="cat-val">{formatMoney(sum, currency)}</span>
+                <span className="cat-val">
+                  <Masked>{formatMoney(sum, currency)}</Masked>
+                </span>
               </div>
             ))}
           </div>
@@ -915,7 +929,9 @@ export default function MonthBreakdown({
                 <Fragment key={g.date}>
                   <tr className="txn-date-header">
                     <td>{fmtTxnDate(g.date)}</td>
-                    <td className="num">{fmtDayNet(g.nets, currency)}</td>
+                    <td className="num">
+                      <Masked>{fmtDayNet(g.nets, currency)}</Masked>
+                    </td>
                   </tr>
                   {g.entries.map((t, i) => (
                     <Fragment key={t.transaction_id}>
@@ -987,6 +1003,11 @@ export default function MonthBreakdown({
                               </div>
                             )}
                             {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
+                            {/* A bank row standing for a row imported from
+                                its file, which the bank changed since (#52). */}
+                            {t.imported_amount !== undefined && (
+                              <div className="excluded-tag">{importedChangedNote(t, (n) => formatMoney(n, currencyOf(t)))}</div>
+                            )}
                           </div>
                         </div>
                         {recatId === t.transaction_id && (
@@ -1173,7 +1194,7 @@ export default function MonthBreakdown({
                       <td
                         className={`num${t.amount < 0 ? " inflow" : ""}${t.excluded === true || t.group_outside ? " excluded" : ""}${t.split_parts ? " split-whole" : ""}`}
                       >
-                        {fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}
+                        <Masked>{fmtTxnAmount(t.amount, currencyOf(t) ?? currency)}</Masked>
                       </td>
                     </tr>
                     {t.split_parts && (

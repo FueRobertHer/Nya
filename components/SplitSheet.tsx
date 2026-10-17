@@ -10,18 +10,21 @@
 //
 // When the bank changed the amount since the split, what changed is shown as
 // left to split (the read layer keeps it as a part of its own until then,
-// lib/split-rows.ts), so saving places it.
+// lib/split-rows.ts), so saving places it; and so is the difference on a row
+// imported from a file whose split was saved at the amount of the bank's
+// transaction that stood for it, once none does.
 
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, hideFiguresIn } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
 import { categoryById, displayName, indexTaxonomy, type Taxonomy } from '@/lib/categories';
 import { MAX_PARTS, MIN_PARTS, PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
-import { bankKept, splitKeptUnder } from './SplitRows';
+import { bankKept, splitAtBanksAmount, splitKeptUnder } from './SplitRows';
 
 /** "Oct 5": a transaction's day as the list shows it. */
 function shownDay(iso: string): string {
@@ -183,13 +186,22 @@ export default function SplitSheet({
   return (
     <Sheet open title={split ? 'Edit split' : 'Split transaction'} onClose={() => !saving && onClose()}>
       <p className="panel-note" style={{ marginTop: 0 }}>
-        {t.name}: {formatMoney(Math.abs(t.amount), currency)} {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
+        {t.name}: <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> {direction === 'out' ? 'out' : 'in'}, on {shownDay(t.date)}. Give each part its own category: the parts
         count in budgets and reports, and the transaction stays one, as the bank has it.
       </p>
       {changed && changed.split_remainder && (
         <div className="stale-note">
-          {bankKept(t) ? 'The bank changed this amount' : 'This amount changed'} from {formatMoney(Math.abs(changed.split_remainder.was), currency)} to{' '}
-          {formatMoney(Math.abs(t.amount), currency)} since you split it. Place the difference below.
+          {splitAtBanksAmount(t) ? (
+            <>
+              You split this at <Masked>{formatMoney(Math.abs(changed.split_remainder.was), currency)}</Masked>, the amount of the bank’s transaction that stood for it. None does
+              now, so it counts at your file’s <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked>. Place the difference below.
+            </>
+          ) : (
+            <>
+              {bankKept(t) ? 'The bank changed this amount' : 'This amount changed'} from <Masked>{formatMoney(Math.abs(changed.split_remainder.was), currency)}</Masked> to{' '}
+              <Masked>{formatMoney(Math.abs(t.amount), currency)}</Masked> since you split it. Place the difference below.
+            </>
+          )}
         </div>
       )}
       <div className="sheet-form">
@@ -253,9 +265,15 @@ export default function SplitSheet({
         )}
       </div>
       <p className={`split-left${left === 0 ? ' done' : ''}`} role="status">
-        {left === 0 ? 'The parts add up to the transaction.' : left > 0 ? `${money(left)} left to split` : `${money(left)} more than the transaction`}
+        <Masked>{left === 0 ? 'The parts add up to the transaction.' : left > 0 ? `${money(left)} left to split` : `${money(left)} more than the transaction`}</Masked>
       </p>
-      {error && <div className="error">{error}</div>}
+      {/* The server's words can give the parts' figures, with no currency to
+          tell them by: all its figures are hidden while amounts are. */}
+      {error && (
+        <div className="error">
+          <Masked>{hideFiguresIn(error)}</Masked>
+        </div>
+      )}
       <div className="button-pair">
         <button onClick={save} disabled={!ready || saving}>
           {saving ? 'Saving…' : 'Save split'}

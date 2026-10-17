@@ -419,6 +419,24 @@ describe('the split sheet', () => {
     expect(page).toContain('Unsplit');
   });
 
+  test('a row imported from a file, split at the amount of the bank’s transaction that stood for it, says so once none does, never that its amount changed', () => {
+    const id = 'imported-txn:0b7e1f5c-1d2e-4f3a-9b8c-7d6e5f4a3b2c';
+    const rows = expandSplitsAndGroups([txn(id, { amount: 150, source: 'import:ofx' })] as any, {
+      splits: new Map([[id, record(160.5, [['groceries', 110.5], ['household', 50]])]]),
+      splitsUnknown: new Set(),
+      groups: new Map(),
+      groupsUnknown: 0,
+      ix,
+    }).rows as unknown as Txn[];
+    const whole = bankRows(rows)[0] as Txn;
+    expect(entryNotice(whole)).toBe(
+      'You split this at the amount of the bank’s transaction that stood for it. None does now, so it counts at your file’s amount, with the difference as a part of its own until you edit the split.'
+    );
+    const page = text(renderToStaticMarkup(<SplitSheet t={whole} taxonomy={taxonomy} onClose={() => {}} onSaved={() => {}} />));
+    expect(page).toContain('You split this at $160.50, the amount of the bank’s transaction that stood for it. None does now, so it counts at your file’s $150.00. Place the difference below.');
+    expect(page).not.toContain('This amount changed');
+  });
+
   test('a part is read in the currency’s own units: eight places for one without an ISO code, whole yen, cents', () => {
     expect(partUnits('0.00000001', 'BTC')).toBe(1);
     expect(partUnits('0.000000001', 'BTC')).toBeNull();

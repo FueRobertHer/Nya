@@ -13,6 +13,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
+import { Masked } from './HideAmounts';
 import type { Txn } from './MonthBreakdown';
 import { formatMoney, signedMoney } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
@@ -219,7 +220,7 @@ export default function GroupSheet({
           <span className="excluded-tag">{t.excluded_by_rule ? 'A rule hides it' : 'You excluded it'}: in the group, it counts through the group.</span>
         )}
       </span>
-      <span className={`num${t.amount < 0 ? ' inflow' : ''}`}>{signedMoney(-t.amount, currency, { always: true })}</span>
+      <span className={`num${t.amount < 0 ? ' inflow' : ''}`}><Masked>{signedMoney(-t.amount, currency, { always: true })}</Masked></span>
     </label>
   );
 
@@ -256,7 +257,7 @@ export default function GroupSheet({
         </div>
       </div>
       <p className="split-left" role="status">
-        {groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}
+        <Masked>{groupStatus({ count: chosen.size, net, currency, category: category ? { name: category.name, kind: groupOf(ix, category).kind } : null })}</Masked>
       </p>
       {error && <div className="error">{error}</div>}
       <div className="button-pair">

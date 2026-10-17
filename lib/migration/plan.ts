@@ -477,6 +477,7 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         banks: context.banks,
         order: context.order,
         bankFrom: context.bank_from,
+        twins: context.twins,
         covers,
         imports,
         choices: chosenAnswers,
