@@ -131,6 +131,25 @@ describe('gone with the transaction', () => {
     expect([...fake.hashes.get(ctxKey('transaction-approvals'))!.keys()].sort()).toEqual(['imported-txn:abc', 't2', 't3']);
   });
 
+  test('a disconnect’s prune forgets bank transactions no Item holds, never while a store can’t be read; a manual row’s goes with the row', async () => {
+    const { pruneSplitsAndGroups, forgetSplitsAndGroups } = await import('@/lib/split-gone');
+    await store.approve(ctx, [input('t_kept'), input('t_gone'), input('manual-txn:6b1f3e2a-1c4d'), input('imported-txn:abc')], NOW);
+    // A store that can't be read: nothing goes.
+    await pruneSplitsAndGroups(ctx, async () => null);
+    expect(await approvalStore.count(ctx)).toBe(4);
+    await pruneSplitsAndGroups(ctx, async () => new Set(['t_kept']));
+    expect([...fake.hashes.get(ctxKey('transaction-approvals'))!.keys()].sort()).toEqual(['imported-txn:abc', 'manual-txn:6b1f3e2a-1c4d', 't_kept']);
+    // Deleted with its row: a manual row's, or an undone import's.
+    await forgetSplitsAndGroups(ctx, ['manual-txn:6b1f3e2a-1c4d', 'imported-txn:abc']);
+    expect([...fake.hashes.get(ctxKey('transaction-approvals'))!.keys()]).toEqual(['t_kept']);
+  });
+
+  test('nothing ever approved reads nothing more than a count', async () => {
+    fake.ops = 0;
+    expect(await store.readApprovalsForDisplay(ctx, ['t1', 't2'])).toEqual({ approvals: new Map(), unknown: new Set() });
+    expect(fake.ops).toBe(1);
+  });
+
   test('a pending transaction’s approval moves to the posted one that replaced it, unless that has its own', async () => {
     await store.approve(ctx, [input('p1', { pending: true }), input('p2', { pending: true }), input('q2', { name: 'Own' }), input('p3', { pending: true })], NOW);
     await fake.hset(ctxKey('transaction-approvals'), { q3: DAMAGED });

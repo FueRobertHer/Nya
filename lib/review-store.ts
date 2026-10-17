@@ -209,6 +209,9 @@ export class ApprovalError extends Error {
 export async function readApprovalsForDisplay(ctx: Ctx, ids: Iterable<string>): Promise<{ approvals: Map<string, Approval>; unknown: Set<string> }> {
   const wanted = [...new Set([...ids].filter(isApprovalId))];
   const unknown = new Set<string>();
+  // Most people never approve anything: one count (readable or not) saves
+  // reading the rows' ids one by one on every load.
+  if (wanted.length === 0 || (await approvalStore.count(ctx)) === 0) return { approvals: new Map(), unknown };
   // getMany is strict and names every record it can't use: those are set
   // aside and the rest read again (twice more at most, should a record be
   // damaged in between).

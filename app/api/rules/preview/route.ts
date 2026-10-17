@@ -16,10 +16,12 @@ import { bankRows } from '@/lib/split-rows';
 // tab shows them, and a few of them, newest first.
 //
 // POST { rule: { conditions, actions } }, checked as a save checks it.
-// Answers { matches, keep_category, keep_name, samples }: how many it
-// matches; of those, how many keep a category the person chose for them, and
-// a name they gave the merchant (a choice made on a row wins over every
-// rule); and up to SAMPLES of them as they show now.
+// Answers { matches, keep_category, keep_name, keep_approved, samples }: how
+// many it matches; of those, how many keep a category the person chose for
+// them, and a name they gave the merchant (a choice made on a row wins over
+// every rule), and how many stay where the person approved them (the review
+// queue: the rule's category is offered there); and up to SAMPLES of them as
+// they show now.
 //
 // The rule is read alone: what other rules do is not counted, since which of
 // two rules decides a row depends on the order the person gives them. From
@@ -68,6 +70,9 @@ export async function POST(req: Request) {
     return NextResponse.json({
       matches: matched.length,
       keep_category: input.actions.set_category ? matched.filter((t) => subjects.get(t.transaction_id)!.keeps_category).length : 0,
+      // Approved ones stay where they were approved: the rule's category is
+      // offered on each, never applied unasked (lib/review-layer.ts).
+      keep_approved: input.actions.set_category ? matched.filter((t) => !subjects.get(t.transaction_id)!.keeps_category && t.reviewed_at !== undefined).length : 0,
       keep_name: input.actions.set_name ? matched.filter((t) => subjects.get(t.transaction_id)!.keeps_name).length : 0,
       samples: matched.slice(0, SAMPLES).map((t) => ({
         transaction_id: t.transaction_id,

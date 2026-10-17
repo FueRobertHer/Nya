@@ -199,7 +199,10 @@ describe('approving', () => {
     next = { added: [plaidRow('t_costco2', { amount: 80, date: daysAgo(2) })], modified: [], removed: [] };
     await resync();
     expect((await approveShown(['t_costco'])).status).toBe(200);
-    const made = await route('rules', 'POST', { action: 'add', rule: { conditions: [{ field: 'name', op: 'contains', value: 'costco' }], actions: { set_category: catId('travel') } } });
+    // Before it is saved, the preview says so.
+    const rule = { conditions: [{ field: 'name', op: 'contains', value: 'costco' }], actions: { set_category: catId('travel') } };
+    expect((await route('rules/preview', 'POST', { rule })).body).toMatchObject({ matches: 2, keep_category: 0, keep_approved: 1 });
+    const made = await route('rules', 'POST', { action: 'add', rule });
     expect(made.status).toBe(200);
     const rows = (await listed()).transactions;
     const kept = find(rows, 't_costco');

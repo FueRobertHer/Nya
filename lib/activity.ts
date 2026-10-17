@@ -47,6 +47,14 @@
 // narrows it after them (`history`), so an excluded row never keeps another
 // from being used.
 //
+// THE REVIEW QUEUE AND MERCHANTS' DEFAULTS are applied with the rules in
+// finishActivity (lib/review-layer.ts, through lib/txn-layers.ts), from the
+// queue's settings and the defaults, read beside the rest, and the approvals
+// of the rows read, by id (lib/review-read.ts): a default files what nothing
+// more specific does, an approved transaction stays where it was approved,
+// and what needs review is marked; never written into a stored row, so
+// nothing about them is cached.
+//
 // SPLITS AND GROUPS (#39) are applied last in finishActivity, after the
 // cache, the person's layers and the rules, once the rows are filed
 // (lib/split-rows.ts): a split transaction is answered as its parts and a

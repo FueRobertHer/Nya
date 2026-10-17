@@ -207,6 +207,20 @@ function CardDeck({ txns, taxonomy, tags, currency, review, onClose, onSplit, on
   };
 
   const onKeyDown = (e: React.KeyboardEvent) => {
+    // Tab stays inside: the page behind is covered, so nothing there is for now.
+    if (e.key === 'Tab' && root.current) {
+      const focusable = [...root.current.querySelectorAll<HTMLElement>('button:not([disabled]), select:not([disabled]), input:not([disabled]), [tabindex="0"]')];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (first && last && e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (first && last && !e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+      return;
+    }
     const k = cardKey(e, e.target === cardRef.current);
     if (!k) return;
     e.preventDefault();
