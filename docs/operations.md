@@ -270,7 +270,7 @@ The key goes once nothing needs it any more (counting reads through it, and disc
 - **Instances running at the time** may hold the key in memory until they end. They read only the live database, where nothing of the account is left.
 - **What is kept for good**: the tombstone, that a container id existed and the day its key was destroyed.
 
-**What a rollback sees.** The release before reads everything this one writes, so rolling back is safe at any time, with no switch to turn off first:
+**What a rollback sees.** The release before reads everything this one writes, so rolling back is safe at any time, with no switch to turn off first. `test/release-before.test.ts` holds this release to that with the release before's own code (`test/fixtures/release-before`, byte for byte): its decrypt, its key store reader, its export and verifier, its rotation, its pass's plain-text check and its first key, against what this release writes. When the release before changes, copy its files there and change their hashes in the test.
 
 - every value reads as before: container keys are ordinary entries of the key store to it. The isolation check is off while it runs: its `decrypt` takes no `Ctx`, so a value copied from one container into another reads there;
 - it writes under the environment's active key, containers with a key of their own included. Rolling forward, those still read (the environment's keys are accepted in every container), the nightly count finds them, and the next pass moves them back;
