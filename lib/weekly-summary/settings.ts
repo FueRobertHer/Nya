@@ -14,7 +14,7 @@
 // checked for its form only (isWeeklySetting): a name another runtime's
 // time-zone data doesn't know must still read, and the daily job then says it
 // can't place it rather than guessing (lib/weekly-summary/job.ts). A save
-// checks that this runtime knows it (parseWeeklySetting).
+// checks that this runtime knows it (parseWeeklyChoice).
 
 import { canonicalTimeZone } from '../report/period';
 

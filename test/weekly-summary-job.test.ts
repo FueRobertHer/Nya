@@ -226,6 +226,19 @@ describe('when it is due', () => {
     expect(await weeklyStateStore.get(TEST_CTX)).toBeNull();
   });
 
+  test('never for a container being deleted, or deleted: its setting goes with it', async () => {
+    await turnOn();
+    // Deleting an account archives its container first (lib/account-deletion.ts).
+    const archived = registry(TEST_CONTAINER).map((c) => ({ ...c, status: 'archived' as const }));
+    await sendWeeklySummaries(archived, { clock: () => MONDAY, sleep: async () => {}, fetch: resend, recipients: async () => ['me@example.com'], sync: async () => {}, gather: gather as never, ready: () => true });
+    expect(delivered).toEqual([]);
+    // Then sweeps every key in it: the setting with them, and nothing is due.
+    for (const key of [...(fake as any).strings.keys()]) if (key.startsWith(ctxKey(''))) await fake.del(key);
+    expect(await weeklySettingStore.get(TEST_CTX)).toBeNull();
+    await run(MONDAY);
+    expect(delivered).toEqual([]);
+  });
+
   test('only once the day’s snapshot is done', async () => {
     await turnOn();
     await run(MONDAY, { ready: () => false });

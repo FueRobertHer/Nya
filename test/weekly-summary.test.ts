@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { CATCH_UP_DAYS, dueSendDay, sendDayOn, todayIn, weekBefore, weekdayOf } from '@/lib/weekly-summary/week';
+import { CATCH_UP_DAYS, MIN_NEW_DAYS, dueSendDay, sendDayOn, todayIn, weekBefore, weekdayOf } from '@/lib/weekly-summary/week';
 import {
   billsFact,
   budgetFact,
@@ -60,6 +60,23 @@ describe('the week', () => {
     expect(dueSendDay('2026-10-12', 1, null, '2026-10-12')).toBe('2026-10-12');
     // Not the send day: nothing.
     expect(dueSendDay('2026-10-16', 1, '2026-10-12', '2026-09-01')).toBeNull();
+  });
+
+  test('a day moved after a summary went never sends most of its week again', () => {
+    expect(MIN_NEW_DAYS).toBe(4);
+    // Monday, October 12 went; then moved to Tuesday: not the next day, which
+    // would repeat six of its days, but the Tuesday after.
+    expect(dueSendDay('2026-10-13', 2, '2026-10-12', '2026-09-01')).toBeNull();
+    expect(dueSendDay('2026-10-20', 2, '2026-10-12', '2026-09-01')).toBe('2026-10-20');
+    // To Thursday, three days on: still most of the same days. To Friday, four
+    // days on, most of its week is new: it goes.
+    expect(dueSendDay('2026-10-15', 4, '2026-10-12', '2026-09-01')).toBeNull();
+    expect(dueSendDay('2026-10-16', 5, '2026-10-12', '2026-09-01')).toBe('2026-10-16');
+    // To Sunday, six days on: it goes.
+    expect(dueSendDay('2026-10-18', 0, '2026-10-12', '2026-09-01')).toBe('2026-10-18');
+    // Moved earlier in the week before this week's went: Monday, October 5
+    // went, moved to Saturday on Thursday: Saturday, October 10 is five days on.
+    expect(dueSendDay('2026-10-10', 6, '2026-10-05', '2026-10-08')).toBe('2026-10-10');
   });
 
   test('catches up on the days after its send day, unless the setting changed since', () => {

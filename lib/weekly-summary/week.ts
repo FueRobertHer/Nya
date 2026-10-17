@@ -21,6 +21,12 @@
 // failed until the next day). A setting changed since the day began waits for
 // the next send day instead: turning it on, or moving it, never brings a late
 // one at once.
+//
+// NEVER A WEEK OVER AGAIN. Moving the day can bring a send day only days after
+// the last summary went: Monday's sent, then moved to Tuesday, would send
+// six of the same days again the next day. So a summary goes only when at
+// least MIN_NEW_DAYS of its seven days weren't in the one before; otherwise
+// the first to go is the next week's.
 
 import { addDays } from '../recurring';
 import { dayIn, daysFrom } from '../report/period';
@@ -28,6 +34,9 @@ import type { Weekday } from './settings';
 
 /** Days after its send day a summary may still go (see the header). */
 export const CATCH_UP_DAYS = 2;
+/** The fewest of a summary's seven days that weren't in the one before it
+ *  (see NEVER A WEEK OVER AGAIN). */
+export const MIN_NEW_DAYS = 4;
 
 /** The day of the week of a calendar day (YYYY-MM-DD), 0 for Sunday. */
 export function weekdayOf(day: string): Weekday {
@@ -54,14 +63,15 @@ export function todayIn(now: number, zone: string): string | null {
  * The send day of the summary due today, or null when none is (see WHEN ONE
  * IS DUE): today is the person's send day, or one of the CATCH_UP_DAYS after
  * it with the setting chosen before it began; and no summary went for it, or
- * for a later send day (`sent`). `chosenOn` is the day, on the person's
- * calendar, the setting was last changed.
+ * for a send day fewer than MIN_NEW_DAYS before it (`sent`), which covers a
+ * later one too. `chosenOn` is the day, on the person's calendar, the setting
+ * was last changed.
  */
 export function dueSendDay(today: string, weekday: Weekday, sent: string | null, chosenOn: string | null): string | null {
   const day = sendDayOn(today, weekday);
   const late = daysFrom(day, today);
   if (late > CATCH_UP_DAYS) return null;
   if (late > 0 && (chosenOn === null || chosenOn >= day)) return null;
-  if (sent !== null && sent >= day) return null;
+  if (sent !== null && daysFrom(sent, day) < MIN_NEW_DAYS) return null;
   return day;
 }

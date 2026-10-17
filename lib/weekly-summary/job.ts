@@ -17,7 +17,8 @@
 //
 // ONE A WEEK, NEVER TWICE. The week's send day is recorded once the email
 // service accepted the summary (weekly-summary-state), and a week recorded is
-// never sent again by any run. Each summary carries an idempotency key built
+// never sent again by any run, nor, after a move of the day, one that would
+// mostly repeat it (week.ts). Each summary carries an idempotency key built
 // from the container and the week (hashed, so it names neither), which Resend
 // honours for 24 hours: one whose answer never arrived, sent again by the next
 // run, is not delivered twice. Resend refuses the same key with a different
