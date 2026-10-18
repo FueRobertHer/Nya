@@ -6,9 +6,12 @@
 // for is whatever the server named), so every request is held to these rules:
 //
 //   - https only, on any port;
-//   - no credentials in the URL itself: the caller passes them separately,
-//     and they are sent as an Authorization header only to the URL's own
-//     origin (scheme, host and port), never to a host a redirect names;
+//   - no credentials in the URL itself: the caller passes them separately
+//     (a user name and password, sent as an Authorization header, or an API
+//     key, sent in a header of its own), and they are sent only to the URL's
+//     own origin (scheme, host and port), or to the few others the caller
+//     names as the same service's (`trustedOrigins`: Lunch Flow's site at
+//     its www name), never to another host a redirect names;
 //   - every address the host resolves to must be public
 //     (lib/connectors/net-guard.ts), checked after DNS resolution and pinned:
 //     the connection goes to the address that was checked, through the
@@ -103,14 +106,24 @@ export class RequestFailedError extends Error {
 
 export type GuardedRequest = {
   method: 'GET' | 'POST';
-  /** No credentials in it: pass them as `auth`. */
+  /** No credentials in it: pass them as `auth` or `key`. */
   url: URL;
-  /** Sent as HTTP Basic authorization, to `url`'s origin only. */
+  /** Sent as HTTP Basic authorization, to `url`'s origin (or a trusted one) only. */
   auth?: { user: string; password: string };
+  /** An API key, sent in the header named, to `url`'s origin (or a trusted
+   *  one) only. The header is one of the service's own (x-api-key), never one
+   *  this module sets itself. */
+  key?: { header: string; value: string };
+  /** Other origins (https://host[:port]) that are the same service as `url`'s,
+   *  which a redirect may lead to with the credentials. None by default. */
+  trustedOrigins?: readonly string[];
   accept: string;
   timeoutMs: number;
   maxBytes: number;
 };
+
+/** The headers this module sets itself, which a key's header may never be. */
+const OWN_HEADERS = new Set(['host', 'accept', 'user-agent', 'content-length', 'authorization', 'cookie', 'connection', 'transfer-encoding']);
 
 export type GuardedResponse = { status: number; contentType: string | null; body: string };
 
@@ -175,6 +188,7 @@ function once(url: URL, req: GuardedRequest, sendAuth: boolean, deadline: number
   if (sendAuth && req.auth) {
     headers.Authorization = `Basic ${Buffer.from(`${req.auth.user}:${req.auth.password}`, 'utf8').toString('base64')}`;
   }
+  if (sendAuth && req.key) headers[req.key.header] = req.key.value;
   return new Promise<OneAnswer>((resolve, reject) => {
     let settled = false;
     const finish = (fn: () => void) => {
@@ -246,10 +260,16 @@ function once(url: URL, req: GuardedRequest, sendAuth: boolean, deadline: number
 export async function guardedRequest(req: GuardedRequest, transport: Transport = currentTransport()): Promise<GuardedResponse> {
   const deadline = Date.now() + req.timeoutMs;
   const origin = req.url.origin;
+  // The origins the credentials may go to: the URL's own, and those the
+  // caller names as the same service's.
+  const trusted = new Set([origin, ...(req.trustedOrigins ?? [])]);
+  if (req.key && (!/^[A-Za-z0-9-]{1,64}$/.test(req.key.header) || OWN_HEADERS.has(req.key.header.toLowerCase()) || /[\r\n\0]/.test(req.key.value))) {
+    throw new UnsafeUrlError('credentials', 'The key would be sent in a way Nya never sends one.');
+  }
   let url = req.url;
   for (let hop = 0; ; hop++) {
     checkUrl(url, transport);
-    const answer = await once(url, req, url.origin === origin, deadline, transport);
+    const answer = await once(url, req, trusted.has(url.origin), deadline, transport);
     const redirect = [301, 302, 303, 307, 308].includes(answer.status) && answer.location !== null;
     if (!redirect) {
       return { status: answer.status, contentType: answer.contentType, body: new TextDecoder().decode(answer.body) };
@@ -261,9 +281,9 @@ export async function guardedRequest(req: GuardedRequest, transport: Transport =
     } catch {
       throw new UnsafeUrlError('redirect', `${url.hostname} redirected to an address Nya can't read.`);
     }
-    // Credentials go to their own origin only: a redirect elsewhere would
-    // either drop them (and fail) or hand them to another host.
-    if (req.auth && next.origin !== origin) {
+    // Credentials go to their own origin (or a trusted one) only: a redirect
+    // elsewhere would either drop them (and fail) or hand them to another host.
+    if ((req.auth || req.key) && !trusted.has(next.origin)) {
       throw new UnsafeUrlError('redirect', `${req.url.hostname} redirected to another host, so Nya didn't follow it with your access.`);
     }
     url = next;

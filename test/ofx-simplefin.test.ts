@@ -324,7 +324,7 @@ describe('an account SimpleFIN keeps up to date, as an OFX statement', () => {
     await fake.hset(ctxKey('connector-accounts'), { [visa]: 'damaged' });
     expect(await statement(visa)).toEqual({
       status: 409,
-      refused: 'What Nya keeps about this account from SimpleFIN couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.',
+      refused: 'What Nya keeps about this account from SimpleFIN or Lunch Flow couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.',
     });
   });
 });

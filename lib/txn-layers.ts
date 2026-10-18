@@ -109,13 +109,13 @@ type Row = Txn | OlderTxn;
 const isListed = (t: Row): t is Txn => 'pending' in t;
 
 /** Whether a rule may give the row its name: never over the person's own
- *  (a rename of a bank's merchant, a name given an imported or SimpleFIN row
- *  in the app, the name typed on a row entered by hand), nor on a row from a
- *  source this release doesn't know. */
+ *  (a rename of a bank's merchant, a name given an imported, SimpleFIN or
+ *  Lunch Flow row in the app, the name typed on a row entered by hand), nor on
+ *  a row from a source this release doesn't know. */
 function renamable(t: Row): boolean {
   if (t.renamed_from !== undefined || t.own_name) return false;
   const kind = sourceKind(t.source);
-  return kind === 'plaid' || kind === 'import' || kind === 'simplefin';
+  return kind === 'plaid' || kind === 'import' || isConnectorKind(kind);
 }
 
 /** A row imported into a linked account from its bank's files (#52), which

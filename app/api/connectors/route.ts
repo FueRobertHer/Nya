@@ -8,12 +8,12 @@ import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
 
-// The connections to SimpleFIN the person made (lib/connectors/): GET lists
-// them for the Accounts tab, with their accounts, what the latest request
-// came to in SimpleFIN's own words, and how many of the day's requests are
-// left; DELETE disconnects one (lib/connectors/manage.ts disconnect), keeping
-// its accounts as manual accounts unless asked to remove them. Never the
-// Access URL.
+// The connections to SimpleFIN or Lunch Flow the person made
+// (lib/connectors/): GET lists them for the Accounts tab, with their
+// accounts, what the latest request came to in the connector's own words, and
+// how many of the day's requests are left; DELETE disconnects one
+// (lib/connectors/manage.ts disconnect), keeping its accounts as manual
+// accounts unless asked to remove them. Never the Access URL or the key.
 
 export const maxDuration = 60;
 
@@ -30,12 +30,12 @@ export async function GET() {
     const othersOf = (id: string) => all.filter((a) => a.connection_id !== id).map((account) => ({ account, host: connections.get(account.connection_id)?.host ?? null }));
     return NextResponse.json({
       connections: [...connections].map(([id, c]) => connectionView(id, c, all, othersOf(id))),
-      orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, accounts: list.map(accountView) })),
+      orphaned: [...orphaned].map(([connection_id, list]) => ({ connection_id, connector: list[0].connector, accounts: list.map(accountView) })),
       requests: requests ? { ...requests, limit: DAILY_REQUESTS } : null,
       max_connections: MAX_CONNECTIONS,
     });
   } catch (err) {
-    return connectorError(err, 'Failed to load your SimpleFIN connections');
+    return connectorError(err, 'Failed to load your connections');
   }
 }
 

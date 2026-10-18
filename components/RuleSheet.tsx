@@ -46,6 +46,7 @@ const SOURCES: [string, string][] = [
   ['manual', 'entered by hand'],
   ['import', 'imported from a file'],
   ['simplefin', 'from SimpleFIN'],
+  ['lunchflow', 'from Lunch Flow'],
 ];
 
 type Preview = { matches: number; keep_category: number; keep_name: number; keep_approved?: number; samples: { transaction_id: string; date: string; name: string; amount: number; currency: string | null; account_name: string }[] };

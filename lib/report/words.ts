@@ -12,6 +12,7 @@
 
 import { joinNames } from '../month-coverage';
 import { sourceLabel } from '../manual-txn-input';
+import { isConnectorKind } from '../connectors/types';
 import type { HealthState } from '../connection-state';
 import type { NoTransactionsReason } from '../item-products';
 import type { Gap, Report, ReportEnded } from './build';
@@ -354,10 +355,11 @@ export function appendixSplitWords(
   row: { source?: string; split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
   money: (n: number) => string
 ): string | null {
-  // The bank changes its own rows' amounts (through Plaid or SimpleFIN); one
-  // entered by hand or imported changes when it is edited or imported again.
+  // The bank changes its own rows' amounts (through Plaid, SimpleFIN or Lunch
+  // Flow); one entered by hand or imported changes when it is edited or
+  // imported again.
   if (row.split?.remainder) {
-    const bank = row.source === undefined || row.source === 'plaid' || row.source === 'simplefin';
+    const bank = row.source === undefined || row.source === 'plaid' || isConnectorKind(row.source);
     return bank ? `What the bank changed this ${money(row.split.whole)} transaction by since it was split` : `What this ${money(row.split.whole)} transaction changed by since it was split`;
   }
   if (row.split) return `Part ${row.split.part} of ${row.split.parts} of a ${money(row.split.whole)} transaction`;

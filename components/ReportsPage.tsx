@@ -331,7 +331,7 @@ export default function ReportsPage() {
   );
 }
 
-/** The accounts a SimpleFIN connection fed that you let go, as
+/** The accounts a SimpleFIN or Lunch Flow connection fed that you let go, as
  *  app/api/connectors/ended lists them. */
 export type StoppedList = {
   accounts: { account_id: string; name: string; institution_name: string; connector: string; ended_at: string; kept: boolean }[];
@@ -362,7 +362,7 @@ export function StoppedAccountsView({
   return (
     <div className="sheet-form">
       <p className="panel-note">
-        Accounts SimpleFIN kept up to date that you stopped tracking or disconnected. Nya keeps each one’s name, its bank and when, so a report on a period
+        Accounts SimpleFIN or Lunch Flow kept up to date that you stopped tracking or disconnected. Nya keeps each one’s name, its bank and when, so a report on a period
         it was tracked in can say what may be missing. Forget one and reports no longer mention it; its past balances stay in your net-worth history.
       </p>
       {list.accounts.map((a) => (
