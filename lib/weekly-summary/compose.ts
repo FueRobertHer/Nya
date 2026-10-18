@@ -510,7 +510,7 @@ export function composeWeekly(f: WeeklyFacts, o: ComposeOptions): ComposedSummar
   else if (f.uncategorized > 0) {
     const one = f.uncategorized === 1;
     paragraphs.push(
-      `${plural(f.uncategorized, 'transaction')} from ${ANY_CONNECTOR} this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
+      `${plural(f.uncategorized, 'transaction')} from ${f.uncategorized_from ?? ANY_CONNECTOR} this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
     );
     attention = true;
   }

@@ -218,8 +218,8 @@ export default function SecurityPage() {
             protects against someone who gets the database or a backup without those keys.
           </li>
           <li>
-            Bank connections through Plaid work for US institutions only; your own SimpleFIN or Lunch Flow account may
-            reach others.
+            Bank connections through Plaid work for US institutions only; your own SimpleFIN account, or your own Lunch
+            Flow account where this copy of Nya offers it, may reach others.
           </li>
           <li>No outside security audit has been done yet.</li>
         </ul>
@@ -445,8 +445,8 @@ export default function SecurityPage() {
           categories.
         </p>
         <p>
-          Your own Lunch Flow account may reach banks in other countries too: you pay Lunch Flow, connect your banks
-          there, and paste the API key of an API destination into Nya. Nya checks the key with Lunch Flow once, keeps it
+          Where this copy of Nya offers it, your own Lunch Flow account may reach banks in other countries too: you pay
+          Lunch Flow, connect your banks there, and paste the API key of an API destination into Nya. Nya checks the key with Lunch Flow once, keeps it
           encrypted, never writes it to a log or shows it again, and asks for your accounts about once a day. It brings
           no pending transactions, no holdings and no categories, and gives no date with a balance, so Nya shows the day
           it received each one.

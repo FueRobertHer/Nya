@@ -51,6 +51,7 @@ import {
   monthsFact,
   spendingFact,
   uncategorizedFact,
+  uncategorizedSourcesFact,
   type Unread,
   type WeeklyFacts,
 } from './content';
@@ -151,6 +152,7 @@ export async function gatherWeekly(ctx: Ctx, opts: GatherOptions): Promise<Weekl
     connections: isUnread(connections) ? UNREAD : connectionsFact({ ...connections, now: opts.now }),
     months: facts === null ? UNREAD : monthsFact([monthOf(first), month, thisMonth], facts),
     uncategorized: isUnread(activity) ? UNREAD : uncategorizedFact(activity.rows, first, last),
+    ...(isUnread(activity) ? {} : { uncategorized_from: uncategorizedSourcesFact(activity.rows, first, last) }),
   };
 }
 
