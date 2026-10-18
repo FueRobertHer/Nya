@@ -339,7 +339,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
           {record?.status === 'undoing' && <p className="stale-note">This restore is being undone. If that stopped part way, undo it again to finish.</p>}
 
           {/* The file: chosen for a new restore, or to go on with one. */}
-          {(state.enabled || unfinished) && (!record || record.status === 'writing') && (
+          {state.enabled && (!record || record.status === 'writing') && (
             <>
               {!record && !scan && phase.kind === 'idle' && (
                 <button className="secondary" onClick={() => void load(true)}>
