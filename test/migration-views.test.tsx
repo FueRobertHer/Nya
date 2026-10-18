@@ -186,7 +186,7 @@ describe('answers kept in the sheet until they are sent', () => {
   });
 
   test('what the app said of the rows the banks have is counted where it goes, with the answers given since, and only offered while it moves anything', async () => {
-    const proposal = (line: number, carry_to: 'bank' | 'approved' | 'earlier') => ({
+    const proposal = (line: number, carry_to: 'bank' | 'approved' | 'earlier', moves: boolean) => ({
       index: line,
       line,
       file: { date: '2026-09-05', name: `Row ${line}`, amount: 10, currency: 'USD' },
@@ -196,31 +196,43 @@ describe('answers kept in the sheet until they are sent', () => {
       similar: true,
       choice: 'same' as const,
       carry_to,
+      moves,
     });
-    const t = { carry: { bank: 1, approved: 1, earlier: 1 }, proposals: [proposal(2, 'bank'), proposal(3, 'approved'), proposal(4, 'earlier')] };
-    expect(carriedNow(t as any, { each: {} }, { each: {} })).toEqual({ bank: 1, approved: 1, earlier: 1 });
-    expect(carriedNow(t as any, { each: {} }, { each: { '2': 'new', '4': 'new' } })).toEqual({ bank: 0, approved: 1, earlier: 0 });
-    expect(carriedNow({ ...t, carry: { bank: 0, approved: 0, earlier: 0 } } as any, { all: 'new', each: {} }, { all: 'new', each: { '3': 'same' } })).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    // A bank's row it would give something, one it would give nothing (no
+    // category, tags, note or split), an approved one with a note, an
+    // approved one with nothing to take, and one a file imported before brought.
+    const proposals = [proposal(2, 'bank', true), proposal(3, 'bank', false), proposal(4, 'approved', true), proposal(5, 'approved', false), proposal(6, 'earlier', false)];
+    const t = { carry: { bank: 1, approved: 2, notes: 1, earlier: 1 }, proposals };
+    expect(carriedNow(t as any, { each: {} }, { each: {} })).toEqual({ bank: 1, approved: 2, notes: 1, earlier: 1 });
+    expect(carriedNow(t as any, { each: {} }, { each: { '2': 'new', '3': 'new', '4': 'new', '6': 'new' } })).toEqual({ bank: 0, approved: 1, notes: 0, earlier: 0 });
+    const none = { bank: 0, approved: 0, notes: 0, earlier: 0 };
+    expect(carriedNow({ ...t, carry: none } as any, { all: 'new', each: {} }, { all: 'new', each: { '4': 'same', '5': 'same' } })).toEqual({ bank: 0, approved: 2, notes: 1, earlier: 0 });
 
-    expect(carryWords({ bank: 2, approved: 1, earlier: 0 }, true, 'Monarch')).toBe(
+    expect(carryWords({ ...none, bank: 2, approved: 1, notes: 1 }, true, 'Monarch')).toBe(
       '2 transactions would take them, as your own choice for them, ahead of your rules and the bank’s categories, so their budgets and reports may change. 1 transaction you approved in the review queue stays where you approved it: only the tags and notes go onto it. Undo puts them back.'
     );
-    expect(carryWords({ bank: 0, approved: 0, earlier: 2 }, true, 'YNAB')).toBe('2 transactions a file imported before brought keep what they have: YNAB’s categories, tags, notes and splits go only onto your banks’ own.');
-    expect(carryWords({ bank: 3, approved: 0, earlier: 2 }, false, 'YNAB')).toBe('They keep what they have now; the file’s rows that are them come in only as theirs.');
+    expect(carryWords({ ...none, approved: 2 }, true, 'Monarch')).toBe('2 transactions you approved in the review queue stay where you approved them.');
+    expect(carryWords({ ...none, earlier: 2 }, true, 'YNAB')).toBe('2 transactions a file imported before brought keep what they have: YNAB’s categories, tags, notes and splits go only onto your banks’ own.');
+    expect(carryWords({ ...none, bank: 3, earlier: 2 }, false, 'YNAB')).toBe('They keep what they have now; the file’s rows that are them come in only as theirs.');
 
     // In the review: the box only while it would move something, the words always.
     const accounts = { Checking: { to: 'new', name: 'Checking', institution: 'YNAB', type: 'depository', balance: 0 }, Savings: { to: 'skip' }, Visa: { to: 'skip' }, Brokerage: { to: 'skip' } };
     const { preview } = await previewOf('ynab-register.csv', { accounts });
     const answered = { accounts: { ...accounts, Checking: { ...accounts.Checking, balance: '0' } } };
-    const linked = (carry: Record<string, number>) => ({ ...preview, targets: preview.targets.map((x: any) => ({ ...x, kind: 'linked', new: false, carry })) });
-    const earlier = text(review(linked({ bank: 0, approved: 0, earlier: 2 }), answered));
+    const linked = (carry: Record<string, number>) => ({ ...preview, targets: preview.targets.map((x: any) => ({ ...x, kind: 'linked', new: false, carry: { ...none, ...carry } })) });
+    const earlier = text(review(linked({ earlier: 2 }), answered));
     expect(earlier).toContain('Your banks’ own transactions');
     expect(earlier).toContain('2 transactions a file imported before brought keep what they have');
     expect(earlier).not.toContain('Give the transactions your banks already have');
-    const moving = text(review(linked({ bank: 1, approved: 2, earlier: 0 }), answered));
+    const moving = text(review(linked({ bank: 1, approved: 2, notes: 1 }), answered));
     expect(moving).toContain('Give the transactions your banks already have the category, tags, notes and splits they had in YNAB');
     expect(moving).toContain('1 transaction would take them, as your own choice for it');
     expect(moving).toContain('2 transactions you approved in the review queue stay where you approved them: only the tags and notes go onto them.');
-    expect(text(review(linked({ bank: 0, approved: 0, earlier: 0 }), answered))).not.toContain('Your banks’ own transactions');
+    // Only approved ones, with nothing of the app's to take: said, never offered.
+    const approved = text(review(linked({ approved: 2 }), answered));
+    expect(approved).toContain('2 transactions you approved in the review queue stay where you approved them.');
+    expect(approved).not.toContain('Give the transactions your banks already have');
+    expect(approved).not.toContain('Undo puts them back');
+    expect(text(review(linked({}), answered))).not.toContain('Your banks’ own transactions');
   });
 });

@@ -46,7 +46,12 @@
 // import/match.ts settle), the category, tags and note the app had, said on
 // the imported row so the bank's row shows them (lib/activity.ts
 // categoriesFromImports, lib/txn-layers.ts): the person's own categorizing
-// comes over for the years the bank also reaches. Only what will show, and
+// comes over for the years the bank also reaches. So does a row the account
+// adds whose only look-alike at the bank is a pending row (TargetPlan
+// onto_pending): that row stands in for it until it posts, and the posted
+// one then takes its place and what is said about it (settle again), so
+// what the app said of it goes there by the same answer, and otherwise it
+// comes in at its total, without its parts or tags. Only what will show, and
 // never over the person's approval (TargetPlan carry_to): a row that is one
 // a file imported before brought, which no bank row stands for, carries
 // nothing (nothing shows what is said on a row standing for such a row, and
@@ -73,7 +78,7 @@ import type { AppTxn, SplitWhole } from '../import/apps/types';
 import type { AppProblem } from '../import/apps/common';
 import { APP_NAMES } from '../import/apps/types';
 import { knownOf, planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from '../history-import/plan';
-import { couldBe, daysApart, type Matchable } from '../history-import/match';
+import { couldBe, crossesEdge, daysApart, pairUp, type Matchable } from '../history-import/match';
 import { coveredPeriod } from '../history-import/commit';
 import type { Covers } from '../history-import/store';
 import type { AccountContext, LinkedAccount } from '../history-import/read';
@@ -133,6 +138,14 @@ export type TargetAccount =
  *  (`earlier`). */
 export type CarryTo = 'bank' | 'approved' | 'earlier';
 
+/** Of a linked account's rows that are its bank's (answered the same as
+ *  planned) or that a pending row of its bank will take the place of
+ *  (onto_pending): how many would give their bank's row something (`bank`);
+ *  how many stay where the person approved theirs (`approved`), and of
+ *  those, how many would give it their tags or note (`notes`); and how many
+ *  are a file imported before's, which keep what they have (`earlier`). */
+export type CarryCounts = { bank: number; approved: number; notes: number; earlier: number };
+
 /** What one Nya account's import would be. */
 export type TargetPlan = {
   /** 'new:<the file's account>', 'manual:<id>' or 'linked:<id>'. */
@@ -162,11 +175,17 @@ export type TargetPlan = {
    *  account's row the bank already has, the category and note to say on it. */
   tags: Map<number, string[]>;
   parts: Map<number, { amount: number; text: string; note: string | null }[]>;
-  /** A linked account's: by row, for each that has a proposal, where what
-   *  the app said of it goes were it the same (CarryTo); and how many of
-   *  those answered the same go each way, as answered when planned. */
+  /** A linked account's: by row, for each that has a proposal or is in
+   *  onto_pending, where what the app said of it goes were it the bank's
+   *  (CarryTo); the rows of those that would give the bank's row something
+   *  there (`moves`: a category, a split, tags or a note; only tags or a
+   *  note onto an approved one); the rows the account adds whose only
+   *  look-alike at the bank is a pending row, which takes their place once
+   *  it posts (see the header); and the counts (CarryCounts). */
   carry_to: Map<number, CarryTo>;
-  carried: Record<CarryTo, number>;
+  moves: Set<number>;
+  onto_pending: Set<number>;
+  carried: CarryCounts;
   /** Splits that came in as their lines here (a manual account), with why. */
   exploded: { reason: string; lines: number[] }[];
   /** A linked account's (see the header): splits brought in whole, as its
@@ -241,9 +260,9 @@ export type MigrationState = {
   unavailable: ReadonlyMap<string, string>;
   /** For each linked account with a context: the posted bank row each of its
    *  kept rows stands for, followed through earlier imports' rows
-   *  (lib/history-import/read.ts standsFor), and its posted bank rows that
-   *  hold an approval in the review queue, or one that can't be read
-   *  (lib/review-layer.ts approvalFor). */
+   *  (lib/history-import/read.ts standsFor), and its bank rows, posted or
+   *  pending, that hold an approval in the review queue, or one that can't
+   *  be read (lib/review-layer.ts approvalFor). */
   reach: ReadonlyMap<string, { leads: ReadonlyMap<string, string>; approved: ReadonlySet<string> }>;
   /** Linked accounts chosen that ended, how and from which day (read
    *  leniently: only the review's words). */
@@ -801,7 +820,9 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     const chosenAnswers = choice.to === 'linked' ? byIndex(own(answers.choices, key), rows) : {};
     let ended: TargetPlan['ended'] = null;
     const carryTo = new Map<number, CarryTo>();
-    const carried: Record<CarryTo, number> = { bank: 0, approved: 0, earlier: 0 };
+    const moves = new Set<number>();
+    const ontoPending = new Set<number>();
+    const carried: CarryCounts = { bank: 0, approved: 0, notes: 0, earlier: 0 };
     if (choice.to === 'linked') {
       const context = state.contexts.get(choice.id)!;
       let first: string | null = null;
@@ -830,12 +851,40 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       // of the account's approvals (lib/migration/targets.ts reads them
       // with its context), every bank row counts as approved.
       const reach = state.reach.get(choice.id);
+      const approvedAt = (bankId: string) => !reach || reach.approved.has(bankId);
       for (const [i, pair] of linked.pairs) {
         const bank = pair.twin.kind === 'bank' ? pair.twin.id : reach?.leads.get(pair.twin.id);
-        const to: CarryTo = bank === undefined ? 'earlier' : !reach || reach.approved.has(bank) ? 'approved' : 'bank';
-        carryTo.set(i, to);
-        if (linked.actions[i] === 'duplicate') carried[to]++;
+        carryTo.set(i, bank === undefined ? 'earlier' : approvedAt(bank) ? 'approved' : 'bank');
       }
+      // The rows it adds that only a pending row of the bank looks like (the
+      // history plan's pending_alike), each with the one that stands in for
+      // it, as settle pairs them (the closest, one to one, never across an
+      // edge): that row takes its place once it posts (see the header).
+      const pendings = context.banks.filter((b) => b.pending).map((b) => ({ ...b, pending: false }));
+      if (pendings.length > 0) {
+        const history = linked;
+        const lone = rows.flatMap((r, i) => (history.actions[i] === 'add' && !history.pairs.has(i) ? [{ index: i, date: r.row.date, amount: r.row.amount, currency: r.row.currency, name: r.row.name }] : []));
+        for (const [i, pair] of pairUp(lone, pendings, (row, b) => crossesEdge(row.date, b.date, context.bank_from, covers))) {
+          carryTo.set(i, approvedAt(pair.twin.transaction_id) ? 'approved' : 'bank');
+          ontoPending.add(i);
+        }
+      }
+      // What each would give its bank's row there, and how many would, of
+      // those that are its bank's as answered.
+      for (const [i, to] of carryTo) {
+        const notes = (tagsOf.get(i)?.length ?? 0) > 0 || !!rows[i].row.note;
+        const refiles = !!rows[i].row.category || partsOf.has(i);
+        if (to === 'bank' ? notes || refiles : to === 'approved' && notes) moves.add(i);
+        if (linked.actions[i] !== 'duplicate' && !ontoPending.has(i)) continue;
+        if (to === 'earlier') carried.earlier++;
+        else if (to === 'approved') {
+          carried.approved++;
+          if (moves.has(i)) carried.notes++;
+        } else if (moves.has(i)) carried.bank++;
+      }
+      // One only a pending row looks like comes in at its total, its parts
+      // left out, unless they go onto that row.
+      for (const i of ontoPending) if (!answers.carry || carryTo.get(i) !== 'bank') partsOf.delete(i);
       // An account that ended counts nothing dated from its end: said, as
       // its own import says it (app/api/history-import).
       const end = state.ends?.get(choice.id);
@@ -872,6 +921,8 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       tags: tagsOf,
       parts: partsOf,
       carry_to: carryTo,
+      moves,
+      onto_pending: ontoPending,
       carried,
       exploded: [...b.exploded].map(([reason, lines]) => ({ reason, lines })),
       whole: [...b.whole].map(([reason, lines]) => ({ reason, lines })),
@@ -894,8 +945,11 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     t.rows.forEach((r, i) => {
       const action = t.manual ? t.manual.actions[i] : t.linked!.actions[i];
       const asked = proposed.has(r.index) || action === 'ask';
-      const mayAdd = action === 'add' || asked;
-      const mayStand = action === 'duplicate' || asked;
+      // One a pending row of the bank will take the place of is as one its
+      // bank has.
+      const onto = t.onto_pending.has(i);
+      const mayAdd = (action === 'add' && !onto) || asked;
+      const mayStand = action === 'duplicate' || asked || onto;
       if (!mayAdd && !mayStand) return;
       // Standing for its twin, it carries what will show there (carry_to).
       const to = t.carry_to.get(i);
@@ -946,11 +1000,12 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
  * a split's parts) with what becomes of each: a manual account's outcome, a
  * linked account's whole review (lib/history-import/plan.ts review), which is
  * what the person answers and never those answers, so answering a proposal
- * keeps the review (the history import's own is the same), and while its
- * rows carry what the app said of them, where that goes (carry_to), so an
- * approval made in the review queue since is reviewed. Equal
- * fingerprints are the same import: the commit refuses one whose plan,
- * worked out again, has another.
+ * keeps the review (the history import's own is the same); which rows a
+ * pending row of the bank will take the place of (onto_pending, which no
+ * review of the bank's posted rows says); and while its rows carry what the
+ * app said of them, where that goes (carry_to), so an approval made in the
+ * review queue since is reviewed. Equal fingerprints are the same import:
+ * the commit refuses one whose plan, worked out again, has another.
  */
 export function planDigest(plan: Omit<MigrationPlan, 'digest'>, answers: MigrationAnswers): string {
   const h = createHash('sha256');
@@ -962,9 +1017,13 @@ export function planDigest(plan: Omit<MigrationPlan, 'digest'>, answers: Migrati
   for (const t of plan.targets) {
     h.update(`\n${t.key}|${t.currency}|${t.covers ? `${t.covers.from}..${t.covers.to}` : '-'}|${t.linked ? t.linked.review : ''}\n`);
     t.rows.forEach((n, i) => {
-      // A manual account's outcome; where what a linked account's row would
-      // carry goes, while it carries (an approval made since is reviewed).
-      const action = t.manual ? `=${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}` : answers.carry && t.carry_to.has(i) ? `>${t.carry_to.get(i)}` : '';
+      // A manual account's outcome; for a linked account's row, whether a
+      // pending row of the bank will take its place (one there since is
+      // reviewed), and where what it would carry goes, while it carries (an
+      // approval made since is reviewed).
+      const action = t.manual
+        ? `=${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}`
+        : `${t.onto_pending.has(i) ? '~p' : ''}${answers.carry && t.carry_to.has(i) ? `>${t.carry_to.get(i)}` : ''}`;
       const row = n.row;
       h.update(
         `${n.index}[${row.date}|${Math.round(row.amount * 1000)}|${row.currency}|${normalizeDescription(row.name)}|${row.category ?? ''}|${row.note ?? ''}|${(t.tags.get(i) ?? []).join(',')}|${JSON.stringify(t.parts.get(i) ?? null)}]${action}\n`

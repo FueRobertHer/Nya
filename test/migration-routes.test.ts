@@ -1114,7 +1114,7 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
         ['Costco', 'imported', 'same', 'earlier'],
       ]);
       expect(target.counts.already).toBe(2);
-      expect(target.carry).toEqual({ bank: 0, approved: 0, earlier: 2 });
+      expect(target.carry).toEqual({ bank: 0, approved: 0, notes: 0, earlier: 2 });
       expect(done.status).toBe(200);
       expect(done.body.counts).toMatchObject({ imported: 0, duplicates: 2, splits: 0, tagged: 0 });
       // They keep what they have, and spending is what it was.
@@ -1143,10 +1143,12 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     expect(row).toBeDefined();
     expect(await send({ action: 'approve', items: [approvalInputOf(row as any)] })).toBe(200);
   }
-  /** The bank's Costco row as every reader shows it, and what is spent. */
+  /** The bank's Costco row as every reader shows it (whole again, when
+   *  split), its parts, and what is spent. */
   async function bankCostco() {
+    const { bankRows } = await import('@/lib/split-rows');
     const read = (await activity()).transactions as any[];
-    const t = read.find((x) => x.transaction_id === 'b_costco');
+    const t = bankRows(read).find((x: any) => x.transaction_id === 'b_costco') as any;
     const set = await readTagSet(ctx);
     return {
       category: t.category_name,
@@ -1176,7 +1178,7 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
       const [target] = preview.targets;
       if (variant === 'split') expect(target.combined.transactions).toBe(1);
       expect(target.proposals.map((p: any) => [p.twin.kind, p.choice, p.carry_to])).toEqual([['bank', 'same', 'approved']]);
-      expect(target.carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+      expect(target.carry).toEqual({ bank: 0, approved: 1, notes: 1, earlier: 0 });
       expect(done.status).toBe(200);
       expect(done.body.counts).toMatchObject({ duplicates: 1, splits: 0, tagged: 1 });
       // Where it was approved, still approved, with nothing offered: only
@@ -1198,7 +1200,7 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     await seed(ctx, [ONE, costcoRow({ pending_transaction_id: 'p_costco' })]);
     expect((await bankCostco()).approved).toBe(true);
     const { preview, done } = await importReviewed(HOUSEHOLD, linkedTo);
-    expect(preview.targets[0].carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    expect(preview.targets[0].carry).toEqual({ bank: 0, approved: 1, notes: 0, earlier: 0 });
     expect(done.status).toBe(200);
     expect(await bankCostco()).toMatchObject({ category: 'general merchandise', approved: true, offered: null });
   });
@@ -1227,15 +1229,89 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
   test('an approval made after the review asks for the review again, which then says it', async () => {
     await seed(ctx, [ONE, costcoRow()]);
     const p = await preview(HOUSEHOLD, linkedTo);
-    expect(p.body.preview.targets[0].carry).toEqual({ bank: 1, approved: 0, earlier: 0 });
+    expect(p.body.preview.targets[0].carry).toEqual({ bank: 1, approved: 0, notes: 0, earlier: 0 });
     await approve('b_costco');
     const refused = await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...linkedTo }, HOUSEHOLD);
     expect(refused.status).toBe(409);
     expect(refused.body.needs).toBe('review');
     const { preview: again, done } = await importReviewed(HOUSEHOLD, linkedTo);
-    expect(again.targets[0].carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    expect(again.targets[0].carry).toEqual({ bank: 0, approved: 1, notes: 0, earlier: 0 });
     expect(done.status).toBe(200);
     expect((await bankCostco()).category).toBe('general merchandise');
+  });
+
+  // ---- A transaction the bank still has pending ----
+
+  /** The bank's Costco row still pending, then posted in its place: the
+   *  posted row takes the place of the app's row the pending one stood in
+   *  for, and what is said about it. */
+  const pendingCostco = () => costcoRow({ transaction_id: 'p_costco', date: daysAgo(1), pending: true });
+  const postedCostco = () => costcoRow({ date: daysAgo(1), pending_transaction_id: 'p_costco' });
+  const pendingSplits: Record<string, { file: string; extra: Record<string, unknown> }> = {
+    'Monarch’s two rows of it, taken together': {
+      file: [MONARCH, `${daysAgo(1)},Costco,Groceries,Checking,COSTCO WHSE #0012,,-80.00,`, `${daysAgo(1)},Costco,Household,Checking,COSTCO WHSE #0012,,-40.00,`].join('\n'),
+      extra: {},
+    },
+    'YNAB’s marked split of it': {
+      file: [ynabHeader, ynabRow(1, 'Costco', 'Food', 'Groceries', 'Split (1/2) ', 80), ynabRow(1, 'Costco', 'Home', 'Household', 'Split (2/2) ', 40)].join('\n'),
+      extra: { options: { date_order: 'mdy' } },
+    },
+  };
+  for (const [name, { file, extra }] of Object.entries(pendingSplits)) {
+    for (const variant of ['approved', 'carry off', 'carry on'] as const) {
+      test(`${name}, for a transaction the bank still has pending: its parts reach the bank’s row once it posts only with carry on and no approval (${variant})`, async () => {
+        await seed(ctx, [ONE, pendingCostco()]);
+        if (variant === 'approved') await approve('p_costco');
+        const { preview, done, migration_id } = await importReviewed(file, { ...linkedTo, ...extra, ...(variant === 'carry off' ? { carry: false } : {}) });
+        const [target] = preview.targets;
+        // The app's own row, which the pending one stands in for until it posts.
+        expect({ new: target.counts.new, pending_alike: target.pending_alike }).toEqual({ new: 1, pending_alike: 1 });
+        expect(target.carry).toEqual(variant === 'approved' ? { bank: 0, approved: 1, notes: 0, earlier: 0 } : { bank: 1, approved: 0, notes: 0, earlier: 0 });
+        // Otherwise it comes in at its total, without its parts.
+        expect(target.splits).toBe(variant === 'carry on' ? 1 : 0);
+        expect(done.status).toBe(200);
+        expect(done.body.counts.splits).toBe(variant === 'carry on' ? 1 : 0);
+        expect(await counted()).toBe(121);
+        await seed(ctx, [ONE, postedCostco()]);
+        const posted = await bankCostco();
+        expect(await counted()).toBe(121);
+        if (variant === 'carry on') expect(posted.parts.sort()).toEqual([[40, 'Household'], [80, 'Groceries']]);
+        else expect(posted).toMatchObject({ category: 'general merchandise', parts: [], spent: { 'general merchandise': 121 } });
+        if (variant === 'approved') expect(posted).toMatchObject({ approved: true, offered: null });
+        // Undone, the bank's row is as it was.
+        expect((await undo({ migration_id, confirm: true })).status).toBe(200);
+        expect(await bankCostco()).toMatchObject({ category: 'general merchandise', parts: [], spent: { 'general merchandise': 121 } });
+      });
+    }
+  }
+
+  for (const carry of [false, true]) {
+    test(`a tagged row of the app’s for a transaction the bank still has pending: its tag and note reach the bank’s row once it posts ${carry ? 'with carry on, with its category' : 'never with carry off'}`, async () => {
+      await seed(ctx, [ONE, pendingCostco()]);
+      const tagged = [MONARCH, `${daysAgo(1)},Costco,Household,Checking,COSTCO WHSE #0012,bulk run,-120.00,Reimbursable`].join('\n');
+      const { preview, done } = await importReviewed(tagged, { ...linkedTo, carry });
+      expect(preview.targets[0].pending_alike).toBe(1);
+      expect(preview.targets[0].carry).toEqual({ bank: 1, approved: 0, notes: 0, earlier: 0 });
+      expect(done.status).toBe(200);
+      expect(done.body.counts.tagged).toBe(carry ? 1 : 0);
+      await seed(ctx, [ONE, postedCostco()]);
+      expect(await bankCostco()).toMatchObject(carry ? { category: 'Household', note: 'bulk run', tags: ['Reimbursable'] } : { category: 'general merchandise', note: null, tags: [] });
+    });
+  }
+
+  test('a pending row the bank brings after the review asks for the review again, carry off too: what the app’s row brings is no longer what was reviewed', async () => {
+    await seed(ctx, [ONE]);
+    const tagged = [MONARCH, `${daysAgo(1)},Costco,Household,Checking,COSTCO WHSE #0012,bulk run,-120.00,Reimbursable`].join('\n');
+    const p = await preview(tagged, { ...linkedTo, carry: false });
+    expect(p.body.preview.targets[0].pending_alike).toBe(0);
+    await seed(ctx, [ONE, pendingCostco()]);
+    const refused = await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...linkedTo, carry: false }, tagged);
+    expect(refused.status).toBe(409);
+    expect(refused.body.needs).toBe('review');
+    const { preview: again, done } = await importReviewed(tagged, { ...linkedTo, carry: false });
+    expect(again.targets[0].pending_alike).toBe(1);
+    expect(done.status).toBe(200);
+    expect(done.body.counts.tagged).toBe(0);
   });
 
   test('before the bank’s own rows begin, nothing has a group or a split’s lines: they come in as a manual account takes them, and the period is whole', async () => {

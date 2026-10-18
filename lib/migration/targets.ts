@@ -130,8 +130,9 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
   // stands for, as the read layer works it out (lib/history-import/read.ts
   // standsFor), and the bank rows that hold an approval in the review queue,
   // found where the read layer finds one (lib/review-layer.ts approvalFor):
-  // under the row's own id, the pending one's it replaced, or that of a row
-  // imported from a file it stands for.
+  // a posted row's under its own id, the pending one's it replaced, or that
+  // of a row imported from a file it stands for; a pending row's under its
+  // own, which the posted one that replaces it has from it.
   const reach = new Map<string, { leads: Map<string, string>; approved: Set<string> }>();
   if (contexts.size > 0) {
     const leadsOf = new Map<string, Map<string, string>>();
@@ -140,9 +141,8 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
       const leads = standsFor(settle(c.held, c.banks, c.order, { bankFrom: c.bank_from, covers: c.covers, twins: c.twins }));
       leadsOf.set(id, leads);
       for (const b of c.banks) {
-        if (b.pending) continue;
         wanted.add(b.transaction_id);
-        const from = c.pending_from.get(b.transaction_id);
+        const from = b.pending ? undefined : c.pending_from.get(b.transaction_id);
         if (from) wanted.add(from);
       }
       for (const rowId of leads.keys()) wanted.add(rowId);
@@ -152,7 +152,7 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     for (const [id, c] of contexts) {
       const leads = leadsOf.get(id)!;
       const approved = new Set<string>();
-      for (const b of c.banks) if (!b.pending && (holds(b.transaction_id) || holds(c.pending_from.get(b.transaction_id)))) approved.add(b.transaction_id);
+      for (const b of c.banks) if (holds(b.transaction_id) || (!b.pending && holds(c.pending_from.get(b.transaction_id)))) approved.add(b.transaction_id);
       for (const [rowId, bankId] of leads) if (holds(rowId)) approved.add(bankId);
       reach.set(id, { leads, approved });
     }

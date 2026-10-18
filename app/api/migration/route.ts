@@ -181,8 +181,9 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
       // be told are listed once, above, though each account's import keeps them.
       const tp = listed(t.own_problems, LISTED_PROBLEMS);
       // Where what the app said of each proposal's row goes were it the
-      // same (lib/migration/plan.ts CarryTo), for the sheet to count the
-      // answers it holds; by the row's place among the account's rows.
+      // same (lib/migration/plan.ts CarryTo), and whether it would give the
+      // bank's row anything there, for the sheet to count the answers it
+      // holds; by the row's place among the account's rows.
       const at = new Map(t.rows.map((r, i) => [r.index, i]));
       return {
         key: t.key,
@@ -200,12 +201,17 @@ function reviewOf(plan: MigrationPlan, targets: ReadTargets, file: { entry: stri
         other_currencies: p.others,
         kinds: p.kinds,
         rows: p.rows.slice(0, PREVIEW_ROWS).map((n, i) => ({ line: n.line, date: n.row.date, name: n.row.name, amount: n.row.amount, currency: n.row.currency, category: n.row.category, action: p.actions[i] })),
-        proposals: proposals.list.map((x) => ({ ...x, carry_to: t.carry_to.get(at.get(x.index) ?? -1) ?? null })),
+        proposals: proposals.list.map((x) => {
+          const i = at.get(x.index) ?? -1;
+          return { ...x, carry_to: t.carry_to.get(i) ?? null, moves: t.moves.has(i) };
+        }),
         more_proposals: proposals.more,
-        // How many of its rows answered the same would take what the app
-        // said of them, how many the person approved in the review queue
-        // take only their tags and notes, and how many a file imported
-        // before brought keep what they have (MigrationAnswers.carry).
+        // Of its rows that are its bank's, answered the same (and those a
+        // pending row of the bank will take the place of), how many would
+        // take what the app said of them, how many the person approved in
+        // the review queue stay so (and how many of those take their tags
+        // or notes), and how many a file imported before brought keep what
+        // they have (lib/migration/plan.ts CarryCounts).
         carry: t.carried,
         problems: tp.list.map((x) => ({ line: x.line, reason: x.reason })),
         more_problems: tp.more,
