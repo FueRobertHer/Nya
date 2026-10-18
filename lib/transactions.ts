@@ -1029,7 +1029,7 @@ async function syncItem(ctx: Ctx,
       } else {
         return {
           state: null,
-          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}). Raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
+          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}); raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
         };
       }
     }
@@ -1127,7 +1127,7 @@ async function syncItem(ctx: Ctx,
         if (attempt < MAX_MUTATION_RETRIES - 1) continue;
         return {
           state: null,
-          note: `${item.institution_name}: could not fetch transactions (the data kept changing). Try again`,
+          note: `${item.institution_name}: could not fetch transactions (the data kept changing); try again`,
         };
       }
       if (code === 'ITEM_LOGIN_REQUIRED') {
@@ -1136,7 +1136,7 @@ async function syncItem(ctx: Ctx,
       if (code === 'PRODUCT_NOT_READY') {
         return {
           state: null,
-          note: `${item.institution_name}: transactions are still syncing. Try again in a minute`,
+          note: `${item.institution_name}: transactions are still syncing; try again in a minute`,
         };
       }
       // The first call found the Item can't have Transactions after all (an
@@ -1169,7 +1169,7 @@ async function syncItem(ctx: Ctx,
     ) {
       return {
         state: null,
-        note: `${item.institution_name}: transactions are still syncing. Try again in a minute`,
+        note: `${item.institution_name}: transactions are still syncing; try again in a minute`,
       };
     }
 
@@ -1204,7 +1204,7 @@ async function syncItem(ctx: Ctx,
     if (!write.persisted && write.reason === 'oversize') {
       return {
         state,
-        note: `${item.institution_name}: too much stored history to save an update. Showing live data, but it won't persist until this is resolved`,
+        note: `${item.institution_name}: too much stored history to save an update; showing live data, but it won't persist until this is resolved`,
       };
     }
 
@@ -1214,7 +1214,7 @@ async function syncItem(ctx: Ctx,
     if (hasMore) {
       return {
         state,
-        note: `${item.institution_name}: still importing older transactions. Refresh again shortly`,
+        note: `${item.institution_name}: still importing older transactions; refresh again shortly`,
         importing: true,
       };
     }

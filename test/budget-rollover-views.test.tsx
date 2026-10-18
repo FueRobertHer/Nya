@@ -9,7 +9,7 @@ import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
 import { lacksHistory, monthUrl, UNREADABLE_MONTHS, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { Carries, Carry, IncomePool } from '@/lib/rollover';
-import { addMonths, monthName } from '@/lib/rollover';
+import { addMonths } from '@/lib/rollover';
 import { localDate, localMonth } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 import { categoriesFor } from './category-fixture';
@@ -268,30 +268,36 @@ describe('a past month, as it was', () => {
 });
 
 describe('income carryover', () => {
-  const pool: IncomePool = {
-    start: addMonths(NOW, -2),
-    from: addMonths(NOW, -2),
+  /** The pool as it stands in `month`: two months carried into it. */
+  const poolIn = (month: string): IncomePool => ({
+    start: addMonths(month, -2),
+    from: addMonths(month, -2),
     clamped: false,
     carried_in: 2140.5,
     income: 3100,
     spending: 1890.25,
     available: 3350.25,
-    uncertain: [addMonths(NOW, -1)],
+    uncertain: [addMonths(month, -1)],
     months: [
-      { month: addMonths(NOW, -2), carried_in: 0, income: 5200, spending: 3150.5, carried_out: 2049.5, uncertain: false },
-      { month: addMonths(NOW, -1), carried_in: 2049.5, income: 1800, spending: 1709, carried_out: 2140.5, uncertain: true },
-      { month: NOW, carried_in: 2140.5, income: 3100, spending: 1890.25, carried_out: 3350.25, uncertain: false },
+      { month: addMonths(month, -2), carried_in: 0, income: 5200, spending: 3150.5, carried_out: 2049.5, uncertain: false },
+      { month: addMonths(month, -1), carried_in: 2049.5, income: 1800, spending: 1709, carried_out: 2140.5, uncertain: true },
+      { month, carried_in: 2140.5, income: 3100, spending: 1890.25, carried_out: 3350.25, uncertain: false },
     ],
-  };
+  });
+  const pool = poolIn(NOW);
 
   test('available to allocate: last month’s leftover, plus this month’s income so far, less its spending', () => {
-    const t = text(renderToStaticMarkup(<IncomePoolHeader pool={pool} currency="USD" month={NOW} today={NOW} />));
-    expect(t).toContain('Available to allocate $3,350.25');
-    // Last month by name, with its year when it is in another one (in January).
-    const last = monthName(addMonths(NOW, -1), NOW);
-    expect(t).toContain(`$2,140.50 left from ${last}, plus $3,100.00 income so far, less $1,890.25 spent`);
-    expect(t).toContain(`May be off: ${last} is incomplete.`);
-    expect(t).toContain('Show how it built up');
+    // Last month by name, with its year when it is in another one: in January.
+    for (const [month, last] of [
+      ['2027-01', 'December 2026'],
+      ['2026-07', 'June'],
+    ]) {
+      const t = text(renderToStaticMarkup(<IncomePoolHeader pool={poolIn(month)} currency="USD" month={month} today={month} />));
+      expect(t).toContain('Available to allocate $3,350.25');
+      expect(t).toContain(`$2,140.50 left from ${last}, plus $3,100.00 income so far, less $1,890.25 spent`);
+      expect(t).toContain(`May be off: ${last} is incomplete.`);
+      expect(t).toContain('Show how it built up');
+    }
   });
 
   test('a past month: what it left; one before the pool began: nothing in it', () => {

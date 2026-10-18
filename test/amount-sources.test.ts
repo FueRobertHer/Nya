@@ -252,7 +252,7 @@ describe('an amount drawn as text outside <Masked>', () => {
       Built: 'const rows = values.map((v: number) => <li key={v}><Masked>{fmt(v)}</Masked></li>); return <ul>{rows}</ul>;',
       Said: "return <p className=\"visually-hidden\">{flag ? spoken(`at ${fmt(n)}`) : ''}</p>;",
       Chart: 'return <svg role="img"><text>{fmt(n)}</text><title>{fmt(n)}</title></svg>;',
-      Option: 'return <select><option>{fmt(n)}</option></select>;',
+      Option: 'return <select><option aria-label={spokenLabel(fmt(n))}>{fmt(n)}</option></select>;',
       Generic: ['return <p>{none().length}</p>;', ['const none = <T,>(): T[] => [];']],
       // A prop given an amount by its parent: in <Masked> when it is a
       // string, and as it is when it is not (an element, drawing its own).
@@ -323,8 +323,24 @@ describe('a label a screen reader reads alone', () => {
       Ternary: "return <div aria-label={flag ? `Paid ${fmt(n)}` : 'Unpaid'} />;",
       Said: 'return <div aria-label={spoken(fmt(n))} />;',
       Tested: "return <div aria-label={n > 0 ? 'Some' : 'None'} />;",
+      // One branch said, the other not.
+      HalfSaid: 'return <div aria-label={flag ? spoken(fmt(n)) : fmt(n)} />;',
+      Description: 'return <div aria-description={fmt(n)} />;',
+      Placeholder: 'return <input placeholder={fmt(n)} />;',
+      FieldPlaceholder: 'return <input inputMode="decimal" placeholder={fieldAmount(n)} />;',
     });
-    expect(found.labels).toEqual({ Direct: [7], Variable: [7], Ternary: [7] });
+    expect(found.labels).toEqual({ Direct: [7], Variable: [7], Ternary: [7], HalfSaid: [7], Description: [7], Placeholder: [7], FieldPlaceholder: [7] });
+  });
+
+  test('text that can’t hold markup is let be only where it is said some other way: a chart drawn as an image, an option with its own label', () => {
+    const found = scan({
+      Image: 'return <svg role="img" aria-label="Spending"><text>{fmt(n)}</text></svg>;',
+      Hidden: 'return <svg aria-hidden="true"><g><text><tspan>{fmt(n)}</tspan></text></g></svg>;',
+      NoImage: 'return <svg><text>{fmt(n)}</text><title>{fmt(n)}</title></svg>;',
+      Labelled: "return <select><option value=\"a\" aria-label={spokenLabel(fmt(n))}>{fmt(n)}</option></select>;",
+      Unlabelled: 'return <select><option value="a">{fmt(n)}</option></select>;',
+    });
+    expect(found.children).toEqual({ NoImage: [7, 7], Unlabelled: [7] });
   });
 });
 

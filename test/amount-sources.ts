@@ -1576,14 +1576,16 @@ export function staleMemos(root: string, modules: readonly string[]): StaleMemo[
 
 export type Unspoken = { file: string; line: number; text: string };
 
-/** The attributes a screen reader reads alone. */
-const LABELS = new Set(['aria-label', 'aria-valuetext', 'title', 'alt']);
+/** The attributes a screen reader reads alone, or as a field's or a
+ *  meter's own words. */
+const LABELS = new Set(['aria-label', 'aria-valuetext', 'aria-valuenow', 'aria-description', 'title', 'alt', 'placeholder']);
 
 /**
- * Each label a screen reader reads alone (aria-label, aria-valuetext, title,
- * alt) built from an amount without spoken(): while amounts are hidden it
- * would be read as bullets, never as "hidden". And each built from a field's
- * figures, which it would say whatever the switch says.
+ * Each label a screen reader reads alone (LABELS: aria-label,
+ * aria-valuetext, title, alt...) built from an amount not said through
+ * spoken(): while amounts are hidden it would be read as bullets, never as
+ * "hidden". And each built from a field's figures, which it would say
+ * whatever the switch says.
  */
 export function unspokenLabels(root: string, modules: readonly string[]): Unspoken[] {
   const model = modelOf(root, modules);
@@ -1592,8 +1594,8 @@ export function unspokenLabels(root: string, modules: readonly string[]): Unspok
     const f = model.facts[i];
     for (const x of f.jsx.exprs) {
       if (!x.attr || !LABELS.has(x.attr)) continue;
-      const said = /\b(?:spoken|spokenLabel)\(/.test(f.text.slice(x.open, x.close));
-      if ((!said && writesAmount(f, x.open + 1, x.close, amountPick(model), 'drawn')) || writesFieldFigures(f, x.open + 1, x.close, model, 'drawn')) {
+      // What of it is drawn but said through spoken() (region, 'drawn').
+      if (writesAmount(f, x.open + 1, x.close, amountPick(model), 'drawn') || writesFieldFigures(f, x.open + 1, x.close, model, 'drawn')) {
         const at = f.text.lastIndexOf(x.attr, x.open);
         out.push({ file: m, line: lineOf(f.text, at), text: lineText(f.text, at) });
       }
@@ -1602,10 +1604,36 @@ export function unspokenLabels(root: string, modules: readonly string[]): Unspok
   return out;
 }
 
-/** Elements whose text can't hold markup, or isn't read as text: SVG text
- *  (a chart is an image with its own label), a select's option (its
- *  aria-label says it), a document title. */
-const PLAIN_TEXT_PARENTS = new Set(['text', 'tspan', 'option', 'title']);
+/** An element's opening tag, as written. */
+function openTag(f: ModuleFacts, el: Element): string {
+  for (let i = el.start + 1; i < el.end; i++) {
+    const past = f.lx.opaque.get(i);
+    const pair = f.lx.pairs.get(i);
+    if (past !== undefined) i = past - 1;
+    else if (pair !== undefined && pair > i) i = pair;
+    else if (f.text[i] === '>') return f.text.slice(el.start, i + 1);
+  }
+  return f.text.slice(el.start, el.end);
+}
+
+const hasAttr = (tag: string, name: string, value?: string) =>
+  new RegExp(`\\s${name}(?=[\\s=/>])${value === undefined ? '' : `\\s*=\\s*(?:["']${value}["']|\\{\\s*['"]?${value}['"]?\\s*\\})`}`).test(tag);
+
+/**
+ * Whether the text of `el` (an element whose text can't hold markup) is said
+ * some other way: SVG text and a title in a chart drawn as an image (an svg
+ * with role="img", and so with its own label, or one hidden from a screen
+ * reader), and a select's option with an aria-label of its own (which
+ * unspokenLabels holds to spoken()).
+ */
+function saidElsewhere(f: ModuleFacts, el: Element): boolean {
+  if (el.name === 'option') return hasAttr(openTag(f, el), 'aria-label');
+  if (!['text', 'tspan', 'title'].includes(el.name)) return false;
+  let svg: Element | null = null;
+  for (const e of f.jsx.elements) if (e.name === 'svg' && e.start < el.start && el.end <= e.end && (!svg || e.start > svg.start)) svg = e;
+  const tag = svg ? openTag(f, svg) : '';
+  return !!svg && (hasAttr(tag, 'role', 'img') || hasAttr(tag, 'aria-hidden', 'true'));
+}
 
 /**
  * Each amount written into the page as an element's child outside <Masked>:
@@ -1624,7 +1652,7 @@ export function unmaskedChildren(root: string, modules: readonly string[]): Unsp
     for (const x of f.jsx.exprs) {
       if (x.attr !== null) continue;
       const field = writesFieldFigures(f, x.open + 1, x.close, model, 'drawn');
-      if (!field && (x.element.name === 'Masked' || PLAIN_TEXT_PARENTS.has(x.element.name))) continue;
+      if (!field && (x.element.name === 'Masked' || saidElsewhere(f, x.element))) continue;
       if (field || writesAmount(f, x.open + 1, x.close, textPick(model), 'drawn')) {
         out.push({ file: m, line: lineOf(f.text, x.open), text: lineText(f.text, x.open) });
       }

@@ -42,6 +42,13 @@ function typed(amount: number, scale: number): string {
   return fieldAmount(Math.abs(toUnits(amount, scale)) / scale, Math.round(Math.log10(scale)));
 }
 
+/** An empty part's example: zero, to the currency's places. No figure of
+ *  anyone's, so it is written as text, not as a field's figures. */
+function zeroIn(scale: number): string {
+  const places = Math.round(Math.log10(scale));
+  return places > 0 ? `0.${'0'.repeat(places)}` : '0';
+}
+
 /** The parts the form starts from: the split's own (what the bank changed
  *  since is left to split), or two empty ones under the transaction's
  *  category. */
@@ -216,7 +223,7 @@ export default function SplitSheet({
                   aria-label={`Part ${i + 1} amount`}
                   value={d.amount}
                   onChange={(e) => set(d.key, { amount: e.target.value })}
-                  placeholder={typed(0, scale)}
+                  placeholder={zeroIn(scale)}
                   aria-invalid={d.amount.trim() !== '' && parsed[i] === null}
                   disabled={saving}
                 />
