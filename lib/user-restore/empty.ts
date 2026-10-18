@@ -64,6 +64,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
       'imported-twins',
       'carried-imported-twins',
       'import-settings',
+      'app-imports',
     ],
   ],
   ['accounts kept from a bank you disconnected', ['accounts:directory', 'accounts:meta', 'account-links', 'account-links:dismissed', 'txn-category-carry', 'carried-annotations', 'hidden:accounts', 'account-lifecycle', 'restored-accounts']],

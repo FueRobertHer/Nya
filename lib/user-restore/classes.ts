@@ -88,6 +88,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'account-lifecycle': 'data',
   'allocation-settings': 'setting',
   'api-tokens': 'machinery',
+  // The person's record of what they brought over from other apps, and its
+  // Undo (lib/migration/store.ts).
+  'app-imports': 'data',
   'budget-months': 'data',
   'budget-set': 'data',
   'carried-annotations': 'data',
