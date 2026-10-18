@@ -1,0 +1,4 @@
+Date,Category Group,Category,Payee,Amount,Currency,Notes,Tags,Account Name,Original Name,Transaction number,Type,Parent ID,Recurring ID,Created At
+2026-09-15,Income,Salary,Acme Corp,2500.00,USD,,,Checking,ACME CORP PAYROLL,501,,,,2026-09-15T08:00:00Z
+2026-09-14,Food,Groceries,Whole Foods,-86.42,USD,,,Checking,WHOLEFDS,502,,,,2026-09-14T08:00:00Z
+2026-09-01,Housing,Rent,Landlord,-1850.00,USD,September,,Checking,ZELLE,503,,,,2026-09-01T08:00:00Z

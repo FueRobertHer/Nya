@@ -1,0 +1,17 @@
+Date,Merchant,Category,Account,Original Statement,Notes,Amount,Tags
+2026-08-30,Whole Foods,Groceries,Chase Checking (...1111),WHOLEFDS MKT 10234 SEATTLE WA,,-86.42,
+2026-08-29,Blue Bottle Coffee,Coffee Shops,Chase Sapphire (...4444),SQ *BLUE BOTTLE 1234 SEATTLE WA,with Sam,-4.50,"Work, Reimbursable"
+2026-08-28,Acme Corp,Paychecks,Chase Checking (...1111),ACME CORP PAYROLL PPD ID 12345,,2500.00,
+2026-08-27,Transfer to Savings,Transfer,Chase Checking (...1111),ONLINE TRANSFER TO SAV ...2222,,-500.00,
+2026-08-27,Transfer from Checking,Transfer,Ally Savings (...2222),ONLINE TRANSFER FROM CHK ...1111,,500.00,
+2026-08-25,Chase Card Payment,Credit Card Payment,Chase Checking (...1111),CHASE CREDIT CRD AUTOPAY,,-1200.00,
+2026-08-25,Payment Thank You,Credit Card Payment,Chase Sapphire (...4444),AUTOMATIC PAYMENT - THANK YOU,,1200.00,
+2026-08-20,REI,Shopping,Chase Sapphire (...4444),REI #48 SEATTLE WA,returned the tent,35.00,
+2026-08-18,Costco,Groceries,Chase Sapphire (...4444),COSTCO WHSE #0012,split: food part,-80.00,
+2026-08-18,Costco,Household,Chase Sapphire (...4444),COSTCO WHSE #0012,split: paper towels,-40.00,
+2026-08-15,"Joe's Pizza, Inc.",Restaurants & Bars,Chase Sapphire (...4444),"JOES PIZZA, INC NEW YORK NY","birthday dinner, with tip",-62.10,Vacation
+2026-08-10,Interest,Interest,Ally Savings (...2222),INTEREST PAYMENT,,3.17,
+2026-08-05,Mystery Charge,Uncategorized,Chase Checking (...1111),POS DEBIT 0805 XYZ,,-12.00,
+2026-07-30,Rent,Rent,Chase Checking (...1111),ZELLE PAYMENT TO LANDLORD,August rent,-1850.00,
+2026-07-15,Delta Air Lines,Travel & Vacation,Chase Sapphire (...4444),DELTA AIR 0062384,flight home,-412.30,"Vacation, Work"
+2026-07-01,Spotify,Entertainment & Recreation,Chase Sapphire (...4444),SPOTIFY USA,,-10.99,

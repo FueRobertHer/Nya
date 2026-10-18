@@ -47,6 +47,7 @@
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { ACCESS_LOG_DAYS, ACCESS_LOG_SLOT_MINUTES, LEVELS, isLevel, widerLevel, type Level, type ShownDay } from './share-rules';
+import { dayViewsOf, isViewsRead, mergeViewsRead, type ViewsRead } from './share-kinds';
 
 /** One quarter hour of a record. */
 export type Showing = {
@@ -57,6 +58,12 @@ export type Showing = {
   /** What was shown: each account's id, at the widest level it was shown at
    *  in that quarter hour. */
   read: Record<string, Level>;
+  /** And of the other kinds of share (lib/share-kinds.ts), each as widely as
+   *  it was shown in that quarter hour: its level, what else it showed (the
+   *  accounts in a net worth, the categories, the positions) and the goals
+   *  shown, by id. Absent when none was (and on every row written before
+   *  there were any): a release from before them reads the row without it. */
+  views?: ViewsRead;
 };
 
 /** One side's record on one connection: its quarter hours, oldest first. */
@@ -83,7 +90,7 @@ function isRead(v: unknown): v is Record<string, Level> {
 function isShowing(v: unknown): v is Showing {
   if (typeof v !== 'object' || v === null) return false;
   const s = v as Showing;
-  return isSlot(s.at) && Number.isSafeInteger(s.times) && s.times >= 1 && isRead(s.read);
+  return isSlot(s.at) && Number.isSafeInteger(s.times) && s.times >= 1 && isRead(s.read) && (s.views === undefined || isViewsRead(s.views));
 }
 
 /** The current shape: what every write stores, and every read checks. */
@@ -115,19 +122,21 @@ export function keptShowings(log: AccessLog, now: number): Showing[] {
 }
 
 /**
- * The record with one more showing at `now`, of `read`: counted in its
- * quarter hour, with each account at the widest level shown in it, and what
- * is no longer kept dropped (keptShowings). Computes only, without changing
+ * The record with one more showing at `now`, of `read` (and `views`, the
+ * other kinds it showed): counted in its quarter hour, with each account at
+ * the widest level shown in it and each kind as widely as it was shown
+ * (mergeViewsRead), and what is no longer kept dropped (keptShowings). Computes only, without changing
  * `current`, since update() may run it more than once.
  */
-export function withShowing(current: AccessLog | null, now: number, read: Record<string, Level>): AccessLog {
+export function withShowing(current: AccessLog | null, now: number, read: Record<string, Level>, views: ViewsRead = {}): AccessLog {
   const at = slotOf(now);
   const kept = keptShowings(current ?? { shown: [] }, now);
   const before = kept.find((s) => s.at === at);
   const shown = kept.filter((s) => s !== before);
   const merged: Record<string, Level> = { ...before?.read };
   for (const [id, level] of Object.entries(read)) merged[id] = merged[id] ? widerLevel(merged[id], level) : level;
-  shown.push({ at, times: (before?.times ?? 0) + 1, read: merged });
+  const kinds = mergeViewsRead(before?.views, views);
+  shown.push({ at, times: (before?.times ?? 0) + 1, read: merged, ...(Object.keys(kinds).length > 0 ? { views: kinds } : {}) });
   // In order even when two servers' clocks disagree about which is newer.
   shown.sort((a, b) => (a.at < b.at ? -1 : a.at > b.at ? 1 : 0));
   return { shown: shown.slice(-MAX_SLOTS) };
@@ -148,21 +157,24 @@ export function timeZoneOf(raw: unknown): string | null {
 
 /**
  * A record's quarter hours as days in `timeZone` (timeZoneOf), newest first:
- * for each day, how many times it was shown, and how many accounts at each
- * level, each account once, at the widest level shown that day. Every time
+ * for each day, how many times it was shown, how many accounts at each level,
+ * each account once, at the widest level shown that day, and, when any other
+ * kind was shown, each kind as widely as it was shown that day, with how
+ * many goals (DayViews). Every time
  * zone in use is a whole number of quarter hours from UTC, so a quarter hour
  * never straddles two days.
  */
 export function shownByDay(shown: Showing[], timeZone: string): ShownDay[] {
   const format = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' });
-  const days = new Map<string, { times: number; read: Record<string, Level> }>();
+  const days = new Map<string, { times: number; read: Record<string, Level>; views: ViewsRead }>();
   for (const s of shown) {
     const parts: Record<string, string> = {};
     for (const p of format.formatToParts(new Date(s.at))) parts[p.type] = p.value;
     const day = `${parts.year}-${parts.month}-${parts.day}`;
-    const d = days.get(day) ?? { times: 0, read: {} };
+    const d = days.get(day) ?? { times: 0, read: {}, views: {} };
     d.times += s.times;
     for (const [id, level] of Object.entries(s.read)) d.read[id] = d.read[id] ? widerLevel(d.read[id], level) : level;
+    d.views = mergeViewsRead(d.views, s.views);
     days.set(day, d);
   }
   return [...days.entries()]
@@ -170,7 +182,7 @@ export function shownByDay(shown: Showing[], timeZone: string): ShownDay[] {
     .map(([day, d]) => {
       const levels = Object.fromEntries(LEVELS.map((l) => [l, 0])) as Record<Level, number>;
       for (const level of Object.values(d.read)) levels[level]++;
-      return { day, times: d.times, levels };
+      return { day, times: d.times, levels, ...(Object.keys(d.views).length > 0 ? { views: dayViewsOf(d.views) } : {}) };
     });
 }
 

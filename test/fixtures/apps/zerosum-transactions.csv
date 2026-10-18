@@ -1,0 +1,13 @@
+Date,Account,Payee,Category Group,Category,Memo,Tags,Outflow,Inflow,Cleared
+09/15/2026,Checking,Acme Corp,Income,Ready to Budget,Paycheck,,,2500.00,Cleared
+09/14/2026,Checking,Savings,,,Monthly savings,,500.00,,Cleared
+09/14/2026,Savings,Checking,,,Monthly savings,,,500.00,Cleared
+09/13/2026,Checking,Visa,,,,,1200.00,,Cleared
+09/13/2026,Visa,Checking,,,,,,1200.00,Cleared
+09/12/2026,Visa,Costco,Everyday,Groceries,food,"Costco, Bulk",80.00,,Cleared
+09/12/2026,Visa,Costco,Everyday,Household,paper towels,,40.00,,Cleared
+09/10/2026,Visa,Whole Foods,Everyday,Groceries,,,86.42,,Cleared
+09/09/2026,Visa,REI,Everyday,Household,returned the tent,,,35.00,Cleared
+09/05/2026,Checking,Landlord,Bills,Rent,September,Home,1850.00,,Reconciled
+09/03/2026,Checking,Mystery Shop,,,,,12.00,,Uncleared
+01/01/2026,Checking,Starting Balance,Income,Ready to Budget,,,,4000.00,Reconciled

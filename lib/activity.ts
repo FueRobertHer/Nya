@@ -515,6 +515,10 @@ export async function finishActivity(
    *  so, for a reader that shows what needs review (the app), not reports. */
   review: { on: boolean; since: string | null; unread: boolean; unknown: number };
   review_note: string | null;
+  /** The merchants' default categories couldn't be read, so none filed a
+   *  row (the notes say so): for a reader that says its totals may be filed
+   *  otherwise than the person files them (a share, lib/share-views.ts). */
+  defaults_unread: boolean;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -626,6 +630,7 @@ export async function finishActivity(
       unknown: reviewParts.approvalsUnknown.size,
     },
     review_note: review.queueNote,
+    defaults_unread: reviewParts.defaultsUnread,
     ...(account ? { accountOf: account } : {}),
     incomplete: [...(plaid.incomplete ?? []), ...manual.incomplete],
     // Chosen once the exclusions are on the rows, so an excluded row neither
