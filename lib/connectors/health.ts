@@ -22,8 +22,10 @@
 // Setup Token (the accounts and their history stay), choose accounts, or wait.
 // The same holds for Lunch Flow, in its words: connecting again takes an API
 // key from it (CONNECTOR_WORDS), and since it gives no time with a balance,
-// a link of its that stopped updating is told by the status of its accounts
-// (a problem it reports), never by an old balance.
+// a link of its that broke is told by the status of its accounts (a problem
+// it reports), never by an old balance. A request about one of its accounts
+// that brought nothing this time is `down` (lib/connectors/institutions.ts):
+// nothing to do, since Nya asks again, never "fix it at Lunch Flow".
 
 import type { ConnectionHealth, HealthAction, HealthState, Side } from '../connection-state';
 import { CONNECTOR_WORDS, isConnectorKind, type ConnectorDetail, type ConnectorIssue, type ConnectorKind } from './types';

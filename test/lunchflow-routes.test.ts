@@ -416,8 +416,12 @@ describe('everywhere else, as SimpleFIN’s are', () => {
     ]);
     const rows = (await rest('transactions')).body;
     expect(rows.transactions.find((t: any) => t.name === 'Pret A Manger')).toMatchObject({ source: 'lunchflow', amount: 3.2 });
-    // Older history comes with the next daily update: said as Lunch Flow's.
-    expect(rows.notes).toContain('Monzo: older transactions are still arriving from Lunch Flow, with its next daily update');
+    // Two years came at once, as far back as Nya keeps history: nothing is
+    // said to be still arriving. Were it not all in, it is said as Lunch Flow's.
+    expect(rows.notes.some((n: string) => n.includes('still arriving'))).toBe(false);
+    const [connection_id] = [...(await connectionsStore.getAll(ctx)).keys()];
+    await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, complete: false } } : c));
+    expect((await rest('transactions')).body.notes).toContain('Monzo: older transactions are still arriving from Lunch Flow, with its next daily update');
     const holdings = await rest('holdings', `account_id=${accounts.accounts[1].id}`);
     expect([holdings.status, holdings.body.error.message]).toEqual([404, 'That account is kept up to date through Lunch Flow, and Nya reads its balance, not its positions: it has no holdings.']);
     // An entry that can't be read is named under missing_accounts, by its connector.
@@ -452,13 +456,22 @@ describe('everywhere else, as SimpleFIN’s are', () => {
     const named = csv.slice(1).map((r) => Object.fromEntries(header.map((h, i) => [h, r[i]])));
     expect(named.filter((r) => r.source === 'lunchflow').map((r) => r.name).sort()).toEqual(['ACME LTD', 'Dishoom', 'Pret A Manger']);
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
-    // An OFX statement of the current account, with its balance and Lunch Flow's words.
+    // An OFX statement of the current account, with its balance and Lunch
+    // Flow's words: all in at once, so nothing said to be still coming, and
+    // were it not, said as Lunch Flow's.
     const everyday = doc.accounts.find((a) => a.name === 'Everyday')!;
-    const data = await collectUserData({ ctx, userId: null });
-    const ofx = ofxFile(data, buildUserExport(data, new Date()), everyday.account_id, new Date());
-    if ('refused' in ofx) throw new Error(ofx.refused);
-    expect([...ofx.file.pieces()].join('')).toContain('<TRNAMT>-3.20');
-    expect(ofx.file.notes.join(' ')).toContain('Lunch Flow is still bringing in older transactions, with its next daily update');
+    const statement = async () => {
+      const data = await collectUserData({ ctx, userId: null });
+      const ofx = ofxFile(data, buildUserExport(data, new Date()), everyday.account_id, new Date());
+      if ('refused' in ofx) throw new Error(ofx.refused);
+      return ofx.file;
+    };
+    const file = await statement();
+    expect([...file.pieces()].join('')).toContain('<TRNAMT>-3.20');
+    expect(file.notes.join(' ')).not.toContain('still bringing in older transactions');
+    const [connection_id] = [...(await connectionsStore.getAll(ctx)).keys()];
+    await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, from: daysAgo(100), complete: false } } : c));
+    expect((await statement()).notes.join(' ')).toContain('Lunch Flow is still bringing in older transactions, with its next daily update');
   });
 });
 

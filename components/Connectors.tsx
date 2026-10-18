@@ -31,7 +31,7 @@ import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatMoney } from '@/lib/format';
 import { instantDay } from '@/lib/local-date';
-import type { ConnectionView, OfferView, AccountView } from '@/lib/connectors/view';
+import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/connectors/view';
 import type { OwedSign } from '@/lib/connectors/store';
 import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
 
@@ -100,6 +100,22 @@ export function reportedWords(balance: number, currency: string): string {
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 
+/** A request that brought nothing this time (ProblemKind `retry`), on the
+ *  card: what didn't come, and that Nya asks again. */
+export const retryLine = (message: string) => `${message.replace(/[.\s]+$/, '')}. Nya asks again at its next update.`;
+
+/** When older history arrives: SimpleFIN's a window a night, Lunch Flow's
+ *  in one more request with the next daily update. */
+const olderWhen = (connector: ConnectorKind) => (connector === 'lunchflow' ? 'with its next daily update' : 'over the next few nights');
+
+/** What Refresh came to, in words, when an answer came. Not everything it
+ *  asked about may have come: then the card says what didn't. */
+export function refreshedWords(by: string, f: Pick<FetchView, 'added' | 'problems' | 'missing'>): string {
+  const brought = f.added === 0 ? 'nothing new' : `${f.added} new transaction${f.added === 1 ? '' : 's'}`;
+  const short = f.problems.length > 0 || f.missing.length > 0;
+  return short ? `${by} answered, but not everything came (its card says what): ${brought} so far.` : `${by} answered: ${brought}.`;
+}
+
 /** When the day's requests for your own sync come back, in words (" in about 5
  *  hours"), or "" when that isn't known. */
 export function backIn(requests: { resets_in_seconds: number } | null | undefined): string {
@@ -159,7 +175,8 @@ export function ConnectorCardView({
       {f && !f.ok && <p className="stale-note">{f.message}</p>}
       {f?.problems.map((p) => (
         <p className="stale-note" key={p.message}>
-          {conn.label} reports: “{p.message}”{p.accounts ? ` (${p.accounts.join(', ')})` : ''}
+          {/* A request that brought nothing this time (its words name the account) clears when Nya asks again: never something to fix at the connector. */}
+          {p.retry ? retryLine(p.message) : `${conn.label} reports: “${p.message}”${p.accounts ? ` (${p.accounts.join(', ')})` : ''}`}
         </p>
       ))}
       {f && f.missing.length > 0 && <p className="stale-note">Not in {conn.label}’s latest answer: {f.missing.join(', ')}.</p>}
@@ -172,9 +189,10 @@ export function ConnectorCardView({
       {f?.note && <p className="stale-note">{f.note}</p>}
       {conn.history && n > 0 && (
         <p className="panel-note">
+          {/* The day history was asked from, never the oldest row: the service may hold fewer days than were asked. */}
           {conn.history.complete
-            ? `Transactions from ${calendarDay(conn.history.from)}, as far back as ${conn.label} has them.`
-            : `Transactions from ${calendarDay(conn.history.from)} so far: older ones arrive over the next few nights${conn.history.failed ? ` (the last try didn’t get an answer; Nya tries again)` : ''}.`}
+            ? `Everything ${conn.label} has from ${calendarDay(conn.history.from)} on is in.`
+            : `Everything ${conn.label} has from ${calendarDay(conn.history.from)} on is in, and older transactions arrive ${olderWhen(conn.connector)}${conn.history.failed ? ` (the last try didn’t get an answer; Nya tries again)` : ''}.`}
         </p>
       )}
       {n === 0 && conn.available.length > 0 && <p className="panel-note">Choose which of the accounts {conn.label} offers to track.</p>}
@@ -421,6 +439,22 @@ export function EndedPointer({ count }: { count: number }) {
   );
 }
 
+/** Where the person pastes what connects the service, named for it. A key is
+ *  a secret that stays the same, so it is typed out of sight; a token is
+ *  long, and spent once claimed, so it is shown. */
+export function CredentialField({ connector, value, busy, onChange }: { connector: ConnectorKind; value: string; busy: boolean; onChange: (value: string) => void }) {
+  return (
+    <label className="field connector-token">
+      {CONNECTOR_WORDS[connector].credential}
+      {connector === 'lunchflow' ? (
+        <input type="password" value={value} onChange={(e) => onChange(e.target.value)} disabled={busy} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      ) : (
+        <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={4} disabled={busy} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      )}
+    </label>
+  );
+}
+
 /** The words of the first step: what the service is and what connecting does. */
 export function ConnectIntro({ again, connector = 'simplefin' }: { again: boolean; connector?: ConnectorKind }) {
   if (connector === 'lunchflow') return <LunchFlowIntro again={again} />;
@@ -607,7 +641,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
         const conn = res.ok ? (res.data.connection as ConnectionView | null) : null;
         const f = conn?.last_fetch;
         const by = conn?.label ?? 'It';
-        setStep({ kind: 'done', text: !res.ok ? res.error : f?.ok ? `${by} answered: ${f.added === 0 ? 'nothing new' : `${f.added} new transaction${f.added === 1 ? '' : 's'}`}.` : f?.message ?? `${by} didn’t answer.` });
+        setStep({ kind: 'done', text: !res.ok ? res.error : f?.ok ? refreshedWords(by, f) : f?.message ?? `${by} didn’t answer.` });
         if (res.ok) changed.current(false);
         return;
       }
@@ -693,8 +727,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (!res.ok) return setError(res.error);
     onChanged(track.length > 0 || stop.length > 0 || retype.length > 0);
     const parts: string[] = [];
-    // SimpleFIN's history comes 90 days a window; Lunch Flow's two years at once.
-    const sofar = s.connector === 'lunchflow' ? 'the last two years are in, and anything older arrives with the next daily update' : 'the last three months are in, and older transactions arrive over the next few nights';
+    // SimpleFIN's history comes 90 days a window; Lunch Flow's two years at
+    // once, as far back as Nya keeps history (lib/connectors/sync.ts HISTORY_DAYS).
+    const sofar = s.connector === 'lunchflow' ? 'everything Lunch Flow has from the last two years is in' : 'the last three months are in, and older transactions arrive over the next few nights';
     if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: ${sofar}.`);
     if (res.data.skipped === 'budget') {
       parts.push(`Nya has used today’s requests for your own sync, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
@@ -761,15 +796,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
       {view?.kind === 'token' && (
         <>
           <ConnectIntro again={!!view.connection_id} connector={view.connector} />
-          <label className="field connector-token">
-            {CONNECTOR_WORDS[view.connector].credential}
-            {/* A key is a secret that stays the same, so it is typed out of sight; a token is long, and spent once claimed. */}
-            {view.connector === 'lunchflow' ? (
-              <input type="password" value={token} onChange={(e) => setToken(e.target.value)} disabled={busy} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-            ) : (
-              <textarea value={token} onChange={(e) => setToken(e.target.value)} rows={4} disabled={busy} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-            )}
-          </label>
+          <CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />
           {error && <div className="error">{error}</div>}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>

@@ -1196,7 +1196,9 @@ export default function Dashboard({
     [loadNetWorth, requestBackfill, loadTransactions, txns]
   );
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
-  const connectLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
+  const askLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
+  // Offered only where the deployment turned it on (app/page.tsx).
+  const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;
 
   const startAddManual = useCallback(() => {
     setManualError('');
@@ -1794,7 +1796,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={lunchFlow ? connectLunchFlow : undefined} brokerage={brokerageLink} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1943,7 +1945,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={lunchFlow ? connectLunchFlow : undefined} brokerage={brokerageLink} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}

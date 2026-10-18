@@ -47,12 +47,15 @@
 //   [price]       Lunch Flow's site: $34.99 a year ($2.92 a month) with two
 //                 connections, $10 for each more, a 7-day trial, daily syncs.
 //   [actual-flow] Lunch Flow's own client, https://github.com/lunchflow/actual-flow
-//                 (npm @lunchflow/actual-flow 0.0.22): the base URL, the fields
-//                 of an account (id, a number; name; institution_name) and of
-//                 a transaction (id, null for a pending one; accountId; amount;
-//                 currency; date; merchant; description; isPending), and its
-//                 amounts handed to Actual Budget as they come, where money
-//                 out is negative.
+//                 (npm @lunchflow/actual-flow 0.0.22): the base URL its setup
+//                 offers, https://lunchflow.app/api/v1 (src/ui.ts; its client's
+//                 own default, https://api.lunchflow.com, is another domain no
+//                 other source names, never asked here), the fields of an
+//                 account (id, a number; name; institution_name) and of a
+//                 transaction (id, null for a pending one; accountId; amount;
+//                 currency; date; merchant; description; isPending), no use of
+//                 `total`, and its amounts handed to Actual Budget as they
+//                 come, where money out is negative.
 //   [mcp]         Lunch Flow's MCP server (a fork, npm @iflow-mcp/lunchflow-mcp
 //                 0.1.0, author "Lunch Flow"): its error bodies, { error,
 //                 message }: 401 "API key is required. Please provide
@@ -70,13 +73,18 @@
 //                 some banks (Halifax, through Lloyds) reporting a card's
 //                 available credit as its balance.
 //   [firefly]     Firefly III's data importer, https://github.com/firefly-iii/data-importer
-//                 (app/Services/LunchFlow, config/lunchflow.php): the base URL,
-//                 and sample answers with `status` "ACTIVE", `provider`
-//                 "gocardless" and 32-character transaction ids.
-//   [sdks]        lunchflow-rs (crates.io lunchflow 0.3.0) and lunchflowpy
-//                 (PyPI 0.1.4): `status` one of ACTIVE, DISCONNECTED and ERROR;
-//                 `from` and `to`, inclusive YYYY-MM-DD days; 403 "invalid API
-//                 key or inactive subscription"; www.lunchflow.app as the host.
+//                 (app/Services/LunchFlow, config/lunchflow.php): the base URL
+//                 https://lunchflow.app/api/v1, and sample answers with
+//                 `status` "ACTIVE", `provider` "gocardless", 32-character
+//                 transaction ids, and a `total` of 2927 beside 11
+//                 transactions (see `total`, below).
+//   [sdks]        lunchflow-rs (crates.io lunchflow 0.3.0, base
+//                 https://lunchflow.app/api/v1) and lunchflowpy (PyPI 0.1.4,
+//                 base https://www.lunchflow.app/api/v1, which its test calls
+//                 "the canonical www host"): `status` one of ACTIVE,
+//                 DISCONNECTED and ERROR; `from` and `to`, inclusive
+//                 YYYY-MM-DD days; 403 "invalid API key or inactive
+//                 subscription".
 //   [zerosum]     https://help.zerosumapp.com/articles/3950774-bank-sync:
 //                 ZeroSum, a hosted budgeting app, takes a subscriber's own
 //                 Lunch Flow Personal API account on its Plus plan.
@@ -91,36 +99,59 @@
 // whoever runs Nya does once Lunch Flow (hello@lunchflow.app) has said yes in
 // writing.
 //
+// HOST. The base is https://lunchflow.app/api/v1, as [docs], Lunch Flow's own
+// MCP server and actual-flow's setup have it, and Sure, Firefly III and
+// lunchflow-rs use; lunchflowpy alone uses www.lunchflow.app. Both names are
+// Lunch Flow's own and trusted for a redirect between them, and the key goes
+// to no other. Should the bare name answer every request with a redirect to
+// www, each would take two, which docs/deployment.md says how to check.
+//
 // CONNECTING. The person pastes the key; Nya checks it once with GET
 // /accounts (it is not spent, unlike a SimpleFIN token) and keeps it as the
 // connection's credential (lib/connectors/store.ts). It is sent in the
 // x-api-key header to Lunch Flow's host and nowhere else: a redirect is
-// followed only to the same site's other name (lunchflow.app and
-// www.lunchflow.app both serve it, [docs] and [sdks]), and every request is
-// held to the rules of lib/connectors/http.ts.
+// followed only to the same site's other name (see HOST), and every request
+// is held to the rules of lib/connectors/http.ts.
 //
 // READING, account by account, since no one answer holds every account:
-// GET /accounts lists them; then each one's balance (GET
-// /accounts/:id/balance), which also says its currency, as /accounts often
-// doesn't; then, for the accounts tracked (FetchRequest `accounts`), their
-// transactions in the window (GET /accounts/:id/transactions?from=&to=). A
-// fetch is 1 + (accounts) + (tracked) requests, at most PARALLEL at a time,
-// within the fetch's one deadline. A request about one account that brings
-// nothing usable is a problem for that account only (its bank is held, and
-// the window asked again); a fetch where none came through failed whole; and
-// a refused key, a limit reached, a request Lunch Flow refuses or an address
-// Nya won't use stops it at once.
+// GET /accounts lists them; then, for the accounts tracked (FetchRequest
+// `accounts`), first, each one's balance (GET /accounts/:id/balance), which
+// also says its currency, as /accounts often doesn't, and its transactions
+// (GET /accounts/:id/transactions?from=&to=); then the balances of accounts
+// nobody tracks that Nya doesn't offer yet, to offer them with their currency
+// (those it offers, FetchRequest `offered`, are only listed, so none costs a
+// request at every update). A listing to choose from (balances only) asks
+// every balance. At most PARALLEL requests are in flight, within the fetch's
+// one deadline. A request about a tracked account that brings nothing usable
+// (no answer, Lunch Flow's own error such as its 503 "Bank data is
+// temporarily unavailable", an answer Nya can't read, or Nya's own time
+// running out before it asked) is a problem for that account only, of kind
+// `retry`: its bank is held, the window asked again, and the person told
+// there is nothing to do. A fetch where no account came through failed
+// whole; a refused key, a limit reached, a request Lunch Flow refuses or an
+// address Nya won't use stops it at once. An account is gone only when
+// Lunch Flow says "Account not found" of it ([mcp]); another 404 (a balance it
+// has none of yet) is that account's problem. Only the tracked accounts'
+// problems are kept, theirs first, at most MAX_PROBLEMS: past that, one that
+// names no account holds every bank, so a cut list never reads as whole.
 //
 // UNVERIFIED, AND THE SAFE READING. The documentation couldn't be read in
 // full, so where the clients above disagree or say nothing:
 //   - the window: `from` and `to` ([sdks]; Sure sends `start_date` and
-//     `end_date`). Nya sends `from` and `to` and keeps only what an answer
-//     holds inside the window, so a parameter Lunch Flow ignores costs a
-//     larger answer, never a wrong one;
-//   - pages: none documented, and no client asks for a second. `total` is
-//     read as the count of what the answer holds: one whose `total` is more
-//     than it sent may have been cut short, so it is a problem for that
-//     account (held, and asked again), never taken as whole;
+//     `end_date`). Nya sends `from` and `to`, and keeps every posted row an
+//     answer holds dated back to the history's limit (FetchRequest `since`),
+//     matched by Lunch Flow's id, so a parameter Lunch Flow ignores costs a
+//     larger answer, never a wrong one, and a row it sends late, dated before
+//     the window, isn't lost;
+//   - late rows: a row is dated by its own day, else the day the bank
+//     confirmed it ([changelog]), and a card's held purchase comes only once
+//     it posts, so it can turn up weeks after its date. The windows overlap
+//     by 45 days, and rows before the window are kept, as above;
+//   - `total`: no client reads it, and Firefly III's sample has 2927 beside
+//     11 transactions, so it may count the account's rows whatever the
+//     window. It isn't read: an answer is taken as it comes, and whether one
+//     is ever cut short is to be checked with a live key (docs/deployment.md).
+//     No pages are documented, and no client asks for a second;
 //   - signs: a transaction's amount is from the holder's side, money out
 //     negative, as Lunch Flow's own client hands it to Actual Budget, so each
 //     is negated once into Plaid's sign. A balance is taken from the holder's
@@ -130,12 +161,14 @@
 //     (lib/connectors/institutions.ts SIGNS). A card a bank reports by its
 //     available credit comes positive too, and then neither reading is
 //     right, which the docs say;
-//   - a balance's time: none is given (a last sync time is only planned), so
-//     a balance is as of when Nya received it (`balance_at` null, its fetch's
-//     time shown, and never called the bank's day), and a bank whose link at
-//     Lunch Flow broke is told by its account's `status`, DISCONNECTED or
-//     ERROR (a problem for its bank), not by an old date. Any other status
-//     says nothing Nya reads;
+//   - a balance's time: none is given (a last sync time is only planned,
+//     [feedback]), so a balance is as of when Nya received it (`balance_at`
+//     null, its fetch's time shown, and never called the bank's day), and a
+//     bank whose link at Lunch Flow broke is told by its account's `status`,
+//     DISCONNECTED or ERROR (a problem for its bank, to fix at Lunch Flow),
+//     not by an old date. Any other status says nothing Nya reads. A link
+//     that stops updating while Lunch Flow still says ACTIVE can't be told:
+//     its last balance is recorded each day as it comes (the docs say so);
 //   - pending transactions: `include_pending` is never sent (false unless
 //     asked, in every client), and one that comes all the same (`isPending`,
 //     or no id) is left out and counted, as SimpleFIN's are;
@@ -263,7 +296,8 @@ async function get(path: string, key: string, deadline: number, query: Record<st
   url.pathname = `${base.pathname.replace(/\/+$/, '')}${path}`;
   for (const [name, value] of Object.entries(query)) url.searchParams.set(name, value);
   const timeoutMs = deadline - Date.now();
-  if (timeoutMs < MIN_LEFT_MS) throw new ConnectorFailure('down', 'connector', 'Lunch Flow didn’t answer in time.');
+  // Nya's own time for the fetch, not Lunch Flow's slowness: nothing was asked.
+  if (timeoutMs < MIN_LEFT_MS) throw new ConnectorFailure('down', 'nya', 'Nya’s time for this update ran out before it asked Lunch Flow.');
   try {
     const { status, body } = await guardedRequest({
       method: 'GET',
@@ -323,10 +357,13 @@ export function failureOfStatus(status: number, said: string): ConnectorFailure 
 }
 
 /** A request about one account, as the fetch takes it: its JSON, or why it
- *  brought nothing for that account (`gone`: Lunch Flow no longer has it).
- *  Throws ConnectorFailure for what holds for every account alike: a refused
- *  key, payment, a limit, a request refused, an address Nya won't use. */
+ *  brought nothing for that account (`gone`: Lunch Flow says it no longer has
+ *  it). Throws ConnectorFailure for what holds for every account alike: a
+ *  refused key, payment, a limit, a request refused, an address Nya won't use. */
 type Asked = { ok: true; json: unknown } | { ok: false; gone: boolean; failure: ConnectorFailure; why: string };
+
+/** Lunch Flow's own words for an account it doesn't have ([mcp]). */
+const NO_SUCH_ACCOUNT = /account not found/i;
 
 async function ask(path: string, key: string, deadline: number, query?: Record<string, string>): Promise<Asked> {
   let got: Got;
@@ -338,8 +375,19 @@ async function ask(path: string, key: string, deadline: number, query?: Record<s
   }
   if (got.status !== 200) {
     const said = saidIn(got.body, key);
+    if (got.status === 404) {
+      // Gone only when Lunch Flow says so of the account itself: another 404
+      // (a balance it has none of yet, say) is that account's, asked again.
+      const theirs = said ? ` Lunch Flow said: “${said}”` : '';
+      if (NO_SUCH_ACCOUNT.test(said)) return { ok: false, gone: true, failure: new ConnectorFailure('rejected', 'connector', `Lunch Flow no longer has an account Nya tracks (HTTP 404).${theirs}`, 404), why: said };
+      return {
+        ok: false,
+        gone: false,
+        failure: new ConnectorFailure('down', 'connector', `Lunch Flow didn’t have what Nya asked for (HTTP 404).${theirs}`, 404),
+        why: said ? `${said} (HTTP 404)` : 'Lunch Flow didn’t have it (HTTP 404)',
+      };
+    }
     const failure = failureOfStatus(got.status, said);
-    if (got.status === 404) return { ok: false, gone: true, failure, why: said || 'HTTP 404' };
     if (failure.kind !== 'down') throw failure;
     return { ok: false, gone: false, failure, why: said ? `${said} (HTTP ${got.status})` : `Lunch Flow had a problem of its own (HTTP ${got.status})` };
   }
@@ -347,7 +395,7 @@ async function ask(path: string, key: string, deadline: number, query?: Record<s
     return { ok: true, json: JSON.parse(got.body) };
   } catch {
     const failure = new ConnectorFailure('answer', 'connector', 'Lunch Flow’s answer couldn’t be read: it isn’t JSON.', 200);
-    return { ok: false, gone: false, failure, why: 'its answer isn’t JSON' };
+    return { ok: false, gone: false, failure, why: 'Its answer isn’t JSON.' };
   }
 }
 
@@ -504,18 +552,18 @@ function recordOf(t: unknown, remote_id: string, currency: string | null): RawRe
 }
 
 /**
- * /accounts/:id/transactions, read: the records posted in `window` (from
- * `start` up to, not including, `end`), what the answer held that isn't among
- * them (pending, unreadable; those outside the window aren't counted, see the
- * header), and whether it may have been cut short (`total` more than it
- * sent). Null when it isn't a list of transactions.
+ * /accounts/:id/transactions, read: the posted records the answer holds,
+ * dated on or after `since` (every one when null), and what it held that
+ * isn't among them (pending, unreadable; those dated before `since` aren't
+ * counted, see the header). Its `total` isn't read (see the header). Null
+ * when it isn't a list of transactions.
  */
 export function readTransactions(
   json: unknown,
   remote_id: string,
-  window: { start: string; end: string | null },
+  since: string | null,
   currency: string | null
-): { records: RawRecord[]; left_out: { pending: number; unreadable: number }; cut: { held: number; total: number } | null } | null {
+): { records: RawRecord[]; left_out: { pending: number; unreadable: number } } | null {
   if (!isRecord(json) || !Array.isArray(json.transactions) || json.transactions.length > MAX_ANSWER_TRANSACTIONS) return null;
   const records: RawRecord[] = [];
   const left_out = { pending: 0, unreadable: 0 };
@@ -523,25 +571,58 @@ export function readTransactions(
     const r = recordOf(t, remote_id, currency);
     if (r === 'pending') left_out.pending++;
     else if (r === 'unreadable') left_out.unreadable++;
-    else if (r.date >= window.start && (window.end === null || r.date < window.end)) records.push(r);
+    else if (since === null || r.date >= since) records.push(r);
   }
-  const total = json.total;
-  const cut = typeof total === 'number' && Number.isSafeInteger(total) && total > json.transactions.length ? { held: json.transactions.length, total } : null;
-  return { records, left_out, cut };
+  return { records, left_out };
 }
-
-/** "A", "A and B", "A, B and C". */
-const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 
 /** What a status says, when it says something is wrong ([sdks]). */
 const STATUS_WORDS: Readonly<Record<string, string>> = { DISCONNECTED: 'is disconnected', ERROR: 'has an error' };
 
 // ---- Fetching ----
 
+/** An account as an answer holds it, from its listing and its balance. */
+function remoteOf(a: Listed, read: NonNullable<ReturnType<typeof readBalance>>): RemoteAccount {
+  return {
+    remote_id: a.remote_id,
+    name: a.name,
+    institution: a.institution,
+    currency: currencyCode(read.currency_text) ?? currencyCode(a.currency_text),
+    currency_text: read.currency_text || a.currency_text,
+    balance: read.balance,
+    available: read.available,
+    // Lunch Flow gives no time with a balance: see the header.
+    balance_at: null,
+    transactions: [],
+    left_out: { pending: 0, unreadable: 0 },
+  };
+}
+
+/** The problems an answer keeps, at most MAX_PROBLEMS, in the order given
+ *  (the tracked accounts' first): past that, the rest are one problem that
+ *  names no account, which holds every bank on the connection, so an answer
+ *  is never taken as whole for an account whose problem was left out. */
+function keptProblems(problems: RemoteProblem[]): RemoteProblem[] {
+  if (problems.length <= MAX_PROBLEMS) return problems;
+  const rest = problems.slice(MAX_PROBLEMS - 1);
+  return [
+    ...problems.slice(0, MAX_PROBLEMS - 1),
+    {
+      message: `${rest.length} more problems with other accounts, which Nya doesn’t keep`,
+      side: rest.every((p) => p.side === 'nya') ? 'nya' : 'connector',
+      accounts: null,
+      ...(rest.every((p) => p.kind === 'retry') ? { kind: 'retry' as const } : {}),
+    },
+  ];
+}
+
 /**
- * Every account the key can see, each with its balance, and, for a window,
- * the tracked accounts' transactions posted in it (see READING in the
- * header). Throws ConnectorFailure (never with the key in it).
+ * Every account the key can see, and, for a window, the tracked accounts'
+ * transactions (see READING in the header): the tracked accounts' balances
+ * and transactions first, so none of them waits behind an account nobody
+ * tracks; then the balances of accounts not tracked that Nya doesn't offer
+ * yet (`offered` names those it does: only listed, with their names). Throws
+ * ConnectorFailure (never with the key in it).
  */
 export async function fetchLunchFlow(secret: string, request: FetchRequest, opts: { timeoutMs: number }): Promise<RemoteAnswer> {
   const key = secret.trim();
@@ -558,86 +639,94 @@ export async function fetchLunchFlow(secret: string, request: FetchRequest, opts
   }
   const { listed, unreadable } = readAccountList(json);
 
-  const balances = await inTurn(listed, (a) => ask(`/accounts/${encodeURIComponent(a.remote_id)}/balance`, key, deadline));
   const window = request.balancesOnly ? null : { start: request.start, end: request.end };
-  // The accounts whose transactions are wanted: the tracked ones, or every
-  // one when the request names none.
-  const only = request.balancesOnly ? null : (request.accounts ?? null);
-  const wanted = window ? listed.filter((a, i) => balances[i].ok && (only === null || only.includes(a.remote_id))) : [];
-  // `from` and `to` are inclusive days ([sdks]); the window's end is not.
+  // The accounts asked about: the tracked ones (every one, when the request
+  // names none, or asks for balances only, to choose from).
+  const named = request.balancesOnly ? null : (request.accounts ?? null);
+  const wanted = named === null ? listed : listed.filter((a) => named.includes(a.remote_id));
+  const others = named === null ? [] : listed.filter((a) => !named.includes(a.remote_id));
+  const offered = new Set(request.balancesOnly ? [] : (request.offered ?? []));
+  // `from` and `to` are inclusive days ([sdks]); the window's end is not. A
+  // row dated before `from` that comes all the same is kept, back to the
+  // history's limit (`since`): Lunch Flow dates a held purchase by its own
+  // day, and sends it once it posts (see the header).
   const query = window ? { from: window.start, ...(window.end ? { to: addDays(window.end, -1) } : {}) } : undefined;
-  const asked = await inTurn(wanted, (a) => ask(`/accounts/${encodeURIComponent(a.remote_id)}/transactions`, key, deadline, query));
-  const transactionsOf = new Map(wanted.map((a, i) => [a.remote_id, asked[i]]));
+  const since = request.balancesOnly ? null : (request.since ?? request.start);
+  const balanceOf = (a: Listed) => ask(`/accounts/${encodeURIComponent(a.remote_id)}/balance`, key, deadline);
+  const asked = await inTurn(wanted, async (a) => {
+    const balance = await balanceOf(a);
+    // An account whose balance didn't come has its problem already: its
+    // transactions wait for the next update with it.
+    const transactions = window && balance.ok ? await ask(`/accounts/${encodeURIComponent(a.remote_id)}/transactions`, key, deadline, query) : null;
+    return { balance, transactions };
+  });
+  const fresh = others.filter((a) => !offered.has(a.remote_id));
+  const freshBalances = await inTurn(fresh, balanceOf);
 
   const accounts: RemoteAccount[] = [];
   const problems: RemoteProblem[] = [];
-  const problem = (message: string, ids: string[]) => problems.push({ message: serverText(message, key), side: 'connector', accounts: ids });
-  // How many accounts came through whole, and the first failure, for a fetch
-  // where none did.
+  // In a listing to choose from nothing is tracked, so a problem names no
+  // account, holding nothing, and the connection's card says it.
+  const about = (a: Listed) => (request.balancesOnly ? null : [a.remote_id]);
+  const retry = (message: string, a: Listed, failure: ConnectorFailure | null) =>
+    problems.push({ message: serverText(message, key), side: failure?.side === 'nya' ? 'nya' : 'connector', accounts: about(a), kind: 'retry' });
+  // How many accounts asked about came through whole, and the first failure,
+  // for a fetch where none did.
   let whole = 0;
   let first: ConnectorFailure | null = null;
 
-  for (const [i, a] of listed.entries()) {
-    const b = balances[i];
+  for (const [i, a] of wanted.entries()) {
+    const { balance: b, transactions: t } = asked[i];
     if (!b.ok) {
       // Gone from Lunch Flow since the listing: missing, as it would be from
       // a listing of its own.
       if (b.gone) continue;
       first ??= b.failure;
-      problem(`${a.name}: no balance came. ${b.why}`, [a.remote_id]);
+      retry(`${a.name}: no balance came. ${b.why}`, a, b.failure);
       continue;
     }
     const read = readBalance(b.json);
     if (!read) {
       first ??= new ConnectorFailure('answer', 'connector', 'Lunch Flow’s answer couldn’t be read: it held no balance.', 200);
-      problem(`${a.name}: its balance couldn’t be read`, [a.remote_id]);
+      retry(`${a.name}: its balance couldn’t be read`, a, null);
       continue;
     }
-    const currency = currencyCode(read.currency_text) ?? currencyCode(a.currency_text);
-    const account: RemoteAccount = {
-      remote_id: a.remote_id,
-      name: a.name,
-      institution: a.institution,
-      currency,
-      currency_text: read.currency_text || a.currency_text,
-      balance: read.balance,
-      available: read.available,
-      // Lunch Flow gives no time with a balance: see the header.
-      balance_at: null,
-      transactions: [],
-      left_out: { pending: 0, unreadable: 0 },
-    };
+    const account = remoteOf(a, read);
     accounts.push(account);
-    const t = transactionsOf.get(a.remote_id);
-    if (!t || !window) {
+    if (!window || !t) {
       whole++;
       continue;
     }
     if (!t.ok) {
       first ??= t.failure;
-      problem(`${a.name}: no transactions came. ${t.why}`, [a.remote_id]);
+      retry(`${a.name}: no transactions came. ${t.why}`, a, t.failure);
       continue;
     }
-    const got = readTransactions(t.json, a.remote_id, window, currency);
+    const got = readTransactions(t.json, a.remote_id, since, account.currency);
     if (!got) {
       first ??= new ConnectorFailure('answer', 'connector', 'Lunch Flow’s answer couldn’t be read: it held no list of transactions.', 200);
-      problem(`${a.name}: its transactions couldn’t be read`, [a.remote_id]);
+      retry(`${a.name}: its transactions couldn’t be read`, a, null);
       continue;
     }
     account.transactions = got.records;
     account.left_out = got.left_out;
-    if (got.cut) {
-      problem(`The answer for ${a.name} held ${got.cut.held} of the ${got.cut.total} transactions it counted, so it may have been cut short: Nya asks again`, [a.remote_id]);
-      continue;
-    }
     whole++;
   }
-  // Nothing came through for any account: the fetch failed, as one request would.
+  // Nothing came through for any account asked about: the fetch failed, as
+  // one request would.
   if (whole === 0 && first) throw first;
+  // Accounts nobody tracks, new since Nya last listed them: offered once
+  // their balances come, so one that didn't come is offered at a later update.
+  for (const [i, a] of fresh.entries()) {
+    const b = freshBalances[i];
+    const read = b.ok ? readBalance(b.json) : null;
+    if (read) accounts.push(remoteOf(a, read));
+  }
 
-  // A broken link at Lunch Flow, said once for each bank.
+  // A broken link at Lunch Flow, said once for each bank with an account
+  // asked about.
   const broken = new Map<string, { institution: string; words: string; ids: string[] }>();
-  for (const a of listed) {
+  for (const a of wanted) {
     const words = STATUS_WORDS[a.status];
     if (!words) continue;
     const at = `${a.status}\n${a.institution.key}`;
@@ -645,9 +734,16 @@ export async function fetchLunchFlow(secret: string, request: FetchRequest, opts
     entry.ids.push(a.remote_id);
     broken.set(at, entry);
   }
-  for (const b of broken.values()) problem(`The connection to ${b.institution} ${b.words}`, b.ids);
+  for (const b of broken.values()) {
+    problems.push({ message: serverText(`The connection to ${b.institution} ${b.words}`, key), side: 'connector', accounts: request.balancesOnly ? null : b.ids });
+  }
 
-  return { accounts, problems: problems.slice(0, MAX_PROBLEMS), unreadable_accounts: unreadable };
+  return {
+    accounts,
+    problems: keptProblems(problems),
+    unreadable_accounts: unreadable,
+    listed: others.filter((a) => offered.has(a.remote_id)).map((a) => ({ remote_id: a.remote_id, name: a.name, institution: a.institution })),
+  };
 }
 
 /**
@@ -684,12 +780,16 @@ export const LUNCHFLOW = {
   kind: 'lunchflow',
   label: CONNECTOR_WORDS.lunchflow.label,
   // No longest window is documented: two years in one answer, as far back as
-  // the daily fetch reaches (lib/connectors/sync.ts HISTORY_DAYS), so older
-  // history is one more request.
+  // Nya keeps history (lib/connectors/sync.ts HISTORY_DAYS), so there is no
+  // older window to ask for.
   windowDays: 731,
-  // Lunch Flow's own Lunch Money destination syncs the last seven days each
-  // day ([guides]), as late as rows are taken to come.
-  overlapDays: 7,
+  // How late a row may turn up: a card's held purchase (a hotel, a car hire)
+  // can post weeks after the day Lunch Flow dates it by ([changelog]), and a
+  // row Lunch Flow sends dated before the window is kept anyway (see the
+  // header). Seven days, as its own Lunch Money destination looks back
+  // ([guides]), was a guess too short for those; a longer overlap costs no
+  // request, one per account whatever the window, only a larger answer.
+  overlapDays: 45,
   providerDailyLimit: null,
   maxInputChars: MAX_KEY_CHARS + 200,
   checkInput: (input) => {

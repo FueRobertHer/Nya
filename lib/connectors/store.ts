@@ -72,7 +72,7 @@
 // pulling in anything else.
 
 import { defineCounterStore, defineMapStore } from '../repo';
-import { isConnectorKind, ANY_CONNECTOR, FAILURE_KINDS, type ConnectorKind, type FailureKind } from './types';
+import { isConnectorKind, ANY_CONNECTOR, FAILURE_KINDS, type ConnectorKind, type FailureKind, type ProblemKind } from './types';
 import { MANUAL_TYPES, type ManualType } from '../manual';
 import { isCalendarDay } from '../manual-txn-input';
 import type { Side } from '../connection-state';
@@ -83,8 +83,11 @@ const SIDES: readonly Side[] = ['none', 'you', 'bank', 'plaid', 'nya', 'unknown'
 export type StoredFailure = { kind: FailureKind; side: Side; message: string; status: number | null };
 
 /** A problem the connector reported, with the tracked accounts (Nya's ids) it
- *  concerns, or null when it could concern any of them. */
-export type StoredProblem = { message: string; side: Side; accounts: string[] | null };
+ *  concerns, or null when it could concern any of them, and what kind it is
+ *  (RemoteProblem): absent for the connector's word about a bank. A release
+ *  from before kinds reads a kept one as that word, and one after may know
+ *  more kinds than `retry`: any other is read as that word too. */
+export type StoredProblem = { message: string; side: Side; accounts: string[] | null; kind?: ProblemKind | (string & {}) };
 
 /** What the latest request for balances came to. */
 export type FetchRecord = {
@@ -219,7 +222,7 @@ function isFailure(v: unknown): v is StoredFailure {
 }
 
 function isProblem(v: unknown): v is StoredProblem {
-  return isRecord(v) && isText(v.message, 1000) && isSide(v.side) && (v.accounts === null || isIdList(v.accounts));
+  return isRecord(v) && isText(v.message, 1000) && isSide(v.side) && (v.accounts === null || isIdList(v.accounts)) && (v.kind === undefined || isText(v.kind, 40));
 }
 
 export function isFetchRecord(v: unknown): v is FetchRecord {

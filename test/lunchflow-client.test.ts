@@ -101,7 +101,7 @@ describe('the key', () => {
   test('the connector is registered, on the documented host, with the words it is shown in', () => {
     expect(connectorOf('lunchflow')).toBe(LUNCHFLOW);
     expect(LUNCHFLOW_API).toBe('https://lunchflow.app/api/v1');
-    expect([LUNCHFLOW.label, LUNCHFLOW.providerDailyLimit, LUNCHFLOW.overlapDays]).toEqual(['Lunch Flow', null, 7]);
+    expect([LUNCHFLOW.label, LUNCHFLOW.providerDailyLimit, LUNCHFLOW.overlapDays]).toEqual(['Lunch Flow', null, 45]);
     expect(LUNCHFLOW.hostOf(server.key)).toBe(`bridge.test:${server.port}`);
     expect(LUNCHFLOW.hostOf('  ')).toBeNull();
     setLunchFlowApiForTests(null);
@@ -199,7 +199,7 @@ describe('reading transactions', () => {
       ],
       total: 15,
     };
-    const got = readTransactions(json, '1470', { start: daysAgo(10), end: null }, 'EUR')!;
+    const got = readTransactions(json, '1470', daysAgo(10), 'EUR')!;
     expect(got.left_out).toEqual({ pending: 3, unreadable: 8 });
     // A time after the day is cut off, never moved into a time zone; a row in
     // another currency keeps its own.
@@ -209,27 +209,30 @@ describe('reading transactions', () => {
       ['tx/9+Q== a', daysAgo(3), 'EUR'],
       ['4242', daysAgo(3), 'EUR'],
     ]);
-    expect(got.cut).toBeNull();
-    expect(readTransactions({ items: [] }, '1470', { start: daysAgo(1), end: null }, 'EUR')).toBeNull();
+    // Its `total` isn't read, whatever it says.
+    expect(got).toEqual({ records: got.records, left_out: got.left_out });
+    expect(readTransactions({ items: [] }, '1470', daysAgo(1), 'EUR')).toBeNull();
   });
 
-  test('a window Lunch Flow ignores costs a larger answer, never a wrong one', async () => {
+  test('a window Lunch Flow ignores costs a larger answer, never a wrong one; rows it sends late are kept, back to the history’s limit', async () => {
     seed();
-    server.accounts[0].transactions.push(lfTxn('old', 300, -1, 'Old one'), lfTxn('future', -5, -1, 'After the window'));
+    server.accounts[0].transactions.push(lfTxn('old', 800, -1, 'Older than the limit'), lfTxn('late', 100, -1, 'Posted late'), lfTxn('after', 1, -1, 'After the window'));
     server.ignoreWindow = true;
-    const answer = await fetchLunchFlow(server.key, { start: daysAgo(10), end: daysAgo(2), accounts: ['1470'] }, T);
-    expect(answer.accounts.find((a) => a.remote_id === '1470')!.transactions.map((t) => t.source_id)).toEqual(['c98ce8f4b11342ff0877b33d4a9d395d', '5d823e7fa31f227822c3d3394841eaa5']);
-    expect(answer.problems).toEqual([]);
+    const ids = async (request: Parameters<typeof fetchLunchFlow>[1]) =>
+      (await fetchLunchFlow(server.key, request, T)).accounts.find((a) => a.remote_id === '1470')!.transactions.map((t) => t.source_id).sort();
+    // Every row it holds back to `since`, matched by Lunch Flow's id, whatever
+    // the window: nothing before the limit, and nothing ever counted twice.
+    expect(await ids({ start: daysAgo(10), end: daysAgo(2), accounts: ['1470'], since: daysAgo(730) })).toEqual(['5d823e7fa31f227822c3d3394841eaa5', 'after', 'c98ce8f4b11342ff0877b33d4a9d395d', 'late']);
+    // With no limit given, the window's first day is one.
+    expect(await ids({ start: daysAgo(10), end: daysAgo(2), accounts: ['1470'] })).toEqual(['5d823e7fa31f227822c3d3394841eaa5', 'after', 'c98ce8f4b11342ff0877b33d4a9d395d']);
   });
 
-  test('an answer whose total is more than it sent may be cut short: a problem for that account, never whole', async () => {
+  test('an answer whose total is more than it sent is taken as it came: `total` alone never holds a bank', async () => {
     seed();
-    server.totalExtra = 50;
+    server.totalExtra = 2916;
     const answer = await fetchLunchFlow(server.key, window(10), T);
-    expect(answer.problems).toEqual([
-      { message: expect.stringContaining('held 2 of the 52 transactions'), side: 'connector', accounts: ['1470'] },
-      { message: expect.stringContaining('held 1 of the 51 transactions'), side: 'connector', accounts: ['1471'] },
-    ]);
+    expect(answer.problems).toEqual([]);
+    expect(answer.accounts.find((a) => a.remote_id === '1470')!.transactions.length).toBe(2);
   });
 });
 
@@ -263,14 +266,19 @@ describe('what Lunch Flow answers', () => {
       { on: 'balance', account: 1471, status: 503, body: JSON.stringify({ error: 'GCRateLimited', message: 'Bank data is temporarily unavailable. This usually resolves within a minute.' }) },
       { on: 'transactions', account: 1470, status: 500, body: JSON.stringify({ error: 'ProviderError', message: 'API request failed (429 - Rate limit exceeded). Please try again in 7 seconds.' }) },
     ];
-    const answer = await fetchLunchFlow(server.key, window(10), T);
+    const answer = await fetchLunchFlow(server.key, { ...window(10), accounts: ['1470', '1471', '2001'] }, T);
     expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '2001']);
+    // Each a request to ask again, never Lunch Flow's word about the bank.
     expect(answer.problems).toEqual([
-      { message: 'Main Account A: no transactions came. API request failed (429 - Rate limit exceeded). Please try again in 7 seconds. (HTTP 500)', side: 'connector', accounts: ['1470'] },
-      { message: 'Credit Card: no balance came. Bank data is temporarily unavailable. This usually resolves within a minute. (HTTP 503)', side: 'connector', accounts: ['1471'] },
+      { message: 'Main Account A: no transactions came. API request failed (429 - Rate limit exceeded). Please try again in 7 seconds. (HTTP 500)', side: 'connector', accounts: ['1470'], kind: 'retry' },
+      { message: 'Credit Card: no balance came. Bank data is temporarily unavailable. This usually resolves within a minute. (HTTP 503)', side: 'connector', accounts: ['1471'], kind: 'retry' },
     ]);
     // The card's transactions weren't asked for without its balance.
-    expect(server.requests('transactions').map((r) => r.path)).toEqual(['/api/v1/accounts/1470/transactions']);
+    expect(server.requests('transactions').map((r) => r.path).sort()).toEqual(['/api/v1/accounts/1470/transactions', '/api/v1/accounts/2001/transactions']);
+    // When every tracked account had trouble, the fetch failed, as one
+    // request would: its accounts are held as they were.
+    const failed = await fetchLunchFlow(server.key, window(10), T).catch((e) => e);
+    expect([failed.name, failed.kind]).toEqual(['ConnectorFailure', 'down']);
   });
 
   test('nothing came through for any account: the fetch failed, as one request would', async () => {
@@ -280,27 +288,94 @@ describe('what Lunch Flow answers', () => {
     expect([err.kind, err.status, err.message]).toEqual(['down', 503, expect.stringContaining('Bank data is temporarily unavailable.')]);
   });
 
-  test('an account Lunch Flow no longer has is missing from the answer, with no problem of its own', async () => {
+  test('an account is gone only when Lunch Flow says “Account not found” of it; another 404 is that account’s, asked again', async () => {
     seed();
-    server.behaviours = [{ on: 'balance', account: 2001, status: 404, body: JSON.stringify({ error: 'Not Found', message: 'Account not found.' }) }];
-    const answer = await fetchLunchFlow(server.key, window(10), T);
-    expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '1471']);
+    server.behaviours = [{ on: 'balance', account: 1471, status: 404, body: JSON.stringify({ error: 'Not Found', message: 'Account not found.' }) }];
+    let answer = await fetchLunchFlow(server.key, window(10), T);
+    expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '2001']);
     expect(answer.problems).toEqual([]);
+    // An account with no balance yet (the fake's own 404 for one): a problem
+    // for it, never taken for gone.
+    server.behaviours = [];
+    server.accounts[1].balance = null;
+    answer = await fetchLunchFlow(server.key, window(10), T);
+    expect(answer.problems).toEqual([{ message: 'Credit Card: no balance came. Balance not found. (HTTP 404)', side: 'connector', accounts: ['1471'], kind: 'retry' }]);
+    // Asked to list them to choose from, it isn't offered yet, and the
+    // connection's card says why (naming no account, it holds none).
+    answer = await fetchLunchFlow(server.key, { balancesOnly: true }, T);
+    expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '2001']);
+    expect(answer.problems).toEqual([{ message: 'Credit Card: no balance came. Balance not found. (HTTP 404)', side: 'connector', accounts: null, kind: 'retry' }]);
   });
 
-  test('a link that broke at Lunch Flow is a problem for its bank, said once, from the accounts’ status', async () => {
+  test('a link that broke at Lunch Flow is a problem for its bank, said once, from the accounts’ status: only for banks it is asked about', async () => {
     seed();
     server.accounts[0].status = 'DISCONNECTED';
     server.accounts[1].status = 'DISCONNECTED';
     server.accounts[2].status = 'ERROR';
-    const answer = await fetchLunchFlow(server.key, window(10), T);
-    expect(answer.problems).toEqual([
+    const all = await fetchLunchFlow(server.key, { ...window(10), accounts: ['1470', '1471', '2001'] }, T);
+    expect(all.problems).toEqual([
       { message: 'The connection to Sandbox Finance is disconnected', side: 'connector', accounts: ['1470', '1471'] },
       { message: 'The connection to Second Bank has an error', side: 'connector', accounts: ['2001'] },
     ]);
+    // An account nobody tracks says nothing about a bank nobody tracks.
+    expect((await fetchLunchFlow(server.key, window(10), T)).problems).toEqual([{ message: 'The connection to Sandbox Finance is disconnected', side: 'connector', accounts: ['1470', '1471'] }]);
     // A status Nya doesn't know says nothing.
     server.accounts.forEach((a) => (a.status = 'SYNCING'));
     expect((await fetchLunchFlow(server.key, window(10), T)).problems).toEqual([]);
+  });
+
+  test('accounts Nya offers already are only listed, never asked about; new ones are asked their balances after the tracked ones', async () => {
+    seed();
+    server.accounts.push(lfAccount({ id: 3001, name: 'New Pot', institution_name: 'Second Bank', provider: 'akahu', balance: { amount: 5, currency: 'NZD' } }));
+    const answer = await fetchLunchFlow(server.key, { ...window(10), offered: ['2001'] }, T);
+    // The tracked accounts first, balance then transactions; then the new one.
+    expect(server.seen.map((r) => r.path)).toEqual([
+      '/api/v1/accounts',
+      '/api/v1/accounts/1470/balance',
+      '/api/v1/accounts/1471/balance',
+      '/api/v1/accounts/1470/transactions',
+      '/api/v1/accounts/1471/transactions',
+      '/api/v1/accounts/3001/balance',
+    ]);
+    expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '1471', '3001']);
+    expect(answer.listed).toEqual([{ remote_id: '2001', name: 'Savings', institution: { name: 'Second Bank', key: 'name:akahu:second bank', domain: null } }]);
+  });
+
+  test('at most four requests at once, the tracked accounts first; past the fetch’s time the rest are Nya’s, asked again', async () => {
+    seed();
+    server.accounts = Array.from({ length: 10 }, (_, i) => lfAccount({ id: 5000 + i, name: `Pot ${i}`, transactions: [lfTxn(`t${i}`, 1, -1, 'Shop')] }));
+    server.slowMs = 60;
+    const tracked = server.accounts.slice(0, 6).map((a) => String(a.id));
+    const answer = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: tracked }, T);
+    expect(server.maxInFlight).toBe(4);
+    expect(answer.problems).toEqual([]);
+    // Not one balance of an untracked account was asked before every tracked
+    // account's had been.
+    const asked = server.requests('balance').map((r) => r.path.split('/')[4]);
+    expect(asked.slice(0, 6).sort()).toEqual([...tracked].sort());
+    // A fetch whose time runs out: what wasn't asked yet is a problem on
+    // Nya's side, to ask again, and what came is kept.
+    server.reset();
+    server.accounts = Array.from({ length: 10 }, (_, i) => lfAccount({ id: 5000 + i, name: `Pot ${i}` }));
+    server.slowMs = 500;
+    const short = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: server.accounts.map((a) => String(a.id)) }, { timeoutMs: 3_000 });
+    const late = short.problems.filter((p) => p.side === 'nya');
+    expect(late.length).toBeGreaterThan(0);
+    expect(late.every((p) => p.kind === 'retry' && p.message.endsWith('Nya’s time for this update ran out before it asked Lunch Flow.'))).toBe(true);
+    expect(short.accounts.length).toBeGreaterThan(0);
+  });
+
+  test('past twenty problems, the rest are one that names no account, so a cut list never reads as whole', async () => {
+    server.accounts = Array.from({ length: 25 }, (_, i) => lfAccount({ id: 6000 + i, name: `Pot ${i}` }));
+    // One account comes whole; the other 24 bring no transactions.
+    server.behaviours = [
+      { on: 'transactions', account: 6024, status: 200, body: JSON.stringify({ transactions: [], total: 0 }) },
+      { on: 'transactions', status: 503, body: JSON.stringify({ message: 'Bank data is temporarily unavailable.' }) },
+    ];
+    const answer = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: server.accounts.map((a) => String(a.id)) }, T);
+    expect(answer.problems.length).toBe(20);
+    expect(answer.problems.slice(0, 19).every((p) => p.accounts?.length === 1)).toBe(true);
+    expect(answer.problems[19]).toEqual({ message: '5 more problems with other accounts, which Nya doesn’t keep', side: 'connector', accounts: null, kind: 'retry' });
   });
 
   test('an answer that isn’t one, or is too large, or comes too slowly, is said so', async () => {

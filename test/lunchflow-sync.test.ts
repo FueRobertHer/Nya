@@ -208,8 +208,9 @@ describe('tracking and the daily fetch', () => {
     );
     // Balances as reported, with no time from Lunch Flow: as of when Nya got them.
     expect(accounts.get('1471')).toMatchObject({ reported_balance: -432.1, type: 'credit', balance_at: null, fetched_at: new Date(NOW).toISOString() });
+    // Two years in one answer, as far back as Nya keeps history: complete at once.
     const conn = (await connectionsStore.get(ctx, id))!;
-    expect(conn.history).toEqual({ from: daysAgo(730, NOW), to: TODAY, complete: false, failed: null });
+    expect(conn.history).toEqual({ from: daysAgo(730, NOW), to: TODAY, complete: true, failed: null });
     // The card owes, the account holds, and the day's total is recordable.
     const monzo = await card('Monzo');
     expect(monzo).toMatchObject({ connector: 'lunchflow', manual: true, error: null, health: { state: 'healthy', cause: 'connector' } });
@@ -253,6 +254,40 @@ describe('tracking and the daily fetch', () => {
     expect([again.record?.added, again.record?.updated]).toEqual([0, 0]);
   });
 
+  test('an account nobody tracks is asked about once, to offer it; after that it is only listed, and still offered with its currency', async () => {
+    const id = await connectAndTrack([
+      ['1470', 'depository'],
+      ['1471', 'credit'],
+    ]);
+    const savings = { remote_id: '2001', name: 'Savings', institution: 'ASB', institution_key: 'name:akahu:asb', currency: 'NZD', currency_text: 'NZD' };
+    await nextDay();
+    server.seen.length = 0;
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect(server.requests('balance').map((r) => r.path).sort()).toEqual(['/api/v1/accounts/1470/balance', '/api/v1/accounts/1471/balance']);
+    expect((await connectionsStore.get(ctx, id))!.available).toEqual([savings]);
+    // Renamed at Lunch Flow: still offered, under its new name.
+    server.accounts[2].name = 'Rainy Day';
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect((await connectionsStore.get(ctx, id))!.available).toEqual([{ ...savings, name: 'Rainy Day' }]);
+    // A new one at Lunch Flow is asked its balance, after the tracked ones', to be offered; then it can be tracked.
+    server.accounts.push(lfAccount({ id: 3001, name: 'Holiday Pot', institution_name: 'ASB', provider: 'akahu', balance: { amount: 50, currency: 'NZD' } }));
+    await nextDay();
+    server.seen.length = 0;
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect(server.requests('balance').map((r) => r.path).at(-1)).toBe('/api/v1/accounts/3001/balance');
+    expect((await connectionsStore.get(ctx, id))!.available.map((a) => [a.remote_id, a.currency])).toEqual([
+      ['3001', 'NZD'],
+      ['2001', 'NZD'],
+    ]);
+    await trackAccounts(ctx, id, [{ remote_id: '3001', type: 'depository' }], NOW);
+    expect((await accountsByRemote()).get('3001')).toMatchObject({ name: 'Holiday Pot', currency: 'NZD', reported_balance: 50 });
+    // Gone from Lunch Flow, it is no longer offered.
+    server.accounts = server.accounts.filter((a) => a.id !== 2001);
+    await nextDay();
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect((await connectionsStore.get(ctx, id))!.available).toEqual([]);
+  });
+
   test('a pending row sent anyway is counted on the fetch, never kept', async () => {
     seedServer();
     const { connection_id } = await connect(ctx, 'lunchflow', server.key, NOW);
@@ -275,9 +310,10 @@ describe('tracking and the daily fetch', () => {
     expect((await rowsOf((await accountsByRemote()).get('1470')!.account_id)).map((r) => r.source_id)).toEqual(['t-posted']);
   });
 
-  test('older history comes in a second window, and then the history is complete', async () => {
+  test('two years at once, as far back as Nya keeps history: nothing older is asked for, nor kept when it comes', async () => {
     seedServer();
     server.accounts[0].transactions.push(lfTxn('t-old', HISTORY_DAYS + 30, -15, 'Old one'));
+    server.ignoreWindow = true;
     const { connection_id } = await connect(ctx, 'lunchflow', server.key, NOW);
     await trackAccounts(ctx, connection_id, [{ remote_id: '1470', type: 'depository' }], NOW);
     const current = (await accountsByRemote()).get('1470')!.account_id;
@@ -287,13 +323,37 @@ describe('tracking and the daily fetch', () => {
     await connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, last_answer_at: new Date(NOW - 13 * 3_600_000).toISOString() } : c));
     server.seen.length = 0;
     await syncConnectorsDaily(ctx, { now: NOW }).done;
-    const windows = server.requests('transactions').map((r) => r.query);
-    // The recent window, then one older one, which ends inside what was there.
-    expect(windows.length).toBe(2);
-    expect(windows[0]).toEqual({ from: daysAgo(7, NOW) });
-    expect(windows[1].to).toBe(daysAgo(730 - 7 + 1, NOW));
-    expect((await rowsOf(current)).find((r) => r.source_id === 't-old')).toMatchObject({ amount: 15 });
-    expect((await connectionsStore.get(ctx, connection_id))!.history).toMatchObject({ complete: true, failed: null });
+    // Only the recent window, from 45 days before the last day fetched: no
+    // older one, since the history reached its limit with the first answer.
+    expect(server.requests('transactions').map((r) => r.query)).toEqual([{ from: daysAgo(45, NOW) }]);
+    expect((await rowsOf(current)).some((r) => r.source_id === 't-old')).toBe(false);
+    expect((await connectionsStore.get(ctx, connection_id))!.history).toMatchObject({ from: daysAgo(730, NOW), complete: true, failed: null });
+  });
+
+  test('a row that posts long after its own day is still kept: windows overlap by 45 days, and one sent from before the window is kept', async () => {
+    const id = await connectAndTrack([['1470', 'depository']]);
+    const current = (await accountsByRemote()).get('1470')!.account_id;
+    // A hotel's hold from 30 days back settles today, dated the day of the
+    // stay, long after the history reached that day (seven days' overlap,
+    // as Lunch Flow's Lunch Money sync has, would never ask for it again).
+    expect((await connectionsStore.get(ctx, id))!.history?.to).toBe(TODAY);
+    server.accounts[0].transactions.push(lfTxn('t-hotel', 30, -250, 'Grand Hotel'));
+    await nextDay();
+    server.seen.length = 0;
+    const res = await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    expect(server.requests('transactions').map((r) => r.query.from)).toEqual([daysAgo(45, NOW)]);
+    expect(res.record).toMatchObject({ added: 1 });
+    expect((await rowsOf(current)).find((r) => r.source_id === 't-hotel')).toMatchObject({ amount: 250, date: daysAgo(30, NOW) });
+    // Later still (a car hire's hold, 60 days back), Lunch Flow sends it
+    // though it is dated before the window, as one filtering by when it was
+    // booked would: kept, and matched by its id, never twice.
+    server.ignoreWindow = true;
+    server.accounts[0].transactions.push(lfTxn('t-car', 60, -180, 'Car Hire'));
+    await nextDay();
+    expect((await syncConnection(ctx, id, { purpose: 'refresh', now: NOW })).record).toMatchObject({ added: 1 });
+    await nextDay();
+    expect((await syncConnection(ctx, id, { purpose: 'refresh', now: NOW })).record).toMatchObject({ added: 0 });
+    expect((await rowsOf(current)).filter((r) => r.source_id === 't-car').map((r) => [r.amount, r.date])).toEqual([[180, daysAgo(60, NOW)]]);
   });
 });
 
@@ -339,7 +399,7 @@ describe('when Lunch Flow can’t be read', () => {
     expect((await connectionsStore.get(ctx, id))!.last_fetch?.problems).toEqual([{ message: 'The connection to ASB is disconnected', side: 'connector', accounts: [(await accountsByRemote()).get('2001')!.account_id] }]);
   });
 
-  test('one account’s request failing holds its bank, and the window is asked again', async () => {
+  test('one account’s request failing holds its bank, says there is nothing to do, and the window is asked again', async () => {
     const id = await connectAndTrack();
     await nextDay();
     server.accounts[1].transactions.push(lfTxn('t-late', 1, -5, 'Late one'));
@@ -347,13 +407,42 @@ describe('when Lunch Flow can’t be read', () => {
     const conn = (await connectionsStore.get(ctx, id))!;
     await syncConnection(ctx, id, { purpose: 'refresh', now: NOW + 86_400_000 });
     const monzo = await card('Monzo');
-    expect(monzo.health?.detail).toMatchObject({ issue: 'reported', messages: [expect.stringContaining('Credit Card: no transactions came. API request failed')] });
+    // A wait, on Lunch Flow's side: never "fix it in Lunch Flow".
+    expect(monzo.health).toMatchObject({ state: 'outage', action: 'wait', side: 'connector' });
+    expect(monzo.health?.detail).toMatchObject({ issue: 'down', messages: [expect.stringContaining('Credit Card: no transactions came. API request failed')] });
+    expect(connectorBadge(monzo.health!)).toBe('Not updating');
+    const said = connectorHealthText('Monzo', monzo.health!)!;
+    expect(said).toContain('Nothing to do: this usually clears on its own, and Nya asks again at its next update.');
+    expect(said).not.toContain('fix it in');
+    expect((await computeNetWorth(ctx)).institutions.every(isRecordable)).toBe(false);
     // Not whole: the history stays where it was, so the next one asks from there.
     expect((await connectionsStore.get(ctx, id))!.history).toEqual(conn.history);
     server.behaviours = [];
     await syncConnection(ctx, id, { purpose: 'refresh', now: NOW + 86_400_000 });
     expect((await card('Monzo')).error).toBeNull();
     expect((await rowsOf((await accountsByRemote()).get('1471')!.account_id)).some((r) => r.source_id === 't-late')).toBe(true);
+  });
+
+  test('an answer about one account Nya can’t read is a wait too; one Nya’s own time ran out on is on Nya’s side; Lunch Flow’s word about the bank still comes first', async () => {
+    const id = await connectAndTrack();
+    await nextDay();
+    server.behaviours = [{ on: 'transactions', account: 1471, status: 200, body: 'not json' }];
+    await syncConnection(ctx, id, { purpose: 'refresh', now: NOW });
+    let monzo = await card('Monzo');
+    expect([monzo.health?.detail?.issue, monzo.health?.side, monzo.health?.action]).toEqual(['down', 'connector', 'wait']);
+    expect(connectorHealthText('Monzo', monzo.health!)).toBe('“Credit Card: no transactions came. Its answer isn’t JSON.” Nothing to do: this usually clears on its own, and Nya asks again at its next update.');
+    // As a fetch stores one its time ran out on (lib/connectors/lunchflow.ts).
+    const cardId = (await accountsByRemote()).get('1471')!.account_id;
+    const ranOut = { message: 'Credit Card: no transactions came. Nya’s time for this update ran out before it asked Lunch Flow.', side: 'nya' as const, accounts: [cardId], kind: 'retry' as const };
+    await connectionsStore.update(ctx, id, (c) => (c ? { ...c, last_fetch: { ...c.last_fetch!, problems: [ranOut] } } : c));
+    monzo = await card('Monzo');
+    expect([monzo.health?.detail?.issue, monzo.health?.side]).toEqual(['down', 'nya']);
+    // Beside the connector's own word about the bank, that word is what to fix.
+    await connectionsStore.update(ctx, id, (c) => (c ? { ...c, last_fetch: { ...c.last_fetch!, problems: [ranOut, { message: 'The connection to Monzo is disconnected', side: 'connector', accounts: [cardId] }] } } : c));
+    monzo = await card('Monzo');
+    expect(monzo.health?.detail).toMatchObject({ issue: 'reported', messages: ['The connection to Monzo is disconnected'] });
+    expect(connectorBadge(monzo.health!)).toBe('Needs attention at Lunch Flow');
+    expect(connectorHealthText('Monzo', monzo.health!)).toContain('fix it in Lunch Flow');
   });
 
   test('a card Lunch Flow reports as money held isn’t counted until the person says which way', async () => {

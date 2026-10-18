@@ -91,6 +91,11 @@ export class FakeLunchFlow {
   ignoreWindow = false;
   /** Added to every `total`: an answer that says it holds more than it sent. */
   totalExtra = 0;
+  /** How long every answer waits before it is given, as a slow day's would. */
+  slowMs = 0;
+  /** How many requests are being answered now, and the most there were at once. */
+  inFlight = 0;
+  maxInFlight = 0;
   /** Hosts other than bridge.test and www.bridge.test, and their addresses. */
   readonly names = new Map<string, string[]>();
   private server!: ReturnType<typeof Bun.serve>;
@@ -124,6 +129,9 @@ export class FakeLunchFlow {
     this.behaviours = [];
     this.ignoreWindow = false;
     this.totalExtra = 0;
+    this.slowMs = 0;
+    this.inFlight = 0;
+    this.maxInFlight = 0;
     this.names.clear();
   }
 
@@ -153,8 +161,20 @@ export class FakeLunchFlow {
 
   private async answer(req: Request): Promise<Response> {
     const url = new URL(req.url);
+    // Seen in the order requests arrive, before any wait.
+    this.seen.push({ method: req.method, host: url.host, path: url.pathname, query: Object.fromEntries(url.searchParams), key: req.headers.get('x-api-key') });
+    this.inFlight++;
+    this.maxInFlight = Math.max(this.maxInFlight, this.inFlight);
+    try {
+      if (this.slowMs) await Bun.sleep(this.slowMs);
+      return await this.answerNow(req, url);
+    } finally {
+      this.inFlight--;
+    }
+  }
+
+  private async answerNow(req: Request, url: URL): Promise<Response> {
     const key = req.headers.get('x-api-key');
-    this.seen.push({ method: req.method, host: url.host, path: url.pathname, query: Object.fromEntries(url.searchParams), key });
     const what = kindOf(url.pathname);
     const b = this.behaviours.find((x) => (!x.on || x.on === what?.kind) && (x.account === undefined || x.account === what?.account));
     if (b) {

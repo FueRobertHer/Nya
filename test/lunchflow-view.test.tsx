@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, LUNCHFLOW_OPTION } from '@/components/ConnectButtons';
-import { ConnectIntro, ConnectorCardView, endsThere, SignView } from '@/components/Connectors';
+import { ConnectIntro, ConnectorCardView, CredentialField, endsThere, refreshedWords, retryLine, SignView } from '@/components/Connectors';
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
 import { connectorHealth, connectorHealthText } from '@/lib/connectors/health';
 import { connectorBalanceDay, connectorLabel, CONNECTOR_WORDS, ANY_CONNECTOR } from '@/lib/connectors/types';
@@ -62,7 +62,8 @@ describe('the option to connect', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain("setConnectorAsk({ kind: 'connect', connector: 'lunchflow' })");
     expect(dashboard).toContain('lunchFlow = false,');
-    expect(dashboard.match(/onConnectLunchFlow=\{lunchFlow \? connectLunchFlow : undefined\}/g)?.length).toBe(2);
+    expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
+    expect(dashboard).toContain('const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;');
     // Decided on the server, from LUNCHFLOW_ENABLED, for both kinds of sign-in.
     const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
     expect(page).toContain('const lunchFlow = lunchFlowEnabled();');
@@ -114,11 +115,18 @@ describe('connecting', () => {
     expect(renderToStaticMarkup(<ConnectIntro again={false} />)).toContain('Setup Token');
   });
 
-  test('the key is typed out of sight, in a field named for it', () => {
+  test('the key is typed out of sight, in a field named for it; a token is shown, as before', () => {
+    const key = renderToStaticMarkup(<CredentialField connector="lunchflow" value="lf_secret_value" busy={false} onChange={noop} />);
+    expect(key).toContain('<label class="field connector-token">API key<input type="password"');
+    expect(key).toContain('autoComplete="off"');
+    expect(key).toContain('spellCheck="false"');
+    expect(key).not.toContain('<textarea');
+    const token = renderToStaticMarkup(<CredentialField connector="simplefin" value="" busy={false} onChange={noop} />);
+    expect(token).toContain('<label class="field connector-token">Setup Token<textarea');
+    expect(token).not.toContain('type="password"');
+    // The sheet's own field is this one.
     const sheet = readFileSync(join(import.meta.dir, '..', 'components', 'Connectors.tsx'), 'utf8');
-    expect(sheet).toContain("{view.connector === 'lunchflow' ? (");
-    expect(sheet).toContain('<input type="password" value={token}');
-    expect(CONNECTOR_WORDS.lunchflow.credential).toBe('API key');
+    expect(sheet).toContain('<CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />');
   });
 
   test('disconnecting says the key still works at Lunch Flow until its destination is deleted there', () => {
@@ -139,6 +147,31 @@ describe('a card reported as money held', () => {
 });
 
 describe('its card and its health', () => {
+  test('what didn’t come this time is a wait on the card, never Lunch Flow’s word; Refresh says not everything came', () => {
+    const problems = [
+      { message: 'Credit Card: no balance came. Bank data is temporarily unavailable. This usually resolves within a minute. (HTTP 503)', accounts: ['Credit Card'], retry: true },
+      { message: 'The connection to Monzo is disconnected', accounts: ['Everyday'], retry: false },
+    ];
+    const html = renderToStaticMarkup(<ConnectorCardView conn={conn({ last_fetch: { ...conn().last_fetch!, problems } })} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
+    expect(html).toContain('Credit Card: no balance came. Bank data is temporarily unavailable. This usually resolves within a minute. (HTTP 503). Nya asks again at its next update.</p>');
+    expect(html).not.toContain('Lunch Flow reports: “Credit Card');
+    expect(html).toContain('Lunch Flow reports: “The connection to Monzo is disconnected” (Everyday)');
+    expect(retryLine('Pot 3: no balance came. Nya’s time for this update ran out before it asked Lunch Flow.')).toBe(
+      'Pot 3: no balance came. Nya’s time for this update ran out before it asked Lunch Flow. Nya asks again at its next update.'
+    );
+    expect(refreshedWords('Lunch Flow', { added: 0, problems, missing: [] })).toBe('Lunch Flow answered, but not everything came (its card says what): nothing new so far.');
+    expect(refreshedWords('Lunch Flow', { added: 1, problems: [], missing: ['Savings'] })).toBe('Lunch Flow answered, but not everything came (its card says what): 1 new transaction so far.');
+    expect(refreshedWords('Lunch Flow', { added: 2, problems: [], missing: [] })).toBe('Lunch Flow answered: 2 new transactions.');
+  });
+
+  test('its history is said as what came from a day on, and a whole one as all in', () => {
+    const complete = renderToStaticMarkup(<ConnectorCardView conn={conn({ history: { from: '2024-10-10', to: '2026-10-09', complete: true } })} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
+    expect(complete).toContain('Everything Lunch Flow has from Oct 10, 2024 on is in.');
+    const coming = renderToStaticMarkup(<ConnectorCardView conn={conn()} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
+    expect(coming).toContain('older transactions arrive with its next daily update');
+    expect(coming).not.toContain('next few nights');
+  });
+
   test('the card names Lunch Flow and offers Connect again when the key is refused', () => {
     const html = renderToStaticMarkup(<ConnectorCardView conn={conn()} requests={{ left: 6, limit: 8, resets_in_seconds: 100 }} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
     expect(html).toContain('Lunch Flow<span class="manual-badge">Your own sync</span>');

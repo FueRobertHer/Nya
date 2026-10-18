@@ -101,6 +101,15 @@ export type RemoteAccount = {
   left_out: { pending: number; unreadable: number };
 };
 
+/** What kind of problem one is, when it isn't the connector's own word about
+ *  a bank (which is fixed at the connector, and has no kind): `retry`, a
+ *  request about these accounts that brought nothing usable this time (no
+ *  answer, the connector's own error, an answer Nya couldn't read, or Nya's
+ *  own time for the fetch running out), which asking again should clear. It
+ *  holds the accounts' bank all the same, and is worded as a wait
+ *  (lib/connectors/institutions.ts, health.ts), never as something to fix. */
+export type ProblemKind = 'retry';
+
 /** A problem the connector reported. */
 export type RemoteProblem = {
   /** Its own words, as it sent them (cleaned of control characters, capped). */
@@ -109,7 +118,14 @@ export type RemoteProblem = {
   /** The remote ids of the accounts it concerns, when that can be told; null
    *  when it could concern any of them. */
   accounts: string[] | null;
+  /** Absent for the connector's word about a bank. */
+  kind?: ProblemKind;
 };
+
+/** An account a connector listed but wasn't asked about, since Nya already
+ *  offers it with what it needs (FetchRequest `offered`): its names, to keep
+ *  the offer up to date with. */
+export type ListedAccount = { remote_id: string; name: string; institution: RemoteAccount['institution'] };
 
 /** One answer: the accounts, and the problems reported beside them. */
 export type RemoteAnswer = {
@@ -118,6 +134,10 @@ export type RemoteAnswer = {
   /** Accounts listed in a shape Nya can't read (no id, no balance): counted,
    *  never guessed at. A tracked one among them reads as missing. */
   unreadable_accounts: number;
+  /** Accounts not tracked that the connector listed without being asked
+   *  about (a connector that asks account by account, for those in the
+   *  request's `offered`): still offered, as they were. */
+  listed?: ListedAccount[];
 };
 
 /** Why a request brought nothing usable, in kinds every connector maps its
@@ -185,12 +205,23 @@ export class ExchangeFailure extends Error {
 
 /** What one fetch asks for: transactions posted from `start` (a UTC day) up
  *  to, not including, `end` (a UTC day; none for "until now"), or only the
- *  balances. `accounts`, when given, are the remote ids whose transactions
- *  are wanted (the tracked ones): a connector that asks account by account
- *  (Lunch Flow) asks for no others' transactions; one whose single answer
- *  holds every account (SimpleFIN) needs no list. Every account is still
- *  listed, with its balance. */
-export type FetchRequest = { start: string; end: string | null; balancesOnly?: false; accounts?: readonly string[] } | { balancesOnly: true };
+ *  balances. One whose single answer holds every account (SimpleFIN) needs
+ *  nothing more; for a connector that asks account by account (Lunch Flow):
+ *    accounts  the remote ids whose transactions are wanted (the tracked
+ *              ones), asked about first; no others' transactions are asked;
+ *    offered   remote ids of accounts not tracked that Nya already offers,
+ *              with their currency: their balances needn't be asked again,
+ *              only their names listed (RemoteAnswer `listed`). Any other
+ *              account is still listed with its balance, to be offered;
+ *    since     the earliest day of transactions wanted at all (the
+ *              history's limit, lib/connectors/sync.ts HISTORY_DAYS): an
+ *              answer's rows from before `start` but not before it are kept,
+ *              for a connector whose rows can turn up after the days they are
+ *              dated (Lunch Flow dates a card's held purchase by its own day,
+ *              and sends it once it posts). */
+export type FetchRequest =
+  | { start: string; end: string | null; balancesOnly?: false; accounts?: readonly string[]; offered?: readonly string[]; since?: string }
+  | { balancesOnly: true };
 
 export type ConnectorDef = {
   kind: ConnectorKind;

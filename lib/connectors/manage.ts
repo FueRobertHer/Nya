@@ -207,7 +207,7 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   const others = await othersOf(ctx, connection_id, [...all.values()]);
   for (const c of choices) {
     const a = offered.get(c.remote_id)!;
-    const there = trackedElsewhere(a, conn.host, others);
+    const there = trackedElsewhere(a, { connector: conn.connector, host: conn.host }, others);
     if (there?.certain) {
       throw new ConnectorRefused(
         `${a.name} at ${a.institution} is already tracked through your other ${connectorOf(conn.connector).label} connection${there.host ? ` (${there.host})` : ''}, so it isn't tracked again here: it would be counted twice.`,
