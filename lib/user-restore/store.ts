@@ -48,39 +48,23 @@
 import { defineCounterStore, defineMapStore, defineValueStore } from '../repo';
 import { BANK_FIELDS, isBankRecord, isCalendarDay, isCount, isInstant, isInstantOrNull, isInvestmentRecord, isPlaidId, isRecord, isText, isTextOrNull, onlyKeys } from './records';
 import type { StoredTxn } from '../transactions';
-import { RESTORED_TXN_PREFIX } from '../history-import/view';
+import { BOOK_ROWS, DIGEST, MAX_BATCHES, MAX_BOOKS, PART, bankIdOf, isRestoredId, isUserRestoreId } from './ids';
 
-/** Rows in one book of restored rows, or one part of investment rows: far
- *  under the write ceiling even with every field, and a batch appends to the
- *  last book only, never recompressing years of rows. */
-export const BOOK_ROWS = 5_000;
-
-/** Books one restored account can have: 10,000 of 5,000 rows is far more
- *  than any bank has served one account. */
-export const MAX_BOOKS = 10_000;
-
-/** How long after it finishes a restore can be undone (decision 4). */
-export const UNDO_DAYS = 7;
-
-const RESTORED_PREFIX = RESTORED_TXN_PREFIX;
-
-/** The id a restored bank row is kept under: the imported rows' prefix and the
- *  bank's own id, so the same file always gives the same id (a batch sent
- *  twice writes the same rows) and every part of the file that names the row
- *  names it alike. */
-export function restoredId(bankId: string): string {
-  if (!isPlaidId(bankId)) throw new TypeError('A restored row needs a bank transaction id.');
-  return `${RESTORED_PREFIX}${bankId}`;
-}
-
-export function isRestoredId(id: unknown): id is string {
-  return typeof id === 'string' && id.startsWith(RESTORED_PREFIX) && isPlaidId(id.slice(RESTORED_PREFIX.length));
-}
-
-/** The bank's own id inside a restored row's id. */
-export function bankIdOf(restored: string): string | null {
-  return isRestoredId(restored) ? restored.slice(RESTORED_PREFIX.length) : null;
-}
+export {
+  BOOK_ROWS,
+  MAX_BOOKS,
+  UNDO_DAYS,
+  MAX_BATCHES,
+  restoredId,
+  isRestoredId,
+  bankIdOf,
+  restoredBookId,
+  investmentPartId,
+  investmentCoverageId,
+  USER_RESTORE_ID,
+  isUserRestoreId,
+  newUserRestoreId,
+} from './ids';
 
 // ---- The record ----
 
@@ -119,16 +103,6 @@ export type UserRestoreRecord = {
   earlier: { exported_at: string; restored_at: string }[];
 };
 
-export const USER_RESTORE_ID = /^user-restore:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
-export const isUserRestoreId = (v: unknown): v is string => typeof v === 'string' && USER_RESTORE_ID.test(v);
-export const newUserRestoreId = (): string => `user-restore:${crypto.randomUUID()}`;
-
-/** At most this many batches in one plan: 2,000 batches of 3.5 MB is far
- *  more than the largest download (docs/data-export.md, "How big"). */
-export const MAX_BATCHES = 2_000;
-/** A part's name: a part of the download, as the plan names it. */
-const PART = /^[a-z_:-]{1,60}$/;
-const DIGEST = /^[0-9a-f]{64}$/;
 
 const isCounts = (v: unknown): v is Record<string, number> =>
   isRecord(v) && Object.keys(v).length <= 200 && Object.entries(v).every(([k, n]) => PART.test(k) && isCount(n));
@@ -287,8 +261,6 @@ export function isRestoredBook(v: unknown): v is RestoredBook {
   return true;
 }
 
-/** A book's id: the account's and its part. */
-export const restoredBookId = (account_id: string, part: number): string => `${account_id}.${part}`;
 
 export const restoredTxnStore = defineMapStore<RestoredBook>('restored-transactions', {
   what: 'transactions brought back from a download',
@@ -333,8 +305,6 @@ export const restoredInvestmentsStore = defineMapStore<RestoredInvestments>('res
   compress: true,
 });
 
-export const investmentPartId = (item_id: string, part: number): string => `${item_id}.${part}`;
-export const investmentCoverageId = (item_id: string): string => `${item_id}.coverage`;
 
 // ---- Counters ----
 

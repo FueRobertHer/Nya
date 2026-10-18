@@ -14,6 +14,7 @@
 // without a Nya release, and the bank store keeps what Plaid sent.
 
 import { isCalendarDay, isCurrencyCode } from '../manual-txn-input';
+import { isPlaidId } from './ids';
 import type { StoredTxn } from '../transactions';
 
 export const isRecord = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -34,11 +35,7 @@ export { isCalendarDay, isCurrencyCode };
 export const ID = /^[A-Za-z0-9_.:-]{1,200}$/;
 export const isId = (v: unknown): v is string => typeof v === 'string' && ID.test(v) && v !== '__proto__';
 
-/** Plaid's ids (an account's, a transaction's, an Item's): letters, digits
- *  and the seam's few marks, short enough that a restored row's id built on
- *  one is still an id the seam takes. */
-export const PLAID_ID = /^[A-Za-z0-9_.:-]{1,150}$/;
-export const isPlaidId = (v: unknown): v is string => typeof v === 'string' && PLAID_ID.test(v);
+export { PLAID_ID, isPlaidId } from './ids';
 
 /** Only these keys (absent is allowed): the closed check of one object. */
 export function onlyKeys(v: Record<string, unknown>, keys: readonly string[]): boolean {
