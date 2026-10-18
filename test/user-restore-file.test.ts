@@ -131,6 +131,6 @@ describe('refusals', () => {
     expect(previewOf(await collect(sourceOf(withProblem({ section: 'rules', problem: 'unrecognised' })))).refuse).toContain('newer one may');
     const p = previewOf(await collect(sourceOf(withProblem({ section: 'transaction-annotations', problem: 'unreadable', ids: ['t_old'] }))));
     expect(p.refuse).toBeNull();
-    expect(p.without).toEqual([{ part: 'transaction-annotations', count: 1, words: 'what you said about 1 transaction (notes, tags, exclusions)', affects: [{ date: '2025-11-20', amount: 61.2, name: 'Rainbow', account: 'acc_chk' }] }]);
+    expect(p.without).toEqual([{ part: 'transaction-annotations', count: 1, words: 'what you said about 1 transaction (notes, tags, exclusions)', affects: [{ date: '2025-11-20', amount: 61.2, currency: 'USD', name: 'Rainbow', account: 'acc_chk' }] }]);
   });
 });

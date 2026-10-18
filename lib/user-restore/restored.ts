@@ -246,6 +246,35 @@ export type TotalsHold = {
 
 export const holdsTotals = (h: TotalsHold): boolean => h.unfinished || h.unreadable || h.waiting.length > 0;
 
+/** A restored account still waiting for an answer: neither linked to a new
+ *  one nor ended (Stop following). `last` is its last restored day. */
+export type WaitingAccount = { account_id: string; institution_name: string; name: string | null; mask: string | null; last: string | null };
+
+/**
+ * The restored accounts still waiting (see WaitingAccount), by bank and
+ * name, and whether something it needs couldn't be read (an entry, an end).
+ * Reads the links, the live accounts and the ends only when a restore
+ * brought accounts back. Storage failing throws.
+ */
+export async function waitingAccounts(ctx: Ctx, liveIds: () => Promise<Set<string>>): Promise<{ accounts: WaitingAccount[]; unreadable: boolean }> {
+  const report = await restoredAccountsStore.getAllReport(ctx);
+  let unreadable = report.unreadable.length > 0 || report.unrecognised.length > 0;
+  if (report.entries.size === 0) return { accounts: [], unreadable };
+  const [links, live, ends] = await Promise.all([getLinks(ctx), liveIds(), lifecycleStore.getAllReport(ctx)]);
+  const applied = effectiveLinks(links, live);
+  const unreadEnds = new Set([...ends.unreadable, ...ends.unrecognised]);
+  const accounts: WaitingAccount[] = [];
+  for (const [id, a] of report.entries) {
+    if (linkedTo(id, applied, live)) continue;
+    const end = ends.entries.get(id);
+    if (end && endOf(end.lifecycle) !== null) continue;
+    if (unreadEnds.has(id)) unreadable = true;
+    accounts.push({ account_id: id, institution_name: a.institution_name, name: a.name, mask: a.mask, last: a.rows?.last ?? null });
+  }
+  accounts.sort((x, y) => x.institution_name.localeCompare(y.institution_name) || (x.name ?? '').localeCompare(y.name ?? '') || x.account_id.localeCompare(y.account_id));
+  return { accounts, unreadable };
+}
+
 /**
  * The totals hold (see the header). Reads the restore's record and the
  * restored accounts, and only with restored accounts, the links, the live
@@ -256,24 +285,16 @@ export const holdsTotals = (h: TotalsHold): boolean => h.unfinished || h.unreada
 export async function totalsHold(ctx: Ctx, liveIds: () => Promise<Set<string>>): Promise<TotalsHold> {
   const none: TotalsHold = { unfinished: false, waiting: [], unreadable: false, history_last: null };
   try {
-    const [record, accounts] = await Promise.all([userRestoreStore.getReport(ctx), restoredAccountsStore.getAllReport(ctx)]);
-    const held: TotalsHold = { ...none, unfinished: record.unreadable || record.unrecognised || unfinished(record.value), history_last: record.value?.history?.last ?? null };
-    if (accounts.unreadable.length > 0 || accounts.unrecognised.length > 0) held.unreadable = true;
-    if (accounts.entries.size === 0) return held;
-    const [links, live, ends] = await Promise.all([getLinks(ctx), liveIds(), lifecycleStore.getAllReport(ctx)]);
-    const applied = effectiveLinks(links, live);
-    const unreadEnds = new Set([...ends.unreadable, ...ends.unrecognised]);
-    const waiting = new Map<string, string | null>();
+    const [record, waiting] = await Promise.all([userRestoreStore.getReport(ctx), waitingAccounts(ctx, liveIds)]);
+    const byBank = new Map<string, string | null>();
     const later = (a: string | null | undefined, b: string | null) => (a === undefined || a === null ? b : b === null || a > b ? a : b);
-    for (const [id, a] of accounts.entries) {
-      if (linkedTo(id, applied, live)) continue;
-      const end = ends.entries.get(id);
-      if (end && endOf(end.lifecycle) !== null) continue;
-      if (unreadEnds.has(id)) held.unreadable = true;
-      waiting.set(a.institution_name, later(waiting.get(a.institution_name), a.rows?.last ?? null));
-    }
-    held.waiting = [...waiting].sort(([a], [b]) => a.localeCompare(b)).map(([institution_name, last]) => ({ institution_name, last }));
-    return held;
+    for (const a of waiting.accounts) byBank.set(a.institution_name, later(byBank.get(a.institution_name), a.last));
+    return {
+      unfinished: record.unreadable || record.unrecognised || unfinished(record.value),
+      waiting: [...byBank].sort(([a], [b]) => a.localeCompare(b)).map(([institution_name, last]) => ({ institution_name, last })),
+      unreadable: waiting.unreadable,
+      history_last: record.value?.history?.last ?? null,
+    };
   } catch {
     return { ...none, unreadable: true };
   }

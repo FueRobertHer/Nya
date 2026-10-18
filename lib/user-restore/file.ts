@@ -166,7 +166,10 @@ export async function collect(source: FileSource): Promise<Collected> {
         if (part === 'transactions') {
           const id = r.transaction_id as string;
           unique(part, id, where);
-          if (wanted.has(id)) c.facts.set(id, { date: r.date as string, amount: r.amount as number, name: ((r.merchant_name as string | null) || (r.name as string)) ?? '', account: r.account_id as string });
+          if (wanted.has(id)) {
+            const currency = (r.iso_currency_code as string | null) ?? (r.unofficial_currency_code as string | null) ?? null;
+            c.facts.set(id, { date: r.date as string, amount: r.amount as number, currency, name: ((r.merchant_name as string | null) || (r.name as string)) ?? '', account: r.account_id as string });
+          }
           if (r.pending === true) {
             c.bank.pending.add(id);
             return;
@@ -241,7 +244,7 @@ export async function collect(source: FileSource): Promise<Collected> {
       book.size++;
       const v = e.value;
       if (isRecord(v) && typeof v.id === 'string' && wanted.has(v.id)) {
-        c.facts.set(v.id, { date: String(v.date ?? ''), amount: Number(v.amount ?? 0), name: String(v.name ?? ''), account: typeof v.account_id === 'string' ? v.account_id : null });
+        c.facts.set(v.id, { date: String(v.date ?? ''), amount: Number(v.amount ?? 0), currency: typeof v.currency === 'string' ? v.currency : null, name: String(v.name ?? ''), account: typeof v.account_id === 'string' ? v.account_id : null });
       }
     }
   };

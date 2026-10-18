@@ -14,15 +14,19 @@ import { isPartName } from '@/lib/user-restore/check';
 import { planDigest } from '@/lib/user-restore/file';
 import { undoRestore, emptyAccount, UndoRefused, EMPTY_WORDS } from '@/lib/user-restore/undo';
 import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
+import { waitingAccounts } from '@/lib/user-restore/restored';
+import { liveAccountIds } from '@/lib/links';
 
 // Bringing a download back into this account (docs/data-export.md,
 // "Bringing it back"): the record of the restore, and what is done to the
 // account as a whole. The batches, and the finish, go to
 // app/api/user-restore/batch.
 //
-//   GET                       { enabled, demo, record, unreadable, undo_days },
-//                             and with ?scan=1 whether this account is empty
-//                             enough (a scan of its keys, counted:
+//   GET                       { enabled, demo, record, unreadable, undo_days,
+//                             waiting }: `waiting`, the restored accounts
+//                             neither linked nor ended, for the card's next
+//                             steps; and with ?scan=1 whether this account is
+//                             empty enough (a scan of its keys, counted:
 //                             PREVIEWS_PER_HOUR)
 //   POST { action: "start", restore_id, plan, source, brought, left_out,
 //          without, history, earlier, password? }
@@ -111,15 +115,20 @@ export async function GET(req: Request) {
     return containerUnavailable(err) ?? storeFailure(err, 'Couldn’t read what was brought back');
   }
   try {
-    const [report, demo] = await Promise.all([userRestoreStore.getReport(ctx), isDemo()]);
+    const [report, demo, waiting] = await Promise.all([
+      userRestoreStore.getReport(ctx),
+      isDemo(),
+      waitingAccounts(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true })),
+    ]);
     const answer: Record<string, unknown> = {
       enabled: restoreEnabled(),
       demo,
       record: viewOf(report.value),
       // A record that can't be read holds the totals as an unfinished one does
       // (lib/user-restore/restored.ts); emptying the account is the way out.
-      unreadable: report.unreadable || report.unrecognised,
+      unreadable: report.unreadable || report.unrecognised || waiting.unreadable,
       undo_days: UNDO_DAYS,
+      waiting: waiting.accounts,
     };
     if (new URL(req.url).searchParams.get('scan') === '1') {
       const counted = await previewsCount.take(ctx);

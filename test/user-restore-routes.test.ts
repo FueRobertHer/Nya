@@ -181,6 +181,11 @@ describe('the routes', () => {
     const state = await call('GET', '/api/user-restore');
     expect(state.status).toBe(200);
     expect(state.body).toMatchObject({ enabled: false, demo: false, unreadable: false, record: { id: record.id, status: 'finished' } });
+    // What the card's next steps name: each restored account still waiting.
+    expect(state.body.waiting).toEqual([
+      { account_id: 'acc_chk', institution_name: 'Chase', name: 'Checking', mask: '1111', last: '2026-01-04' },
+      { account_id: 'acc_card', institution_name: 'Chase', name: 'Sapphire', mask: '2222', last: '2026-01-03' },
+    ]);
     expect((await call('POST', '/api/user-restore', { action: 'empty', confirm: 'empty my account', password: 'hunter2' })).status).toBe(403);
     expect((await call('POST', `/api/user-restore/batch?restore_id=${record.id}&finish=1`)).status).toBe(403);
     expect((await call('POST', '/api/user-restore/batch?check=1&exported=2026-10-06', '{"part":"store:tags","records":[]}')).status).toBe(403);

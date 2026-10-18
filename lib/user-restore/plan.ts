@@ -36,7 +36,7 @@ import { SEAM } from './parts';
 export type ExportProblem = { section: string; problem: string; ids?: string[]; count?: number };
 
 /** A bank transaction's facts, to name one a damaged entry was about. */
-export type Fact = { date: string; amount: number; name: string; account: string | null };
+export type Fact = { date: string; amount: number; currency: string | null; name: string; account: string | null };
 
 /** A large entry of a store on the seam (parts.ts SEAM `split`): its id, its
  *  other fields (`head`), and how many items its split field holds (a list's
