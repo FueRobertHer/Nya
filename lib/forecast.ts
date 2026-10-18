@@ -433,8 +433,11 @@ export type NoteDays = {
 
 /** A connection whose transactions stopped arriving (lib/month-coverage.ts). */
 export type StoppedConnection = { institution_name: string; last_ok_at: string | null };
-/** An institution whose rows are not all in this load (/api/transactions). */
-export type IncompleteConnection = { institution_name: string; coverage: 'missing' | 'importing' };
+/** An institution whose rows are not all in this load (/api/transactions):
+ *  missing, or importing older rows. A bank a restore brought back that waits
+ *  to be linked (`held`) is past rows only, which a forecast's months never
+ *  reach, so it says nothing of one. */
+export type IncompleteConnection = { institution_name: string; coverage: 'missing' | 'importing' | 'held' };
 
 /** How old a typed balance may be before the forecast says when it is from. */
 export const MANUAL_STALE_DAYS = 7;

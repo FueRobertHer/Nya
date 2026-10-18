@@ -86,6 +86,12 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         break;
       case 'removed': {
         const which = joinNames(g.accounts);
+        if (g.restored) {
+          out.push(
+            `${g.institution}${which ? ` (${which})` : ''} came back from your download, and its transactions there aren’t counted until its accounts are linked to the bank connected again (Accounts tab), so this report may be missing some of them.`
+          );
+          break;
+        }
         out.push(
           g.partly_back
             ? `${g.institution} was removed on or after ${day(g.last_seen)} and connected again, but not ${which}: the transactions ${g.accounts.length === 1 ? 'it' : 'they'} brought in went with the old connection, so this report may be missing some of them.`
@@ -160,7 +166,7 @@ export function gapShort(g: Gap, day: DayFormat): string {
     case 'no_consent':
       return 'You didn’t allow its bank or card transactions';
     case 'removed':
-      return `Removed on or after ${day(g.last_seen)}`;
+      return g.restored ? 'From your download, waiting to be linked' : `Removed on or after ${day(g.last_seen)}`;
     case 'disconnected':
       return `Disconnected on ${day(g.since)}, kept as a manual account`;
     case 'removed_unknown':

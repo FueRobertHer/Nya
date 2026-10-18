@@ -827,6 +827,9 @@ export type MonthGap =
   /** A bank account or card there whose transactions Plaid doesn't provide
    *  (`refused`), or the person didn't allow (`no_consent`). */
   | { kind: 'without'; institution: string; reason: 'refused' | 'no_consent' }
+  /** A bank a restore brought back whose transactions that month wait to be
+   *  linked to the bank connected again (lib/user-restore/restored.ts). */
+  | { kind: 'held'; institution: string }
   /** Something the read couldn't read, in words ("your own categories"). */
   | { kind: 'unread'; what: string }
   /** Transactions that month whose exclusion couldn't be read: counted. */
@@ -891,6 +894,7 @@ export function monthGapsOf(month: string, facts: CoverageFacts): MonthGap[] {
     ...g.missing.map((institution): MonthGap => ({ kind: 'missing', institution })),
     ...g.importing.map((institution): MonthGap => ({ kind: 'importing', institution })),
     ...g.stopped.map((s): MonthGap => ({ kind: 'stopped', institution: s.institution_name, since: s.last_ok_at })),
+    ...g.held.map((institution): MonthGap => ({ kind: 'held', institution })),
     ...unfiled(counts(facts.without)).map((w): MonthGap => ({ kind: 'without', institution: w.institution, reason: w.reason })),
     ...counts(facts.unread).map((u): MonthGap => ({ kind: 'unread', what: u.what })),
   ];
@@ -920,6 +924,8 @@ export function gapText(g: MonthGap, day: (isoOrDay: string) => string): string 
         : `you didn’t allow Nya to see transactions from the bank or card accounts at ${g.institution}`;
     case 'unread':
       return `${g.what} couldn’t be read`;
+    case 'held':
+      return `${g.institution}’s transactions from your download wait for its accounts to be linked`;
     case 'exclusions':
       return `whether you excluded ${g.count} transaction${g.count === 1 ? '' : 's'} couldn’t be read`;
   }

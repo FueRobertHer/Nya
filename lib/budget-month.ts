@@ -96,6 +96,7 @@ import {
   type MonthBudgets,
   type MonthGap,
 } from './rollover';
+import type { Incomplete } from './month-coverage';
 
 /** The first day of the window the dashboard loads (the last LOOKBACK_DAYS,
  *  by UTC day, as lib/transactions.ts cuts it): the rows the budgets'
@@ -117,7 +118,7 @@ export type MonthActivity = {
   taxonomy: Taxonomy;
   hidden: Set<string>;
   bank: { sources: BankSource[]; payload: PlaidPayload; own_read: { categories: boolean; names: boolean; exclusions: boolean } };
-  incomplete: { institution_name: string; coverage: 'missing' | 'importing' }[];
+  incomplete: Incomplete[];
   manual_unread: string[] | 'all';
   /** Each bank a SimpleFIN connection reaches (lib/connectors/institutions.ts). */
   fed: ConnectorBanksReport;

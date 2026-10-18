@@ -90,6 +90,7 @@ import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
 import type { TxnCoverage } from '../transactions';
 import { coveredAccountsOf, importedCoverage } from '../history-import/read';
+import { restoredAccountsStore } from '../user-restore/store';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -221,6 +222,17 @@ export async function readReport(
     console.error('Report: the account directory could not be read', err instanceof Error ? err.name : typeof err);
     return null;
   });
+  // LENIENT, for this display only: which removed connections are banks a
+  // restore brought back (lib/user-restore/restored.ts), whose transactions
+  // are kept and wait to be linked, not gone. One that can't be read is said
+  // as removed, which is what the report says without it.
+  const restored = await restoredAccountsStore.getAllReport(ctx).then(
+    (r) => new Set(r.entries.keys()),
+    (err: unknown) => {
+      console.error('Report: what a restore brought back could not be read', err instanceof Error ? err.name : typeof err);
+      return new Set<string>();
+    }
+  );
 
   // Each stored connection's accounts: as it last reported them, and as the
   // directory saw them (an account seen there and not reported since still
@@ -316,7 +328,16 @@ export async function readReport(
       const accounts = r.accounts.filter((a) => !hidden.has(a.account_id));
       return accounts.length === 0
         ? []
-        : [{ institution_name: r.institution_name, institution_id: r.institution_id, first_seen: r.first_seen, last_seen: r.last_seen, accounts }];
+        : [
+            {
+              institution_name: r.institution_name,
+              institution_id: r.institution_id,
+              first_seen: r.first_seen,
+              last_seen: r.last_seen,
+              accounts,
+              ...(accounts.every((a) => restored.has(a.account_id)) ? { restored: true as const } : {}),
+            },
+          ];
     }),
     ...gone.removed,
   ];

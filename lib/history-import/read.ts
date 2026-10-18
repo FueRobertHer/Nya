@@ -226,6 +226,12 @@ export type ImportedRead = {
   unresolved: boolean;
   /** Imports whose summary can't be read: their order and period aren't known. */
   summariesUnreadable: string[];
+  /** Banks a restore brought back whose accounts aren't linked to a live one
+   *  (lib/user-restore/restored.ts HELD UNTIL LINKED), each with the days its
+   *  rows span: no month there has them, which a total says
+   *  (lib/month-coverage.ts `held`). Hidden ones aren't: they count nowhere
+   *  anyway. */
+  held: { institution_name: string; from: string; to: string }[];
 };
 
 /** Some entries of a map store, named as getAllReport names every one: the
@@ -288,7 +294,7 @@ export async function readImported(
         ? entriesReport(restoredAccountsStore, ctx, bookIds)
         : restoredAccountsStore.getAllReport(ctx),
   ]);
-  const empty: ImportedRead = { accounts: [], order: [], summaries: new Map(), covers: new Map(), notes: [], flawed: new Set(), unresolved: false, summariesUnreadable: [] };
+  const empty: ImportedRead = { accounts: [], order: [], summaries: new Map(), covers: new Map(), notes: [], flawed: new Set(), unresolved: false, summariesUnreadable: [], held: [] };
   const restoredUnread = [...restoredReport.unreadable, ...restoredReport.unrecognised];
   const nothing = books.entries.size === 0 && books.unreadable.length === 0 && books.unrecognised.length === 0;
   if (nothing && restoredReport.entries.size === 0 && restoredUnread.length === 0) return empty;
@@ -360,11 +366,24 @@ export async function readImported(
   // while their directory entry exists (lib/user-restore/restored.ts), and
   // their books. One whose record can't be read may be one of them.
   const restoredHere = new Map<string, { current: string; a: RestoredAccount }>();
+  const waiting = new Map<string, { from: string; to: string }>();
   for (const [id, a] of restoredReport.entries) {
-    if (!listed.has(id) || !linkedTo(id, links, live)) continue;
+    if (!listed.has(id)) continue;
+    if (!linkedTo(id, links, live)) {
+      // Held: said for the months its rows span, unless it is hidden.
+      if (a.rows && !leftOut.has(id) && (!opts.only || opts.only.has(id))) {
+        const was = waiting.get(a.institution_name);
+        waiting.set(a.institution_name, { from: was && was.from < a.rows.first ? was.from : a.rows.first, to: was && was.to > a.rows.last ? was.to : a.rows.last });
+      }
+      continue;
+    }
     const account = wanted(id);
     if (account && !flawed.has(account.account_id)) restoredHere.set(id, { current: account.account_id, a });
   }
+  const held = [...waiting].sort(([a], [b]) => a.localeCompare(b)).map(([institution_name, span]) => ({ institution_name, ...span }));
+  // Said as a bank's transactions that aren't all in are, so every figure
+  // that weighs those (the Plan) weighs these too.
+  for (const h of held) notes.push(`${h.institution_name}: transactions from your download aren't counted until its accounts are linked to the bank connected again`);
   const unrestored = restoredUnread.length > 0;
   if (unrestored) notes.push("Transactions brought back from your download aren't shown while what was brought back can't be read");
   const byRestored = new Map<string, HeldTxn[]>();
@@ -393,7 +412,7 @@ export async function readImported(
   if (unended) notes.push("Transactions imported for an account whose closure can't be read aren't shown until it can be");
   const unresolved = unlinked || unowned || unended || unrestored;
   const heldAccounts = new Set([...byAccount.keys(), ...byRestored.keys()].filter((id) => !flawed.has(id)));
-  if (heldAccounts.size === 0) return { ...empty, notes, flawed, unresolved, summariesUnreadable };
+  if (heldAccounts.size === 0) return { ...empty, notes, flawed, unresolved, summariesUnreadable, held };
 
   // The bank's rows of the connections holding these accounts, read once each
   // (or as the caller already read them), and which of them were kept as
@@ -480,6 +499,7 @@ export async function readImported(
     flawed,
     unresolved,
     summariesUnreadable,
+    held,
   };
 }
 
@@ -599,7 +619,16 @@ export async function importedForActivity(
     /** What was carried across a re-link, for restored rows (toDisplay). */
     carry?: CarriedForRows;
   }
-): Promise<{ txns: Txn[]; older: OlderTxn[]; notes: string[]; represents: Map<string, string[]>; first: string | null; changed: Map<string, number> }> {
+): Promise<{
+  txns: Txn[];
+  older: OlderTxn[];
+  notes: string[];
+  represents: Map<string, string[]>;
+  first: string | null;
+  changed: Map<string, number>;
+  /** Banks a restore brought back that wait to be linked (ImportedRead `held`). */
+  held: ImportedRead['held'];
+}> {
   const read = await readImported(ctx, { items: opts.items, links: opts.links, leftOut: opts.leftOut, bankStates: opts.bankStates });
   let first: string | null = null;
   const changed = new Map<string, number>();
@@ -665,7 +694,7 @@ export async function importedForActivity(
   const importOf = new Map(read.accounts.flatMap((a) => a.held.map((r) => [r.id, r.import_id] as const)));
   const at = (rowId: string) => rank.get(importOf.get(rowId) ?? '') ?? Number.MAX_SAFE_INTEGER;
   for (const list of represents.values()) list.sort((x, y) => at(x) - at(y));
-  return { txns, older, notes: read.notes, represents, first, changed };
+  return { txns, older, notes: read.notes, represents, first, changed, held: read.held };
 }
 
 /**

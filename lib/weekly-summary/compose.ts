@@ -370,6 +370,8 @@ function gapText(g: MonthGap, zone: string, year: string, n: Namer): string {
       return "some of what Nya keeps couldn't be read";
     case 'exclusions':
       return `whether you excluded ${plural(g.count, 'transaction')} couldn't be read`;
+    case 'held':
+      return `${inst}'s transactions from your download wait for its accounts to be linked`;
   }
 }
 

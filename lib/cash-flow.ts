@@ -79,7 +79,7 @@ import { countTransactions, countsInTotals, transactionCounter, uncategorizedFro
 import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
-import { joinNames, monthGaps, type Incomplete, type Stopped } from './month-coverage';
+import { heldNote, joinNames, monthGaps, type Incomplete, type Stopped } from './month-coverage';
 import { refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from './no-transactions';
 import { importedRowsNote } from './history-import/view';
 import type { LabelSide, SankeyLinkInput } from './sankey';
@@ -592,6 +592,9 @@ export function cashFlowNotes(input: {
   }
   const importing = [...new Set(byMonth.flatMap((g) => g.gaps.importing))];
   if (importing.length > 0) gaps.push(`${joinNames(importing)} ${importing.length === 1 ? 'is' : 'are'} still importing older transactions, so ${whole} may be incomplete.`);
+  // A bank a restore brought back, waiting to be linked (lib/month-coverage.ts).
+  const held = [...new Set(byMonth.flatMap((g) => g.gaps.held))];
+  if (held.length > 0) gaps.push(heldNote(held, whole));
   const refused = refusedNames(view);
   if (refused.length > 0) gaps.push(`Doesn't include the bank or card accounts at ${joinNames(refused)}: Plaid doesn't provide their transactions, so ${whole} may be incomplete.`);
   const unallowed = unallowedNames(view);
