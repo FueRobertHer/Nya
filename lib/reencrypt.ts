@@ -59,7 +59,7 @@
 import { createHash } from 'node:crypto';
 import { rawRedis, envPrefix } from './storage';
 import { splitScoped, isEnvWide, listContainers, type ContainerId, type Ctx } from './containers';
-import { declaredStore } from './stores';
+import { declaredStore, declaredPublicStore } from './stores';
 import type { Store } from './repo';
 import { listedKind, type Kind } from './key-families';
 import {
@@ -103,7 +103,9 @@ export function classify(key: string): Kind | null {
   // that environment-wide stores never belong in one, and containers never
   // nest: either means a key was built wrongly, so it is reported.
   const scoped = splitScoped(key);
-  if (!scoped.container) return listedKind(key);
+  // Outside every container: a key family on the lists, or a public store
+  // declared through the seam (plain JSON, public data: lib/repo.ts).
+  if (!scoped.container) return listedKind(key) ?? (declaredPublicStore(key) ? 'plain' : null);
   if (scoped.key.startsWith('c:') || isEnvWide(scoped.key)) return null;
   // Then a store declared through the seam: a value store is one string of
   // ciphertext, a map store a hash of it, a counter store a plain integer, a

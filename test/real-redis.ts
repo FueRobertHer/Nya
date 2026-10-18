@@ -134,6 +134,14 @@ export function upstashOn(client: RedisClient) {
     },
     hset: async (key: string, kv: Record<string, string>) => Number(await call('hset', [key, ...Object.entries(kv).flat()])),
     hdel: async (key: string, ...fields: string[]) => Number(await call('hdel', [key, ...fields])),
+    // As Upstash decodes HMGET (its hmget deserializer): null when no field is
+    // there, else each value JSON-parsed where it parses, a missing one null.
+    hmget: async (key: string, ...fields: string[]) => {
+      const values = (await call('hmget', [key, ...fields])) as (string | null)[];
+      if (values.every((v) => v === null)) return null;
+      return Object.fromEntries(fields.map((f, i) => [f, values[i] === null ? null : parsedOr(values[i]!)]));
+    },
+    hkeys: async (key: string) => (await call('hkeys', [key])) as string[],
     hlen: async (key: string) => Number(await call('hlen', [key])),
     hexists: async (key: string, field: string) => Number(await call('hexists', [key, field])),
     strlen: async (key: string) => Number(await call('strlen', [key])),

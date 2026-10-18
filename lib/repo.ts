@@ -162,15 +162,30 @@
 //
 // AN OPERATION THE SEAM LACKS is added here as a named method with its own
 // contract test (and its Lua, if it must be atomic), never as raw key access.
+//
+// PUBLIC DATA, THE ONE EXCEPTION TO CONTAINERS ONLY: definePublicMapStore. A
+// store of data that belongs to no one and is the same for everyone (the
+// ECB's published exchange rates, lib/fx/ecb-store.ts), kept once for the
+// whole environment rather than once per container. Its values are plain JSON,
+// never encrypted (there is nothing of anyone's to protect, and encrypting
+// would tie public data to the environment's keys), never in anyone's
+// download, and left out of backups and kept through restores (lib/export.ts
+// REFETCHED_PREFIXES): it can always be fetched again. Its name must be under a
+// prefix listed as environment-wide (ENV_WIDE_PREFIXES in lib/containers.ts),
+// so a container store can't take it and a copy built inside a container is
+// reported, and it has a registry of its own, so nothing that walks the
+// containers' stores (the download, deletion) meets it. classify() in
+// lib/reencrypt.ts knows it as plain text. Never for anything about a person:
+// declaring one is a reviewed change, like adding to kEnv's list.
 
 import { createHash } from 'node:crypto';
-import { redis, kc } from './storage';
+import { redis, kc, kEnv } from './storage';
 import { isEnvWide, type Ctx } from './containers';
 import { encrypt, formatOf, DecryptFailedError, KeyNotForContainerError, MalformedCiphertextError, UnsupportedFormatError } from './crypto';
 import { StoredDataUnreadableError } from './stored-json';
 import { decryptJsonText, encodeJsonText, maxBlobChars, blobWarnChars } from './blob';
 import { listedKind } from './key-families';
-import { isExcluded } from './export';
+import { isExcluded, isRefetched } from './export';
 
 export { StoredDataUnreadableError, describeUnreadable } from './stored-json';
 
@@ -1202,6 +1217,117 @@ export function defineCounterMapStore(name: string, opts: CounterOptions): Count
   });
 }
 
+/** A public store's options: what it holds, for messages, and the check of
+ *  each value, which may depend on its id (each field holds its own shape). */
+export type PublicStoreOptions<T> = { what: string; isValid: (v: unknown, id: string) => v is T };
+
+export type PublicMapStore<T> = {
+  readonly kind: 'public-map';
+  /** The key family, environment-wide: "<env>:<name>". */
+  readonly name: string;
+  readonly what: string;
+  /** Strict. The values there are for these ids, in the order asked; an id
+   *  with none is left out. One that isn't JSON, or that its check refuses,
+   *  throws UnreadableEntriesError naming it (unrecognised: plain text has no
+   *  damaged bytes to tell apart). */
+  getMany(ids: Iterable<string>): Promise<Map<string, T>>;
+  /** As getMany, but names the ids whose values can't be used instead of
+   *  throwing. For readers that nothing writes on, which then do without
+   *  them and say so. A storage failure still throws. */
+  getManyReport(ids: Iterable<string>): Promise<{ entries: Map<string, T>; unrecognised: string[] }>;
+  /** Writes these entries in one step (one HSET): every one, or none if any
+   *  is invalid or the whole is over the blob ceiling (StoredValueTooLargeError). */
+  setMany(entries: Iterable<readonly [string, T]>): Promise<void>;
+  /** Every id stored, in id order. */
+  ids(): Promise<string[]>;
+};
+
+// Public stores, by name: a registry apart from the containers' stores.
+const publicDeclared = new Map<string, PublicMapStore<unknown>>();
+
+/** A stored plain value, which the client may already have parsed (the
+ *  default Upstash client parses what looks like JSON). */
+function plainValue(raw: unknown): { ok: true; value: unknown } | { ok: false } {
+  if (typeof raw !== 'string') return { ok: true, value: raw };
+  try {
+    return { ok: true, value: JSON.parse(raw) };
+  } catch {
+    return { ok: false };
+  }
+}
+
+/**
+ * Declares a public map store (see PUBLIC DATA above): one environment-wide
+ * hash of plain JSON values, one per id. Its name must be under a prefix
+ * listed as environment-wide and as refetched, and not a key family stored the
+ * old way.
+ */
+export function definePublicMapStore<T>(name: string, opts: PublicStoreOptions<T>): PublicMapStore<T> {
+  if (!NAME.test(name) || name.length > 64) {
+    throw new Error(`"${name}" cannot name a store: use lowercase words joined by "-" or ":", at most 64 long.`);
+  }
+  if (!isEnvWide(name)) throw new Error(`"${name}" cannot name a public store: it is not under a prefix lib/containers.ts lists as environment-wide.`);
+  if (!isRefetched(name)) throw new Error(`"${name}" cannot name a public store: lib/export.ts must list it in REFETCHED_PREFIXES, so backups leave it out.`);
+  if (listedKind(name) !== null) throw new Error(`"${name}" cannot name a public store: it is a key family stored the old way (lib/key-families.ts).`);
+  const { what, isValid } = opts;
+  const key = () => kEnv(name);
+  const read = async (ids: Iterable<string>) => {
+    const asked = [...new Set([...ids].map((id) => checkId(what, id)))];
+    const entries = new Map<string, T>();
+    const unrecognised: string[] = [];
+    if (asked.length === 0) return { entries, unrecognised };
+    const got = (await redis().hmget<Record<string, unknown>>(key(), ...asked)) ?? {};
+    for (const id of asked) {
+      const raw = got[id];
+      if (raw === null || raw === undefined) continue;
+      const v = plainValue(raw);
+      if (v.ok && isValid(v.value, id)) entries.set(id, v.value);
+      else unrecognised.push(id);
+    }
+    return { entries, unrecognised: unrecognised.sort() };
+  };
+  const store: PublicMapStore<T> = {
+    kind: 'public-map',
+    name,
+    what,
+    async getMany(ids) {
+      const { entries, unrecognised } = await read(ids);
+      if (unrecognised.length > 0) throw new UnreadableEntriesError(what, [], unrecognised);
+      return entries;
+    },
+    getManyReport: read,
+    async setMany(given) {
+      const fields: Record<string, string> = {};
+      let chars = 0;
+      for (const [id, value] of given) {
+        checkId(what, id);
+        const text = JSON.stringify(value);
+        // Checked as it will read back, and written exactly as checked.
+        if (text === undefined || !isValid(JSON.parse(text), id)) throw new TypeError(`Invalid value for ${what}: refused before it was written.`);
+        fields[id] = text;
+        chars += id.length + text.length;
+      }
+      if (Object.keys(fields).length === 0) return;
+      const limit = maxBlobChars();
+      if (chars > limit) throw new StoredValueTooLargeError(what, chars, limit);
+      await redis().hset(key(), fields);
+    },
+    async ids() {
+      return (await redis().hkeys(key())).sort();
+    },
+  };
+  // The same name declared again is its module being evaluated again (a
+  // development reload): the new declaration replaces the old.
+  publicDeclared.set(name, store as PublicMapStore<unknown>);
+  return store;
+}
+
+/** Every public store declared so far, by name. For lib/stores.ts only, as
+ *  storesDeclaredSoFar is. */
+export function publicStoresDeclaredSoFar(): ReadonlyMap<string, PublicMapStore<unknown>> {
+  return publicDeclared;
+}
+
 /**
  * Every store declared so far, by name. For lib/stores.ts, which imports every
  * declaring module before it reads this, so its answer is complete. Read
@@ -1215,4 +1341,5 @@ export function storesDeclaredSoFar(): ReadonlyMap<string, Store> {
  *  only the app's own stores. */
 export function forgetDeclaredStore(name: string): void {
   declared.delete(name);
+  publicDeclared.delete(name);
 }

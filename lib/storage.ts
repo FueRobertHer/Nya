@@ -138,7 +138,10 @@ export function containerPrefix(ctx: Ctx): string {
  *   - which signed-in account owns which container (lib/owners.ts), which decides
  *     the container;
  *   - who shares which accounts with whom (lib/sharing.ts), which is between
- *     containers.
+ *     containers;
+ *   - public data that belongs to no one, kept once for everyone by a public
+ *     store on the seam (lib/repo.ts definePublicMapStore, which builds its
+ *     key): the ECB's exchange rates (lib/fx/ecb-store.ts).
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;

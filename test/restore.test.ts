@@ -801,3 +801,43 @@ describe('production', () => {
     expect(res.stdout.toString()).toContain('ok');
   });
 });
+
+describe('the ECB’s rates: public data that is fetched again, never restored', () => {
+  const OLD = { latest: '{"date":"2026-09-11","rates":{"USD":"1.1592"}}' };
+  const RUNNING = { latest: '{"date":"2026-09-14","rates":{"USD":"1.1551"}}' };
+
+  test('an export leaves them out, and its header says so', async () => {
+    await seed();
+    await fake.hset(testKey('fx:ecb'), RUNNING);
+    const lines = linesOf(await exportText());
+    expect(lines.some((l) => l.includes('"key":"fx:ecb"'))).toBe(false);
+    expect(JSON.parse(lines[0]).excluded).toContain('fx:*');
+  });
+
+  test('an archive holding them, as the release before takes one, is restored without them, keeping the running copy’s', async () => {
+    await seed();
+    const lines = linesOf(await exportText());
+    lines.splice(1, 0, JSON.stringify({ key: 'fx:ecb', type: 'hash', ttl: null, value: OLD }));
+    const archive = verifyArchive(reseal(lines));
+    expect(archive.records.some((r) => r.key === 'fx:ecb')).toBe(false);
+
+    fake.reset();
+    await fake.hset(testKey('fx:ecb'), RUNNING);
+    // The rates are not data in the way: the target counts as empty.
+    expect(await targetKeys(fake as any)).toEqual([]);
+    const result = await restoreArchive(fake as any, archive, { overwrite: false });
+    expect(result).toMatchObject({ written: 4, deleted: 0 });
+    expect(await fake.hgetall<Record<string, string>>(testKey('fx:ecb'))).toEqual(RUNNING);
+    expect(await fake.get<string>(testKey('budgets'))).toBe('cipher-budgets');
+  });
+
+  test('an overwrite never deletes the running copy’s rates', async () => {
+    await seed();
+    const archive = verifyArchive(await exportText());
+    await fake.hset(testKey('fx:ecb'), RUNNING);
+    const existing = await targetKeys(fake as any);
+    expect(existing.some((k) => k.endsWith('fx:ecb'))).toBe(false);
+    await restoreArchive(fake as any, archive, { overwrite: true, backedUp: existing });
+    expect(await fake.hgetall<Record<string, string>>(testKey('fx:ecb'))).toEqual(RUNNING);
+  });
+});
