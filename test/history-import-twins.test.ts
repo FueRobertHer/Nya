@@ -59,7 +59,7 @@ const { assembleBankRows, finishActivity } = await import('@/lib/activity');
 const { readSpending } = await import('@/lib/api-read');
 const { carriedTwinsStore, importedTwinsStore, importedTxnStore } = await import('@/lib/history-import/store');
 const { settle } = await import('@/lib/history-import/match');
-const { carriedPairs, changedRows, nextTwins, withCarried } = await import('@/lib/history-import/twins');
+const { carriedPairs, changedRows, nextTwins, replacedPending, withCarried } = await import('@/lib/history-import/twins');
 const { forgetImportedHistory } = await import('@/lib/history-import/commit');
 const { disconnectItem } = await import('@/lib/disconnect-item');
 const { linkAccounts } = await import('@/lib/links');
@@ -688,6 +688,148 @@ describe('a place in a group carried from the imported row', () => {
     ]);
     expect(group!.amount).toBe(110.5);
     expect(await moneyOut()).toBe(10 + 110.5);
+  });
+});
+
+describe('a pending row that posts', () => {
+  // While pending, the bank's row stands in for the imported one; once it
+  // posts, the posted row (a new id, naming the pending one) is the same
+  // transaction, dated by its posting, after the file's last day, and maybe
+  // at another amount (a tip), which the rule alone never pairs: the sync
+  // that posts it keeps the pair (lib/history-import/twins.ts A PENDING ROW
+  // THAT POSTS).
+  const PENDING = bankTxn('p_diner', 2, 50, { name: 'DINER 0042', merchant_name: 'Diner', pending: true });
+  const POSTED = (amount: number) => bankTxn('b_diner', 1, amount, { name: 'DINER 0042', merchant_name: 'Diner', pending_transaction_id: 'p_diner' });
+  /** The bank's own CSV, reviewed and imported: its last row the diner, so
+   *  it covers that day and no later. The imported row's id. */
+  async function importCsv(): Promise<string> {
+    const csv = ['Date,Description,Amount', `${daysAgo(2)},DINER 0042,-50.00`].join('\n');
+    const form = (meta: Record<string, unknown>) => {
+      const f = new FormData();
+      f.set('file', new Blob([new TextEncoder().encode(csv) as Uint8Array<ArrayBuffer>]), 'export.csv');
+      f.set('meta', JSON.stringify({ file_name: 'export.csv', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, account_id: 'acc_chk', ...meta }));
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+    };
+    const preview = (await (await routes.POST(form({ action: 'preview' }))).json()).preview;
+    expect((await routes.POST(form({ action: 'import', review: preview.review }))).status).toBe(200);
+    return (await importedTxnStore.get(ctx, 'acc_chk'))!.rows[0].id;
+  }
+  const ids = async () => (await rows()).map((t) => t.transaction_id).sort();
+
+  test('which pending rows a sync replaces: one whose posted row it brings, or whose posted row is there as it removes it', () => {
+    const p = PENDING as never;
+    const b = POSTED(50) as never;
+    expect(replacedPending({ p_diner: p }, { p_diner: p })).toEqual(new Map());
+    expect(replacedPending({ p_diner: p }, { b_diner: b })).toEqual(new Map([['p_diner', 'b_diner']]));
+    expect(replacedPending({ p_diner: p }, { p_diner: p, b_diner: b })).toEqual(new Map([['p_diner', 'b_diner']]));
+    expect(replacedPending({ p_diner: p, b_diner: b }, { b_diner: b })).toEqual(new Map([['p_diner', 'b_diner']]));
+    // Both there and staying, or the named row not pending: nothing new.
+    expect(replacedPending({ p_diner: p, b_diner: b }, { p_diner: p, b_diner: b })).toEqual(new Map());
+    expect(replacedPending({ p_diner: { ...PENDING, pending: false } as never }, { b_diner: b })).toEqual(new Map());
+    expect(replacedPending({}, { b_diner: b })).toEqual(new Map());
+  });
+
+  for (const tip of [0, 10]) {
+    test(`posted a day after the file’s last day${tip ? ', with a tip' : ''}: it takes the imported row’s place, the transaction counted once`, async () => {
+      await storeBank([FIRST, PENDING]);
+      const id = await importCsv();
+      expect(await ids()).toEqual(['b_first', 'p_diner']);
+      expect(await moneyOut()).toBe(10 + 50);
+      plaid.added.push(POSTED(50 + tip));
+      plaid.removed.push('p_diner');
+      await sync();
+      expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [id]: 'b_diner' } });
+      const shown = await rows();
+      expect(shown.map((t) => t.transaction_id).sort()).toEqual(['b_diner', 'b_first']);
+      expect(await moneyOut()).toBe(10 + 50 + tip);
+      // A tip is said as any amount the bank changed is.
+      expect(shown.find((t) => t.transaction_id === 'b_diner')!.imported_amount).toBe(tip ? 50 : undefined);
+      // Further syncs keep it so.
+      await sync();
+      expect(await moneyOut()).toBe(10 + 50 + tip);
+    });
+  }
+
+  test('the posted row a sync before the pending one goes: kept as it comes, and still once the pending one goes', async () => {
+    await storeBank([FIRST, PENDING]);
+    const id = await importCsv();
+    plaid.added.push(POSTED(55));
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [id]: 'b_diner' } });
+    expect(await ids()).toEqual(['b_diner', 'b_first']);
+    expect(await moneyOut()).toBe(10 + 55);
+    plaid.removed.push('p_diner');
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [id]: 'b_diner' } });
+    expect(await moneyOut()).toBe(10 + 55);
+  });
+
+  test('a split of the imported row, posted with a tip: the bank’s row takes it, the tip shown as its remainder', async () => {
+    const id = await importCsv();
+    const t = (await (await transactionsRoute.GET(new Request('http://localhost/api/transactions?refresh=1'))).json()).categories;
+    const food = t.categories.find((c: { name: string }) => c.name.toLowerCase() === 'food and drink').id;
+    const home = t.categories.find((c: { id: string; kind?: string }) => c.id !== food).id;
+    const put = await splitsRoute.PUT(new Request('http://x/api/transaction-splits', { method: 'PUT', body: JSON.stringify({ transaction_id: id, parts: [{ amount: 30, category_id: food }, { amount: 20, category_id: home }], updated_at: null }) }));
+    expect(put.status).toBe(200);
+    // The bank's pending row comes, and stands in for it; then it posts.
+    plaid.added.push(PENDING);
+    await sync();
+    expect(await ids()).toEqual(['b_first', 'p_diner']);
+    plaid.added.push(POSTED(60));
+    plaid.removed.push('p_diner');
+    await sync();
+    const parts = (await rows()).filter((r) => r.split_of === 'b_diner');
+    expect(parts.map((p) => [p.amount, p.split_remainder ?? null, p.split_carried_from])).toEqual([
+      [30, null, id],
+      [20, null, id],
+      [10, { was: 50 }, id],
+    ]);
+    expect(await moneyOut()).toBe(10 + 60);
+  });
+
+  test('the sync that posts it reads only the books of that row’s account', async () => {
+    await connect('item_card', 'Amex', ['acc_card']);
+    others.set('access-sandbox-item_card', { added: [], modified: [], removed: [] });
+    await storeBank([bankTxn('c_first', 50, 20, { account_id: 'acc_card', name: 'CARD ROW', merchant_name: null })], 'item_card', ['acc_card']);
+    await importedTxnStore.set(ctx, 'acc_card', { version: 1, rows: [heldRow('acc_card', 'history-import:card', 300, 5)] });
+    await storeBank([FIRST, PENDING]);
+    const id = await importCsv();
+    plaid.added.push(POSTED(50));
+    plaid.removed.push('p_diner');
+    // The load's own read of the books, and this account's alone.
+    expect(await bookReads(() => sync())).toEqual({ whole: 1, some: [['acc_chk']] });
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toEqual({ version: 1, twins: { [id]: 'b_diner' } });
+    expect(await moneyOut()).toBe(10 + 50 + 20);
+  });
+
+  test('gone without posting: the imported row counts again, and nothing is kept', async () => {
+    await storeBank([FIRST, PENDING]);
+    const id = await importCsv();
+    plaid.removed.push('p_diner');
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toBeNull();
+    expect(await ids()).toEqual(['b_first', id].sort());
+    expect(await moneyOut()).toBe(10 + 50);
+  });
+
+  test('undone after it posted: the bank’s row counts alone, and the pair goes with the next sync that reads the books', async () => {
+    await storeBank([FIRST, PENDING]);
+    const id = await importCsv();
+    plaid.added.push(POSTED(60));
+    plaid.removed.push('p_diner');
+    await sync();
+    const import_id = (await importedTxnStore.get(ctx, 'acc_chk'))!.rows[0].import_id;
+    const undone = await routes.DELETE(
+      new Request('http://localhost/api/history-import', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ account_id: 'acc_chk', import_id, confirm: true }) })
+    );
+    expect(undone.status).toBe(200);
+    expect(await ids()).toEqual(['b_diner', 'b_first']);
+    expect(await moneyOut()).toBe(10 + 60);
+    plaid.modified.push(bankTxn('b_first', 60, 12, { name: 'FIRST ROW', merchant_name: null }));
+    await sync();
+    expect(await importedTwinsStore.get(ctx, 'item_chase')).toBeNull();
+    expect((await rows()).find((r) => r.transaction_id === 'b_diner')!.imported_amount).toBeUndefined();
+    void id;
   });
 });
 

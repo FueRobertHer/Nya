@@ -104,7 +104,7 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `goals` | Your savings goals, each with its plan: its allocation, monthly target, target date and whether it is archived. |
 | `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `review-settings`, `rules`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `review-settings`, `rules`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -329,6 +329,24 @@ What you set under Allocation on the Plan tab ([features.md](features.md#allocat
 | `target` | Your target allocation, a `split`, or `null`. |
 
 A `split` is percents by asset class, each above 0 with at most one decimal, adding up to 100: `us-stocks`, `intl-stocks`, `stocks` (stocks of any region), `bonds`, `cash`, `real-estate`, `crypto` and `other`. A class it doesn't name holds none: `{ "us-stocks": 60, "bonds": 40 }`.
+
+#### `app-imports`
+
+Each import of another app's export ([Switching from another app](features.md#switching-from-another-app)): one entry per import, `id` the import's own (`app-import:` and a random id), and `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `version` | The shape's version: 1. |
+| `app` | `monarch`, `ynab`, `lunchmoney`, `actual` or `zerosum`. |
+| `variant` | Which of the app's export formats it was read as (`register`, `register-ynab4`, `export-2026`, `transactions` and so on). |
+| `file_name`, `file_bytes`, `entry` | The file's name as your device gave it, its size in bytes, and, for a zip, the file in it that was read (`null` otherwise). The file itself is not kept. |
+| `started_at`, `finished_at` | When it began, and when it was done (`null` until then). |
+| `status` | `done`; `importing` while it was being made, or if it stopped part way (Undo takes out what it made); `undoing` while it was being undone. |
+| `imports[]` | Each Nya account it went into: `account_id`, `kind` (`manual` or `linked`), its `type`, `name` and the app's accounts that went into it (`sources`), and `import_id`, the account's own import, in [`imports`](#imports) for a manual account and [`history-imports`](#history-imports) for a linked one, where the file's records and what became of each are kept. |
+| `made` | What it made beside the transactions, by id: the manual `accounts` (`id` and `name`), and the `categories`, `groups` and `tags` (in [`categories`](#categories) and [`tags`](#tags)). |
+| `counts` | `rows` (transactions read), `imported` (added), `duplicates` (kept as your bank's own, on a linked account), `present` (already there), `unreadable` (lines that couldn't be read), `splits` (split transactions rebuilt) and `tagged` (transactions it tagged); `null` until it was done. |
+
+What its transactions carry is where your own is: the rows in [`manual-transactions`](#manual-transactions) and [`imported-transactions`](#imported-transactions), their tags and notes in [`transaction-annotations`](#transaction-annotations), their splits in [`transaction-splits`](#transaction-splits), and the category on a linked account's row the bank already had in [`category_overrides`](#category_overrides-and-merchant_renames). Undoing the import deletes its entry. An entry is these fields and no others: it is what Undo reads to take the import out, so one a later release wrote with more in it is named under [`problems`](#problems) as one this release doesn't recognise, rather than read without what it added.
 
 #### `budget-months`
 
