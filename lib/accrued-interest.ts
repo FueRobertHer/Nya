@@ -1,27 +1,26 @@
 // lib/accrued-interest.ts
 //
-// A student loan's accrued interest in today's net worth (plan #19). Plaid
-// reports a student loan's balance as its principal, Sallie Mae's aside (Plaid
-// says theirs include it), and the interest accrued on it apart
-// (outstanding_interest_amount, lib/liabilities.ts). Both are owed: the
-// Accounts tab shows the interest on the loan's row, and the payoff planner
-// plans on the two together (lib/payoff.ts, which reads it here). The total on
-// Home counts it too, as owed, in a line of its own that says where it comes
-// from (accruedNote).
+// A student loan's accrued interest, and what the total on Home says of it
+// (plan #19). Plaid reports a student loan's balance as its principal,
+// Sallie Mae's aside (Plaid says theirs include it), and the interest accrued
+// on it apart (outstanding_interest_amount, lib/liabilities.ts). Both are
+// owed: the Accounts tab shows the interest on the loan's row, and the payoff
+// plan plans on the two together unless the person leaves the interest out
+// there (lib/payoff.ts, which reads the rule here).
 //
-// NEVER IN HISTORY. What lib/history.ts records each day, and every point the
-// chart draws from it, today's among them (withTodayPoint, which shows only a
-// figure the history layer has), is the balances as reported: a day recorded
-// before this counted would otherwise be set against one after, and the step
-// between them read as a loss. So the server never sees this: it is worked
-// out on the page, from the rows the total is made of, and the line says the
-// chart counts the balances alone, and by how much its point for today is
-// above the total.
+// THE TOTAL STAYS THE BALANCES, as every other reader has it: the chart and
+// every day lib/history.ts records, the Accounts tab's subtotals, the API, the
+// download and a net worth share. Under it, a line says how much accrued
+// interest it leaves out, on how many loans (homeAccrued, accruedLines). The
+// interest comes from a call of its own (/liabilities/get), which can fail
+// while the balances come back, and a servicer's row may carry none: a loan
+// whose interest wasn't reported on this load is named in a line of its own,
+// as interest that couldn't be read, never passed over. So a failure moves no
+// total: only the lines change, to say what couldn't be read.
 //
-// Only what Plaid reported on this load counts: a loan whose bank couldn't be
-// reached shows its last known balance (lib/last-known.ts), which carries no
-// liability, so it counts its balance alone until its bank answers. Pure: no
-// I/O, so the browser bundle can import it.
+// Pure: no I/O, so the browser bundle can import it.
+
+import { joinNames } from './month-coverage';
 
 /** Plaid's institution id for Sallie Mae, whose student loan balances already
  *  include accrued interest (Plaid's AccountBalance.current documentation). */
@@ -42,55 +41,82 @@ export function accruedApart(
 }
 
 type Row = {
-  account_id: string;
+  type: string;
+  subtype?: string | null;
   balance: number | null;
   hidden?: boolean;
   liability?: { kind?: string | null; outstanding_interest?: number | null } | null;
 };
+type HomeInstitution = {
+  institution_name: string;
+  institution_id?: string | null;
+  /** Kept by hand, or fed by a connector (lib/connectors): no Plaid terms. */
+  manual?: boolean;
+  connector?: string;
+  accounts: readonly Row[];
+};
 
-/** What today's total owes in accrued interest, and on how many loans. */
-export type AccruedOwed = { total: number; loans: number };
-
-export const NO_ACCRUED: AccruedOwed = { total: 0, loans: 0 };
+/** What the total on Home leaves out in accrued interest. */
+export type HomeAccrued = {
+  /** Reported on this load: how much, on how many loans. */
+  total: number;
+  loans: number;
+  /** The student loans whose interest wasn't reported on this load, by
+   *  institution, in the order they are listed. */
+  unread: { institution: string; loans: number }[];
+};
 
 /**
- * The accrued interest the total on Home leaves out, over the rows it is made
- * of: every account the server sent that isn't hidden and has a balance (an
- * account that ended is not among them: lib/lifecycle.ts applyLifecycle).
+ * The accrued interest on the rows the total counts: every account Plaid
+ * sent that isn't hidden and has a balance (an account that ended is not
+ * among them: lib/lifecycle.ts applyLifecycle). A student loan (Plaid's terms
+ * say so, or its type does) whose interest isn't a reported number is
+ * unread: the liabilities call failed or isn't on for its institution, the
+ * servicer's row carries none, or the row is its last known balance
+ * (lib/last-known.ts), which carries no terms. Accounts kept by hand or fed
+ * by a connector have no such figure, and Sallie Mae's balances include it.
  */
-export function accruedInterestOwed(institutions: readonly { institution_id?: string | null; accounts: readonly Row[] }[]): AccruedOwed {
+export function homeAccrued(institutions: readonly HomeInstitution[]): HomeAccrued {
   let cents = 0;
   let loans = 0;
+  const unread = new Map<string, number>();
   for (const inst of institutions) {
+    if (inst.manual || inst.connector || inst.institution_id === SALLIE_MAE) continue;
     for (const a of inst.accounts) {
       if (a.hidden || a.balance == null) continue;
-      const accrued = accruedApart(a.liability?.kind, inst.institution_id, a.liability?.outstanding_interest);
-      if (accrued === null) continue;
-      cents += Math.round(accrued * 100);
+      const student = a.liability?.kind === 'student' || (a.type === 'loan' && a.subtype === 'student');
+      if (!student) continue;
+      const reported = a.liability?.kind === 'student' ? a.liability.outstanding_interest : undefined;
+      if (typeof reported !== 'number' || !Number.isFinite(reported) || reported < 0) {
+        unread.set(inst.institution_name, (unread.get(inst.institution_name) ?? 0) + 1);
+        continue;
+      }
+      if (reported === 0) continue;
+      cents += Math.round(reported * 100);
       loans++;
     }
   }
-  return loans === 0 ? NO_ACCRUED : { total: cents / 100, loans };
+  return { total: cents / 100, loans, unread: [...unread].map(([institution, n]) => ({ institution, loans: n })) };
 }
 
 /**
- * The line under the total, when it counts accrued interest: how much, where
- * it comes from, and, when the chart is shown, that it (and the change beside
- * the total, which is worked out from it) counts the balances alone.
- * `chartToday`: the chart's last point is today's, the total before the
- * interest, so the line says how far above the total it is. `money` formats
- * an amount as the total is.
+ * The lines under the total: how much accrued interest it leaves out, as
+ * Plaid reports it apart from the balances (`leftOut`), and the loans whose
+ * interest couldn't be read on this load (`unread`). Each null when there is
+ * nothing to say. `money` formats an amount as the total is.
  */
-export function accruedNote(
-  owed: AccruedOwed,
-  opts: { chart: boolean; chartToday: boolean; delta: boolean },
-  money: (n: number) => string
-): string | null {
-  if (owed.loans === 0 || !(owed.total > 0)) return null;
-  const one = owed.loans === 1;
-  const lead = `Counts ${money(owed.total)} of accrued interest on ${one ? 'a student loan' : `${owed.loans} student loans`} as owed: Plaid reports it apart from ${one ? 'the loan’s balance' : 'the loans’ balances'}.`;
-  if (!opts.chart) return lead;
-  const counts = opts.delta ? 'The chart and the change above count' : 'The chart counts';
-  const today = opts.chartToday ? `, so ${opts.delta ? 'the chart’s' : 'its'} point for today is ${money(owed.total)} above this total` : '';
-  return `${lead} ${counts} the balances alone, as every day is recorded${today}.`;
+export function accruedLines(view: HomeAccrued, money: (n: number) => string): { leftOut: string | null; unread: string | null } {
+  const one = view.loans === 1;
+  const leftOut =
+    view.loans > 0 && view.total > 0
+      ? `Leaves out ${money(view.total)} of accrued interest on ${one ? 'a student loan' : `${view.loans} student loans`}, which Plaid reports apart from ${one ? 'its balance' : 'their balances'}. The payoff plan counts it, unless you leave it out there.`
+      : null;
+  const n = view.unread.reduce((sum, u) => sum + u.loans, 0);
+  if (n === 0) return { leftOut, unread: null };
+  const which = view.loans > 0 ? (n === 1 ? 'another student loan' : `${n} other student loans`) : n === 1 ? 'your student loan' : `${n} student loans`;
+  const where = joinNames(view.unread.map((u) => u.institution));
+  return {
+    leftOut,
+    unread: `The accrued interest on ${which} at ${where} couldn’t be read, so how much interest the total leaves out for ${n === 1 ? 'it' : 'them'} isn’t known.`,
+  };
 }
