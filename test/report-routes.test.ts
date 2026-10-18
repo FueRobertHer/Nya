@@ -39,6 +39,7 @@ const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { saveManualAccount } = await import('@/lib/manual');
 const { setAccountHidden } = await import('@/lib/hidden');
+const { rememberAccounts } = await import('@/lib/last-known');
 const { setExcluded } = await import('@/lib/txn-annotations');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { syncsStore, noticesStore } = await import('@/lib/connection-records');
@@ -513,6 +514,22 @@ describe('verification: a report from stored data says what may be missing, and 
     ]);
     // 2025 is within its reach: nothing in it, and nothing missing.
     expect((await quiet(() => readReport(ctx, year2025(), { now: NOW }))).gaps).toEqual([]);
+  });
+
+  test('a connection whose every remembered account is hidden: none of its rows is read, and a 2015 report says nothing of how far back they can go', async () => {
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
+    await fake.set(ctxKey('txns:item_a'), await store([on('2026-04-01', 'a-1', 'acc_chk', 50)]));
+    await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-03-02') });
+    await rememberAccounts(ctx, [
+      { item_id: 'item_a', error: null, accounts: [{ account_id: 'acc_chk', name: 'Checking', official_name: null, mask: '1111', type: 'depository', subtype: 'checking', currency: 'USD' }] },
+    ]);
+    await setAccountHidden(ctx, 'acc_chk', 'depository', true);
+    const r = await quiet(() => readReport(ctx, p2015(), { now: NOW }));
+    expect(r.gaps).toEqual([]);
+    expect(r.caveats.hidden).toBe(true);
+    // Shown again, its rows say how far back it goes: back only to its reach.
+    await setAccountHidden(ctx, 'acc_chk', 'depository', false);
+    expect((await quiet(() => readReport(ctx, p2015(), { now: NOW }))).gaps).toEqual([{ kind: 'begins_late', item_id: 'item_a', institution: 'Chase', first: '2026-04-01', from: 'stored' }]);
   });
 
   test('a store that can’t be read stays missing from a period before its connection was first seen', async () => {

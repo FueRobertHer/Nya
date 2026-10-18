@@ -795,6 +795,16 @@ describe('verification: how far back a connection’s history can go', () => {
     expect(buildReport(input({ period: p2015, sources: [chase({ coverage: 'importing', first_date: null, first_seen: '2026-03-02' })] })).gaps.map((g) => g.kind)).toEqual(['importing']);
   });
 
+  test('a connection whose every account is hidden: its rows are stored and none is read, so how far back its history can go is no gap', () => {
+    const hiddenAll = chase({ first_date: null, first_seen: '2026-03-02', every_hidden: true });
+    const r = buildReport(input({ period: p2015, sources: [hiddenAll] }));
+    expect(r.gaps).toEqual([]);
+    expect(r.months.some((m) => m.uncertain)).toBe(false);
+    expect(r.institutions[0]).not.toHaveProperty('every_hidden');
+    // One account still shown: the rows read say how far back it goes, as before.
+    expect(buildReport(input({ period: p2015, sources: [chase({ first_date: null, first_seen: '2026-03-02', every_hidden: false })] })).gaps.map((g) => g.kind)).toEqual(['begins_late']);
+  });
+
   test('a store that can’t be read is missing from every day, however late its connection was first seen', () => {
     // First seen in 2026, but it may have been linked long before: what it
     // holds can't be bounded by that.

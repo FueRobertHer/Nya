@@ -196,6 +196,10 @@ export type SourceFacts = {
   /** The day the last of its accounts (those not hidden) ended, when every
    *  one has (lib/lifecycle.ts); null or absent while one counts. */
   ended_by?: string | null;
+  /** Every account it is remembered to hold is hidden (and it holds some):
+   *  none of its transactions is read, so its stored rows' first day (which
+   *  leaves hidden accounts' out) says nothing of how far back it reaches. */
+  every_hidden?: boolean;
   /** Set for a bank a SimpleFIN connection reaches. */
   connector?: ConnectorSourceFacts;
   /** Its bank accounts and cards (not hidden), each with the days the files
@@ -649,9 +653,12 @@ function sourceGaps(s: SourceFacts, period: Period): Gap[] {
   if (s.coverage === 'missing' && !s.never_synced) return [{ kind: 'missing', ...at, reach: null }];
   // With nothing stored to say how far back its history goes, how far it can:
   // the days before that will never come, so if its accounts were open then,
-  // they are missing, as with a late start.
+  // they are missing, as with a late start. Not for a connection whose every
+  // account is hidden: its rows are stored, and none is read (first_date
+  // leaves them out), so nothing of it is missing from the period.
   const reach = reachOf(s.first_seen);
-  const beyondReach: Gap[] = s.first_date === null && reach !== null && reach > period.start ? [{ kind: 'begins_late', ...at, first: reach, from: 'reach' }] : [];
+  const beyondReach: Gap[] =
+    s.first_date === null && !s.every_hidden && reach !== null && reach > period.start ? [{ kind: 'begins_late', ...at, first: reach, from: 'reach' }] : [];
   if (s.coverage === 'missing') {
     // Never synced: missing from the days its history can reach, if any are
     // in the period, unless files cover them all.
@@ -1024,7 +1031,7 @@ export function buildReport(input: ReportInput): Report {
     marked,
     appendix,
     institutions: input.sources
-      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, accounts, ...s }) => ({
+      .map(({ institution_id: _id, first_seen: _seen, never_synced: _never, every_hidden: _hidden, accounts, ...s }) => ({
         ...s,
         ended_by: s.ended_by ?? null,
         note: noteOf.get(s.item_id) ?? null,

@@ -297,6 +297,9 @@ export async function readReport(
       // the day each that ended stopped counting, up to which it needs them.
       accounts: coveredAccountsOf(s.item_id, remembered.byItem[s.item_id] ?? [], bank.lifecycle, covered, hidden).map(({ name, covers, end }) => ({ name, covers, end })),
       ended_by: endedBy(s.item_id),
+      // Every account it is remembered to hold hidden: none of its rows is
+      // read, so how far back they reach says nothing of the report.
+      every_hidden: (remembered.byItem[s.item_id] ?? []).length > 0 && remembered.byItem[s.item_id].every((a) => hidden.has(a.account_id)),
     };
   });
 
