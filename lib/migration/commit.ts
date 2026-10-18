@@ -20,10 +20,12 @@
 // tags (and, on a linked account's row the bank already has, the app's note)
 // in what is said about each transaction, split transactions' parts, and on
 // such a row the app's category, so the bank's row shows the person's own
-// categorizing (unless the person said not to: MigrationAnswers.carry). If
-// any step fails the import is undone, as Undo would undo
-// it, and the failure answered: a file is never half imported. An entry left
-// part way (the server stopped) is listed, and Undo finishes taking it out.
+// categorizing (unless the person said not to: MigrationAnswers.carry), only
+// where it shows and never moving a row they approved in the review queue
+// (lib/migration/plan.ts carry_to). If any step fails the import is undone,
+// as Undo would undo it, and the failure answered: a file is never half
+// imported. An entry left part way (the server stopped) is listed, and Undo
+// finishes taking it out.
 //
 // NOTHING ELSE. No balance is moved (a new manual account's is the one the
 // person typed, as the Add form saves it), and nothing is written to the
@@ -253,8 +255,15 @@ export async function commitMigration(
       }
       for (const { i, duplicate } of kept) {
         // A row its bank has: what the app said of it shows on the bank's
-        // row only when the person keeps that on.
-        if (duplicate && !answers.carry) continue;
+        // row only when the person keeps that on, and is said only where it
+        // shows (lib/migration/plan.ts carry_to): never on a row standing
+        // for one a file imported before brought, which keeps what it has;
+        // and on one whose bank row the person approved in the review queue,
+        // its tags and note, never what would move it from where they
+        // approved it (its category, its split).
+        const to = duplicate ? t.carry_to.get(i) : undefined;
+        if (duplicate && (!answers.carry || to === undefined || to === 'earlier')) continue;
+        const refiles = !duplicate || to === 'bank';
         const id = ids.rows[i];
         const row = t.rows[i].row;
         const tags = (t.tags.get(i) ?? []).map((n) => tagOf.get(n.toLowerCase())).filter((x): x is string => !!x);
@@ -262,8 +271,8 @@ export async function commitMigration(
         // row shows it (lib/txn-layers.ts); else it is the row's own.
         const note = duplicate && row.note ? row.note : undefined;
         if (tags.length > 0 || note) annotations.push([id, { ...(tags.length > 0 ? { tags: [...new Set(tags)] } : {}), ...(note ? { note } : {}), updated_at: at }]);
-        if (duplicate && row.category) overrides.set(id, row.category);
-        const parts = t.parts.get(i);
+        if (duplicate && refiles && row.category) overrides.set(id, row.category);
+        const parts = refiles ? t.parts.get(i) : undefined;
         if (parts) {
           const checked = checkParts(
             parts.map((p) => {

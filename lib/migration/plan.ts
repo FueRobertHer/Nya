@@ -46,7 +46,13 @@
 // import/match.ts settle), the category, tags and note the app had, said on
 // the imported row so the bank's row shows them (lib/activity.ts
 // categoriesFromImports, lib/txn-layers.ts): the person's own categorizing
-// comes over for the years the bank also reaches.
+// comes over for the years the bank also reaches. Only what will show, and
+// never over the person's approval (TargetPlan carry_to): a row that is one
+// a file imported before brought, which no bank row stands for, carries
+// nothing (nothing shows what is said on a row standing for such a row, and
+// that row keeps what it has); one whose bank row holds an approval in the
+// review queue (lib/review-layer.ts approvalFor) carries its tags and note
+// but neither the category nor the split, so it stays where it was approved.
 //
 // LIMITS, checked here so the review says so before anything is made: the
 // file's rows, MAX_IMPORT_ROWS in any one account; manual accounts
@@ -119,6 +125,14 @@ export type TargetAccount =
   | { kind: 'manual'; id: string; name: string; institution: string; type: string; currency: string }
   | { kind: 'linked'; id: string; name: string; institution: string; type: string; currency: string | null; mask: string | null };
 
+/** Where what the app said of a linked account's row its bank (or a file
+ *  imported before) already has would go, were it the same (see the header):
+ *  onto the bank's row it leads to, all of it (`bank`); onto one the person
+ *  approved in the review queue, its tags and note only (`approved`); or
+ *  nowhere, the row a file imported before brought keeping what it has
+ *  (`earlier`). */
+export type CarryTo = 'bank' | 'approved' | 'earlier';
+
 /** What one Nya account's import would be. */
 export type TargetPlan = {
   /** 'new:<the file's account>', 'manual:<id>' or 'linked:<id>'. */
@@ -148,6 +162,11 @@ export type TargetPlan = {
    *  account's row the bank already has, the category and note to say on it. */
   tags: Map<number, string[]>;
   parts: Map<number, { amount: number; text: string; note: string | null }[]>;
+  /** A linked account's: by row, for each that has a proposal, where what
+   *  the app said of it goes were it the same (CarryTo); and how many of
+   *  those answered the same go each way, as answered when planned. */
+  carry_to: Map<number, CarryTo>;
+  carried: Record<CarryTo, number>;
   /** Splits that came in as their lines here (a manual account), with why. */
   exploded: { reason: string; lines: number[] }[];
   /** A linked account's (see the header): splits brought in whole, as its
@@ -220,6 +239,12 @@ export type MigrationState = {
   contexts: ReadonlyMap<string, AccountContext>;
   /** Linked accounts chosen whose context couldn't be read, with why. */
   unavailable: ReadonlyMap<string, string>;
+  /** For each linked account with a context: the posted bank row each of its
+   *  kept rows stands for, followed through earlier imports' rows
+   *  (lib/history-import/read.ts standsFor), and its posted bank rows that
+   *  hold an approval in the review queue, or one that can't be read
+   *  (lib/review-layer.ts approvalFor). */
+  reach: ReadonlyMap<string, { leads: ReadonlyMap<string, string>; approved: ReadonlySet<string> }>;
   /** Linked accounts chosen that ended, how and from which day (read
    *  leniently: only the review's words). */
   ends?: ReadonlyMap<string, { state: string; day: string }>;
@@ -775,6 +800,8 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
     let covers: Covers | null = null;
     const chosenAnswers = choice.to === 'linked' ? byIndex(own(answers.choices, key), rows) : {};
     let ended: TargetPlan['ended'] = null;
+    const carryTo = new Map<number, CarryTo>();
+    const carried: Record<CarryTo, number> = { bank: 0, approved: 0, earlier: 0 };
     if (choice.to === 'linked') {
       const context = state.contexts.get(choice.id)!;
       let first: string | null = null;
@@ -797,6 +824,18 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
         imports,
         choices: chosenAnswers,
       });
+      // Where what the app said of each row the account already has would
+      // go (see the header): onto the bank's row it is, or the one the
+      // earlier file's row it is leads to; else nowhere. With nothing read
+      // of the account's approvals (lib/migration/targets.ts reads them
+      // with its context), every bank row counts as approved.
+      const reach = state.reach.get(choice.id);
+      for (const [i, pair] of linked.pairs) {
+        const bank = pair.twin.kind === 'bank' ? pair.twin.id : reach?.leads.get(pair.twin.id);
+        const to: CarryTo = bank === undefined ? 'earlier' : !reach || reach.approved.has(bank) ? 'approved' : 'bank';
+        carryTo.set(i, to);
+        if (linked.actions[i] === 'duplicate') carried[to]++;
+      }
       // An account that ended counts nothing dated from its end: said, as
       // its own import says it (app/api/history-import).
       const end = state.ends?.get(choice.id);
@@ -832,6 +871,8 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       covers,
       tags: tagsOf,
       parts: partsOf,
+      carry_to: carryTo,
+      carried,
       exploded: [...b.exploded].map(([reason, lines]) => ({ reason, lines })),
       whole: [...b.whole].map(([reason, lines]) => ({ reason, lines })),
       left_out: b.left_out,
@@ -856,9 +897,11 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
       const mayAdd = action === 'add' || asked;
       const mayStand = action === 'duplicate' || asked;
       if (!mayAdd && !mayStand) return;
-      const carried = mayStand && answers.carry;
-      if (((t.tags.get(i)?.length ?? 0) > 0 && (mayAdd || carried)) || (carried && t.txns[i].note)) annotations++;
-      if (t.parts.has(i) && (mayAdd || carried)) splits++;
+      // Standing for its twin, it carries what will show there (carry_to).
+      const to = t.carry_to.get(i);
+      const carries = mayStand && answers.carry && to !== undefined && to !== 'earlier';
+      if (((t.tags.get(i)?.length ?? 0) > 0 && (mayAdd || carries)) || (carries && t.txns[i].note)) annotations++;
+      if (t.parts.has(i) && (mayAdd || (carries && to === 'bank'))) splits++;
     });
   }
   const annotationRoom = Math.max(0, MAX_ANNOTATIONS - state.counts.annotations);
@@ -903,7 +946,9 @@ export function planMigration(read: Extract<AppRead, { status: 'ready' }>, answe
  * a split's parts) with what becomes of each: a manual account's outcome, a
  * linked account's whole review (lib/history-import/plan.ts review), which is
  * what the person answers and never those answers, so answering a proposal
- * keeps the review (the history import's own is the same). Equal
+ * keeps the review (the history import's own is the same), and while its
+ * rows carry what the app said of them, where that goes (carry_to), so an
+ * approval made in the review queue since is reviewed. Equal
  * fingerprints are the same import: the commit refuses one whose plan,
  * worked out again, has another.
  */
@@ -917,7 +962,9 @@ export function planDigest(plan: Omit<MigrationPlan, 'digest'>, answers: Migrati
   for (const t of plan.targets) {
     h.update(`\n${t.key}|${t.currency}|${t.covers ? `${t.covers.from}..${t.covers.to}` : '-'}|${t.linked ? t.linked.review : ''}\n`);
     t.rows.forEach((n, i) => {
-      const action = t.manual ? `=${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}` : '';
+      // A manual account's outcome; where what a linked account's row would
+      // carry goes, while it carries (an approval made since is reviewed).
+      const action = t.manual ? `=${t.manual.actions[i]}:${JSON.stringify(t.manual.outcomes[i])}` : answers.carry && t.carry_to.has(i) ? `>${t.carry_to.get(i)}` : '';
       const row = n.row;
       h.update(
         `${n.index}[${row.date}|${Math.round(row.amount * 1000)}|${row.currency}|${normalizeDescription(row.name)}|${row.category ?? ''}|${row.note ?? ''}|${(t.tags.get(i) ?? []).join(',')}|${JSON.stringify(t.parts.get(i) ?? null)}]${action}\n`

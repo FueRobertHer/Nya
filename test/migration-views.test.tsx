@@ -16,7 +16,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { forgetEpochs } = await import('@/lib/sessions');
-const { ReviewStep, MappingStep, PastMigrations, UndoConfirm, countsNow } = await import('@/components/MigrationSheet');
+const { ReviewStep, MappingStep, PastMigrations, UndoConfirm, countsNow, carriedNow, carryWords } = await import('@/components/MigrationSheet');
 const routes = await import('@/app/api/migration/route');
 
 const FIXTURES = join(import.meta.dir, 'fixtures', 'apps');
@@ -183,5 +183,44 @@ describe('answers kept in the sheet until they are sent', () => {
     const t = { counts: { new: 0, duplicates: 1, unanswered: 1 }, proposals: [proposal(2, 'high'), proposal(3, 'low')] };
     expect(countsNow(t as any, { each: {} }, { each: { '3': 'new' } })).toMatchObject({ new: 1, duplicates: 1, unanswered: 0 });
     expect(countsNow(t as any, { each: {} }, { all: 'new', each: {} })).toMatchObject({ new: 2, duplicates: 0, unanswered: 0 });
+  });
+
+  test('what the app said of the rows the banks have is counted where it goes, with the answers given since, and only offered while it moves anything', async () => {
+    const proposal = (line: number, carry_to: 'bank' | 'approved' | 'earlier') => ({
+      index: line,
+      line,
+      file: { date: '2026-09-05', name: `Row ${line}`, amount: 10, currency: 'USD' },
+      twin: { date: '2026-09-05', name: `BANK ${line}`, amount: 10, currency: 'USD', kind: carry_to === 'earlier' ? ('imported' as const) : ('bank' as const), descriptor: null },
+      days: 0,
+      confidence: 'high' as const,
+      similar: true,
+      choice: 'same' as const,
+      carry_to,
+    });
+    const t = { carry: { bank: 1, approved: 1, earlier: 1 }, proposals: [proposal(2, 'bank'), proposal(3, 'approved'), proposal(4, 'earlier')] };
+    expect(carriedNow(t as any, { each: {} }, { each: {} })).toEqual({ bank: 1, approved: 1, earlier: 1 });
+    expect(carriedNow(t as any, { each: {} }, { each: { '2': 'new', '4': 'new' } })).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    expect(carriedNow({ ...t, carry: { bank: 0, approved: 0, earlier: 0 } } as any, { all: 'new', each: {} }, { all: 'new', each: { '3': 'same' } })).toEqual({ bank: 0, approved: 1, earlier: 0 });
+
+    expect(carryWords({ bank: 2, approved: 1, earlier: 0 }, true, 'Monarch')).toBe(
+      '2 transactions would take them, as your own choice for them, ahead of your rules and the bank’s categories, so their budgets and reports may change. 1 transaction you approved in the review queue stays where you approved it: only the tags and notes go onto it. Undo puts them back.'
+    );
+    expect(carryWords({ bank: 0, approved: 0, earlier: 2 }, true, 'YNAB')).toBe('2 transactions a file imported before brought keep what they have: YNAB’s categories, tags, notes and splits go only onto your banks’ own.');
+    expect(carryWords({ bank: 3, approved: 0, earlier: 2 }, false, 'YNAB')).toBe('They keep what they have now; the file’s rows that are them come in only as theirs.');
+
+    // In the review: the box only while it would move something, the words always.
+    const accounts = { Checking: { to: 'new', name: 'Checking', institution: 'YNAB', type: 'depository', balance: 0 }, Savings: { to: 'skip' }, Visa: { to: 'skip' }, Brokerage: { to: 'skip' } };
+    const { preview } = await previewOf('ynab-register.csv', { accounts });
+    const answered = { accounts: { ...accounts, Checking: { ...accounts.Checking, balance: '0' } } };
+    const linked = (carry: Record<string, number>) => ({ ...preview, targets: preview.targets.map((x: any) => ({ ...x, kind: 'linked', new: false, carry })) });
+    const earlier = text(review(linked({ bank: 0, approved: 0, earlier: 2 }), answered));
+    expect(earlier).toContain('Your banks’ own transactions');
+    expect(earlier).toContain('2 transactions a file imported before brought keep what they have');
+    expect(earlier).not.toContain('Give the transactions your banks already have');
+    const moving = text(review(linked({ bank: 1, approved: 2, earlier: 0 }), answered));
+    expect(moving).toContain('Give the transactions your banks already have the category, tags, notes and splits they had in YNAB');
+    expect(moving).toContain('1 transaction would take them, as your own choice for it');
+    expect(moving).toContain('2 transactions you approved in the review queue stay where you approved them: only the tags and notes go onto them.');
+    expect(text(review(linked({ bank: 0, approved: 0, earlier: 0 }), answered))).not.toContain('Your banks’ own transactions');
   });
 });

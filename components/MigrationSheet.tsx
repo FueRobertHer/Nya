@@ -68,6 +68,9 @@ type Mapping = {
   by: string;
   differs: string | null;
 };
+/** Where what the app said of a row its bank (or a file imported before) has
+ *  goes, were it the same (lib/migration/plan.ts CarryTo). */
+type CarryTo = 'bank' | 'approved' | 'earlier';
 type Proposal = {
   index: number;
   line: number | null;
@@ -77,6 +80,7 @@ type Proposal = {
   confidence: 'high' | 'medium' | 'low';
   similar: boolean;
   choice: 'same' | 'new' | null;
+  carry_to?: CarryTo | null;
 };
 type Target = {
   key: string;
@@ -96,6 +100,9 @@ type Target = {
   rows?: { line: number | null; date: string; name: string; amount: number; currency: string; category: string | null; action: string }[];
   proposals: Proposal[];
   more_proposals: number;
+  /** Of its rows answered the same as the review was read, where what the
+   *  app said of them goes (carriedNow). */
+  carry?: Record<CarryTo, number>;
   problems: { line: number; reason: string }[];
   more_problems: number;
   before_bank: number | null;
@@ -225,6 +232,38 @@ export function countsNow(t: Pick<Target, 'counts' | 'proposals'>, sent: Proposa
     counts[bucket(after, p)] = (counts[bucket(after, p)] ?? 0) + 1;
   }
   return counts;
+}
+
+/** Of a linked account's rows answered the same, with the answers given here
+ *  since the review was read: how many would take what the app said of them
+ *  (`bank`), how many the person approved in the review queue would take
+ *  only their tags and notes (`approved`), and how many a file imported
+ *  before brought keep what they have (`earlier`: lib/migration/plan.ts
+ *  CarryTo). */
+export function carriedNow(t: Pick<Target, 'carry' | 'proposals'>, sent: ProposalChoices, now: ProposalChoices): Record<CarryTo, number> {
+  const out: Record<CarryTo, number> = { bank: 0, approved: 0, earlier: 0, ...t.carry };
+  for (const p of t.proposals) {
+    if (!p.carry_to) continue;
+    const before = choiceOf(sent, p) === 'same';
+    const after = choiceOf(now, p) === 'same';
+    if (before !== after) out[p.carry_to] += after ? 1 : -1;
+  }
+  return out;
+}
+
+/** What the review says of the transactions the person's banks already have,
+ *  with the app's carried onto them or not. */
+export function carryWords(c: Record<CarryTo, number>, on: boolean, appName: string): string {
+  const them = (n: number) => (n === 1 ? 'it' : 'them');
+  if (!on) return 'They keep what they have now; the file’s rows that are them come in only as theirs.';
+  const words: string[] = [];
+  if (c.bank > 0) words.push(`${plural(c.bank, 'transaction')} would take them, as your own choice for ${them(c.bank)}, ahead of your rules and the bank’s categories, so their budgets and reports may change.`);
+  if (c.approved > 0)
+    words.push(`${plural(c.approved, 'transaction')} you approved in the review queue ${c.approved === 1 ? 'stays' : 'stay'} where you approved ${them(c.approved)}: only the tags and notes go onto ${them(c.approved)}.`);
+  if (c.bank + c.approved > 0) words.push('Undo puts them back.');
+  if (c.earlier > 0)
+    words.push(`${plural(c.earlier, 'transaction')} a file imported before brought ${c.earlier === 1 ? 'keeps what it has' : 'keep what they have'}: ${appName}’s categories, tags, notes and splits go only onto your banks’ own.`);
+  return words.join(' ');
 }
 
 const NO_CHOICES: ProposalChoices = { each: {} };
@@ -690,7 +729,16 @@ export function ReviewStep({
     setDrafts({});
     onAnswer({ accounts: next });
   };
-  const carried = linkedNow.reduce((n, x) => n + (x.counts.duplicates ?? 0) + (x.counts.already ?? 0), 0);
+  // Where what the app said of the rows the banks already have goes: the
+  // box is offered while it moves anything (or is off).
+  const carried = linkedNow.reduce<Record<CarryTo, number>>(
+    (n, { t }) => {
+      const c = carriedNow(t, own(sentChoices, t.key) ?? NO_CHOICES, own(choices, t.key) ?? NO_CHOICES);
+      return { bank: n.bank + c.bank, approved: n.approved + c.approved, earlier: n.earlier + c.earlier };
+    },
+    { bank: 0, approved: 0, earlier: 0 }
+  );
+  const carrying = carried.bank + carried.approved > 0 || r.carry === false;
   return (
     <div className="sheet-form">
       <p className="import-headline" style={{ marginTop: 0 }}>
@@ -883,19 +931,19 @@ export function ReviewStep({
         </>
       )}
 
-      {(carried > 0 || r.carry === false) && r.targets.some((t) => t.kind === 'linked') && (
+      {(carrying || carried.earlier > 0) && r.targets.some((t) => t.kind === 'linked') && (
         <>
           <p className="section-label" style={{ marginTop: 16 }}>
             Your banks’ own transactions
           </p>
-          <label className="quick-add-check">
-            <input type="checkbox" checked={carry} disabled={busy} onChange={(e) => onAnswer({ carry: e.target.checked })} />
-            <span>Give the transactions your banks already have the category, tags, notes and splits they had in {r.app_name}</span>
-          </label>
+          {carrying && (
+            <label className="quick-add-check">
+              <input type="checkbox" checked={carry} disabled={busy} onChange={(e) => onAnswer({ carry: e.target.checked })} />
+              <span>Give the transactions your banks already have the category, tags, notes and splits they had in {r.app_name}</span>
+            </label>
+          )}
           <p className="panel-note" style={{ marginTop: 0 }}>
-            {carry
-              ? `${plural(carried, 'transaction')} would take them, as your own choice for ${carried === 1 ? 'it' : 'them'}, ahead of your rules and the bank’s categories, so their budgets and reports may change. Undo puts them back.`
-              : 'They keep what they have now; the file’s rows that are them come in only as theirs.'}
+            {carryWords(carried, carry, r.app_name)}
           </p>
         </>
       )}

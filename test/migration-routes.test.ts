@@ -58,7 +58,7 @@ const { getItems, removeItem } = await import('@/lib/storage');
 const { linkAccounts } = await import('@/lib/links');
 const { loadBudgets, saveBudgets } = await import('@/lib/budget-store');
 const { budgetMonthsStore } = await import('@/lib/budget-months-store');
-const { setOverride } = await import('@/lib/overrides');
+const { setOverride, getOverrides } = await import('@/lib/overrides');
 const { commitMigration } = await import('@/lib/migration/commit');
 const { planMigration } = await import('@/lib/migration/plan');
 const { readTargets } = await import('@/lib/migration/targets');
@@ -1083,6 +1083,159 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     } finally {
       setSystemTime();
     }
+  });
+
+  test('the app’s rows a bank file imported before brought carry nothing onto them, and the review says those keep what they have', async () => {
+    try {
+      // A year before the bank's own rows begin: only the bank's file has these.
+      await bankFileFirst(['2025-08-30,TARGET T-1234,-22.00', '2025-09-12,COSTCO WHSE #0012,-120.00']);
+      const shown = async () => {
+        const read = ((await activity()).transactions as any[]).filter((t) => t.name !== 'FIRST ROW');
+        return { rows: read.map((t) => [t.name, t.amount, t.category_name ?? null, t.note ?? null, t.tags ?? [], !!t.split_of]).sort(), spent: spending(read, 'USD') };
+      };
+      const before = await shown();
+      expect(before.rows.length).toBe(2);
+      // YNAB's register of those days: Target under Home: Supplies, with a
+      // memo, and Costco split between groceries and household.
+      const ynab = [
+        ynabHeader,
+        ynabOn('2025-09-12', 'Costco', 'Food', 'Groceries', 'Split (1/2) ', 80),
+        ynabOn('2025-09-12', 'Costco', 'Home', 'Household', 'Split (2/2) ', 40),
+        ynabOn('2025-08-30', 'Target', 'Home', 'Supplies', 'bought a lamp', 22),
+      ].join('\n');
+      const { preview, done } = await importReviewed(ynab, { ...linkedTo, options: { date_order: 'mdy' } });
+      const [target] = preview.targets;
+      // Each is the bank file's row, as the review says, and nothing of the
+      // app's would show on it (only a bank's row shows what is said on a
+      // row standing for it): so nothing goes, and the review counts them
+      // as keeping what they have, not as taking the app's.
+      expect(target.proposals.map((p: any) => [p.file.name, p.twin.kind, p.choice, p.carry_to])).toEqual([
+        ['Target', 'imported', 'same', 'earlier'],
+        ['Costco', 'imported', 'same', 'earlier'],
+      ]);
+      expect(target.counts.already).toBe(2);
+      expect(target.carry).toEqual({ bank: 0, approved: 0, earlier: 2 });
+      expect(done.status).toBe(200);
+      expect(done.body.counts).toMatchObject({ imported: 0, duplicates: 2, splits: 0, tagged: 0 });
+      // They keep what they have, and spending is what it was.
+      expect(await shown()).toEqual(before);
+      // Nothing is said about the app's rows: no category, note or split.
+      const ids = (await importedTxnStore.get(ctx, 'acc_chk'))!.rows.filter((r) => r.name === 'Target' || r.name === 'Costco').map((r) => r.id);
+      expect(ids.length).toBe(2);
+      expect([...(await txnAnnotationStore.getMany(ctx, ids)).keys()]).toEqual([]);
+      expect([...(await splitStore.getMany(ctx, ids)).keys()]).toEqual([]);
+      const overrides = await getOverrides(ctx);
+      expect(ids.filter((id) => id in overrides)).toEqual([]);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  /** The review queue on, and a bank's row approved as it shows, as the
+   *  Activity tab and Card Mode approve one. */
+  async function approve(id: string) {
+    const reviewRoute = await import('@/app/api/review/route');
+    const { approvalInputOf } = await import('@/lib/review-layer');
+    const { bankRows } = await import('@/lib/split-rows');
+    const send = async (body: unknown) => (await reviewRoute.POST(new Request('http://localhost/api/review', { method: 'POST', body: JSON.stringify(body) }))).status;
+    expect(await send({ action: 'start', today: daysAgo(0), since: daysAgo(20) })).toBe(200);
+    const row = bankRows((await activity()).transactions as any[]).find((t: any) => t.transaction_id === id);
+    expect(row).toBeDefined();
+    expect(await send({ action: 'approve', items: [approvalInputOf(row as any)] })).toBe(200);
+  }
+  /** The bank's Costco row as every reader shows it, and what is spent. */
+  async function bankCostco() {
+    const read = (await activity()).transactions as any[];
+    const t = read.find((x) => x.transaction_id === 'b_costco');
+    const set = await readTagSet(ctx);
+    return {
+      category: t.category_name,
+      approved: !!t.reviewed_at,
+      offered: t.review_suggestion ?? null,
+      note: t.note ?? null,
+      tags: (t.tags ?? []).map((id: string) => set?.tags.find((x) => x.id === id)?.name),
+      parts: read.filter((x) => x.split_of === 'b_costco').map((x) => [x.amount, x.category_name]),
+      spent: spending(read, 'USD'),
+    };
+  }
+  const costcoRow = (over: Record<string, unknown> = {}) => bankTxn('b_costco', 'acc_chk', 5, 120, { name: 'COSTCO WHSE #0012', merchant_name: 'Costco', ...over });
+
+  for (const variant of ['category', 'split'] as const) {
+    test(`a transaction approved in the review queue stays where it was approved: the app’s ${variant} doesn’t move it, its tags and notes still come, and Undo leaves it as it was`, async () => {
+      await seed(ctx, [ONE, costcoRow()]);
+      await approve('b_costco');
+      const before = await bankCostco();
+      expect(before).toMatchObject({ category: 'general merchandise', approved: true, offered: null, note: null, tags: [], parts: [] });
+      // Monarch has it under Household, with a note; or as two rows, 80 of
+      // groceries and 40 of household, which are taken together as it.
+      const file =
+        variant === 'category'
+          ? [MONARCH, `${daysAgo(5)},Costco,Household,Checking,COSTCO WHSE #0012,bulk run,-120.00,Costco run`].join('\n')
+          : [MONARCH, `${daysAgo(5)},Costco,Groceries,Checking,COSTCO WHSE #0012,,-80.00,Costco run`, `${daysAgo(5)},Costco,Household,Checking,COSTCO WHSE #0012,,-40.00,`].join('\n');
+      const { preview, done, migration_id } = await importReviewed(file, linkedTo);
+      const [target] = preview.targets;
+      if (variant === 'split') expect(target.combined.transactions).toBe(1);
+      expect(target.proposals.map((p: any) => [p.twin.kind, p.choice, p.carry_to])).toEqual([['bank', 'same', 'approved']]);
+      expect(target.carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+      expect(done.status).toBe(200);
+      expect(done.body.counts).toMatchObject({ duplicates: 1, splits: 0, tagged: 1 });
+      // Where it was approved, still approved, with nothing offered: only
+      // the app's tags and note beside it, its 120 spent where it was.
+      expect(await bankCostco()).toEqual({ ...before, note: variant === 'category' ? 'bulk run' : null, tags: ['Costco run'] });
+      const undone = await undo({ migration_id, confirm: true });
+      expect(undone.status).toBe(200);
+      expect(await bankCostco()).toEqual(before);
+    });
+  }
+
+  const HOUSEHOLD = [MONARCH, `${daysAgo(5)},Costco,Household,Checking,COSTCO WHSE #0012,,-120.00,`].join('\n');
+
+  test('an approval made while the bank’s row was pending holds it too, as the posted row has it from the pending one', async () => {
+    await seed(ctx, [ONE, costcoRow({ transaction_id: 'p_costco', pending: true })]);
+    await approve('p_costco');
+    // Posted: its approval is the pending one's until the sync that removes
+    // that one moves it.
+    await seed(ctx, [ONE, costcoRow({ pending_transaction_id: 'p_costco' })]);
+    expect((await bankCostco()).approved).toBe(true);
+    const { preview, done } = await importReviewed(HOUSEHOLD, linkedTo);
+    expect(preview.targets[0].carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    expect(done.status).toBe(200);
+    expect(await bankCostco()).toMatchObject({ category: 'general merchandise', approved: true, offered: null });
+  });
+
+  test('an approval of a row a bank file brought holds the bank’s row that took its place', async () => {
+    await seed(ctx, [ONE]);
+    const form = (meta: object) => {
+      const f = new FormData();
+      f.set('file', new Blob([new TextEncoder().encode(['Date,Description,Amount', `${daysAgo(5)},COSTCO WHSE #0012,-120.00`].join('\n')) as Uint8Array<ArrayBuffer>]), 'bank.csv');
+      f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+    };
+    const hp = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
+    expect((await asRes(await historyRoutes.POST(form({ action: 'import', review: hp.body.preview.review })))).status).toBe(200);
+    const [fromFile] = (await importedTxnStore.get(ctx, 'acc_chk'))!.rows;
+    await approve(fromFile.id);
+    // The bank's own row arrives and stands for the file's.
+    await seed(ctx, [ONE, costcoRow()]);
+    expect((await bankCostco()).approved).toBe(true);
+    const { preview, done } = await importReviewed(HOUSEHOLD, linkedTo);
+    expect(preview.targets[0].proposals.map((p: any) => [p.twin.kind, p.carry_to])).toEqual([['bank', 'approved']]);
+    expect(done.status).toBe(200);
+    expect(await bankCostco()).toMatchObject({ category: 'general merchandise', approved: true, offered: null });
+  });
+
+  test('an approval made after the review asks for the review again, which then says it', async () => {
+    await seed(ctx, [ONE, costcoRow()]);
+    const p = await preview(HOUSEHOLD, linkedTo);
+    expect(p.body.preview.targets[0].carry).toEqual({ bank: 1, approved: 0, earlier: 0 });
+    await approve('b_costco');
+    const refused = await post({ action: 'import', review: p.body.preview.review, migration_id: `app-import:${crypto.randomUUID()}`, ...linkedTo }, HOUSEHOLD);
+    expect(refused.status).toBe(409);
+    expect(refused.body.needs).toBe('review');
+    const { preview: again, done } = await importReviewed(HOUSEHOLD, linkedTo);
+    expect(again.targets[0].carry).toEqual({ bank: 0, approved: 1, earlier: 0 });
+    expect(done.status).toBe(200);
+    expect((await bankCostco()).category).toBe('general merchandise');
   });
 
   test('before the bank’s own rows begin, nothing has a group or a split’s lines: they come in as a manual account takes them, and the period is whole', async () => {

@@ -6,17 +6,20 @@
 // and for each account chosen, what it already holds: a manual account's
 // book, a linked account's bank rows, earlier imports and the bank rows kept
 // as standing for their rows (lib/history-import/read.ts readAccountContext,
-// its `twins`). Server only.
+// its `twins`), and which of its bank rows the person approved in the review
+// queue (MigrationState reach). Server only.
 //
 // STRICT where a wrong read would duplicate or lose a row: a book, a bank's
 // store, the links an account's earlier imports are found through. One of
 // those that can't be read makes its account unavailable, with why, which the
 // review says (lib/migration/plan.ts blocks), never an empty account to
-// import into. The categories are read as the app's own first load reads
-// them (lib/category-store.ts ensureTaxonomy): a set never made is made then,
-// as the Activity tab would make it, so the ids the review names are the
-// stored ones the commit files under. That is the one thing a review may
-// write, and only once; nothing else is written here.
+// import into. An approval that can't be read counts as one, so a row the
+// person may have approved is never moved by the app's category. The
+// categories are read as the app's own first load reads them
+// (lib/category-store.ts ensureTaxonomy): a set never made is made then, as
+// the Activity tab would make it, so the ids the review names are the stored
+// ones the commit files under. That is the one thing a review may write, and
+// only once; nothing else is written here.
 
 import type { Ctx } from '../containers';
 import { getManualAccounts, type ManualAccount } from '../manual';
@@ -27,7 +30,9 @@ import { txnAnnotationStore } from '../txn-annotations';
 import { splitStore } from '../splits';
 import { readLinks, effectiveLinks, type Link } from '../link-core';
 import { liveAccountIds } from '../links';
-import { liveLinkedAccounts, readAccountContext, type AccountContext, type LinkedAccount } from '../history-import/read';
+import { liveLinkedAccounts, readAccountContext, standsFor, type AccountContext, type LinkedAccount } from '../history-import/read';
+import { settle } from '../history-import/match';
+import { readApprovalsForDisplay } from '../review-store';
 import { StateUnreadableError } from '../transactions';
 import { StoredDataUnreadableError } from '../repo';
 import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore } from '../lifecycle';
@@ -120,6 +125,39 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     }
   }
 
+  // Where what the app said of a row a linked account already has would
+  // show (lib/migration/plan.ts carry_to): the posted bank row each kept row
+  // stands for, as the read layer works it out (lib/history-import/read.ts
+  // standsFor), and the bank rows that hold an approval in the review queue,
+  // found where the read layer finds one (lib/review-layer.ts approvalFor):
+  // under the row's own id, the pending one's it replaced, or that of a row
+  // imported from a file it stands for.
+  const reach = new Map<string, { leads: Map<string, string>; approved: Set<string> }>();
+  if (contexts.size > 0) {
+    const leadsOf = new Map<string, Map<string, string>>();
+    const wanted = new Set<string>();
+    for (const [id, c] of contexts) {
+      const leads = standsFor(settle(c.held, c.banks, c.order, { bankFrom: c.bank_from, covers: c.covers, twins: c.twins }));
+      leadsOf.set(id, leads);
+      for (const b of c.banks) {
+        if (b.pending) continue;
+        wanted.add(b.transaction_id);
+        const from = c.pending_from.get(b.transaction_id);
+        if (from) wanted.add(from);
+      }
+      for (const rowId of leads.keys()) wanted.add(rowId);
+    }
+    const read = await readApprovalsForDisplay(ctx, wanted);
+    const holds = (txnId: string | undefined) => txnId !== undefined && (read.approvals.has(txnId) || read.unknown.has(txnId));
+    for (const [id, c] of contexts) {
+      const leads = leadsOf.get(id)!;
+      const approved = new Set<string>();
+      for (const b of c.banks) if (!b.pending && (holds(b.transaction_id) || holds(c.pending_from.get(b.transaction_id)))) approved.add(b.transaction_id);
+      for (const [rowId, bankId] of leads) if (holds(rowId)) approved.add(bankId);
+      reach.set(id, { leads, approved });
+    }
+  }
+
   const offered: TargetAccount[] = [
     ...manualList.map((a): TargetAccount => ({ kind: 'manual', id: a.account_id, name: a.name, institution: a.institution_name, type: a.type, currency: a.currency ?? 'USD' })),
     ...[...linked.values()].map((a): TargetAccount => ({ kind: 'linked', id: a.account_id, name: a.name, institution: a.institution_name, type: a.type, currency: a.currency, mask: a.mask })),
@@ -134,6 +172,7 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
     books,
     contexts,
     unavailable,
+    reach,
     ends,
     counts: { annotations, splits, manual: manualList.length },
     offered,
