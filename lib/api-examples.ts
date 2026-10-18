@@ -972,7 +972,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['exclusion_unknown', 'Those whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ...LEFT_OUT,
       ...SOURCES,
-      TXN_NOTES,
+      [
+        'notes',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from your bank’s files into a linked account rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+      ],
     ],
   },
 

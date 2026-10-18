@@ -362,7 +362,9 @@ describe('the API’s cash flow over imported rows', () => {
       const categories = f.groups.flatMap((g) => g.categories.map((c) => ({ category: c.name, category_id: c.id, group: g.name, group_id: g.id, spent: c.amount, transactions: c.transactions })));
       const sorted = [...categories].sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1));
       expect(sorted).toEqual(s.categories as unknown as typeof sorted);
-      expect(f.notes).toEqual([...s.notes, imported(count)]);
+      // Spending's notes, the note on what was imported among them, last.
+      expect(f.notes).toEqual(s.notes);
+      expect(s.notes.at(-1)).toBe(imported(count));
       return f;
     };
     const before = await same(4);
@@ -371,6 +373,7 @@ describe('the API’s cash flow over imported rows', () => {
     // A month is named, as the chart names one; it holds the corner shop alone.
     const m = daysAgo(50).slice(0, 7);
     expect((await readCashFlow(ctx, { from: `${m}-01`, to: lastDayOf(m) })).notes).toContain(imported(1, monthName(m)));
+    expect((await readSpending(ctx, { from: `${m}-01`, to: lastDayOf(m) })).notes).toContain(imported(1, monthName(m)));
 
     await storeBank([...BANK, bankTxn('b_mid', 49, 60, { name: 'CORNER SHOP #12' })]);
     const after = await same(3);

@@ -18,18 +18,16 @@
 // account whose rows can't be read is named in sources and notes, so a short
 // answer is never passed off as a period with nothing in it. It writes nothing.
 //
-// Its notes are spending's (what couldn't be read, and the connections that
-// bring in no transactions, in the words under the month's totals), and, as
+// Its notes are spending's (what couldn't be read, the connections that
+// bring in no transactions, in the words under the month's totals, and, as
 // under the month's totals and beside the chart, how many of the range's
-// transactions were imported into linked accounts from the bank's files
-// (#52, lib/history-import/view.ts importedRowsNote): rows that come through
-// the same assembly, each only where no bank row stands for it.
+// transactions were imported into linked accounts from the bank's files:
+// #52, lib/api-read.ts importedNote), rows that come through the same
+// assembly, each only where no bank row stands for it.
 
 import type { Ctx } from './containers';
-import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
-import { cashFlow, inPeriod, lastDayOf } from './cash-flow';
-import { monthName } from './rollover';
-import { importedRowsNote } from './history-import/view';
+import { firstDay, importedNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { cashFlow, inPeriod } from './cash-flow';
 import { totalsCurrency, type LeftOut } from './spending';
 import { isProvisionalId, type CategoryKind } from './categories';
 
@@ -67,11 +65,6 @@ export type ApiCashFlow = {
  *  (lib/api-read.ts, CATEGORIES). */
 const shownId = (id: string): string | null => (isProvisionalId(id) ? null : id);
 
-/** The days a note speaks of: a whole month by its name ("September 2026"),
- *  as the chart names one, and any other range as this period. */
-const rangeName = (from: string, to: string): string =>
-  from.endsWith('-01') && to === lastDayOf(from.slice(0, 7)) ? monthName(from.slice(0, 7)) : 'this period';
-
 /** Where money came from and went over [from, to], in one currency: by default
  *  the one most transactions are in, as the app's totals. */
 export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiCashFlow> {
@@ -80,7 +73,7 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
   const inRange = inPeriod(opts);
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
-  const imported = importedRowsNote(activity.rows.filter((t) => inRange(t.date)), rangeName(opts.from, opts.to));
+  const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
   const flow = cashFlow(activity.rows, inRange, currency, activity.ix);
   return {

@@ -104,7 +104,7 @@ import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTrans
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
 import { readBudgetMonth, windowStart } from './budget-month';
-import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
+import { availableMeters, gapText, monthName, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
@@ -121,7 +121,8 @@ import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 import { bankRows, PART_PREFIX, type WithParts } from './split-rows';
 import { readDrawState } from './history-import/extend';
-import { importedStretch } from './history-import/view';
+import { importedRowsNote, importedStretch } from './history-import/view';
+import { lastDayOf } from './cash-flow';
 import type { WalkState } from './history-import/store';
 
 const DAY_MS = 86_400_000;
@@ -1606,11 +1607,32 @@ export type ApiSpending = Summary & {
 /** Money in and out over [from, to], and spending by category and by group,
  *  in one currency: by default the one most transactions are in, as the
  *  app's totals. */
+/**
+ * How many of the transactions of [from, to] were imported into linked
+ * accounts from the bank's files rather than sent by the bank (#52), in the
+ * words under the month's totals and beside the chart (lib/history-import/
+ * view.ts importedRowsNote): a whole month named as the chart names one
+ * ("September 2026"), any other range as this period. Null with none. The
+ * last of spending's notes, and of the cash flow's (lib/api-cash-flow.ts).
+ */
+export function importedNote(rows: readonly Txn[], range: { from: string; to: string }): string | null {
+  const { from, to } = range;
+  const whole = from.endsWith('-01') && to === lastDayOf(from.slice(0, 7));
+  return importedRowsNote(
+    rows.filter((t) => t.date >= from && t.date <= to),
+    whole ? monthName(from.slice(0, 7)) : 'this period'
+  );
+}
+
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
+  // Last, as under the month's totals: how many of the range's transactions
+  // came from the bank's files rather than the bank.
+  const imported = importedNote(activity.rows, opts);
+  if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
   // Groups add up what the categories do: money out that counts.
   const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: ReturnType<typeof transactionCounter> }>();
