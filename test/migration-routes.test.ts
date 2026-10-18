@@ -1314,6 +1314,32 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     expect(done.body.counts.tagged).toBe(0);
   });
 
+  // Plaid posts a pending transaction under a new id, naming the pending
+  // one, dated by its posting: usually after the export's last day.
+  for (const tip of [0, 10]) {
+    test(`the app’s last row, for a transaction the bank posts the next day${tip ? ' with a tip' : ''}: the bank’s row takes its place and what the app said of it, counted once, and Undo leaves the bank’s alone`, async () => {
+      await seed(ctx, [ONE, bankTxn('p_dinner', 'acc_chk', 2, 50, { name: 'DINER 0042', merchant_name: 'Diner', pending: true })]);
+      const file = [MONARCH, `${daysAgo(2)},Diner,Restaurants,Checking,DINER 0042,date night,-50.00,`].join('\n');
+      const { preview, done, migration_id } = await importReviewed(file, linkedTo);
+      expect(preview.targets[0].pending_alike).toBe(1);
+      expect(preview.targets[0].covers).toMatchObject({ from: daysAgo(2), to: daysAgo(2) });
+      expect(done.status).toBe(200);
+      expect(await counted()).toBe(1 + 50);
+      // The sync that posts it, a day after the file's last.
+      const food = { primary: 'FOOD_AND_DRINK', detailed: 'FOOD_AND_DRINK_RESTAURANT', confidence_level: 'HIGH' };
+      plaid.added = [bankTxn('b_dinner', 'acc_chk', 1, 50 + tip, { name: 'DINER 0042', merchant_name: 'Diner', pending_transaction_id: 'p_dinner', personal_finance_category: food })];
+      plaid.removed = ['p_dinner'];
+      await assembleBankRows(ctx, { sync: true });
+      const diner = async () =>
+        ((await activity()).transactions as any[]).filter((t) => /diner/i.test(`${t.name} ${t.merchant_name ?? ''}`)).map((t) => [t.transaction_id, t.amount, t.category_name, t.note ?? null, t.imported_amount ?? null]);
+      expect(await diner()).toEqual([['b_dinner', 50 + tip, 'Restaurants', 'date night', tip ? 50 : null]]);
+      expect(await counted()).toBe(1 + 50 + tip);
+      expect((await undo({ migration_id, confirm: true })).status).toBe(200);
+      expect(await diner()).toEqual([['b_dinner', 50 + tip, 'food and drink', null, null]]);
+      expect(await counted()).toBe(1 + 50 + tip);
+    });
+  }
+
   test('before the bank’s own rows begin, nothing has a group or a split’s lines: they come in as a manual account takes them, and the period is whole', async () => {
     await seed(ctx, [ONE]);
     const lm = [

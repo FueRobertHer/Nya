@@ -1186,7 +1186,9 @@ async function syncItem(ctx: Ctx,
     // Before the rows change: which of them stood for rows imported from the
     // bank's files, kept when this sync changes one (a new amount, a
     // corrected name, a removal), so that a row it modifies keeps standing
-    // for the one it stood for and never lets it count beside it, and the
+    // for the one it stood for and never lets it count beside it; which a
+    // pending row it replaces with a posted one stood in for, under the
+    // posted one, which may be dated later or say another amount; and the
     // pairs carried across a re-link made again (lib/history-import/twins.ts).
     // Best effort: it never fails the sync. Imported here, when needed, as it
     // reads this module's rows itself.
