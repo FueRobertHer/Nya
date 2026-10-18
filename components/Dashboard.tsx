@@ -34,6 +34,7 @@ import DisconnectSplitsNote from './DisconnectSplitsNote';
 import ManualTxnSheet from './ManualTxnSheet';
 import ImportSheet, { type ImportTarget } from './ImportSheet';
 import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportSheet';
+import MigrationSheet, { SwitchingLink } from './MigrationSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
@@ -942,6 +943,9 @@ export default function Dashboard({
   // its rows join the Activity tab, and the estimated history is drawn back
   // through them, so both are read again.
   const [historyTarget, setHistoryTarget] = useState<HistoryImportTarget | null>(null);
+  // Switching from another app (components/MigrationSheet.tsx): accounts it
+  // makes change net worth, and its rows join the Activity tab.
+  const [migrationOpen, setMigrationOpen] = useState(false);
   const onImported = useCallback(
     async ({ balanceChanged }: { balanceChanged: boolean }) => {
       loadTransactions();
@@ -1804,13 +1808,14 @@ export default function Dashboard({
                 Manual accounts are for institutions Plaid can&apos;t reach. You type the balance and
                 update it whenever you like; it counts toward net worth and builds its own history.
               </p>
+              <SwitchingLink onOpen={() => setMigrationOpen(true)} />
               {error && <div className="error">{error}</div>}
               {lifecycleRepair}
             </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
             <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
-            {clerk && <SharedWithMe refreshKey={asOf} />}
+            {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
           </>
         ) : (
           <>
@@ -1958,6 +1963,7 @@ export default function Dashboard({
                       {manageMode ? 'Done' : 'Manage'}
                     </button>
                   </div>
+                  <SwitchingLink onOpen={() => setMigrationOpen(true)} />
                   {error && <div className="error">{error}</div>}
                   {lifecycleRepair}
                   {lifecycle.problem && <div className="error">{lifecycle.problem}</div>}
@@ -2727,7 +2733,7 @@ export default function Dashboard({
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
-                {clerk && <SharedWithMe refreshKey={asOf} />}
+                {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
               </>
             )}
 
@@ -3032,6 +3038,18 @@ export default function Dashboard({
           // earliest point changed (lib/history-import/extend.ts).
           requestBackfill(() => loadNetWorth());
           void loadNetWorth();
+        }}
+      />
+      <MigrationSheet
+        open={migrationOpen}
+        taxonomy={categories.taxonomy}
+        onClose={() => setMigrationOpen(false)}
+        onImported={() => {
+          loadTransactions();
+          // Accounts it made or took out move net worth; a linked account's
+          // rows are drawn into its estimated history by the backfill.
+          void loadNetWorth(true);
+          requestBackfill(() => loadNetWorth());
         }}
       />
       <ConnectorSheet ask={connectorAsk} onClose={() => setConnectorAsk(null)} onChanged={connectorChanged} />

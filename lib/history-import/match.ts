@@ -61,12 +61,16 @@
 // the imported-twins store), and settle takes those pairs first (`twins`), by
 // the bank row's id: a bank row that stood for a row still stands for it, as
 // a duplicate's twin or as the row that superseded it, until the bank removes
-// it. Nothing is paired by them that the rule didn't pair; a read never
-// writes them. A pair the rule made is worked out from the amounts, as it
-// always was, until a sync changes its bank row, which keeps it first; one
-// the bank changed before pairs were kept is lost to it. A disconnect carries
-// the pairs by their bank rows' content, which the re-added connection's
-// syncs make again once the person links the accounts.
+// it. Nothing is paired by them that the rule didn't pair, or a pending row
+// didn't stand in for: the posted row replacing a pending one (a new id,
+// naming it) is the same transaction, though dated by its posting, often
+// after the imported row's file ends, and maybe at another amount, so the
+// sync that brings it keeps each row the pending one stood in for under it.
+// A read never writes them. A pair the rule made is worked out from the
+// amounts, as it always was, until a sync changes its bank row, which keeps
+// it first; one the bank changed before pairs were kept is lost to it. A
+// disconnect carries the pairs by their bank rows' content, which the
+// re-added connection's syncs make again once the person links the accounts.
 //
 // ACROSS AN EDGE (a row dated before the bank's earliest posted row, or a
 // bank row dated outside the period the row's file covers) two rows can only

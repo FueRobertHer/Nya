@@ -107,6 +107,13 @@ export const windowStart = (now: number = Date.now()): string => new Date(now - 
 export type MonthActivity = {
   rows: Txn[];
   notes: string[];
+  /** Of `notes`, those that say transactions couldn't all be read or aren't
+   *  all in (lib/activity.ts finishActivity). */
+  unread_notes: string[];
+  /** Whether the merchants' defaults couldn't be read, and how many of the
+   *  rows' approvals couldn't be (lib/activity.ts finishActivity): the rows
+   *  they would file are filed otherwise, which the notes say. */
+  review_unread: { defaults: boolean; approvals: number };
   taxonomy: Taxonomy;
   hidden: Set<string>;
   bank: { sources: BankSource[]; payload: PlaidPayload; own_read: { categories: boolean; names: boolean; exclusions: boolean } };
@@ -264,6 +271,8 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   return {
     rows,
     notes: finished.notes,
+    unread_notes: finished.unread_notes,
+    review_unread: { defaults: finished.defaults_unread, approvals: finished.review.unknown },
     taxonomy: finished.taxonomy,
     hidden: bank.hidden,
     bank: { sources: bank.sources, payload: bank.payload, own_read: bank.own_read },
@@ -373,17 +382,40 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
     const filed = new Set(activity.taxonomy.categories.map((c) => c.id));
     taxonomy = opts.app.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : opts.app.taxonomy;
   } else {
-    // `pool: false` (the download, which has the setting in a section of its
-    // own) reads no income setting, so one that can't be read never keeps the
-    // budgets' carries out.
-    const [stored, setting] = await Promise.all([budgetMonthsStore.get(ctx), opts.pool === false ? null : incomeCarryoverStore.get(ctx)]);
-    income = setting;
-    activity = await readMonthActivity(ctx, { since: sinceFor(firstFor(stored, setting)), includeHidden: opts.includeHidden });
-    ({ budgets: budgetsNow, taxonomy } = await budgetsForReading(ctx, activity.taxonomy));
-    // Noted in memory, as the app would note it today: nothing is written.
-    months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
+    // Without `app`, read as any number of months are (readBudgetMonths).
+    return (await readBudgetMonths(ctx, { months: [month], today, includeHidden: opts.includeHidden, pool: opts.pool }))[0];
   }
   return monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window });
+}
+
+/**
+ * Several months, as readBudgetMonth reads one without `app` (writing
+ * nothing), from one read of the stored rows: back to the earliest any of
+ * them counts. For a reader that shows more than one month at once (a
+ * budgets share shows this month and last, lib/share-views.ts). Strict, as
+ * readBudgetMonth is.
+ */
+export async function readBudgetMonths(
+  ctx: Ctx,
+  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false }
+): Promise<BudgetMonthRead[]> {
+  const { today } = opts;
+  const window = windowStart();
+  // `pool: false` (the download, which has the setting in a section of its
+  // own, and a share, which never shows the pool) reads no income setting,
+  // so one that can't be read never keeps the budgets' carries out.
+  const [stored, income] = await Promise.all([budgetMonthsStore.get(ctx), opts.pool === false ? null : incomeCarryoverStore.get(ctx)]);
+  // The first month whose rows are read: the earliest any carry or the pool
+  // counts, for a month gone by or this one, over every month asked for. A
+  // month still to come counts nothing (lib/rollover.ts budgetsInMonth), so
+  // only the year is read for it.
+  const from = opts.months.map((m) => (m > today ? m : neededFrom(stored, income, m))).sort()[0];
+  const since = from !== undefined && `${from}-01` < window ? `${from}-01` : window;
+  const activity = await readMonthActivity(ctx, { since, includeHidden: opts.includeHidden });
+  const { budgets: budgetsNow, taxonomy } = await budgetsForReading(ctx, activity.taxonomy);
+  // Noted in memory, as the app would note it today: nothing is written.
+  const months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
+  return opts.months.map((month) => monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window }));
 }
 
 /** The month worked out from what was read: no reads, no writes. */

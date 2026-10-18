@@ -210,7 +210,7 @@ describe('finding people: nobody can', () => {
     const mine = await connectionsOf('user_partner');
     const [conn] = mine.connections;
     expect(mine.connections).toEqual([
-      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, expires_at: null },
+      { id: pair, label: 'Someone', introduced_as: null, since: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/), sharing: {}, views: {}, expires_at: null },
     ]);
     // Its records of showings come on their own: a random id, begun when they connected, empty so far.
     const records = (await recordsOf('user_partner')).body;
@@ -1886,12 +1886,26 @@ describe('records of showings', () => {
 
   test('a failing write never fails the read, and is logged', async () => {
     await share({ acct_joint: 'balance' });
-    fake.failNext('eval'); // the record's own read
-    const { result, logged } = await quietly(() => as('user_partner', () => route('shared', 'GET')));
-    expect(result.status).toBe(200);
-    expect(result.body.shared.map((s: any) => s.connection)).toEqual([pair]);
-    expect(logged.map((l) => l[0])).toEqual(['A showing of shared data could not be recorded']);
-    expect(await ownerRecord()).toBeNull();
+    // The record's own read fails; the count of reads before it
+    // (lib/share-limit.ts) is taken as usual.
+    const real = fake.eval.bind(fake);
+    let armed = true;
+    fake.eval = async (script: string, keys: string[], args: string[]) => {
+      if (armed && !script.startsWith('-- nya:repo-counter')) {
+        armed = false;
+        throw new Error('FakeRedis: armed failure for eval');
+      }
+      return real(script, keys, args);
+    };
+    try {
+      const { result, logged } = await quietly(() => as('user_partner', () => route('shared', 'GET')));
+      expect(result.status).toBe(200);
+      expect(result.body.shared.map((s: any) => s.connection)).toEqual([pair]);
+      expect(logged.map((l) => l[0])).toEqual(['A showing of shared data could not be recorded']);
+      expect(await ownerRecord()).toBeNull();
+    } finally {
+      fake.eval = real;
+    }
   });
 
   test('a record that can’t be read says so on both sides, showings go unrecorded, and the owner can clear it', async () => {

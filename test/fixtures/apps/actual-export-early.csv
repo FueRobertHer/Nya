@@ -1,0 +1,5 @@
+Account,Date,Payee,Notes,Category,Amount,Cleared
+Checking,2024-05-12,Costco,food,Food,-80,Cleared
+Checking,2024-05-12,Costco,,General,-40,Cleared
+Checking,2024-05-10,Savings,,,-500,Cleared
+Savings,2024-05-10,Checking,,,500,Cleared

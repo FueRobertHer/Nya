@@ -17,6 +17,17 @@
 // it's there), balance, or balance and recent transactions. There is no
 // accept step per share; the viewer only ever reads.
 //
+// OTHER KINDS OF SHARE (#45 step 3, lib/share-kinds.ts) sit beside the
+// accounts in the same share, each opt-in and at a level of its own: their
+// net worth, spending, holdings, budgets and chosen goals. Each is a small
+// projection of the owner's data built on the server as it is read
+// (lib/share-views.ts, given the owner's Ctx from here, as every read of
+// theirs is), never a payload filtered on the way out. The share's end covers
+// them too, and so do the preview and the record of showings. Before a share
+// is saved the drawer says, and the preview says again, what the viewer could
+// work out from all of it together beyond what it shows
+// (lib/share-inference.ts), without refusing anything.
+//
 // A SHARE CAN END. Its owner can give it an end, expires_at: an instant, the
 // start of the day after the one they chose, in their own time zone (the
 // drawer works that out on their device). Every read compares it with the
@@ -44,12 +55,19 @@
 //                      field "<id>|label|<user>" what <user> calls the other
 //                      field "<id>|intro|<user>" the name <user> gave when connecting
 //                      field "<id>|share|<user>" what <user> shares: {accounts: {"<account id>": level}, updated_at},
-//                                                or with an end {expiring: {...}, expires_at, updated_at}
+//                                                or with an end {expiring: {...}, expires_at, updated_at},
+//                                                either with the other kinds under views: {net_worth: {...}, ...}
 //                      field "<id>|log"          {id, since}: the connection's log id, and when its records began
 //   <env>:invites:<sha256 of the token>          {from, from_name, their_label, created_at}, with an expiry
 // A share with an end keeps its accounts under "expiring", not "accounts":
 // a release from before shares could end reads it as sharing nothing, so
-// rolling back past this can end a share early but never extend one.
+// rolling back past this can end a share early but never extend one. The
+// other kinds are under "views", which a release from before them doesn't
+// read: it shares the accounts alone, and a change it saves to the share (its
+// accounts, or its end) writes it without them, so rolling back past them can
+// take a kind away, never share one more widely. This release reads "views"
+// closed (lib/share-kinds.ts parseViews): a kind or a level it doesn't know is
+// shared as nothing, and so is the field when it isn't one it can read.
 // Every field of a connection is in one hash, so removing one (the breakup
 // case) is a single HDEL of all but its log field: every share both ways ends
 // at once, none missed.
@@ -114,9 +132,15 @@ import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
 import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
-import { StoredDataUnreadableError, UnreadableEntriesError } from './repo';
+import { UnreadableEntriesError } from './repo';
 import { accessLogStore, withShowing, keptShowings, shownByDay, type AccessLog, type Showing } from './access-log';
 import { ACCESS_LOG_DAYS, isLevel, RECORD_FIRST_DAYS, SHARED_TXN_DAYS, SHARE_END_MAX_DAYS, type Level, type RecordProblem, type RecordSummary } from './share-rules';
+import { parseViews, sharedKinds, viewsChangeProblem, viewsOfChange, isUnreadable, type ShareViews, type SharedViews, type ViewsRead } from './share-kinds';
+import { inferences, type FactAccount, type FactGoal, type Inference } from './share-inference';
+// dataUnreadable: whether an error says the owner's stored data can't be
+// decoded, as opposed to storage being out of reach; one rule for the
+// accounts here and the other kinds there.
+import { dataUnreadable, investmentAccountIds, projectViews, shareableGoals } from './share-views';
 
 export type { Level } from './share-rules';
 export type Share = {
@@ -124,6 +148,9 @@ export type Share = {
   updated_at: string;
   /** When it stops showing anything: an ISO instant, or null for no end. */
   expires_at: string | null;
+  /** The other kinds shared, each with its level (lib/share-kinds.ts); empty
+   *  for none. */
+  views: ShareViews;
 };
 
 export const connectionsKey = () => kEnv('connections');
@@ -199,16 +226,17 @@ function parseShare(raw: unknown): Share | null {
   if (typeof levels !== 'object' || levels === null || Array.isArray(levels)) return null;
   const accounts: Record<string, Level> = {};
   for (const [id, level] of Object.entries(levels)) if (isLevel(level)) accounts[id] = level;
-  return { accounts, updated_at: String(g.updated_at ?? ''), expires_at: ending ? (g.expires_at as string) : null };
+  return { accounts, updated_at: String(g.updated_at ?? ''), expires_at: ending ? (g.expires_at as string) : null, views: parseViews(g.views) };
 }
 
 /** A share as stored (see the header): with an end, its accounts go under
- *  "expiring". */
+ *  "expiring"; the other kinds, when there are any, under "views". */
 function storedShare(s: Share): string {
+  const views = sharedKinds(s.views).length > 0 ? { views: s.views } : {};
   return JSON.stringify(
     s.expires_at === null
-      ? { accounts: s.accounts, updated_at: s.updated_at }
-      : { expiring: s.accounts, expires_at: s.expires_at, updated_at: s.updated_at }
+      ? { accounts: s.accounts, updated_at: s.updated_at, ...views }
+      : { expiring: s.accounts, expires_at: s.expires_at, updated_at: s.updated_at, ...views }
   );
 }
 
@@ -370,6 +398,8 @@ export type MyConnection = {
    *  (components/Sharing.tsx shortDate). */
   since: string;
   sharing: Record<string, Level>;
+  /** The other kinds I share with them, each with its level. */
+  views: ShareViews;
   /** When what I share with them ends (an ISO instant, which may have
    *  passed: then they see none of it), or null for no end. */
   expires_at: string | null;
@@ -391,6 +421,7 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
         // time (components/Sharing.tsx shortDate).
         since: c.meta.created_at,
         sharing: c.shares[me]?.accounts ?? {},
+        views: c.shares[me]?.views ?? {},
         expires_at: c.shares[me]?.expires_at ?? null,
       }))
       .sort(byLabel),
@@ -404,10 +435,13 @@ export async function myConnections(me: string): Promise<{ connections: MyConnec
 
 /** A change to one of my connections: what I call them (`label`), what I
  *  share (`accounts`: each account to a level, or "none" or null for not
- *  shared) and until when (`expires_at`: an ISO instant ahead, or null for no
- *  end). Whatever is left out stays as it is: an end outlives a change of
- *  accounts, and renewing changes no account. */
-export type ConnectionChange = { label?: unknown; accounts?: Record<string, unknown>; expires_at?: unknown };
+ *  shared; `views`: the other kinds, each a setting or null for not shared,
+ *  lib/share-kinds.ts) and until when (`expires_at`: an ISO instant ahead, or
+ *  null for no end). Whatever is left out stays as it is: an end outlives a
+ *  change of accounts, and renewing changes no account. `accounts` and
+ *  `views`, when given, each say all of what they cover: what they don't name
+ *  is no longer shared. */
+export type ConnectionChange = { label?: unknown; accounts?: Record<string, unknown>; views?: unknown; expires_at?: unknown };
 
 /**
  * Saves a change to one of my connections, all of it or none: everything is
@@ -419,15 +453,18 @@ export type ConnectionChange = { label?: unknown; accounts?: Record<string, unkn
  * it was, one that names it "none" ends it, and its level can't change while
  * it is paused. The settings list a held account that is shared, marked as
  * waiting (waitingAccounts), so taking everything back there takes it back
- * too. Sharing nothing ends the share and its end date, which then isn't
- * checked: taking everything back never fails on a date.
+ * too. A goal the other kinds name must be one of mine, not archived, unless
+ * it was already shared (a goal on a hidden account stays chosen, and is
+ * shown again once its account is). Sharing nothing (no account and no other
+ * kind) ends the share and its end date, which then isn't checked: taking
+ * everything back never fails on a date.
  */
 export async function saveConnection(ctx: Ctx, me: string, id: string, change: ConnectionChange, now: number = Date.now()): Promise<void> {
   const c = await connectionOf(me, id);
   if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
   const set: Record<string, string> = {};
   let unshare = false;
-  if (change.accounts !== undefined || change.expires_at !== undefined) {
+  if (change.accounts !== undefined || change.expires_at !== undefined || change.views !== undefined) {
     const share = await nextShare(ctx, me, c, change, now);
     if (share) set[shareField(id, me)] = storedShare(share);
     else unshare = true;
@@ -471,12 +508,32 @@ async function nextShare(ctx: Ctx, me: string, c: Conn, change: ConnectionChange
     }
     accounts = clean;
   }
-  if (Object.keys(accounts).length === 0) {
-    if (change.accounts === undefined) throw new SharingRefused('You share nothing with them, so there is nothing to end or renew.');
+  const views = change.views === undefined ? (current?.views ?? {}) : await checkViews(ctx, change.views, current?.views ?? {});
+  if (Object.keys(accounts).length === 0 && sharedKinds(views).length === 0) {
+    if (change.accounts === undefined && change.views === undefined) throw new SharingRefused('You share nothing with them, so there is nothing to end or renew.');
     return null;
   }
   const expires_at = change.expires_at === undefined ? (current?.expires_at ?? null) : checkEnd(change.expires_at, now);
-  return { accounts, updated_at: new Date(now).toISOString(), expires_at };
+  return { accounts, updated_at: new Date(now).toISOString(), expires_at, views };
+}
+
+/** The other kinds a change shares, checked: settings this release knows
+ *  (lib/share-kinds.ts), and goals of mine. A goal already shared stays
+ *  chosen without being read again, so keeping or taking back what is shared
+ *  never fails on goals that can't be read just now. */
+async function checkViews(ctx: Ctx, raw: unknown, current: ShareViews): Promise<ShareViews> {
+  const problem = viewsChangeProblem(raw);
+  if (problem) throw new SharingRefused(`${problem}.`);
+  const views = viewsOfChange(raw as Record<string, unknown>);
+  const already = new Set(current.goals?.goals ?? []);
+  const added = (views.goals?.goals ?? []).filter((g) => !already.has(g));
+  if (added.length > 0) {
+    // Strict: goals that can't be read refuse the change (a 409 that says so),
+    // never a goal let through unchecked.
+    const mine = new Set((await shareableGoals(ctx)).map((g) => g.id));
+    if (added.some((g) => !mine.has(g))) throw new SharingRefused('One of those goals can’t be shared (archived, or no longer yours).');
+  }
+  return views;
 }
 
 /** Removes a connection: every share both ways ends in one write, and then
@@ -849,6 +906,9 @@ export type MySharing = {
     shared_updated_at: string | null;
     /** When it ends (an ISO time, which may have passed), or null for no end. */
     shared_until: string | null;
+    /** The other kinds I share with them, each with its level, when I share
+     *  any (lib/share-kinds.ts): my settings, never what they were shown. */
+    shared_views?: ShareViews;
     /** When the records of showings on this connection began, or null
      *  before the first, or when its log field can't be read. */
     record_since: string | null;
@@ -908,6 +968,7 @@ export async function mySharing(me: string | null, ctx: Ctx): Promise<MySharing 
             .sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0)),
           shared_updated_at: c.shares[me!]?.updated_at || null,
           shared_until: c.shares[me!]?.expires_at ?? null,
+          ...(sharedKinds(c.shares[me!]?.views).length > 0 ? { shared_views: c.shares[me!]!.views } : {}),
           record_since: r.since,
           ...recordFields(r.toThem, 'shown_to_them'),
           ...recordFields(r.toMe, 'shown_to_me'),
@@ -1038,6 +1099,8 @@ export type ShareView = {
   accounts: SharedAccount[];
   /** When the share ends: an ISO instant, or null for no end. */
   expires_at: string | null;
+  /** The other kinds shared, as projected (lib/share-views.ts), when any is. */
+  views?: SharedViews;
 };
 /** One connection's shares with me: `label` is what I call them. */
 export type SharedFrom = ShareView & { connection: string; label: string };
@@ -1062,7 +1125,7 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
     }
     if (!shown) continue;
     out.push({ connection: c.id, label: c.labels[me] ?? 'Someone', ...shown.view });
-    showings.push(recordShowing(shown.theirs, c, shown.view, now));
+    showings.push(recordShowing(shown.theirs, c, shown.view, shown.read, now));
   }
   await Promise.all(showings); // each one is best effort, and never throws
   return out.sort((a, b) => a.label.localeCompare(b.label));
@@ -1072,22 +1135,26 @@ export async function sharedWithMe(me: string, now: number = Date.now()): Promis
  *  right now (`view`, or null when they see nothing), from the projection
  *  their own read uses, without their name for me, and recording nothing.
  *  `unreadable` when my shared data can't be decoded: they see nothing then
- *  either. */
-export type SharePreview = { connection: string; view: ShareView | null; unreadable?: true };
-
-/** Whether an error says the owner's stored data can't be decoded, so their
- *  own read fails the same way and they see nothing, as opposed to storage
- *  or another service being out of reach for a moment. */
-function dataUnreadable(err: unknown): boolean {
-  return err instanceof StoredDataUnreadableError || (err instanceof StateUnreadableError && err.kind === 'decode');
-}
+ *  either. `inferences`: what they could work out from all of what they are
+ *  shown together, beyond what it shows (lib/share-inference.ts); mine only,
+ *  never part of what they are sent. `inferences_unavailable` when that
+ *  couldn't be worked out just now (what they see is still shown). */
+export type SharePreview = { connection: string; view: ShareView | null; unreadable?: true; inferences?: Inference[]; inferences_unavailable?: true };
 
 export async function previewShare(me: string, id: string, now: number = Date.now()): Promise<SharePreview> {
   const c = await connectionOf(me, id);
   if (c.meta.status !== 'active') throw new SharingRefused('No such connection.');
   try {
     const shown = await projectShare(c, me, now);
-    return { connection: c.id, view: shown?.view ?? null };
+    if (!shown) return { connection: c.id, view: null };
+    // What they could work out is said beside what they see, never instead
+    // of it: when it can't be worked out, the preview says so and still shows
+    // what they see.
+    const found = await inferencesOf(shown, c.shares[me]!).catch((err) => {
+      console.error('Sharing: what they could work out could not be worked out for a preview', err instanceof Error ? err.name : err);
+      return null;
+    });
+    return { connection: c.id, view: shown.view, ...(found === null ? { inferences_unavailable: true as const } : found.length > 0 ? { inferences: found } : {}) };
   } catch (err) {
     // Anything else (storage, Clerk) says nothing of what they see: the
     // route answers it as an error.
@@ -1097,9 +1164,38 @@ export async function previewShare(me: string, id: string, now: number = Date.no
   }
 }
 
+/**
+ * What the one I share with could work out from all they are shown of mine
+ * together (lib/share-inference.ts), for my preview: each account of mine I
+ * could share, at the level whose balance they are shown (one they only see
+ * exists says none; one that ended, or has no balance yet, shows none), the
+ * kinds shown (never one that couldn't be read, which shows nothing), and the
+ * goals shown.
+ */
+async function inferencesOf(shown: Projected, share: Share): Promise<Inference[]> {
+  const mine = await shareableAccounts(shown.theirs, { readOnly: true });
+  const investment = await investmentAccountIds(shown.theirs, mine.map((a) => a.id));
+  const seen = new Map(shown.view.accounts.map((a) => [a.id, a]));
+  const accounts: FactAccount[] = mine
+    .filter((a) => !seen.get(a.id)?.ended)
+    .map((a) => {
+      const s = seen.get(a.id);
+      const level = !s ? null : s.level === 'exists' ? 'exists' : s.balance === null ? null : s.level;
+      return { id: a.id, label: a.label, level, investment: investment.has(a.id) };
+    });
+  const views: ShareViews = {};
+  for (const kind of sharedKinds(share.views)) {
+    const v = shown.view.views?.[kind];
+    if (v && !isUnreadable(v)) Object.assign(views, { [kind]: share.views[kind] });
+  }
+  return inferences({ accounts, views, goals: shown.goalFacts });
+}
+
 /** A projection, and the owner's Ctx it was read from, which recordShowing
- *  needs. Never returned from this module. */
-type Projected = { view: ShareView; theirs: Ctx };
+ *  needs with what was shown of the other kinds (`read`), and what the
+ *  preview's warnings go by of the goals shown. Never returned from this
+ *  module. */
+type Projected = { view: ShareView; theirs: Ctx; goalFacts: FactGoal[]; read: ViewsRead };
 
 /**
  * What the other person on connection `c` is shown of `owner`'s share at
@@ -1110,7 +1206,9 @@ type Projected = { view: ShareView; theirs: Ctx };
  * Reads read-only: it changes nothing in the owner's container. Throws when
  * the owner's data can't be read, and both callers then show nothing from it,
  * except a manual account's transactions, whose book can't be read on its
- * own: that account says so (transactions_unreadable) and the rest is shown.
+ * own: that account says so (transactions_unreadable) and the rest is shown;
+ * and each other kind, which says on its own that it couldn't be read
+ * (lib/share-views.ts), the rest shown beside it.
  */
 async function projectShare(c: Conn, owner: string, now: number): Promise<Projected | null> {
   const share = c.shares[owner];
@@ -1118,6 +1216,28 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
+  // The accounts, and the other kinds beside them, read at once. A net worth
+  // with its accounts lists only those whose balances the accounts show
+  // (lib/share-views.ts), so it waits for them once its own reads are done.
+  const shownAccounts = sharedAccounts(theirs, share, now);
+  const balancesShown = shownAccounts.then(
+    (list) => new Set(list.filter((a) => a.level !== 'exists' && a.balance !== null && !a.ended).map((a) => a.id)),
+    () => new Set<string>()
+  );
+  const [accounts, other] = await Promise.all([shownAccounts, projectViews(theirs, share.views, now, { balancesShown })]);
+  if (accounts.length === 0 && !other) return null;
+  return {
+    view: { accounts, expires_at: share.expires_at, ...(other ? { views: other.views } : {}) },
+    theirs,
+    goalFacts: other?.goalFacts ?? [],
+    read: other?.read ?? {},
+  };
+}
+
+/** The accounts `share` shows of what is in `theirs` (see projectShare), or
+ *  none, reading nothing, when it shares no account. */
+async function sharedAccounts(theirs: Ctx, share: Share, now: number): Promise<SharedAccount[]> {
+  if (Object.keys(share.accounts).length === 0) return [];
   // Re-checked against what they can share now: hidden or gone since is out,
   // except an account that ended, which shows as ended (see the header),
   // named as it was when it ended, unless it is hidden.
@@ -1135,7 +1255,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
     }
   }
   const granted = Object.entries(share.accounts).filter(([id]) => still.has(id));
-  if (granted.length === 0) return null;
+  if (granted.length === 0) return [];
 
   // Manual accounts, and those SimpleFIN keeps up to date, the same way: the
   // balance kept with its time, and the rows in their book.
@@ -1242,7 +1362,7 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
         : {}),
     });
   }
-  return { view: { accounts, expires_at: share.expires_at }, theirs };
+  return accounts;
 }
 
 /**
@@ -1304,10 +1424,12 @@ const newestEntered = (a: ManualTxn, b: ManualTxn) =>
  * Counts, in the owner's record (lib/access-log.ts), that the other person on
  * `c` was just shown `view`: one of the two writes this module makes in
  * someone else's container. Under the connection's log id, the quarter hour,
- * a count, and the accounts and levels the read returned, none of it taken
- * from the request. A connection from before records gets its log id here,
- * the first time (logFor). Best effort: a failure is logged, and never fails
- * the read.
+ * a count, and the accounts and levels the read returned, with the other
+ * kinds it returned as they were shown (`views`: each at its level, with
+ * what else it showed and the goals shown, by id; one that couldn't be read
+ * showed nothing, so isn't counted), none of it taken from the request. A connection
+ * from before records gets its log id here, the first time (logFor). Best
+ * effort: a failure is logged, and never fails the read.
  *
  * A removal deletes the connection, and only then reads its log id, deletes
  * that and then the records (forgetShowings). So after writing, this looks
@@ -1317,7 +1439,7 @@ const newestEntered = (a: ManualTxn, b: ManualTxn) =>
  * left, in every order. While the connection is still this one, nothing is
  * taken back, whatever its log field says.
  */
-async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number): Promise<void> {
+async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, views: ViewsRead, now: number): Promise<void> {
   try {
     const log = await logFor(c, now);
     if (log === 'damaged') {
@@ -1327,7 +1449,7 @@ async function recordShowing(theirs: Ctx, c: Conn, view: ShareView, now: number)
     if (!log) return; // the connection went meanwhile: nothing to record
     // What was shown: an account whose transactions couldn't be read showed its balance only.
     const read = Object.fromEntries(view.accounts.map((a): [string, Level] => [a.id, a.transactions_unreadable ? 'balance' : a.level]));
-    await accessLogStore.update(theirs, log.id, (current) => withShowing(current, now, read));
+    await accessLogStore.update(theirs, log.id, (current) => withShowing(current, now, read, views));
     if (!sameConnection(await redis().hget(connectionsKey(), c.id), c)) {
       await accessLogStore.remove(theirs, log.id);
       await deleteLogIf(c.id, log.id);

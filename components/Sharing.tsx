@@ -15,7 +15,14 @@
 //   - "Shared by ...", on the Accounts tab whenever a connection shares
 //     something: their accounts, read-only, and until when. They are fetched
 //     only once that part of the page is on screen, since each fetch is
-//     counted as a showing in the sharer's record (lib/access-log.ts).
+//     counted as a showing in the sharer's record (lib/access-log.ts). A
+//     fetch turned away (the limit on reads) or failing keeps what is shown,
+//     and says why it couldn't be refreshed. With nothing on screen it says
+//     nothing, unless nothing has loaded yet and the last good read on this
+//     device had something shared (rememberShares).
+// Beside the accounts, the other kinds of share (#45 step 3): the drawer's
+// choices for them, and what they could work out from all of it together,
+// are components/ShareKinds.tsx; how a card draws them, components/SharedViews.tsx.
 // Only with Clerk on; with the shared password there's nobody to connect
 // with, and both parts render nothing. End dates and the records' days are in
 // components/SharingDates.tsx.
@@ -28,6 +35,11 @@ import { formatMoney } from '@/lib/format';
 import { ACCESS_LOG_DAYS, SHARED_TXN_DAYS, type Level, type RecordSummary } from '@/lib/share-rules';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
+import { cacheKeyFor } from './device-cache';
+import { InferenceNotes, KindsEditor, sameViews, seenText, viewsToSave, type ShareableGoal } from './ShareKinds';
+import { SharedViewsList } from './SharedViews';
+import { sharedKinds, type ShareViews, type SharedViews } from '@/lib/share-kinds';
+import type { Inference } from '@/lib/share-inference';
 import {
   shortDate,
   endFor,
@@ -50,6 +62,8 @@ export type Connection = {
   introduced_as: string | null;
   since: string;
   sharing: Record<string, Level>;
+  /** The other kinds I share with them (lib/share-kinds.ts). */
+  views?: ShareViews;
   /** When what I share with them ends (an ISO time, which may have passed),
    *  or null for no end. */
   expires_at: string | null;
@@ -61,7 +75,10 @@ export type SharingPayload = {
   /** What I can share, and (`waiting`) a shared account a connector feeds
    *  that is only waiting for its balance: its share can be kept or ended,
    *  not begun or changed, until it has one (lib/sharing.ts). */
-  accounts?: { id: string; label: string; institution?: string; name?: string; waiting?: true }[];
+  accounts?: { id: string; label: string; institution?: string; name?: string; waiting?: true; investment?: true }[];
+  /** The goals I could share, and whether they couldn't be read. */
+  goals?: ShareableGoal[];
+  goals_unreadable?: true;
 };
 /** Both records of showings on one connection (lib/sharing.ts
  *  connectionRecords), asked for when it is opened. */
@@ -113,10 +130,11 @@ type SharedAccount = {
   ended?: { state: 'closed' | 'left' | 'untracked'; on: string };
 };
 /** What someone is shown of one person's share (lib/sharing.ts ShareView). */
-export type SharedView = { accounts: SharedAccount[]; expires_at: string | null };
+export type SharedView = { accounts: SharedAccount[]; expires_at: string | null; views?: SharedViews };
 export type SharedPayload = { shared: (SharedView & { connection: string; label: string })[] };
-/** "What they see" (lib/sharing.ts previewShare): `view` null when they see nothing. */
-export type SharePreview = { connection: string; view: SharedView | null; unreadable?: true };
+/** "What they see" (lib/sharing.ts previewShare): `view` null when they see
+ *  nothing; `inferences`, what they could work out from all of it. */
+export type SharePreview = { connection: string; view: SharedView | null; unreadable?: true; inferences?: Inference[]; inferences_unavailable?: true };
 export type Invite = { url: string; expires_at: string } | null;
 
 const LEVEL_LABEL: Record<Choice, string> = {
@@ -175,6 +193,8 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const [data, setData] = useState<SharingPayload | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [draft, setDraft] = useState<Record<string, Choice>>({});
+  // The other kinds, as being chosen (lib/share-kinds.ts).
+  const [viewsDraft, setViewsDraft] = useState<ShareViews>({});
   const [labelDraft, setLabelDraft] = useState('');
   const [endChoice, setEndChoice] = useState<EndChoice>('none');
   const [endDay, setEndDay] = useState('');
@@ -242,6 +262,7 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
       const c = data?.connections?.find((c) => c.id === id);
       if (!c) return;
       setDraft(Object.fromEntries((data?.accounts ?? []).map((a) => [a.id, c.sharing[a.id] ?? 'none'])));
+      setViewsDraft(c.views ?? {});
       setLabelDraft(c.label);
       setEndChoice(savedChoice(c));
       setEndDay('');
@@ -311,6 +332,7 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
   const unsaved =
     !!current &&
     (accounts.some((a) => (draft[a.id] ?? 'none') !== (current.sharing[a.id] ?? 'none')) ||
+      !sameViews(viewsDraft, current.views) ||
       (endFor(endChoice, endDay) !== undefined && !(endChoice === 'none' && current.expires_at === null)));
   const title = current ? (previewing ? `What ${current.label} sees` : current.label) : 'Sharing';
   return (
@@ -327,6 +349,7 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
           data={data}
           current={current}
           draft={draft}
+          viewsDraft={viewsDraft}
           labelDraft={labelDraft}
           endChoice={endChoice}
           endDay={endDay}
@@ -336,6 +359,7 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
           notice={notice}
           onOpen={openConnection}
           onChoose={(id, c) => setDraft((d) => ({ ...d, [id]: c }))}
+          onViews={setViewsDraft}
           onLabel={setLabelDraft}
           onEndChoice={setEndChoice}
           onEndDay={setEndDay}
@@ -346,7 +370,12 @@ export function SharingDrawer({ open, onClose }: { open: boolean; onClose: () =>
           onSave={async () => {
             if (!current) return;
             const expires_at = endFor(endChoice, endDay);
-            const saved = await act('PUT', '/api/connections', { id: current.id, label: labelDraft, accounts: draft, ...(expires_at !== undefined ? { expires_at } : {}) }, 'Saved.');
+            const saved = await act(
+              'PUT',
+              '/api/connections',
+              { id: current.id, label: labelDraft, accounts: draft, views: viewsToSave(viewsDraft), ...(expires_at !== undefined ? { expires_at } : {}) },
+              'Saved.'
+            );
             // What is saved now: a choice like "7 days" isn't sent again with the next save.
             if (saved && expires_at !== undefined) setEndChoice(expires_at === null ? 'none' : 'keep');
           }}
@@ -392,6 +421,7 @@ export function SharingPanelView({
   data,
   current,
   draft,
+  viewsDraft = {},
   labelDraft,
   endChoice,
   endDay,
@@ -401,6 +431,7 @@ export function SharingPanelView({
   notice,
   onOpen,
   onChoose,
+  onViews = () => {},
   onLabel,
   onEndChoice,
   onEndDay,
@@ -420,6 +451,8 @@ export function SharingPanelView({
   /** The connection being looked at, or null for the list. */
   current: Connection | null;
   draft: Record<string, Choice>;
+  /** The other kinds, as being chosen. */
+  viewsDraft?: ShareViews;
   labelDraft: string;
   endChoice: EndChoice;
   endDay: string;
@@ -429,6 +462,7 @@ export function SharingPanelView({
   notice: string;
   onOpen: (id: string) => void;
   onChoose: (id: string, c: Choice) => void;
+  onViews?: (views: ShareViews) => void;
   onLabel: (label: string) => void;
   onEndChoice: (c: EndChoice) => void;
   onEndDay: (day: string) => void;
@@ -473,7 +507,9 @@ export function SharingPanelView({
     // where it is shared, to keep or end.
     const seen = accounts.filter((a) => !a.waiting && current.sharing[a.id]).length;
     const listed = accounts.filter((a) => !a.waiting || current.sharing[a.id]);
-    const over = seen > 0 && ended(current.expires_at);
+    // What they can see now, in words: accounts, and the other kinds.
+    const sees = seenText(seen, current.views);
+    const over = sees !== null && ended(current.expires_at);
     return (
       <>
         <section className="panel-section">
@@ -491,7 +527,7 @@ export function SharingPanelView({
           {over ? (
             <>
               <p className="stale-note" style={{ margin: '0 0 6px' }}>
-                Ended {endLabel(current.expires_at!)}: {current.label} sees none of your accounts now. Your choices below are kept.
+                Ended {endLabel(current.expires_at!)}: {current.label} sees {sharedKinds(current.views).length > 0 ? 'nothing of yours' : 'none of your accounts'} now. Your choices below are kept.
               </p>
               <button className="secondary" onClick={onRenew} disabled={busy} style={{ marginBottom: 6 }}>
                 Renew until {endLabel(endAfterDays(RENEW_DAYS))}
@@ -499,9 +535,9 @@ export function SharingPanelView({
             </>
           ) : (
             <p className="panel-note" style={{ margin: '0 0 6px' }}>
-              {seen === 0
+              {sees === null
                 ? `${current.label} can’t see any of your accounts.`
-                : `${current.label} can see ${seen === 1 ? '1 of your accounts' : `${seen} of your accounts`}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
+                : `${current.label} can see ${sees}, read-only${current.expires_at ? `, until ${endLabel(current.expires_at)}` : ''}.`}
             </p>
           )}
           {listed.length === 0 && <p className="panel-note">You have no accounts to share yet.</p>}
@@ -529,6 +565,18 @@ export function SharingPanelView({
               ))}
             </div>
           ))}
+          <KindsEditor
+            views={viewsDraft}
+            onChange={onViews}
+            goals={data.goals_unreadable ? null : (data.goals ?? [])}
+            who={current.label}
+            accounts={accounts
+              .filter((a) => !a.waiting)
+              .map((a) => {
+                const c = draft[a.id] ?? 'none';
+                return { id: a.id, label: a.label, level: c === 'none' ? null : c, investment: a.investment === true };
+              })}
+          />
           <EndPicker saved={current.expires_at} choice={endChoice} day={endDay} onChoice={onEndChoice} onDay={onEndDay} />
           <button onClick={onSave} disabled={busy || (endChoice === 'date' && endFor('date', endDay) === undefined)} style={{ marginTop: 4 }}>
             {busy ? 'Saving…' : 'Save'}
@@ -659,12 +707,13 @@ export function SharingPanelView({
           <div className="peer-list">
             {connections.map((c) => {
               const seen = accounts.filter((a) => !a.waiting && c.sharing[a.id]).length;
+              const sees = seenText(seen, c.views);
               const what =
-                seen === 0
+                sees === null
                   ? 'Sees none of your accounts'
                   : ended(c.expires_at)
                     ? `Ended ${endLabel(c.expires_at!)}`
-                    : `Sees ${seen} of your accounts${c.expires_at ? ` until ${endLabel(c.expires_at)}` : ''}`;
+                    : `Sees ${sees}${c.expires_at ? ` until ${endLabel(c.expires_at)}` : ''}`;
               return (
                 <button key={c.id} className="peer-item" onClick={() => onOpen(c.id)}>
                   <span className="avatar">{initial(c.label)}</span>
@@ -736,16 +785,24 @@ export function PreviewView({
       </p>
       {unsaved && <p className="stale-note">You have changes you haven’t saved. This shows what is saved.</p>}
       {preview.view ? (
-        <SharedCard
-          name="you"
-          view={preview.view}
-          note={
-            <p className="panel-note">
-              {preview.view.expires_at ? `Shared until ${endLabel(preview.view.expires_at)}. ` : ''}You see each time this is shown to them, and so
-              do they, in Sharing.
-            </p>
-          }
-        />
+        <>
+          <SharedCard
+            name="you"
+            view={preview.view}
+            note={
+              <p className="panel-note">
+                {preview.view.expires_at ? `Shared until ${endLabel(preview.view.expires_at)}. ` : ''}You see each time this is shown to them, and so
+                do they, in Sharing.
+              </p>
+            }
+          />
+          {/* What they could work out from all of it: every warning needs another kind shared. */}
+          {preview.inferences_unavailable ? (
+            <p className="stale-note">What they could work out from all of this couldn’t be worked out just now. Try again later.</p>
+          ) : (
+            preview.view.views && <InferenceNotes found={preview.inferences ?? []} />
+          )}
+        </>
       ) : (
         <p className="empty-note">{nothing}</p>
       )}
@@ -754,13 +811,103 @@ export function PreviewView({
 }
 
 /**
+ * Why what is shared with me couldn't be read or refreshed, in words, from
+ * the answer of app/api/shared: past the limit on reads (429), when to come
+ * back, in the answer's own words, else by its Retry-After; otherwise what
+ * the answer said, or that Nya couldn't be reached (status 0).
+ */
+export function sharedProblem(status: number, body: { error?: unknown } | null, retryAfter: string | null): string {
+  const said = typeof body?.error === 'string' ? body.error.trim() : '';
+  const sentence = (t: string) => (/[.!?]$/.test(t) ? t : `${t}.`);
+  if (status === 429) {
+    if (said) return sentence(said);
+    const seconds = Number(retryAfter);
+    const minutes = Number.isFinite(seconds) && seconds > 0 ? Math.ceil(seconds / 60) : null;
+    return minutes === null ? 'Try again in a few minutes.' : `Try again in ${minutes === 1 ? 'a minute' : `${minutes} minutes`}.`;
+  }
+  if (said) return /try again/i.test(said) ? sentence(said) : `${sentence(said)} Try again later.`;
+  return status === 0 ? 'Nya couldn’t be reached. Try again later.' : 'Try again later.';
+}
+
+type DeviceStorage = Pick<Storage, 'getItem' | 'setItem' | 'removeItem'>;
+
+/** This device's storage, or null where there is none (the server). Even
+ *  reaching it can throw, where site data is blocked. */
+function deviceStorage(): DeviceStorage | null {
+  try {
+    return typeof window === 'undefined' ? null : window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+/** Where this device remembers whether the last good read of what is shared
+ *  with `viewer` had anything in it: beside the dashboard's snapshot for the
+ *  same account (components/device-cache.ts), so signing out forgets it with
+ *  the snapshot (components/ForgetDevice.tsx). */
+export const sharedSeenKey = (viewer: string) => `${cacheKeyFor(viewer)}:shared`;
+
+/** REMEMBERED ON THIS DEVICE, a viewer's own convenience and never relied
+ *  on: whether the last good read had anything shared, so a read that fails
+ *  before anything is on screen (offline, say) can say so to someone who
+ *  has shares, and to nobody else. Quietly nothing where it can't be kept. */
+export function rememberShares(viewer: string | undefined, had: boolean, storage: DeviceStorage | null = deviceStorage()): void {
+  if (!viewer || !storage) return;
+  try {
+    if (had) storage.setItem(sharedSeenKey(viewer), '1');
+    else storage.removeItem(sharedSeenKey(viewer));
+  } catch {
+    // Not kept: a failed read then says nothing, as before anything was.
+  }
+}
+
+/** LENIENT: whether the last good read on this device had anything shared;
+ *  false when it can't say. */
+export function rememberedShares(viewer: string | undefined, storage: DeviceStorage | null = deviceStorage()): boolean {
+  if (!viewer || !storage) return false;
+  try {
+    return storage.getItem(sharedSeenKey(viewer)) === '1';
+  } catch {
+    return false;
+  }
+}
+
+/** One read of what is shared with me (app/api/shared), as the cards take
+ *  it: what came, or else why nothing did (sharedProblem) and whether the
+ *  last good read on this device had anything shared (rememberedShares). A
+ *  good read is remembered so (rememberShares). Never throws. */
+export async function readSharedWithMe(
+  viewer: string | undefined,
+  get: (url: string) => Promise<Response> = (url) => fetch(url),
+  storage: DeviceStorage | null = deviceStorage()
+): Promise<{ data: SharedPayload; problem: '' } | { data: null; problem: string; hadShares: boolean }> {
+  try {
+    const res = await get('/api/shared');
+    const body = await res.json().catch(() => null);
+    if (res.ok && body) {
+      rememberShares(viewer, Array.isArray(body.shared) && body.shared.length > 0, storage);
+      return { data: body, problem: '' };
+    }
+    return { data: null, problem: sharedProblem(res.status, body, res.headers.get('Retry-After')), hadShares: rememberedShares(viewer, storage) };
+  } catch {
+    return { data: null, problem: sharedProblem(0, null, null), hadShares: rememberedShares(viewer, storage) };
+  }
+}
+
+/**
  * What others share with me, fetched only once this part of the page is on
  * screen, and again after a refresh if it is (or once it next is): each fetch
  * counts as a showing in the sharer's record, so one is made only when the
  * cards can actually be seen. Scrolling past them again fetches nothing.
+ * `viewer`: who is signed in, whose last good read this device remembers.
  */
-export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
+export function SharedWithMe({ refreshKey, viewer }: { refreshKey?: unknown; viewer?: string }) {
   const [data, setData] = useState<SharedPayload | null>(null);
+  // Why the last read was turned away or failed (sharedProblem), or ''.
+  const [problem, setProblem] = useState('');
+  // Whether the last good read on this device had anything shared, as
+  // remembered when a read fails (rememberedShares).
+  const [hadShares, setHadShares] = useState(false);
   const [onScreen, setOnScreen] = useState(false);
   const spot = useRef<HTMLDivElement>(null);
   const loadedFor = useRef<{ key: unknown } | null>(null);
@@ -778,14 +925,22 @@ export function SharedWithMe({ refreshKey }: { refreshKey?: unknown }) {
   useEffect(() => {
     if (!onScreen || (loadedFor.current && Object.is(loadedFor.current.key, refreshKey))) return;
     loadedFor.current = { key: refreshKey };
-    fetch('/api/shared')
-      .then((res) => (res.ok ? res.json() : null))
-      .then((body) => setData(body))
-      .catch(() => setData(null));
-  }, [onScreen, refreshKey]);
+    void readSharedWithMe(viewer).then((read) => {
+      if (read.data) {
+        setData(read.data);
+        setProblem('');
+        return;
+      }
+      // What is on screen stays: a read turned away (the limit on reads,
+      // lib/share-limit.ts) or failing never takes it away, and why it
+      // couldn't be refreshed is said, as the preview says it.
+      setHadShares(read.hadShares);
+      setProblem(read.problem);
+    });
+  }, [onScreen, refreshKey, viewer]);
   return (
     <div ref={spot} className="incoming-spot">
-      <SharedWithMeView data={data} />
+      <SharedWithMeView data={data} problem={problem} hadShares={hadShares} />
     </div>
   );
 }
@@ -827,6 +982,7 @@ function SharedCard({ name, view, note }: { name: string; view: SharedView; note
       {view.accounts.map((a) => (
         <SharedAccountItem key={a.id} a={a} open={open === a.id} onToggle={() => setOpen(open === a.id ? null : a.id)} />
       ))}
+      {view.views && <SharedViewsList views={view.views} whose={name === 'you' ? 'Your' : `${name}’s`} />}
       {note}
     </div>
   );
@@ -873,7 +1029,13 @@ export function SharedAccountItem({ a, open, onToggle }: { a: SharedAccount; ope
   );
 }
 
-export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
+/** `problem`: why the last read was turned away or failed (sharedProblem),
+ *  said above what was last shown, which stays. With nothing on screen,
+ *  nothing is said: someone nobody shares with, or one offline, is never
+ *  told of shares they don't have. Only when nothing has loaded here yet
+ *  (`data` null) and the last good read on this device had something shared
+ *  (`hadShares`, rememberedShares) is it said alone. */
+export function SharedWithMeView({ data, problem = '', hadShares = false }: { data: SharedPayload | null; problem?: string; hadShares?: boolean }) {
   const [now, setNow] = useState(() => Date.now());
   // A share that ends while it is on screen goes at its end, without waiting
   // for the next fetch: from then on the server shows nothing of it.
@@ -884,9 +1046,12 @@ export function SharedWithMeView({ data }: { data: SharedPayload | null }) {
     return () => clearTimeout(timer);
   }, [next]);
   const shared = (data?.shared ?? []).filter((s) => !ended(s.expires_at, now));
-  if (shared.length === 0) return null;
+  if (shared.length === 0) {
+    return problem && data === null && hadShares ? <p className="stale-note">{`What is shared with you couldn’t be shown just now. ${problem}`}</p> : null;
+  }
   return (
     <>
+      {problem && <p className="stale-note">{`This is what was last shown: it couldn’t be refreshed. ${problem}`}</p>}
       {shared.map((s) => (
         <SharedCard
           key={s.connection}

@@ -602,14 +602,18 @@ export function standsFor(settled: Settled<ImportedTxn>): Map<string, string> {
 
 /** What importing into one account reads first: every id it has had, its kept
  *  rows under them, its connection's bank rows and where they begin, which of
- *  those were kept as standing for which kept row, and the imports in order,
- *  with their summaries. */
+ *  those were kept as standing for which kept row, the pending row each
+ *  posted one replaced, and the imports in order, with their summaries. */
 export type AccountContext = {
   ids: string[];
   held: ImportedTxn[];
   banks: BankRow[];
   bank_from: string | null;
   twins: Map<string, string>;
+  /** Each posted bank row's pending one it replaced (Plaid's
+   *  pending_transaction_id), by the posted row's id: whose approval in the
+   *  review queue is the posted row's own (lib/review-layer.ts approvalFor). */
+  pending_from: Map<string, string>;
   /** The connection's older transactions may still be arriving: Plaid said
    *  its first pull is done and its full history isn't yet. */
   history_pending: boolean;
@@ -636,12 +640,15 @@ export async function readAccountContext(ctx: Ctx, account: LinkedAccount, links
   ]);
   const all = Object.values(item.txns);
   const mine = new Set(ids);
+  const banks = bankRowsOf(all, links).filter((b) => b.account_id === account.account_id || mine.has(b.account_id));
+  const theirs = new Set(banks.map((b) => b.transaction_id));
   return {
     ids,
     held: [...books.values()].flatMap((b) => b.rows),
-    banks: bankRowsOf(all, links).filter((b) => b.account_id === account.account_id || mine.has(b.account_id)),
+    banks,
     bank_from: earliestPosted(all),
     twins: twinsOf(twins),
+    pending_from: new Map(all.flatMap((t) => (!t.pending && t.pending_transaction_id && theirs.has(t.transaction_id) ? [[t.transaction_id, t.pending_transaction_id] as const] : []))),
     history_pending: item.history_pending === true,
     order: importOrder(summaries),
     summaries: summaries.entries,
