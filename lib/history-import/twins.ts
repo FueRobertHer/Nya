@@ -17,25 +17,46 @@
 // were, with the pairs already kept, and keeps every pair it finds at the
 // connection's accounts, before it saves the change. A row it modifies is
 // kept as it stood, and no reader ever sees it unpaired. A sync that only
-// adds rows, or changes what matching doesn't read (a category, a logo),
-// reads nothing for it; one that does reads only the books of the
-// connection's accounts, under every id they have had, the summaries of the
-// imports their rows came from, and the connection's own pairs. No read
-// writes it, and nothing else does but a disconnect (below).
+// adds rows (but for a posted one replacing a pending one, below), or
+// changes what matching doesn't read (a category, a logo), reads nothing for
+// it; one that does reads only the books of the connection's accounts, under
+// every id they have had, the summaries of the imports their rows came from,
+// and the connection's own pairs. No read writes it, and nothing else does
+// but a disconnect (below).
+//
+// A PENDING ROW THAT POSTS. While pending, a bank row stands in for an
+// imported row like it (settle's `pending`), and once it posts, the posted
+// row (a new id, naming the pending one: Plaid's pending_transaction_id) is
+// the same transaction. But the rule alone may not pair the posted row with
+// the imported one: Plaid dates it by its posting, often after the last day
+// of the file the imported row came from (an edge the rule never pairs
+// across), and it may post at another amount (a tip). So the sync that brings
+// the posted row, or removes the pending one it names, works settle out on
+// the rows as they were with the pending rows standing in, and keeps each
+// imported row that pending row stood in for as a pair under the posted
+// row's id, as a posted row's are kept: the posted row then takes the
+// imported row's place whatever its day or amount, as the pending one's
+// approval moves to it (lib/review-store.ts carryApprovalsToPosted). Only
+// this sync can: once the pending row is gone, nothing says what it stood in
+// for, so one that posted before pairs were kept this way counts beside the
+// bank's. SimpleFIN keeps no pending rows (lib/connectors/simplefin.ts), and
+// its accounts take no history import, so this is Plaid's alone.
 //
 // WHAT IS KEPT. Each imported row a posted bank row stood for, as a
 // duplicate's twin (lib/history-import/store.ts same_as) or as the row
-// superseding it, by the bank row's id, as settle worked it out on the rows
-// as they were, the pairs already kept first. Dropped: a pair whose bank row
-// the sync leaves out (the bank removed it), which puts the imported row back
-// as it was; and one whose imported row no book of the connection's accounts
-// holds any more (an undo, a forget), once a sync that keeps pairs read every
-// one of those books: meanwhile it pairs nothing (settle reads only the pairs
-// of rows still held). Nothing makes a pair the rule didn't: when what
-// decides the rule's pairs at the connection's accounts can't be read (the
-// links, the connection's accounts, an end of one of them, a summary of one
-// of their imports, whose period is the rule's edge), none is kept, and the
-// pairs stay as they were, but for those whose bank row is gone.
+// superseding it, and each a pending row this sync replaces stood in for,
+// under the posted row replacing it, by the bank row's id, as settle worked
+// it out on the rows as they were, the pairs already kept first. Dropped: a
+// pair whose bank row the sync leaves out (the bank removed it), which puts
+// the imported row back as it was; and one whose imported row no book of the
+// connection's accounts holds any more (an undo, a forget), once a sync that
+// keeps pairs read every one of those books: meanwhile it pairs nothing
+// (settle reads only the pairs of rows still held). Nothing makes a pair the
+// rule (or a pending row's standing in) didn't: when what decides them at
+// the connection's accounts can't be read (the links, the connection's
+// accounts, an end of one of them, a summary of one of their imports, whose
+// period is the rule's edge), none is kept, and the pairs stay as they were,
+// but for those whose bank row is gone.
 //
 // CARRIED ACROSS A RE-LINK. A re-link gives every transaction a new id, so a
 // pair kept by its bank row's id would go with the connection, and the
@@ -91,6 +112,26 @@ export function changedRows(before: Readonly<Record<string, StoredTxn>>, after: 
     if (was.pending) continue;
     const now = Object.prototype.hasOwnProperty.call(after, id) ? after[id] : undefined;
     if (!now || !readsAlike(now, was)) out.push(was);
+  }
+  return out;
+}
+
+/**
+ * The pending rows of `before` that a posted row of `after` replaces (it
+ * names the pending one: Plaid's pending_transaction_id), each to that posted
+ * row's id, when this sync brings the posted row or removes the pending one
+ * (A PENDING ROW THAT POSTS). Pure.
+ */
+export function replacedPending(before: Readonly<Record<string, StoredTxn>>, after: Readonly<Record<string, StoredTxn>>): Map<string, string> {
+  const has = (rows: Readonly<Record<string, StoredTxn>>, id: string) => Object.prototype.hasOwnProperty.call(rows, id);
+  const out = new Map<string, string>();
+  for (const id of Object.keys(after).sort()) {
+    const t = after[id];
+    const from = t.pending ? null : t.pending_transaction_id;
+    if (!from || out.has(from) || !has(before, from) || !before[from].pending) continue;
+    // Both there before, and the pending one still: nothing new this sync.
+    if (has(before, id) && has(after, from)) continue;
+    out.set(from, id);
   }
   return out;
 }
@@ -199,29 +240,43 @@ const samePairs = (a: ImportedTwins | null, b: ImportedTwins | null): boolean =>
 
 /**
  * The pairs settle works out at a connection's accounts on its rows as they
- * were (`before`), the pairs already kept first, and every imported row those
- * accounts' books hold, when every one of them was read (else null). Null
- * when what decides the pairs can't be read. Reads only those books, under
- * every id their accounts have had, and what goes with them.
+ * were (`before`), the pairs already kept first: with `whole`, every pair a
+ * posted row makes there, and every imported row those accounts' books hold,
+ * when every one of them was read (else null); and each imported row a
+ * pending row stood in for, under the posted row replacing that one
+ * (`replacing`, replacedPending), reading, without `whole`, only the books
+ * of those pending rows' accounts. Null when what decides the pairs can't be
+ * read. Reads only those books, under every id their accounts have had, and
+ * what goes with them.
  */
 async function observedPairs(
   ctx: Ctx,
   item: StoredItem,
   before: Record<string, StoredTxn>,
-  links: Map<string, Link>
+  links: Map<string, Link>,
+  replacing: ReadonlyMap<string, string>,
+  whole: boolean
 ): Promise<{ observed: Map<string, string>; held: Set<string> | null } | null> {
   const accounts = new Set<string>();
-  for (const t of Object.values(before)) if (!t.pending) accounts.add(resolveId(t.account_id, links));
+  for (const t of Object.values(before)) if ((whole && !t.pending) || replacing.has(t.transaction_id)) accounts.add(resolveId(t.account_id, links));
   const bookIds = [...accounts].flatMap((id) => sameAccountIds(id, links));
   const read = await readImported(ctx, { items: [item], links, bankStates: new Map([[item.item_id, before]]), bookIds });
   if (read.unresolved || read.summariesUnreadable.length > 0) return null;
   const observed = new Map<string, string>();
   for (const a of read.accounts) {
-    const settled = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, twins: a.twins });
-    for (const [row, bank] of settled.superseded) observed.set(row, bank.transaction_id);
-    for (const [row, st] of settled.standing) if ('bank' in st) observed.set(row, st.bank.transaction_id);
+    // The pending rows standing in only when one is replaced: what they
+    // stand in for is kept for none else.
+    const settled = countedRows(a.held, a.banks, read.order, { bankFrom: a.bank_from, covers: read.covers, twins: a.twins, pending: replacing.size > 0 });
+    if (whole) {
+      for (const [row, bank] of settled.superseded) observed.set(row, bank.transaction_id);
+      for (const [row, st] of settled.standing) if ('bank' in st) observed.set(row, st.bank.transaction_id);
+    }
+    for (const [row, bank] of settled.pendingStood) {
+      const posted = replacing.get(bank.transaction_id);
+      if (posted !== undefined) observed.set(row, posted);
+    }
   }
-  return { observed, held: read.flawed.size === 0 ? new Set(read.accounts.flatMap((a) => a.held.map((r) => r.id))) : null };
+  return { observed, held: whole && read.flawed.size === 0 ? new Set(read.accounts.flatMap((a) => a.held.map((r) => r.id))) : null };
 }
 
 /**
@@ -233,21 +288,24 @@ async function observedPairs(
 export async function keepImportedTwins(ctx: Ctx, item: StoredItem, before: Record<string, StoredTxn>, after: Record<string, StoredTxn>): Promise<void> {
   try {
     const changing = changedRows(before, after).length > 0;
+    const replacing = replacedPending(before, after);
     const [carried, books, kept] = await Promise.all([
       carriedTwinsStore.getAllReport(ctx),
-      changing ? importedTxnStore.count(ctx) : Promise.resolve(0),
+      changing || replacing.size > 0 ? importedTxnStore.count(ctx) : Promise.resolve(0),
       changing ? importedTwinsStore.has(ctx, item.item_id) : Promise.resolve(false),
     ]);
     // Pairs to keep only where something was imported, or is kept here; and
-    // carried pairs only from an earlier account linked to another.
-    const observing = changing && (books > 0 || kept);
+    // carried pairs only from an earlier account linked to another. A sync
+    // that only posts pending rows reads only those rows' accounts' books.
+    const whole = changing && (books > 0 || kept);
+    const observing = whole || (replacing.size > 0 && books > 0);
     if (!observing && carried.entries.size === 0) return;
     const links = await getLinks(ctx);
     if (!observing && ![...carried.entries.keys()].some((id) => links.has(id))) return;
     const active = effectiveLinks(links, await liveAccountIds(ctx, { strict: true, readOnly: true }));
     const carry = carriedPairs(carried.entries, active, before, after);
     if (!observing && carry.pins.size === 0) return;
-    const seen = observing ? await observedPairs(ctx, item, before, active) : null;
+    const seen = observing ? await observedPairs(ctx, item, before, active, replacing, whole) : null;
     const next = (now: ImportedTwins | null) => withCarried(nextTwins(now, seen?.observed ?? new Map(), after, seen?.held ?? null), carry.pins);
     const current = await importedTwinsStore.get(ctx, item.item_id);
     const written = samePairs(next(current), current) ? current : await importedTwinsStore.update(ctx, item.item_id, next);
