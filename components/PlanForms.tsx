@@ -11,7 +11,7 @@ import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type 
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
-import { Masked, spokenLabel } from './HideAmounts';
+import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
@@ -242,7 +242,7 @@ export function FigureForm(
         <div className="sheet-form">
           <label className="field">
             {t.field}
-            <input type="number" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} disabled={s.saving} />
+            <input type="number" inputMode="decimal" value={text} onChange={(e) => setText(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
           </label>
         </div>
       )}
@@ -474,11 +474,11 @@ export function SimulationForm(
           <div className="plan-pair">
             <label className="field">
               Floor (% of the first year)
-              <input type="number" inputMode="decimal" value={floor} onChange={(e) => setFloor(e.target.value)} disabled={s.saving} />
+              <input type="number" inputMode="decimal" data-percent value={floor} onChange={(e) => setFloor(e.target.value)} disabled={s.saving} />
             </label>
             <label className="field">
               Ceiling (% of the first year)
-              <input type="number" inputMode="decimal" value={ceiling} onChange={(e) => setCeiling(e.target.value)} disabled={s.saving} />
+              <input type="number" inputMode="decimal" data-percent value={ceiling} onChange={(e) => setCeiling(e.target.value)} disabled={s.saving} />
             </label>
           </div>
         )}
@@ -502,7 +502,7 @@ export function SimulationForm(
         {start === 'custom' && (
           <label className="field">
             Starting balance
-            <input type="number" inputMode="decimal" value={balance} onChange={(e) => setBalance(e.target.value)} disabled={s.saving} />
+            <input type="number" inputMode="decimal" value={balance} onChange={(e) => setBalance(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
           </label>
         )}
         <label className="field">
@@ -598,7 +598,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
         </label>
         <label className="field">
           A year, after tax
-          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
         </label>
         <label className="field">
           From age
@@ -662,7 +662,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
         </label>
         <label className="field">
           Amount
-          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} disabled={s.saving} />
+          <input type="number" inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder={NO_EXAMPLE} disabled={s.saving} />
         </label>
         <label className="field">
           At age

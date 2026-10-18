@@ -5138,7 +5138,10 @@ button.cash-flow-show {
    mask whatever the amount, its own text not drawn at all (one dot per
    figure would say how large it is), until the field is in use, so a form
    opened in public shows no figure either. An empty field shows its
-   placeholder, an example. A percentage's field (data-percent) stays, as
+   placeholder: an example, or nothing, one space (NO_EXAMPLE in
+   components/HideAmounts.tsx), where it has none to give. Every such field
+   has one, as :placeholder-shown never matches a field without, which would
+   draw the mask in it empty. A percentage's field (data-percent) stays, as
    percentages do everywhere. */
 .hide-amounts-btn[aria-pressed="true"] {
   border-color: var(--accent);

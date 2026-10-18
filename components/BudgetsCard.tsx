@@ -38,7 +38,7 @@ import { categoriesIn, displayName, indexTaxonomy, sortedGroups, type Taxonomy }
 import { carryText, monthName, sinceText, startChoices, withCarry, type Carries, type Carry } from '@/lib/rollover';
 import { localMonth } from '@/lib/local-date';
 import { Sheet } from './Sheet';
-import { Masked, spokenLabel } from './HideAmounts';
+import { Masked, NO_EXAMPLE, spokenLabel } from './HideAmounts';
 import BudgetSuggestion from './BudgetSuggestion';
 import type { BudgetSuggestions } from '@/lib/budget-suggestions';
 
@@ -302,6 +302,7 @@ export default function BudgetsCard({
         step="1"
         value={editAmount}
         onChange={(e) => setEditAmount(e.target.value)}
+        placeholder={NO_EXAMPLE}
         aria-label={`Monthly budget for ${name}`}
       />
       <BudgetSuggestion

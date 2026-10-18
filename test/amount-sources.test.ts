@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { bypasses, clientModules, drawnParts, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
+import { bypasses, clientModules, drawnParts, fieldsWithoutPlaceholder, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
 
 // The scan of the source (test/amount-sources.ts) on its own: each shape an
 // amount can be written in that it is there to catch, each in a component of
@@ -39,7 +39,7 @@ function caseFile(shape: string, extra: string[] = []): string {
 type Case = string | [string, string[]] | { file: string };
 
 /** What the scan says of each case, by the case's name: the lines reported. */
-function scan(cases: Record<string, Case>): Record<'bypasses' | 'memos' | 'labels' | 'children', Record<string, number[]>> {
+function scan(cases: Record<string, Case>): Record<'bypasses' | 'memos' | 'labels' | 'children' | 'fields', Record<string, number[]>> {
   const dir = mkdtempSync(join(tmpdir(), 'nya-amount-sources-'));
   dirs.push(dir);
   const write = (path: string, text: string) => {
@@ -72,6 +72,7 @@ function scan(cases: Record<string, Case>): Record<'bypasses' | 'memos' | 'label
     memos: byCase(staleMemos(dir, modules)),
     labels: byCase(unspokenLabels(dir, modules)),
     children: byCase(unmaskedChildren(dir, modules)),
+    fields: byCase(fieldsWithoutPlaceholder(dir, modules)),
   };
 }
 
@@ -235,5 +236,25 @@ describe('what of a child expression is drawn', () => {
     for (const test of ['n > 0', 'a === b', '!flag', 'typeof v', 'n >= 1 && m <= 2']) expect([test, drawnParts(test)]).toEqual([test, []]);
     expect(drawnParts("typeof v === 'string' ? A : v")).toEqual(['A']);
     expect(drawnParts("typeof v !== 'string' ? v : A")).toEqual(['A']);
+  });
+});
+
+describe('a field the CSS hook covers while amounts are hidden', () => {
+  test('has a placeholder, so an empty one shows it rather than the mask', () => {
+    const found = scan({
+      Bare: 'return <input inputMode="decimal" value={value} readOnly />;',
+      Budget: 'return <input className="text-input budget-input" type="number" value={value} readOnly />;',
+      Braced: "return <input inputMode={'decimal'} value={value} readOnly />;",
+      Example: 'return <input inputMode="decimal" placeholder="0.00" value={value} readOnly />;',
+      NoExample: "return <input inputMode=\"decimal\" placeholder={' '} value={value} readOnly />;",
+      Percent: 'return <input inputMode="decimal" data-percent value={value} readOnly />;',
+      Count: 'return <input inputMode="numeric" value={value} readOnly />;',
+    });
+    expect(found.fields).toEqual({ Bare: [7], Budget: [7], Braced: [7] });
+  });
+
+  test('every one the app has', () => {
+    const root = join(import.meta.dir, '..');
+    expect(fieldsWithoutPlaceholder(root, clientModules(root))).toEqual([]);
   });
 });

@@ -267,7 +267,7 @@ describe('an imported row splits and groups as the bank’s do', () => {
       { amount: 30, category_id: home },
     ]);
     expect(off.status).toBe(400);
-    expect(off.body.error).toContain('not the transaction’s 100.00');
+    expect(off.body.error).toContain('not the transaction’s $100.00');
 
     expect((await route('transaction-splits', 'DELETE', { transaction_id: old })).body).toEqual({ transaction_id: old, removed: true });
     const back = (await rowsOf()).find((t) => t.transaction_id === old)!;

@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { fieldAmount, formatMoney, hideFiguresIn } from '@/lib/format';
+import { fieldAmount, formatMoney, hideAmountsIn } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
@@ -267,11 +267,12 @@ export default function SplitSheet({
       <p className={`split-left${left === 0 ? ' done' : ''}`} role="status">
         <Masked>{left === 0 ? 'The parts add up to the transaction.' : left > 0 ? `${money(left)} left to split` : `${money(left)} more than the transaction`}</Masked>
       </p>
-      {/* The server's words can give the parts' figures, with no currency to
-          tell them by: all its figures are hidden while amounts are. */}
+      {/* The server's words can give the parts' amounts, each with its
+          currency (lib/splits.ts): those are hidden while amounts are, and
+          its counts stay. */}
       {error && (
         <div className="error">
-          <Masked>{hideFiguresIn(error)}</Masked>
+          <Masked>{hideAmountsIn(error)}</Masked>
         </div>
       )}
       <div className="button-pair">

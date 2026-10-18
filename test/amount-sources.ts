@@ -1099,3 +1099,28 @@ export function unmaskedChildren(root: string, modules: readonly string[]): Unsp
   }
   return out;
 }
+
+export type Field = { file: string; line: number; text: string };
+
+/**
+ * Each field the CSS hook covers while amounts are hidden (app/globals.css,
+ * "Hide amounts": an `inputMode="decimal"` field or a budget's, but not one
+ * marked data-percent) that has no placeholder. `:placeholder-shown` can't
+ * tell such a field is empty, so it would draw the mask in it while it holds
+ * nothing: one with no example to give has NO_EXAMPLE
+ * (components/HideAmounts.tsx).
+ */
+export function fieldsWithoutPlaceholder(root: string, modules: readonly string[]): Field[] {
+  const model = modelOf(root, modules);
+  const out: Field[] = [];
+  for (const [i, m] of modules.entries()) {
+    const f = model.facts[i];
+    for (const el of f.jsx.elements) {
+      if (el.name !== 'input') continue;
+      const tag = f.text.slice(el.start, el.end);
+      if (!/\binputMode=(?:["']decimal["']|\{\s*['"]decimal['"]\s*\})|\bbudget-input\b/.test(tag) || /\sdata-percent\b/.test(tag)) continue;
+      if (!/\splaceholder=/.test(tag)) out.push({ file: m, line: lineOf(f.text, el.start), text: lineText(f.text, el.start) });
+    }
+  }
+  return out;
+}
