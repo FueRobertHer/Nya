@@ -458,6 +458,17 @@ describe('the privacy page', () => {
     expect(page).toContain('no email provider');
   });
 
+  // Decision 6: the ECB on the public pages (for the owner's sign-off).
+  test('says where the exchange rates come from, that the ECB is sent nothing about you, and how long a home currency is kept', () => {
+    const page = privacy();
+    expect(page).toContain('the European Central Bank’s euro reference rates, which Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you');
+    expect(page).toContain('Your home currency and your own exchange rates Until you change them, or delete your account. Encrypted, and in your download.');
+    expect(page).toContain('Nothing converted with them is kept');
+    const sec = security();
+    expect(sec).toContain('The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for every account, and never in a backup.');
+    expect(sec).toContain('Your home currency and your own exchange rates are encrypted.');
+  });
+
   test('states the other retention figures the code uses', () => {
     const page = privacy();
     expect(page).toContain(`Invite links ${INVITE_HOURS} hours, or until used.`);

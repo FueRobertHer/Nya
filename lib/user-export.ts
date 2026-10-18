@@ -847,6 +847,7 @@ export function notIncluded(people: boolean): string[] {
       : 'The app password: a credential, not your data.',
     'Internal ids and the machinery of the app: your storage container’s id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections and on accounts a bank stopped reporting). They are about running the app, not about you.',
     'The balances an estimate held flat: for an account the estimate could not walk back through its transactions, estimated net-worth totals use that account’s balance on the day the estimate was made. That copied balance is part of the estimated totals, and is not listed as the account’s own history.',
+    'The European Central Bank’s exchange rates: public, the same for everyone, and on the ECB’s own site. Nothing converted with them is kept, so every amount here is in its own currency; your home currency and your own rates are in, under currency-settings.',
     'What other people share with you, what they call you and how they introduced themselves: that is their data. Their record of each time what they share was shown to you is in, under sharing: it is about you, and they see the same one.',
     'Unused invite links: they work for 72 hours and are then gone.',
     ...(people ? [] : ['Sharing: with one shared password there are no separate people to share with.']),

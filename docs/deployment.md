@@ -70,6 +70,7 @@ Defined in `vercel.json`. Crons run only on the production deployment.
 | 13:00 | `/api/snapshot` | Records each container's daily net-worth snapshot, fetching from the [SimpleFIN connections](#bring-your-own-sync) people made beside Plaid, and sends the [email notices](#email-notices) about its connections, then the weekly summaries due that day. |
 | 15:00 | `/api/snapshot/catchup` | Runs again for any container that failed, came back unclean, was deferred, or had nothing linked, and sends the weekly summaries still due. |
 | 16:00 | `/api/backup` | Nightly off-site backup. |
+| 16:30 | `/api/fx/fetch` | Fetches the European Central Bank's euro reference rates, published around 16:00 CET each working day, which a person's home currency converts with ([operations.md](operations.md#exchange-rates-and-rolling-back): on a preview or after a restore into an empty database, run it once by hand). |
 | 17:00 | `/api/plaid/check-items` | Flags connections that cost money and do nothing. |
 
 ## 5. Local development

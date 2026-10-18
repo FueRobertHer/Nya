@@ -561,6 +561,8 @@ describe('everything stored, decrypted, and nothing else', () => {
       expect(text).not.toContain(parseToken(token)!.secret);
     }
     expect(doc.not_included.some((s: string) => s.startsWith('Your API tokens themselves, and the hashes'))).toBe(true);
+    // The rates are public; what the person chose is theirs, and in the file.
+    expect(doc.not_included.some((s: string) => s.startsWith('The European Central Bank’s exchange rates: public') && s.includes('currency-settings'))).toBe(true);
     // A damaged record, and one from a version this one doesn't know: the
     // others are listed, and these are counted under problems, never named by
     // their ids, which are part of the tokens. Nothing stops the download.

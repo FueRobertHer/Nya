@@ -252,6 +252,11 @@ export default function SecurityPage() {
           what someone sees of yours, kept for {SHARED_READS_WINDOW_SECONDS / 60} minutes.
         </p>
         <p>Encrypting these as well is planned.</p>
+        <p>
+          The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for
+          every account, and never in a backup. Every currency the ECB publishes is kept, so which ones are there says nothing about anyone.
+          Your home currency and your own exchange rates are encrypted.
+        </p>
       </InfoSection>
 
       <InfoSection title="Who can read what">
