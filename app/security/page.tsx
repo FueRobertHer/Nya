@@ -58,7 +58,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
   ],
   [
     'Lunch Flow, if you connect it',
-    'Your bank connections, which you make and pay for in your own Lunch Flow account, under its own terms, and when Nya reads your accounts there and which ones. Nya sends the API key you paste only to Lunch Flow’s own address (lunchflow.app, and its www name), never anywhere a redirect points, and never to a private or internal address.',
+    'Your bank connections, which you make and pay for in your own Lunch Flow account, under its own terms, and when Nya reads your accounts there and which ones. Nya sends the API key you paste only to Lunch Flow’s own address (lunchflow.app, and its www name), never to another host a redirect points to, and never to a private or internal address.',
   ],
   [
     'Clerk, the sign-in service',
