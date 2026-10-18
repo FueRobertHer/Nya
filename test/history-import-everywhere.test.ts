@@ -366,7 +366,7 @@ describe('the checking account’s OFX statement', () => {
     expect(records.filter((r) => r.source_id?.startsWith('imported-txn:')).map((r) => r.description).sort()).toEqual(['DOMAIN RENEWAL', 'DOMAIN RENEWAL', 'OLD DEPOSIT', 'OLD STORE']);
     // The bank's corner shop stands for the one the person excluded: excluded too.
     expect(records.find((r) => r.source_id === 'b_mid')!.note).toContain('Excluded from budgets and reports in Nya');
-    expect(made.file.notes.some((n) => n.startsWith('4 transactions you imported from your bank’s files are in it'))).toBe(true);
+    expect(made.file.notes.some((n) => n.startsWith('4 transactions you imported from files are in it'))).toBe(true);
   });
 });
 

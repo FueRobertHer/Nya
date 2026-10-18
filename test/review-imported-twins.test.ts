@@ -195,11 +195,11 @@ describe('the review queue and a bank row standing for an imported one', () => {
     // detail adds only that it was approved at it; Card Mode says both at once.
     expect(approvedAsImported(changed.review_changed!, changed)).toBe(true);
     expect(importedChangedNote(changed, money(changed))).toBe(
-      'This is the transaction you imported from your bank’s file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.'
+      'This is the transaction you imported from a file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.'
     );
-    expect(changedSinceWords(changed.review_changed!, changed, true)).toBe('You approved it at the amount imported from your bank’s file, before the bank changed it.');
+    expect(changedSinceWords(changed.review_changed!, changed, true)).toBe('You approved it at the amount it was imported at, before the bank changed it.');
     expect(changedSinceWords(changed.review_changed!, changed, false)).toBe(
-      'You approved it at $150.00 out, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.'
+      'You approved it at $150.00 out, the amount it was imported at. The bank has changed its amount since, so it counts once, at the bank’s amount.'
     );
     // The read-only API says it waits.
     const api = (await queryTransactions(ctx, { from: daysAgo(40), to: daysAgo(0), limit: 50 } as never)).transactions;

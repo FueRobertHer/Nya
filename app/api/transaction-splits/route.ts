@@ -101,13 +101,13 @@ async function refuseHiding(ctx: Ctx, found: FoundTxn, groups: ReadonlyMap<strin
   if (stood.length === 0) return;
   const splits = await splitStore.getMany(ctx, stood);
   if (stood.some((id) => splits.has(id))) {
-    throw new SplitError('This transaction is split as you split the row you imported for it from your bank’s file: change that split instead, with Edit split.', 409);
+    throw new SplitError('This transaction is split as the row imported for it is: change that split instead, with Edit split.', 409);
   }
   const index = memberIndex(groups);
   const group = stood.map((id) => index.get(id)).find((id) => id !== undefined);
   if (group) {
     throw new SplitError(
-      `This transaction counts in the group “${groups.get(group)!.name}”, in place of the row you imported for it from your bank’s file, and the group counts it whole: take it out of the group to split it.`,
+      `This transaction counts in the group “${groups.get(group)!.name}”, in place of the row imported for it, and the group counts it whole: take it out of the group to split it.`,
       409
     );
   }
