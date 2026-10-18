@@ -63,7 +63,10 @@
 // plan": the next save would write over the goal's plan with nothing. The
 // shape is closed: a field a later release adds reads as unrecognised, and
 // nothing here saves over it. Version 1 is the first shape, so there is
-// nothing to upgrade yet.
+// nothing to upgrade yet. An entry whose bytes are damaged holds nothing
+// anyone can read: once the person confirms (app/api/goals, repair), it is
+// removed (removeDamagedPlans), and its goal reads with no plan. One a later
+// release saved is never touched.
 
 import { defineMapStore, MANY_AT_ONCE, StoreRefusedError } from './repo';
 import type { Ctx } from './containers';
@@ -245,6 +248,29 @@ export async function readGoalRecords(ctx: Ctx, opts: { readOnly?: boolean; stri
   const entries = await goalPlansStore.getAll(ctx);
   const links = await goalLinks(ctx, opts);
   return { records: goals.map((g) => recordOf(coreOf(g), entries.get(coreOf(g).id), links)), entries, links };
+}
+
+/**
+ * Removes the plans whose bytes are damaged, once the person has confirmed
+ * (app/api/goals, repair): the only removal the storage seam allows
+ * (lib/repo.ts, READS), so nothing readable is lost, and one a later release
+ * saved (unrecognised) is never touched, only named. Each damaged entry is
+ * replaced by a placeholder in one compare-and-set over the damaged bytes
+ * (MapStore.replaceUnreadable), then removed only while it is still that
+ * placeholder, as lib/lifecycle.ts removeUnreadable does; a goal read in
+ * between has no plan, as after. Answers the goal ids removed, and those
+ * left unrecognised.
+ */
+export async function removeDamagedPlans(ctx: Ctx): Promise<{ removed: string[]; unrecognised: string[] }> {
+  const report = await goalPlansStore.getAllReport(ctx);
+  const placeholder: GoalPlanEntry = { v: 1, save: 'damaged-plan-removed', core: { name: '', target: 0, account_id: null }, plan: {}, before: null };
+  const removed: string[] = [];
+  for (const id of report.unreadable) {
+    if (!(await goalPlansStore.replaceUnreadable(ctx, id, placeholder))) continue;
+    await goalPlansStore.update(ctx, id, (current) => (current && current.save === placeholder.save && current.core.name === '' ? null : current));
+    removed.push(id);
+  }
+  return { removed, unrecognised: report.unrecognised };
 }
 
 /** Why a save can't be taken just now: what it follows account links with
