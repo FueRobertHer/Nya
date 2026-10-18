@@ -532,6 +532,22 @@ describe('verification: a report from stored data says what may be missing, and 
     expect((await quiet(() => readReport(ctx, p2015(), { now: NOW }))).gaps).toEqual([{ kind: 'begins_late', item_id: 'item_a', institution: 'Chase', first: '2026-04-01', from: 'stored' }]);
   });
 
+  test('its every bank account and card hidden, beside a brokerage account and a loan shown: the same, since those bring no rows', async () => {
+    await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
+    await fake.set(ctxKey('txns:item_a'), await store([on('2026-04-01', 'a-1', 'acc_chk', 50)]));
+    await fake.hset(ctxKey('accounts:directory'), { acc_chk: await seenFrom('item_a', 'Chase', '2026-03-02') });
+    const account = (account_id: string, name: string, type: string, subtype: string) => ({ account_id, name, official_name: null, mask: '1111', type, subtype, currency: 'USD' });
+    await rememberAccounts(ctx, [
+      {
+        item_id: 'item_a',
+        error: null,
+        accounts: [account('acc_chk', 'Checking', 'depository', 'checking'), account('acc_brk', 'Brokerage', 'investment', 'brokerage'), account('acc_car', 'Car loan', 'loan', 'auto')],
+      },
+    ]);
+    await setAccountHidden(ctx, 'acc_chk', 'depository', true);
+    expect((await quiet(() => readReport(ctx, p2015(), { now: NOW }))).gaps).toEqual([]);
+  });
+
   test('a store that can’t be read stays missing from a period before its connection was first seen', async () => {
     await saveItem(ctx, { item_id: 'item_a', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(TEST_CTX, 't-a') });
     await fake.set(ctxKey('txns:item_a'), 'damaged-not-a-blob');

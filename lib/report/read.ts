@@ -99,6 +99,14 @@ import { coveredAccountsOf, importedCoverage } from '../history-import/read';
  *  record had none (lib/manual.ts writes 1970-01-01). */
 const realTime = (iso: string | null | undefined): string | null => (iso && Date.parse(iso) > 0 ? iso : null);
 
+/** Whether a connection holds a bank account or card (what its transactions
+ *  are of: lib/history-import/read.ts coveredAccountsOf), and every one it is
+ *  remembered to hold is hidden. */
+const everyBankAccountHidden = (accounts: readonly { account_id: string; type: string }[], hidden: ReadonlySet<string>): boolean => {
+  const banking = accounts.filter((a) => a.type === 'depository' || a.type === 'credit');
+  return banking.length > 0 && banking.every((a) => hidden.has(a.account_id));
+};
+
 /**
  * The accounts that ended and the windows any was missing from its bank's
  * answer, as the report says them (lib/report/build.ts ENDED ACCOUNTS): a
@@ -297,9 +305,11 @@ export async function readReport(
       // the day each that ended stopped counting, up to which it needs them.
       accounts: coveredAccountsOf(s.item_id, remembered.byItem[s.item_id] ?? [], bank.lifecycle, covered, hidden).map(({ name, covers, end }) => ({ name, covers, end })),
       ended_by: endedBy(s.item_id),
-      // Every account it is remembered to hold hidden: none of its rows is
-      // read, so how far back they reach says nothing of the report.
-      every_hidden: (remembered.byItem[s.item_id] ?? []).length > 0 && remembered.byItem[s.item_id].every((a) => hidden.has(a.account_id)),
+      // Every bank account and card it is remembered to hold hidden (what its
+      // rows are of, as for coveredAccountsOf; an investment account or a loan
+      // beside them brings none): none of its rows is read, so how far back
+      // they reach says nothing of the report.
+      every_hidden: everyBankAccountHidden(remembered.byItem[s.item_id] ?? [], hidden),
     };
   });
 
