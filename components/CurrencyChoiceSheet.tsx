@@ -113,10 +113,13 @@ export function CurrencyChoiceBody({
   // A choice the lists don't have (a runtime without Intl's list): kept.
   const known = new Set([...mine, ...ecb, ...rest]);
   const priced = new Set(view?.own.map((o) => o.currency) ?? []);
-  const unpriceable = view !== null && !published.includes(chosen) && !priced.has(chosen);
+  // No rates fetched yet (a fresh copy of Nya): nothing is said to be
+  // unpublished, only that the rates aren't in yet.
+  const fetched = view !== null && view.ecb.date !== null;
+  const unpriceable = fetched && !published.includes(chosen) && !priced.has(chosen);
   // The person's currencies nothing can convert yet: left out of the total
   // until they set a rate for each.
-  const unrated = view !== null ? mine.filter((c) => c !== chosen && !published.includes(c) && !priced.has(c)) : [];
+  const unrated = fetched ? mine.filter((c) => c !== chosen && !published.includes(c) && !priced.has(c)) : [];
   const same = view !== null && view.home === chosen;
   const option = (c: string) => (
     <option key={c} value={c}>
@@ -149,6 +152,9 @@ export function CurrencyChoiceBody({
           own for {unrated.length === 1 ? 'it' : 'each'}, on the Currency card under Manage on the Accounts tab.
         </p>
       )}
+      {view !== null && !fetched && (
+        <p className="stale-note">Nya doesn’t have the ECB’s rates yet, so nothing in another currency can be converted until it has fetched them (it does each evening).</p>
+      )}
       {view?.problem && <p className="stale-note">Your currency settings couldn’t be read, so nothing can be saved over them. See the Currency card under Manage on the Accounts tab.</p>}
       <div className="button-pair">
         <button onClick={onSave} disabled={saving || same || !!view?.problem}>
@@ -160,7 +166,7 @@ export function CurrencyChoiceBody({
       </div>
       {same && <p className="panel-note">It is your home currency now.</p>}
       {error && <div className="error">{error}</div>}
-      <p className="panel-note">You can change it, or stop converting, at any time on the Currency card. Nothing converted is ever saved, so nothing has to be undone.</p>
+      <p className="panel-note">You can change it, or stop converting, at any time on the Currency card. Nya’s server never keeps a converted figure, so nothing has to be undone.</p>
     </div>
   );
 }

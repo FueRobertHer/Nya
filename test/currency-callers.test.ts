@@ -43,7 +43,7 @@ const ALLOWED: Record<string, string> = {
   'lib/report/build.ts#buildReport:currency': STEP_2,
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
   'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,
-  'components/Dashboard.tsx#Dashboard:offer': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
+  'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
 };
 
 /** A top-level function's start: `function name(` or `const name = (…) =>`. */

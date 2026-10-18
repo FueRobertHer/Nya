@@ -5,9 +5,11 @@
 // into what, at whose rates and from what day, each currency's part and what
 // it came to, what was left out and why (with the way to set a rate), and
 // rates older than they should be; under the chart, the days it couldn't
-// convert. And, for someone whose accounts and transactions are in more than
-// one currency who hasn't chosen one, the offer to show their totals in one
-// (decision 1: only the person's tap ever chooses).
+// convert. And, for someone whose accounts' balances are in more than one
+// currency who hasn't chosen one, the offer to show their totals in one
+// (decision 1: only the person's tap ever chooses). Transactions don't bring
+// the offer in this step: nothing they total converts yet, so choosing would
+// change nothing on screen.
 
 import { Masked } from './HideAmounts';
 import { chartGapLines, convertedHeading, convertedText, leftOutLines, staleText, unknownText } from './currency-text';
@@ -77,20 +79,17 @@ export function dismissOffer(): void {
   }
 }
 
-/** What the offer suggests: the currency the budgets are read in today (so
- *  what was typed keeps its meaning), the accounts' main one beside it when
- *  the two differ, and whether the accounts themselves mix currencies (net
- *  worth adds them unconverted) or only the transactions do. */
-export type Offer = { budgets: string | null; accounts: string | null; mixedAccounts: boolean };
+/** What the offer suggests: the currency the budgets are read in today (the
+ *  last 365 days of rows, lib/budget-month.ts, so what was typed keeps its
+ *  meaning), and the accounts' main one beside it when the two differ. */
+export type Offer = { budgets: string | null; accounts: string | null };
 
-/** The offer, or null when everything is in one currency: nothing is
- *  offered. */
-export function offerFor(input: { accounts: readonly (string | null)[]; transactions: readonly (string | null)[]; budgets: string | null; main: string | null }): Offer | null {
-  const seen = new Set([...input.accounts, ...input.transactions].filter((c): c is string => !!c));
-  if (seen.size < 2) return null;
-  const budgets = input.budgets;
-  const accounts = input.main && input.main !== budgets ? input.main : null;
-  return { budgets, accounts, mixedAccounts: new Set(input.accounts.filter(Boolean)).size > 1 };
+/** The offer, or null when the accounts' balances are all in one currency:
+ *  nothing is offered. `accounts`: the currency of each account with a
+ *  balance, hidden ones too. */
+export function offerFor(input: { accounts: readonly (string | null)[]; budgets: string | null; main: string | null }): Offer | null {
+  if (new Set(input.accounts.filter((c): c is string => !!c)).size < 2) return null;
+  return { budgets: input.budgets, accounts: input.main && input.main !== input.budgets ? input.main : null };
 }
 
 export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: Offer; onChoose: (code: string | null) => void; onDismiss: () => void }) {
@@ -100,10 +99,8 @@ export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: Offer; on
         <div className="inst-name">Show your totals in one currency</div>
       </div>
       <p className="panel-note">
-        {offer.mixedAccounts
-          ? 'Your accounts are in more than one currency, and your net worth adds them up unconverted.'
-          : 'Your transactions are in more than one currency.'}{' '}
-        Choose one, and Nya shows your net worth in it, converted at the European Central Bank’s daily rates. Nothing changes until you do.
+        Your accounts are in more than one currency, and your net worth adds them up unconverted. Choose one, and Nya shows your net worth in it, converted at
+        the European Central Bank’s daily rates. Nothing changes until you do.
       </p>
       <div className="currency-offer-choices">
         {offer.budgets && (

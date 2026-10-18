@@ -32,13 +32,13 @@ export type FxRead = {
 
 /** The currencies whose rates converting these amounts into `home` needs:
  *  each one other than home, home itself, and the quotes of the own rates
- *  that price them. The euro needs none. */
-function currenciesFor(given: Iterable<string>, fx: Pick<FxTable, 'home' | 'own'>): Set<string> {
+ *  that price them. The euro has no series of its own (its rate is 1), but a
+ *  rate of the person's for it goes through its quote's, which is read. */
+export function currenciesFor(given: Iterable<string>, fx: Pick<FxTable, 'home' | 'own'>): Set<string> {
   const out = new Set<string>();
   const home = fx.home!;
   const add = (c: string) => {
-    if (c === 'EUR') return;
-    out.add(c);
+    if (c !== 'EUR') out.add(c);
     for (const o of fx.own) if (o.currency === c && o.quote !== 'EUR') out.add(o.quote);
   };
   let foreign = false;

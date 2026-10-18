@@ -53,7 +53,11 @@ const onlyKeys = (o: object, keys: readonly string[]) => Object.keys(o).every((k
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
 const isTime = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.parse(v));
 
-/** A home currency: an ISO code this runtime knows. */
+/** A home currency as it is chosen: an ISO code this runtime knows. For
+ *  input only (the routes): the stored shape is checked by form alone
+ *  (isCurrencyCode), since runtimes' lists differ (Bun's has 307 codes,
+ *  Node 22's 162), and a value saved under one must never become
+ *  unrecognised under the next. */
 export const isHomeCurrency = (v: unknown): v is string => isCurrencyCode(v) && knownCurrency(v);
 
 export function isOwnRate(v: unknown): v is OwnRate {
@@ -64,7 +68,7 @@ export function isOwnRate(v: unknown): v is OwnRate {
     typeof v.rate === 'string' &&
     rateTextError(v.rate) === null &&
     typeof v.quote === 'string' &&
-    (v.quote === 'EUR' || isHomeCurrency(v.quote)) &&
+    isCurrencyCode(v.quote) &&
     v.quote !== v.currency &&
     (v.from === null || isCalendarDay(v.from)) &&
     isTime(v.set_at)
@@ -73,14 +77,14 @@ export function isOwnRate(v: unknown): v is OwnRate {
 
 function isChange(v: unknown): v is HomeChange {
   if (!isRecord(v) || !onlyKeys(v, ['on', 'from', 'to'])) return false;
-  return isCalendarDay(v.on) && (v.from === null || isHomeCurrency(v.from)) && (v.to === null || isHomeCurrency(v.to));
+  return isCalendarDay(v.on) && (v.from === null || isCurrencyCode(v.from)) && (v.to === null || isCurrencyCode(v.to));
 }
 
 /** The current shape, closed: a field this release doesn't know makes the
  *  whole value unrecognised, never one read without it. */
 export function isCurrencySettings(v: unknown): v is CurrencySettings {
   if (!isRecord(v) || !onlyKeys(v, ['v', 'home', 'changes', 'own'])) return false;
-  if (v.v !== 1 || !(v.home === null || isHomeCurrency(v.home))) return false;
+  if (v.v !== 1 || !(v.home === null || isCurrencyCode(v.home))) return false;
   if (!Array.isArray(v.changes) || v.changes.length > MAX_CHANGES || !v.changes.every(isChange)) return false;
   if (!Array.isArray(v.own) || v.own.length > MAX_OWN_RATES || !v.own.every(isOwnRate)) return false;
   return new Set(v.own.map((o) => (o as OwnRate).currency)).size === v.own.length;
@@ -110,14 +114,26 @@ export class SettingsRefused extends Error {
   }
 }
 
-/** The settings with `home` chosen (or cleared with null) on `day`: a change
- *  recorded only when it differs. What it was given, the same value, when
- *  nothing differs, so the store's update() writes nothing. */
+/**
+ * The settings with `home` chosen (or cleared with null) on `day`: a change
+ * recorded only when it differs. What it was given, the same value, when
+ * nothing differs, so the store's update() writes nothing. One change a day:
+ * a day's last choice is what counts for its month, so a second on the same
+ * day takes the first's place (and one back to where the day began leaves
+ * none). Past MAX_CHANGES the oldest is forgotten, never a choice refused.
+ */
 export function withHome(s: CurrencySettings | null, home: string | null, day: string): CurrencySettings | null {
   const current = s ?? NO_SETTINGS;
   if (current.home === home) return s;
-  if (current.changes.length >= MAX_CHANGES) throw new SettingsRefused(`The home currency has been changed ${MAX_CHANGES} times, the most Nya keeps.`);
-  return { ...current, home, changes: [...current.changes, { on: day, from: current.home, to: home }] };
+  const changes = [...current.changes];
+  const last = changes[changes.length - 1];
+  if (last && last.on === day) {
+    changes.pop();
+    if (last.from !== home) changes.push({ on: day, from: last.from, to: home });
+  } else {
+    changes.push({ on: day, from: current.home, to: home });
+  }
+  return { ...current, home, changes: changes.slice(-MAX_CHANGES) };
 }
 
 /** The settings with this own rate, replacing any for its currency. */

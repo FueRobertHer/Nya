@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, setSystemTime } from 'bun:test';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys, testKey } from './fake-redis';
 
@@ -10,7 +10,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
 const settingsModule = await import('@/lib/fx/settings');
-const { currencySettingsStore, isCurrencySettings, rateTextError, withHome, withOwnRate, withoutOwnRate, readSettingsForDisplay, NO_SETTINGS, MAX_OWN_RATES } = settingsModule;
+const { currencySettingsStore, isCurrencySettings, isHomeCurrency, rateTextError, withHome, withOwnRate, withoutOwnRate, readSettingsForDisplay, NO_SETTINGS, MAX_OWN_RATES, MAX_CHANGES } = settingsModule;
 const { declaredStore } = await import('@/lib/stores');
 const { classify } = await import('@/lib/reencrypt');
 const { readFx } = await import('@/lib/fx/read');
@@ -62,7 +62,10 @@ describe('the store', () => {
     expect(isCurrencySettings({ ...NO_SETTINGS, home: 'EUR' })).toBe(true);
     expect(isCurrencySettings({ ...NO_SETTINGS, extra: 1 })).toBe(false);
     expect(isCurrencySettings({ ...NO_SETTINGS, home: 'eur' })).toBe(false);
-    expect(isCurrencySettings({ ...NO_SETTINGS, home: 'BTC' })).toBe(false);
+    // A home is chosen from the ISO codes this runtime knows (the routes);
+    // what is stored is checked by form alone (below).
+    expect(isHomeCurrency('BTC')).toBe(false);
+    expect(isHomeCurrency('EUR')).toBe(true);
     expect(isCurrencySettings({ ...NO_SETTINGS, v: 2 })).toBe(false);
     const rate = { currency: 'BTC', rate: '61000', quote: 'USD', from: null, set_at: '2026-09-01T00:00:00.000Z' };
     expect(isCurrencySettings({ ...NO_SETTINGS, own: [rate] })).toBe(true);
@@ -96,6 +99,31 @@ describe('the store', () => {
     ]);
   });
 
+  test('one change a day, its last choice; past the most kept the oldest goes, and a choice is never refused', () => {
+    const first = withHome(null, 'EUR', '2026-10-17')!;
+    // Changed twice in a day: one change, the day's last.
+    const twice = withHome(withHome(first, 'USD', '2026-10-18'), 'GBP', '2026-10-18')!;
+    expect(twice.changes).toEqual([
+      { on: '2026-10-17', from: null, to: 'EUR' },
+      { on: '2026-10-18', from: 'EUR', to: 'GBP' },
+    ]);
+    // And back to where the day began: none.
+    expect(withHome(withHome(first, 'USD', '2026-10-18'), 'EUR', '2026-10-18')!.changes).toEqual(first.changes);
+    let s: ReturnType<typeof withHome> = null;
+    for (let i = 0; i < MAX_CHANGES + 5; i++) s = withHome(s, i % 2 ? 'USD' : 'EUR', `2026-${String(1 + Math.floor(i / 28)).padStart(2, '0')}-${String(1 + (i % 28)).padStart(2, '0')}`);
+    expect(s!.changes.length).toBe(MAX_CHANGES);
+    // Stopping is always possible.
+    expect(withHome(s, null, '2026-12-31')!).toMatchObject({ home: null });
+    expect(isCurrencySettings(withHome(s, null, '2026-12-31'))).toBe(true);
+  });
+
+  test('the stored shape is checked by form, not by this runtime’s list of currencies', () => {
+    // A code a runtime's Intl may not list (Node 22's list is shorter than Bun's).
+    const saved = { v: 1, home: 'ZWG', changes: [{ on: '2026-10-17', from: null, to: 'ZWG' }], own: [{ currency: 'BTC', rate: '61000', quote: 'ZWG', from: null, set_at: '2026-10-17T10:00:00.000Z' }] };
+    expect(isCurrencySettings(saved)).toBe(true);
+    expect(isCurrencySettings({ ...saved, home: 'zwg' })).toBe(false);
+  });
+
   test('own rates: one per currency, at most 50, removed by currency', () => {
     const r = (currency: string) => ({ currency, rate: '1', quote: 'EUR', from: null, set_at: '2026-09-01T00:00:00.000Z' });
     let s = withOwnRate(null, r('BTC'));
@@ -125,17 +153,26 @@ describe('the home currency route', () => {
     expect(body).toMatchObject({ home: null, own: [], problem: null, removable: false, ecb: { date: '2026-09-14', rates: LATEST.rates, stale: true } });
   });
 
-  test('the person chooses, changes and clears it, each recorded', async () => {
-    expect(await json(await putHome({ home: 'EUR' }))).toMatchObject({ home: 'EUR' });
-    expect(await json(await putHome({ home: 'USD' }))).toMatchObject({ home: 'USD' });
-    const cleared = await json(await putHome({ home: null }));
-    expect(cleared.home).toBeNull();
-    expect(cleared.changes.map((c: any) => [c.from, c.to])).toEqual([
-      [null, 'EUR'],
-      ['EUR', 'USD'],
-      ['USD', null],
-    ]);
-    expect((await currencySettingsStore.get(TEST_CTX))?.home).toBeNull();
+  test('the person chooses, changes and clears it, each recorded, one change a day', async () => {
+    try {
+      setSystemTime(new Date('2026-10-16T12:00:00Z'));
+      expect(await json(await putHome({ home: 'EUR' }))).toMatchObject({ home: 'EUR' });
+      setSystemTime(new Date('2026-10-17T12:00:00Z'));
+      expect(await json(await putHome({ home: 'GBP' }))).toMatchObject({ home: 'GBP' });
+      // The same day again: the day's last choice stands for it.
+      expect(await json(await putHome({ home: 'USD' }))).toMatchObject({ home: 'USD' });
+      setSystemTime(new Date('2026-10-18T12:00:00Z'));
+      const cleared = await json(await putHome({ home: null }));
+      expect(cleared.home).toBeNull();
+      expect(cleared.changes.map((c: any) => [c.on, c.from, c.to])).toEqual([
+        ['2026-10-16', null, 'EUR'],
+        ['2026-10-17', 'EUR', 'USD'],
+        ['2026-10-18', 'USD', null],
+      ]);
+      expect((await currencySettingsStore.get(TEST_CTX))?.home).toBeNull();
+    } finally {
+      setSystemTime();
+    }
   });
 
   test.each([
@@ -208,6 +245,11 @@ describe('the own rates route', () => {
     ['a quote the ECB doesn’t publish', { currency: 'BTC', rate: '1', quote: 'ARS', from: null }, /doesn’t publish/],
     ['the currency as its own quote', { currency: 'USD', rate: '1', quote: 'USD', from: null }, /another currency/],
     ['a day that isn’t one', { currency: 'BTC', rate: '1', quote: 'EUR', from: '2026-02-30' }, /date/],
+    // Never every day, past ones included, from a field left out.
+    ['no from', { currency: 'BTC', rate: '1', quote: 'EUR' }, /date/],
+    // A name off the object's prototype is no currency the ECB publishes.
+    ['a quote that is a prototype name', { currency: 'BTC', rate: '1', quote: 'constructor', from: null }, /which currency/],
+    ['a quote in capitals no currency has', { currency: 'BTC', rate: '1', quote: 'XYZ', from: null }, /doesn’t publish/],
     ['a day after tomorrow', { currency: 'BTC', rate: '1', quote: 'EUR', from: '2999-01-01' }, /tomorrow/],
   ])('refuses %s', async (_, body, message) => {
     await seedLatest();

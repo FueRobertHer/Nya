@@ -48,6 +48,18 @@ describe('a total of balances, converted by currency', () => {
     expect(b.left_out).toEqual([{ currency: 'BTC', accounts: 1, why: 'not-published', unrated: 'BTC' }]);
   });
 
+  test('a rate of the person’s own for the euro itself goes through its quote, on past days too', async () => {
+    const { currenciesFor } = await import('@/lib/fx/read');
+    const own = [{ currency: 'EUR', rate: '1.10', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }];
+    // The quote's series is read for the euro's own rate.
+    expect([...currenciesFor(['EUR'], { home: 'GBP', own })].sort()).toEqual(['GBP', 'USD']);
+    // 1,000 EUR is 1,100 USD, at 0.85815 GBP per 1.1592 USD on 11 Sep.
+    const fx = ecbTable({ home: 'GBP', own });
+    const b = balancesIn([{ amount: 1000, currency: 'EUR' }], fx, 'GBP', '2026-09-11', 'EUR');
+    expect(b.left_out).toEqual([]);
+    expect(b.total).toBe(814.32);
+  });
+
   test('a home currency with no rate of its own: whose rate is missing is the home one, never the accounts’', () => {
     const fx = ecbTable({ home: 'ARS' });
     const b = balancesIn([{ amount: 100, currency: 'USD' }, { amount: 5000, currency: 'ARS' }], fx, 'ARS', DAY, 'USD');

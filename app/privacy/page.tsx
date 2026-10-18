@@ -231,7 +231,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   ],
   [
     'Your home currency and your own exchange rates',
-    'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted with them is kept: each figure is worked out again when it is shown. The European Central Bank’s rates are public, kept once for everyone in plain text, and never in a backup.',
+    'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted is kept by Nya’s server: each figure is worked out again when it is shown (your device keeps the last ones it showed, with the rest of what the app last showed). The European Central Bank’s rates are public, kept once for everyone in plain text, and left out of Nya’s nightly backups.',
   ],
   ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Reads of what is shared with you, and of what someone sees of yours', `Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`],

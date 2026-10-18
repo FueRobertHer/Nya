@@ -463,9 +463,11 @@ describe('the privacy page', () => {
     const page = privacy();
     expect(page).toContain('the European Central Bank’s euro reference rates, which Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you');
     expect(page).toContain('Your home currency and your own exchange rates Until you change them, or delete your account. Encrypted, and in your download.');
-    expect(page).toContain('Nothing converted with them is kept');
+    expect(page).toContain('Nothing converted is kept by Nya’s server');
+    expect(page).toContain('left out of Nya’s nightly backups');
+    expect(page).not.toMatch(/never in a backup/);
     const sec = security();
-    expect(sec).toContain('The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for every account, and never in a backup.');
+    expect(sec).toContain('The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for every account, and left out of Nya’s nightly backups.');
     expect(sec).toContain('Your home currency and your own exchange rates are encrypted.');
   });
 

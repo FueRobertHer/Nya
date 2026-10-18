@@ -261,7 +261,7 @@ export default function SecurityPage() {
         <p>Encrypting these as well is planned.</p>
         <p>
           The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for
-          every account, and never in a backup. Every currency the ECB publishes is kept, so which ones are there says nothing about anyone.
+          every account, and left out of Nya’s nightly backups. Every currency the ECB publishes is kept, so which ones are there says nothing about anyone.
           Your home currency and your own exchange rates are encrypted.
         </p>
       </InfoSection>

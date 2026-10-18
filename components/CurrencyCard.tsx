@@ -51,7 +51,7 @@ export function ownRateText(o: OwnRate): string {
 export function ecbBeside(o: Pick<OwnRate, 'currency' | 'quote'>, ecb: CurrencySettingsView['ecb']): string {
   const cross = ecbCross(ecb.rates, o.currency, o.quote);
   if (cross !== null) return `The ECB’s ${ecb.date ? `of ${rateDay(ecb.date)}` : 'newest'}: ${formatRate(cross, o.currency, o.quote)}`;
-  return o.currency === 'EUR' || o.currency in ecb.rates ? 'The ECB has no rate for it now' : `The ECB doesn’t publish ${o.currency}`;
+  return o.currency === 'EUR' || Object.hasOwn(ecb.rates, o.currency) ? 'The ECB has no rate for it now' : `The ECB doesn’t publish ${o.currency}`;
 }
 
 /** A rate of the person's own, as the form holds it. */
@@ -219,7 +219,7 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
             <p className="panel-note">
               The ECB’s rates are reference rates, published for information each working day around 16:00 CET; a weekend or a holiday takes the last working
               day’s. A bank’s own rate can differ: that is what your own rates are for. Changing a rate changes every figure it reaches, past days included, since
-              nothing converted is kept. Each total converts each currency once, so the parts of one can differ from it by a cent.
+              Nya’s server keeps nothing converted. Each total converts each currency once, so the parts of one can differ from it by a cent.
             </p>
           </>
         )

@@ -81,7 +81,7 @@ export function currencyName(code: string): string {
  *  (units per euro), for showing beside a rate of the person's own; null
  *  when the ECB publishes either not. */
 export function ecbCross(rates: Record<string, string>, from: string, to: string): number | null {
-  const per = (c: string) => (c === 'EUR' ? 1 : rates[c] !== undefined ? Number(rates[c]) : NaN);
+  const per = (c: string) => (c === 'EUR' ? 1 : Object.hasOwn(rates, c) ? Number(rates[c]) : NaN);
   const value = per(to) / per(from);
   return Number.isFinite(value) && value > 0 ? value : null;
 }

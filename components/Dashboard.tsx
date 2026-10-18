@@ -74,7 +74,7 @@ import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offer
 import { institutionNote, rateEffectText } from './currency-text';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
-import { currencyOf, totalsCurrency } from '@/lib/spending';
+import { totalsCurrency } from '@/lib/spending';
 import VendorDefaultsCard from './VendorDefaultsCard';
 import { useReview } from './review-state';
 import { countToReview } from '@/lib/review-layer';
@@ -1758,21 +1758,21 @@ export default function Dashboard({
     [institutions]
   );
   // The offer to show totals in one currency (decision 1): only for someone
-  // whose accounts (hidden ones too) and transactions are in more than one,
-  // suggesting the currency their budgets are read in today. Once the
+  // whose accounts' balances (hidden ones too) are in more than one,
+  // suggesting the currency their budgets are read in today, from the last
+  // 365 days of rows as the Budgets tab's read takes them. Once the
   // transactions are in, so what it suggests doesn't change under a finger.
-  const offer = useMemo(
-    () =>
-      txns === null
-        ? null
-        : offerFor({
-            accounts: institutions.flatMap((i) => i.accounts.map((a) => a.currency)),
-            transactions: txns.map((t) => currencyOf(t)),
-            budgets: totalsCurrency(txns),
-            main: accountCurrency,
-          }),
-    [institutions, txns, accountCurrency]
-  );
+  const offer = useMemo(() => {
+    if (txns === null) return null;
+    // The same window as lib/budget-month.ts windowStart (LOOKBACK_DAYS, 365 UTC days).
+    const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
+    const budgets = totalsCurrency(txns.filter((t) => t.date >= since));
+    return offerFor({
+      accounts: institutions.flatMap((i) => i.accounts.filter((a) => a.balance !== null).map((a) => a.currency)),
+      budgets,
+      main: accountCurrency,
+    });
+  }, [institutions, txns, accountCurrency]);
   // What Home shows: net worth in the home currency once one is chosen
   // (base), else the sum as it always was, labelled with the main currency.
   const shownWorth = base ? base.net_worth : netWorth;
