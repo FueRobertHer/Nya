@@ -1835,7 +1835,7 @@ export default function Dashboard({
             {/* Bringing back a download goes only into an empty account, so
                 it is offered here first (components/RestoreCard.tsx). */}
             <div id="bring-back">
-              <RestoreCard clerk={clerk} onChanged={restoreChanged} />
+              <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan />
             </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
             <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />

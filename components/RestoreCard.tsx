@@ -83,18 +83,24 @@ type Phase =
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
+type CardProps = { onChanged?: () => void; autoScan?: boolean };
+
 /** `clerk`: whether sign-in is Clerk's (lib/auth-mode.ts). Clerk's hook only
- *  works inside its provider, which exists only then. */
-export default function RestoreCard({ clerk, onChanged }: { clerk: boolean; onChanged?: () => void }) {
-  return clerk ? <WithClerk onChanged={onChanged} /> : <RestoreFlow ask={ask} needsPassword onChanged={onChanged} />;
+ *  works inside its provider, which exists only then. `autoScan`: look at
+ *  whether the account is empty as the card opens (an account with nothing
+ *  in it yet, where a restore is likely); otherwise only when asked, since
+ *  the look reads every key of the account and is counted. `onChanged`: run
+ *  once a restore, an undo or an emptying changed the account. */
+export default function RestoreCard({ clerk, ...props }: CardProps & { clerk: boolean }) {
+  return clerk ? <WithClerk {...props} /> : <RestoreFlow ask={ask} needsPassword {...props} />;
 }
 
-function WithClerk({ onChanged }: { onChanged?: () => void }) {
+function WithClerk(props: CardProps) {
   const verified = useReverification(ask);
-  return <RestoreFlow ask={verified} needsPassword={false} onChanged={onChanged} />;
+  return <RestoreFlow ask={verified} needsPassword={false} {...props} />;
 }
 
-function RestoreFlow({ ask: send, needsPassword, onChanged }: { ask: typeof ask; needsPassword: boolean; onChanged?: () => void }) {
+function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: CardProps & { ask: typeof ask; needsPassword: boolean }) {
   const [state, setState] = useState<RestoreState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
@@ -119,8 +125,8 @@ function RestoreFlow({ ask: send, needsPassword, onChanged }: { ask: typeof ask;
     }
   }, []);
   useEffect(() => {
-    void load(true);
-  }, [load]);
+    void load(autoScan);
+  }, [load, autoScan]);
 
   const busy = phase.kind !== 'idle' && phase.kind !== 'preview' && phase.kind !== 'passphrase';
   const record = state?.record ?? null;
@@ -228,7 +234,8 @@ function RestoreFlow({ ask: send, needsPassword, onChanged }: { ask: typeof ask;
       if (answer.status === 409) await load(true);
       return;
     }
-    onChanged?.();
+    // The dashboard is read again once it has finished (goOn), not before:
+    // the page this card is on may change as the account fills.
     await goOn(loaded.source, loaded.collected, answer.body.record as RecordView, plan);
   };
 
@@ -334,8 +341,13 @@ function RestoreFlow({ ask: send, needsPassword, onChanged }: { ask: typeof ask;
           {/* The file: chosen for a new restore, or to go on with one. */}
           {(state.enabled || unfinished) && (!record || record.status === 'writing') && (
             <>
+              {!record && !scan && phase.kind === 'idle' && (
+                <button className="secondary" onClick={() => void load(true)}>
+                  Check whether this account can take one
+                </button>
+              )}
               {!record && scan && !scan.empty && scan.message && <p className="stale-note">{scan.message}</p>}
-              {(!record ? scan?.empty !== false : true) && phase.kind === 'idle' && (
+              {(record || scan?.empty === true) && phase.kind === 'idle' && (
                 <>
                   <input
                     ref={fileInput}
