@@ -81,7 +81,8 @@ import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import { readBudgetMonths } from './budget-month';
 import { summarize, tidy, type SummaryCategory } from './totals';
 import { leftOutByCurrency, totalsCurrency, type LeftOut } from './spending';
-import { noTransactionsView, spendingUnknown } from './no-transactions';
+import { coveredOutOfDays, noTransactionsView, spendingUnknown, type NoTransactionsView } from './no-transactions';
+import { withImportedFiles } from './history-import/without-files';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
 import { allocate, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
@@ -312,7 +313,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
       ...(sum.exclusion_unknown > 0 ? { exclusions_unknown: true as const } : {}),
     });
   }
-  const incomplete = finished.incomplete.length > 0 || bank.sources.some((x) => x.coverage !== 'complete') || spendingUnknown(noTransactionsView(bank.payload));
+  const incomplete = finished.incomplete.length > 0 || bank.sources.some((x) => x.coverage !== 'complete') || (await spendingShort(theirs, noTransactionsView(bank.payload), months, today));
   return {
     detail: s.detail,
     by: s.by,
@@ -322,6 +323,18 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
     ...(bank.own_read.exclusions ? {} : { exclusions_unread: true as const }),
     ...(filingUnread(bank.own_read.categories, finished.defaults_unread, finished.review.unknown) ? { filing_unread: true as const } : {}),
   };
+}
+
+/** Whether a bank account or card's spending doesn't come in for the months
+ *  shown (lib/no-transactions.ts spendingUnknown): not one whose connection's
+ *  files cover them, from the first through today, for every one of its bank
+ *  accounts and cards, as the owner's Activity tab counts them
+ *  (lib/history-import/without-files.ts, lenient: what can't be read covers
+ *  nothing). */
+async function spendingShort(theirs: Ctx, view: NoTransactionsView, months: readonly SpendingMonth[], today: string): Promise<boolean> {
+  if (!spendingUnknown(view)) return false;
+  const oldest = months.length > 0 ? months[months.length - 1].month : today.slice(0, 7);
+  return spendingUnknown(coveredOutOfDays({ ...view, without: await withImportedFiles(theirs, view.without) }, `${oldest}-01`, today));
 }
 
 // ---- Budgets ----
@@ -597,10 +610,15 @@ export async function shareableGoals(ctx: Ctx): Promise<ShareableGoal[]> {
  *  shared as percentages: a kept account's own type, a linked one's as its
  *  last good load remembered it, else as the account directory has it.
  *  LENIENT, for those warnings only, which nothing writes, deletes or records
- *  on: a remembered record that can't be read leaves its accounts to the
- *  directory. */
+ *  on: a remembered record that can't be read, or records that can't be read
+ *  at all just now (the report throws for a key that can't be had), leave
+ *  their accounts to the directory. */
 export async function investmentAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
-  const [types, kept, remembered] = await Promise.all([directoryTypes(ctx, [...ids]), getKeptAccounts(ctx), rememberedAccountsReport(ctx)]);
+  const [types, kept, remembered] = await Promise.all([
+    directoryTypes(ctx, [...ids]),
+    getKeptAccounts(ctx),
+    rememberedAccountsReport(ctx).catch(() => ({ byItem: {} as Awaited<ReturnType<typeof rememberedAccountsReport>>['byItem'] })),
+  ]);
   const typeOf = new Map<string, string>();
   for (const accounts of Object.values(remembered.byItem)) for (const a of accounts) typeOf.set(a.account_id, a.type);
   for (const k of kept) typeOf.set(k.account_id, k.type);

@@ -40,14 +40,14 @@ const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
   ['complete', `False when accounts are missing (missing_accounts), so ${consequence}.`],
   [
     'missing_accounts',
-    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, and each manual account, or account SimpleFIN or Lunch Flow keeps up to date, that couldn’t be read. Empty when nothing is missing.',
+    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, each manual account, or account SimpleFIN or Lunch Flow keeps up to date, that couldn’t be read, and each linked account listed without a balance because its newest couldn’t be read. Empty when nothing is missing.',
   ],
   ['missing_accounts[].institution', 'The connection’s institution; null for an account, whose name is in what couldn’t be read.'],
-  ['missing_accounts[].account_id', 'A manual account’s id, or one SimpleFIN or Lunch Flow feeds; null for a connection, whose accounts can’t be told apart until they are read.'],
+  ['missing_accounts[].account_id', 'A manual account’s id, one SimpleFIN or Lunch Flow feeds, or a linked account’s whose newest balance couldn’t be read; null for a connection, whose accounts can’t be told apart until they are read.'],
   ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual", "simplefin" or "lunchflow". Version 1 may add values.'],
   [
     'missing_accounts[].reason',
-    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (a manual account saved under an encryption key this Nya doesn’t have: a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
+    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (saved under an encryption key this Nya doesn’t have: a manual account, a connection’s record of its accounts, or the day’s balances that may hold a linked account’s newest; a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
   ],
 ];
 const LEFT_OUT: readonly FieldDoc[] = [
@@ -184,7 +184,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].mask', 'The last digits of the account number, or null.'],
       [
         'accounts[].balance',
-        'Its newest measured balance: never an estimate. What a credit card or a loan owes is positive. Null if none was ever measured, and, for a card or a loan SimpleFIN or Lunch Flow reports as money held, until you say in Nya how to read it (notes say so).',
+        'Its newest measured balance: never an estimate. What a credit card or a loan owes is positive. Null if none was ever measured, when the newest can’t be read (it is in missing_accounts, as "unavailable": never an older one in its place), and, for a card or a loan SimpleFIN or Lunch Flow reports as money held, until you say in Nya how to read it (notes say so).',
       ],
       ['accounts[].currency', 'The balance’s currency, or null when not known (shown in your main currency).'],
       ['accounts[].credit_limit', 'A credit card’s limit, or null.'],
@@ -972,7 +972,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['exclusion_unknown', 'Those whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ...LEFT_OUT,
       ...SOURCES,
-      TXN_NOTES,
+      [
+        'notes',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+      ],
     ],
   },
 
@@ -1067,7 +1070,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ...SOURCES,
       [
         'notes',
-        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from your bank’s files into a linked account rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
       ],
     ],
   },

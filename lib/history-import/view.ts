@@ -36,7 +36,7 @@ export function importedRowsNote(rows: readonly NotedRow[], period = 'this month
   }
   const n = imported.size;
   if (n === 0) return null;
-  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from files, not sent by the bank.`;
 }
 
 /**

@@ -66,7 +66,7 @@ import { noticesStore } from './connection-records';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { manualTxnStore } from './manual-txns';
 import { endDays } from './lifecycle';
-import { rememberedAccountsReport } from './last-known';
+import { couldNotRead, rememberedAccountsReport } from './last-known';
 import { readLinks } from './link-core';
 import { coveredAccountsOf, importedCoverage } from './history-import/read';
 import { loadBudgets, budgetsForReading } from './budget-store';
@@ -195,7 +195,7 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     return shown.map((id) => endDay.get(id)!).sort()[shown.length - 1];
   };
   const itemEndedBy = (item_id: string): string | null => {
-    if (!remembered || remembered.unreadable.includes(item_id)) return null;
+    if (!remembered || couldNotRead(remembered).includes(item_id)) return null;
     const endedThere = [...bank.lifecycle.accounts].flatMap(([id, { entry }]) => (entry.item_id === item_id ? [id] : []));
     return endedBy([...(remembered.byItem[item_id] ?? []).map((a) => a.account_id), ...endedThere]);
   };
@@ -204,7 +204,7 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
   // (lib/rollover.ts Filed); nothing while none was imported, or while its
   // accounts can't be read.
   const filesOf = (item_id: string): { files?: ReturnType<typeof coveredAccountsOf> } => {
-    if (covered.size === 0 || !remembered || remembered.unreadable.includes(item_id)) return {};
+    if (covered.size === 0 || !remembered || couldNotRead(remembered).includes(item_id)) return {};
     return { files: coveredAccountsOf(item_id, remembered.byItem[item_id] ?? [], bank.lifecycle, covered, leftOut) };
   };
   // Not yet synced: its transactions are all missing, unless its files hold

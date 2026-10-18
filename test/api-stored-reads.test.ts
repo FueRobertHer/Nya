@@ -23,7 +23,7 @@ const { encrypt } = await import('@/lib/crypto');
 const { encodeJsonBlob, decodeJsonBlob } = await import('@/lib/blob');
 const { latestMeasuredBalances } = await import('@/lib/history');
 const { storedItemTransactions, syncItemTransactions } = await import('@/lib/transactions');
-const { rememberedAccountsReport } = await import('@/lib/last-known');
+const { rememberedAccountsReport, couldNotRead } = await import('@/lib/last-known');
 const { sampleSeries, comparePageKeys } = await import('@/lib/api-read');
 
 const ctx = TEST_CTX;
@@ -31,6 +31,15 @@ const DAY = 86_400_000;
 const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
 const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
 const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
+/** A value under k0 as it looks once PLAID_ENCRYPTION_KEY is replaced: whole
+ *  ciphertext that fails to open under this deployment's k0, which can't be
+ *  told from damage (k0 commits to no key), so it is never called damage. */
+async function underAnotherK0(plain: string): Promise<string> {
+  const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+  return Buffer.concat([iv, sealed]).toString('base64');
+}
 
 beforeEach(() => {
   fake.reset();
@@ -46,7 +55,8 @@ describe('each account’s newest measured balance', () => {
     await fake.hset(ctxKey('history:accounts:partial'), { [daysAgo(2)]: await map({ a: 2.5 }), [daysAgo(1)]: await map({ b: 30 }) });
     await fake.hset(ctxKey('history:accounts:est'), { [daysAgo(0)]: await map({ a: 999, b: 999, c: 999 }) });
     const got = await latestMeasuredBalances(ctx, new Map([['a', ['a']], ['b', ['b']], ['c', ['c']], ['never', ['never']]]));
-    expect(Object.fromEntries(got)).toEqual({
+    expect(got.unavailable).toEqual(new Set());
+    expect(Object.fromEntries(got.balances)).toEqual({
       a: { date: daysAgo(2), value: 2.5, layer: 'partial' },
       b: { date: daysAgo(1), value: 30, layer: 'partial' },
       c: { date: daysAgo(3), value: 100, layer: 'recorded' },
@@ -58,9 +68,9 @@ describe('each account’s newest measured balance', () => {
       [daysAgo(5)]: await map({ old_a: 7 }),
       [daysAgo(4)]: await map({ old_a: 8, new_a: 9 }),
     });
-    expect((await latestMeasuredBalances(ctx, new Map([['new_a', ['new_a', 'old_a']]]))).get('new_a')).toEqual({ date: daysAgo(4), value: 9, layer: 'recorded' });
+    expect((await latestMeasuredBalances(ctx, new Map([['new_a', ['new_a', 'old_a']]]))).balances.get('new_a')).toEqual({ date: daysAgo(4), value: 9, layer: 'recorded' });
     // Before the new id was ever recorded, the earlier one answers.
-    expect((await latestMeasuredBalances(ctx, new Map([['newer', ['newer', 'old_a']]]))).get('newer')).toEqual({ date: daysAgo(4), value: 8, layer: 'recorded' });
+    expect((await latestMeasuredBalances(ctx, new Map([['newer', ['newer', 'old_a']]]))).balances.get('newer')).toEqual({ date: daysAgo(4), value: 8, layer: 'recorded' });
   });
 
   test('a map that can’t be decrypted is passed over, and a future date is never taken', async () => {
@@ -69,7 +79,26 @@ describe('each account’s newest measured balance', () => {
       [daysAgo(3)]: DAMAGED,
       [daysAgo(-2)]: await map({ a: 99 }), // clock skew minted a date ahead
     });
-    expect((await latestMeasuredBalances(ctx, new Map([['a', ['a']]]))).get('a')).toEqual({ date: daysAgo(4), value: 4, layer: 'recorded' });
+    expect((await latestMeasuredBalances(ctx, new Map([['a', ['a']]]))).balances.get('a')).toEqual({ date: daysAgo(4), value: 4, layer: 'recorded' });
+  });
+
+  test('a map sealed under a key this deployment can’t use is no damage: an account it may hold the newest balance of is unavailable, never given an older one', async () => {
+    await fake.hset(ctxKey('history:accounts'), {
+      [daysAgo(5)]: await map({ a: 5, b: 5, c: 5 }),
+      [daysAgo(4)]: await underAnotherK0(JSON.stringify({ a: 4, b: 4 })),
+      [daysAgo(3)]: await map({ b: 3 }),
+    });
+    const got = await latestMeasuredBalances(ctx, new Map([['a', ['a']], ['b', ['b']], ['c', ['c']]]));
+    // b was measured since; a and c may be in the sealed map, and aren't
+    // answered from day 5.
+    expect(Object.fromEntries(got.balances)).toEqual({ b: { date: daysAgo(3), value: 3, layer: 'recorded' } });
+    expect(got.unavailable).toEqual(new Set(['a', 'c']));
+    // A sealed partial map comes before the day's recorded one: what it holds
+    // can't be told, so the recorded map's balance isn't taken either.
+    fake.reset();
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(2)]: await map({ a: 2 }) });
+    await fake.hset(ctxKey('history:accounts:partial'), { [daysAgo(2)]: await underAnotherK0(JSON.stringify({ a: 2.5 })) });
+    expect(await latestMeasuredBalances(ctx, new Map([['a', ['a']]]))).toEqual({ balances: new Map(), unavailable: new Set(['a']) });
   });
 
   test('reads only the maps it needs, newest first', async () => {
@@ -83,7 +112,7 @@ describe('each account’s newest measured balance', () => {
       return hget(...(args as [string, string]));
     };
     try {
-      expect((await latestMeasuredBalances(ctx, new Map([['a', ['a']], ['b', ['b']]]))).get('a')).toEqual({ date: daysAgo(1), value: 1, layer: 'recorded' });
+      expect((await latestMeasuredBalances(ctx, new Map([['a', ['a']], ['b', ['b']]]))).balances.get('a')).toEqual({ date: daysAgo(1), value: 1, layer: 'recorded' });
       expect(reads).toBe(1);
     } finally {
       (fake as any).hget = hget;
@@ -245,11 +274,48 @@ describe('remembered accounts, for a display that names what it can’t show', (
     const report = await rememberedAccountsReport(ctx);
     expect(Object.keys(report.byItem)).toEqual(['item_a']);
     expect(report.unreadable).toEqual(['item_b']);
+    expect(report.unavailable).toEqual([]);
+  });
+
+  test('one sealed under a key this deployment can’t use is named apart, as unavailable, never as damaged', async () => {
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_a: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'a1', name: 'Checking', type: 'depository' }])),
+      item_b: DAMAGED,
+      item_c: await underAnotherK0(JSON.stringify([{ account_id: 'c1', name: 'Card', type: 'credit' }])),
+    });
+    const report = await rememberedAccountsReport(ctx);
+    expect([Object.keys(report.byItem), report.unreadable, report.unavailable]).toEqual([['item_a'], ['item_b'], ['item_c']]);
+    expect(couldNotRead(report)).toEqual(['item_b', 'item_c']);
+  });
+
+  test('a record that isn’t text, or text that isn’t JSON, is damaged; a master key that can’t open its data key says nothing of it, and throws', async () => {
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_a: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'a1', name: 'Checking', type: 'depository' }])),
+      // Read back as a number, as Upstash's client parses what is JSON.
+      item_n: '12345',
+      item_t: await encrypt(TEST_CTX, 'not json'),
+    });
+    expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: { item_a: [expect.objectContaining({ account_id: 'a1' })] }, unreadable: ['item_n', 'item_t'], unavailable: [] });
+    // Under a data key, with no master key here to open it: the deployment's
+    // problem, as for manual accounts (lib/manual.ts), so no connection is
+    // called damaged for it.
+    const { forgetActiveKey, MasterKeyError } = await import('@/lib/crypto');
+    const master = process.env.MASTER_KEY;
+    delete process.env.MASTER_KEY;
+    forgetActiveKey();
+    try {
+      await fake.hset(ctxKey('accounts:meta'), { item_v2: `v2.k9-0badc0de.-.${'A'.repeat(38)}` });
+      expect(await rememberedAccountsReport(ctx).catch((e) => e)).toBeInstanceOf(MasterKeyError);
+    } finally {
+      if (master === undefined) delete process.env.MASTER_KEY;
+      else process.env.MASTER_KEY = master;
+      forgetActiveKey();
+    }
   });
 
   test('changes nothing (a field in the old shape stays), and storage failing throws', async () => {
     await fake.hset(ctxKey('accounts:meta'), { a1: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'a1', name: 'old shape', type: 'depository' })) });
-    expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: {}, unreadable: [] });
+    expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: {}, unreadable: [], unavailable: [] });
     expect(fake.hashes.get(ctxKey('accounts:meta'))?.has('a1')).toBe(true);
     fake.failNext('hgetall');
     await expect(rememberedAccountsReport(ctx)).rejects.toThrow('armed failure');

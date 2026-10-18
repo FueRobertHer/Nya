@@ -80,6 +80,7 @@ import { createWholeListStore, initialListState, type ListState } from '@/lib/wh
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import AccruedInterestNote from './AccruedInterestNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -527,6 +528,9 @@ export default function Dashboard({
   // Your rules (components/rules-state.ts), and the rule drawer.
   const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // What only the list says, beside them (the answer's `aside_notes`: tags
+  // or the review queue's settings that couldn't be read), never the chart.
+  const [txnAside, setTxnAside] = useState<string[]>([]);
   // Of those, the ones that say transactions couldn't all be read, which the
   // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
   // that says how a rule, a category, a split or a group applies.
@@ -592,6 +596,9 @@ export default function Dashboard({
         showRefusal: true,
         // What a save dates (an archive) is dated on the person's own day.
         extra: () => ({ today: localDate() }),
+        // Plans that can't be read stop the load: the card offers to remove
+        // the damaged ones (components/GoalPlansRepair.tsx).
+        repair: 'goal-plans',
       }),
     []
   );
@@ -772,6 +779,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnAside([]);
         setTxnUnread(['Could not load transactions.']);
         setTxnsFailed(true);
         return;
@@ -783,6 +791,7 @@ export default function Dashboard({
       acceptTags(data.tags);
       acceptReview(data.review);
       setTxnNotes(data.notes ?? []);
+      setTxnAside(Array.isArray(data.aside_notes) ? data.aside_notes : []);
       setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -790,6 +799,7 @@ export default function Dashboard({
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnAside([]);
       setTxnUnread(['Could not load transactions.']);
       setTxnsFailed(true);
     } finally {
@@ -931,6 +941,7 @@ export default function Dashboard({
     txns,
     setTxns,
     setTxnNotes,
+    setTxnAside,
     setTxnUnread,
     setTxnIncomplete,
     setTxnWithout,
@@ -1842,6 +1853,9 @@ export default function Dashboard({
                       {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
                     </div>
                   )}
+                  {/* What the total leaves out in student loans' accrued
+                      interest, or couldn't read of it (lib/accrued-interest.ts). */}
+                  <AccruedInterestNote institutions={institutions} currency={accountCurrency} />
                   {mixedAccountCurrency && (
                     <div className="as-of">
                       Accounts use multiple currencies; totals aren&apos;t converted.
@@ -2750,6 +2764,7 @@ export default function Dashboard({
               <MonthBreakdown
                 txns={txns}
                 notes={txnNotes}
+                asideNotes={txnAside}
                 loading={txnsLoading}
                 taxonomy={categories.taxonomy}
                 onRecategorize={txnEdits.recategorize}
@@ -2804,6 +2819,8 @@ export default function Dashboard({
                 goalsStatus={goalsState.status}
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
+                goalsDamage={goalsState.damage}
+                onGoalsRepaired={() => goalsStore.load()}
                 onSaveGoals={goalsStore.save}
                 // Hidden accounts stay in this list, and those that ended join
                 // it with their end (#50): GoalsCard needs them to tell "you hid
