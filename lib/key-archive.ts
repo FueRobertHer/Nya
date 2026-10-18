@@ -762,8 +762,14 @@ export async function rewriteGenerations(
   // is read for it, never trusted on its name alone.
   if (failed) {
     const withOlder = new Set(stale.map((p) => parseKeyArchiveName(p)!.taken));
-    for (const g of passed) {
-      if (withOlder.has(g.taken) && 'archive' in (await readGeneration(store, g, signal))) superseded.add(g.taken);
+    try {
+      for (const g of passed) {
+        if (withOlder.has(g.taken) && 'archive' in (await readGeneration(store, g, signal))) superseded.add(g.taken);
+      }
+    } catch (err) {
+      // As for the deletion below: the run's own failure is the one to say,
+      // and what wasn't read keeps its older files, for the next run.
+      console.error('Key archive: a generation passed over by its name could not be read for its older files; they stay for the next run.', err instanceof Error ? err.message : typeof err);
     }
   }
   const leftovers = failed ? stale.filter((p) => superseded.has(parseKeyArchiveName(p)!.taken)) : stale;
