@@ -1,7 +1,8 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { SharingPanelView, SharedWithMeView, PreviewView, sharedProblem, type Choice } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
+import { LOCAL_CACHE_KEY } from '@/components/device-cache';
 import { SharedViewsList, outlookWords } from '@/components/SharedViews';
 import { seenText, kindsText, viewsToSave, sameViews } from '@/components/ShareKinds';
 import { shownText } from '@/components/SharingDates';
@@ -510,10 +511,77 @@ describe('a read of what is shared turned away or failing', () => {
     expect(page).toContain('This is what was last shown: it couldn’t be refreshed. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.');
     expect(page).toContain('Shared by Sam');
     expect(page).toContain('Rainy day');
-    // With nothing shown yet, it says so alone.
-    expect(text(renderToStaticMarkup(<SharedWithMeView data={null} problem={problem} />))).toBe(' What is shared with you couldn’t be shown just now. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes. ');
     // And with nothing wrong, nothing is said.
     expect(renderToStaticMarkup(<SharedWithMeView data={null} />)).toBe('');
+  });
+
+  /** This device's storage, as a test holds it. */
+  const device = () => {
+    const kept = new Map<string, string>();
+    return { kept, getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) };
+  };
+  const answer = (status: number, body: unknown, headers: Record<string, string> = {}) => async () => new Response(JSON.stringify(body), { status, headers });
+  const offline = async (): Promise<Response> => {
+    throw new TypeError('Failed to fetch');
+  };
+  const cards = (read: Awaited<ReturnType<typeof readSharedWithMe>>, shown: any = null) =>
+    renderToStaticMarkup(<SharedWithMeView data={read.data ?? shown} problem={read.problem} hadShares={read.data ? false : read.hadShares} />);
+
+  test('offline, with nothing ever shared: nothing is said', async () => {
+    const read = await readSharedWithMe('user_a', offline, device());
+    expect(read).toEqual({ data: null, problem: 'Nya couldn’t be reached. Try again later.', hadShares: false });
+    expect(cards(read)).toBe('');
+  });
+
+  test('a refresh that fails after a read that said nothing is shared: nothing is said', async () => {
+    const storage = device();
+    const first = await readSharedWithMe('user_a', answer(200, { shared: [] }), storage);
+    expect(first.data).toEqual({ shared: [] });
+    const refresh = await readSharedWithMe('user_a', answer(503, { error: 'Could not read what is shared with you' }), storage);
+    expect(refresh).toMatchObject({ data: null, hadShares: false });
+    // What was shown stays: the empty read, with nothing to say about it.
+    expect(cards(refresh, first.data)).toBe('');
+    // Nor after a 429.
+    expect(cards(await readSharedWithMe('user_a', answer(429, null, { 'Retry-After': '120' }), storage), first.data)).toBe('');
+  });
+
+  test('a first read that fails, for someone whose last good read here had shares: the note, with when to try again', async () => {
+    const storage = device();
+    const good = await readSharedWithMe('user_a', answer(200, { shared: [{ connection: 'c1', label: 'Sam', accounts: [], expires_at: null }] }), storage);
+    expect(good.data!.shared).toHaveLength(1);
+    expect(storage.kept.get(sharedSeenKey('user_a'))).toBe('1');
+    // A later page on this device, turned away before anything loaded.
+    const turned = await readSharedWithMe('user_a', answer(429, null, { 'Retry-After': '120' }), storage);
+    expect(turned).toEqual({ data: null, problem: 'Try again in 2 minutes.', hadShares: true });
+    expect(text(cards(turned))).toBe(' What is shared with you couldn’t be shown just now. Try again in 2 minutes. ');
+    // Someone else on the same device never hears of the first one's shares.
+    expect(cards(await readSharedWithMe('user_b', offline, storage))).toBe('');
+    // Once a good read has nothing, it is forgotten.
+    await readSharedWithMe('user_a', answer(200, { shared: [] }), storage);
+    expect(storage.kept.has(sharedSeenKey('user_a'))).toBe(false);
+  });
+
+  test('what this device remembers is a convenience: per account, forgotten on sign-out with the snapshot, and never a reason to throw', () => {
+    expect(sharedSeenKey('user_a').startsWith(`${LOCAL_CACHE_KEY}:`)).toBe(true);
+    expect(sharedSeenKey('user_a')).not.toBe(sharedSeenKey('user_b'));
+    const broken = {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+      removeItem: () => {
+        throw new Error('blocked');
+      },
+    };
+    expect(() => rememberShares('user_a', true, broken)).not.toThrow();
+    expect(rememberedShares('user_a', broken)).toBe(false);
+    // Nothing is kept for nobody, and no storage says nothing.
+    const storage = device();
+    rememberShares(undefined, true, storage);
+    expect(storage.kept.size).toBe(0);
+    expect(rememberedShares('user_a', null)).toBe(false);
   });
 
   test('why, in words: past the limit, when to come back, by the answer or its Retry-After; else what the answer said', () => {
