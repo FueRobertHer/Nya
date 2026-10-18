@@ -46,6 +46,11 @@ export class RestoreStopped extends Error {
 
 export type Plan = { digest: string; batches: PlannedBatch[] };
 
+/** What a batch the plan doesn't have says: the restore goes on only with
+ *  the file it started from, or starts again once undone. */
+export const NOT_THE_FILE =
+  'This isn’t the file this restore started from, or the file changed since. Choose that file to go on, or undo the restore and start again with this one.';
+
 /** The day a download was made, as the server's checks take it. */
 export const exportedDay = (c: Collected): string => new Date(c.exported_at).toISOString().slice(0, 10);
 
@@ -134,7 +139,11 @@ export async function sendBatches(
     if (opts.plan && (await digestOf(b.body)) !== opts.plan.batches[i].digest) {
       throw new RestoreStopped('The file changed since the restore was planned. Choose it again to go on, or undo the restore.', null);
     }
-    const answer = await call(opts.fetcher, `/api/user-restore/batch?restore_id=${encodeURIComponent(record.id)}&index=${i}`, post(b.body));
+    const answer = await call(opts.fetcher, `/api/user-restore/batch?restore_id=${encodeURIComponent(record.id)}&index=${i}`, post(b.body)).catch((err) => {
+      // A batch that isn't the plan's: another file, or this one changed.
+      if (err instanceof RestoreStopped && err.answer?.mismatch === true) throw new RestoreStopped(NOT_THE_FILE, err.status, err.answer);
+      throw err;
+    });
     done = Math.max(done, typeof answer.done === 'number' ? answer.done : i + 1);
     opts.onProgress?.(done, total);
   });

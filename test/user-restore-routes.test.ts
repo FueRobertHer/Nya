@@ -21,7 +21,7 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { collect, previewOf } = await import('@/lib/user-restore/file');
-const { startBody, startRestore, sendBatches, finishRestore, RestoreStopped } = await import('@/lib/user-restore/send');
+const { startBody, startRestore, sendBatches, finishRestore, RestoreStopped, NOT_THE_FILE } = await import('@/lib/user-restore/send');
 const { newUserRestoreId, restoredId, MAX_BATCH_BODY } = await import('@/lib/user-restore/ids');
 const { userRestoreStore, restoredTxnStore, startsCount, STARTS_PER_DAY } = await import('@/lib/user-restore/store');
 const { scanAccount } = await import('@/lib/user-restore/empty');
@@ -437,6 +437,7 @@ describe('interrupted', () => {
     const refused = await sendBatches(other, await collect(other), state, { fetcher }).catch((err) => err);
     expect(refused).toBeInstanceOf(RestoreStopped);
     expect(refused.answer).toMatchObject({ mismatch: true, done: differs });
+    expect(refused.problem).toBe(NOT_THE_FILE);
 
     // The same file, read again from the start, as a resume does.
     sent.batches = 0;
