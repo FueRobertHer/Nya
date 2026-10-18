@@ -7,7 +7,9 @@
 //
 // A FEW REQUESTS A DAY. SimpleFIN allows 24 requests a day per Access URL and
 // updates once a day, so Nya makes at most DAILY_REQUESTS in a day's window
-// per container, counted before each is sent (connector-requests, a counter
+// per container (a request being one fetch: Lunch Flow's asks account by
+// account, lib/connectors/lunchflow.ts, and counts once), counted before each
+// is sent (connector-requests, a counter
 // on the seam: a count that can't be read stops requests until its window
 // ends, never opens them). The daily run asks once for the recent window, and
 // while older history is still coming, for at most BACKFILL_WINDOWS_PER_RUN
@@ -32,17 +34,22 @@
 // statement.
 //
 // WINDOWS. A request asks for the transactions posted in a window of at most
-// the connector's windowDays (90 for SimpleFIN). The recent window has no end
-// (it runs to now), so it starts at most windowDays - 1 days back, at 00:00
-// UTC, and spans under windowDays days; and overlapDays (5) before the last
-// day fetched, so a transaction that posted late into a day already fetched
-// is still caught. History before that arrives a window at a time going back,
+// the connector's windowDays (90 for SimpleFIN, 731 for Lunch Flow). The
+// recent window has no end (it runs to now), so it starts at most
+// windowDays - 1 days back, at 00:00 UTC, and spans under windowDays days; and
+// overlapDays (5 for SimpleFIN, 45 for Lunch Flow) before the last day
+// fetched, so a transaction that posted late into a day already fetched is
+// still caught. History before that arrives a window at a time going back,
 // each overlapping the one after it by overlapDays, until two whole answers in
 // a row bring nothing older than what is already there (the connector has no
 // more; one quiet window could be a quiet account) or HISTORY_DAYS is
-// reached. Only a whole answer (every tracked account in it, no problem
-// reported that concerns them) moves the walk on or ends it: anything less is
-// noted as failed and asked again the next night. A gap (more than windowDays
+// reached: no window starts before it, and a recent window that reaches it
+// (Lunch Flow's first) leaves the history complete. Only a whole answer
+// (every tracked account in it, no problem reported that concerns them) moves
+// the walk on or ends it: anything less is noted as failed and asked again
+// the next night. A request also says which accounts not tracked Nya offers
+// already, and the history's limit (FetchRequest `offered`, `since`), for a
+// connector that asks account by account. A gap (more than windowDays
 // without an answer) starts the walk back again from the recent window, so no
 // stretch is ever skipped: what was fetched already is matched, never added
 // twice.
@@ -51,8 +58,9 @@
 // import pipeline's normalize stage (lib/import/normalize.ts: the rules a
 // typed transaction meets, its text cleaned) and into the account's book
 // (lib/manual-txns.ts) in one compare-and-set per 16 accounts, matched by the
-// connector's own transaction id (source 'simplefin', source_id): an id the
-// book has is the same transaction, so fetching an overlapping window again
+// connector's own transaction id (its kind as the row's source, 'simplefin' or
+// 'lunchflow', and source_id): an id the book has is the same transaction, so
+// fetching an overlapping window again
 // adds nothing, and one whose date, amount or description the bank has since
 // changed is brought up to date, keeping the person's category. An id is
 // never matched by content: two identical coffees with two ids are two
@@ -82,7 +90,7 @@ import {
 } from './store';
 import { answeredWhole } from './institutions';
 import { connectorOf } from './registry';
-import { ConnectorFailure, type ConnectorDef, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
+import { CONNECTOR_WORDS, ConnectorFailure, type ConnectorDef, type ConnectorKind, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
 import { manualTxnStore, newManualTxnId, type ManualTxn, type ManualTxnBook } from '../manual-txns';
 import { normalizeRecords, type ImportRow } from '../import/normalize';
 import { MANY_AT_ONCE, StoreRefusedError, StoredDataUnreadableError } from '../repo';
@@ -238,7 +246,7 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
             const next = [...(book?.rows ?? [])];
             const index = new Map<string, number>();
             next.forEach((r, n) => {
-              if (r.source === 'simplefin' && r.source_id) index.set(r.source_id, n);
+              if (r.source === account.connector && r.source_id) index.set(r.source_id, n);
             });
             let changed = false;
             for (const row of rows) {
@@ -301,14 +309,15 @@ async function trackedOf(ctx: Ctx, connection_id: string): Promise<ConnectorAcco
 }
 
 /** The credential kept for a connection, or the failure that it can't be used. */
-async function secretOf(ctx: Ctx, connection_id: string): Promise<string | ConnectorFailure> {
+async function secretOf(ctx: Ctx, connection_id: string, kind: ConnectorKind): Promise<string | ConnectorFailure> {
+  const { label, again } = CONNECTOR_WORDS[kind];
   try {
     const kept = await secretsStore.get(ctx, connection_id);
     if (kept) return kept.secret;
-    return new ConnectorFailure('credentials', 'nya', 'Nya no longer has the access SimpleFIN gave it. Connect again with a new Setup Token.');
+    return new ConnectorFailure('credentials', 'nya', `Nya no longer has the access ${label} gave it. Connect again with ${again}.`);
   } catch (err) {
     if (err instanceof StoredDataUnreadableError) {
-      return new ConnectorFailure('credentials', 'nya', 'Nya can’t read the access SimpleFIN gave it. Connect again with a new Setup Token.');
+      return new ConnectorFailure('credentials', 'nya', `Nya can’t read the access ${label} gave it. Connect again with ${again}.`);
     }
     throw err;
   }
@@ -328,11 +337,13 @@ function failureRecord(at: number, f: ConnectorFailure): FetchRecord {
   };
 }
 
-/** The accounts an answer offers that aren't tracked, for choosing. */
-function availableIn(answer: RemoteAnswer, tracked: ReadonlySet<string>): AvailableAccount[] {
-  return answer.accounts
+/** The accounts an answer offers that aren't tracked, for choosing: those it
+ *  asked about, and those it only listed (RemoteAnswer `listed`), as they
+ *  were offered before (`before`), under the names they have now. One
+ *  listed that wasn't offered before has nothing to be offered with yet. */
+function availableIn(answer: RemoteAnswer, tracked: ReadonlySet<string>, before: readonly AvailableAccount[] = []): AvailableAccount[] {
+  const asked: AvailableAccount[] = answer.accounts
     .filter((a) => !tracked.has(a.remote_id))
-    .slice(0, MAX_AVAILABLE)
     .map((a) => ({
       remote_id: a.remote_id,
       name: a.name,
@@ -341,6 +352,20 @@ function availableIn(answer: RemoteAnswer, tracked: ReadonlySet<string>): Availa
       currency: a.currency,
       currency_text: a.currency_text,
     }));
+  const was = new Map(before.map((a) => [a.remote_id, a]));
+  const listed = (answer.listed ?? []).flatMap((a) => {
+    const kept = was.get(a.remote_id);
+    return kept && !tracked.has(a.remote_id) ? [{ ...kept, name: a.name, institution: a.institution.name, institution_key: a.institution.key }] : [];
+  });
+  const seen = new Set(asked.map((a) => a.remote_id));
+  return [...asked, ...listed.filter((a) => !seen.has(a.remote_id))].slice(0, MAX_AVAILABLE);
+}
+
+/** What a request about transactions also says (FetchRequest): the accounts
+ *  it already offers, by their remote ids, so a connector that asks account
+ *  by account needn't ask their balances again, and the history's limit. */
+function windowExtras(conn: ConnectorConnection, today: string): { offered: string[]; since: string } {
+  return { offered: conn.available.filter((a) => a.currency !== null).map((a) => a.remote_id), since: addDays(today, -HISTORY_DAYS) };
 }
 
 /** Writes each tracked account's balance from the answer, in one
@@ -480,12 +505,15 @@ async function saveFetch(
     if (!answered) return { ...current, last_fetch: record };
     const tracked = new Set(current.tracked.map((t) => t.remote_id));
     const moves = answered.start !== null && wholeRecord(record, ended);
+    const history = moves ? advanceHistory(current.history, answered.start!, answered.today) : current.history;
     return {
       ...current,
       last_fetch: record,
       last_answer_at: record.at,
-      available: availableIn(answered.answer, tracked),
-      history: moves ? advanceHistory(current.history, answered.start!, answered.today) : current.history,
+      available: availableIn(answered.answer, tracked, current.available),
+      // A recent window that reached the history's limit (a connector whose
+      // window is as long, Lunch Flow's) leaves nothing older to ask for.
+      history: history && !history.complete && history.from <= addDays(answered.today, -HISTORY_DAYS) ? { ...history, complete: true } : history,
     };
   });
 }
@@ -514,6 +542,7 @@ async function applyAnswer(ctx: Ctx, tracked: ConnectorAccount[], answer: Remote
     message: p.message,
     side: p.side,
     accounts: p.accounts === null ? null : p.accounts.flatMap((id) => (nyaIdOf.has(id) ? [nyaIdOf.get(id)!] : [])),
+    ...(p.kind ? { kind: p.kind } : {}),
   }));
   // The accounts a problem concerns: those it names, or all of them when it
   // names no bank.
@@ -546,15 +575,26 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
   const ended = await endedIdsUnlinked(ctx, now);
   while (done.windows < BACKFILL_WINDOWS_PER_RUN) {
     const conn = await connectionsStore.get(ctx, connection_id);
-    const window = backfillWindow(conn?.history ?? null, def);
-    if (!conn || !window) break;
+    const next = backfillWindow(conn?.history ?? null, def);
+    if (!conn || !next) break;
+    // Never past the history's limit: a history already there has nothing
+    // older to ask for, and a window that would start before it starts there.
+    if (conn.history!.from <= limit) {
+      await connectionsStore.update(ctx, connection_id, (c) => (c?.history && !c.history.complete ? { ...c, history: { ...c.history, complete: true } } : c));
+      break;
+    }
+    const window = next.start < limit ? { ...next, start: limit } : next;
     const tracked = await trackedOf(ctx, connection_id);
     if (tracked.length === 0) break;
     if (deadline - Date.now() < MIN_REQUEST_MS) break;
     if (!(await takeRequest(ctx, DAILY_REQUESTS - REFRESH_RESERVE))) break;
     let answer: RemoteAnswer;
     try {
-      answer = await def.fetch(secret, { start: window.start, end: window.end }, { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) });
+      answer = await def.fetch(
+        secret,
+        { start: window.start, end: window.end, accounts: tracked.map((a) => a.remote_id), ...windowExtras(conn, today) },
+        { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) }
+      );
     } catch (err) {
       if (!(err instanceof ConnectorFailure)) throw err;
       await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, failed: new Date(now).toISOString() } } : c));
@@ -641,7 +681,7 @@ export async function syncConnection(
   else if (deadline - Date.now() < MIN_REQUEST_MS) result.skipped = 'time';
   else if (!(await takeRequest(ctx))) result.skipped = 'budget';
   else {
-    const kept = await secretOf(ctx, connection_id);
+    const kept = await secretOf(ctx, connection_id, conn.connector);
     if (kept instanceof ConnectorFailure) {
       result.record = failureRecord(now, kept);
       await saveFetch(ctx, connection_id, result.record, null);
@@ -649,7 +689,10 @@ export async function syncConnection(
       return result;
     }
     secret = kept;
-    const request: FetchRequest = tracked.length === 0 ? { balancesOnly: true } : { start: recentStart(conn.history, today, def), end: null };
+    const request: FetchRequest =
+      tracked.length === 0
+        ? { balancesOnly: true }
+        : { start: recentStart(conn.history, today, def), end: null, accounts: tracked.map((a) => a.remote_id), ...windowExtras(conn, today) };
     try {
       result.answer = await def.fetch(secret, request, { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) });
     } catch (err) {
@@ -701,7 +744,7 @@ export async function syncOlderHistory(
   if (!conn || (await trackedOf(ctx, connection_id)).length === 0) return none;
   let secret = opts.secret ?? null;
   if (secret === null) {
-    const kept = await secretOf(ctx, connection_id);
+    const kept = await secretOf(ctx, connection_id, conn.connector);
     if (kept instanceof ConnectorFailure) return none;
     secret = kept;
   }

@@ -75,7 +75,7 @@
 // transaction with only its parts in the node under it, a group's row with
 // its transactions.
 
-import { countTransactions, countsInTotals, transactionCounter, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
+import { countTransactions, countsInTotals, transactionCounter, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
 import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
@@ -624,7 +624,7 @@ export function cashFlowNotes(input: {
   if (history) gaps.push(history);
   const inRange = inPeriod(period);
   const inRows = input.rows.filter((t) => inRange(t.date));
-  const uncategorized = uncategorizedNote(uncategorizedFromConnector(inRows));
+  const uncategorized = uncategorizedNote(uncategorizedFromConnector(inRows), uncategorizedFrom(inRows));
   if (uncategorized) gaps.push(uncategorized);
 
   const counted: string[] = [];

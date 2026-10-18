@@ -1,13 +1,15 @@
 'use client';
 
-// Bring your own sync (lib/connectors/): connecting a SimpleFIN account the
-// person pays for themselves, choosing which of its accounts Nya tracks, and
-// letting them go. Two parts, each mounted once by the dashboard:
+// Bring your own sync (lib/connectors/): connecting a SimpleFIN account, or a
+// Lunch Flow account by its API key, that the person pays for themselves,
+// choosing which of its accounts Nya tracks, and letting them go. Two parts,
+// each mounted once by the dashboard:
 //
-//   ConnectorSheet  the drawer for every step: pasting a Setup Token (the
-//                   first time, or again when SimpleFIN no longer accepts
-//                   Nya's access), choosing accounts and what kind each is,
-//                   saying how to read a card's or a loan's positive balance,
+//   ConnectorSheet  the drawer for every step: pasting a Setup Token or an
+//                   API key (the first time, or again when the service no
+//                   longer accepts Nya's access), choosing accounts and
+//                   what kind each is, saying how to read a card's or a
+//                   loan's positive balance,
 //                   a Refresh, and disconnecting (keeping the accounts as
 //                   manual ones, or removing them). Opened by an "ask" the
 //                   dashboard holds: from the connect buttons, the card
@@ -17,24 +19,27 @@
 //                   own words, how much older history has come, how many of
 //                   the day's requests are left, and its buttons.
 //
-// Only when the person chooses it: nothing here runs, or asks SimpleFIN
-// anything, until they open it. The words say what SimpleFIN is, that the
+// Only when the person chooses it: nothing here runs, or asks a service
+// anything, until they open it. The words say what each service is, that the
 // person pays it (not Nya), what it doesn't bring, that a Setup Token works
-// once, and what Nya keeps. A balance SimpleFIN reports is shown with its sign
-// in words ("owed", "held"), never as what is owed before that is known.
+// once (a Lunch Flow key is checked once, and kept), and what Nya keeps. A
+// balance a service reports is shown with its sign in words ("owed",
+// "held"), never as what is owed before that is known.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
 import { formatMoney } from '@/lib/format';
 import { instantDay } from '@/lib/local-date';
-import type { ConnectionView, OfferView, AccountView } from '@/lib/connectors/view';
+import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/connectors/view';
 import type { OwedSign } from '@/lib/connectors/store';
+import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
 
-/** What the dashboard asks of the sheet. */
+/** What the dashboard asks of the sheet: `connector` is which service a new
+ *  connection (or a new token or key for one) is for. */
 export type ConnectorAsk =
-  | { kind: 'connect' }
-  | { kind: 'token'; connection_id: string }
+  | { kind: 'connect'; connector?: ConnectorKind }
+  | { kind: 'token'; connection_id: string; connector?: ConnectorKind }
   | { kind: 'accounts'; connection_id: string }
   | { kind: 'refresh'; connection_id: string }
   | { kind: 'sign'; connection_id: string }
@@ -42,7 +47,7 @@ export type ConnectorAsk =
 
 type Kind = 'depository' | 'credit' | 'loan' | 'investment' | 'other';
 
-/** What each account can be said to be: SimpleFIN doesn't say. */
+/** What each account can be said to be: neither SimpleFIN nor Lunch Flow says. */
 export const KINDS: readonly { value: Kind; label: string }[] = [
   { value: 'depository', label: 'Checking or savings' },
   { value: 'credit', label: 'Credit card' },
@@ -53,7 +58,7 @@ export const KINDS: readonly { value: Kind; label: string }[] = [
 
 /**
  * A first guess at what an account is, from its name and the sign of the
- * balance SimpleFIN reports (negative is owed), for the person to check: the
+ * balance the service reports (negative is owed), for the person to check: the
  * choice is shown as a guess, never kept unless they keep it.
  */
 export function guessKind(name: string, balance?: number): Kind {
@@ -67,7 +72,7 @@ export function guessKind(name: string, balance?: number): Kind {
 
 type ListBody = {
   connections: ConnectionView[];
-  orphaned: { connection_id: string; accounts: AccountView[] }[];
+  orphaned: { connection_id: string; connector?: ConnectorKind; accounts: AccountView[] }[];
   requests: { left: number; resets_in_seconds: number; limit: number } | null;
   max_connections: number;
 };
@@ -86,7 +91,7 @@ async function send(path: string, method: string, body?: unknown): Promise<{ ok:
 
 const dayOf = (iso: string | null | undefined) => (iso ? (instantDay(iso) ?? iso.slice(0, 10)) : null);
 
-/** A balance as SimpleFIN reported it, its sign said in words: "-$432.10,
+/** A balance as its service reported it, its sign said in words: "-$432.10,
  *  owed" or "+$500.00, held". Never "what you owe" before that is known. */
 export function reportedWords(balance: number, currency: string): string {
   if (balance < 0) return `${formatMoney(balance, currency)}, owed`;
@@ -95,7 +100,23 @@ export function reportedWords(balance: number, currency: string): string {
 
 const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
 
-/** When the day's requests to SimpleFIN come back, in words (" in about 5
+/** A request that brought nothing this time (ProblemKind `retry`), on the
+ *  card: what didn't come, and that Nya asks again. */
+export const retryLine = (message: string) => `${message.replace(/[.\s]+$/, '')}. Nya asks again at its next update.`;
+
+/** When older history arrives: SimpleFIN's a window a night, Lunch Flow's
+ *  in one more request with the next daily update. */
+const olderWhen = (connector: ConnectorKind) => (connector === 'lunchflow' ? 'with its next daily update' : 'over the next few nights');
+
+/** What Refresh came to, in words, when an answer came. Not everything it
+ *  asked about may have come: then the card says what didn't. */
+export function refreshedWords(by: string, f: Pick<FetchView, 'added' | 'problems' | 'missing'>): string {
+  const brought = f.added === 0 ? 'nothing new' : `${f.added} new transaction${f.added === 1 ? '' : 's'}`;
+  const short = f.problems.length > 0 || f.missing.length > 0;
+  return short ? `${by} answered, but not everything came (its card says what): ${brought} so far.` : `${by} answered: ${brought}.`;
+}
+
+/** When the day's requests for your own sync come back, in words (" in about 5
  *  hours"), or "" when that isn't known. */
 export function backIn(requests: { resets_in_seconds: number } | null | undefined): string {
   if (!requests || !(requests.resets_in_seconds > 0)) return '';
@@ -133,7 +154,7 @@ export function ConnectorCardView({
   onRefresh: () => void;
 }) {
   const f = conn.last_fetch;
-  // A new token is what fixes access SimpleFIN refuses, or one Nya can't use.
+  // A new token (or key) is what fixes access the service refuses, or one Nya can't use.
   const refused = !!f && (f.kind === 'refused' || f.kind === 'credentials');
   const n = conn.accounts.length;
   const unsure = conn.accounts.filter((a) => a.needs_sign);
@@ -154,7 +175,8 @@ export function ConnectorCardView({
       {f && !f.ok && <p className="stale-note">{f.message}</p>}
       {f?.problems.map((p) => (
         <p className="stale-note" key={p.message}>
-          {conn.label} reports: “{p.message}”{p.accounts ? ` (${p.accounts.join(', ')})` : ''}
+          {/* A request that brought nothing this time (its words name the account) clears when Nya asks again: never something to fix at the connector. */}
+          {p.retry ? retryLine(p.message) : `${conn.label} reports: “${p.message}”${p.accounts ? ` (${p.accounts.join(', ')})` : ''}`}
         </p>
       ))}
       {f && f.missing.length > 0 && <p className="stale-note">Not in {conn.label}’s latest answer: {f.missing.join(', ')}.</p>}
@@ -167,16 +189,17 @@ export function ConnectorCardView({
       {f?.note && <p className="stale-note">{f.note}</p>}
       {conn.history && n > 0 && (
         <p className="panel-note">
+          {/* The day history was asked from, never the oldest row: the service may hold fewer days than were asked. */}
           {conn.history.complete
-            ? `Transactions from ${calendarDay(conn.history.from)}, as far back as ${conn.label} has them.`
-            : `Transactions from ${calendarDay(conn.history.from)} so far: older ones arrive over the next few nights${conn.history.failed ? ` (the last try didn’t get an answer; Nya tries again)` : ''}.`}
+            ? `Everything ${conn.label} has from ${calendarDay(conn.history.from)} on is in.`
+            : `Everything ${conn.label} has from ${calendarDay(conn.history.from)} on is in, and older transactions arrive ${olderWhen(conn.connector)}${conn.history.failed ? ` (the last try didn’t get an answer; Nya tries again)` : ''}.`}
         </p>
       )}
       {n === 0 && conn.available.length > 0 && <p className="panel-note">Choose which of the accounts {conn.label} offers to track.</p>}
       {note && <p className="status-note">{note}</p>}
       <div className="card-actions">
         {refused ? (
-          <button onClick={() => onAsk({ kind: 'token', connection_id: conn.connection_id })} disabled={busy}>
+          <button onClick={() => onAsk({ kind: 'token', connection_id: conn.connection_id, connector: conn.connector })} disabled={busy}>
             Connect again
           </button>
         ) : (
@@ -235,7 +258,7 @@ export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: u
     [load, onChanged]
   );
 
-  if (error) return <div className="card"><div className="error">SimpleFIN connections couldn’t be loaded: {error}</div></div>;
+  if (error) return <div className="card"><div className="error">Your own sync’s connections couldn’t be loaded: {error}</div></div>;
   if (!data) return null;
   return (
     <>
@@ -253,7 +276,7 @@ export function ConnectorCards({ refreshKey, onAsk, onChanged }: { refreshKey: u
       {data.orphaned.map((o) => (
         <div className="card" key={o.connection_id}>
           <p className="stale-note">
-            {o.accounts.map((a) => a.name).join(', ')} {o.accounts.length === 1 ? 'is' : 'are'} left from a SimpleFIN connection that is gone. Disconnect to keep{' '}
+            {o.accounts.map((a) => a.name).join(', ')} {o.accounts.length === 1 ? 'is' : 'are'} left from a connection that is gone. Disconnect to keep{' '}
             {o.accounts.length === 1 ? 'it' : 'them'} as manual accounts or remove {o.accounts.length === 1 ? 'it' : 'them'}.
           </p>
           <div className="card-actions">
@@ -416,8 +439,25 @@ export function EndedPointer({ count }: { count: number }) {
   );
 }
 
-/** The words of the first step: what SimpleFIN is and what connecting does. */
-export function ConnectIntro({ again }: { again: boolean }) {
+/** Where the person pastes what connects the service, named for it. A key is
+ *  a secret that stays the same, so it is typed out of sight; a token is
+ *  long, and spent once claimed, so it is shown. */
+export function CredentialField({ connector, value, busy, onChange }: { connector: ConnectorKind; value: string; busy: boolean; onChange: (value: string) => void }) {
+  return (
+    <label className="field connector-token">
+      {CONNECTOR_WORDS[connector].credential}
+      {connector === 'lunchflow' ? (
+        <input type="password" value={value} onChange={(e) => onChange(e.target.value)} disabled={busy} autoComplete="off" autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      ) : (
+        <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={4} disabled={busy} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
+      )}
+    </label>
+  );
+}
+
+/** The words of the first step: what the service is and what connecting does. */
+export function ConnectIntro({ again, connector = 'simplefin' }: { again: boolean; connector?: ConnectorKind }) {
+  if (connector === 'lunchflow') return <LunchFlowIntro again={again} />;
   return again ? (
     <p className="panel-note" style={{ marginTop: 0 }}>
       SimpleFIN no longer accepts the access Nya had. Create a new Setup Token for Nya in SimpleFIN Bridge and paste it here: the same accounts carry on, with their history.
@@ -439,10 +479,35 @@ export function ConnectIntro({ again }: { again: boolean }) {
   );
 }
 
+/** Lunch Flow's words for the first step (lib/connectors/lunchflow.ts). */
+export function LunchFlowIntro({ again }: { again: boolean }) {
+  return again ? (
+    <p className="panel-note" style={{ marginTop: 0 }}>
+      Lunch Flow no longer accepts the API key Nya had, or Nya can’t use it. In Lunch Flow, copy the API key of your API destination (or add a new API destination) and paste it here:
+      the same accounts carry on, with their history.
+    </p>
+  ) : (
+    <>
+      <p className="panel-note" style={{ marginTop: 0 }}>
+        Lunch Flow connects to banks in many countries, through providers such as GoCardless, Akahu and MX, and lets apps you choose read your accounts, balances and transactions.
+        You pay Lunch Flow for it (about $35 a year for two bank connections when this was written), not Nya, and it may reach banks Plaid doesn’t.
+      </p>
+      <p className="panel-note">
+        It brings no pending transactions, no holdings for investment accounts (only their balances) and no categories, and it updates from your banks about once a day. Lunch Flow
+        gives no date with a balance, so each one shows the day Nya received it.
+      </p>
+      <p className="panel-note">
+        In Lunch Flow, add an API destination and paste its API key below. Nya checks the key with Lunch Flow once, keeps it encrypted, never shows it again, and never sees your bank
+        password. Nya asks Lunch Flow about once a day, and never more than a few times a day. Deleting that destination in Lunch Flow ends Nya’s access there.
+      </p>
+    </>
+  );
+}
+
 type Step =
-  | { kind: 'token'; connection_id: string | null }
-  | { kind: 'choose'; connection_id: string; offers: OfferView[]; tracked: AccountView[]; label: string; note: string | null; guessed: boolean }
-  | { kind: 'disconnect'; connection_id: string; label: string; accounts: AccountView[] }
+  | { kind: 'token'; connection_id: string | null; connector: ConnectorKind }
+  | { kind: 'choose'; connection_id: string; connector: ConnectorKind; offers: OfferView[]; tracked: AccountView[]; label: string; note: string | null; guessed: boolean }
+  | { kind: 'disconnect'; connection_id: string; connector: ConnectorKind | null; label: string; accounts: AccountView[] }
   | { kind: 'sign'; connection_id: string; label: string; accounts: AccountView[]; lead: string | null }
   | { kind: 'working'; text: string }
   | { kind: 'done'; text: string };
@@ -460,7 +525,7 @@ function signStep(conn: ConnectionView | null, lead: string | null): Step | null
   return conn && accounts.length > 0 ? { kind: 'sign', connection_id: conn.connection_id, label: conn.label, accounts, lead } : null;
 }
 
-/** The question for each card or loan SimpleFIN reports as money held. Pure. */
+/** The question for each card or loan its service reports as money held. Pure. */
 export function SignView({
   label,
   accounts,
@@ -479,6 +544,8 @@ export function SignView({
       <p className="panel-note">
         {label}’s usual way is to report what you owe as a negative balance, so a card or loan with a positive one is either money held (a card paid past zero) or a server that
         reports what you owe as positive. Say which, once for each: until you do, it isn’t counted.
+        {label === CONNECTOR_WORDS.lunchflow.label &&
+          ' Some banks give Lunch Flow a card’s credit left to spend in place of its balance: if that is the figure here, neither answer is right, so stop tracking the card with Choose accounts.'}
       </p>
       {accounts.map((a) => {
         const amount = formatMoney(Math.abs(a.reported ?? 0), a.currency);
@@ -508,6 +575,19 @@ export function SignView({
   );
 }
 
+/** Where the person ends Nya's access on the service's side, which Nya can't
+ *  do for them: said once disconnected, and before. */
+export function endsThere(connector: ConnectorKind | null): string {
+  if (connector === 'lunchflow') return 'Its API key still works at Lunch Flow until you delete that API destination there.';
+  return 'SimpleFIN still lists Nya as an app until you remove it there.';
+}
+
+/** The same, as the disconnect sheet says it before the person confirms. */
+function endsAt(connector: ConnectorKind | null, label: string): string {
+  if (connector === 'lunchflow') return 'To end its access on Lunch Flow’s side too, delete its API destination in Lunch Flow.';
+  return `To end its access on ${label}’s side too, remove Nya in your ${label} account.`;
+}
+
 /** Each offer's guessed kind, as the choices start. */
 function guesses(offers: OfferView[]): Record<string, Choice> {
   return Object.fromEntries(offers.filter((o) => o.currency && !o.elsewhere).map((o) => [o.remote_id, guessKind(o.name, o.balance)]));
@@ -532,13 +612,13 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   if (step) last.current = step;
 
   /** One connection, read afresh from the list. */
-  const readOne = useCallback(async (connection_id: string): Promise<{ conn: ConnectionView | null; orphan: AccountView[] | null } | string> => {
+  const readOne = useCallback(async (connection_id: string): Promise<{ conn: ConnectionView | null; orphan: AccountView[] | null; orphanOf: ConnectorKind | null } | string> => {
     const res = await send('/api/connectors', 'GET');
     if (!res.ok) return res.error;
     const body = res.data as ListBody;
     const conn = body.connections.find((c) => c.connection_id === connection_id) ?? null;
-    const orphan = body.orphaned.find((o) => o.connection_id === connection_id)?.accounts ?? null;
-    return { conn, orphan };
+    const left = body.orphaned.find((o) => o.connection_id === connection_id);
+    return { conn, orphan: left?.accounts ?? null, orphanOf: left?.connector ?? null };
   }, []);
 
   // Each ask starts its step.
@@ -550,16 +630,18 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     setKeep(true);
     setChoices({});
     setSigns({});
-    if (ask.kind === 'connect') return setStep({ kind: 'token', connection_id: null });
-    if (ask.kind === 'token') return setStep({ kind: 'token', connection_id: ask.connection_id });
+    if (ask.kind === 'connect') return setStep({ kind: 'token', connection_id: null, connector: ask.connector ?? 'simplefin' });
+    if (ask.kind === 'token') return setStep({ kind: 'token', connection_id: ask.connection_id, connector: ask.connector ?? 'simplefin' });
     let cancelled = false;
     (async () => {
       if (ask.kind === 'refresh') {
-        setStep({ kind: 'working', text: 'Asking SimpleFIN…' });
+        setStep({ kind: 'working', text: 'Asking…' });
         const res = await send('/api/connectors/refresh', 'POST', { connection_id: ask.connection_id });
         if (cancelled) return;
-        const f = res.ok ? (res.data.connection as ConnectionView | null)?.last_fetch : null;
-        setStep({ kind: 'done', text: !res.ok ? res.error : f?.ok ? `SimpleFIN answered: ${f.added === 0 ? 'nothing new' : `${f.added} new transaction${f.added === 1 ? '' : 's'}`}.` : f?.message ?? 'SimpleFIN didn’t answer.' });
+        const conn = res.ok ? (res.data.connection as ConnectionView | null) : null;
+        const f = conn?.last_fetch;
+        const by = conn?.label ?? 'It';
+        setStep({ kind: 'done', text: !res.ok ? res.error : f?.ok ? refreshedWords(by, f) : f?.message ?? `${by} didn’t answer.` });
         if (res.ok) changed.current(false);
         return;
       }
@@ -567,13 +649,14 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
       const read = await readOne(ask.connection_id);
       if (cancelled) return;
       if (typeof read === 'string') return setStep({ kind: 'done', text: read });
-      const { conn, orphan } = read;
+      const { conn, orphan, orphanOf } = read;
       if (ask.kind === 'disconnect') {
-        return setStep({ kind: 'disconnect', connection_id: ask.connection_id, label: conn?.label ?? 'SimpleFIN', accounts: conn?.accounts ?? orphan ?? [] });
+        const connector = conn?.connector ?? orphanOf;
+        return setStep({ kind: 'disconnect', connection_id: ask.connection_id, connector, label: conn?.label ?? CONNECTOR_WORDS[connector ?? 'simplefin'].label, accounts: conn?.accounts ?? orphan ?? [] });
       }
       if (!conn) return setStep({ kind: 'done', text: 'That connection no longer exists.' });
       if (ask.kind === 'sign') return setStep(signStep(conn, null) ?? { kind: 'done', text: 'Nothing to answer: every balance is counted.' });
-      setStep({ kind: 'choose', connection_id: conn.connection_id, offers: conn.available, tracked: conn.accounts, label: conn.label, note: null, guessed: false });
+      setStep({ kind: 'choose', connection_id: conn.connection_id, connector: conn.connector, offers: conn.available, tracked: conn.accounts, label: conn.label, note: null, guessed: false });
     })();
     return () => {
       cancelled = true;
@@ -586,20 +669,22 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     onClose();
   };
 
-  const submitToken = async (connection_id: string | null) => {
+  const submitToken = async (s: Extract<Step, { kind: 'token' }>) => {
+    const { connection_id, connector } = s;
+    const label = CONNECTOR_WORDS[connector].label;
     setBusy(true);
     setError('');
-    const res = await send('/api/connectors/connect', 'POST', { connector: 'simplefin', token, ...(connection_id ? { connection_id } : {}) });
+    const res = await send('/api/connectors/connect', 'POST', { connector, token, ...(connection_id ? { connection_id } : {}) });
     setBusy(false);
     if (!res.ok) return setError(res.error);
     setToken('');
     const conn = res.data.connection as ConnectionView | null;
     const f = conn?.last_fetch;
-    const listed = f && !f.ok ? `Connected, but SimpleFIN didn’t list the accounts: ${f.message} Try again with Refresh on its card.` : null;
+    const listed = f && !f.ok ? `Connected, but ${label} didn’t list the accounts: ${f.message} Try again with Refresh on its card.` : null;
     // Spent requests mean no answer yet, never that the new token failed.
     const later =
       res.data.skipped === 'budget'
-        ? ` Nya has used today’s requests to SimpleFIN; more are available${backIn(res.data.requests)}, and Refresh on its card then brings your accounts up to date.`
+        ? ` Nya has used today’s requests for your own sync; more are available${backIn(res.data.requests)}, and Refresh on its card then brings your accounts up to date.`
         : '';
     if (connection_id) {
       onChanged(false);
@@ -610,12 +695,13 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (res.data.skipped === 'budget') {
       return setStep({
         kind: 'done',
-        text: `Connected, but Nya has used today’s requests to SimpleFIN, so it couldn’t list your accounts yet. More are available${backIn(res.data.requests)}: then Refresh on its card lists them to choose from.`,
+        text: `Connected, but Nya has used today’s requests for your own sync, so it couldn’t list your accounts yet. More are available${backIn(res.data.requests)}: then Refresh on its card lists them to choose from.`,
       });
     }
-    if (listed || offers.length === 0) return setStep({ kind: 'done', text: listed ?? 'Connected, but SimpleFIN listed no accounts. Add some in SimpleFIN Bridge, then choose them here.' });
+    const where = connector === 'lunchflow' ? 'Lunch Flow' : 'SimpleFIN Bridge';
+    if (listed || offers.length === 0) return setStep({ kind: 'done', text: listed ?? `Connected, but ${label} listed no accounts. Add some in ${where}, then choose them here.` });
     setChoices(guesses(offers));
-    setStep({ kind: 'choose', connection_id: res.data.connection_id, offers, tracked: [], label: conn?.label ?? 'SimpleFIN', note: null, guessed: true });
+    setStep({ kind: 'choose', connection_id: res.data.connection_id, connector, offers, tracked: [], label: conn?.label ?? label, note: null, guessed: true });
   };
 
   const submitChoices = async (s: Extract<Step, { kind: 'choose' }>) => {
@@ -641,9 +727,12 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (!res.ok) return setError(res.error);
     onChanged(track.length > 0 || stop.length > 0 || retype.length > 0);
     const parts: string[] = [];
-    if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: the last three months are in, and older transactions arrive over the next few nights.`);
+    // SimpleFIN's history comes 90 days a window; Lunch Flow's two years at
+    // once, as far back as Nya keeps history (lib/connectors/sync.ts HISTORY_DAYS).
+    const sofar = s.connector === 'lunchflow' ? 'everything Lunch Flow has from the last two years is in' : 'the last three months are in, and older transactions arrive over the next few nights';
+    if (track.length) parts.push(`Tracking ${track.length} account${track.length === 1 ? '' : 's'}: ${sofar}.`);
     if (res.data.skipped === 'budget') {
-      parts.push(`Nya has used today’s requests to SimpleFIN, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
+      parts.push(`Nya has used today’s requests for your own sync, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
     }
     if (retype.length) parts.push(`Changed what ${retype.length === 1 ? 'one account is' : `${retype.length} accounts are`}.`);
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
@@ -684,7 +773,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     const kept = keep ? `${res.data.kept} account${res.data.kept === 1 ? ' is' : 's are'} now manual.${nothingToKeep(res.data.nothing_to_keep)}` : `${res.data.removed} account${res.data.removed === 1 ? '' : 's'} removed.`;
     setStep({
       kind: 'done',
-      text: `Disconnected: Nya deleted its access and stops asking. ${kept} SimpleFIN still lists Nya as an app until you remove it there.`,
+      text: `Disconnected: Nya deleted its access and stops asking. ${kept} ${endsThere(s.connector)}`,
     });
   };
 
@@ -692,31 +781,28 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   const title =
     view?.kind === 'token'
       ? view.connection_id
-        ? 'Connect SimpleFIN again'
-        : 'Connect with SimpleFIN'
+        ? `Connect ${CONNECTOR_WORDS[view.connector].label} again`
+        : `Connect with ${CONNECTOR_WORDS[view.connector].label}`
       : view?.kind === 'choose'
         ? 'Choose accounts'
         : view?.kind === 'disconnect'
           ? `Disconnect ${view.label}?`
           : view?.kind === 'sign'
             ? 'Owed or held?'
-            : 'SimpleFIN';
+            : 'Your own sync';
 
   return (
     <Sheet open={!!ask && !!step} title={title} onClose={close}>
       {view?.kind === 'token' && (
         <>
-          <ConnectIntro again={!!view.connection_id} />
-          <label className="field connector-token">
-            Setup Token
-            <textarea value={token} onChange={(e) => setToken(e.target.value)} rows={4} disabled={busy} autoCapitalize="off" autoCorrect="off" spellCheck={false} />
-          </label>
+          <ConnectIntro again={!!view.connection_id} connector={view.connector} />
+          <CredentialField connector={view.connector} value={token} busy={busy} onChange={setToken} />
           {error && <div className="error">{error}</div>}
           <div className="button-pair">
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button onClick={() => submitToken(view.connection_id)} disabled={busy || !token.trim()}>
+            <button onClick={() => submitToken(view)} disabled={busy || !token.trim()}>
               {busy ? 'Connecting…' : 'Connect'}
             </button>
           </div>
@@ -781,7 +867,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             />
           )}
           <p className="panel-note">
-            Type <strong>{view.label}</strong> to confirm. To end its access on {view.label}’s side too, remove Nya in your {view.label} account.
+            Type <strong>{view.label}</strong> to confirm. {endsAt(view.connector, view.label)}
           </p>
           <label className="field">
             Name

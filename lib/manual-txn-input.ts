@@ -35,8 +35,8 @@ export function newManualTxnId(): string {
 }
 
 /** Where a row came from, in a few words for the transaction list. Rows
- *  entered in the app are 'manual'; file imports (lib/import/) and SimpleFIN
- *  add theirs. */
+ *  entered in the app are 'manual'; file imports (lib/import/), SimpleFIN and
+ *  Lunch Flow add theirs. */
 export function sourceLabel(source: string): string {
   switch (source) {
     case 'manual':
@@ -49,6 +49,8 @@ export function sourceLabel(source: string): string {
       return 'imported from QIF';
     case 'simplefin':
       return 'from SimpleFIN';
+    case 'lunchflow':
+      return 'from Lunch Flow';
     default:
       return source;
   }

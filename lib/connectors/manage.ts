@@ -13,7 +13,10 @@
 // their history and their transactions stay, matched by SimpleFIN's ids. What
 // the old access came to is forgotten with it: until the new one answers, the
 // accounts wait for it, never showing the old refusal as the new token's.
-// What was pasted is checked before anything is counted or sent.
+// What was pasted is checked before anything is counted or sent. A Lunch Flow
+// API key is not spent: it is checked once against Lunch Flow and kept the
+// same way, and connecting again takes a key in its place
+// (lib/connectors/lunchflow.ts).
 //
 // TRACKING an account gives it an id of its own ("manual_" and a random UUID,
 // see lib/connectors/institutions.ts), chosen inside the one compare-and-set
@@ -49,9 +52,10 @@
 // was, when, and which way), so a report on a period it was tracked in says
 // its transactions may be gone, or since then only entered by hand, as the
 // account directory lets it say of a removed Plaid connection.
-// A disconnect then deletes the Access URL and the connection, so nothing is
-// fetched again. SimpleFIN can't be told: the person removes Nya from their
-// SimpleFIN account themselves, and the routes say so.
+// A disconnect then deletes the Access URL (or the key) and the connection, so
+// nothing is fetched again. Neither SimpleFIN nor Lunch Flow can be told: the
+// person removes Nya from their SimpleFIN account, or deletes the API
+// destination in Lunch Flow, themselves, and the screens say so.
 
 import type { Ctx } from '../containers';
 import {
@@ -68,6 +72,7 @@ import {
   type OwedSign,
 } from './store';
 import { connectorOf } from './registry';
+import { connectorOffered } from './switch';
 import { syncConnection, type SyncResult } from './sync';
 import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './institutions';
 import type { ConnectorKind } from './types';
@@ -84,7 +89,11 @@ import { isOwedType } from '../balance';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
  *  holds the person's banks there; a second is for another server that speaks
- *  the protocol (Redbark, say). */
+ *  the protocol (Redbark, say), or for a Lunch Flow account. No more, since
+ *  the day's requests are for every connection together (lib/connectors/sync.ts
+ *  DAILY_REQUESTS): two leave enough for each one's daily update, a catch-up
+ *  and older history, with some for Refresh, where a third would need a
+ *  budget of its own. */
 export const MAX_CONNECTIONS = 2;
 /** How many accounts connectors may feed one container. */
 export const MAX_CONNECTOR_ACCOUNTS = 100;
@@ -107,7 +116,7 @@ const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.sl
 async function takeClaim(ctx: Ctx): Promise<void> {
   const { count, secondsLeft } = await claimsCount.take(ctx);
   if (count > CLAIMS_PER_HOUR) {
-    throw new ConnectorRefused(`Too many tokens were tried this hour. Try again in ${Math.max(1, Math.ceil(secondsLeft / 60))} minutes.`, 429);
+    throw new ConnectorRefused(`Too many tokens or keys were tried this hour. Try again in ${Math.max(1, Math.ceil(secondsLeft / 60))} minutes.`, 429);
   }
 }
 
@@ -118,6 +127,11 @@ async function takeClaim(ctx: Ctx): Promise<void> {
  * failure there leaves the connection in place, its accounts to list later).
  */
 export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now: number = Date.now()): Promise<{ connection_id: string; result: SyncResult }> {
+  // Before anything is counted or sent (lib/connectors/switch.ts): turned off,
+  // no new connection, while those made keep working.
+  if (!connectorOffered(kind)) {
+    throw new ConnectorRefused(`Connecting ${connectorOf(kind).label} isn't turned on for this copy of Nya.`, 403);
+  }
   if ((await connectionsStore.count(ctx)) >= MAX_CONNECTIONS) {
     throw new ConnectorRefused(`Nya keeps at most ${MAX_CONNECTIONS} connections like this. Disconnect one first.`, 409);
   }
@@ -146,11 +160,14 @@ export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now:
   return { connection_id, result };
 }
 
-/** Connects again with a new token, for a connection SimpleFIN no longer
- *  accepts: the same connection, its accounts and history kept. */
-export async function reconnect(ctx: Ctx, connection_id: string, input: string, now: number = Date.now()): Promise<SyncResult> {
+/** Connects again with a new token (or key), for a connection its connector
+ *  no longer accepts: the same connection, its accounts and history kept.
+ *  `kind`, when given, is the connector the request says it is for: another
+ *  connection's is refused, changing nothing. */
+export async function reconnect(ctx: Ctx, connection_id: string, input: string, now: number = Date.now(), kind?: ConnectorKind): Promise<SyncResult> {
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) throw new ConnectorRefused('That connection no longer exists.', 404);
+  if (kind !== undefined && kind !== conn.connector) throw new ConnectorRefused(`That connection is through ${connectorOf(conn.connector).label}: connect it again from its own card.`, 400);
   const def = connectorOf(conn.connector);
   def.checkInput(input);
   await takeClaim(ctx);
@@ -190,7 +207,7 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   const others = await othersOf(ctx, connection_id, [...all.values()]);
   for (const c of choices) {
     const a = offered.get(c.remote_id)!;
-    const there = trackedElsewhere(a, conn.host, others);
+    const there = trackedElsewhere(a, { connector: conn.connector, host: conn.host }, others);
     if (there?.certain) {
       throw new ConnectorRefused(
         `${a.name} at ${a.institution} is already tracked through your other ${connectorOf(conn.connector).label} connection${there.host ? ` (${there.host})` : ''}, so it isn't tracked again here: it would be counted twice.`,
@@ -214,6 +231,12 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
       // New accounts' history is fetched afresh, from the recent window back;
       // what the others have already is matched, never added twice.
       history: null,
+      // The last request's word was about what was tracked then (a listing to
+      // choose from names no account, so its problems would read as any
+      // bank's): forgotten, as connecting again forgets it, so until the
+      // fetch below answers (skipped when the day's requests are spent) the
+      // accounts say they wait for it.
+      last_fetch: null,
     };
   });
   if (ids.size === 0) throw new ConnectorRefused('That connection no longer exists.', 404);

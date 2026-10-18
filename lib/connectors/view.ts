@@ -56,8 +56,10 @@ export type FetchView = {
   /** Why it failed, in words for the person (the connector's own included). */
   message: string | null;
   /** What the connector reported, in its own words, with the tracked
-   *  accounts each concerns by name (null: any of them). */
-  problems: { message: string; accounts: string[] | null }[];
+   *  accounts each concerns by name (null: any of them), and whether asking
+   *  again should clear it (ProblemKind `retry`), never the connector's word
+   *  about a bank, to fix there. */
+  problems: { message: string; accounts: string[] | null; retry: boolean }[];
   /** Tracked accounts the answer didn't hold, by name. */
   missing: string[];
   added: number;
@@ -101,10 +103,14 @@ export function accountView(a: ConnectorAccount): AccountView {
  *  offer as tracked elsewhere (lib/connectors/institutions.ts trackedElsewhere). */
 export type Others = readonly { account: ConnectorAccount; host: string | null }[];
 
-/** Where an offer is tracked already, for OfferView.elsewhere. */
+/** Where an offer is tracked already, for OfferView.elsewhere: the other
+ *  connection's host, with its connector's name when it is another one. */
 function elsewhereOf(offer: { remote_id: string; name: string; institution: string; balance?: number }, conn: ConnectorConnection, others: Others): OfferView['elsewhere'] {
-  const there = trackedElsewhere(offer, conn.host, others);
-  return there ? { host: there.host ?? connectorOf(conn.connector).label, certain: there.certain } : null;
+  const there = trackedElsewhere(offer, { connector: conn.connector, host: conn.host }, others);
+  if (!there) return null;
+  const by = there.account.connector === conn.connector ? null : connectorOf(there.account.connector).label;
+  const host = by ? (there.host ? `${by}, ${there.host}` : by) : (there.host ?? connectorOf(conn.connector).label);
+  return { host, certain: there.certain };
 }
 
 /** One connection as the screens show it. `others`: the accounts other
@@ -128,7 +134,7 @@ export function connectionView(connection_id: string, conn: ConnectorConnection,
           message: f.failure?.message ?? null,
           problems: f.problems
             .filter((p) => p.accounts === null || p.accounts.length > 0)
-            .map((p) => ({ message: p.message, accounts: p.accounts === null ? null : p.accounts.map((id) => nameOf.get(id) ?? 'An account') })),
+            .map((p) => ({ message: p.message, accounts: p.accounts === null ? null : p.accounts.map((id) => nameOf.get(id) ?? 'An account'), retry: p.kind === 'retry' })),
           missing: f.missing.flatMap((id) => (nameOf.has(id) ? [nameOf.get(id)!] : [])),
           added: f.added,
           updated: f.updated,
