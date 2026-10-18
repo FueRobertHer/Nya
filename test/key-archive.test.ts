@@ -107,6 +107,8 @@ const backup = (s: BackupStore, at: Date, opts: Parameters<typeof runBackup>[3] 
   if ('reads' in s) (s as MemoryStore).clock = at.getTime();
   return runBackup(fake as any, s, at, opts);
 };
+/** The tombstones as the key store holds them. */
+const tombstonesNow = () => new Map([...(fake.hashes.get(c.tombstonesKey()) ?? new Map<string, string>())].map(([id, raw]) => [id, JSON.parse(raw)]));
 /** Damages a file at rest, keeping its name: cut short. */
 const damage = (s: MemoryStore, pathname: string) => {
   const f = s.files.get(pathname)!;
@@ -539,6 +541,103 @@ describe('a key archive that doesn’t read back intact', () => {
     expect(await quietly(() => rewriteKeyArchivesAfterDeletion(s, B))).toEqual({ pending: true });
     await expect(quietly(() => backup(s, night(2)))).rejects.toThrow(`The newest key archive, ${top.pathname}, doesn't read back intact`);
     expect(s.files.has(top.pathname)).toBe(true);
+  });
+
+  test('the newest kept, damaged: the older ones are rewritten without the key all the same, and the run then fails naming it', async () => {
+    const s = memoryStore();
+    for (let n = 0; n < 3; n++) await backup(s, night(n));
+    const [top, ...older] = await generations(s);
+    damage(s, top.pathname);
+    await deleteB();
+    await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(3)))).rejects.toThrow(`The key archive ${top.pathname} doesn't read back intact`);
+    // Kept, since it alone may hold a key; every other one without B's key.
+    expect(s.files.has(top.pathname)).toBe(true);
+    const now = await generations(s);
+    expect(now.map((g) => g.taken)).toEqual([top, ...older].map((g) => g.taken));
+    for (const g of now.slice(1)) {
+      expect(g.pathname).not.toBe(older.find((o) => o.taken === g.taken)!.pathname);
+      const held = ka.verifyKeyArchive((await s.get(g.pathname))!);
+      expect([held.keys.has(keyB), held.tombstones.has(keyB)]).toEqual([false, true]);
+    }
+    // A deletion that meets it leaves the rest for the nightly run, as before.
+    expect(await quietly(() => rewriteKeyArchivesAfterDeletion(s, B))).toEqual({ pending: true });
+  });
+
+  describe('the older files a rewrite that stopped left of a generation', () => {
+    /** Three generations, each with an older file of its own beside its
+     *  newest (the same keys, written a second before), as a rewrite that
+     *  stopped before deleting what it replaced leaves them; and B deleted. */
+    async function withOlderFiles() {
+      const s = memoryStore();
+      for (let n = 0; n < 3; n++) await backup(s, night(n));
+      const gens = await generations(s);
+      const older = gens.map((g) => {
+        const f = s.files.get(g.pathname)!;
+        const { header } = ka.verifyKeyArchive(f.body);
+        const pathname = ka.keyArchiveName(header.taken_at, new Date(Date.parse(header.written_at) - 1000), []);
+        s.files.set(pathname, { ...f });
+        return pathname;
+      });
+      expect((await ka.listGenerations(s)).stale).toEqual([...older].sort());
+      await deleteB();
+      return { s, gens, older };
+    }
+
+    test('a run that finishes deletes them all', async () => {
+      const { s, older } = await withOlderFiles();
+      await ka.rewriteGenerations(s, tombstonesNow(), night(3));
+      expect(older.map((p) => s.files.has(p))).toEqual([false, false, false]);
+    });
+
+    test('a run that fails on a kept one deletes those of the generations it rewrote, which hold the key just destroyed, and keeps the kept one’s', async () => {
+      const { s, gens, older } = await withOlderFiles();
+      damage(s, gens[0].pathname);
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(3)))).rejects.toThrow(`The key archive ${gens[0].pathname} doesn't read back intact`);
+      // The kept one's older file may be the only one of it that reads.
+      expect(older.map((p) => s.files.has(p))).toEqual([true, false, false]);
+      expect(ka.verifyKeyArchive(s.files.get(older[0])!.body).keys.has(keyB)).toBe(true);
+    });
+  });
+
+  describe('a newer one passed over by its name', () => {
+    /** Three generations, B deleted, and its rewrite stopped part way: the
+     *  newest rewritten (its name holds every tombstone), the older two not. */
+    async function stoppedPartWay() {
+      const s = memoryStore();
+      for (let n = 0; n < 3; n++) await backup(s, night(n));
+      await deleteB();
+      const put = s.put;
+      let puts = 0;
+      s.put = async (...args) => {
+        if (++puts === 2) throw new Error('cut off');
+        return put(...args);
+      };
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(3)))).rejects.toThrow('cut off');
+      s.put = put;
+      const [top, middle, oldest] = await generations(s);
+      expect([top, middle, oldest].map((g) => ka.verifyKeyArchive(s.files.get(g.pathname)!.body).tombstones.has(keyB))).toEqual([true, false, false]);
+      return { s, top, middle, oldest };
+    }
+
+    test('counts as intact once it reads back intact: an older one that doesn’t is deleted on its strength', async () => {
+      const { s, top, middle } = await stoppedPartWay();
+      damage(s, middle.pathname);
+      const before = s.reads.get(top.pathname) ?? 0;
+      const { dropped } = await quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(4)));
+      expect(dropped).toEqual([middle.pathname]);
+      expect(s.reads.get(top.pathname)).toBeGreaterThan(before);
+    });
+
+    test('never on its name alone: damaged too, the older one is kept and the run fails naming it, the oldest rewritten all the same', async () => {
+      const { s, top, middle, oldest } = await stoppedPartWay();
+      damage(s, top.pathname);
+      damage(s, middle.pathname);
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(4)))).rejects.toThrow(`The key archive ${middle.pathname} doesn't read back intact`);
+      expect([s.files.has(top.pathname), s.files.has(middle.pathname)]).toEqual([true, true]);
+      const rewritten = (await generations(s)).find((g) => g.taken === oldest.taken)!;
+      expect(rewritten.pathname).not.toBe(oldest.pathname);
+      expect(ka.verifyKeyArchive(s.files.get(rewritten.pathname)!.body).keys.has(keyB)).toBe(false);
+    });
   });
 });
 

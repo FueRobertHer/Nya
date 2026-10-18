@@ -264,6 +264,22 @@ describe('what the load couldn’t read, beside the chart', () => {
     expect(html).toContain(`<div class="stale-note">${manual.replace(/'/g, '&#x27;')}.</div>`);
     expect(html).toContain(`<div class="error">${manual.replace(/'/g, '&#x27;')}</div>`);
   });
+
+  test('what no figure reads (tags, the review queue’s settings) the list says, never the chart', () => {
+    const tags = "Your tags couldn't be read, so transactions show without them until they can be.";
+    const queue = 'Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.';
+    const html = renderToStaticMarkup(
+      <MonthBreakdown txns={ROWS} notes={[manual]} asideNotes={[tags, queue]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />
+    );
+    const esc = (n: string) => n.replace(/'/g, '&#x27;');
+    expect(html).toContain(`<div class="error">${esc(manual)}</div><div class="error">${esc(tags)}</div><div class="error">${esc(queue)}</div>`);
+    expect(html).toContain(`<div class="stale-note">${esc(manual)}.</div>`);
+    expect(html).not.toContain(`<div class="stale-note">${esc(tags)}</div>`);
+    expect(html).not.toContain(`<div class="stale-note">${esc(queue)}</div>`);
+    // With nothing listed, they still say why rather than the year looking empty.
+    const none = renderToStaticMarkup(<MonthBreakdown txns={[]} notes={[]} asideNotes={[tags]} loading={false} taxonomy={taxonomy} onRecategorize={() => {}} onRename={() => {}} />);
+    expect(none).not.toContain('No transactions in the last 12 months.');
+  });
 });
 
 describe('the period selector', () => {
@@ -371,10 +387,10 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);
     expect(html.split(`<div class="summary-value">${formatMoney(s.money_out, 'USD')}</div>`).length - 1).toBe(2);
     const t = text(html);
-    expect(t).toContain('2 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
-    expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from your bank’s files, not sent by the bank.`);
+    expect(t).toContain('2 of this month’s transactions were imported from files, not sent by the bank.');
+    expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from files, not sent by the bank.`);
     // Over a longer period, of the period.
-    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
     // Without them, nothing.
     expect(text(sankey())).not.toContain('imported from your bank');
   });

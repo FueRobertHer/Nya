@@ -5,7 +5,7 @@ import type { Ctx } from '@/lib/containers';
 import { StoredDataUnreadableError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { CategoryError, type CategoryUsage, type Taxonomy } from '@/lib/categories';
 import { changeTaxonomy, ensureTaxonomy, newCategoryId } from '@/lib/category-store';
-import { categoryUsage } from '@/lib/category-usage';
+import { categoryUsages } from '@/lib/category-usage';
 import { loadBudgets } from '@/lib/budget-store';
 import { BudgetError } from '@/lib/budget-set';
 import { budgetMonthsStore } from '@/lib/budget-months-store';
@@ -48,11 +48,11 @@ import {
 // drops a cache: transactions are filed into categories after the cache
 // (lib/activity.ts), so a change shows on the next load of the list.
 
-// Each read of what uses a category is every stored row (lib/category-usage.ts),
-// made a few at once: up to three for an apply, and up to eleven for undoing
-// Freelancer, which a long history makes slow. A literal, as route segment
-// config requires.
-export const maxDuration = 120;
+// What uses the categories it may archive or remove is read once for all of
+// them (lib/category-usage.ts categoryUsages), every stored row once, as one
+// category's read is: an apply's three and the eleven undoing Freelancer
+// removes cost the same. A literal, as route segment config requires.
+export const maxDuration = 60;
 
 const MAX_BODY_CHARS = 64 * 1024;
 const BASIS = /^[0-9a-f]{64}$/;
@@ -83,16 +83,10 @@ function failure(err: unknown, what: string): NextResponse {
   return NextResponse.json({ error: what }, { status: 500 });
 }
 
-/** What uses each category, a few at a time: each read is every stored row
- *  (lib/category-usage.ts), so they aren't all made at once. Strict. */
+/** What uses each category, every stored row read once for all of them
+ *  (lib/category-usage.ts). Strict. */
 async function usageOf(ctx: Ctx, taxonomy: Taxonomy, ids: readonly string[]): Promise<Map<string, CategoryUsage>> {
-  const out = new Map<string, CategoryUsage>();
-  for (let i = 0; i < ids.length; i += 4) {
-    const batch = ids.slice(i, i + 4);
-    const got = await Promise.all(batch.map((id) => categoryUsage(ctx, taxonomy, id)));
-    batch.forEach((id, k) => out.set(id, got[k]));
-  }
-  return out;
+  return ids.length === 0 ? new Map() : categoryUsages(ctx, taxonomy, ids);
 }
 
 /** A plan as the page is sent it: everything but the set it would make. */

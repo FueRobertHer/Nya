@@ -86,7 +86,7 @@ import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
 import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
-import { rememberedAccountsReport, type RememberedAccount } from './last-known';
+import { couldNotRead, rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
@@ -100,11 +100,12 @@ import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
-import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
+import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, coveredOutOfDays, type NoTransactionsView } from './no-transactions';
+import { withImportedFiles } from './history-import/without-files';
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
 import { readBudgetMonth, windowStart, type BudgetMonthRead } from './budget-month';
-import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
+import { availableMeters, gapText, monthName, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
@@ -121,7 +122,8 @@ import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 import { bankRows, PART_PREFIX, type WithParts } from './split-rows';
 import { readDrawState } from './history-import/extend';
-import { importedStretch } from './history-import/view';
+import { importedRowsNote, importedStretch } from './history-import/view';
+import { lastDayOf } from './cash-flow';
 import type { WalkState } from './history-import/store';
 
 const DAY_MS = 86_400_000;
@@ -190,7 +192,8 @@ export type ApiAccount = {
   subtype: string | null;
   mask: string | null;
   /** Plaid's sign: what a credit card or a loan owes is positive. Null when
-   *  no balance was ever measured. */
+   *  no balance was ever measured, or the newest can't be read (named in
+   *  `missing`, as unavailable: never an older one in its place). */
   balance: number | null;
   currency: string | null;
   credit_limit: number | null;
@@ -239,7 +242,8 @@ export type ApiMissing = {
   /** The connection's institution; null for a manual account, whose name is
    *  in what couldn't be read. */
   institution: string | null;
-  /** A manual account's id, or one SimpleFIN feeds; null for a connection,
+  /** A manual account's id, one SimpleFIN feeds, or a linked account's whose
+   *  newest balance can't be read (listed with none); null for a connection,
    *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
   /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
@@ -247,9 +251,12 @@ export type ApiMissing = {
   source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
-   *  version's), kept as it is. 'unavailable': a manual account sealed under
-   *  an encryption key this deployment doesn't have (lib/manual.ts
-   *  ManualAccountsReport): the deployment's problem, not damage.
+   *  version's), kept as it is. 'unavailable': sealed under an encryption
+   *  key this deployment doesn't have (lib/crypto.ts sealedAway): a manual
+   *  account (lib/manual.ts ManualAccountsReport), a connection's record of
+   *  its accounts (lib/last-known.ts), or the day's balances that may hold a
+   *  linked account's newest (lib/history.ts latestMeasuredBalances): the
+   *  deployment's problem, not damage.
    *  'not_loaded': a connection whose accounts the app hasn't loaded yet.
    *  Version 1 may add reasons. */
   reason: 'unreadable' | 'unrecognised' | 'unavailable' | 'not_loaded';
@@ -322,13 +329,16 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
+  // Sealed under a key this deployment can't use: named with a reason of its
+  // own, as a manual account's is, never as damaged (lib/last-known.ts).
+  const unavailable = new Set(remembered.unavailable);
 
   // Each stored Item's accounts, as its last good load recorded them.
   const linked: { item: StoredItem; account: RememberedAccount }[] = [];
   for (const item of items) {
-    if (unreadable.has(item.item_id)) {
+    if (unreadable.has(item.item_id) || unavailable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable', source: 'plaid' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: unavailable.has(item.item_id) ? 'unavailable' : 'unreadable', source: 'plaid' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
@@ -360,7 +370,15 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
   );
   const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
+  const [{ balances, unavailable: sealed }, currencies] = await Promise.all([
+    latestMeasuredBalances(ctx, ids),
+    bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem),
+  ]);
+  // Accounts whose newest balance is sealed under a key this deployment
+  // can't use: listed with none, and named, never answered with an older one.
+  const sealedOf = (account_id: string, institution: string) => {
+    if (sealed.has(account_id)) missing.push({ institution, account_id, reason: 'unavailable', source: 'plaid' });
+  };
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -374,6 +392,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
 
   const accounts: ApiAccount[] = linked.map(({ item, account }) => {
     const b = balances.get(account.account_id) ?? null;
+    sealedOf(account.account_id, item.institution_name);
     return {
       id: account.account_id,
       source: 'plaid',
@@ -449,6 +468,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const id of fed.accounts.keys()) fedIds.add(id);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
+    sealedOf(root, entry.label.institution);
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
@@ -507,6 +527,10 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
     if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+  }
+  if (sealed.size > 0) {
+    const one = sealed.size === 1;
+    notes.push(`${one ? 'An account’s newest balance' : `${sealed.size} accounts’ newest balances`} couldn’t be read, so ${one ? 'it has' : 'they have'} none here`);
   }
   const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
   for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
@@ -790,7 +814,7 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     const remembered = await rememberedAccountsReport(ctx);
     known ||= Object.values(remembered.byItem).some((accounts) => accounts.some((a) => a.account_id === id));
     currency = (await bankCurrencies(ctx, [id], remembered.byItem)).get(id) ?? null;
-    if (currency === null && remembered.unreadable.length > 0) {
+    if (currency === null && couldNotRead(remembered).length > 0) {
       notes.push('Some accounts’ records couldn’t be read, so this account’s currency isn’t known');
       // It may be one of theirs: not said to be unknown.
       known = true;
@@ -1070,7 +1094,10 @@ export type ApiSource = { institution: string; synced_at: string | null; complet
 export type ActivityRead = {
   rows: Txn[];
   history: OlderTxn[];
+  /** The read layer's notes, the tags' among them (`tags_note`, also apart,
+   *  for an answer that shows no tags: lib/api-cash-flow.ts). */
   notes: string[];
+  tags_note: string | null;
   sources: ApiSource[];
   hidden: Set<string>;
   view: NoTransactionsView;
@@ -1089,27 +1116,32 @@ const apiSourceOf = (s: BankSource): ApiSource => ({
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts), the rows before them that recurring detection
- *  needs (`history`), and the categories they were filed by (`ix`), grown in
- *  memory where the app hasn't yet (see CATEGORIES). */
+ *  (lib/no-transactions.ts), each that doesn't bring its transactions in with
+ *  what the files imported into its accounts cover, as the app's are sent
+ *  (lib/history-import/without-files.ts, lenient), the rows before them that
+ *  recurring detection needs (`history`), and the categories they were filed
+ *  by (`ix`), grown in memory where the app hasn't yet (see CATEGORIES). */
 export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
+  const view = noTransactionsView(bank.payload);
+  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed, without] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
     // assembly's own notes. One that ended holds no bank.
     connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
+    withImportedFiles(ctx, view.without),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
     notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
+    tags_note,
     ix: indexTaxonomy(taxonomy),
     tags,
     sources: [...bank.sources.map(apiSourceOf), ...fedSources.sources],
     hidden: bank.hidden,
-    view: noTransactionsView(bank.payload),
+    view: { ...view, without },
   };
 }
 
@@ -1253,7 +1285,8 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     transactions: page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+    // A bank whose files cover the range in its place has its rows here.
+    notes: [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, q.from, q.to), activity.rows.length, 'list')],
   };
 }
 
@@ -1610,14 +1643,38 @@ export type ApiSpending = Summary & {
   notes: string[];
 };
 
+/**
+ * How many of the transactions of [from, to] were imported into linked
+ * accounts from files (the bank's, or another app's export: lib/migration)
+ * rather than sent by the bank (#52), in the
+ * words under the month's totals and beside the chart (lib/history-import/
+ * view.ts importedRowsNote): a whole month named as the chart names one
+ * ("September 2026"), any other range as this period. Null with none. The
+ * last of spending's notes, and of the cash flow's (lib/api-cash-flow.ts).
+ */
+export function importedNote(rows: readonly Txn[], range: { from: string; to: string }): string | null {
+  const { from, to } = range;
+  const whole = from.endsWith('-01') && to === lastDayOf(from.slice(0, 7));
+  return importedRowsNote(
+    rows.filter((t) => t.date >= from && t.date <= to),
+    whole ? monthName(from.slice(0, 7)) : 'this period'
+  );
+}
+
 /** Money in and out over [from, to], and spending by category and by group,
  *  in one currency: by default the one most transactions are in, as the
  *  app's totals. */
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  // The tags' note stays: spending by tag is in the answer. A bank whose
+  // files cover the range in its place is counted, as in the app.
+  const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
+  // Last, as under the month's totals: how many of the range's transactions
+  // came from files rather than the bank.
+  const imported = importedNote(activity.rows, opts);
+  if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
   // Groups add up what the categories do: money out that counts.
   const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: ReturnType<typeof transactionCounter> }>();
@@ -1784,10 +1841,11 @@ export type ApiHoldings = {
  * with the day they were recorded: what the nightly snapshot and the person's
  * loads kept, never a fresh fetch. Plaid keeps no history of holdings, so an
  * account is known only from the day recording began. With `accountId`, that
- * one account's; an id no account has is NotFound, but one that may be at a
- * connection whose accounts couldn't be read, or haven't been loaded, is said
- * to be so (complete: false, with the connections named), never "no such
- * account".
+ * one account's; an id no account has is NotFound, and so is one known not to
+ * be an investment account (listed as another kind, or kept by hand), but one
+ * that may be at a connection whose accounts couldn't be read, or haven't
+ * been loaded, is said to be so (complete: false, with the connections
+ * named), never "no such account".
  */
 export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; accountId?: string } = {}): Promise<ApiHoldings> {
   const read = await accountsRead(ctx, !!opts.includeHidden);
@@ -1797,9 +1855,14 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
-    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
+    const known = read.accounts.find((a) => a.id === opts.accountId);
+    if (known?.source === 'simplefin') {
       throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
     }
+    // Known not to be an investment account (listed as another kind, or one
+    // kept by hand, which no connection holds): whatever connection can't be
+    // read, it has no holdings to be missing.
+    if (known || isManualId(opts.accountId)) throw new NotFound('That account isn’t an investment account linked through Plaid, so it has no holdings.');
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {
       accounts: [],

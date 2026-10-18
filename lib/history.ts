@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt, MalformedCiphertextError, DecryptFailedError } from './crypto';
+import { encrypt, decrypt, sealedAway, MalformedCiphertextError, DecryptFailedError } from './crypto';
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
 import { openStored } from './repo';
@@ -487,6 +487,16 @@ export type MeasuredBalance = {
   layer: 'recorded' | 'partial';
 };
 
+/** Each account's newest measured balance, and the accounts whose newest one
+ *  can't be told (latestMeasuredBalances). */
+export type MeasuredBalances = {
+  balances: Map<string, MeasuredBalance>;
+  /** Accounts whose newest measured balance may be in a map sealed under a
+   *  key this deployment can't use (lib/crypto.ts sealedAway): none is
+   *  answered for them, never an older one. */
+  unavailable: Set<string>;
+};
+
 /**
  * Each account's newest MEASURED balance and its UTC day, never an estimate:
  * the balance the read-only API gives a linked account (lib/api-read.ts),
@@ -500,25 +510,34 @@ export type MeasuredBalance = {
  * one. Reads the dates, then only the maps it needs, newest first and a few
  * more each round trip, until every account has a balance: on most days the
  * newest map names them all. A map damaged for good (unreadableForGood) is
- * passed over (the next date down answers, with its own date); a failure that
- * may pass (storage, or the key store, out of reach) throws, never "an older
- * balance". An account no measured map names is left out.
+ * passed over (the next date down answers, with its own date). A map sealed
+ * under a key this deployment can't use (a failed decrypt under k0, which a
+ * replaced PLAID_ENCRYPTION_KEY looks exactly like, or a data key the key
+ * store lacks) is not damage: every account not answered by then, which it
+ * may hold the newest balance of, is `unavailable`, never answered with an
+ * older balance, as a manual account sealed so is (lib/manual.ts). Any other
+ * failure that may pass (storage, the master key) throws. An account no
+ * measured map names is left out.
  */
-export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, string[]>): Promise<Map<string, MeasuredBalance>> {
+export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, string[]>): Promise<MeasuredBalances> {
   const found = new Map<string, MeasuredBalance>();
-  if (accounts.size === 0) return found;
+  const unavailable = new Set<string>();
+  if (accounts.size === 0) return { balances: found, unavailable };
   const [recordedDates, partialDates] = await Promise.all([redis().hkeys(ACCOUNTS_HASH(ctx)), redis().hkeys(ACCOUNTS_PARTIAL_HASH(ctx))]);
   const recorded = new Set(recordedDates);
   const partial = new Set(partialDates);
   const today = new Date().toISOString().slice(0, 10);
   const dates = [...new Set([...recordedDates, ...partialDates])].filter((d) => d <= today).sort().reverse();
 
-  const mapAt = async (key: string, date: string): Promise<Record<string, number> | null> => {
+  /** A day's map, null for none (or one damaged for good: the date before
+   *  answers), or 'sealed' for one this deployment can't open. */
+  const mapAt = async (key: string, date: string): Promise<Record<string, number> | null | 'sealed'> => {
     const blob = await redis().hget<string>(key, date); // uncaught: storage failing is never "no balance"
     if (!blob) return null;
     try {
       return await decryptMap(ctx, blob);
     } catch (err) {
+      if (sealedAway(err)) return 'sealed';
       if (!unreadableForGood(err)) throw err;
       return null; // damaged for good: the date before answers
     }
@@ -531,7 +550,7 @@ export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, str
     return null;
   };
 
-  for (let i = 0, size = 1; i < dates.length && found.size < accounts.size; i += size, size = Math.min(size * 4, 32)) {
+  for (let i = 0, size = 1; i < dates.length && found.size + unavailable.size < accounts.size; i += size, size = Math.min(size * 4, 32)) {
     const batch = await Promise.all(
       dates.slice(i, i + size).map(async (date) => {
         const [p, r] = await Promise.all([
@@ -543,14 +562,28 @@ export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, str
     );
     for (const { date, p, r } of batch) {
       for (const [account, ids] of accounts) {
-        if (found.has(account)) continue;
+        if (found.has(account) || unavailable.has(account)) continue;
+        // The partial map first, as its precedence says: one that can't be
+        // opened may name it, and would win, so nothing older can stand in.
+        if (p === 'sealed') {
+          unavailable.add(account);
+          continue;
+        }
         const fromPartial = valueIn(p, ids);
-        const value = fromPartial ?? valueIn(r, ids);
-        if (value !== null) found.set(account, { date, value, layer: fromPartial !== null ? 'partial' : 'recorded' });
+        if (fromPartial !== null) {
+          found.set(account, { date, value: fromPartial, layer: 'partial' });
+          continue;
+        }
+        if (r === 'sealed') {
+          unavailable.add(account);
+          continue;
+        }
+        const value = valueIn(r, ids);
+        if (value !== null) found.set(account, { date, value, layer: 'recorded' });
       }
     }
   }
-  return found;
+  return { balances: found, unavailable };
 }
 
 /** The moment the snapshot dated `date` was last written, or null if unknown. */

@@ -28,6 +28,10 @@ export type ListState<T> = {
   /** Why the last save did not go through. Cleared by the next success. */
   saveError: string | null;
   saving: boolean;
+  /** When the load failed on stored entries the screen can offer to remove
+   *  (a 409 naming the store's `repair`): how many are damaged, which can
+   *  be, and how many a later version saved, which can't. Absent otherwise. */
+  damage?: { unreadable: number; unrecognised: number };
 };
 
 /** The state before the first load: loading, so the empty value is never
@@ -72,6 +76,9 @@ export function createWholeListStore<T>(opts: {
    *  (goals: the person's own day, which the server dates an archive by;
    *  budgets: the month they are changed in, as the page has it). */
   extra?: () => Record<string, unknown>;
+  /** The repair the server names on a 409 for entries the screen can offer
+   *  to remove (goals: "goal-plans"): kept in `damage` when it does. */
+  repair?: string;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -86,7 +93,7 @@ export function createWholeListStore<T>(opts: {
 
   async function load(): Promise<void> {
     const mine = ++loadSeq;
-    set({ status: 'loading', error: null });
+    set({ status: 'loading', error: null, damage: undefined });
     let res: Response;
     let data: Record<string, unknown> | null = null;
     try {
@@ -101,11 +108,15 @@ export function createWholeListStore<T>(opts: {
     if (mine !== loadSeq) return; // a newer load has started; its answer wins
     const value = data?.[opts.field];
     if (!res.ok || !opts.isValid(value)) {
+      const count = (v: unknown) => (Array.isArray(v) ? v.length : 0);
       set({
         status: 'error',
         error: data?.unreadable
           ? `Your saved ${opts.noun} could not be read, so they have been left untouched and editing is paused.`
           : `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.`,
+        ...(res.status === 409 && opts.repair && data?.repair === opts.repair
+          ? { damage: { unreadable: count(data.unreadable_ids), unrecognised: count(data.unrecognised_ids) } }
+          : {}),
       });
       return;
     }

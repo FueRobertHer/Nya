@@ -55,7 +55,10 @@
 // left out, and the report says why), the person's own categories, names and
 // carried exclusions that can't (the assembly's own_read), each manual
 // account whose rows can't (never counted as having none), and whatever else
-// the assembly couldn't read (its notes, which the report lists as gaps).
+// the assembly couldn't read: the transactions it couldn't (its unread_notes,
+// which the report lists as gaps), and how a rule, a category, a split or a
+// group applies when something of theirs couldn't be (its other notes, which
+// leave no transaction out: caveats on the totals).
 // Storage that can't be reached at all fails the whole report, and so do
 // account closures that can't be read, as they fail the Activity tab: never
 // a report counting an account the person closed.
@@ -74,6 +77,7 @@ import { accountWords, endDays, endedNowIds, endOf, type LifecycleView } from '.
 import { reportSettingsStore } from './store';
 import {
   buildReport,
+  notesBesides,
   type EndedFacts,
   type KeptFacts,
   type LiveAccountFacts,
@@ -94,6 +98,14 @@ import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
 const realTime = (iso: string | null | undefined): string | null => (iso && Date.parse(iso) > 0 ? iso : null);
+
+/** Whether a connection holds a bank account or card (what its transactions
+ *  are of: lib/history-import/read.ts coveredAccountsOf), and every one it is
+ *  remembered to hold is hidden. */
+const everyBankAccountHidden = (accounts: readonly { account_id: string; type: string }[], hidden: ReadonlySet<string>): boolean => {
+  const banking = accounts.filter((a) => a.type === 'depository' || a.type === 'credit');
+  return banking.length > 0 && banking.every((a) => hidden.has(a.account_id));
+};
 
 /**
  * The accounts that ended and the windows any was missing from its bank's
@@ -293,6 +305,11 @@ export async function readReport(
       // the day each that ended stopped counting, up to which it needs them.
       accounts: coveredAccountsOf(s.item_id, remembered.byItem[s.item_id] ?? [], bank.lifecycle, covered, hidden).map(({ name, covers, end }) => ({ name, covers, end })),
       ended_by: endedBy(s.item_id),
+      // Every bank account and card it is remembered to hold hidden (what its
+      // rows are of, as for coveredAccountsOf; an investment account or a loan
+      // beside them brings none): none of its rows is read, so how far back
+      // they reach says nothing of the report.
+      every_hidden: everyBankAccountHidden(remembered.byItem[s.item_id] ?? [], hidden),
     };
   });
 
@@ -327,7 +344,8 @@ export async function readReport(
     rows: activity.transactions,
     currency: opts.currency ?? null,
     sources,
-    notes: activity.notes,
+    notes: activity.unread_notes,
+    caveatNotes: notesBesides(activity.notes, activity.unread_notes),
     manual: manualFacts,
     manualUnread: activity.manual_unread,
     removed,

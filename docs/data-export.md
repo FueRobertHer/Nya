@@ -123,7 +123,7 @@ Empty when the file has everything. Otherwise one entry for each part of the fil
 
 A day of `net_worth_history` that is named has no point in the file, and no estimate stands in for it (the app's chart has none that day either). A day of `account_history` that is named is one whose stored balances couldn't all be read: a record of that day is damaged or in a form this version doesn't know, or holds a balance that isn't a number (the numbers beside it are in the file). On it an account has the balance another record of that day holds, or none. A recorded day that can't be read gets no estimate in its place; a measurement that can't be read, on a day with nothing recorded, falls back to that day's estimate, marked `estimated`, as the chart does. A manual account that is named is not in `manual_accounts`, nor listed in `accounts` as one since removed; its balance history is still in `account_history`, under its id.
 
-Nothing in `problems` was removed: it is all still stored as it was. Nya doesn't offer to clear damaged records from here. What removing one would do differs from store to store (an exclusion record gone puts a transaction back in your totals; a record of an email gone may send the email again; an import's record gone loses its undo), so a repair belongs where the record is used, as holdings history's is ([architecture.md](architecture.md#holdings-history)) and sharing's is (the Sharing drawer).
+Nothing in `problems` was removed: it is all still stored as it was. Nya doesn't offer to clear damaged records from here. What removing one would do differs from store to store (an exclusion record gone puts a transaction back in your totals; a record of an email gone may send the email again; an import's record gone loses its undo), so a repair belongs where the record is used, as holdings history's is ([architecture.md](architecture.md#holdings-history)), sharing's is (the Sharing drawer) and goal plans' is (the Goals card, [features.md](features.md#savings-goals)).
 
 ### `institutions[]`
 
@@ -242,7 +242,7 @@ A transaction you split or grouped is here whole, as stored, filed as it would b
 
 ### `category_overrides[]` and `merchant_renames[]`
 
-Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
+Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), and every merchant you renamed (`vendor_key`, `name`). One whose transaction the bank removed goes once a sync saves the removal, as what you said about it does (nothing goes while a store of transactions can't be read), and so do those of an institution you disconnect, after they are kept in `txn-category-carry`; until then it is in the file too, though no transaction shows it.
 
 ### `investment_transactions[]`
 

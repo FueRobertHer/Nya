@@ -329,7 +329,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     name: 'holdings',
     summary: 'Each investment account’s latest recorded positions, and the day they were recorded.',
     args: {
-      account_id: { kind: 'id', description: 'One investment account’s positions (ids from accounts); every account’s without it.' },
+      account_id: { kind: 'id', description: 'One investment account’s positions (ids from accounts); every account’s without it. Another kind of account has none: a 404.' },
       include_hidden: INCLUDE_HIDDEN,
     },
   },
