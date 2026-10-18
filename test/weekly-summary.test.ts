@@ -689,7 +689,7 @@ describe('the summary’s words', () => {
     // connecting it again would help, which the record doesn't say.
     expect(text).toContain("- A bank's connection can't be repaired.");
     expect(text).toContain("October may be missing transactions: Chase hasn't synced since Thursday, October 8 and whether you excluded 3 transactions couldn't be read.");
-    expect(text).toContain('2 transactions from SimpleFIN this week have no category, so they count as spending or income until you categorize them.');
+    expect(text).toContain('2 transactions from SimpleFIN or Lunch Flow this week have no category, so they count as spending or income until you categorize them.');
     expect(text).toContain(`Open Nya to see the figures: ${LINK}/`);
     expect(text).toContain(`Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Manage on the Accounts tab.`);
     expect(text).not.toContain('Nothing needs your attention');

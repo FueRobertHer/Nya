@@ -40,11 +40,11 @@ const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
   ['complete', `False when accounts are missing (missing_accounts), so ${consequence}.`],
   [
     'missing_accounts',
-    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, and each manual account, or account SimpleFIN keeps up to date, that couldn’t be read. Empty when nothing is missing.',
+    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, and each manual account, or account SimpleFIN or Lunch Flow keeps up to date, that couldn’t be read. Empty when nothing is missing.',
   ],
   ['missing_accounts[].institution', 'The connection’s institution; null for an account, whose name is in what couldn’t be read.'],
-  ['missing_accounts[].account_id', 'A manual account’s id, or one SimpleFIN feeds; null for a connection, whose accounts can’t be told apart until they are read.'],
-  ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual" or "simplefin". Version 1 may add values.'],
+  ['missing_accounts[].account_id', 'A manual account’s id, or one SimpleFIN or Lunch Flow feeds; null for a connection, whose accounts can’t be told apart until they are read.'],
+  ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual", "simplefin" or "lunchflow". Version 1 may add values.'],
   [
     'missing_accounts[].reason',
     '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (a manual account saved under an encryption key this Nya doesn’t have: a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
@@ -170,11 +170,11 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       notes: [],
     },
     fields: [
-      ['accounts', 'Every account, linked, kept up to date through SimpleFIN, and manual, by institution and then name. Hidden ones only with include_hidden=true.'],
-      ['accounts[].id', 'The account’s id: Plaid’s for a linked account, manual_… for one you track by hand or one SimpleFIN keeps up to date.'],
+      ['accounts', 'Every account, linked, kept up to date through SimpleFIN or Lunch Flow, and manual, by institution and then name. Hidden ones only with include_hidden=true.'],
+      ['accounts[].id', 'The account’s id: Plaid’s for a linked account, manual_… for one you track by hand or one SimpleFIN or Lunch Flow keeps up to date.'],
       [
         'accounts[].source',
-        '"plaid" for a linked account, "simplefin" for one your SimpleFIN connection keeps up to date, "manual" for one you track by hand. Version 1 may add values, as new ways to connect come: treat one you don’t know as none of these.',
+        '"plaid" for a linked account, "simplefin" for one your SimpleFIN connection keeps up to date, "lunchflow" for one your Lunch Flow connection keeps up to date, "manual" for one you track by hand. Version 1 may add values, as new ways to connect come: treat one you don’t know as none of these.',
       ],
       ['accounts[].name', 'Its name.'],
       ['accounts[].official_name', 'The name the bank gives it, or null.'],
@@ -468,7 +468,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].institution', 'That account’s institution.'],
       [
         'transactions[].source',
-        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
+        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "lunchflow" for one your Lunch Flow connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
       ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
       [
@@ -676,7 +676,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['rules[].conditions', 'What it matches: all of them must.'],
       [
         'rules[].conditions[].field',
-        '"name" (the name shown, the bank’s under a name you gave it, or the merchant behind a payment processor), "amount", "account" (by id), "institution" (its name), "category" (by id: the one it is under before any rule runs) or "source" ("plaid", "manual", "import" or "simplefin"). Version 1 may add fields: a rule you don’t understand, leave alone.',
+        '"name" (the name shown, the bank’s under a name you gave it, or the merchant behind a payment processor), "amount", "account" (by id), "institution" (its name), "category" (by id: the one it is under before any rule runs) or "source" ("plaid", "manual", "import", "simplefin" or "lunchflow"). Version 1 may add fields: a rule you don’t understand, leave alone.',
       ],
       ['rules[].conditions[].op', 'For a name: "contains", "equals" or "starts_with", in any case, accents and repeated spaces ignored. For an amount: "gt" (more than), "lt" (less than) or "between" (both ends included). Otherwise "equals".'],
       ['rules[].conditions[].value', 'What it matches: text, an id, or for an amount a size, never negative, in the transaction’s own currency (nothing is converted).'],

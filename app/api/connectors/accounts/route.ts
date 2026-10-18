@@ -8,8 +8,9 @@ import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId, MANUAL_TYPES, type ManualType } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
 
-// Choosing which of a SimpleFIN connection's accounts to track, and what kind
-// each is (lib/connectors/manage.ts), in one request: `retype` changes what
+// Choosing which of a connection's accounts to track (SimpleFIN's or Lunch
+// Flow's), and what kind each is (lib/connectors/manage.ts), in one request:
+// `retype` changes what
 // kind tracked ones are, then `sign` records how to read a card's or a loan's
 // balance (`as_reported`, or `owed_positive` when the server reports what is
 // owed as positive), then `stop` lets accounts go (kept as manual accounts
@@ -106,6 +107,6 @@ export async function PUT(req: Request) {
       requests,
     });
   } catch (err) {
-    return connectorError(err, 'Failed to save your SimpleFIN accounts');
+    return connectorError(err, 'Failed to save your accounts');
   }
 }

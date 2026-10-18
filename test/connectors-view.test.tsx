@@ -268,7 +268,8 @@ describe('in connection health', () => {
     expect(dashboard).toContain('<ConnectorSheet ask={connectorAsk}');
     expect(dashboard.match(/<ConnectorCards /g)?.length).toBe(2);
     expect(dashboard.match(/onConnectSimpleFin=\{connectSimpleFin\}/g)?.length).toBe(2);
-    expect(dashboard).toContain("{inst.connector ? 'via SimpleFIN' : 'Manual'}");
+    expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
+    expect(dashboard).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
     for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (', '{inst.manual && !inst.connector && manageMode && (']) {
       expect(dashboard).toContain(gate);
     }

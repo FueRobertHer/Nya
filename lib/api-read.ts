@@ -58,7 +58,9 @@
 // waits for the person to say how to read it (an answer built on it says
 // complete: false), with each bank's health as Connection health shows it.
 // Their rows come from the same assembly as the rest, and each bank is among
-// the sources, with whether its older history is all in.
+// the sources, with whether its older history is all in. A Lunch Flow
+// connection's accounts are served the same way with source 'lunchflow', as
+// of when Nya received their balances (Lunch Flow gives no time with them).
 //
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
@@ -92,7 +94,7 @@ import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } 
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
 import { connectorAccountsStore, endedAccountsStore } from './connectors/store';
-import { connectorOf } from './connectors/registry';
+import { ANY_CONNECTOR, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
 import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
 import { readHealthForDisplay } from './connection-health';
@@ -178,10 +180,10 @@ export type ApiConnection = {
 
 export type ApiAccount = {
   id: string;
-  /** 'plaid' for a linked account, 'simplefin' for one a SimpleFIN
-   *  connection keeps up to date, 'manual' for one tracked by hand. Version
-   *  1 may add values (another way to connect): treat one you don't know as
-   *  none of these. */
+  /** 'plaid' for a linked account, 'simplefin' or 'lunchflow' for one a
+   *  SimpleFIN or Lunch Flow connection keeps up to date, 'manual' for one
+   *  tracked by hand. Version 1 may add values (another way to connect):
+   *  treat one you don't know as none of these. */
   source: string;
   name: string;
   official_name: string | null;
@@ -243,7 +245,7 @@ export type ApiMissing = {
    *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
   /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
-   *  accounts, 'manual', or 'simplefin'. */
+   *  accounts, 'manual', 'simplefin' or 'lunchflow'. */
   source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
@@ -437,22 +439,24 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     }
   }
   const stored = new Set(items.map((i) => i.item_id));
-  // One SimpleFIN fed is SimpleFIN's: still tracked, or let go and removed
-  // (lib/connectors/store.ts connector-ended remembers it). LENIENT: one
-  // that can't be read is said as a manual account.
-  const fedIds = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
+  // One a connector fed is that connector's: still tracked, or let go and
+  // removed (lib/connectors/store.ts connector-ended remembers it, and which
+  // connector). LENIENT: one that can't be read is said as a manual account;
+  // one whose record can't say which connector is read as SimpleFIN's, the
+  // value readers before Lunch Flow know.
+  const fedKinds: Map<string, ConnectorKind | null> = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
     ? await endedAccountsStore.getAllReport(ctx).then(
-        (r) => new Set([...r.entries.keys(), ...r.unreadable, ...r.unrecognised]),
-        () => new Set<string>()
+        (r) => new Map([...[...r.entries].map(([id, e]) => [id, e.connector] as const), ...[...r.unreadable, ...r.unrecognised].map((id) => [id, null] as const)]),
+        () => new Map<string, ConnectorKind | null>()
       )
-    : new Set<string>();
-  for (const id of fed.accounts.keys()) fedIds.add(id);
+    : new Map<string, ConnectorKind | null>();
+  for (const [id, a] of fed.accounts) fedKinds.set(id, a.connector);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
-      source: isManualId(root) ? (fedIds.has(root) ? 'simplefin' : 'manual') : 'plaid',
+      source: isManualId(root) ? (fedKinds.has(root) ? (fedKinds.get(root) ?? 'simplefin') : 'manual') : 'plaid',
       name: entry.label.name,
       official_name: null,
       institution: entry.label.institution,
@@ -471,20 +475,20 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       lifecycle: apiLifecycle(lifecycle, root),
     });
   }
-  // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
-  // above). One kept as a manual account on a disconnect that stopped part
-  // way is in both stores: the manual one, listed above, is it.
+  // The accounts a SimpleFIN or Lunch Flow connection keeps up to date (see
+  // SIMPLEFIN above). One kept as a manual account on a disconnect that
+  // stopped part way is in both stores: the manual one, listed above, is it.
   const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
-  const label = connectorOf('simplefin').label;
   for (const card of fed.cards) {
     const shown = card.accounts.filter((a) => !own.has(a.account_id) && asked(a.account_id));
     if (shown.length === 0) continue;
     const connection = fedConnection(card, fed);
+    const kind = card.connector ?? 'simplefin';
     for (const a of shown) {
       const at = realTime(a.updated_at);
       accounts.push({
         id: a.account_id,
-        source: 'simplefin',
+        source: kind,
         name: a.name,
         official_name: null,
         institution: card.institution_name,
@@ -498,7 +502,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         is_debt: isOwedType(a.type),
         hidden: hidden.has(a.account_id),
         // The time the bank gave the balance (its balance-date), else when
-        // Nya received it.
+        // Nya received it (Lunch Flow gives none).
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection,
@@ -506,12 +510,18 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       });
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
-    if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+    if (said) notes.push(`${card.institution_name}, through ${connectorLabel(kind)}: ${said}`);
   }
   const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
-  for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
+  // Which connector one that can't be read came through: the connection that
+  // lists it says, when it can be read (else read as SimpleFIN's, as above).
+  const trackedBy = (id: string): ConnectorKind | null => [...fed.connections.values()].find((c) => c.tracked.some((t) => t.account_id === id))?.connector ?? null;
+  const unreadKinds = unread.map((u) => trackedBy(u.account_id));
+  unread.forEach((u, i) => missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: unreadKinds[i] ?? 'simplefin' }));
   if (unread.length > 0) {
     const one = unread.length === 1;
+    const kinds = new Set(unreadKinds);
+    const label = kinds.size === 1 && !kinds.has(null) ? connectorLabel(unreadKinds[0]!) : ANY_CONNECTOR;
     notes.push(`${one ? `An account ${label} keeps` : `${unread.length} accounts ${label} keeps`} up to date couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
@@ -1122,9 +1132,10 @@ export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<Ac
 function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>): { sources: ApiSource[]; notes: string[] } {
   const sources: ApiSource[] = [];
   const notes: string[] = [];
-  const label = connectorOf('simplefin').label;
   for (const card of fed.cards) {
     if (card.accounts.every((a) => hidden.has(a.account_id))) continue;
+    const kind = card.connector ?? 'simplefin';
+    const label = connectorLabel(kind);
     const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
     const unread = !!card.connection_id && fed.unreadableConnections.has(card.connection_id);
     const history = conn?.history ?? null;
@@ -1133,7 +1144,9 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
     if (complete) continue;
     if (unread) notes.push(`${card.institution_name}: what Nya keeps about its ${label} connection couldn’t be read, so whether its transactions are all here isn’t known`);
     else if (history === null) notes.push(`${card.institution_name}: no transactions have come from ${label} yet`);
-    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, a few months each night`);
+    // SimpleFIN's come 90 days a window; Lunch Flow's two years at once, and
+    // what is older in one more (lib/connectors/lunchflow.ts).
+    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, ${kind === 'lunchflow' ? 'with its next daily update' : 'a few months each night'}`);
   }
   return { sources, notes };
 }
@@ -1790,8 +1803,12 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
-    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
-      throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
+    const fedBy = read.accounts.find((a) => a.id === opts.accountId && isConnectorKind(a.source))?.source;
+    if (fedBy && isConnectorKind(fedBy)) {
+      // Lunch Flow serves positions for some brokerages, which Nya doesn't
+      // read yet (lib/connectors/lunchflow.ts HOLDINGS): its words say so.
+      const why = fedBy === 'lunchflow' ? 'whose holdings Nya doesn’t read: only its balance' : 'which reports balances, not positions';
+      throw new NotFound(`That account is kept up to date through ${connectorLabel(fedBy)}, ${why}: it has no holdings.`);
     }
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {

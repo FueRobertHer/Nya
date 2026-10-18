@@ -63,6 +63,7 @@ import { dayIn } from '../report/period';
 import { WEEKDAY_NAMES, type Weekday } from './settings';
 import { weekBefore } from './week';
 import { isUnread, type BillFact, type ConnectionFact, type Level, type SpendingFact, type WeeklyFacts } from './content';
+import { ANY_CONNECTOR } from '../connectors/types';
 
 /** From this many on, a count is written "over 99". */
 export const COUNT_CAP = 100;
@@ -509,7 +510,7 @@ export function composeWeekly(f: WeeklyFacts, o: ComposeOptions): ComposedSummar
   else if (f.uncategorized > 0) {
     const one = f.uncategorized === 1;
     paragraphs.push(
-      `${plural(f.uncategorized, 'transaction')} from SimpleFIN this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
+      `${plural(f.uncategorized, 'transaction')} from ${ANY_CONNECTOR} this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
     );
     attention = true;
   }

@@ -76,6 +76,7 @@ import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurr
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
+import { isConnectorKind } from '@/lib/connectors/types';
 
 /** The trailing window, in days (today included). */
 export const TRAILING_DAYS = 365;
@@ -203,8 +204,9 @@ export type TrailingFlows = {
   /** Transactions that would count but are in another currency: in none of
    *  the figures, by currency. */
   leftOut: LeftOut;
-  /** Transactions from SimpleFIN with no category, counted as spending or
-   *  income (lib/spending.ts uncategorizedFromConnector); absent is none. */
+  /** Transactions from SimpleFIN or Lunch Flow with no category, counted as
+   *  spending or income (lib/spending.ts uncategorizedFromConnector); absent
+   *  is none. */
   uncategorized?: number;
 };
 
@@ -278,7 +280,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     }
     sums[flow] += t.amount;
     if (flow === 'unclear-loan' && t.source) unclearElsewhere += t.amount;
-    if (t.source === 'simplefin' && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
+    if (isConnectorKind(t.source) && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
     // A row on the cash account, typed or imported (any source but a bank's,
     // which has none): spending of the cash withdrawn.
     if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {

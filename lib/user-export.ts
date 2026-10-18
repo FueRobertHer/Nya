@@ -706,15 +706,16 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
 
 export type Kind = 'recorded' | 'estimated';
 
-/** A connection: a Plaid Item, or a connection to SimpleFIN (`item_id` its
- *  connection's id, `institution_name` "SimpleFIN" and the host it reaches). */
+/** A connection: a Plaid Item, or a connection to SimpleFIN or Lunch Flow
+ *  (`item_id` its connection's id, `institution_name` "SimpleFIN" or "Lunch
+ *  Flow" and the host it reaches). */
 export type ExportInstitution = { item_id: string; institution_name: string; institution_id: string | null; provider: 'plaid' | ConnectorKind };
 
 export type ExportAccount = {
   account_id: string;
-  /** "plaid"; "simplefin" for an account SimpleFIN keeps up to date; "manual"
-   *  for a manual account since removed, known now only by what still names
-   *  it; null when nothing stored says. */
+  /** "plaid"; "simplefin" or "lunchflow" for an account SimpleFIN or Lunch
+   *  Flow keeps up to date; "manual" for a manual account since removed,
+   *  known now only by what still names it; null when nothing stored says. */
   provider: string | null;
   item_id: string | null;
   institution_name: string | null;
@@ -841,6 +842,7 @@ export function notIncluded(people: boolean): string[] {
   return [
     'Bank access tokens: the credentials Nya uses to reach your banks through Plaid. They are credentials, not your data, and they work only for Nya, so they are left out.',
     'The Access URL SimpleFIN gave Nya when you connected it: a credential, which reads your accounts there, not your data. Remove Nya at SimpleFIN to end it.',
+    'The Lunch Flow API key you gave Nya when you connected it: a credential, which reads your accounts there, not your data. Delete its API destination in Lunch Flow to end it.',
     'Your API tokens themselves, and the hashes Nya keeps to check them: credentials, not your data. Each token’s name and when it was made and last used are in, under api_tokens.',
     people
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
@@ -1170,7 +1172,7 @@ const PART_WORDS: Record<string, PartWords> = {
     many: 'entries',
     missing: missingFrom,
     inCsv: (counts) =>
-      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.`,
+      `Not all of your ${txnAnnotationStore.what} could be read: ${counts}. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank, SimpleFIN or Lunch Flow brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.`,
   },
   [carriedAnnotationStore.name]: {
     noun: carriedAnnotationStore.what,

@@ -490,7 +490,7 @@ describe('getting to them', () => {
     expect(links).toContain('href="/privacy"');
     expect(links).not.toContain('aria-current');
     expect(text(renderToStaticMarkup(<CoverageNote />))).toContain(
-      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
+      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
     );
   });
 

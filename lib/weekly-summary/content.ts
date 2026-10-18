@@ -154,7 +154,7 @@ export type WeeklyFacts = {
   goals: GoalFact | Unread;
   connections: ConnectionFact[] | Unread;
   months: MonthFact[] | Unread;
-  /** Transactions this week from SimpleFIN with no category. */
+  /** Transactions this week from SimpleFIN or Lunch Flow with no category. */
   uncategorized: number | Unread;
 };
 

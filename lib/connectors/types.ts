@@ -48,11 +48,21 @@ export const CONNECTOR_WORDS: Readonly<Record<ConnectorKind, { label: string; cr
   lunchflow: { label: 'Lunch Flow', credential: 'API key', again: 'an API key from Lunch Flow', balance_date: 'received' },
 };
 
-/** What the person calls a connector: "SimpleFIN", "Lunch Flow". */
-export const connectorLabel = (kind: ConnectorKind): string => CONNECTOR_WORDS[kind].label;
+/** What the person calls a connector: "SimpleFIN", "Lunch Flow" (a kind this
+ *  release doesn't know, as it is). */
+export const connectorLabel = (kind: string): string => (isConnectorKind(kind) ? CONNECTOR_WORDS[kind].label : kind);
 
 /** Every connector's name, for words about them all ("SimpleFIN or Lunch Flow"). */
 export const ANY_CONNECTOR = CONNECTOR_KINDS.map(connectorLabel).join(' or ');
+
+/** The line under a connector account's balance on the Accounts tab, `day`
+ *  written for the person: the institution's own day (SimpleFIN's
+ *  balance-date), or, for a connector that gives none, the day Nya received
+ *  it, said as such, never as the bank's. */
+export function connectorBalanceDay(kind: string, day: string): string {
+  const words = isConnectorKind(kind) ? CONNECTOR_WORDS[kind] : null;
+  return words?.balance_date === 'received' ? `Balance as ${words.label} gave it on ${day}` : `Balance as of ${day}`;
+}
 
 /** One account as a connector reports it. */
 export type RemoteAccount = {

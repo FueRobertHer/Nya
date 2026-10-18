@@ -55,6 +55,7 @@
 
 import { dominantCurrency } from './format';
 import type { CategoryKind } from './categories';
+import { ANY_CONNECTOR, CONNECTOR_KINDS, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
 
 /** What these rules read of a transaction (the Activity tab's Txn). */
 export type Countable = {
@@ -143,22 +144,36 @@ export function isTransfer(t: Pick<Countable, 'transaction_code' | 'category' | 
   return isMoneyMovement(t) || categoryKey(t) === LOAN_PAYMENTS;
 }
 
+/** A row a connector the person brought (SimpleFIN, Lunch Flow) counts with no
+ *  category: neither gives categories (see below). */
+const uncategorizedConnectorRow = (t: Countable & { source?: string | null }) => isConnectorKind(t.source) && t.category === null && !isExcluded(t) && !isTransfer(t);
+
 /**
- * How many rows from a connector the person brought (SimpleFIN) have no
- * category and still count in totals. SimpleFIN gives no categories, so
+ * How many rows from a connector the person brought (SimpleFIN, Lunch Flow)
+ * have no category and still count in totals. Neither gives categories, so
  * nothing says such a row is a card payment or a move between the person's
  * own accounts: it counts as spending or income until they categorize it,
- * except a pair between two of their SimpleFIN accounts, which is shown as a
+ * except a pair between two of their connector accounts, which is shown as a
  * transfer (lib/manual-txns.ts connectorTransfers).
  */
 export function uncategorizedFromConnector(rows: readonly (Countable & { source?: string | null })[]): number {
-  return rows.filter((t) => t.source === 'simplefin' && t.category === null && !isExcluded(t) && !isTransfer(t)).length;
+  return rows.filter(uncategorizedConnectorRow).length;
 }
 
-/** What to say under a total that counts them, or null when there are none. */
-export function uncategorizedNote(n: number): string | null {
+/** Which connectors those rows came through, by name, for uncategorizedNote:
+ *  "SimpleFIN", or "SimpleFIN or Lunch Flow" when both brought some. */
+export function uncategorizedFrom(rows: readonly (Countable & { source?: string | null })[]): string {
+  const kinds = new Set(rows.filter(uncategorizedConnectorRow).map((t) => t.source as ConnectorKind));
+  const labels = CONNECTOR_KINDS.filter((k) => kinds.has(k)).map(connectorLabel);
+  return labels.length > 0 ? labels.join(' or ') : ANY_CONNECTOR;
+}
+
+/** What to say under a total that counts them, or null when there are none.
+ *  `from` names the connectors they came through (uncategorizedFrom), every
+ *  one when only a count is known. */
+export function uncategorizedNote(n: number, from: string = ANY_CONNECTOR): string | null {
   if (n <= 0) return null;
-  return `${n} transaction${n === 1 ? '' : 's'} from SimpleFIN ${n === 1 ? 'has' : 'have'} no category, so ${n === 1 ? 'it counts' : 'they count'} as spending or income. A move between two of your SimpleFIN accounts is left out on its own; categorize any other card payment or move between your accounts as a transfer to leave it out too.`;
+  return `${n} transaction${n === 1 ? '' : 's'} from ${from} ${n === 1 ? 'has' : 'have'} no category, so ${n === 1 ? 'it counts' : 'they count'} as spending or income. A move between two of your ${from} accounts is left out on its own; categorize any other card payment or move between your accounts as a transfer to leave it out too.`;
 }
 
 /** You excluded it from budgets and reports. When whether you did could not be

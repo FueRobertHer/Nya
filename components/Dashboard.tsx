@@ -37,6 +37,7 @@ import HistoryImportSheet, { type HistoryImportTarget } from './HistoryImportShe
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
+import { connectorBalanceDay, connectorLabel } from '@/lib/connectors/types';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
@@ -1186,6 +1187,7 @@ export default function Dashboard({
     [loadNetWorth, requestBackfill, loadTransactions, txns]
   );
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
+  const connectLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
 
   const startAddManual = useCallback(() => {
     setManualError('');
@@ -1783,7 +1785,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1931,7 +1933,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -2040,7 +2042,7 @@ export default function Dashboard({
                       <div className="inst-header">
                         <div className="inst-name">
                           {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
+                          {inst.manual && <span className="manual-badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
                           <div className="inst-total">
@@ -2103,8 +2105,8 @@ export default function Dashboard({
                                         typed one has to say when it was set. */}
                                     {inst.manual && a.updated_at && (
                                       <div className="manual-updated">
-                                        {/* SimpleFIN's balance is as of the day the bank gave it. */}
-                                        {inst.connector ? `Balance as of ${fmtInstantDay(a.updated_at)}` : `Updated ${fmtAsOf(a.updated_at)}`}
+                                        {/* SimpleFIN's balance is as of the day the bank gave it; Lunch Flow gives no day, so its is the day Nya received it. */}
+                                        {inst.connector ? connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at)) : `Updated ${fmtAsOf(a.updated_at)}`}
                                       </div>
                                     )}
                                     {/* Missing from its bank's answer, held
