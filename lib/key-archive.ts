@@ -671,7 +671,8 @@ async function readGeneration(store: BackupStore, g: Generation, signal?: AbortS
  * kept one are rewritten all the same, so a key just destroyed leaves every
  * file that can be rewritten, and then it throws, naming the newest kept,
  * once the older files of each generation known intact (or deleted for a
- * newer one intact) are gone: those of any other may be the only ones of it
+ * newer one intact) are gone: one passed over by its name that has older
+ * files is read for it, and those of any other may be the only ones of it
  * that read, and stay. Answers the files written, and the damaged ones
  * deleted. Under the lock.
  */
@@ -756,9 +757,26 @@ export async function rewriteGenerations(
   // than the file that replaced them, so never needed. When the run failed,
   // only those of a generation known intact (or deleted for a newer one)
   // go, since they may still hold the key just destroyed: an older file of
-  // any other may be the only one of it that reads.
+  // any other may be the only one of it that reads. One passed over by its
+  // name (rewritten by an earlier run whose leftovers weren't all deleted)
+  // is read for it, never trusted on its name alone.
+  if (failed) {
+    const withOlder = new Set(stale.map((p) => parseKeyArchiveName(p)!.taken));
+    for (const g of passed) {
+      if (withOlder.has(g.taken) && 'archive' in (await readGeneration(store, g, signal))) superseded.add(g.taken);
+    }
+  }
   const leftovers = failed ? stale.filter((p) => superseded.has(parseKeyArchiveName(p)!.taken)) : stale;
-  if (leftovers.length > 0) await store.del(leftovers, signal);
+  if (leftovers.length > 0) {
+    try {
+      await store.del(leftovers, signal);
+    } catch (err) {
+      // The run's own failure names the archive kept: it is the one to say.
+      // These go the next time a run gets this far.
+      if (!failed) throw err;
+      console.error(`Key archive: ${leftovers.length} older file(s) of rewritten generations could not be deleted; the next run deletes them.`, err instanceof Error ? err.message : typeof err);
+    }
+  }
   if (failed) throw failed;
   return { written, dropped };
 }

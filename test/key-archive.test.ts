@@ -597,6 +597,26 @@ describe('a key archive that doesn’t read back intact', () => {
       expect(older.map((p) => s.files.has(p))).toEqual([true, false, false]);
       expect(ka.verifyKeyArchive(s.files.get(older[0])!.body).keys.has(keyB)).toBe(true);
     });
+
+    test('a deletion of them that fails never hides the run’s own failure, naming the kept one; the next run deletes them', async () => {
+      const { s, gens, older } = await withOlderFiles();
+      damage(s, gens[0].pathname);
+      const del = s.del;
+      s.del = async (pathnames, signal) => {
+        if (pathnames.some((p) => older.includes(p))) throw new Error('store out of reach');
+        return del(pathnames, signal);
+      };
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(3)))).rejects.toThrow(`The key archive ${gens[0].pathname} doesn't read back intact`);
+      expect(older.map((p) => s.files.has(p))).toEqual([true, true, true]);
+      s.del = del;
+      // The next run passes the two rewritten over by their names, so it
+      // reads them for their older files: one that doesn't read back keeps
+      // its own.
+      const [, middle] = await generations(s);
+      damage(s, middle.pathname);
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(4)))).rejects.toThrow(`The key archive ${gens[0].pathname} doesn't read back intact`);
+      expect(older.map((p) => s.files.has(p))).toEqual([true, true, false]);
+    });
   });
 
   describe('a newer one passed over by its name', () => {
