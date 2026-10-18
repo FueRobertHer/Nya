@@ -19,7 +19,11 @@
 // function that writes one, its module's or imported, to a fixed point; one
 // of those handed on uncalled, as a callback (`.map(fmt)`) or as a
 // component's prop (`money={fmt}`, then called as `money(...)` in that
-// component); a variable or a component's prop given an amount; and a number
+// component), or kept in a variable or an object handed on (`const names =
+// { money: fmt }`), or a parameter's default; a variable or a component's
+// prop given an amount (a `let` given one later, a list or a map one is put
+// in, a callback's parameter given their items, what a function returns and
+// what is destructured from it), by the members that hold one; and a number
 // written as one past the formatters: Intl's or toLocaleString's currency,
 // fraction digits or compact notation, a "$" written by hand, toFixed, or a
 // toLocaleString given no options, unless the code beside it says it is
@@ -342,7 +346,7 @@ function lexed(text: string): Lexed {
   if (!lx) {
     lx = lex(text, false);
     recent.set(text, lx);
-    if (recent.size > 64) recent.delete(recent.keys().next().value!);
+    if (recent.size > 512) recent.delete(recent.keys().next().value!);
   }
   return lx;
 }
@@ -634,18 +638,165 @@ function bodyOpen(lx: Lexed, paramsEnd: number): number {
   return -1;
 }
 
-/** Each function a module defines, by name, with where its body is: a
- *  function's braces, or a const's arrow to the end of its statement. */
-function functionRanges(lx: Lexed): Map<string, [number, number]> {
-  const out = new Map<string, [number, number]>();
+/** Each function a module defines, by name, with where its body is (a
+ *  function's braces, or a const's arrow to the end of its statement), and
+ *  where its parameters are, inside their parentheses. */
+function functionRanges(lx: Lexed): { ranges: Map<string, [number, number]>; params: Map<string, [number, number]> } {
+  const ranges = new Map<string, [number, number]>();
+  const params = new Map<string, [number, number]>();
   for (const m of lx.names.matchAll(/\bfunction\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g)) {
-    const paramsEnd = closing(lx, m.index! + m[0].length - 1);
-    const open = paramsEnd < 0 ? -1 : bodyOpen(lx, paramsEnd);
-    const end = open < 0 ? -1 : closing(lx, open);
-    if (end > 0) out.set(m[1], [open, end + 1]);
+    const open = m.index! + m[0].length - 1;
+    const paramsEnd = closing(lx, open);
+    const body = paramsEnd < 0 ? -1 : bodyOpen(lx, paramsEnd);
+    const end = body < 0 ? -1 : closing(lx, body);
+    if (end > 0) ranges.set(m[1], [body, end + 1]), params.set(m[1], [open + 1, paramsEnd]);
   }
-  for (const m of lx.names.matchAll(/\bconst\s+(\w+)\s*(?::[^=\n]+)?=\s*(?:async\s*)?(?:\(|\w+\s*=>)/g)) {
-    if (!out.has(m[1])) out.set(m[1], [m.index!, statementEnd(lx, m.index!)]);
+  for (const m of lx.names.matchAll(/\bconst\s+(\w+)\s*(?::[^=\n]+)?=\s*(?:async\s*)?(\(|\w+\s*=>)/g)) {
+    if (ranges.has(m[1])) continue;
+    ranges.set(m[1], [m.index!, statementEnd(lx, m.index!)]);
+    const open = m.index! + m[0].length - m[2].length;
+    const close = m[2] === '(' ? closing(lx, open) : -1;
+    if (close > 0) params.set(m[1], [open + 1, close]);
+  }
+  return { ranges, params };
+}
+
+/** The ranges of the parts of [from, to) of a module separated by commas at
+ *  its outermost level: a call's arguments, a function's parameters. */
+function partsOf(lx: Lexed, from: number, to: number): [number, number][] {
+  const out: [number, number][] = [];
+  let start = from;
+  for (let i = from; i < to; i++) {
+    const past = lx.opaque.get(i) ?? lx.elementEnd.get(i);
+    const pair = lx.pairs.get(i);
+    if (past !== undefined) i = past - 1;
+    else if (pair !== undefined && pair > i) i = pair;
+    else if (lx.code[i] === ',') out.push([start, i]), (start = i + 1);
+  }
+  if (lx.code.slice(start, to).trim()) out.push([start, to]);
+  return out;
+}
+
+/** A name a binding binds; in an object pattern, the key it is bound from
+ *  (an outer one's, in a pattern inside it); and its default's code, if any. */
+type Binding = { name: string; key: string | null; init: string | null };
+
+/** What a binding binds: a name, with its default; or each name of a
+ *  pattern (`{ a, b: c = x, ...d }` binds a, c from b with its default x, and
+ *  d; `[e, [f]]` binds e and f). Its type is left out. */
+function bindingsIn(binding: string, key: string | null = null): Binding[] {
+  let b = binding.trim().replace(/^\.\.\./, '').trim();
+  const isEq = (e: string, i: number) => e[i] === '=' && e[i + 1] !== '=' && e[i + 1] !== '>' && !/[=!<>]/.test(e[i - 1] ?? '');
+  const eq = topLevel(b).find((i) => isEq(b, i));
+  const init = eq === undefined ? null : b.slice(eq + 1).trim();
+  if (eq !== undefined) b = b.slice(0, eq).trim();
+  if (b[0] !== '{' && b[0] !== '[') {
+    const name = /^[A-Za-z_$][\w$]*/.exec(b)?.[0];
+    return name ? [{ name, key, init }] : [];
+  }
+  const close = closing(b, 0);
+  if (close < 0) return [];
+  const inner = b.slice(1, close);
+  const out: Binding[] = [];
+  let from = 0;
+  for (const cut of [...topLevel(inner).filter((i) => inner[i] === ','), inner.length]) {
+    let part = inner.slice(from, cut);
+    from = cut + 1;
+    let own = key;
+    if (b[0] === '{') {
+      // `key: binding`, but not a default's own colon (a ternary's).
+      const top = topLevel(part);
+      const colon = top.find((i) => part[i] === ':');
+      const def = top.find((i) => isEq(part, i));
+      const named = colon !== undefined && (def === undefined || colon < def);
+      // A rest element holds what the others don't: all the value has.
+      if (!/^\s*\.\.\./.test(part)) own ??= /^\s*['"]?([\w$-]+)/.exec(named ? part.slice(0, colon) : part)?.[1] ?? null;
+      if (named) part = part.slice(colon + 1);
+    }
+    out.push(...bindingsIn(part, own));
+  }
+  return out;
+}
+
+/** A function's parameter as written, and what it binds. */
+type Param = { text: string; bindings: Binding[] };
+
+/** The parameters of a function written at [from, to) of a module (an arrow
+ *  function, or a function expression), or null when what is there is no
+ *  function written there (a name, a call, a value). */
+function paramsAt(lx: Lexed, from: number, to: number): Param[] | null {
+  const t = lx.names;
+  let i = from;
+  while (i < to && /\s/.test(t[i])) i++;
+  if (/^async\b/.test(t.slice(i, i + 6))) i += 5;
+  while (i < to && /\s/.test(t[i])) i++;
+  const list = (open: number, close: number) =>
+    partsOf(lx, open + 1, close).map(([a, b]) => ({ text: lx.code.slice(a, b).trim(), bindings: bindingsIn(lx.code.slice(a, b)) }));
+  if (/^function\b/.test(t.slice(i, i + 9))) {
+    const open = t.indexOf('(', i);
+    const close = open < 0 || open >= to ? -1 : closing(lx, open);
+    return close < 0 ? null : list(open, close);
+  }
+  if (t[i] === '(') {
+    const close = closing(lx, i);
+    // An arrow's parameters: "=>" after them, past a return type.
+    return close > 0 && close < to && /^\s*(?::[^=]*)?=>/.test(t.slice(close + 1, to)) ? list(i, close) : null;
+  }
+  const one = /^([A-Za-z_$][\w$]*)\s*=>/.exec(t.slice(i, to));
+  return one ? [{ text: one[1], bindings: [{ name: one[1], key: null, init: null }] }] : null;
+}
+
+/** The indexes of [from, to) of a module at its outermost level: in no
+ *  bracket, string, template, regular expression or element. */
+function topLevelIn(lx: Lexed, from: number, to: number): number[] {
+  const out: number[] = [];
+  for (let i = from; i < to; i++) {
+    const past = lx.opaque.get(i) ?? lx.elementEnd.get(i);
+    const pair = lx.pairs.get(i);
+    if (past !== undefined) i = past - 1;
+    else if (pair !== undefined) i = Math.max(i, pair);
+    else out.push(i);
+  }
+  return out;
+}
+
+/** The body of the function written at [from, to) of a module: a block's
+ *  inside, or an arrow's expression; null when none is written there. */
+function bodyIn(lx: Lexed, from: number, to: number): { block: boolean; from: number; to: number } | null {
+  const t = lx.names;
+  let i = from;
+  while (i < to && /\s/.test(t[i])) i++;
+  const block = (open: number) => {
+    const close = closing(lx, open);
+    return close > 0 && close <= to ? { block: true, from: open + 1, to: close } : null;
+  };
+  if (t[i] === '{') return block(i);
+  if (/^(?:async\s+)?function\b/.test(t.slice(i, i + 15))) {
+    const params = closing(lx, t.indexOf('(', i));
+    const open = params < 0 ? -1 : bodyOpen(lx, params);
+    return open < 0 ? null : block(open);
+  }
+  const arrow = topLevelIn(lx, i, to).find((k) => t[k] === '=' && t[k + 1] === '>');
+  if (arrow === undefined) return null;
+  let j = arrow + 2;
+  while (j < to && /\s/.test(t[j])) j++;
+  return t[j] === '{' ? block(j) : { block: false, from: j, to };
+}
+
+/** Where each return of a function's block [from, to) gives its value: its
+ *  own, not those of a function written inside it. */
+function ownReturns(lx: Lexed, from: number, to: number): [number, number][] {
+  const t = lx.names;
+  const inner: [number, number][] = [];
+  for (const m of t.slice(from, to).matchAll(/=>|\bfunction\b/g)) {
+    const body = bodyIn(lx, from + m.index!, to);
+    if (body?.block) inner.push([body.from, body.to]);
+  }
+  const out: [number, number][] = [];
+  for (const m of t.slice(from, to).matchAll(/(?<![\w$.])return\b/g)) {
+    const at = from + m.index!;
+    if (inner.some(([a, b]) => at >= a && at < b)) continue;
+    out.push([at + m[0].length, statementEnd(lx, at + m[0].length)]);
   }
   return out;
 }
@@ -679,9 +830,24 @@ function defaultExportOf(text: string): string | null {
   return /\bexport\s+default\s+(?:async\s+)?function\s+(\w+)/.exec(text)?.[1] ?? /\bexport\s+default\s+(\w+)\s*;/.exec(text)?.[1] ?? null;
 }
 
-/** A variable given an amount, and where it can be read: from its
- *  declaration to the end of the block it is in. */
-type AmountVar = { name: string; from: number; to: number };
+/** What of a value holds an amount: all of it (null), or only these of its
+ *  members (an object's, or the items' of a list). */
+type Holds = ReadonlySet<string> | null;
+
+/** Two answers to what of a value holds an amount (false: none), together. */
+function joined(a: Holds | false, b: Holds | false): Holds | false {
+  if (a === false) return b;
+  if (b === false || a === null) return a;
+  return b === null ? null : new Set([...a, ...b]);
+}
+
+const sameHolds = (a: Holds | false, b: Holds | false) => a === b || (a instanceof Set && b instanceof Set && a.size === b.size && [...a].every((m) => b.has(m)));
+
+/** A variable given an amount (`members`: what of it holds one), or holding
+ *  a function that writes one, and where it can be read: from its
+ *  declaration to the end of the block it is in (a callback's parameter: in
+ *  the callback). */
+type AmountVar = { name: string; from: number; to: number; members: Holds };
 
 type ModuleFacts = {
   file: string;
@@ -692,6 +858,7 @@ type ModuleFacts = {
   /** Where it formats a number as an amount (numberFormats). */
   formats: number[];
   ranges: Map<string, [number, number]>;
+  params: Map<string, [number, number]>;
   bindings: Map<string, { file: string; name: string }>;
   /** Its functions that write an amount, and those that write a field's figures. */
   writers: Set<string>;
@@ -701,6 +868,16 @@ type ModuleFacts = {
   propWriters: Map<string, Set<string>>;
   propAmounts: Map<string, Set<string>>;
   amountVars: AmountVar[];
+  /** Its variables holding a function that writes an amount: one given a
+   *  writer (`const money = formatMoney`), or an object holding one
+   *  (`{ money: size }`); and the parameters whose default is one. */
+  writerVars: AmountVar[];
+  /** Of each of its functions writing an amount, what of what it returns
+   *  holds one (holdsOf). */
+  returns: Map<string, Holds | false>;
+  /** What region() and componentAt() found, by where. */
+  regions: Map<string, { names: string; formats: boolean }>;
+  components: Map<number, string | null>;
 };
 
 type Model = { facts: ModuleFacts[]; byFile: Map<string, ModuleFacts>; writers: Map<string, Set<string>>; fieldWriters: Map<string, Set<string>> };
@@ -721,7 +898,6 @@ const amountPick = (model: Model): Pick => (file, name) => model.writers.get(fil
 const textPick = (model: Model): Pick => (file, name) => (model.writers.get(file)?.has(name) ?? false) && !builds(model.byFile.get(file), name);
 const fieldPick = (model: Model): Pick => (file, name) => model.fieldWriters.get(file)?.has(name) ?? false;
 
-const ARROW = /^\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>|^\s*(?:async\s+)?function\b/;
 
 /** A ternary's "?", not optional chaining's "?." nor "??". */
 const isQuestion = (e: string, i: number) => e[i] === '?' && e[i + 1] !== '.' && e[i + 1] !== '?' && e[i - 1] !== '?';
@@ -820,6 +996,14 @@ const SAID = /^\s*(?:spoken|spokenLabel)\s*\(/;
  *  string's or template's text), and, of what is drawn, but what is said
  *  through spoken(); and whether a number is formatted as an amount in it. */
 function region(f: ModuleFacts, from: number, to: number, how: Reading): { names: string; formats: boolean } {
+  // The text alone decides it: kept, as the same regions are read on each round.
+  const key = `${from}:${to}:${how}`;
+  let r = f.regions.get(key);
+  if (!r) f.regions.set(key, (r = readRegion(f, from, to, how)));
+  return r;
+}
+
+function readRegion(f: ModuleFacts, from: number, to: number, how: Reading): { names: string; formats: boolean } {
   const nested = how === 'all' ? [] : f.jsx.elements.filter((el) => el.start >= from && el.end <= to);
   const read = (text: string) => {
     let out = text.slice(from, to);
@@ -834,6 +1018,8 @@ function region(f: ModuleFacts, from: number, to: number, how: Reading): { names
 
 /** The component whose body `at` is in: the innermost function named as one. */
 function componentAt(f: ModuleFacts, at: number): string | null {
+  const known = f.components.get(at);
+  if (known !== undefined) return known;
   let best: string | null = null;
   let size = Infinity;
   for (const [name, [from, to]] of f.ranges) {
@@ -842,17 +1028,20 @@ function componentAt(f: ModuleFacts, at: number): string | null {
       size = to - from;
     }
   }
+  f.components.set(at, best);
   return best;
 }
 
-/** Whether `name`, a name alone at `at` in `f`, is one of `seeds`, a
- *  function `pick` counts (its module's, or imported) or, with `props`, a prop
- *  of the component it is in given a function that writes an amount. */
+/** Whether `name` (or its `member`), at `at` in `f`, is one of `seeds`, a
+ *  function `pick` counts (its module's, or imported) or, with `props`, a
+ *  variable holding a function that writes an amount, or a prop of the
+ *  component it is in given one. */
 function isWriter(name: string, member: string | undefined, f: ModuleFacts, at: number, pick: Pick, seeds: readonly string[], props: boolean): boolean {
   const component = props ? componentAt(f, at) : null;
   const given = (component && f.propWriters.get(component)) || new Set<string>();
-  if (!member && (seeds.includes(name) || given.has(name) || (f.ranges.has(name) && pick(f.file, name)))) return true;
-  if (member && given.has(member)) return true;
+  const held = props && f.writerVars.some((v) => v.name === name && at >= v.from && at < v.to);
+  if (!member && (seeds.includes(name) || given.has(name) || held || (f.ranges.has(name) && pick(f.file, name)))) return true;
+  if (member && (given.has(member) || given.has(name) || held)) return true;
   const b = member ? f.bindings.get(`${name}.*`) : f.bindings.get(name);
   return !!b && pick(b.file, member ?? b.name);
 }
@@ -871,12 +1060,22 @@ function usesWriter(names: string, f: ModuleFacts, at: number, pick: Pick, seeds
   return false;
 }
 
+const escaped = (name: string) => name.replace(/\$/g, '\\$');
+
+/** `name` read in code: not as another's member (`x.name`), but spread
+ *  (`...name`) or alone; then the member read of it, if any. */
+const readOf = (name: string) => new RegExp(`(?:(?<=\\.\\.\\.)|(?<![\\w$.]))${escaped(name)}(?![\\w$])(?:\\s*\\??\\.\\s*([\\w$]+))?`, 'g');
+
 /** Whether `names`, at `at` in `f`, reads a variable or a component's prop
- *  given an amount. */
+ *  given an amount: of a variable holding one in some members only, one of
+ *  those, or all of it. */
 function readsAmount(names: string, f: ModuleFacts, at: number): boolean {
+  for (const v of f.amountVars) {
+    if (at < v.from || at >= v.to) continue;
+    for (const m of names.matchAll(readOf(v.name))) if (!v.members || !m[1] || v.members.has(m[1])) return true;
+  }
   const component = componentAt(f, at);
-  const seen = [...f.amountVars.filter((v) => at >= v.from && at < v.to).map((v) => v.name), ...((component && f.propAmounts.get(component)) || [])];
-  return seen.some((name) => new RegExp(`(?<![\\w$.])${name.replace(/\$/g, '\\$')}(?![\\w$])`).test(names));
+  return [...((component && f.propAmounts.get(component)) || [])].some((name) => readOf(name).test(names));
 }
 
 /** Whether [from, to) of `f`, as `how` reads it, writes an amount (see WHAT
@@ -891,17 +1090,279 @@ function writesFieldFigures(f: ModuleFacts, from: number, to: number, model: Mod
   return usesWriter(region(f, from, to, how).names, f, from, fieldPick(model), FIELD_WRITERS, false);
 }
 
-/** The variables of `f` given an amount, with where each can be read. */
-function amountVarsOf(f: ModuleFacts, model: Model): AmountVar[] {
+/** A module's declarations: the names each binds (`pattern`, the "{" or
+ *  "[" of a destructuring), where it is, where it can be read (to its
+ *  block's end), and where its value is, if it is given one. */
+type Declaration = { names: Binding[]; pattern: string | null; at: number; to: number; kind: string; init: [number, number] | null };
+
+function declarationsOf(f: ModuleFacts): Declaration[] {
+  const { lx } = f;
+  const t = lx.names;
+  const out: Declaration[] = [];
+  for (const m of t.matchAll(/\b(const|let|var)\s+/g)) {
+    const at = m.index!;
+    const start = at + m[0].length;
+    let end = start;
+    let names: Binding[];
+    const pattern = t[start] === '{' || t[start] === '[' ? t[start] : null;
+    if (pattern) {
+      const close = closing(lx, start);
+      if (close < 0) continue;
+      names = bindingsIn(lx.code.slice(start, close + 1));
+      end = close + 1;
+    } else {
+      const name = /^[A-Za-z_$][\w$]*/.exec(t.slice(start, start + 100))?.[0];
+      if (!name) continue;
+      names = [{ name, key: null, init: null }];
+      end = start + name.length;
+    }
+    let to = t.length;
+    for (const [open, close] of f.jsx.blocks) if (open < at && close > at && close < to) to = close;
+    // Its value: past its type, after "=".
+    const eq = /^\s*(?::[^=;\n]+)?=(?![=>])/.exec(t.slice(end, end + 300));
+    const init: [number, number] | null = eq ? [end + eq[0].length, statementEnd(lx, end + eq[0].length)] : null;
+    out.push({ names, pattern, at, to, kind: m[1], init });
+  }
+  return out;
+}
+
+/** The methods giving a list's own items, or one of them. */
+const SAME_ITEMS = /^(?:filter|slice|sort|toSorted|toReversed|reverse|concat|find|findLast|at|flat)$/;
+
+/**
+ * What of the value at [from, to) of `f` holds an amount (Holds), or false
+ * for none: of an object written there, its members given one; of a list
+ * written there, its items'; of a variable given one, what of it does; of a
+ * member of one, all of it, when that member holds one; of a list's own
+ * items (filter, sort, find...), the list's; of what .map gives, what its
+ * callback returns; of useMemo's value, what its callback returns; of a call
+ * of a function the model knows that writes one, what it returns; and of
+ * anything else that writes one, all of it.
+ */
+function holdsOf(f: ModuleFacts, from: number, to: number, model: Model): Holds | false {
+  const { lx } = f;
+  const t = lx.names;
+  let a = from;
+  let b = to;
+  while (a < b && /\s/.test(lx.code[a])) a++;
+  while (b > a && /[\s;,]/.test(lx.code[b - 1])) b--;
+  if (a >= b) return false;
+  const whole = (): Holds | false => (writesAmount(f, a, b, textPick(model), 'drawn') ? null : false);
+  // A string or a template: all of it, if it writes one.
+  if (/['"`]/.test(lx.code[a])) return whole();
+  const awaited = /^await\s+/.exec(t.slice(a, b));
+  if (awaited) return holdsOf(f, a + awaited[0].length, b, model);
+  if (t[b - 1] === '!') return holdsOf(f, a, b - 1, model);
+  const top = topLevelIn(lx, a, b);
+  const cast = top.find((i) => /^\sas\s/.test(t.slice(i, i + 4)) || /^\ssatisfies\s/.test(t.slice(i, i + 11)));
+  if (cast !== undefined) return holdsOf(f, a, cast, model);
+  // A ternary's branches, not its test; each side of || and ??; the last of
+  // a run of && (one before it is given when falsy: nothing).
+  const q = top.find((i) => isQuestion(t, i));
+  if (q !== undefined) {
+    let nest = 0;
+    const colon = top.find((i) => i > q && (isQuestion(t, i) ? (nest++, false) : t[i] === ':' && nest-- === 0));
+    return colon === undefined ? whole() : joined(holdsOf(f, q + 1, colon, model), holdsOf(f, colon + 1, b, model));
+  }
+  const or = top.find((i) => /^(?:\|\||\?\?)/.test(t.slice(i, i + 2)));
+  if (or !== undefined) return joined(holdsOf(f, a, or, model), holdsOf(f, or + 2, b, model));
+  const and = top.findLast((i) => t.startsWith('&&', i));
+  if (and !== undefined) return holdsOf(f, and + 2, b, model);
+  if (lx.pairs.get(a) === b - 1) {
+    if (t[a] === '(') return holdsOf(f, a + 1, b - 1, model);
+    if (t[a] === '{') return objectHolds(f, a, b, model);
+    if (t[a] === '[') {
+      let out: Holds | false = false;
+      for (const [p, q] of partsOf(lx, a + 1, b - 1)) {
+        const spread = /^\s*\.\.\./.exec(t.slice(p, q));
+        out = joined(out, holdsOf(f, spread ? p + spread[0].length : p, q, model));
+      }
+      return out;
+    }
+  }
+  const open = t[b - 1] === ')' || t[b - 1] === ']' ? lx.pairs.get(b - 1) : undefined;
+  if (open !== undefined && open > a) {
+    // An item of a list.
+    if (t[b - 1] === ']') return holdsOf(f, a, open, model);
+    const callee = t.slice(a, open);
+    const method = /\??\.\s*([\w$]+)\s*$/.exec(callee);
+    if (method && SAME_ITEMS.test(method[1])) return holdsOf(f, a, a + method.index!, model);
+    if (method && /^(?:map|flatMap)$/.test(method[1])) {
+      const [callback] = partsOf(lx, open + 1, b - 1);
+      return callback ? returnsHold(f, callback[0], callback[1], model) : false;
+    }
+    const fn = method ? null : /^([A-Za-z_$][\w$]*)\s*(?:<[^()]*>)?\s*$/.exec(callee)?.[1];
+    if (fn === 'useMemo') {
+      const [callback] = partsOf(lx, open + 1, b - 1);
+      return callback ? returnsHold(f, callback[0], callback[1], model) : false;
+    }
+    const known = fn ? returnsOfCall(f, fn, model) : undefined;
+    return known === undefined || known === false ? whole() : known;
+  }
+  const ref = /^([A-Za-z_$][\w$]*)(?:\s*\??\.\s*([A-Za-z_$][\w$]*))?$/.exec(t.slice(a, b));
+  const v = ref && f.amountVars.findLast((v) => v.name === ref[1] && a >= v.from && a < v.to);
+  if (v) return !ref[2] ? v.members : !v.members || v.members.has(ref[2]) ? null : false;
+  return whole();
+}
+
+/** What of an object written at [a, b) of `f` (its braces) holds an amount:
+ *  its members given one, and what a spread of one brings. */
+function objectHolds(f: ModuleFacts, a: number, b: number, model: Model): Holds | false {
+  const { lx } = f;
+  const members = new Set<string>();
+  for (const [p, q] of partsOf(lx, a + 1, b - 1)) {
+    const spread = /^\s*\.\.\./.exec(lx.names.slice(p, q));
+    if (spread) {
+      const h = holdsOf(f, p + spread[0].length, q, model);
+      if (h === null) return null;
+      if (h) for (const m of h) members.add(m);
+      continue;
+    }
+    const colon = topLevelIn(lx, p, q).find((i) => lx.names[i] === ':');
+    // `key: value` or `key`; a method or a computed key holds no figure written here.
+    const key = /^\s*(?:['"]([^'"]*)['"]|([A-Za-z_$][\w$]*))\s*$/.exec(lx.code.slice(p, colon ?? q));
+    if (key && holdsOf(f, colon === undefined ? p : colon + 1, q, model) !== false) members.add(key[1] ?? key[2]);
+  }
+  return members.size > 0 ? members : false;
+}
+
+/** What of what the function written at [from, to) of `f` returns holds an
+ *  amount: its expression's, or its own returns'; a function named, as a
+ *  call of it. */
+function returnsHold(f: ModuleFacts, from: number, to: number, model: Model): Holds | false {
+  const body = bodyIn(f.lx, from, to);
+  if (!body) {
+    const name = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(f.lx.names.slice(from, to))?.[1];
+    return name && isWriter(name, undefined, f, from, textPick(model), FORMATTERS, true) ? null : false;
+  }
+  if (!body.block) return holdsOf(f, body.from, body.to, model);
+  let out: Holds | false = false;
+  for (const [p, q] of ownReturns(f.lx, body.from, body.to)) out = joined(out, holdsOf(f, p, q, model));
+  return out;
+}
+
+/** What of what a call of `name`, in `f`, returns holds an amount, when it
+ *  is a function the model knows (its module's, or imported) that writes
+ *  one. */
+function returnsOfCall(f: ModuleFacts, name: string, model: Model): Holds | false | undefined {
+  if (f.ranges.has(name)) return f.returns.get(name);
+  const b = f.bindings.get(name);
+  const target = b && model.byFile.get(b.file);
+  const fn = target && (b.name === 'default' ? defaultExportOf(target.text) : b.name);
+  return fn ? target.returns.get(fn) : undefined;
+}
+
+/** The methods whose callback is given a list's items, or a map's. */
+const ITEM_CALLBACKS = /\.\s*(map|flatMap|filter|find|findLast|forEach|some|every|reduce|sort|toSorted)\s*\(/g;
+
+/**
+ * The variables of `f` given an amount, with where each can be read, and
+ * what of each holds one (holdsOf): one declared with one, or a `let` given
+ * one later; a list or a map one is put in (push, unshift, set, add); and
+ * the parameters of a callback given a list's items holding one (.map,
+ * .filter, .forEach...), or a for...of's over one. What a destructuring
+ * binds holds one when the member it is bound from does.
+ */
+function amountVarsOf(f: ModuleFacts, model: Model, declared: Declaration[]): AmountVar[] {
+  const { lx } = f;
+  const t = lx.names;
+  const holds = (from: number, to: number) => holdsOf(f, from, to, model);
   const out: AmountVar[] = [];
-  for (const m of f.lx.names.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=(?![=>])/g)) {
-    const from = m.index! + m[0].length;
-    const end = statementEnd(f.lx, from);
-    if (ARROW.test(f.lx.names.slice(from, end))) continue; // a function, not a value
-    if (!writesAmount(f, from, end, textPick(model), 'drawn')) continue;
-    let to = f.text.length;
-    for (const [open, close] of f.jsx.blocks) if (open < m.index! && close > m.index! && close < to) to = close;
-    out.push({ name: m[1], from: m.index!, to });
+  const give = (name: string, from: number, to: number, h: Holds | false) => {
+    if (h === false) return;
+    const had = out.find((v) => v.name === name && v.from === from);
+    if (had) had.members = joined(had.members, h) as Holds;
+    else out.push({ name, from, to, members: h });
+  };
+  // What each binding of a value holding `h` holds, by its key in an object pattern.
+  const bind = (names: readonly Binding[], pattern: string | null, from: number, to: number, h: Holds | false) => {
+    for (const b of names) {
+      if (pattern !== '{') give(b.name, from, to, h);
+      else if (h === null || (h && b.key !== null && h.has(b.key))) give(b.name, from, to, null);
+    }
+  };
+  const patternOf = (text: string) => (/^[{[]/.test(text) ? text[0] : null);
+  // A JSX attribute's "=" is no assignment.
+  const attrs = new Set(f.jsx.exprs.filter((x) => x.attr !== null).map((x) => x.open));
+  for (const d of declared) {
+    // A function is no value.
+    if (d.init && paramsAt(lx, ...d.init) === null) bind(d.names, d.pattern, d.at, d.to, holds(...d.init));
+    if (d.kind === 'const') continue;
+    for (const b of d.names) {
+      const rx = new RegExp(`(?<![\\w$.])${escaped(b.name)}\\s*(?:[-+*/%]|\\|\\||&&|\\?\\?)?=(?![=>])`, 'g');
+      for (const a of t.slice(d.at, d.to).matchAll(rx)) {
+        let from = d.at + a.index! + a[0].length;
+        while (/\s/.test(t[from] ?? '')) from++;
+        if (!attrs.has(from)) give(b.name, d.at, d.to, holds(from, statementEnd(lx, from)));
+      }
+    }
+  }
+  const declarationOf = (name: string, at: number) => declared.findLast((d) => d.at < at && at < d.to && d.names.some((b) => b.name === name));
+  for (const m of t.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)\s*\.\s*(push|unshift|set|add)\s*\(/g)) {
+    const open = m.index! + m[0].length - 1;
+    const close = closing(lx, open);
+    const d = close > 0 ? declarationOf(m[1], m.index!) : undefined;
+    if (!d) continue;
+    // A map's values; a list's or a set's items.
+    let h: Holds | false = false;
+    for (const [p, q] of partsOf(lx, open + 1, close).slice(m[2] === 'set' ? 1 : 0)) h = joined(h, holds(p, q));
+    give(m[1], d.at, d.to, h);
+  }
+  for (const m of t.matchAll(ITEM_CALLBACKS)) {
+    const open = m.index! + m[0].length - 1;
+    const close = closing(lx, open);
+    const [callback] = close > 0 ? partsOf(lx, open + 1, close) : [];
+    const params = callback ? paramsAt(lx, ...callback) : null;
+    if (!params?.length) continue;
+    const dot = t[m.index! - 1] === '?' ? m.index! - 1 : m.index!;
+    const start = receiverStart(lx, dot);
+    const h = start < dot ? holds(start, dot) : false;
+    if (h === false) continue;
+    // The items: the first parameter, both of sort's; reduce's total too.
+    const items = m[1] === 'reduce' ? [null, h] : /sort/i.test(m[1]) ? [h, h] : [h];
+    items.forEach((held, k) => params[k] && bind(params[k].bindings, patternOf(params[k].text), callback[0], callback[1], held ?? null));
+  }
+  for (const m of t.matchAll(/\bfor\s*(?:await\s*)?\(\s*(?:const|let|var)\s+/g)) {
+    const paren = t.indexOf('(', m.index!);
+    const close = closing(lx, paren);
+    const d = declared.find((x) => x.at > paren && x.at < close);
+    const of = d && close > 0 ? /\s+of\s+/.exec(t.slice(d.at, close)) : null;
+    if (!d || !of) continue;
+    let body = close + 1;
+    while (/\s/.test(t[body] ?? '')) body++;
+    const to = t[body] === '{' ? closing(lx, body) : statementEnd(lx, body);
+    bind(d.names, d.pattern, m.index!, to, holds(d.at + of.index! + of[0].length, close));
+  }
+  return out;
+}
+
+/**
+ * The variables of `f` holding a function that writes an amount, with where
+ * each can be read: one given a writer uncalled (`const money =
+ * formatMoney`, `flag ? compactMoney : formatMoney`) or an object or a list
+ * holding one (`{ money: size }`, `{ money: (n) => formatMoney(n, c) }`),
+ * and a function's parameter whose default is one.
+ */
+function writerVarsOf(f: ModuleFacts, model: Model, declared: Declaration[]): AmountVar[] {
+  const { lx } = f;
+  const pick = amountPick(model);
+  // Whether code at `at` names a writer uncalled (an object's key aside), or writes one in a function of its own.
+  const holds = (names: string, at: number) =>
+    [...names.matchAll(/(?<![\w$.])([A-Za-z_$][\w$]*)(?!\s*[\w$(.])/g)].some(
+      (m) => !(/^\s*:/.test(names.slice(m.index! + m[0].length)) && /[{,]\s*$/.test(names.slice(0, m.index!))) && isWriter(m[1], undefined, f, at, pick, FORMATTERS, true)
+    ) ||
+    (/=>|\bfunction\b/.test(names) && usesWriter(names, f, at, pick, FORMATTERS, true));
+  const out: AmountVar[] = [];
+  for (const d of declared) {
+    if (!d.init || paramsAt(lx, ...d.init) !== null) continue;
+    if (holds(lx.names.slice(...d.init), d.init[0])) for (const b of d.names) out.push({ name: b.name, from: d.at, to: d.to, members: null });
+  }
+  for (const [name, [from, to]] of f.params) {
+    const body = f.ranges.get(name);
+    if (!body) continue;
+    for (const p of partsOf(lx, from, to).flatMap(([a, b]) => bindingsIn(lx.code.slice(a, b)))) {
+      if (p.init && holds(lexed(p.init).names, body[0])) out.push({ name: p.name, from: body[0], to: body[1], members: null });
+    }
   }
   return out;
 }
@@ -947,37 +1408,56 @@ function modelOf(root: string, modules: readonly string[]): Model {
       jsx: lx.jsx,
       // lib/format.ts writes amounts with the switch: how it formats a number is its own.
       formats: m === 'lib/format.ts' ? [] : numberFormats(lx),
-      ranges: functionRanges(lx),
+      ...functionRanges(lx),
       bindings: bindingsOf(root, file, lx.code),
       writers: new Set<string>(),
       fieldWriters: new Set<string>(),
       propWriters: new Map(),
       propAmounts: new Map(),
       amountVars: [],
+      writerVars: [],
+      returns: new Map(),
+      regions: new Map(),
+      components: new Map(),
     };
   });
+  const declared = new Map(facts.map((f) => [f, declarationsOf(f)]));
   const model: Model = {
     facts,
     byFile: new Map(facts.map((f) => [f.file, f])),
     writers: new Map(facts.map((f) => [f.file, f.writers])),
     fieldWriters: new Map(facts.map((f) => [f.file, f.fieldWriters])),
   };
-  for (let changed = true; changed; ) {
-    changed = false;
+  // Each round works a module out again only when what it reads is new
+  // since the round before: its own facts, or those of a module it imports.
+  const imports = new Map(facts.map((f) => [f, [...new Set([...f.bindings.values()].map((b) => model.byFile.get(b.file)))].filter((g): g is ModuleFacts => !!g && g !== f)]));
+  for (let last = new Set(facts); last.size > 0; ) {
+    const now = new Set<ModuleFacts>();
     for (const f of facts) {
+      if (!last.has(f) && !imports.get(f)!.some((g) => last.has(g))) continue;
       for (const [name, [from, to]] of f.ranges) {
-        if (!f.writers.has(name) && writesAmount(f, from, to, amountPick(model), 'all')) f.writers.add(name), (changed = true);
-        if (!f.fieldWriters.has(name) && writesFieldFigures(f, from, to, model, 'all')) f.fieldWriters.add(name), (changed = true);
+        if (!f.writers.has(name) && writesAmount(f, from, to, amountPick(model), 'all')) f.writers.add(name), now.add(f);
+        if (!f.fieldWriters.has(name) && writesFieldFigures(f, from, to, model, 'all')) f.fieldWriters.add(name), now.add(f);
       }
       // What it re-exports under its own name.
       for (const [local, b] of f.bindings) {
         const target = model.byFile.get(b.file);
         if (!target || b.name === '*' || !new RegExp(`export\\s*\\{[^}]*\\b${local}\\b`).test(f.text)) continue;
-        if (!f.writers.has(local) && target.writers.has(b.name)) f.writers.add(local), (changed = true);
-        if (!f.fieldWriters.has(local) && target.fieldWriters.has(b.name)) f.fieldWriters.add(local), (changed = true);
+        if (!f.writers.has(local) && target.writers.has(b.name)) f.writers.add(local), now.add(f);
+        if (!f.fieldWriters.has(local) && target.fieldWriters.has(b.name)) f.fieldWriters.add(local), now.add(f);
       }
-      const vars = amountVarsOf(f, model);
-      if (vars.length !== f.amountVars.length) (f.amountVars = vars), (changed = true);
+      // What its functions writing an amount return, but those building elements.
+      for (const [name, [from, to]] of f.ranges) {
+        if (!f.writers.has(name) || builds(f, name)) continue;
+        const had = f.returns.has(name) ? f.returns.get(name)! : false;
+        const held = joined(had, returnsHold(f, from, to, model));
+        if (!sameHolds(had, held)) f.returns.set(name, held), now.add(f);
+      }
+      const vars = amountVarsOf(f, model, declared.get(f)!);
+      const key = (vs: AmountVar[]) => vs.map((v) => `${v.name}@${v.from}:${v.members ? [...v.members].sort().join(',') : '*'}`).join(';');
+      if (key(vars) !== key(f.amountVars)) (f.amountVars = vars), now.add(f);
+      const holding = writerVarsOf(f, model, declared.get(f)!);
+      if (holding.length !== f.writerVars.length) (f.writerVars = holding), now.add(f);
       // What its elements give the components they name.
       for (const x of f.jsx.exprs) {
         if (!x.attr || x.attr === '...' || x.attr === 'key') continue;
@@ -985,14 +1465,15 @@ function modelOf(root: string, modules: readonly string[]): Model {
         if (!to) continue;
         const r = region(f, x.open + 1, x.close, 'own');
         const bare = /^\s*([A-Za-z_$][\w$]*)\s*$/.exec(r.names)?.[1];
-        if (ARROW.test(r.names) || bare) {
+        if (paramsAt(f.lx, x.open + 1, x.close) !== null || bare) {
           // A function that writes an amount, handed on: an arrow that writes one, or one named.
           const writes = bare ? isWriter(bare, undefined, f, x.open, textPick(model), FORMATTERS, true) : writesAmount(f, x.open + 1, x.close, textPick(model), 'own');
-          if (writes && add(to.target.propWriters, to.component, x.attr)) changed = true;
-          if (bare && readsAmount(r.names, f, x.open) && add(to.target.propAmounts, to.component, x.attr)) changed = true;
-        } else if (writesAmount(f, x.open + 1, x.close, textPick(model), 'drawn') && add(to.target.propAmounts, to.component, x.attr)) changed = true;
+          if (writes && add(to.target.propWriters, to.component, x.attr)) now.add(to.target);
+          if (bare && readsAmount(r.names, f, x.open) && add(to.target.propAmounts, to.component, x.attr)) now.add(to.target);
+        } else if (writesAmount(f, x.open + 1, x.close, textPick(model), 'drawn') && add(to.target.propAmounts, to.component, x.attr)) now.add(to.target);
       }
     }
+    last = now;
   }
   models.set(key, model);
   return model;

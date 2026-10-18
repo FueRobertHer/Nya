@@ -390,7 +390,9 @@ function LiabilityDetail({
       {rows.map((r) => (
         <div className="txn-detail-row" key={r.label}>
           <dt>{r.label}</dt>
-          <dd>{r.value}</dd>
+          <dd>
+            <Masked>{r.value}</Masked>
+          </dd>
         </div>
       ))}
     </dl>

@@ -151,7 +151,7 @@ export default function GoalSheet({
       </div>
       {read.errors.map((e) => (
         <div className="error" key={e}>
-          {e}
+          <Masked>{e}</Masked>
         </div>
       ))}
       {preview && (

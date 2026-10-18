@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { bypasses, clientModules, closing, drawnParts, fieldsWithoutPlaceholder, lex, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
@@ -241,6 +241,55 @@ describe('an amount drawn as text outside <Masked>', () => {
   });
 });
 
+describe('where an amount is kept before it is drawn', () => {
+  test('a `let` given one later, a list or a map it is put in, a callback given their items, and a for...of over them', () => {
+    const found = scan({
+      Later: "let label = 'none'; if (flag) label = fmt(n); return <span>{label}</span>;",
+      Added: "let label = 'Spent '; label += fmt(n); return <span>{label}</span>;",
+      Pushed: 'const lines: string[] = []; lines.push(`at ${fmt(n)}`); return <ul>{lines.map((l) => <li key={l}>{l}</li>)}</ul>;',
+      InMap: "const lines = new Map<string, string>(); lines.set('a', fmt(n)); return <ul>{[...lines].map(([k, line]) => <li key={k}>{line}</li>)}</ul>;",
+      Returned: ['return <ul>{lines(n).map((l) => <li key={l}>{l}</li>)}</ul>;', ['function lines(n: number) { return [fmt(n), fmt(-n)]; }']],
+      Looped: 'for (const line of values.map(fmt)) return <p>{line}</p>; return null;',
+      Immediate: 'const text = (() => fmt(n))(); return <p>{text}</p>;',
+    });
+    const all = ['Later', 'Added', 'Pushed', 'InMap', 'Returned', 'Looped', 'Immediate'];
+    expect(found.children).toEqual(Object.fromEntries(all.map((name) => [name, [7]])));
+  });
+
+  test('of an object or a list of them, the members given one, but not the others', () => {
+    const found = scan({
+      Value: "const rows = [{ label: 'Total', value: fmt(n) }]; return <dl>{rows.map((r) => <dd key={r.label}>{r.value}</dd>)}</dl>;",
+      Label: "const rows = [{ label: 'Total', value: fmt(n) }]; return <dl>{rows.map((r) => <dt key={r.label}>{r.label}</dt>)}</dl>;",
+      PushedValue: "const rows: { label: string; value: string }[] = []; rows.push({ label: 'Total', value: fmt(n) }); return <dl>{rows.filter((r) => r.label).map((r) => <dd key={r.label}>{r.value}</dd>)}</dl>;",
+      PushedLabel: "const rows: { label: string; value: string }[] = []; rows.push({ label: 'Total', value: fmt(n) }); return <dl>{rows.map((r) => <dt key={r.label}>{r.label}</dt>)}</dl>;",
+      // Destructured from what a function returns.
+      Said: ['const { text } = describe(n); return <p>{text}</p>;', ["function describe(n: number) { return n > 0 ? { text: fmt(n), note: 'plain' } : { text: '', note: 'none' }; }"]],
+      Note: ['const { note } = describe(n); return <p>{note}</p>;', ["function describe(n: number) { return n > 0 ? { text: fmt(n), note: 'plain' } : { text: '', note: 'none' }; }"]],
+      Errors: ['const read = check(n); return <ul>{read.errors.map((e) => <li key={e}>{e}</li>)}</ul>;', ["function check(n: number) { const errors: string[] = []; if (n > 1) errors.push(`At most ${fmt(1)}`); return { errors, n }; }"]],
+      Count: ['const { n: m } = check(n); return <p>{m}</p>;', ["function check(n: number) { const errors: string[] = []; if (n > 1) errors.push(`At most ${fmt(1)}`); return { errors, n }; }"]],
+    });
+    expect(found.children).toEqual({ Value: [7], PushedValue: [7], Said: [7], Errors: [7] });
+  });
+
+  test('a function given its formatter: by a default, or in an object handed to it, or under another name', () => {
+    const found = scan({
+      Default: ['return <p>{line(n)}</p>;', ["function line(n: number, money: (n: number) => string = fmt) { return 'at ' + money(n); }"]],
+      Handed: ['const names = { money: fmt }; return <p>{sentence(n, names)}</p>;', ["function sentence(n: number, names: { money: (n: number) => string }) { return 'over ' + names.money(n); }"]],
+      Renamed: "const money = formatMoney; return <p>{money(n, 'USD')}</p>;",
+      Chosen: "const money = flag ? formatMoney : formatMoney; return <p>{money(n, null)}</p>;",
+    });
+    expect(found.children).toEqual({ Default: [7], Handed: [7], Renamed: [7], Chosen: [7] });
+  });
+
+  test('a list of choices whose labels hold one, read alone', () => {
+    const found = scan({
+      Choices: "return <select>{[['a', fmt(n)]].map(([v, t]) => <option key={v} value={v} aria-label={t}>{t}</option>)}</select>;",
+      SaidChoices: "return <select>{[['a', fmt(n)]].map(([v, t]) => <option key={v} value={v} aria-label={spoken(t)}>{t}</option>)}</select>;",
+    });
+    expect(found.labels).toEqual({ Choices: [7] });
+  });
+});
+
 describe('a label a screen reader reads alone', () => {
   test('built from an amount, not said through spoken()', () => {
     const found = scan({
@@ -291,5 +340,71 @@ describe('a field the CSS hook covers while amounts are hidden', () => {
   test('every one the app has', () => {
     const root = join(import.meta.dir, '..');
     expect(fieldsWithoutPlaceholder(root, clientModules(root))).toEqual([]);
+  });
+});
+
+/** What the app draws in <Masked> that never holds an amount (a count, a
+ *  currency's code, words): the scan owes no report for it drawn bare. */
+const NEVER_AN_AMOUNT = [
+  'components/FiProgressCard.tsx {leftOut.excluded}',
+  'components/FiProgressCard.tsx {leftOut.otherCurrencies}',
+  'components/GoalsCard.tsx {stateText(v)}',
+  'components/ManualTxnSheet.tsx {balanceNote}',
+];
+
+/** A component's text with each amount it draws through <Masked> drawn bare,
+ *  in a fragment, and each label it says through spoken() said as it is,
+ *  every offset kept; and each place so changed, as "file:line code". */
+function unwrapped(file: string, text: string): { text: string; sites: string[] } {
+  const lx = lex(text, true);
+  const out = text.split('');
+  const sites: string[] = [];
+  const blank = (from: number, to: number, put = '') => {
+    for (let i = from; i < to; i++) out[i] = put[i - from] ?? ' ';
+  };
+  const lineOf = (at: number) => text.slice(0, at).split('\n').length;
+  const said = (from: number, to: number) => text.slice(from, to).replace(/\s+/g, ' ').trim();
+  for (const el of lx.jsx.elements) {
+    if (el.name !== 'Masked') continue;
+    const [x, ...more] = lx.jsx.exprs.filter((e) => e.element === el && e.attr === null);
+    const open = el.start + '<Masked>'.length;
+    const close = el.end - '</Masked>'.length;
+    if (!x || more.length > 0 || text.slice(open, x.open).trim() || text.slice(x.close + 1, close).trim()) continue;
+    blank(el.start, open, '<>');
+    blank(close, el.end, '</>');
+    sites.push(`${file}:${lineOf(x.open)} ${said(x.open, x.close + 1)}`);
+  }
+  for (const x of lx.jsx.exprs) {
+    const inner = text.slice(x.open + 1, x.close);
+    const call = /^\s*(spoken|spokenLabel)\s*\(/.exec(inner);
+    // A label that is a call of spoken() and nothing else.
+    if (!x.attr || !['aria-label', 'aria-valuetext', 'title', 'alt'].includes(x.attr) || !call) continue;
+    if (closing(lx, x.open + call[0].length) !== x.open + inner.trimEnd().length) continue;
+    const name = x.open + 1 + call[0].indexOf(call[1]);
+    blank(name, name + call[1].length);
+    sites.push(`${file}:${lineOf(text.lastIndexOf(x.attr, x.open))} ${x.attr}={${said(x.open + 1, x.close)}}`);
+  }
+  return { text: out.join(''), sites };
+}
+
+describe('held to the app’s own shapes', () => {
+  test('each amount the app draws through <Masked>, or says through spoken(), is reported once drawn bare or said as it is', () => {
+    const root = join(import.meta.dir, '..');
+    const dir = mkdtempSync(join(tmpdir(), 'nya-amount-unwrapped-'));
+    dirs.push(dir);
+    for (const d of ['lib', 'app']) symlinkSync(join(root, d), join(dir, d));
+    mkdirSync(join(dir, 'components'));
+    const sites: string[] = [];
+    for (const name of readdirSync(join(root, 'components'))) {
+      const text = readFileSync(join(root, 'components', name), 'utf8').replace(/\r/g, '');
+      const changed = name.endsWith('.tsx') && name !== 'HideAmounts.tsx' ? unwrapped(`components/${name}`, text) : { text, sites: [] };
+      writeFileSync(join(dir, 'components', name), changed.text);
+      sites.push(...changed.sites);
+    }
+    const modules = clientModules(dir);
+    const reported = new Set([...unmaskedChildren(dir, modules), ...unspokenLabels(dir, modules)].map((r) => `${r.file}:${r.line}`));
+    expect(sites.length).toBeGreaterThan(250);
+    const missed = sites.filter((site) => !reported.has(site.split(' ')[0])).map((site) => site.replace(/:\d+ /, ' '));
+    expect(missed.sort()).toEqual(NEVER_AN_AMOUNT);
   });
 });
