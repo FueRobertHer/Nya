@@ -78,6 +78,7 @@ import { createWholeListStore, initialListState, type ListState } from '@/lib/wh
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import { accruedInterestOwed, accruedNote } from '@/lib/accrued-interest';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -1500,6 +1501,18 @@ export default function Dashboard({
     return { value, pct, days, from: base.date, to: current.date };
   }, [history]);
 
+  // A student loan's accrued interest, which Plaid reports apart from its
+  // balance: owed, so the total counts it, in a line of its own; never in
+  // history, which the chart and the change above draw on (lib/accrued-interest.ts).
+  const accrued = useMemo(() => accruedInterestOwed(institutions), [institutions]);
+  const shownNetWorth = netWorth - accrued.total;
+  // Whether the chart's last point is today's live figure (the total before
+  // the interest), which the line then says how far above the total it is.
+  const chartEndsToday = useMemo(() => {
+    const last = history[history.length - 1];
+    return !!last && !last.estimated && last.date === new Date().toISOString().slice(0, 10) && Math.abs(last.value - netWorth) < 0.005;
+  }, [history, netWorth]);
+
   // The stored hidden set's ids, and the notes the chart marks: not those
   // about a hidden account, which moves no day of it (#50).
   const hiddenIds = useMemo(() => new Set(hiddenMeta.map((h) => h.account_id)), [hiddenMeta]);
@@ -1828,14 +1841,23 @@ export default function Dashboard({
               <>
                 <div className="card">
                   <div className="total-label">Net Worth</div>
-                  <div className={`total-value${netWorth < 0 ? ' negative' : ''}`}>
-                    <Masked>{fmt(netWorth, accountCurrency)}</Masked>
+                  <div className={`total-value${shownNetWorth < 0 ? ' negative' : ''}`}>
+                    <Masked>{fmt(shownNetWorth, accountCurrency)}</Masked>
                   </div>
                   {heroDelta && (
                     <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
                       {heroDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(heroDelta.value), accountCurrency)}</Masked> (
                       {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
                       {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
+                    </div>
+                  )}
+                  {accrued.loans > 0 && (
+                    <div className="as-of">
+                      <Masked>
+                        {accruedNote(accrued, { chart: history.length >= 2, chartToday: chartEndsToday, delta: heroDelta !== null }, (n) =>
+                          fmt(n, accountCurrency)
+                        )}
+                      </Masked>
                     </div>
                   )}
                   {mixedAccountCurrency && (

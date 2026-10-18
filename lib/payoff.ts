@@ -42,6 +42,7 @@
 // component, so everything here is bundled for the browser.
 
 import { isOwedType } from './balance';
+import { accruedApart } from './accrued-interest';
 
 /**
  * How far ahead a plan is followed, in months (50 years). A plan that hasn't
@@ -640,10 +641,6 @@ export type DebtAccount = {
   updatedAt: string | null;
 };
 
-/** Plaid's institution id for Sallie Mae, whose student loan balances already
- *  include accrued interest (Plaid's AccountBalance.current documentation). */
-const SALLIE_MAE = 'ins_116944';
-
 function finite(n: unknown): number | null {
   return typeof n === 'number' && Number.isFinite(n) ? n : null;
 }
@@ -678,7 +675,8 @@ function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAcc
   const minimum = finite(l?.minimum_payment);
   const plaidMinimumCents = minimum === null ? null : toCents(minimum);
 
-  const accrued = kind === 'student' && inst.institution_id !== SALLIE_MAE ? finite(l?.outstanding_interest) : null;
+  // Owed on top of the balance, as the total on Home counts it (lib/accrued-interest.ts).
+  const accrued = accruedApart(kind, inst.institution_id, l?.outstanding_interest);
   const blend = kind === 'credit' ? blendedApr(l?.apr_balances) : null;
   const escrow = kind === 'mortgage' ? finite(l?.escrow_balance) : null;
 
@@ -730,7 +728,7 @@ function toDebtAccount(inst: DebtInstitutionInput, a: DebtAccountInput): DebtAcc
     subtype: a.subtype ?? null,
     kind,
     balanceCents,
-    accruedInterestCents: accrued !== null && accrued > 0 ? toCents(accrued) : null,
+    accruedInterestCents: accrued !== null ? toCents(accrued) : null,
     currency: a.currency ?? null,
     manual: !!inst.manual,
     plaidApr: blend ? blend.rate : finite(l?.apr),
