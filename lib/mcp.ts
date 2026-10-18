@@ -128,17 +128,25 @@ const code = (c: unknown): string | null => (typeof c === 'string' && /^[A-Z0-9]
 function netWorthNow(now: any): string {
   const b = now.base;
   const home = code(now.base_currency);
-  if (b && home && b.parts.some((p: any) => p.currency !== home && p.converted !== null)) {
-    const rates = [b.rate_day ? `the ECB’s rates of ${b.rate_day}` : '', b.own_rates.length > 0 ? 'the person’s own rates' : ''].filter(Boolean).join(' and ');
-    const outAccounts = b.left_out.reduce((n: number, l: any) => n + l.accounts, 0);
-    const outCodes = b.left_out.map((l: any) => code(l.currency) ?? 'another currency');
-    const left = outAccounts > 0 ? ` (${plural(outAccounts, 'account')} in ${outCodes.join(', ')} not counted: no rate)` : '';
-    const stale = b.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '';
-    return `Net worth ${money(b.net_worth, home)}, converted into ${home}${rates ? ` at ${rates}` : ''}${left}${datedFrom(now.balances_from, now.balances_to)}.${stale}`;
-  }
-  return now.totals.length
-    ? `Net worth ${now.totals.map((t: any) => money(t.net_worth, code(t.currency))).join(', ')}${datedFrom(now.balances_from, now.balances_to)}.`
-    : 'No balances are recorded yet.';
+  const totals = () =>
+    now.totals.length
+      ? `Net worth ${now.totals.map((t: any) => money(t.net_worth, code(t.currency))).join(', ')}${datedFrom(now.balances_from, now.balances_to)}.`
+      : 'No balances are recorded yet.';
+  if (!b || !home) return totals();
+  // The home currency itself has no rate: nothing converts into it, so one
+  // total per currency, and why.
+  if (b.left_out.some((l: any) => l.why === 'base_has_no_rate')) return `${totals()} Nothing could be converted into ${home}, the home currency: it has no rate.`;
+  if (!b.parts.some((p: any) => p.currency !== home && p.converted !== null)) return totals();
+  const rates = [b.rate_day ? `the ECB’s rates of ${b.rate_day}` : '', b.own_rates.length > 0 ? 'the person’s own rates' : ''].filter(Boolean).join(' and ');
+  /** Accounts left out for a reason, in counts and codes. */
+  const out = (pred: (l: any) => boolean, why: string) => {
+    const left = b.left_out.filter(pred);
+    const n = left.reduce((s: number, l: any) => s + l.accounts, 0);
+    return n > 0 ? `${plural(n, 'account')} in ${left.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: ${why}` : '';
+  };
+  const left = [out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'), out((l) => l.why !== 'not_fetched', 'no rate')].filter(Boolean).join('; ');
+  const stale = b.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '';
+  return `Net worth ${money(b.net_worth, home)}, converted into ${home}${rates ? ` at ${rates}` : ''}${left ? ` (${left})` : ''}${datedFrom(now.balances_from, now.balances_to)}.${stale}`;
 }
 
 /** The days the balances counted are from, when known. */

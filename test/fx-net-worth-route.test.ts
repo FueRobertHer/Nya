@@ -95,7 +95,7 @@ describe('with a home currency', () => {
       ['USD', 1000, 865.73], // 1,000 / 1.1551
       ['BTC', 0.5, null],
     ]);
-    expect(body.base.left_out).toEqual([{ currency: 'BTC', accounts: 1, why: 'not-published' }]);
+    expect(body.base.left_out).toEqual([{ currency: 'BTC', accounts: 1, why: 'not-published', unrated: 'BTC' }]);
     expect(body.base.rates).toMatchObject({ day: '2026-09-14', own: [] });
     expect(body.base.fx.latest.rates).toEqual({ USD: '1.1551' });
   });
@@ -109,7 +109,7 @@ describe('with a home currency', () => {
     ]);
     // Today's stored point is read too, its total recorded before the
     // history is (with a home currency the read waits for the accounts).
-    expect(body.base.gaps.left_out).toEqual([{ currency: 'BTC', from: '2026-09-11', to: '2026-09-14', days: 2 }]);
+    expect(body.base.gaps.left_out).toEqual([{ currency: 'BTC', why: 'not-published', unrated: 'BTC', from: '2026-09-11', to: '2026-09-14', days: 2 }]);
     // The change is all exchange rates: the balances held still.
     expect(body.base.delta).toMatchObject({ value: 3.07, from: '2026-09-11', to: '2026-09-14', from_rates: 3.07 });
   });

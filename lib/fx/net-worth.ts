@@ -22,6 +22,11 @@
 // point a hidden account can't be taken out of isn't), and neither is one
 // whose main currency has no rate that day; another currency with no rate is
 // left out of it and named with its days.
+//
+// WHOSE RATE IS MISSING is kept with why (`unrated`): the currency's own, or
+// the home currency's (one the ECB doesn't publish, with no rate of the
+// person's for it), so a note names the currency that needs a rate, never
+// one that has one.
 
 import { convert, displayRate, precisionOf, type FxTable, type NoRate } from './rates';
 
@@ -38,6 +43,9 @@ export type BalancePart = {
   rate: { value: number; day: string; source: 'ecb' | 'own' } | null;
   /** Why it has no rate, when it has none. */
   why: NoRate | null;
+  /** The currency whose rate is missing, when it has none: its own, or the
+   *  home currency's. */
+  unrated: string | null;
   accounts: number;
 };
 
@@ -48,8 +56,9 @@ export type BalancesIn = {
   /** Each currency's subtotal: the home currency's, those converted, then
    *  those left out, each by most accounts. */
   parts: BalancePart[];
-  /** The currencies left out for having no rate, with how many accounts. */
-  left_out: { currency: string; accounts: number; why: NoRate }[];
+  /** The currencies left out for having no rate, with how many accounts,
+   *  why, and whose rate is missing (its own, or the home currency's). */
+  left_out: { currency: string; accounts: number; why: NoRate; unrated: string }[];
   /** Accounts that say no currency, counted in `main`. */
   unknown: number;
 };
@@ -87,10 +96,10 @@ export function balancesIn(rows: readonly BalanceRow[], fx: FxTable, home: strin
       // In the home currency already: itself, tidied, so the parts add up.
       const value = currency === home ? own : c.amount;
       total += value;
-      parts.push({ currency, amount: own, converted: value, rate: displayRate(fx, currency, home, day), why: null, accounts });
+      parts.push({ currency, amount: own, converted: value, rate: displayRate(fx, currency, home, day), why: null, unrated: null, accounts });
     } else {
-      parts.push({ currency, amount: own, converted: null, rate: null, why: c.why, accounts });
-      leftOut.push({ currency, accounts, why: c.why });
+      parts.push({ currency, amount: own, converted: null, rate: null, why: c.why, unrated: c.currency, accounts });
+      leftOut.push({ currency, accounts, why: c.why, unrated: c.currency });
     }
   }
   // The home currency's part first, then those converted, then those left
@@ -106,15 +115,17 @@ export function balancesIn(rows: readonly BalanceRow[], fx: FxTable, home: strin
  *  rest; null when it can't be told. Absent: nothing but `main` in it. */
 export type SplitPoint = { date: string; value: number; estimated?: boolean; parts?: Record<string, number> | null };
 
-/** What the converted chart couldn't draw or count, for its note. */
+/** What the converted chart couldn't draw or count, for its note. Each
+ *  with why, and whose rate was missing (lib/fx/rates.ts NoRate). */
 export type HistoryGaps = {
   /** Points not drawn: their split couldn't be told. */
   unsplit: number;
-  /** Points not drawn: their main currency had no rate that day. */
-  main_unrated: number;
-  /** Currencies left out of some points for having no rate, with the first
-   *  and last day they were. */
-  left_out: { currency: string; from: string; to: string; days: number }[];
+  /** Points not drawn: their main currency couldn't be converted that day,
+   *  by why, with their first and last day. */
+  main_unrated: { why: NoRate; unrated: string; from: string; to: string; days: number }[];
+  /** Currencies left out of some points for having no rate, by why, with
+   *  the first and last day they were. */
+  left_out: { currency: string; why: NoRate; unrated: string; from: string; to: string; days: number }[];
 };
 
 export type ConvertedPoint = { date: string; value: number; estimated?: boolean };
@@ -123,8 +134,16 @@ export type ConvertedPoint = { date: string; value: number; estimated?: boolean 
  *  what couldn't be drawn or counted. */
 export function convertHistory(points: readonly SplitPoint[], main: string | null, fx: FxTable, home: string): { points: ConvertedPoint[]; gaps: HistoryGaps } {
   const out: ConvertedPoint[] = [];
-  const gaps: HistoryGaps = { unsplit: 0, main_unrated: 0, left_out: [] };
-  const leftOut = new Map<string, { from: string; to: string; days: number }>();
+  const gaps: HistoryGaps = { unsplit: 0, main_unrated: [], left_out: [] };
+  type Span = { from: string; to: string; days: number };
+  /** Each (currency, why, whose rate) a span of its own. */
+  const leftOut = new Map<string, Span & { currency: string; why: NoRate; unrated: string }>();
+  const mainOut = new Map<string, Span & { why: NoRate; unrated: string }>();
+  const widen = (s: Span, day: string) => {
+    s.from = day < s.from ? day : s.from;
+    s.to = day > s.to ? day : s.to;
+    s.days++;
+  };
   for (const p of points) {
     if (p.parts === null) {
       gaps.unsplit++;
@@ -135,22 +154,24 @@ export function convertHistory(points: readonly SplitPoint[], main: string | nul
     const rows: BalanceRow[] = [{ amount: p.value - others, currency: main }, ...Object.entries(parts).map(([currency, amount]) => ({ amount, currency }))];
     const b = balancesIn(rows, fx, home, p.date, main);
     const mainCurrency = main ?? home;
-    if (b.left_out.some((l) => l.currency === mainCurrency)) {
-      gaps.main_unrated++;
+    const unratedMain = b.left_out.find((l) => l.currency === mainCurrency);
+    if (unratedMain) {
+      const k = `${unratedMain.why}|${unratedMain.unrated}`;
+      const seen = mainOut.get(k);
+      if (seen) widen(seen, p.date);
+      else mainOut.set(k, { why: unratedMain.why, unrated: unratedMain.unrated, from: p.date, to: p.date, days: 1 });
       continue;
     }
     for (const l of b.left_out) {
-      const seen = leftOut.get(l.currency);
-      if (!seen) leftOut.set(l.currency, { from: p.date, to: p.date, days: 1 });
-      else {
-        seen.to = p.date > seen.to ? p.date : seen.to;
-        seen.from = p.date < seen.from ? p.date : seen.from;
-        seen.days++;
-      }
+      const k = `${l.currency}|${l.why}|${l.unrated}`;
+      const seen = leftOut.get(k);
+      if (seen) widen(seen, p.date);
+      else leftOut.set(k, { currency: l.currency, why: l.why, unrated: l.unrated, from: p.date, to: p.date, days: 1 });
     }
     out.push({ date: p.date, value: b.total, ...(p.estimated ? { estimated: true } : {}) });
   }
-  gaps.left_out = [...leftOut].map(([currency, r]) => ({ currency, ...r })).sort((a, b) => b.days - a.days || (a.currency < b.currency ? -1 : 1));
+  gaps.main_unrated = [...mainOut.values()].sort((a, b) => b.days - a.days || (a.why < b.why ? -1 : 1));
+  gaps.left_out = [...leftOut.values()].sort((a, b) => b.days - a.days || (a.currency < b.currency ? -1 : 1) || (a.why < b.why ? -1 : 1));
   return { points: out, gaps };
 }
 

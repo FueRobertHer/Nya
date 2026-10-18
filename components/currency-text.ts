@@ -13,27 +13,23 @@
 // with why, never guessed (docs/architecture.md, "Exchange rates").
 
 import { formatMoney, formatRate } from '@/lib/format';
-import type { BalancePart, BalancesIn } from '@/lib/fx/net-worth';
+import type { BalancePart, BalancesIn, HistoryGaps } from '@/lib/fx/net-worth';
 import type { NoRate, OwnRate } from '@/lib/fx/rates';
+import { homeUnrated, reasonText } from '@/lib/fx/words';
 
 /** A day as the notes write it: "Sep 14, 2026" in this locale. */
 export function rateDay(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-/** Why a currency has no rate, in words. */
+/** Why a currency has no rate of its own, in words (lib/fx/words.ts). */
 export function noRateText(currency: string, why: NoRate | string): string {
-  switch (why) {
-    case 'not-fetched':
-      return 'Nya doesn’t have the ECB’s rates for those days yet';
-    case 'quote':
-      return `your rate for ${currency} is in a currency the ECB has no rate for`;
-    case 'before':
-      return `there is no rate for ${currency} that far back`;
-    default:
-      return `there is no rate for ${currency}`;
-  }
+  return reasonText(currency, why, currency, '', 'now');
 }
+
+/** A line of a note, and the currency a rate of the person's own would mend
+ *  it for, if one would. */
+export type NoteLine = { text: string; rateFor: string | null };
 
 const accounts = (n: number) => (n === 1 ? '1 account' : `${n} accounts`);
 
@@ -69,10 +65,33 @@ export function convertedText(b: Pick<BalancesIn, 'currency' | 'parts'>, own: re
     .join('; ');
 }
 
-/** What was left out of a total, one sentence a currency: "1 account in BTC
- *  isn't in this total: there is no rate for BTC." */
-export function leftOutLines(b: Pick<BalancesIn, 'left_out'>, where = 'this total'): string[] {
-  return b.left_out.map((l) => `${accounts(l.accounts)} in ${l.currency} ${l.accounts === 1 ? 'isn’t' : 'aren’t'} in ${where}: ${noRateText(l.currency, l.why)}.`);
+/**
+ * What was left out of a total, one sentence a currency: "1 account in BTC
+ * isn't in this total: there is no rate for BTC." When it is the home
+ * currency that has no rate (the ECB doesn't publish it, and the person set
+ * none for it), one sentence naming it, as a rate for any other currency
+ * would change nothing: "Nothing can be converted into ARS yet: the ECB
+ * doesn't publish ARS, so 2 accounts in other currencies aren't in this
+ * total." Each with the currency a rate of the person's own would mend it
+ * for, and none when the rates simply haven't been fetched yet.
+ */
+export function leftOutLines(b: Pick<BalancesIn, 'currency' | 'left_out'>, where = 'this total'): NoteLine[] {
+  const home = b.currency;
+  const lines: NoteLine[] = [];
+  const homeOut = b.left_out.filter((l) => homeUnrated(l.currency, l.why, l.unrated, home));
+  if (homeOut.length > 0) {
+    const n = homeOut.reduce((s, l) => s + l.accounts, 0);
+    const why = homeOut[0].why === 'quote' ? `your rate for ${home} is in a currency the ECB has no rate for` : `the ECB doesn’t publish ${home}`;
+    lines.push({ text: `Nothing can be converted into ${home} yet: ${why}, so ${accounts(n)} in other currencies ${n === 1 ? 'isn’t' : 'aren’t'} in ${where}.`, rateFor: home });
+  }
+  for (const l of b.left_out) {
+    if (homeOut.includes(l)) continue;
+    lines.push({
+      text: `${accounts(l.accounts)} in ${l.currency} ${l.accounts === 1 ? 'isn’t' : 'aren’t'} in ${where}: ${reasonText(l.currency, l.why, l.unrated, home)}.`,
+      rateFor: l.why === 'not-fetched' ? null : l.unrated,
+    });
+  }
+  return lines;
 }
 
 /** The heading of the hero's note: into what, at whose rates, from when. */
@@ -88,7 +107,8 @@ export function staleText(day: string | null): string {
     : 'Nya has no exchange rates yet, so nothing in another currency can be converted.';
 }
 
-/** Accounts saying no currency, counted in the main one. */
+/** Accounts saying no currency, counted in the main one (with a balance
+ *  now: these are the hero's). */
 export function unknownText(n: number, main: string | null): string {
   return `${accounts(n)} ${n === 1 ? 'says' : 'say'} no currency, so ${n === 1 ? 'it is' : 'they are'} counted in ${main ?? 'the main one'}.`;
 }
@@ -107,30 +127,36 @@ export function rateEffectText(change: number, fromRates: number | null, home: s
 }
 
 /** What the converted chart couldn't draw or count, for its note. */
-export type ChartGaps = {
-  unsplit: number;
-  main_unrated: number;
-  left_out: { currency: string; from: string; to: string; days: number }[];
-  unknown_currency: number;
-};
+export type ChartGaps = HistoryGaps & { unknown_currency: number };
 
-/** The chart's note, a sentence a gap. */
+/** The chart's note, a sentence a gap, each with why. */
 export function chartGapLines(g: ChartGaps, home: string, main: string | null): string[] {
   const out: string[] = [];
   const days = (n: number) => (n === 1 ? '1 day' : `${n} days`);
+  const span = (s: { from: string; to: string }) => (s.from === s.to ? `on ${rateDay(s.from)}` : `from ${rateDay(s.from)} to ${rateDay(s.to)}`);
+  const many = (n: number) => (n === 1 ? 'one' : 'many');
   if (g.unsplit > 0) out.push(`${days(g.unsplit)} couldn’t be converted: Nya didn’t keep ${g.unsplit === 1 ? 'its balances' : 'their balances'} by account, so ${g.unsplit === 1 ? 'it isn’t' : 'they aren’t'} drawn.`);
-  if (g.main_unrated > 0) out.push(`${days(g.main_unrated)} ${g.main_unrated === 1 ? 'isn’t' : 'aren’t'} drawn: there is no rate into ${home} for ${main ?? 'the main currency'} on ${g.main_unrated === 1 ? 'it' : 'them'}.`);
-  for (const l of g.left_out) {
-    const span = l.from === l.to ? `on ${rateDay(l.from)}` : `from ${rateDay(l.from)} to ${rateDay(l.to)}`;
-    out.push(`What is in ${l.currency} isn’t in the chart ${span}: there is no rate for ${l.currency} on ${l.days === 1 ? 'that day' : 'those days'}.`);
+  for (const m of g.main_unrated) {
+    out.push(`${days(m.days)} ${m.days === 1 ? 'isn’t' : 'aren’t'} drawn, ${span(m)}: ${reasonText(main ?? home, m.why, m.unrated, home, many(m.days))}.`);
   }
-  if (g.unknown_currency > 0) out.push(`${accounts(g.unknown_currency)} Nya knows of ${g.unknown_currency === 1 ? 'has' : 'have'} no currency recorded, so ${g.unknown_currency === 1 ? 'it is' : 'they are'} counted in ${main ?? 'the main currency'} on the days ${g.unknown_currency === 1 ? 'it' : 'they'} held a balance.`);
+  for (const l of g.left_out) {
+    out.push(`What is in ${l.currency} isn’t in the chart ${span(l)}: ${reasonText(l.currency, l.why, l.unrated, home, many(l.days))}.`);
+  }
+  // Counted in the main currency wherever they held a balance: these are
+  // every account Nya knows of with no currency recorded, whether or not one
+  // held a balance on a day drawn.
+  if (g.unknown_currency > 0) {
+    out.push(`Nya knows of ${accounts(g.unknown_currency)} with no currency recorded: any balance ${g.unknown_currency === 1 ? 'it' : 'they'} held is counted in ${main ?? 'the main currency'}.`);
+  }
   return out;
 }
 
 /** An institution's total on the Accounts tab, converted, in words for its
  *  note: into what, and what it left out. */
 export function institutionNote(b: Pick<BalancesIn, 'currency' | 'left_out'>): string {
-  const out = b.left_out.map((l) => `${l.currency} isn’t in it (no rate)`);
+  if (b.left_out.some((l) => homeUnrated(l.currency, l.why, l.unrated, b.currency))) {
+    return `Mixed currencies: nothing can be converted into ${b.currency} yet, as the ECB doesn’t publish it.`;
+  }
+  const out = b.left_out.map((l) => `${l.currency} isn’t in it (${l.why === 'not-fetched' ? 'no rates yet' : 'no rate'})`);
   return `Mixed currencies, converted into ${b.currency} at the ECB’s newest rates${out.length > 0 ? `; ${out.join('; ')}` : ''}.`;
 }

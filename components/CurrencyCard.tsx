@@ -23,8 +23,9 @@ type Props = {
   /** The person's accounts' currencies, most first. */
   currencies: readonly string[];
   manual: readonly { name: string; currency: string }[];
-  /** Opened from a note on Home: show it, and scroll to it. */
-  focus?: boolean;
+  /** Opened from a note on Home: show it, scroll to it, and open the form
+   *  for a rate for the currency the note named, if any. */
+  focus?: { rateFor: string | null } | null;
   onFocused?: () => void;
   /** The home currency or a rate changed: Home's figures load again. */
   onChanged: () => void;
@@ -53,6 +54,19 @@ export function ecbBeside(o: Pick<OwnRate, 'currency' | 'quote'>, ecb: CurrencyS
   return o.currency === 'EUR' || o.currency in ecb.rates ? 'The ECB has no rate for it now' : `The ECB doesn’t publish ${o.currency}`;
 }
 
+/** A rate of the person's own, as the form holds it. */
+const draftOf = (o: OwnRate): RateDraft => ({ currency: o.currency, rate: o.rate, quote: o.quote, every: o.from === null, from: o.from ?? today() });
+
+/** A new rate's form: quoted in the home currency when the ECB publishes it,
+ *  else in the euro. */
+const newDraft = (view: CurrencySettingsView | null): RateDraft => ({
+  currency: '',
+  rate: '',
+  quote: view?.home && view.home !== 'EUR' && Object.hasOwn(view.ecb.rates, view.home) ? view.home : 'EUR',
+  every: false,
+  from: today(),
+});
+
 /** Why a draft can't be saved yet, or null when it can. */
 export function draftProblem(d: RateDraft): string | null {
   const code = d.currency.trim().toUpperCase();
@@ -72,7 +86,17 @@ type Handlers = {
   onRepair: () => void;
   onRemove: (currency: string) => void;
   onEdit: (o?: OwnRate) => void;
+  /** The form for a new rate for this currency. */
+  onRateFor: (currency: string) => void;
 };
+
+/** Whether nothing can be converted into the home currency: the ECB doesn't
+ *  publish it (once Nya has its rates at all), and no rate of the person's
+ *  prices it. */
+export function homeNeedsRate(view: CurrencySettingsView): boolean {
+  const home = view.home;
+  return !!home && home !== 'EUR' && view.ecb.date !== null && !Object.hasOwn(view.ecb.rates, home) && !view.own.some((o) => o.currency === home);
+}
 
 /** The card, from what was loaded: for tests, and the card above. */
 export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: CurrencyLoad; busy: boolean; confirm: Confirming; error: string | null } & Handlers) {
@@ -120,6 +144,14 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
               {view.ecb.date ? `The ECB’s newest rates: ${rateDay(view.ecb.date)}.` : 'Nya has no ECB rates yet.'}
               {view.ecb.date && view.ecb.stale ? ' Nya couldn’t fetch newer ones, so converted figures may be out of date.' : ''}
             </p>
+            {homeNeedsRate(view) && (
+              <div className="stale-note">
+                The ECB doesn’t publish {view.home}, so nothing can be converted into it until you set a rate of your own for {view.home}.{' '}
+                <button className="link-btn" onClick={() => on.onRateFor(view.home!)} disabled={busy}>
+                  Set a rate for {view.home}
+                </button>
+              </div>
+            )}
             {confirm === 'stop' ? (
               <>
                 <p className="panel-note">Every figure goes back to its own currency, as before you chose one. Your own rates are kept.</p>
@@ -287,7 +319,7 @@ export function OwnRateForm({
   );
 }
 
-export default function CurrencyCard({ currencies, manual, focus = false, onFocused, onChanged }: Props) {
+export default function CurrencyCard({ currencies, manual, focus = null, onFocused, onChanged }: Props) {
   const { load, reload, accept } = useCurrencySettings(true);
   const [choosing, setChoosing] = useState(false);
   const [draft, setDraft] = useState<RateDraft | null>(null);
@@ -296,13 +328,21 @@ export default function CurrencyCard({ currencies, manual, focus = false, onFocu
   const [confirm, setConfirm] = useState<Confirming>(null);
   const ref = useRef<HTMLDivElement>(null);
 
+  const view = load.kind === 'ready' ? load.view : null;
+  // Opened for a currency's rate: its form, once the settings are in (a rate
+  // already set for it is changed, not added beside).
+  const asked = focus?.rateFor ?? null;
   useEffect(() => {
     if (!focus || !ref.current) return;
+    if (asked && !view) return;
     ref.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (asked && view) {
+      const mine = view.own.find((o) => o.currency === asked);
+      setError(null);
+      setDraft(mine ? draftOf(mine) : { ...newDraft(view), currency: asked });
+    }
     onFocused?.();
-  }, [focus, onFocused]);
-
-  const view = load.kind === 'ready' ? load.view : null;
+  }, [focus, asked, view, onFocused]);
 
   /** A write, then Home's figures and this card read again. */
   const send = async (url: string, init: RequestInit, done: (data: any) => void) => {
@@ -327,11 +367,7 @@ export default function CurrencyCard({ currencies, manual, focus = false, onFocu
 
   const edit = (o?: OwnRate) => {
     setError(null);
-    setDraft(
-      o
-        ? { currency: o.currency, rate: o.rate, quote: o.quote, every: o.from === null, from: o.from ?? today() }
-        : { currency: '', rate: '', quote: view?.home && view.home !== 'EUR' && view.ecb.rates[view.home] ? view.home : 'EUR', every: false, from: today() }
-    );
+    setDraft(o ? draftOf(o) : newDraft(view));
   };
   const saveRate = () => {
     if (!draft || draftProblem(draft)) return;
@@ -358,6 +394,10 @@ export default function CurrencyCard({ currencies, manual, focus = false, onFocu
         onRepair={() => void send('/api/currency', { method: 'DELETE' }, () => accept({ home: null, own: [], problem: null, removable: false }))}
         onRemove={(c) => void send(`/api/currency/rates?currency=${encodeURIComponent(c)}`, { method: 'DELETE' }, (d) => accept({ own: d.own ?? [] }))}
         onEdit={edit}
+        onRateFor={(currency) => {
+          setError(null);
+          setDraft({ ...newDraft(view), currency });
+        }}
       />
 
       <CurrencyChoiceSheet

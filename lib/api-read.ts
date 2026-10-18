@@ -900,9 +900,13 @@ function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState |
   const notes: string[] = nw.home?.note ? [nw.home.note] : [];
   let base: { currency: string | null; of: ((p: HistoryPoint) => number | null) | null } = { currency: null, of: null };
   if (fx?.home && nw.split) {
-    const { byDay, gaps } = historyInBase(nw.split, fx);
+    const { byDay, gaps } = historyInBase(
+      nw.split,
+      fx,
+      (p) => (q.includeEstimated || !p.estimated) && (q.from === undefined || p.date >= q.from) && (q.to === undefined || p.date <= q.to)
+    );
     base = { currency: fx.home, of: (p) => byDay.get(p.date) ?? null };
-    notes.push(...historyNotes(gaps, fx.home));
+    notes.push(...historyNotes(gaps, fx.home, nw.split.main));
   }
   return seriesOf(
     nw.history,

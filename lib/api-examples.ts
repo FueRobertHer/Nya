@@ -322,7 +322,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['base.left_out[].accounts', 'How many accounts in it.'],
       [
         'base.left_out[].why',
-        '"no_rate" (the ECB doesn’t publish it, and you set no rate of your own), "not_fetched" (Nya doesn’t have the ECB’s rates yet) or "quote_has_no_rate" (your own rate for it is in a currency with no rate). Version 1 may add reasons.',
+        '"no_rate" (the ECB doesn’t publish it, and you set no rate of your own), "not_fetched" (Nya doesn’t have the ECB’s rates yet), "quote_has_no_rate" (your own rate for it is in a currency with no rate) or "base_has_no_rate" (your home currency itself has no rate: the ECB doesn’t publish it and you set none for it, so nothing in another currency can be converted into it). Version 1 may add reasons.',
       ],
       ['base.rate_day', 'The day of the ECB’s rates used, their newest publication (each working day, around 16:00 CET), or null when none was.'],
       ['base.rates_stale', 'True when those rates are older than they should be, because Nya couldn’t fetch newer ones.'],

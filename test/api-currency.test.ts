@@ -230,3 +230,29 @@ describe('with a home currency', () => {
     expect(changedKeys(before, snapshot()).filter((k) => !/:api-(requests|tokens)$/.test(k))).toEqual([]);
   });
 });
+
+describe('with a home currency the ECB doesn’t publish', () => {
+  beforeEach(() => chooseHome('ARS', []));
+
+  test('the home currency is named as the one with no rate, never the accounts’ own', async () => {
+    const worth = await call('net-worth');
+    expect(worth.base.net_worth).toBe(1_000_000);
+    expect(worth.base.left_out).toEqual([
+      { currency: 'USD', accounts: 5, why: 'base_has_no_rate' },
+      { currency: 'AED', accounts: 1, why: 'no_rate' },
+      { currency: 'EUR', accounts: 1, why: 'base_has_no_rate' },
+    ]);
+    expect(worth.notes).toContain(
+      'Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 6 accounts in other currencies aren’t in base. You can set a rate of your own for ARS in the app'
+    );
+    expect(worth.notes.some((n: string) => n.includes('no rate for USD') || n.includes('no rate for EUR'))).toBe(false);
+    const result = await tool('get_net_worth', { include_history: false });
+    expect(result.content[0].text).toContain('Nothing could be converted into ARS, the home currency: it has no rate.');
+  });
+
+  test('the history says it too', async () => {
+    const history = await call('balance-history');
+    expect(history.points.every((p: any) => p.to_base === null)).toBe(true);
+    expect(history.notes).toContain('2 points have no to_base, from 2026-09-11 to 2026-09-12: nothing can be converted into ARS: the ECB doesn’t publish ARS');
+  });
+});

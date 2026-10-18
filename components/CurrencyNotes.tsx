@@ -13,7 +13,8 @@ import { Masked } from './HideAmounts';
 import { chartGapLines, convertedHeading, convertedText, leftOutLines, staleText, unknownText } from './currency-text';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 
-export function HeroCurrencyNote({ base, main, onOpen }: { base: NetWorthBase; main: string | null; onOpen: () => void }) {
+/** `onOpen`: the Currency card, at the form for a rate for that currency. */
+export function HeroCurrencyNote({ base, main, onOpen }: { base: NetWorthBase; main: string | null; onOpen: (rateFor: string | null) => void }) {
   const converted = convertedText(base, base.fx.own);
   const left = leftOutLines(base);
   const own = base.parts.some((p) => p.rate?.source === 'own');
@@ -25,11 +26,16 @@ export function HeroCurrencyNote({ base, main, onOpen }: { base: NetWorthBase; m
         </div>
       )}
       {left.map((line) => (
-        <div className="as-of stale" key={line}>
-          {line}{' '}
-          <button className="link-btn" onClick={onOpen}>
-            Set a rate of your own
-          </button>
+        <div className="as-of stale" key={line.text}>
+          {line.text}
+          {line.rateFor && (
+            <>
+              {' '}
+              <button className="link-btn" onClick={() => onOpen(line.rateFor)}>
+                Set a rate for {line.rateFor}
+              </button>
+            </>
+          )}
         </div>
       ))}
       {base.rates.stale && <div className="as-of stale">{staleText(base.rates.day)}</div>}

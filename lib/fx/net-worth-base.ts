@@ -9,8 +9,8 @@
 // after the cache, on every answer.
 
 import { bridgeInteriorEstimates, withTodayPoint, type HistoryPoint } from '../history';
-import { balancesIn, convertHistory, deltaOver, rateEffect, tidyNumber, type BalancePart, type BalanceRow, type HistoryGaps, type SplitPoint } from './net-worth';
-import { isStale, precisionOf, type EcbLatest, type FxTable, type NoRate, type OwnRate } from './rates';
+import { balancesIn, convertHistory, deltaOver, rateEffect, tidyNumber, type BalancesIn, type BalancePart, type BalanceRow, type HistoryGaps, type SplitPoint } from './net-worth';
+import { isStale, precisionOf, type EcbLatest, type FxTable, type OwnRate } from './rates';
 
 /** What the cache keeps to convert the chart after it: the points with their
  *  split (unconverted), the end days bridging steps on, the currency the
@@ -31,7 +31,7 @@ export type NetWorthBase = {
   currency: string;
   net_worth: number;
   parts: BalancePart[];
-  left_out: { currency: string; accounts: number; why: NoRate }[];
+  left_out: BalancesIn['left_out'];
   /** Accounts that say no currency, counted in the main one. */
   unknown: number;
   history: HistoryPoint[];

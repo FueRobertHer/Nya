@@ -29,6 +29,20 @@ const text = (html: string) =>
     .replace(/\s+/g, ' ')
     .trim();
 const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([\s\S]*?)<\/button>/g)].map((m) => text(m[1])).filter(Boolean);
+/** Each button an element draws, with what tapping it does: function
+ *  components called through, as a static render would. */
+function tappable(node: any): { text: string; tap: () => void }[] {
+  const out: { text: string; tap: () => void }[] = [];
+  const walk = (n: any): void => {
+    if (n === null || typeof n !== 'object') return;
+    if (Array.isArray(n)) return n.forEach(walk);
+    if (typeof n.type === 'function') return walk(n.type(n.props));
+    if (n.type === 'button') out.push({ text: text(renderToStaticMarkup(n)), tap: n.props.onClick });
+    walk(n.props?.children);
+  };
+  walk(node);
+  return out;
+}
 
 /** As in a browser's page: only there can amounts be hidden. */
 function hidden<T>(fn: () => T): T {
@@ -61,7 +75,7 @@ function base(rows: { amount: number; currency: string | null }[], over: Partial
     left_out: b.left_out,
     unknown: b.unknown,
     history: [],
-    gaps: { unsplit: 0, main_unrated: 0, left_out: [], unknown_currency: 0 },
+    gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 },
     delta: null,
     rates: { day: DAY, stale: false, own },
     fx: { home: 'EUR', latest: fx.latest, own },
@@ -89,9 +103,26 @@ describe('the words of a converted figure', () => {
 
   test('what was left out, and why, never guessed', () => {
     const b = balancesIn([{ amount: 1, currency: 'BTC' }, { amount: 2, currency: 'BTC' }, { amount: 5, currency: 'AED' }], FX, 'EUR', DAY, 'USD');
-    expect(leftOutLines(b)).toEqual(['2 accounts in BTC aren’t in this total: there is no rate for BTC.', '1 account in AED isn’t in this total: there is no rate for AED.']);
-    expect(noRateText('USD', 'not-fetched')).toBe('Nya doesn’t have the ECB’s rates for those days yet');
+    expect(leftOutLines(b)).toEqual([
+      { text: '2 accounts in BTC aren’t in this total: there is no rate for BTC.', rateFor: 'BTC' },
+      { text: '1 account in AED isn’t in this total: there is no rate for AED.', rateFor: 'AED' },
+    ]);
+    expect(noRateText('USD', 'not-fetched')).toBe('Nya doesn’t have the ECB’s rates yet');
     expect(noRateText('BTC', 'quote')).toBe('your rate for BTC is in a currency the ECB has no rate for');
+  });
+
+  test('a home currency with no rate is named, once, as the one needing a rate: never the accounts’ own', () => {
+    const fx = ecbTable({ home: 'ARS' });
+    const b = balancesIn([{ amount: 100, currency: 'USD' }, { amount: 50, currency: 'GBP' }, { amount: 5000, currency: 'ARS' }], fx, 'ARS', DAY, 'USD');
+    expect(leftOutLines(b)).toEqual([{ text: 'Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 2 accounts in other currencies aren’t in this total.', rateFor: 'ARS' }]);
+    expect(institutionNote(b)).toBe('Mixed currencies: nothing can be converted into ARS yet, as the ECB doesn’t publish it.');
+  });
+
+  test('rates Nya hasn’t fetched yet are said as that, with no rate to set', () => {
+    const none = ecbTable({ home: 'EUR', latest: false });
+    const b = balancesIn([{ amount: 100, currency: 'USD' }], { ...none, days: {}, series: {} }, 'EUR', '2026-10-01', 'USD');
+    expect(leftOutLines(b)).toEqual([{ text: '1 account in USD isn’t in this total: Nya doesn’t have the ECB’s rates yet.', rateFor: null }]);
+    expect(institutionNote(b)).toBe('Mixed currencies, converted into EUR at the ECB’s newest rates; USD isn’t in it (no rates yet).');
   });
 
   test('the heading, stale rates, and accounts saying no currency', () => {
@@ -114,14 +145,31 @@ describe('the words of a converted figure', () => {
 
   test('the chart’s note: days not drawn, currencies left out with their days, accounts with no currency', () => {
     expect(
-      chartGapLines({ unsplit: 3, main_unrated: 1, left_out: [{ currency: 'ARS', from: '2026-03-01', to: '2026-03-04', days: 4 }], unknown_currency: 1 }, 'EUR', 'USD')
+      chartGapLines(
+        {
+          unsplit: 3,
+          main_unrated: [{ why: 'not-fetched', unrated: 'USD', from: '2024-06-03', to: '2024-06-03', days: 1 }],
+          left_out: [
+            { currency: 'ARS', why: 'not-published', unrated: 'ARS', from: '2026-03-01', to: '2026-03-04', days: 4 },
+            { currency: 'GBP', why: 'not-fetched', unrated: 'GBP', from: '2024-01-02', to: '2024-01-05', days: 4 },
+          ],
+          unknown_currency: 1,
+        },
+        'EUR',
+        'USD'
+      )
     ).toEqual([
       '3 days couldn’t be converted: Nya didn’t keep their balances by account, so they aren’t drawn.',
-      '1 day isn’t drawn: there is no rate into EUR for USD on it.',
+      '1 day isn’t drawn, on Jun 3, 2024: Nya doesn’t have the ECB’s rates for that day yet.',
       'What is in ARS isn’t in the chart from Mar 1, 2026 to Mar 4, 2026: there is no rate for ARS on those days.',
-      '1 account Nya knows of has no currency recorded, so it is counted in USD on the days it held a balance.',
+      'What is in GBP isn’t in the chart from Jan 2, 2024 to Jan 5, 2024: Nya doesn’t have the ECB’s rates for those days yet.',
+      'Nya knows of 1 account with no currency recorded: any balance it held is counted in USD.',
     ]);
-    expect(chartGapLines({ unsplit: 0, main_unrated: 0, left_out: [], unknown_currency: 0 }, 'EUR', 'USD')).toEqual([]);
+    // A home currency with no rate: the days not drawn say so.
+    expect(chartGapLines({ unsplit: 0, main_unrated: [{ why: 'not-published', unrated: 'ARS', from: '2026-09-01', to: '2026-09-14', days: 10 }], left_out: [], unknown_currency: 0 }, 'ARS', 'USD')).toEqual([
+      '10 days aren’t drawn, from Sep 1, 2026 to Sep 14, 2026: nothing can be converted into ARS: the ECB doesn’t publish ARS.',
+    ]);
+    expect(chartGapLines({ unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, 'EUR', 'USD')).toEqual([]);
   });
 });
 
@@ -178,7 +226,7 @@ describe('Home’s notes', () => {
     expect(text(html)).toBe(
       [
         'Converted into EUR at the ECB’s rates of Sep 14, 2026: USD $1,000.00 is €865.73 (1 USD = 0.86573 EUR).',
-        '1 account in BTC isn’t in this total: there is no rate for BTC. Set a rate of your own',
+        '1 account in BTC isn’t in this total: there is no rate for BTC. Set a rate for BTC',
         'The newest rates Nya has are from Sep 14, 2026: it couldn’t fetch newer ones, so converted figures may be out of date.',
       ].join(' ')
     );
@@ -188,10 +236,25 @@ describe('Home’s notes', () => {
     expect(masked).not.toMatch(/1,000|865\.73/);
   });
 
+  test('a home currency the ECB doesn’t publish: one note naming it, its link the form for its rate', () => {
+    const fx = ecbTable({ home: 'ARS' });
+    const b = balancesIn([{ amount: 100, currency: 'USD' }, { amount: 5000, currency: 'ARS' }], fx, 'ARS', DAY, 'USD');
+    const asked: (string | null)[] = [];
+    const node = <HeroCurrencyNote base={{ ...base([]), currency: 'ARS', net_worth: b.total, parts: b.parts, left_out: b.left_out }} main="USD" onOpen={(c) => asked.push(c)} />;
+    const html = renderToStaticMarkup(node);
+    expect(text(html)).toBe('Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 1 account in other currencies isn’t in this total. Set a rate for ARS');
+    expect(text(html)).not.toContain('no rate for USD');
+    // The link opens the form for ARS's rate.
+    const [link] = tappable(node);
+    expect(link.text).toBe('Set a rate for ARS');
+    link.tap();
+    expect(asked).toEqual(['ARS']);
+  });
+
   test('under the chart: the days it couldn’t convert, or nothing', () => {
     const none = renderToStaticMarkup(<ChartCurrencyNote base={base([{ amount: 1, currency: 'USD' }])} main="USD" />);
     expect(none).toBe('');
-    const html = renderToStaticMarkup(<ChartCurrencyNote base={base([{ amount: 1, currency: 'USD' }], { gaps: { unsplit: 2, main_unrated: 0, left_out: [], unknown_currency: 0 } })} main="USD" />);
+    const html = renderToStaticMarkup(<ChartCurrencyNote base={base([{ amount: 1, currency: 'USD' }], { gaps: { unsplit: 2, main_unrated: [], left_out: [], unknown_currency: 0 } })} main="USD" />);
     expect(text(html)).toBe('2 days couldn’t be converted: Nya didn’t keep their balances by account, so they aren’t drawn.');
   });
 });
@@ -285,7 +348,7 @@ describe('the Currency card', () => {
   });
   const card = (load: Parameters<typeof CurrencyCardBody>[0]['load'], over: Partial<Parameters<typeof CurrencyCardBody>[0]> = {}) =>
     renderToStaticMarkup(
-      <CurrencyCardBody load={load} busy={false} confirm={null} error={null} onChoose={noop} onConfirm={noop} onStop={noop} onRepair={noop} onRemove={noop} onEdit={noop} {...over} />
+      <CurrencyCardBody load={load} busy={false} confirm={null} error={null} onChoose={noop} onConfirm={noop} onStop={noop} onRepair={noop} onRemove={noop} onEdit={noop} onRateFor={noop} {...over} />
     );
 
   test('without a home currency: what Nya does now, and the way to choose one', () => {
@@ -306,6 +369,16 @@ describe('the Currency card', () => {
     expect(buttons(html)).toEqual(['Change', 'Stop converting', 'Change', 'Remove…', 'Change', 'Remove…', 'Add a rate']);
     // Stopping is confirmed, and says what it keeps.
     expect(text(card(ready({ home: 'EUR' }), { confirm: 'stop' }))).toContain('Every figure goes back to its own currency, as before you chose one. Your own rates are kept.');
+  });
+
+  test('a home currency the ECB doesn’t publish asks for a rate for it, and stops asking once there is one', () => {
+    const html = card(ready({ home: 'ARS' }));
+    expect(text(html)).toContain('The ECB doesn’t publish ARS, so nothing can be converted into it until you set a rate of your own for ARS.');
+    expect(buttons(html)).toContain('Set a rate for ARS');
+    const priced = card(ready({ home: 'ARS', own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] }));
+    expect(text(priced)).not.toContain('nothing can be converted into it');
+    // Before Nya has any rates, nothing is said to be unpublished.
+    expect(text(card(ready({ home: 'ARS', ecb: { date: null, rates: {}, stale: true, fetch_ok: null } })))).not.toContain('doesn’t publish ARS');
   });
 
   test('rates older than they should be are said', () => {

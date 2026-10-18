@@ -565,9 +565,10 @@ export default function Dashboard({
   const [healthUnavailable, setHealthUnavailable] = useState(false);
   const [healthFocus, setHealthFocus] = useState(false);
   const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
-  // The Currency card (components/CurrencyCard.tsx), opened from a note on Home.
-  const [currencyFocus, setCurrencyFocus] = useState(false);
-  const clearCurrencyFocus = useCallback(() => setCurrencyFocus(false), []);
+  // The Currency card (components/CurrencyCard.tsx), opened from a note on
+  // Home, at the form for a rate for the currency the note named, if any.
+  const [currencyFocus, setCurrencyFocus] = useState<{ rateFor: string | null } | null>(null);
+  const clearCurrencyFocus = useCallback(() => setCurrencyFocus(null), []);
   // The offer to show totals in one currency (components/CurrencyNotes.tsx):
   // whether it was put away on this device (read after the first paint, so
   // the server's render and the browser's agree), and the sheet it opens,
@@ -659,10 +660,10 @@ export default function Dashboard({
   // type-to-confirm drawer.
   const [manageMode, setManageMode] = useState(false);
   // The Currency card is under Manage on the Accounts tab.
-  const openCurrency = useCallback(() => {
+  const openCurrency = useCallback((rateFor: string | null = null) => {
     setTab('accounts');
     setManageMode(true);
-    setCurrencyFocus(true);
+    setCurrencyFocus({ rateFor });
   }, []);
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
@@ -1943,7 +1944,7 @@ export default function Dashboard({
                   ) : currencyProblem ? (
                     <div className="as-of stale">
                       Your currency settings couldn&apos;t be read, so totals aren&apos;t converted.{' '}
-                      <button className="link-btn" onClick={openCurrency}>
+                      <button className="link-btn" onClick={() => openCurrency()}>
                         See Currency
                       </button>
                     </div>

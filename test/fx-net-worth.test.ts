@@ -45,7 +45,17 @@ describe('a total of balances, converted by currency', () => {
       'EUR'
     );
     expect(b.total).toBe(100);
-    expect(b.left_out).toEqual([{ currency: 'BTC', accounts: 1, why: 'not-published' }]);
+    expect(b.left_out).toEqual([{ currency: 'BTC', accounts: 1, why: 'not-published', unrated: 'BTC' }]);
+  });
+
+  test('a home currency with no rate of its own: whose rate is missing is the home one, never the accounts’', () => {
+    const fx = ecbTable({ home: 'ARS' });
+    const b = balancesIn([{ amount: 100, currency: 'USD' }, { amount: 5000, currency: 'ARS' }], fx, 'ARS', DAY, 'USD');
+    expect(b.total).toBe(5000);
+    expect(b.left_out).toEqual([{ currency: 'USD', accounts: 1, why: 'not-published', unrated: 'ARS' }]);
+    // With a rate of the person's for ARS, through the ECB's USD rate.
+    const priced = ecbTable({ home: 'ARS', own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] });
+    expect(balancesIn([{ amount: 100, currency: 'USD' }], priced, 'ARS', DAY, 'USD')).toMatchObject({ total: 140845.07, left_out: [] });
   });
 
   test('an account with no currency counts in the main one, and is counted', () => {
@@ -92,7 +102,7 @@ describe('the history, day by day', () => {
       { date: '2026-09-12', value: 1862.66, estimated: true },
       { date: '2026-09-14', value: 1865.73 }, // 1,000 + 1,000 / 1.1551
     ]);
-    expect(gaps).toEqual({ unsplit: 0, main_unrated: 0, left_out: [] });
+    expect(gaps).toEqual({ unsplit: 0, main_unrated: [], left_out: [] });
   });
 
   test('a point whose split can’t be told isn’t drawn, and is counted', () => {
@@ -101,10 +111,13 @@ describe('the history, day by day', () => {
     expect(gaps.unsplit).toBe(1);
   });
 
-  test('a point whose main currency has no rate isn’t drawn as a fall', () => {
+  test('a point whose main currency has no rate isn’t drawn as a fall, and why is kept', () => {
     const { points, gaps } = convertHistory([{ date: DAY, value: 10 }], 'ARS', FX, 'EUR');
     expect(points).toEqual([]);
-    expect(gaps.main_unrated).toBe(1);
+    expect(gaps.main_unrated).toEqual([{ why: 'not-published', unrated: 'ARS', from: DAY, to: DAY, days: 1 }]);
+    // A year Nya hasn't fetched is said as that, not as no rate.
+    const early = convertHistory([{ date: '2024-06-03', value: 10 }], 'USD', FX, 'EUR');
+    expect(early.gaps.main_unrated).toEqual([{ why: 'not-fetched', unrated: 'USD', from: '2024-06-03', to: '2024-06-03', days: 1 }]);
   });
 
   test('another currency with no rate is left out of the points, named with its days', () => {
@@ -118,7 +131,7 @@ describe('the history, day by day', () => {
       'EUR'
     );
     expect(points.map((p) => p.value)).toEqual([1000, 1000]);
-    expect(gaps.left_out).toEqual([{ currency: 'BTC', from: '2026-09-11', to: '2026-09-14', days: 2 }]);
+    expect(gaps.left_out).toEqual([{ currency: 'BTC', why: 'not-published', unrated: 'BTC', from: '2026-09-11', to: '2026-09-14', days: 2 }]);
   });
 
   test('one currency only, not the home one: every point converts from it', () => {

@@ -18,6 +18,7 @@
 import { bridgeInteriorEstimates, type HistoryPoint } from '../history';
 import { balancesIn, convertHistory, type HistoryGaps, type SplitPoint } from './net-worth';
 import { convert, ecbRate, isStale, ownRateOn, type FxTable, type NoRate, type OwnRate } from './rates';
+import { homeUnrated, reasonText } from './words';
 
 /** An own rate as the API gives it: 1 `currency` is `rate` `quote`, from
  *  the day `from` on (every day when null). */
@@ -27,11 +28,15 @@ export const apiOwnRates = (own: readonly OwnRate[]): ApiOwnRate[] => own.map((o
 
 /** Why a currency has no rate, in the API's words: the ECB doesn't publish
  *  it (or didn't that day) and the person set none of their own; Nya doesn't
- *  have the ECB's rates for that day yet; or the person's own rate is quoted
- *  in a currency with no rate that day. Version 1 may add reasons. */
-export type ApiNoRate = 'no_rate' | 'not_fetched' | 'quote_has_no_rate';
+ *  have the ECB's rates for that day yet; the person's own rate is quoted in
+ *  a currency with no rate that day; or the home currency itself has none (the
+ *  ECB doesn't publish it, with no rate of the person's for it), so nothing
+ *  converts into it. Version 1 may add reasons. */
+export type ApiNoRate = 'no_rate' | 'not_fetched' | 'quote_has_no_rate' | 'base_has_no_rate';
 
-export const apiNoRate = (why: NoRate): ApiNoRate => (why === 'not-fetched' ? 'not_fetched' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate');
+/** `unrated`: whose rate is missing (lib/fx/net-worth.ts). */
+export const apiNoRate = (currency: string, why: NoRate, unrated: string, home: string): ApiNoRate =>
+  why === 'not-fetched' ? 'not_fetched' : homeUnrated(currency, why, unrated, home) ? 'base_has_no_rate' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate';
 
 export type ApiBasePart = {
   currency: string;
@@ -108,7 +113,7 @@ export function apiBase(accounts: readonly BaseAccount[], fx: FxTable, main: str
     debts: debts.total,
     accounts: net.parts.filter((p) => p.converted !== null).reduce((n, p) => n + p.accounts, 0),
     parts: net.parts.map((p) => ({ currency: p.currency, net_worth: p.amount, converted: p.converted, rate: p.rate?.value ?? null, rate_source: p.rate?.source ?? null, accounts: p.accounts })),
-    left_out: net.left_out.map((l) => ({ currency: l.currency, accounts: l.accounts, why: apiNoRate(l.why) })),
+    left_out: net.left_out.map((l) => ({ currency: l.currency, accounts: l.accounts, why: apiNoRate(l.currency, l.why, l.unrated, home) })),
     rate_day: rateDay,
     rates_stale: rateDay !== null && isStale(fx, now),
     own_rates: apiOwnRates(used),
@@ -128,21 +133,30 @@ export function toBase(fx: FxTable, balance: number | null, currency: string | n
  *  chart (lib/history.ts bridgeInteriorEstimates). A day with no value is a
  *  point that couldn't be converted (its split can't be told, or its main
  *  currency has no rate that day); `gaps` says what couldn't be. */
-export function historyInBase(split: { points: readonly SplitPoint[]; breaks: readonly string[]; main: string | null }, fx: FxTable): { byDay: Map<string, number>; gaps: HistoryGaps } {
-  const { points, gaps } = convertHistory(split.points, split.main, fx, fx.home!);
+export function historyInBase(
+  split: { points: readonly SplitPoint[]; breaks: readonly string[]; main: string | null },
+  fx: FxTable,
+  /** The points the answer holds (its range, estimated or not): what `gaps`
+   *  counts. Bridging reads them all. */
+  answered: (p: SplitPoint) => boolean = () => true
+): { byDay: Map<string, number>; gaps: HistoryGaps } {
+  const { points } = convertHistory(split.points, split.main, fx, fx.home!);
+  const { gaps } = convertHistory(split.points.filter(answered), split.main, fx, fx.home!);
   return { byDay: new Map(bridgeInteriorEstimates(points as HistoryPoint[], split.breaks).map((p) => [p.date, p.value])), gaps };
 }
 
 /** What a person should know of a converted history, in words: the points
  *  with no to_base, and the currencies left out of some. */
-export function historyNotes(gaps: HistoryGaps, home: string): string[] {
+export function historyNotes(gaps: HistoryGaps, home: string, main: string | null): string[] {
   const notes: string[] = [];
-  const days = (n: number) => (n === 1 ? '1 point has' : `${n} points have`);
-  if (gaps.unsplit > 0) notes.push(`${days(gaps.unsplit)} no to_base: Nya didn’t keep their balances by account, so they can’t be converted`);
-  if (gaps.main_unrated > 0) notes.push(`${days(gaps.main_unrated)} no to_base: there is no rate into ${home} on their days`);
+  const points = (n: number) => (n === 1 ? '1 point has' : `${n} points have`);
+  const span = (s: { from: string; to: string }) => (s.from === s.to ? `on ${s.from}` : `from ${s.from} to ${s.to}`);
+  if (gaps.unsplit > 0) notes.push(`${points(gaps.unsplit)} no to_base: Nya didn’t keep their balances by account, so they can’t be converted`);
+  for (const m of gaps.main_unrated) {
+    notes.push(`${points(m.days)} no to_base, ${span(m)}: ${reasonText(main ?? home, m.why, m.unrated, home, m.days === 1 ? 'one' : 'many')}`);
+  }
   for (const l of gaps.left_out) {
-    const span = l.from === l.to ? `on ${l.from}` : `from ${l.from} to ${l.to}`;
-    notes.push(`${l.currency} isn’t in to_base ${span} (${l.days === 1 ? '1 point' : `${l.days} points`}): there is no rate for it on those days`);
+    notes.push(`${l.currency} isn’t in to_base ${span(l)} (${l.days === 1 ? '1 point' : `${l.days} points`}): ${reasonText(l.currency, l.why, l.unrated, home, l.days === 1 ? 'one' : 'many')}`);
   }
   return notes;
 }
@@ -151,13 +165,23 @@ export function historyNotes(gaps: HistoryGaps, home: string): string[] {
  *  and rates older than they should be. */
 export function baseNotes(base: ApiBase, home: string): string[] {
   const notes: string[] = [];
+  // The home currency itself without a rate: one note, naming it, since a
+  // rate for any other currency would change nothing.
+  const homeOut = base.left_out.filter((l) => l.why === 'base_has_no_rate');
+  if (homeOut.length > 0) {
+    const n = homeOut.reduce((s, l) => s + l.accounts, 0);
+    notes.push(
+      `Nothing can be converted into ${home} yet: the ECB doesn’t publish ${home}, so ${n === 1 ? '1 account' : `${n} accounts`} in other currencies ${n === 1 ? 'isn’t' : 'aren’t'} in base. You can set a rate of your own for ${home} in the app`
+    );
+  }
   for (const l of base.left_out) {
+    if (l.why === 'base_has_no_rate') continue;
     const which = l.accounts === 1 ? `1 account in ${l.currency} isn’t` : `${l.accounts} accounts in ${l.currency} aren’t`;
     const why =
       l.why === 'not_fetched'
         ? 'Nya doesn’t have the ECB’s rates yet'
         : l.why === 'quote_has_no_rate'
-          ? `the currency your own rate for ${l.currency} is quoted in has no rate`
+          ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
           : `there is no rate for ${l.currency}; you can set your own in the app`;
     notes.push(`${which} in base, which is in ${home}: ${why}`);
   }
