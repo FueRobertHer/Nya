@@ -72,6 +72,7 @@ import {
   type OwedSign,
 } from './store';
 import { connectorOf } from './registry';
+import { connectorOffered } from './switch';
 import { syncConnection, type SyncResult } from './sync';
 import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './institutions';
 import type { ConnectorKind } from './types';
@@ -88,8 +89,12 @@ import { isOwedType } from '../balance';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
  *  holds the person's banks there; a second is for another server that speaks
- *  the protocol (Redbark, say); a third for a Lunch Flow account. */
-export const MAX_CONNECTIONS = 3;
+ *  the protocol (Redbark, say), or for a Lunch Flow account. No more, since
+ *  the day's requests are for every connection together (lib/connectors/sync.ts
+ *  DAILY_REQUESTS): two leave enough for each one's daily update, a catch-up
+ *  and older history, with some for Refresh, where a third would need a
+ *  budget of its own. */
+export const MAX_CONNECTIONS = 2;
 /** How many accounts connectors may feed one container. */
 export const MAX_CONNECTOR_ACCOUNTS = 100;
 
@@ -122,6 +127,11 @@ async function takeClaim(ctx: Ctx): Promise<void> {
  * failure there leaves the connection in place, its accounts to list later).
  */
 export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now: number = Date.now()): Promise<{ connection_id: string; result: SyncResult }> {
+  // Before anything is counted or sent (lib/connectors/switch.ts): turned off,
+  // no new connection, while those made keep working.
+  if (!connectorOffered(kind)) {
+    throw new ConnectorRefused(`Connecting ${connectorOf(kind).label} isn't turned on for this copy of Nya.`, 403);
+  }
   if ((await connectionsStore.count(ctx)) >= MAX_CONNECTIONS) {
     throw new ConnectorRefused(`Nya keeps at most ${MAX_CONNECTIONS} connections like this. Disconnect one first.`, 409);
   }

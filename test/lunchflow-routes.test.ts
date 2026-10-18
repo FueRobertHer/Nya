@@ -15,6 +15,8 @@ import { parseCsv } from './csv-parse';
 // or the download.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// Connecting Lunch Flow is off unless the deployment turns it on (lib/connectors/switch.ts).
+process.env.LUNCHFLOW_ENABLED = '1';
 
 const plaidCalls: string[] = [];
 mock.module('@/lib/plaid', () => ({
@@ -229,6 +231,46 @@ describe('connecting through the routes', () => {
     expect(last.status).toBe(429);
     expect(last.body.error).toContain("today's 8 requests for your own sync");
     expect(last.body.error).toContain('Lunch Flow updates about once a day');
+  });
+});
+
+describe('the switch (LUNCHFLOW_ENABLED, lib/connectors/switch.ts)', () => {
+  afterEach(() => {
+    process.env.LUNCHFLOW_ENABLED = '1';
+  });
+
+  test('off, a new connection is refused before anything is counted or sent; on, it connects', async () => {
+    for (const value of [undefined, '0', 'true']) {
+      if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;
+      else process.env.LUNCHFLOW_ENABLED = value;
+      const off = await call(connectRoute.POST, 'POST', { connector: 'lunchflow', token: server.key });
+      expect([value, off.status, off.body.error]).toEqual([value, 403, "Connecting Lunch Flow isn't turned on for this copy of Nya."]);
+    }
+    expect(server.seen).toEqual([]);
+    expect(await fake.get(ctxKey('connector-claims', ctx))).toBeNull();
+    expect((await list()).body.connections).toEqual([]);
+    process.env.LUNCHFLOW_ENABLED = '1';
+    expect((await call(connectRoute.POST, 'POST', { connector: 'lunchflow', token: server.key })).status).toBe(200);
+  });
+
+  test('turned off later, a connection made keeps working: listed, refreshed, connected again, chosen from and disconnected', async () => {
+    const id = await connectAndTrack();
+    delete process.env.LUNCHFLOW_ENABLED;
+    expect((await list()).body.connections.map((c: any) => [c.connector, c.accounts.length])).toEqual([['lunchflow', 2]]);
+    server.accounts[0].transactions.push(lfTxn('t-gum', 0, -1, 'Newsagent'));
+    const refreshed = await call(refreshRoute.POST, 'POST', { connection_id: id });
+    expect([refreshed.status, refreshed.body.connection.last_fetch.ok, refreshed.body.connection.last_fetch.added]).toEqual([200, true, 1]);
+    server.keys.clear();
+    server.keys.add('lf_replacement_key_123456');
+    const again = await call(connectRoute.POST, 'POST', { connector: 'lunchflow', token: 'lf_replacement_key_123456', connection_id: id });
+    expect([again.status, again.body.connection.last_fetch.ok]).toEqual([200, true]);
+    const everyday = again.body.connection.accounts.find((a: any) => a.name === 'Everyday');
+    const stopped = await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [everyday.account_id], keep: true } });
+    expect(stopped.status).toBe(200);
+    const gone = await call(connectors.DELETE, 'DELETE', { connection_id: id });
+    expect(gone.status).toBe(200);
+    // But no new one.
+    expect((await call(connectRoute.POST, 'POST', { connector: 'lunchflow', token: 'lf_replacement_key_123456' })).status).toBe(403);
   });
 });
 

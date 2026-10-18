@@ -12,6 +12,8 @@ import { FakeLunchFlow, daysAgo, lfAccount, lfTxn } from './lunchflow-fake';
 // another's reach, and the key never in storage in the clear nor in a log.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// Connecting Lunch Flow is off unless the deployment turns it on (lib/connectors/switch.ts).
+process.env.LUNCHFLOW_ENABLED = '1';
 
 const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));

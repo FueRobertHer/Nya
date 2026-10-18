@@ -1,14 +1,17 @@
 import Dashboard from '@/components/Dashboard';
 import { clerkEnabled } from '@/lib/auth-mode';
 import { brokerageLinkEnabled } from '@/lib/item-products';
+import { lunchFlowEnabled } from '@/lib/connectors/switch';
 
 export default async function Home() {
   // Without Clerk there is one person, who is the admin (lib/admin-items.ts), so
   // nothing is read: this page stays as static as it was.
   // Whether to offer connecting a brokerage or retirement account, which is off
-  // unless the deployment turns it on (lib/item-products.ts).
+  // unless the deployment turns it on (lib/item-products.ts), and Lunch Flow,
+  // likewise (lib/connectors/switch.ts).
   const brokerageLink = brokerageLinkEnabled();
-  if (!clerkEnabled()) return <Dashboard clerk={false} admin brokerageLink={brokerageLink} />;
+  const lunchFlow = lunchFlowEnabled();
+  if (!clerkEnabled()) return <Dashboard clerk={false} admin brokerageLink={brokerageLink} lunchFlow={lunchFlow} />;
   const { auth } = await import('@clerk/nextjs/server');
   const { userId } = await auth();
   // Decided here, on the server, so nobody else is ever sent the admin's panel
@@ -23,5 +26,5 @@ export default async function Home() {
       admin = false;
     }
   }
-  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} brokerageLink={brokerageLink} />;
+  return <Dashboard clerk viewer={userId ?? undefined} admin={admin} brokerageLink={brokerageLink} lunchFlow={lunchFlow} />;
 }

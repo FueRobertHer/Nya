@@ -7,6 +7,7 @@ import { ConnectIntro, ConnectorCardView, endsThere, SignView } from '@/componen
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
 import { connectorHealth, connectorHealthText } from '@/lib/connectors/health';
 import { connectorBalanceDay, connectorLabel, CONNECTOR_WORDS, ANY_CONNECTOR } from '@/lib/connectors/types';
+import { connectorOffered, lunchFlowEnabled } from '@/lib/connectors/switch';
 import type { ConnectionView } from '@/lib/connectors/view';
 
 // What the screens say of Lunch Flow (components/Connectors.tsx,
@@ -57,10 +58,36 @@ describe('the option to connect', () => {
     expect(renderToStaticMarkup(<ConnectButtonsView connecting={false} starting={null} brokerage={false} idBase="cb" onConnect={noop} onConnectSimpleFin={noop} />)).not.toContain('Lunch Flow');
   });
 
-  test('the dashboard offers it in both places it offers SimpleFIN', () => {
+  test('the dashboard offers it in both places it offers SimpleFIN, only where the deployment turned it on', () => {
     const dashboard = readFileSync(join(import.meta.dir, '..', 'components', 'Dashboard.tsx'), 'utf8');
     expect(dashboard).toContain("setConnectorAsk({ kind: 'connect', connector: 'lunchflow' })");
-    expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
+    expect(dashboard).toContain('lunchFlow = false,');
+    expect(dashboard.match(/onConnectLunchFlow=\{lunchFlow \? connectLunchFlow : undefined\}/g)?.length).toBe(2);
+    // Decided on the server, from LUNCHFLOW_ENABLED, for both kinds of sign-in.
+    const page = readFileSync(join(import.meta.dir, '..', 'app', 'page.tsx'), 'utf8');
+    expect(page).toContain('const lunchFlow = lunchFlowEnabled();');
+    expect(page.match(/lunchFlow=\{lunchFlow\}/g)?.length).toBe(2);
+  });
+
+  test('the switch is on only for LUNCHFLOW_ENABLED=1, and never stands in SimpleFIN’s way', () => {
+    const saved = process.env.LUNCHFLOW_ENABLED;
+    try {
+      for (const [value, on] of [
+        [undefined, false],
+        ['', false],
+        ['0', false],
+        ['true', false],
+        ['yes', false],
+        ['1', true],
+      ] as const) {
+        if (value === undefined) delete process.env.LUNCHFLOW_ENABLED;
+        else process.env.LUNCHFLOW_ENABLED = value;
+        expect([value, lunchFlowEnabled(), connectorOffered('lunchflow'), connectorOffered('simplefin')]).toEqual([value, on, on, true]);
+      }
+    } finally {
+      if (saved === undefined) delete process.env.LUNCHFLOW_ENABLED;
+      else process.env.LUNCHFLOW_ENABLED = saved;
+    }
   });
 });
 

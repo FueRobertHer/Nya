@@ -85,9 +85,11 @@
 // points an app that accesses other users' data to its Platform API, which is
 // a partnership. Here each person connects their own Lunch Flow account, with
 // a key they make and can delete, to see their own data, as Sure, Firefly III
-// and ZeroSum's Plus plan do. Nothing found forbids it, and whoever runs Nya
-// should still confirm it with Lunch Flow (hello@lunchflow.app) before
-// offering it widely.
+// and ZeroSum's Plus plan do. Nothing found forbids it, but a hosted Nya looks
+// like such an app from Lunch Flow's side, so connecting it is off until the
+// deployment turns it on (LUNCHFLOW_ENABLED, lib/connectors/switch.ts), which
+// whoever runs Nya does once Lunch Flow (hello@lunchflow.app) has said yes in
+// writing.
 //
 // CONNECTING. The person pastes the key; Nya checks it once with GET
 // /accounts (it is not spent, unlike a SimpleFIN token) and keeps it as the
