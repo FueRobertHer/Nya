@@ -607,7 +607,7 @@ export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n
   const lines: string[] = [];
   if (alloc.otherCurrencies.length) {
     lines.push(
-      `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${alloc.otherCurrencies.length === 1 ? 'another currency' : 'other currencies'}. Nya doesn't convert currencies.`
+      `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${alloc.otherCurrencies.length === 1 ? 'another currency' : 'other currencies'}. The allocation doesn't convert currencies.`
     );
   }
   for (const c of alloc.caveats) lines.push(caveatText(c, 'this'));
@@ -1231,7 +1231,7 @@ export function HistoryBody({
       {noCurrency && (
         <div className="as-of stale">Positions with no currency in an account that isn&apos;t linked now are left out: its currency isn&apos;t known.</div>
       )}
-      {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: Nya doesn&apos;t convert currencies.</div>}
+      {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: the allocation doesn&apos;t convert currencies.</div>}
       {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
       {/* What today's allocation may be short of, so are the latest days. */}
       {caveats.map((c) => (

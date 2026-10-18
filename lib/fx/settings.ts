@@ -26,6 +26,9 @@ import { defineValueStore } from '../repo';
 import type { Ctx } from '../containers';
 import { isCalendarDay, isCurrencyCode, knownCurrency } from '../manual-txn-input';
 import type { OwnRate } from './rates';
+import { PRICED_CODE, rateTextError } from './rate-text';
+
+export { PRICED_CODE, rateTextError };
 
 export type HomeChange = { on: string; from: string | null; to: string | null };
 
@@ -45,14 +48,6 @@ export const MAX_CHANGES = 100;
 /** More own rates than anyone needs, one per currency. */
 export const MAX_OWN_RATES = 50;
 
-/** An ISO code, or Plaid's unofficial one (a cryptocurrency's), as the API's
- *  currency argument takes it (lib/api-spec.ts). */
-export const PRICED_CODE = /^[A-Z0-9]{2,10}$/;
-/** A rate as typed: digits with a full stop, no more than 12 significant
- *  digits, between 1e-12 and 1e12. */
-const RATE_TEXT = /^(\d{1,13})(?:\.(\d{1,24}))?$/;
-const MIN_RATE = 1e-12;
-const MAX_RATE = 1e12;
 
 const onlyKeys = (o: object, keys: readonly string[]) => Object.keys(o).every((k) => keys.includes(k));
 const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -60,19 +55,6 @@ const isTime = (v: unknown) => typeof v === 'string' && Number.isFinite(Date.par
 
 /** A home currency: an ISO code this runtime knows. */
 export const isHomeCurrency = (v: unknown): v is string => isCurrencyCode(v) && knownCurrency(v);
-
-/** Why rate text can't be a rate, or null when it can. */
-export function rateTextError(text: string): string | null {
-  if (/^\s*\d+,\d+\s*$/.test(text)) return `Use a full stop for decimals: ${text.trim().replace(',', '.')}.`;
-  const m = RATE_TEXT.exec(text);
-  if (!m) return 'A rate is a number, like 0.92 or 61000.';
-  const digits = (m[1] + (m[2] ?? '')).replace(/^0+/, '').replace(/0+$/, '');
-  if (digits.length > 12) return 'A rate has at most 12 significant digits.';
-  const value = Number(text);
-  if (!(value >= MIN_RATE)) return 'A rate is more than zero.';
-  if (value > MAX_RATE) return 'That rate is too large.';
-  return null;
-}
 
 export function isOwnRate(v: unknown): v is OwnRate {
   if (!isRecord(v) || !onlyKeys(v, ['currency', 'rate', 'quote', 'from', 'set_at'])) return false;

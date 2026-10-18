@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, wr
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { amountSamples, compactMoney, formatMoney, hiddenFigure, hideAmountsIn, hideFiguresIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
+import { amountSamples, compactMoney, formatMoney, formatRate, hiddenFigure, hideAmountsIn, hideFiguresIn, MASK, setAmountsHidden, signedMoney, spoken, amountsHidden } from '@/lib/format';
 import {
   HIDE_AMOUNTS_KEY,
   amountsHiddenNow,
@@ -40,7 +40,10 @@ import type { ReviewControls } from '@/components/review-state';
 import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
 import { indexTaxonomy } from '@/lib/categories';
 import { readImport, type ImportOptions } from '@/lib/import/read';
-import { bypasses, clientModules, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
+import { bypasses, clientModules, FORMATTERS, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
+import { HeroCurrencyNote } from '@/components/CurrencyNotes';
+import { balancesIn } from '@/lib/fx/net-worth';
+import { ecbTable } from './fx-fixture';
 import { buildReport, type ReportInput, type SourceFacts } from '@/lib/report/build';
 import { resolvePeriod } from '@/lib/report/period';
 import type { Txn as StoredTxn } from '@/lib/transactions';
@@ -233,6 +236,22 @@ describe('the formatters, with amounts hidden', () => {
     expect(spoken('Nothing hidden here: $12.00')).toBe('Nothing hidden here: $12.00');
     // A word after an amount with its symbol before is a word, said as one.
     expect(spoken('+$••• IRA contribution, $••• OK, CHF\u00a0••• due')).toBe('hidden IRA contribution, hidden OK, hidden due');
+  });
+
+  // A rate is no amount of the person's money: the ECB's are public, and a
+  // rate of their own is a price (lib/format.ts formatRate).
+  test('a rate shows while amounts are hidden, and the scan doesn’t take its formatter for one of theirs', () => {
+    expect(FORMATTERS).not.toContain('formatRate');
+    hideNow();
+    expect(formatRate(0.865725911177, 'USD', 'EUR')).toBe('1 USD = 0.86573 EUR');
+    expect(formatRate(61000, 'BTC', 'USD')).toBe('1 BTC = 61,000 USD');
+    // Net worth's note under the hero: its amounts hidden, its rate kept.
+    const fx = ecbTable({ home: 'EUR' });
+    const b = balancesIn([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }], fx, 'EUR', '2026-09-14', 'USD');
+    const base = { currency: 'EUR', net_worth: b.total, parts: b.parts, left_out: b.left_out, unknown: 0, history: [], gaps: { unsplit: 0, main_unrated: 0, left_out: [], unknown_currency: 0 }, delta: null, rates: { day: '2026-09-14', stale: false, own: [] }, fx: { home: 'EUR', latest: fx.latest, own: [] } };
+    const html = renderToStaticMarkup(<HeroCurrencyNote base={base} main="USD" onOpen={() => {}} />);
+    expect(exposed(html)).toContain('1 USD = 0.86573 EUR');
+    expectNoAmounts(html.replace(/1 [A-Z]{3,10} = [\d.,]+ [A-Z]{3,10}/g, ''));
   });
 
   test('Masked draws the text as it is, and gives a screen reader the spoken words', () => {

@@ -99,7 +99,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
         <span className="incoming-account-value">{v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}</span>
       </div>
       {v.other_currencies.map((o) => (
-        <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: nothing is converted.`}</p>
+        <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: a share doesn’t convert currencies.`}</p>
       ))}
       {v.without_balance > 0 && (
         <p className="panel-note">{`${v.without_balance === 1 ? '1 account has' : `${v.without_balance} accounts have`} no balance yet, so ${v.without_balance === 1 ? 'it isn’t' : 'they aren’t'} in this total.`}</p>
@@ -110,7 +110,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
             <NetWorthChart points={history} label="Net worth" currency={v.currency} rangeSet="balance" />
             <p className="panel-note">
               One point a week. Dashed stretches are estimates, worked out from transactions rather than recorded.
-              {v.history_mixed ? ' It adds accounts in other currencies as they are, as their own chart does.' : ''}
+              {v.history_mixed ? ' It adds accounts in other currencies as they are, unconverted: a share doesn’t convert currencies.' : ''}
             </p>
           </>
         ) : (

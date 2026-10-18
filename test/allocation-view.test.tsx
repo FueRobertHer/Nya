@@ -155,7 +155,7 @@ describe('the allocation by class', () => {
     });
     const t = text(renderToStaticMarkup(<AllocationNotes alloc={a} money={money} />));
     expect(t).toContain("1 position belongs to no account Nya can show, so it isn't counted.");
-    expect(t).toContain("Left out: CA$5,000, in another currency. Nya doesn't convert currencies.");
+    expect(t).toContain("Left out: CA$5,000, in another currency. The allocation doesn't convert currencies.");
     expect(t).toContain("Chase couldn't be reached and isn't counted");
     expect(t).toContain("1 account at Vanguard couldn't be shown");
     expect(t).toContain("1 position has no value from the institution, so it isn't counted.");
@@ -304,7 +304,7 @@ describe('the plan’s mix', () => {
     const mix = planMix(a, 5_000);
     expect(mixText(mix as never)).toBe('94% stocks, 0% bonds, 6% cash');
     expect(mixLeftOutText(mix, 'USD')).toBe(
-      "Left out: $10,000 of real estate and $10,000 of crypto, 19% of the $105,000, which the simulation's stocks, bonds and cash can't stand for. CA$1,000 in another currency is left out too: Nya doesn't convert currencies."
+      "Left out: $10,000 of real estate and $10,000 of crypto, 19% of the $105,000, which the simulation's stocks, bonds and cash can't stand for. CA$1,000 in another currency is left out too: the allocation doesn't convert currencies."
     );
     const t = text(renderToStaticMarkup(<MixSection mix={mix} plan={plan()} ready currency="USD" editable onUse={noop} />));
     expect(t).toContain(
@@ -320,7 +320,7 @@ describe('the plan’s mix', () => {
       currency: 'USD',
     });
     const mix = planMix(a);
-    expect(mixLeftOutText(mix, 'USD')).toBe("CA$1,000 in another currency is left out: Nya doesn't convert currencies.");
+    expect(mixLeftOutText(mix, 'USD')).toBe("CA$1,000 in another currency is left out: the allocation doesn't convert currencies.");
     expect(mixBasisText(mix, 'USD')).toBe('All $1,000 your accounts hold in USD is classified as stocks, bonds or cash');
     const solo = planMix(allocate({ institutions: [inst('X', [acct('s', { balance: 1_000 })])], holdings: [hold('s', 'VTI', 1_000)], settings: null, currency: 'USD' }));
     expect(mixBasisText(solo, 'USD')).toBe('All $1,000 in your accounts is classified as stocks, bonds or cash');
@@ -478,7 +478,7 @@ describe('the mix over time', () => {
     expect(t).toContain("Rollover IRA at Schwab isn't linked now, so on the days it was recorded it is counted from its positions alone.");
     expect(t).toContain('Leaves out Rollover IRA at Schwab (not recorded that day)');
     expect(t).toContain("Positions with no currency in an account that isn't linked now are left out: its currency isn't known.");
-    expect(t).toContain("Money in CAD is left out: Nya doesn't convert currencies.");
+    expect(t).toContain("Money in CAD is left out: the allocation doesn't convert currencies.");
     expect(t).toContain("1 recorded day couldn't be read, so it isn't drawn.");
   });
 
