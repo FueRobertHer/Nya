@@ -39,6 +39,7 @@ import './rate-limit';
 import './report/store';
 import './review-store';
 import './rules';
+import './share-limit';
 import './splits';
 import './tags';
 import './timeline-notes';

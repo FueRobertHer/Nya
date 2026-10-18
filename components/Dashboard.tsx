@@ -1815,7 +1815,7 @@ export default function Dashboard({
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
             <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
-            {clerk && <SharedWithMe refreshKey={asOf} />}
+            {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
           </>
         ) : (
           <>
@@ -2733,7 +2733,7 @@ export default function Dashboard({
                 {/* What others share with me, whenever there is some; last,
                     so my own accounts don't move when it arrives. What I
                     share is in the Sharing drawer. */}
-                {clerk && <SharedWithMe refreshKey={asOf} />}
+                {clerk && <SharedWithMe refreshKey={asOf} viewer={viewer} />}
               </>
             )}
 

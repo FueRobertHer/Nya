@@ -12,7 +12,7 @@ import { SHORT_TTL_SECONDS, WEBHOOK_TTL_SECONDS } from '@/lib/cache';
 import { LOGIN_MAX_FAILURES, LOGIN_WINDOW_SECONDS } from '@/lib/rate-limit';
 import { DEMO_WINDOW_SECONDS } from '@/lib/demo';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
-import { ACCESS_LOG_DAYS } from '@/lib/share-rules';
+import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 import { RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 import { SENDS_NOW_WINDOW_SECONDS, UNSUBSCRIBE_WINDOW_SECONDS } from '@/lib/weekly-summary/store';
@@ -196,7 +196,9 @@ describe('the security page', () => {
     for (const who of ['The operator', 'Upstash', 'Vercel', 'Plaid', 'Clerk', 'People you share with', 'Your device']) {
       expect(page).toContain(who);
     }
-    expect(page).toContain(`last ${SHARED_TXN_DAYS} days of transactions, until the end date you set, if you set one.`);
+    expect(page).toContain(
+      `last ${SHARED_TXN_DAYS} days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one.`
+    );
     expect(page).toContain('your name and picture if you sign in with Google or another account');
     expect(page).toContain('Cloudflare (Turnstile), which sees your IP address and browser');
     // The device keeps more than balances (components/Dashboard.tsx saves the whole snapshot).
@@ -207,7 +209,7 @@ describe('the security page', () => {
     const page = security();
     expect(page).toContain('manual accounts, how each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies');
     expect(page).toContain(
-      'which accounts each of you shares at which level and until when, and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances or transactions themselves.'
+      'which accounts each of you shares at which level and until when, which of your net worth, spending, holdings, budgets and goals each of you shares, at which level (with the random ids of the goals chosen), and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances, amounts or transactions themselves.'
     );
     expect(page).toContain('until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.');
     // Deleting an account deletes both sides' records, so nothing of them stays with anyone.
@@ -425,11 +427,16 @@ describe('the privacy page', () => {
     }
   });
 
+  test('the count of reads of what is shared: plain text, kept for the length of its window', () => {
+    expect(security()).toContain(`And how many times you read what is shared with you, or what someone sees of yours, kept for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`);
+    expect(privacy()).toContain(`Reads of what is shared with you, and of what someone sees of yours Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`);
+  });
+
   test('describes sharing as it is: the preview, ends, and both records of when it was shown, for as long as the connection lasts', () => {
     const html = privacyHtml();
     const page = text(html);
     expect(page).toContain(
-      'True today Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.'
+      'True today Nothing is shared until you choose, person by person and account by account, and hidden accounts are never shared. Beyond accounts, you can choose to share your net worth, as an amount, and your spending by category, your holdings, your budgets or goals you pick, each as percentages or amounts, never the transactions behind them; a net worth lists no account whose balance you don’t share. Before you save, Sharing says what Nya knows they could work out from it all together (what your other accounts add up to beside your net worth, your income from your net worth and spending, what goes into a goal each month, and amounts from percentages beside an amount of the same money), and that this isn’t every way. For each person, Sharing shows a preview of exactly what they see of yours, and a record of each time it was shown to them. They see that same record, and you see theirs of each time what they share was shown to you; both records are in both of your downloads. A share can end on a date you set, which they see too. Remove or Block ends everything shared both ways at once and deletes both records, as does either of you deleting your account.'
     );
     // Built now, so no longer listed as to come, and nothing new promised in its place.
     const card = html.slice(html.indexOf('You decide what anyone else sees'), html.indexOf('You can see who can read what'));
