@@ -464,16 +464,17 @@ export async function fetchAccountSet(secret: string, request: FetchRequest, opt
   return readAccountSet(json, { access, balancesOnly: !!request.balancesOnly });
 }
 
-export const SIMPLEFIN: ConnectorDef = {
+export const SIMPLEFIN = {
   kind: 'simplefin',
   label: 'SimpleFIN',
   windowDays: 90,
   overlapDays: 5,
   providerDailyLimit: 24,
+  maxInputChars: MAX_TOKEN_CHARS + 200,
   checkInput: (input) => {
     decodeSetupToken(input);
   },
   exchange: (input, opts) => claimSetupToken(input, opts),
   hostOf: (secret) => parseAccessUrl(secret)?.base.host ?? null,
   fetch: (secret, request, opts) => fetchAccountSet(secret, request, opts),
-};
+} satisfies ConnectorDef;

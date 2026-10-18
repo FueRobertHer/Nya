@@ -1076,15 +1076,15 @@ const PART_WORDS: Record<string, PartWords> = {
     // name is missing from them.
     inCsv: (counts) => `Not all of your manual accounts could be read: ${counts}. Their rows in this file are under their account ids, with no account name.`,
   },
-  // An account SimpleFIN keeps up to date: in a CSV, what names its rows and
-  // the type a pair of them is worked out by (transactionsCsv).
+  // An account SimpleFIN or Lunch Flow keeps up to date: in a CSV, what names
+  // its rows and the type a pair of them is worked out by (transactionsCsv).
   [connectorAccountsStore.name]: {
     noun: connectorAccountsStore.what,
     one: 'entry',
     many: 'entries',
     missing: missingFrom,
     inCsv: (counts) =>
-      `Not all of your ${connectorAccountsStore.what} could be read: ${counts}. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category.`,
+      `Not all of your ${connectorAccountsStore.what} could be read: ${counts}. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as it came, with no category.`,
   },
   // One entry per manual account: its book.
   'manual-transactions': {

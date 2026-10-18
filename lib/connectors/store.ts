@@ -7,14 +7,15 @@
 //   connector-secrets      one entry per connection: the credential the
 //                          connector gave (SimpleFIN's Access URL, which
 //                          carries the user name and password to read the
-//                          accounts). Encrypted like every seam value, never
+//                          accounts, or the Lunch Flow API key the person
+//                          pasted). Encrypted like every seam value, never
 //                          in the person's data download (a credential, not
 //                          data), never in a log or an error, removed on a
 //                          disconnect, and never in a backup (`backup: false`,
-//                          lib/export.ts): an Access URL works on its own, so
-//                          a backup must neither carry it nor bring back one
-//                          the person disconnected. After a restore each
-//                          connection asks to be connected again, and its
+//                          lib/export.ts): an Access URL or a key works on its
+//                          own, so a backup must neither carry it nor bring
+//                          back one the person disconnected. After a restore
+//                          each connection asks to be connected again, and its
 //                          accounts, history and transactions carry on.
 //   connector-connections  one entry per connection: which connector, the
 //                          host it reaches, what its latest request came to
@@ -55,22 +56,23 @@
 //                          not in the download, and not in backups (a window
 //                          restored part way would only shut requests).
 //   connector-claims       a count per container: how many tokens were
-//                          claimed this hour, a bound on the connect route.
-//                          Out of the download and backups the same way.
+//                          claimed (or keys checked) this hour, a bound on
+//                          the connect route. Out of the download and backups
+//                          the same way.
 //
 // The ids are random (crypto.randomUUID()), never content: a connection's id
 // is plaintext in the database, and so is an account's.
 //
 // The transactions of a tracked account are not here: they are in its book in
 // manual-transactions (lib/manual-txns.ts), the shape every account Nya keeps
-// itself uses, each row with source 'simplefin' and SimpleFIN's id as its
-// source_id.
+// itself uses, each row with its connector's kind as its source ('simplefin'
+// or 'lunchflow') and that connector's id for it as its source_id.
 //
 // This module only declares the stores, so lib/stores.ts can load it without
 // pulling in anything else.
 
 import { defineCounterStore, defineMapStore } from '../repo';
-import { isConnectorKind, FAILURE_KINDS, type ConnectorKind, type FailureKind } from './types';
+import { isConnectorKind, ANY_CONNECTOR, FAILURE_KINDS, type ConnectorKind, type FailureKind } from './types';
 import { MANUAL_TYPES, type ManualType } from '../manual';
 import { isCalendarDay } from '../manual-txn-input';
 import type { Side } from '../connection-state';
@@ -328,7 +330,7 @@ export type EndedAccount = {
   name: string;
   institution_name: string;
   type: ManualType;
-  /** Its currency's ISO 4217 code, as SimpleFIN gave it. */
+  /** Its currency's ISO 4217 code, as its connector gave it. */
   currency: string;
   /** When it was first tracked. */
   tracked_at: string;
@@ -370,19 +372,19 @@ function isSecret(v: unknown): v is ConnectorSecret {
 }
 
 export const connectionsStore = defineMapStore<ConnectorConnection>('connector-connections', {
-  what: 'connections to SimpleFIN',
+  what: `connections to ${ANY_CONNECTOR}`,
   isValid: isConnection,
   exportable: true,
 });
 
 export const connectorAccountsStore = defineMapStore<ConnectorAccount>('connector-accounts', {
-  what: 'accounts from SimpleFIN',
+  what: `accounts from ${ANY_CONNECTOR}`,
   isValid: isConnectorAccount,
   exportable: true,
 });
 
 export const endedAccountsStore = defineMapStore<EndedAccount>('connector-ended', {
-  what: 'accounts you stopped tracking through SimpleFIN',
+  what: `accounts you stopped tracking through ${ANY_CONNECTOR}`,
   isValid: isEndedAccount,
   exportable: true,
 });

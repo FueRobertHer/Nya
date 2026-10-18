@@ -13,7 +13,10 @@
 // their history and their transactions stay, matched by SimpleFIN's ids. What
 // the old access came to is forgotten with it: until the new one answers, the
 // accounts wait for it, never showing the old refusal as the new token's.
-// What was pasted is checked before anything is counted or sent.
+// What was pasted is checked before anything is counted or sent. A Lunch Flow
+// API key is not spent: it is checked once against Lunch Flow and kept the
+// same way, and connecting again takes a key in its place
+// (lib/connectors/lunchflow.ts).
 //
 // TRACKING an account gives it an id of its own ("manual_" and a random UUID,
 // see lib/connectors/institutions.ts), chosen inside the one compare-and-set
@@ -49,9 +52,10 @@
 // was, when, and which way), so a report on a period it was tracked in says
 // its transactions may be gone, or since then only entered by hand, as the
 // account directory lets it say of a removed Plaid connection.
-// A disconnect then deletes the Access URL and the connection, so nothing is
-// fetched again. SimpleFIN can't be told: the person removes Nya from their
-// SimpleFIN account themselves, and the routes say so.
+// A disconnect then deletes the Access URL (or the key) and the connection, so
+// nothing is fetched again. Neither SimpleFIN nor Lunch Flow can be told: the
+// person removes Nya from their SimpleFIN account, or deletes the API
+// destination in Lunch Flow, themselves, and the screens say so.
 
 import type { Ctx } from '../containers';
 import {
@@ -84,8 +88,8 @@ import { isOwedType } from '../balance';
 
 /** How many connections a container may have: one SimpleFIN Bridge account
  *  holds the person's banks there; a second is for another server that speaks
- *  the protocol (Redbark, say). */
-export const MAX_CONNECTIONS = 2;
+ *  the protocol (Redbark, say); a third for a Lunch Flow account. */
+export const MAX_CONNECTIONS = 3;
 /** How many accounts connectors may feed one container. */
 export const MAX_CONNECTOR_ACCOUNTS = 100;
 
@@ -107,7 +111,7 @@ const names = (list: string[]) => (list.length <= 1 ? list.join('') : `${list.sl
 async function takeClaim(ctx: Ctx): Promise<void> {
   const { count, secondsLeft } = await claimsCount.take(ctx);
   if (count > CLAIMS_PER_HOUR) {
-    throw new ConnectorRefused(`Too many tokens were tried this hour. Try again in ${Math.max(1, Math.ceil(secondsLeft / 60))} minutes.`, 429);
+    throw new ConnectorRefused(`Too many tokens or keys were tried this hour. Try again in ${Math.max(1, Math.ceil(secondsLeft / 60))} minutes.`, 429);
   }
 }
 
@@ -146,11 +150,14 @@ export async function connect(ctx: Ctx, kind: ConnectorKind, input: string, now:
   return { connection_id, result };
 }
 
-/** Connects again with a new token, for a connection SimpleFIN no longer
- *  accepts: the same connection, its accounts and history kept. */
-export async function reconnect(ctx: Ctx, connection_id: string, input: string, now: number = Date.now()): Promise<SyncResult> {
+/** Connects again with a new token (or key), for a connection its connector
+ *  no longer accepts: the same connection, its accounts and history kept.
+ *  `kind`, when given, is the connector the request says it is for: another
+ *  connection's is refused, changing nothing. */
+export async function reconnect(ctx: Ctx, connection_id: string, input: string, now: number = Date.now(), kind?: ConnectorKind): Promise<SyncResult> {
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) throw new ConnectorRefused('That connection no longer exists.', 404);
+  if (kind !== undefined && kind !== conn.connector) throw new ConnectorRefused(`That connection is through ${connectorOf(conn.connector).label}: connect it again from its own card.`, 400);
   const def = connectorOf(conn.connector);
   def.checkInput(input);
   await takeClaim(ctx);

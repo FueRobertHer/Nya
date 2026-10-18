@@ -20,9 +20,16 @@
 //   - not known ('unknown'): the server's address isn't one Nya connects to.
 // And what to do: fix it at SimpleFIN and refresh, connect again with a new
 // Setup Token (the accounts and their history stay), choose accounts, or wait.
+// The same holds for Lunch Flow, in its words: connecting again takes an API
+// key from it (CONNECTOR_WORDS), and since it gives no time with a balance,
+// a link of its that stopped updating is told by the status of its accounts
+// (a problem it reports), never by an old balance.
 
 import type { ConnectionHealth, HealthAction, HealthState, Side } from '../connection-state';
-import type { ConnectorDetail, ConnectorIssue } from './types';
+import { CONNECTOR_WORDS, isConnectorKind, type ConnectorDetail, type ConnectorIssue, type ConnectorKind } from './types';
+
+/** What connecting again takes, in words: "a new Setup Token". */
+const again = (kind: ConnectorKind) => (isConnectorKind(kind) ? CONNECTOR_WORDS[kind].again : 'a new Setup Token');
 
 /** Each issue's state and action (what a failed request's own side doesn't
  *  settle, its side). */
@@ -114,7 +121,10 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
       return `Waiting for ${by}'s answer about ${name}: Nya asks at its next daily update, or when you Refresh. ${until}`;
     case 'sign': {
       const n = d.accounts.length;
-      return `${by} reports ${names(d.messages)} as money held. For a card or a loan that is unusual: some servers report what you owe that way. Say which it is, once: until you do, ${plural(n, 'it isn’t', 'they aren’t')} counted, and no day's total is saved.`;
+      // Some banks give Lunch Flow a card's credit left to spend in its place
+      // (lib/connectors/lunchflow.ts), which neither answer reads rightly.
+      const neither = d.connector === 'lunchflow' ? ' If neither is right (some banks report the credit left to spend instead), stop tracking it with Choose accounts.' : '';
+      return `${by} reports ${names(d.messages)} as money held. For a card or a loan that is unusual: some servers report what you owe that way. Say which it is, once: until you do, ${plural(n, 'it isn’t', 'they aren’t')} counted, and no day's total is saved.${neither}`;
     }
     case 'old_balance':
       return `The latest balance ${by} has from ${name} is from ${shortDay(d.messages[0])}: its link to ${name} has stopped updating. Fix it in ${by} (often by signing in to ${name} there again), then refresh here. ${until}`;
@@ -133,7 +143,7 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
     case 'gone':
       return `This account's ${by} connection is gone. Disconnect it to keep its history as a manual account, or remove it.`;
     case 'refused':
-      return `${by} no longer accepts Nya's access: it was removed or reset at ${by}, or the subscription ended. Connect again with a new Setup Token: your accounts and their history stay. ${quoted(d.messages)}`;
+      return `${by} no longer accepts Nya's access: it was removed or reset at ${by}, or the subscription ended. Connect again with ${again(d.connector)}: your accounts and their history stay. ${quoted(d.messages)}`;
     case 'payment':
       return `${by} says your subscription needs paying. Renew it at ${by}; Nya picks up again at its next update. ${until}`;
     case 'limited':
@@ -145,9 +155,9 @@ export function connectorHealthText(name: string, h: ConnectionHealth): string |
     case 'answer':
       return `${by}'s answer couldn't be read. Nothing to do yet: Nya asks again at its next update.`;
     case 'blocked':
-      return `${quoted(d.messages)} If you didn't expect this, connect again with a new Setup Token.`;
+      return `${quoted(d.messages)} If you didn't expect this, connect again with ${again(d.connector)}.`;
     case 'credentials':
-      return `Nya can't use the access ${by} gave it. Connect again with a new Setup Token: your accounts and their history stay.`;
+      return `Nya can't use the access ${by} gave it. Connect again with ${again(d.connector)}: your accounts and their history stay.`;
     default:
       return `${name} couldn't be updated through ${by}.`;
   }

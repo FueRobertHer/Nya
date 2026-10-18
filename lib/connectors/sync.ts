@@ -7,7 +7,9 @@
 //
 // A FEW REQUESTS A DAY. SimpleFIN allows 24 requests a day per Access URL and
 // updates once a day, so Nya makes at most DAILY_REQUESTS in a day's window
-// per container, counted before each is sent (connector-requests, a counter
+// per container (a request being one fetch: Lunch Flow's asks account by
+// account, lib/connectors/lunchflow.ts, and counts once), counted before each
+// is sent (connector-requests, a counter
 // on the seam: a count that can't be read stops requests until its window
 // ends, never opens them). The daily run asks once for the recent window, and
 // while older history is still coming, for at most BACKFILL_WINDOWS_PER_RUN
@@ -51,8 +53,9 @@
 // import pipeline's normalize stage (lib/import/normalize.ts: the rules a
 // typed transaction meets, its text cleaned) and into the account's book
 // (lib/manual-txns.ts) in one compare-and-set per 16 accounts, matched by the
-// connector's own transaction id (source 'simplefin', source_id): an id the
-// book has is the same transaction, so fetching an overlapping window again
+// connector's own transaction id (its kind as the row's source, 'simplefin' or
+// 'lunchflow', and source_id): an id the book has is the same transaction, so
+// fetching an overlapping window again
 // adds nothing, and one whose date, amount or description the bank has since
 // changed is brought up to date, keeping the person's category. An id is
 // never matched by content: two identical coffees with two ids are two
@@ -82,7 +85,7 @@ import {
 } from './store';
 import { answeredWhole } from './institutions';
 import { connectorOf } from './registry';
-import { ConnectorFailure, type ConnectorDef, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
+import { CONNECTOR_WORDS, ConnectorFailure, type ConnectorDef, type ConnectorKind, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
 import { manualTxnStore, newManualTxnId, type ManualTxn, type ManualTxnBook } from '../manual-txns';
 import { normalizeRecords, type ImportRow } from '../import/normalize';
 import { MANY_AT_ONCE, StoreRefusedError, StoredDataUnreadableError } from '../repo';
@@ -238,7 +241,7 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
             const next = [...(book?.rows ?? [])];
             const index = new Map<string, number>();
             next.forEach((r, n) => {
-              if (r.source === 'simplefin' && r.source_id) index.set(r.source_id, n);
+              if (r.source === account.connector && r.source_id) index.set(r.source_id, n);
             });
             let changed = false;
             for (const row of rows) {
@@ -301,14 +304,15 @@ async function trackedOf(ctx: Ctx, connection_id: string): Promise<ConnectorAcco
 }
 
 /** The credential kept for a connection, or the failure that it can't be used. */
-async function secretOf(ctx: Ctx, connection_id: string): Promise<string | ConnectorFailure> {
+async function secretOf(ctx: Ctx, connection_id: string, kind: ConnectorKind): Promise<string | ConnectorFailure> {
+  const { label, again } = CONNECTOR_WORDS[kind];
   try {
     const kept = await secretsStore.get(ctx, connection_id);
     if (kept) return kept.secret;
-    return new ConnectorFailure('credentials', 'nya', 'Nya no longer has the access SimpleFIN gave it. Connect again with a new Setup Token.');
+    return new ConnectorFailure('credentials', 'nya', `Nya no longer has the access ${label} gave it. Connect again with ${again}.`);
   } catch (err) {
     if (err instanceof StoredDataUnreadableError) {
-      return new ConnectorFailure('credentials', 'nya', 'Nya can’t read the access SimpleFIN gave it. Connect again with a new Setup Token.');
+      return new ConnectorFailure('credentials', 'nya', `Nya can’t read the access ${label} gave it. Connect again with ${again}.`);
     }
     throw err;
   }
@@ -554,7 +558,11 @@ async function backfill(ctx: Ctx, connection_id: string, def: ConnectorDef, secr
     if (!(await takeRequest(ctx, DAILY_REQUESTS - REFRESH_RESERVE))) break;
     let answer: RemoteAnswer;
     try {
-      answer = await def.fetch(secret, { start: window.start, end: window.end }, { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) });
+      answer = await def.fetch(
+        secret,
+        { start: window.start, end: window.end, accounts: tracked.map((a) => a.remote_id) },
+        { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) }
+      );
     } catch (err) {
       if (!(err instanceof ConnectorFailure)) throw err;
       await connectionsStore.update(ctx, connection_id, (c) => (c?.history ? { ...c, history: { ...c.history, failed: new Date(now).toISOString() } } : c));
@@ -641,7 +649,7 @@ export async function syncConnection(
   else if (deadline - Date.now() < MIN_REQUEST_MS) result.skipped = 'time';
   else if (!(await takeRequest(ctx))) result.skipped = 'budget';
   else {
-    const kept = await secretOf(ctx, connection_id);
+    const kept = await secretOf(ctx, connection_id, conn.connector);
     if (kept instanceof ConnectorFailure) {
       result.record = failureRecord(now, kept);
       await saveFetch(ctx, connection_id, result.record, null);
@@ -649,7 +657,8 @@ export async function syncConnection(
       return result;
     }
     secret = kept;
-    const request: FetchRequest = tracked.length === 0 ? { balancesOnly: true } : { start: recentStart(conn.history, today, def), end: null };
+    const request: FetchRequest =
+      tracked.length === 0 ? { balancesOnly: true } : { start: recentStart(conn.history, today, def), end: null, accounts: tracked.map((a) => a.remote_id) };
     try {
       result.answer = await def.fetch(secret, request, { timeoutMs: Math.min(REQUEST_TIMEOUT_MS, deadline - Date.now()) });
     } catch (err) {
@@ -701,7 +710,7 @@ export async function syncOlderHistory(
   if (!conn || (await trackedOf(ctx, connection_id)).length === 0) return none;
   let secret = opts.secret ?? null;
   if (secret === null) {
-    const kept = await secretOf(ctx, connection_id);
+    const kept = await secretOf(ctx, connection_id, conn.connector);
     if (kept instanceof ConnectorFailure) return none;
     secret = kept;
   }

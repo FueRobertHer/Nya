@@ -38,6 +38,11 @@
 //   - the bank's latest balance is more than OLD_BALANCE_HOURS old: SimpleFIN
 //     answers, but its link to the bank has stopped updating;
 //   - no answer has come for FRESH_HOURS (the daily update didn't run).
+// The same holds for Lunch Flow's accounts (lib/connectors/lunchflow.ts),
+// with one difference: Lunch Flow gives no time with a balance, so its
+// balance is as of when Nya received it, the old-balance rule never applies,
+// and a link of its that stopped updating is a problem it reports (the
+// account's status), which holds the bank as any reported problem does.
 // Its last balances are still shown, with their own date, as last known;
 // never written as measured, and never recovered from the history layer.
 //
@@ -78,7 +83,7 @@ import { connectionsStore, connectorAccountsStore, type ConnectorAccount, type C
 import { connectorHealth, shortDay } from './health';
 import { formatMoney } from '../format';
 import { connectorOf } from './registry';
-import type { ConnectorDetail, ConnectorIssue, ConnectorKind } from './types';
+import { ANY_CONNECTOR, type ConnectorDetail, type ConnectorIssue, type ConnectorKind } from './types';
 import type { Side } from '../connection-state';
 
 /** How long the last answer counts as current: a day and a half, so a
@@ -418,9 +423,11 @@ export async function connectorBanksReport(
 }
 
 /** The card for connector accounts that couldn't be read: no accounts, an
- *  error, so the snapshot gate stays shut rather than a total going short. */
+ *  error, so the snapshot gate stays shut rather than a total going short.
+ *  Which connector they came through can't be read either, so its words name
+ *  every one (its `connector` is only the shape's placeholder). */
 export function unreadableConnectorInstitution(): InstitutionResult {
-  const label = connectorOf('simplefin').label;
+  const label = ANY_CONNECTOR;
   return {
     institution_name: `${label} accounts`,
     item_id: 'connector:unreadable',
