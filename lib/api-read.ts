@@ -1821,10 +1821,11 @@ export type ApiHoldings = {
  * with the day they were recorded: what the nightly snapshot and the person's
  * loads kept, never a fresh fetch. Plaid keeps no history of holdings, so an
  * account is known only from the day recording began. With `accountId`, that
- * one account's; an id no account has is NotFound, but one that may be at a
- * connection whose accounts couldn't be read, or haven't been loaded, is said
- * to be so (complete: false, with the connections named), never "no such
- * account".
+ * one account's; an id no account has is NotFound, and so is one known not to
+ * be an investment account (listed as another kind, or kept by hand), but one
+ * that may be at a connection whose accounts couldn't be read, or haven't
+ * been loaded, is said to be so (complete: false, with the connections
+ * named), never "no such account".
  */
 export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; accountId?: string } = {}): Promise<ApiHoldings> {
   const read = await accountsRead(ctx, !!opts.includeHidden);
@@ -1834,9 +1835,14 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
-    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
+    const known = read.accounts.find((a) => a.id === opts.accountId);
+    if (known?.source === 'simplefin') {
       throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
     }
+    // Known not to be an investment account (listed as another kind, or one
+    // kept by hand, which no connection holds): whatever connection can't be
+    // read, it has no holdings to be missing.
+    if (known || isManualId(opts.accountId)) throw new NotFound('That account isn’t an investment account linked through Plaid, so it has no holdings.');
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {
       accounts: [],

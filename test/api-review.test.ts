@@ -322,6 +322,36 @@ describe('holdings for one account whose connection can’t be read, or hasn’t
     expect((await call('holdings', 'account_id=does_not_exist')).res.status).toBe(404);
     expect((await call('holdings')).body).toMatchObject({ complete: true, missing_accounts: [] });
   });
+
+  test('a checking or a manual account is known to hold none: a 404 saying so, while a connection hasn’t been loaded', async () => {
+    // The fixture's NewBank has never been loaded, so its accounts are missing.
+    expect((await call('accounts')).body.missing_accounts).toContainEqual({ institution: 'NewBank', account_id: null, reason: 'not_loaded', source: 'plaid' });
+    const notInvestment = { error: { code: 'not_found', message: 'That account isn’t an investment account linked through Plaid, so it has no holdings.' } };
+    for (const id of ['acc_chk', 'manual_house']) {
+      const { res, body } = await call('holdings', `account_id=${id}`);
+      expect([id, res.status, body]).toEqual([id, 404, notInvestment]);
+    }
+    const result = await tool('get_holdings', { account_id: 'acc_chk' });
+    expect(result.isError).toBe(true);
+    // An id that may be at that connection is still said to be so.
+    expect((await call('holdings', 'account_id=acc_maybe_new')).body).toMatchObject({ accounts: [], complete: false });
+  });
+
+  test('holdings recorded, with their index gone (deleted by hand, or left so by a rollback), are a 409 that they can’t be read, never none recorded', async () => {
+    const seen = [{ account_id: 'acc_ira', type: 'investment', balance: 20500 }];
+    const securities = [{ security_id: 'sec_vti', ticker_symbol: 'VTI', name: 'Total market', type: 'etf', is_cash_equivalent: false }];
+    const holdings = [{ account_id: 'acc_ira', security_id: 'sec_vti', quantity: 80, institution_price: 256.25, institution_price_as_of: daysAgo(1), institution_value: 20500, cost_basis: 15000, iso_currency_code: 'USD', unofficial_currency_code: null }];
+    await recordHoldings(ctx, [{ error: null, accounts: seen, holdings_observed: observeHoldings({ accounts: seen, holdings, securities })! }]);
+    expect((await call('holdings', 'account_id=acc_ira')).body.accounts[0].positions).toHaveLength(1);
+    await fake.hdel(ctxKey('holdings:history:index'), 'index');
+    await quietly(async () => {
+      for (const query of ['account_id=acc_ira', '']) {
+        const { res, body } = await call('holdings', query);
+        expect([query, res.status, body.error?.code]).toEqual([query, 409, 'unreadable']);
+      }
+      expect((await tool('get_holdings', { account_id: 'acc_ira' })).isError).toBe(true);
+    });
+  });
 });
 
 describe('an account_id', () => {
