@@ -34,7 +34,7 @@ import { sweepContainerExcept } from '../account-deletion';
 import { ownersOf } from '../owners';
 import { clearCaches } from '../cache';
 import { classOfKey } from './classes';
-import { userRestoreStore, type UserRestoreRecord } from './store';
+import { userRestoreStore, UNDO_DAYS, type UserRestoreRecord } from './store';
 import { unfinished } from './restored';
 
 /** Longer than a batch can run (app/api/user-restore/batch maxDuration). */
@@ -87,7 +87,7 @@ export async function undoRestore(
   const now = opts.now ?? Date.now();
   const record = await userRestoreStore.get(ctx);
   if (!record || record.id !== id) throw new UndoRefused('There is no restore here to undo.', 404);
-  if (!undoable(record, now)) throw new UndoRefused(`This restore finished more than ${7} days ago, so it can no longer be undone. Empty the account instead (Manage), after downloading what is in it.`);
+  if (!undoable(record, now)) throw new UndoRefused(`This restore finished more than ${UNDO_DAYS} days ago, so it can no longer be undone. Download what is in this account first, then empty it (Manage, Bring back a download).`);
   await mayEmpty(ctx, opts.userId);
   // Every batch is refused from here (lib/user-restore/check.ts).
   await userRestoreStore.update(ctx, (cur) => (cur && cur.id === id ? { ...cur, status: 'undoing' } : cur));

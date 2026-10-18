@@ -151,6 +151,15 @@ export function isUserRestoreRecord(v: unknown): v is UserRestoreRecord {
   );
 }
 
+/** The record as the page is told it: the plan by its digest and length,
+ *  since only the batch route compares batches (app/api/user-restore). */
+export type RecordView = Omit<UserRestoreRecord, 'plan'> & { plan: { digest: string; batches: number } };
+
+export function recordView(r: UserRestoreRecord): RecordView {
+  const { plan, ...rest } = r;
+  return { ...rest, plan: { digest: plan.digest, batches: plan.batches.length } };
+}
+
 export const userRestoreStore = defineValueStore<UserRestoreRecord>('user-restore', {
   what: 'records of bringing back a download',
   isValid: isUserRestoreRecord,
