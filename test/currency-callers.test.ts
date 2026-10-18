@@ -79,6 +79,18 @@ describe('every reader that totals in one currency is listed, with its reason', 
     for (const [where, why] of Object.entries(ALLOWED)) expect([where, why.length > 20]).toEqual([where, true]);
   });
 
+  // Decision 1: Nya never writes a home currency on its own, on any path.
+  test('only the person’s own requests write the currency settings: the two routes, nothing else', () => {
+    // Every module, lib/fx/ included; withHome's own definition aside.
+    const all = ['lib', 'components', 'app'].flatMap((d) => filesUnder(join(ROOT, d))).map((f) => relative(ROOT, f));
+    const writes = (f: string) => {
+      const code = withoutComments(readFileSync(join(ROOT, f), 'utf8')).replace(/\bfunction\s+withHome\s*\(/g, '');
+      return /\bcurrencySettingsStore\s*\.\s*(?:set|update|remove)\s*\(|\bwithHome\s*\(/.test(code);
+    };
+    const writers = all.filter(writes);
+    expect(writers.sort()).toEqual(['app/api/currency/rates/route.ts', 'app/api/currency/route.ts']);
+  });
+
   test('the scan finds a call by its function and value, and passes over a definition and a comment', () => {
     const source = [
       "import { dominantCurrency } from '@/lib/format';",
