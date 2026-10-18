@@ -1768,7 +1768,8 @@ describe('every store the app declares exportable on the seam', () => {
 
   test('the app declares some, so the test below reads them', () => {
     expect(exportable().length).toBeGreaterThan(20);
-    expect(exportable().map((s) => s.name)).toContain('goal-plans');
+    // The goals' plans, and the record of imports from other apps among them.
+    expect(exportable().map((s) => s.name)).toEqual(expect.arrayContaining(['goal-plans', 'app-imports']));
   });
 
   for (const [mode, problem] of [
