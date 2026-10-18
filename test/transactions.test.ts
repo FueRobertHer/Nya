@@ -645,4 +645,18 @@ describe('what was said about a transaction the bank removed', () => {
     expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
     expect(recordOf('t1')).toBeDefined();
   });
+
+  test('and the category chosen for it stays with it, as its other records do', async () => {
+    await seed();
+    await setOverride(ctx, 't1', 'travel');
+    await setOverride(ctx, 't2', 'travel');
+    pages = [
+      { removed: [{ transaction_id: 't1' }, { transaction_id: 't2' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    // t1 came back in the store the sync saved; t2 didn't.
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual(['t1']);
+  });
 });
