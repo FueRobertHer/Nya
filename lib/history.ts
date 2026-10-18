@@ -1038,28 +1038,66 @@ export async function getHistoryWithBreaks(
 }
 
 /**
+ * Accounts in another currency than the one most accounts are in, by every id
+ * each has had (lib/fx/known-accounts.ts): what a point's split by currency
+ * reads (getHistoryWithSplit), with the kind each is signed as (null when
+ * unknown: then a balance it holds can't be signed, and the split can't be
+ * told).
+ */
+export type ForeignAccounts = ReadonlyMap<string, { currency: string; type: string | null }>;
+
+/** A point with its split by currency (lib/fx/net-worth.ts SplitPoint):
+ *  `parts` each foreign account's signed contribution added up by currency,
+ *  the rest being the main currency's; null when it can't be told. */
+export type SplitHistoryPoint = HistoryPoint & { parts?: Record<string, number> | null };
+
+/**
+ * getHistoryWithBreaks, and the same points before bridging, each with its
+ * split by currency, for converting each day at its own rate
+ * (lib/fx/net-worth.ts): never converted here, and never written. With no
+ * foreign accounts it reads exactly what getHistoryWithBreaks reads.
+ */
+export async function getHistoryWithSplit(
+  ctx: Ctx,
+  hidden: HiddenMap | undefined,
+  ended: EndedAccounts | undefined,
+  short: ReadonlySet<string> | undefined,
+  foreign: ForeignAccounts | null
+): Promise<{ points: HistoryPoint[]; breaks: string[]; raw: SplitHistoryPoint[] }> {
+  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short, foreign ?? undefined);
+  const plain = points.map(({ date, value, estimated }) => ({ date, value, ...(estimated ? { estimated: true } : {}) }));
+  return { points: bridgeInteriorEstimates(plain, breaks), breaks, raw: points };
+}
+
+/**
  * The points getHistory draws, before any bridging, date-sorted, and the end
  * days that move a total: for a caller comparing two readings, which bridging
  * would set apart by the breaks alone (lib/lifecycle.ts endedForgetRefusal).
+ * With `foreign`, each point also carries its split by currency.
  */
 export async function readHistoryPoints(
   ctx: Ctx,
   hidden?: HiddenMap,
   ended?: EndedAccounts,
-  short?: ReadonlySet<string>
-): Promise<{ points: HistoryPoint[]; breaks: string[] }> {
+  short?: ReadonlySet<string>,
+  foreign?: ForeignAccounts
+): Promise<{ points: SplitHistoryPoint[]; breaks: string[] }> {
   const ending = [...(ended ?? [])].filter(([id]) => !hidden?.has(id));
   const hiding = (!!hidden && hidden.size > 0) || ending.length > 0;
+  const splitting = !!foreign && foreign.size > 0;
+  const endingFrom = new Map(ending.map(([id, e]) => [id, e.from]));
 
-  // Per-account maps are read only when something is hidden: decrypting a year
-  // of them on every load to subtract nothing would be waste.
+  // Per-account maps are read only when something is hidden, or a point is to
+  // be split by currency: decrypting a year of them on every load to subtract
+  // nothing would be waste.
+  const perAccount = hiding || splitting;
   const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
     redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
     redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
-    hiding ? getEstimatedFlat(ctx) : null,
+    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)) : null,
+    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)) : null,
+    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
+    perAccount ? getEstimatedFlat(ctx) : null,
   ]);
   const sources: HiddenSources = { realAccounts, estAccounts, estFlatByDate, legacyFlat };
 
@@ -1074,7 +1112,7 @@ export async function readHistoryPoints(
   }
 
   const points = await Promise.all(
-    entries.map(async ({ date, blob, estimated }): Promise<HistoryPoint | null> => {
+    entries.map(async ({ date, blob, estimated }): Promise<SplitHistoryPoint | null> => {
       let value: number;
       try {
         value = Number(await decrypt(ctx, blob));
@@ -1099,10 +1137,30 @@ export async function readHistoryPoints(
         }
       }
 
-      return { date, value, ...(estimated ? { estimated: true } : {}) };
+      // Split by currency: what each account in another currency put into
+      // this point, by the same rule hiding takes one out by. One whose part
+      // can't be told leaves the split unknown (null), never guessed. Hidden
+      // ones, and ended ones from their end day, are out of the point already.
+      let parts: Record<string, number> | null | undefined;
+      if (splitting) {
+        parts = {};
+        for (const [id, { currency, type }] of foreign!) {
+          if (hidden?.has(id)) continue;
+          const end = endingFrom.get(id);
+          if (end !== undefined && date >= end) continue;
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
+          if (c === null) {
+            parts = null;
+            break;
+          }
+          if (c !== 0) parts[currency] = (parts[currency] ?? 0) + c;
+        }
+      }
+
+      return { date, value, ...(estimated ? { estimated: true } : {}), ...(parts !== undefined ? { parts } : {}) };
     })
   );
-  const sorted = points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
+  const sorted = points.filter((p): p is SplitHistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
   return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(ctx, sorted, ending, sources) : [] };
 }
 

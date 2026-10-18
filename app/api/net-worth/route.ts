@@ -5,14 +5,15 @@ import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
-  getHistoryWithBreaks,
+  getHistoryWithSplit,
   withTodayPoint,
   isBackfillDone,
+  type ForeignAccounts,
   type HistoryPoint,
 } from '@/lib/history';
 import { signedContribution } from '@/lib/balance';
 import { applyHidden } from '@/lib/hidden';
-import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
+import { directoryCurrencies, getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
 import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
@@ -22,6 +23,9 @@ import { importedHistoryView, type ImportedHistoryView } from '@/lib/history-imp
 import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, shortDays, type LifecycleForClient } from '@/lib/lifecycle';
 import { holdMissingAccounts, askAboutZeroBalances, askAboutReportedEnds } from '@/lib/lifecycle-questions';
 import { storeFailure } from '@/lib/store-failure';
+import { readSettingsForDisplay } from '@/lib/fx/settings';
+import type { HistorySplit, NetWorthBase } from '@/lib/fx/net-worth-base';
+import { foreignFor, historySplit, lifecycleAccounts, listedAccounts, mainCurrency, readNetWorthBase, visibleRows } from '@/lib/fx/net-worth-read';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -37,7 +41,23 @@ type NetWorthPayload = {
   // stored set, so one whose institution is gone is still listed.
   lifecycle: LifecycleForClient[];
   as_of: string;
+  // With a home currency (lib/fx/settings.ts): the chart's points split by
+  // currency, unconverted, so a cached load converts them as a fresh one does
+  // (lib/fx/net-worth-base.ts). Server only: never sent, never converted here.
+  history_split?: HistorySplit;
 };
+
+/** The answer's figures in the home currency, when one is chosen, worked out
+ *  after the cache on every answer (`base`), and why there are none when the
+ *  settings can't be read (`currency_problem`). Additive: `netWorth` and
+ *  `history` keep what they always meant, so a page from the release before,
+ *  or this one's own snapshot in the browser, never shows a converted figure
+ *  under another currency's label. */
+async function baseFields(ctx: Ctx, institutions: InstitutionResult[], split: HistorySplit | undefined): Promise<{ base?: NetWorthBase; currency_problem?: string }> {
+  if (!split) return {};
+  const { base, problem } = await readNetWorthBase(ctx, { institutions, split, now: Date.now() });
+  return { ...(base ? { base } : {}), ...(problem ? { currency_problem: problem } : {}) };
+}
 
 // Whether the estimated layer was built by an older algorithm and should be
 // recomputed. The client can't work this out itself: its only other trigger is
@@ -135,15 +155,22 @@ export async function GET(req: Request) {
     const stalePromise = eager(staleFlag(ctx));
     const newAccountsPromise = itemsWithNewAccounts(ctx); // never throws: a failed read is "none"
     const healthPromise = readHealthForDisplay(ctx); // never throws: a failed read is null, and said
+    // Whether the person chose a home currency (lib/fx/settings.ts): only then
+    // is anything converted, or anything more read. Lenient, for display.
+    const settingsPromise = eager(readSettingsForDisplay(ctx));
 
     if (!refresh) {
-      const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
-      if (cached) {
+      const [cached, { settings }] = await Promise.all([readCache<NetWorthPayload>(ctx, CacheKey.NetWorth), settingsPromise]);
+      // A payload cached before a home currency was chosen has no split to
+      // convert the chart from: load afresh once, which caches one.
+      if (cached && (!settings.home || cached.history_split)) {
+        const { history_split, ...shown } = cached;
         return NextResponse.json({
-          ...cached,
+          ...shown,
           // A cached payload holds only institutions that answered, when it was made.
           ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
+          ...(settings.home ? await baseFields(ctx, cached.institutions, history_split) : {}),
           from_cache: true,
         });
       }
@@ -165,10 +192,26 @@ export async function GET(req: Request) {
     // snapshot like the hidden set, so it can't cost today's point.
     const readLifecycle = () => eager(hiddenPromise.then((h) => getEffectiveLifecycle(ctx, h.links)));
     let lifecyclePromise = readLifecycle();
+    // With a home currency, the history is split by currency as it is read
+    // (lib/history.ts getHistoryWithSplit), which needs the accounts in other
+    // currencies: known once the fetch is in, so its read waits for them
+    // (`foreign`, settled below). Without one it is settled at once, and the
+    // read overlaps the fetch as it always has.
+    let settleForeign: (f: ForeignAccounts | null) => void = () => {};
+    const foreignPromise = new Promise<ForeignAccounts | null>((resolve) => (settleForeign = resolve));
+    settingsPromise.then(
+      ({ settings }) => {
+        if (!settings.home) settleForeign(null);
+      },
+      () => settleForeign(null)
+    );
+    const directoryPromise = eager(settingsPromise.then(({ settings }) => (settings.home ? directoryCurrencies(ctx) : [])));
     // The days known short of an account that came back after an assumed
     // closure are left out (lib/lifecycle.ts shortDays).
     const readHistory = () =>
-      eager(Promise.all([hiddenPromise, lifecyclePromise]).then(([h, l]) => getHistoryWithBreaks(ctx, h.hidden, l.ended, shortDays(l, h.hidden))));
+      eager(
+        Promise.all([hiddenPromise, lifecyclePromise, foreignPromise]).then(([h, l, f]) => getHistoryWithSplit(ctx, h.hidden, l.ended, shortDays(l, h.hidden), f))
+      );
     let historyPromise = readHistory();
 
     const { institutions, netWorth, lifecycleChanged } = await computeNetWorth(ctx);
@@ -244,6 +287,9 @@ export async function GET(req: Request) {
     // And one that ended but whose bank still returns it moving is asked
     // about again, from a copy of its row (`ended_reported`).
     await askAboutReportedEnds(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // Every account listed, with its currency, before those that ended leave
+    // the list: what prices each one's part of the chart (lib/fx).
+    const listed = listedAccounts(institutions);
     // And an account that ended leaves the live accounts (and with them every
     // total) for the Accounts tab's own section, unless it is hidden too: the
     // Hidden card lists it, and every total leaves it out already.
@@ -258,6 +304,17 @@ export async function GET(req: Request) {
       for (const a of inst.accounts) delete a.persistent_account_id;
     }
     const visibleNetWorth = applyHidden(institutions, hidden);
+    // With a home currency, the accounts in another currency than the main
+    // one, by every id each has had: what the history's split reads, which
+    // waits for them (see readHistory).
+    const { settings } = await settingsPromise;
+    const main = mainCurrency(institutions);
+    let unknownCurrency = 0;
+    if (settings.home) {
+      const { foreign, unknown } = foreignFor([listed, lifecycleAccounts(lifecycle), await directoryPromise], links, main);
+      unknownCurrency = unknown;
+      settleForeign(foreign);
+    }
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
     const stored = await historyPromise;
@@ -269,6 +326,28 @@ export async function GET(req: Request) {
       ? endedRows.filter((r) => r.end > snapshotDate && r.type !== null).reduce((n, r) => n + signedContribution(r.type!, r.balance ?? 0), 0)
       : 0;
     const history = snapshotDate ? withTodayPoint(stored.points, snapshotDate, visibleNetWorth + notYet, stored.breaks) : stored.points;
+    // The same points split by currency, and today's rows, for converting
+    // after the cache: unconverted, a regrouping of what was stored.
+    const currencyOfListed = new Map(listed.map((a) => [a.account_id, a.currency]));
+    const split = settings.home
+      ? historySplit({
+          main,
+          breaks: stored.breaks,
+          raw: stored.raw,
+          today: snapshotDate
+            ? {
+                date: snapshotDate,
+                rows: [
+                  ...visibleRows(institutions),
+                  ...endedRows
+                    .filter((r) => r.end > snapshotDate && r.type !== null)
+                    .map((r) => ({ amount: signedContribution(r.type!, r.balance ?? 0), currency: currencyOfListed.get(r.account_id) ?? null })),
+                ],
+              }
+            : null,
+          unknown: unknownCurrency,
+        })
+      : undefined;
 
     const payload: NetWorthPayload = {
       institutions,
@@ -277,6 +356,7 @@ export async function GET(req: Request) {
       hidden: hiddenList,
       lifecycle: lifecycleForClient(lifecycle),
       as_of: new Date().toISOString(),
+      ...(split ? { history_split: split } : {}),
     };
 
     // Don't cache payloads containing errors: an institution that needs reauth
@@ -294,10 +374,12 @@ export async function GET(req: Request) {
       await clearNetWorthCache(ctx);
     }
 
+    const { history_split, ...shown } = payload;
     return NextResponse.json({
-      ...payload,
+      ...shown,
       ...healthFields(withNewAccounts(payload.institutions, await newAccountsPromise), await healthPromise, answeredAt),
       ...(await stalePromise),
+      ...(await baseFields(ctx, payload.institutions, history_split)),
       from_cache: false,
     });
   } catch (err: any) {

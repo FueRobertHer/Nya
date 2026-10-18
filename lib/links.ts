@@ -81,6 +81,12 @@ export type DirectoryEntry = {
    *  balance, or the day it was first seen live. */
   first_seen: string;
   last_seen: string;
+  /** Its balance's currency (an ISO code, or Plaid's unofficial one), where
+   *  known: absent on entries written before it was kept. What prices an
+   *  account in net worth's history after it was disconnected
+   *  (lib/fx/known-accounts.ts). The release before keeps reading an entry
+   *  with it, and drops it from an entry it writes again. */
+  currency?: string | null;
 };
 
 /** Every readable entry, and the ids whose entries couldn't be read. Those
@@ -100,6 +106,18 @@ async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, Direct
     })
   );
   return { entries, unreadable };
+}
+
+/** Every account in the directory with its currency (null where the entry
+ *  predates it being kept) and kind, for pricing net worth's history
+ *  (lib/fx/known-accounts.ts). LENIENT, for that display only: an entry that
+ *  can't be read is left out, and its account is then counted in the main
+ *  currency, as before. Storage out of reach throws. */
+export async function directoryCurrencies(ctx: Ctx): Promise<{ account_id: string; currency: string | null; type: string | null }[]> {
+  const { entries } = await readDirectory(ctx);
+  return Object.entries(entries)
+    .filter(([, e]) => e && typeof e === 'object')
+    .map(([account_id, e]) => ({ account_id, currency: typeof e.currency === 'string' ? e.currency : null, type: typeof e.type === 'string' ? e.type : null }));
 }
 
 /** The whole directory, for the download of my data (lib/user-export.ts).
@@ -284,6 +302,7 @@ type SeenAccount = {
   type?: string | null;
   subtype?: string | null;
   persistent_account_id?: string | null;
+  currency?: string | null;
 };
 type SeenInstitution = {
   item_id: string;
@@ -334,6 +353,7 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
         persistent_account_id: a.persistent_account_id ?? prev?.persistent_account_id ?? null,
         first_seen: prev?.first_seen ?? spans[a.account_id]?.first ?? day,
         last_seen: day,
+        ...(a.currency ? { currency: a.currency } : prev?.currency ? { currency: prev.currency } : {}),
       };
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
       writes[a.account_id] = await encrypt(ctx, JSON.stringify(next));
