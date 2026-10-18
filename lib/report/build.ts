@@ -58,8 +58,13 @@
 //   - own_categories, own_exclusions: the person's own categories, or the
 //     exclusions they carried across a re-link, couldn't be read, so the
 //     totals use the bank's categories, or may count what they excluded;
-//   - unreadable: anything else the read couldn't read (a manual account's
-//     transactions, say), in the read's own words;
+//   - unreadable: any other transactions the read couldn't read (a manual
+//     account's, say), in the read's own words. Only a note that says
+//     transactions couldn't all be read or aren't all in is one
+//     (lib/activity.ts `unread_notes`); what the read says of how what it
+//     read applies (a rule, a category, a split, a group or an approval that
+//     couldn't be read) leaves no transaction out, so it is a caveat on the
+//     totals (`caveats.notes`), never a gap, and makes no month uncertain;
 //   - assumed_closed: an account Nya took as closed because it stopped
 //     appearing at its bank and nobody said otherwise (lib/lifecycle.ts): if
 //     it is still open, its transactions from then aren't here;
@@ -262,8 +267,13 @@ export type ReportInput = {
    *  one most of the period's transactions are in. */
   currency: string | null;
   sources: readonly SourceFacts[];
-  /** What the read couldn't read, in its own words ("Chase: ..."). */
+  /** The transactions the read couldn't read, or that aren't all in, in its
+   *  own words ("Chase: ..."): its `unread_notes` (lib/activity.ts). */
   notes: readonly string[];
+  /** The read's other notes, on how what it read applies (a rule's, a
+   *  category's, a split's, a group's, an approval's that couldn't be read):
+   *  caveats on the totals, never gaps. Absent, none. */
+  caveatNotes?: readonly string[];
   manual: readonly ManualFacts[];
   /** The manual accounts whose rows couldn't be read, or 'all'. */
   manualUnread: readonly string[] | 'all';
@@ -523,6 +533,9 @@ export type Report = {
     scope: { investment: boolean; loans: boolean };
     /** The person's names for merchants couldn't be read: the bank's show. */
     names_unread: boolean;
+    /** What the read said of how what it read applies, in its own words
+     *  (ReportInput `caveatNotes`): none of it leaves a transaction out. */
+    notes: string[];
   };
   /** No transaction in the period at all. */
   empty: boolean;
@@ -554,6 +567,19 @@ const GAP_ORDER: GapKind[] = [
  *  `words:` and the words, for words no category has), the words a mark of
  *  it is stored as, and its name now. */
 type Mark = { id: string; key: string; name: string };
+
+/** The notes of `all` besides those of `unread`, each of those taken out
+ *  once for each time it is there: what the read said that isn't about
+ *  transactions it couldn't read (ReportInput `caveatNotes`), in its order. */
+export function notesBesides(all: readonly string[], unread: readonly string[]): string[] {
+  const left = [...unread];
+  return all.filter((n) => {
+    const i = left.indexOf(n);
+    if (i < 0) return true;
+    left.splice(i, 1);
+    return false;
+  });
+}
 
 const minDay = (a: string, b: string) => (a < b ? a : b);
 /** Whether an account's own transactions can be in a report: never an
@@ -1031,6 +1057,7 @@ export function buildReport(input: ReportInput): Report {
         loans: input.sources.some((s) => s.holds.loans) || manualHere.some((m) => m.type === 'loan'),
       },
       names_unread: !input.ownRead.names,
+      notes: [...(input.caveatNotes ?? [])],
     },
     empty: rows.length === 0,
     no_spending: noSpending(view, rows.length),

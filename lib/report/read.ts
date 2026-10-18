@@ -55,7 +55,10 @@
 // left out, and the report says why), the person's own categories, names and
 // carried exclusions that can't (the assembly's own_read), each manual
 // account whose rows can't (never counted as having none), and whatever else
-// the assembly couldn't read (its notes, which the report lists as gaps).
+// the assembly couldn't read: the transactions it couldn't (its unread_notes,
+// which the report lists as gaps), and how a rule, a category, a split or a
+// group applies when something of theirs couldn't be (its other notes, which
+// leave no transaction out: caveats on the totals).
 // Storage that can't be reached at all fails the whole report, and so do
 // account closures that can't be read, as they fail the Activity tab: never
 // a report counting an account the person closed.
@@ -74,6 +77,7 @@ import { accountWords, endDays, endedNowIds, endOf, type LifecycleView } from '.
 import { reportSettingsStore } from './store';
 import {
   buildReport,
+  notesBesides,
   type EndedFacts,
   type KeptFacts,
   type LiveAccountFacts,
@@ -327,7 +331,8 @@ export async function readReport(
     rows: activity.transactions,
     currency: opts.currency ?? null,
     sources,
-    notes: activity.notes,
+    notes: activity.unread_notes,
+    caveatNotes: notesBesides(activity.notes, activity.unread_notes),
     manual: manualFacts,
     manualUnread: activity.manual_unread,
     removed,

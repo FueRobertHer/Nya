@@ -230,7 +230,9 @@ export const MANUAL_NOTE = 'Transactions on a manual account are the ones you en
 
 /** What is true of the period whatever the data: a year still running, days
  *  still settling, what the report covers, accounts left out, and what
- *  couldn't be read about the connections or the person's own choices. */
+ *  couldn't be read about the connections or the person's own choices (the
+ *  read's notes on how a rule, a category, a split or a group applies among
+ *  them, in its own words: none of them leaves a transaction out). */
 export function caveatLines(report: Report, day: DayFormat): string[] {
   const { caveats, period } = report;
   const out: string[] = [];
@@ -252,6 +254,8 @@ export function caveatLines(report: Report, day: DayFormat): string[] {
   if (caveats.marked === 'unreadable') out.push(MARKED_UNREAD);
   if (caveats.names_unread) out.push('Your names for merchants couldn’t be read, so the bank’s are shown.');
   if (caveats.health_unread) out.push('How each bank connection is doing couldn’t be read, so what is said of each may be missing something.');
+  // Absent from a report made before they were sent.
+  for (const n of caveats.notes ?? []) out.push(`${n.replace(/[.\s]+$/, '')}.`);
   return out;
 }
 

@@ -20,6 +20,7 @@ import {
 } from '@/lib/report/period';
 import {
   buildReport,
+  notesBesides,
   POST_DAYS,
   APPENDIX_LIMIT,
   type ReportInput,
@@ -551,6 +552,34 @@ describe('gaps: what the period may be missing, and the months each touches', ()
     expect(r.gaps).toEqual([{ kind: 'unreadable', item_id: null, institution: null, note: 'Cash: transactions entered for Wallet couldn’t be read' }]);
     expect(sentencesOf(r.gaps)).toEqual(['Cash: transactions entered for Wallet couldn’t be read.']);
     expect(r.months.every((m) => m.uncertain && m.gaps.length === 0)).toBe(true);
+  });
+
+  test('what the read says of how what it read applies is a caveat, never a gap: no month uncertain, the headline whole, said among the caveats and in the CSV', () => {
+    const split = 'How you split 1 transaction couldn’t be read, so it shows whole until it can be.';
+    const rule = 'Your rules couldn’t be read, so none applies until they can be';
+    const r = buildReport(input({ rows: MARCH, caveatNotes: [split, rule] }));
+    expect(r.gaps).toEqual([]);
+    expect(r.months.some((m) => m.uncertain)).toBe(false);
+    expect(statusHeadline(r)).toBe('Nothing is known to be missing from this period.');
+    expect(problemLines(r, iso)).toEqual([]);
+    expect(r.caveats.notes).toEqual([split, rule]);
+    expect(caveatLines(r, iso).slice(-2)).toEqual([split, 'Your rules couldn’t be read, so none applies until they can be.']);
+    const csv = parseCsv(reportCsv(r));
+    expect(csv.filter((x) => x[0] === 'caveat').map((x) => x[1]).slice(-2)).toEqual(caveatLines(r, iso).slice(-2));
+    expect(csv.some((x) => x[0] === 'gap')).toBe(false);
+    // Beside a note on transactions that couldn't be read, which is a gap.
+    const both = buildReport(input({ rows: MARCH, notes: ['Cash: transactions entered for Wallet couldn’t be read'], caveatNotes: [split] }));
+    expect(both.gaps.map((g) => g.kind)).toEqual(['unreadable']);
+    expect(both.caveats.notes).toEqual([split]);
+    // A report made before caveats carried notes still reads.
+    const older = { ...r, caveats: { ...r.caveats, notes: undefined } } as unknown as typeof r;
+    expect(caveatLines(older, iso)).toEqual(caveatLines(r, iso).slice(0, -2));
+  });
+
+  test('the caveats are the read’s notes besides those on transactions it couldn’t read, each taken out once, in order', () => {
+    expect(notesBesides(['Chase: x', 'rules', 'Cash: y', 'splits', 'rules'], ['Chase: x', 'Cash: y', 'rules'])).toEqual(['splits', 'rules']);
+    expect(notesBesides(['a', 'b'], [])).toEqual(['a', 'b']);
+    expect(notesBesides(['a'], ['a', 'b'])).toEqual([]);
   });
 
   test('a note is a bank’s own only when its gap says it: a manual account under the same name is never swallowed', () => {
