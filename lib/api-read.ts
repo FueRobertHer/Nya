@@ -1643,9 +1643,6 @@ export type ApiSpending = Summary & {
   notes: string[];
 };
 
-/** Money in and out over [from, to], and spending by category and by group,
- *  in one currency: by default the one most transactions are in, as the
- *  app's totals. */
 /**
  * How many of the transactions of [from, to] were imported into linked
  * accounts from the bank's files rather than sent by the bank (#52), in the
@@ -1663,6 +1660,9 @@ export function importedNote(rows: readonly Txn[], range: { from: string; to: st
   );
 }
 
+/** Money in and out over [from, to], and spending by category and by group,
+ *  in one currency: by default the one most transactions are in, as the
+ *  app's totals. */
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
