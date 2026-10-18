@@ -36,6 +36,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [The weekly summary](#the-weekly-summary)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [The API and the MCP server](#the-api-and-the-mcp-server)
+- [Sharing with someone](#sharing-with-someone)
 - [Downloading your data](#downloading-your-data)
 - [Planning](#planning)
 
@@ -925,6 +926,25 @@ Programs you choose can read your data: a script, a spreadsheet, a dashboard of 
 - **Version 1 is stable.** Fields may be added, but none removed, renamed or given a new meaning; a change that would do that comes as `/api/v2`, with version 1 kept beside it for at least six months.
 
 Each token may make 100 requests a minute, and one person may have 10 tokens; an address that sends too many tokens that don't work is turned away for a while. Restoring a backup ends every token (backups leave them out), and the demo accounts can't make any. Writing (adding a transaction, changing a budget), signing in with OAuth instead of a token, webhooks, live balances and calls from web pages on other sites (no CORS) are not part of version 1.
+
+## Sharing with someone
+
+With accounts (Clerk), people who connect by an invite link can share parts of their finances with each other, read-only, each choosing what the other sees and for how long, and seeing exactly what that is and each time it was shown. How connecting, ends, previews and the records of showings work is in [authentication.md](authentication.md#sharing-between-people).
+
+What can be shared, each on its own, and none of it until it is chosen:
+
+- **Accounts**, one by one: that it exists, its balance, or its balance and the last 30 days of transactions.
+- **Net worth**: the total now, or the total and its history (your chart, a point a week, estimates marked), always as amounts, with or without the accounts in it whose balances you share above, each with its balance. The total is your accounts' newest balances added up, as on the Accounts tab, in the currency most of them are in; an account you share only as existing, or not at all, is in the total and never listed.
+- **Spending**: what went out each month, this month so far and the five before, by category group, or by category too, as percentages or amounts, by the same rule as every total in the app. Never money in, and never a transaction, a merchant, a note, a tag, a split's parts, a group of transactions or how many there were: what another currency left out is named by its currency alone.
+- **Holdings**: your investments by asset class and by tax bucket, as the Plan tab's allocation counts them with your own buckets and splits, as percentages or amounts, with or without the positions. Never an account's name or number.
+- **Budgets**: this month's and last month's, by group, or by category too, as how much of each is spent or as amounts, with what rolled over, as the Budgets tab counts them.
+- **Goals** you choose: each one's progress and when it is projected to be reached, as percentages or amounts, never the monthly rate behind the projection.
+
+Hidden accounts are in none of it, and an account that ended counts from its day in nothing, as everywhere else in the app. "This month" is yours: the month in the time zone your weekly summary keeps, else by the UTC day. A kind whose data can't be read just now says so, on their card and in your preview, never a figure short of what it can't read; spending that counts a transaction whose exclusion couldn't be read, as your Activity tab does, says that too, and spending and budgets say when some of how you file transactions couldn't be read (your own categories, your merchants' default categories or what you approved in the review queue), so some of it may be under another category. Percentages read as your own screens write them: money that is there is never 0%, and a share short of the whole never 100%.
+
+**What they could work out.** Shares can give away more together than one by one: a net worth beside an account's balance, or beside your holdings in amounts, gives what the rest add up to; spending beside net worth gives an estimate of income; a goal's progress and when it will be reached give what goes into it each month; holdings as percentages beside one investment account's balance, or beside a net worth with every other balance shown, give their amounts; budgets as percentages beside spending in amounts give the budgets. Before you save, under your choices, Sharing says plainly which of these combinations what you share with someone makes, and "See what they see" says it again from what they are shown (`lib/share-inference.ts`). It never stops a save, and it says that no list is complete: any total says something about what is in it, and these are only the combinations Nya knows.
+
+**Joint budgets** (two people keeping one budget together) aren't built: sharing is read-only, always, and whether a joint container is in scope is the owner's decision (decision 8 of the plan).
 
 ## Downloading your data
 
