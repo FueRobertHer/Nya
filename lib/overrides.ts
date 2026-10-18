@@ -67,6 +67,21 @@ export async function setOverride(ctx: Ctx, transaction_id: string, category: st
   await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(ctx, category) });
 }
 
+/** Sets many overrides at once, a thousand to a request: the categories an
+ *  import from another app says on rows a linked account's bank also has
+ *  (lib/migration/commit.ts), which its bank rows show (lib/activity.ts
+ *  categoriesFromImports). Each id is a new imported row's, so nothing set
+ *  by the person is written over. */
+export async function setOverrides(ctx: Ctx, categories: ReadonlyMap<string, string>): Promise<void> {
+  const entries = [...categories];
+  for (let i = 0; i < entries.length; i += 1000) {
+    const chunk = entries.slice(i, i + 1000);
+    const fields: Record<string, string> = {};
+    for (const [id, category] of chunk) fields[id] = await encrypt(ctx, category);
+    if (chunk.length > 0) await redis().hset(OVERRIDES_HASH(ctx), fields);
+  }
+}
+
 /** One transaction's override, or null when it has none: what a
  *  recategorization replaces, which its undo puts back (app/api/recategorize,
  *  Card Mode). Strict: one that can't be read throws, never reads as none. */

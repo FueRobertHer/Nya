@@ -209,11 +209,14 @@ export type CsvTable = {
  * after them. An error, in words for the person, when it isn't a table of
  * transactions at all.
  */
-export function readCsvTable(text: string, opts: { delimiter?: Delimiter; header_line?: number } = {}): CsvTable | { error: string } {
+export function readCsvTable(text: string, opts: { delimiter?: Delimiter; header_line?: number; max_rows?: number } = {}): CsvTable | { error: string } {
   const delimiter = opts.delimiter ?? detectDelimiter(text);
+  // Another app's export holds every account at once (lib/import/apps/), so
+  // it may hold more rows than one account's file.
+  const maxRows = opts.max_rows ?? MAX_IMPORT_ROWS;
   // Enough rows to tell a file over the limit, and no more: a file of nothing
   // but line breaks and separators is bounded by its size, and stops here.
-  const split = splitCsv(text, delimiter, MAX_IMPORT_ROWS + 200);
+  const split = splitCsv(text, delimiter, maxRows + 200);
   if (split.wide !== null) {
     return {
       error: `Line ${split.wide.toLocaleString('en-US')} of this file has more than ${MAX_CSV_COLUMNS} fields, more than a bank’s export has, so it can’t be read as a table.`,
@@ -245,9 +248,9 @@ export function readCsvTable(text: string, opts: { delimiter?: Delimiter; header
     header,
     header_line: rows[at].line,
     skipped: at,
-    rows: data.slice(0, MAX_IMPORT_ROWS + 1),
+    rows: data.slice(0, maxRows + 1),
     unterminated: split.unterminated,
-    too_many: data.length > MAX_IMPORT_ROWS || split.more,
+    too_many: data.length > maxRows || split.more,
   };
 }
 

@@ -1,0 +1,5 @@
+﻿"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"
+"Girokonto","","03.09.2026","Arbeitgeber GmbH","Inflow: Ready to Assign","Inflow","Ready to Assign","Lohn September","0,00 €","3.150,00 €","Cleared"
+"Girokonto","","02.09.2026","REWE","Alltag: Lebensmittel","Alltag","Lebensmittel","","45,67 €","0,00 €","Cleared"
+"Girokonto","Purple","01.09.2026","Vermieter","Fixkosten: Miete","Fixkosten","Miete","Miete 09/2026","1.250,00 €","0,00 €","Cleared"
+"Girokonto","","01.08.2026","Starting Balance","Inflow: Ready to Assign","Inflow","Ready to Assign","","0,00 €","2.000,00 €","Reconciled"

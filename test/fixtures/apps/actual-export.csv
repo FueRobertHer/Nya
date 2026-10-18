@@ -1,0 +1,15 @@
+Account,Date,Payee,Notes,Category_Group,Category,Amount,Split_Amount,Cleared
+Checking,2026-09-15,Acme Corp,Paycheck,Income,Income,2500,0,Cleared
+Checking,2026-09-14,Savings,Monthly savings,,,-500,0,Cleared
+Savings,2026-09-14,Checking,Monthly savings,,,500,0,Cleared
+Checking,2026-09-12,Costco,(SPLIT INTO 2) big shop,,,0,-120,Cleared
+Checking,2026-09-12,Costco,(SPLIT 1 OF 2) food,Usual Expenses,Food,-80,0,Cleared
+Checking,2026-09-12,Costco,(SPLIT 2 OF 2) ,Usual Expenses,General,-40,0,Cleared
+Checking,2026-09-10,Whole Foods,,Usual Expenses,Food,-86.42,0,Cleared
+Checking,2026-09-09,REI,returned the tent,Usual Expenses,General,35,0,Cleared
+Checking,2026-09-05,'=Formula Shop,,Usual Expenses,General,-9.99,0,Not cleared
+Checking,2026-09-03,Mystery Shop,,,,-12,0,Not cleared
+Checking,2026-09-01,Landlord,September,Bills,Rent,-1850,0,Reconciled
+Savings,2026-08-01,Ally Bank,Interest,Income,Income,3.17,0,Reconciled
+Checking,2026-01-01,Starting Balance,,Income,Starting Balances,4000,0,Reconciled
+Savings,2026-01-01,Starting Balance,,Income,Starting Balances,10000,0,Reconciled

@@ -5674,3 +5674,116 @@ button.review-keys-toggle {
   padding: 8px 12px;
   font-size: 13px;
 }
+
+/* --- sharing's other kinds: net worth, spending, holdings, budgets, goals
+   (components/SharedViews.tsx on a "Shared by" card, components/ShareKinds.tsx
+   in the drawer). Class names avoid "share" (components/Sharing.tsx). --- */
+
+/* Each kind a section of the card, under the accounts. */
+.incoming-kind {
+  padding: 12px 0 4px;
+  border-top: 1px solid var(--line);
+}
+
+.incoming-kind-name {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.incoming-kind-sub {
+  margin: 12px 0 2px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.incoming-kind .peer-row {
+  padding: 6px 0;
+}
+
+.incoming-kind .peer-row + .peer-row {
+  border-top: none;
+}
+
+.incoming-kind .peer-row select {
+  max-width: 70%;
+}
+
+.incoming-line + .incoming-line {
+  margin-top: 6px;
+}
+
+/* A category under its group, or a goal's lesser line. */
+.incoming-sub {
+  padding-left: 12px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.incoming-meter {
+  height: 6px;
+  margin-top: 2px;
+}
+
+/* The drawer: each kind a choice, what it shows beneath, and what they could
+   work out from all of it together. */
+.kind-row + .kind-row {
+  border-top: 1px solid var(--line);
+}
+
+/* A kind's name, and its level beneath it the whole width, so a closed
+   select shows its level whole however narrow the drawer is. */
+.kind-choice {
+  display: grid;
+  gap: 4px;
+  padding: 10px 0 6px;
+}
+
+.kind-name {
+  font-size: 14px;
+}
+
+.kind-choice select {
+  width: 100%;
+  font-size: 14px;
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+
+.kind-row .plan-check {
+  margin: 0 0 10px;
+}
+
+.kind-what {
+  margin: 0 0 8px;
+}
+
+.kind-warnings {
+  margin-top: 12px;
+}
+
+.kind-warnings .stale-note {
+  margin: 0 0 8px;
+}
+
+/* --- switching from another app (components/MigrationSheet.tsx) --- */
+
+/* The way in: a line under the account buttons, its link wrapping on a
+   narrow phone rather than pushing the card wider. */
+.migration-link .link-btn {
+  display: inline;
+  text-align: left;
+  white-space: normal;
+}
+
+/* Each app's export steps, folded until asked for. */
+.migration-how {
+  margin-top: 12px;
+  font-size: 13px;
+}
+
+.migration-how summary {
+  cursor: pointer;
+  color: var(--muted);
+}

@@ -10,6 +10,7 @@ import { sendsEmail } from '@/lib/notice-recipients';
 import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
+import { SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -74,7 +75,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
   ],
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions, until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
+    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
   ],
   [
     'Your device',
@@ -234,9 +235,10 @@ export default function SecurityPage() {
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
           <li>
             for sharing: the names you and the people you connect with gave each other, which accounts each of you
-            shares at which level and until when, and for each connection a random id, which its records of when shared
-            accounts were shown are kept under, and when those records began (what they record is encrypted), never
-            the balances or transactions themselves.
+            shares at which level and until when, which of your net worth, spending, holdings, budgets and goals each
+            of you shares, at which level (with the random ids of the goals chosen), and for each connection a random
+            id, which its records of when shared accounts were shown are kept under, and when those records began (what
+            they record is encrypted), never the balances, amounts or transactions themselves.
           </li>
         </ul>
         <p>
@@ -246,7 +248,8 @@ export default function SecurityPage() {
           minutes. These never go into backups. And for each API token, how many requests it made in the current minute,
           deleted when the token is revoked, or {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with
           any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many
-          times a link to turn it off was used, kept for an hour.
+          times a link to turn it off was used, kept for an hour. And how many times you read what is shared with you, or
+          what someone sees of yours, kept for {SHARED_READS_WINDOW_SECONDS / 60} minutes.
         </p>
         <p>Encrypting these as well is planned.</p>
       </InfoSection>
