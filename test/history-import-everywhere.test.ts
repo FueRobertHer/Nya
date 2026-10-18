@@ -12,6 +12,9 @@ import { parseCsv } from './csv-parse';
 // test/sharing.test.ts; the chart's history in history-import-walk-route.
 
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
+// The real size ceiling, whatever a file before this one lowered it to
+// (lib/blob.ts reads it each time it is used; test/preload.ts puts it back too).
+delete process.env.MAX_TXN_BLOB_CHARS;
 
 const plaid = { later: [] as unknown[] };
 mock.module('@/lib/plaid', () => ({
