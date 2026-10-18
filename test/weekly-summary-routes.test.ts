@@ -359,9 +359,12 @@ describe('the link that turns it off', () => {
     const otherKey = Buffer.alloc(32, 2).toString('base64url');
     await onWithLink(OTHER);
     const flip = (s: string) => (s[0] === 'A' ? 'B' : 'A') + s.slice(1);
+    // The day after, as a real day: one added to "20270331" is no day at all,
+    // which is refused before anything is read, and not counted.
+    const dayAfter = new Date(Date.parse(`${expires.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10).replaceAll('-', '');
     const cases: [string, string][] = [
       ['a forged mac', `${container}.${expires}.${flip(mac)}`],
-      ['another day than it was signed for', `${container}.${String(Number(expires) + 1)}.${mac}`],
+      ['another day than it was signed for', `${container}.${dayAfter}.${mac}`],
       ['expired', linkToken(ME, Buffer.alloc(32, 1).toString('base64url'), '2026-01-01')],
       ['signed with another container’s key', linkToken(ME, otherKey, expires.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))],
       ['another container’s id on this one’s mac', `${OTHER.container}.${expires}.${mac}`],

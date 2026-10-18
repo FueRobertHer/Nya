@@ -403,7 +403,10 @@ describe('Home\'s upcoming bills', () => {
 
   test('leave out a bill marked not recurring', () => {
     const id = detectRecurring(bills)[0].id;
-    expect(home({ dismissed: [id] })).not.toContain('Gym');
+    // Its line alone: in a month's last three days the charge before the next
+    // one is this month's, and can be named as the month's biggest purchase.
+    expect(home()).toContain('Upcoming: Gym');
+    expect(home({ dismissed: [id] })).not.toContain('Upcoming: Gym');
   });
 
   test('find a yearly bill from the history before the year', () => {
