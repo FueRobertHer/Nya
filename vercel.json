@@ -15,6 +15,10 @@
       "schedule": "0 16 * * *"
     },
     {
+      "path": "/api/fx/fetch",
+      "schedule": "30 16 * * *"
+    },
+    {
       "path": "/api/plaid/check-items",
       "schedule": "0 17 * * *"
     }
