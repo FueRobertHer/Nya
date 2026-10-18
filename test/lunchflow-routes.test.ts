@@ -40,6 +40,7 @@ const { setLunchFlowApiForTests } = await import('@/lib/connectors/lunchflow');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { connectionsStore, connectorAccountsStore } = await import('@/lib/connectors/store');
 const { connect, trackAccounts } = await import('@/lib/connectors/manage');
+const { markEnded } = await import('@/lib/lifecycle');
 const { createToken } = await import('@/lib/api-tokens');
 const { collectUserData, buildUserExport, exportFile, notIncluded, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
 const { ofxFile } = await import('@/lib/ofx-export');
@@ -405,6 +406,31 @@ describe('everywhere else, as SimpleFIN’s are', () => {
     // A source the rules don't know is refused, as before.
     const odd = await call(rulesRoute.POST, 'POST', { action: 'add', rule: { conditions: [{ field: 'source', op: 'equals', value: 'lunchfl0w' }], actions: { hide: true } } });
     expect(odd.status).toBe(400);
+  });
+
+  test('an account let go whose newest balance is sealed under another key is named under missing_accounts by its own source', async () => {
+    const id = await connectAndTrack();
+    const card = (await list()).body.connections[0].accounts.find((a: any) => a.name === 'Credit Card');
+    // It closed, then was removed (connector-ended keeps that it was Lunch
+    // Flow's); beside it, a manual account removed after it ended.
+    const about = (name: string, type: string) => ({ type, label: { name, institution: 'Monzo', mask: null }, item_id: null });
+    await markEnded(ctx, card.account_id, { state: 'closed', on: daysAgo(1) }, about('Credit Card', 'credit'));
+    expect((await call(accountsRoute.PUT, 'PUT', { connection_id: id, stop: { account_ids: [card.account_id], keep: false } })).status).toBe(200);
+    await markEnded(ctx, 'manual_jar', { state: 'closed', on: daysAgo(1) }, { ...about('Jar', 'depository'), label: { name: 'Jar', institution: 'Cash', mask: null } });
+    // The day's balances that may hold their newest, sealed under another
+    // PLAID_ENCRYPTION_KEY, as after it was replaced.
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify({ [card.account_id]: 432.1, manual_jar: 20 }))));
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(1)]: Buffer.concat([iv, sealed]).toString('base64') });
+    const { status, body } = await quietly(() => rest('accounts')).then((r) => r.result);
+    expect(status).toBe(200);
+    expect(body.missing_accounts).toContainEqual({ institution: 'Monzo', account_id: card.account_id, reason: 'unavailable', source: 'lunchflow' });
+    expect(body.missing_accounts).toContainEqual({ institution: 'Cash', account_id: 'manual_jar', reason: 'unavailable', source: 'manual' });
+    expect(body.missing_accounts.some((m: any) => m.source === 'plaid')).toBe(false);
+    const byId = new Map<string, any>(body.accounts.map((a: any) => [a.id, a]));
+    expect(byId.get(card.account_id)).toMatchObject({ source: 'lunchflow', balance: null });
+    expect(byId.get('manual_jar')).toMatchObject({ source: 'manual', balance: null });
   });
 
   test('the read-only API and the MCP server serve them with source lunchflow, in Nya’s sign', async () => {

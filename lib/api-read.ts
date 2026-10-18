@@ -377,9 +377,10 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem),
   ]);
   // Accounts whose newest balance is sealed under a key this deployment
-  // can't use: listed with none, and named, never answered with an older one.
-  const sealedOf = (account_id: string, institution: string) => {
-    if (sealed.has(account_id)) missing.push({ institution, account_id, reason: 'unavailable', source: 'plaid' });
+  // can't use: listed with none, and named, never answered with an older one,
+  // under the account's own source (ApiAccount.source).
+  const sealedOf = (account_id: string, institution: string, source: string) => {
+    if (sealed.has(account_id)) missing.push({ institution, account_id, reason: 'unavailable', source });
   };
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
@@ -394,7 +395,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
 
   const accounts: ApiAccount[] = linked.map(({ item, account }) => {
     const b = balances.get(account.account_id) ?? null;
-    sealedOf(account.account_id, item.institution_name);
+    sealedOf(account.account_id, item.institution_name, 'plaid');
     return {
       id: account.account_id,
       source: 'plaid',
@@ -472,11 +473,12 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const [id, a] of fed.accounts) fedKinds.set(id, a.connector);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
-    sealedOf(root, entry.label.institution);
+    const source = isManualId(root) ? (fedKinds.has(root) ? (fedKinds.get(root) ?? 'simplefin') : 'manual') : 'plaid';
+    sealedOf(root, entry.label.institution, source);
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
-      source: isManualId(root) ? (fedKinds.has(root) ? (fedKinds.get(root) ?? 'simplefin') : 'manual') : 'plaid',
+      source,
       name: entry.label.name,
       official_name: null,
       institution: entry.label.institution,
