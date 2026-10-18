@@ -392,6 +392,18 @@ function idText(v: unknown): string {
   return /^[A-Za-z0-9_.:-]{1,200}$/.test(t) ? t : '';
 }
 
+/** A transaction's id as Lunch Flow gave it: a whole number, or text of up
+ *  to 200 characters with no control characters, kept whole. It is only ever
+ *  matched against (a row's source_id), never a field name or part of a
+ *  path, so nothing narrower is asked of it, as for SimpleFIN's; one longer
+ *  is unreadable, never cut, since two cut alike would be taken for one. */
+function txnIdText(v: unknown): string {
+  if (typeof v === 'number') return Number.isSafeInteger(v) && v >= 0 ? String(v) : '';
+  if (typeof v !== 'string') return '';
+  const t = v.trim();
+  return t.length <= 200 && !/[\u0000-\u001f\u007f]/.test(t) ? t : '';
+}
+
 /** An ISO 4217 code this runtime knows, or null. */
 function currencyCode(v: unknown): string | null {
   if (typeof v !== 'string' || !/^[A-Za-z]{3}$/.test(v.trim())) return null;
@@ -452,7 +464,7 @@ export function readBalance(json: unknown): { balance: number; available: number
 /** One transaction as a pipeline record, or why not: pending, or unreadable. */
 function recordOf(t: unknown, remote_id: string, currency: string | null): RawRecord | 'pending' | 'unreadable' {
   if (!isRecord(t)) return 'unreadable';
-  const id = idText(t.id);
+  const id = txnIdText(t.id);
   const pending = t.isPending === true || t.pending === true;
   // Pending, said outright, or without the id a posted one has ([actual-flow]).
   if (pending || t.id === null || t.id === undefined || t.id === '') return pending || t.isPending !== false ? 'pending' : 'unreadable';

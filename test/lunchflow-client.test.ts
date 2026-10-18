@@ -188,17 +188,26 @@ describe('reading transactions', () => {
         { id: 'odd-currency', accountId: 1470, amount: -1, currency: 'DOGE', date: daysAgo(1), merchant: 'X' },
         { id: 'with-time', accountId: 1470, amount: -2, currency: 'EUR', date: `${daysAgo(2)}T23:30:00.000Z`, merchant: 'Late' },
         { id: 'other-currency', accountId: 1470, amount: -2, currency: 'usd', date: daysAgo(2), merchant: 'Abroad' },
+        // A transaction's id is only matched against: any text is kept whole,
+        // and a number read as one; too long, or with a control character in
+        // it, it can't be read, never cut.
+        { id: 'tx/9+Q== a', accountId: 1470, amount: -4, currency: 'EUR', date: daysAgo(3), merchant: 'Odd id' },
+        { id: 4242, accountId: 1470, amount: -5, currency: 'EUR', date: daysAgo(3), merchant: 'Number id' },
+        { id: 'x'.repeat(201), accountId: 1470, amount: -6, currency: 'EUR', date: daysAgo(3), merchant: 'Long id' },
+        { id: 'a\u0007b', accountId: 1470, amount: -6, currency: 'EUR', date: daysAgo(3), merchant: 'Bell id' },
         'not a row',
       ],
-      total: 11,
+      total: 15,
     };
     const got = readTransactions(json, '1470', { start: daysAgo(10), end: null }, 'EUR')!;
-    expect(got.left_out).toEqual({ pending: 3, unreadable: 6 });
+    expect(got.left_out).toEqual({ pending: 3, unreadable: 8 });
     // A time after the day is cut off, never moved into a time zone; a row in
     // another currency keeps its own.
     expect(got.records.map((r) => [r.source_id, r.date, r.currency])).toEqual([
       ['with-time', daysAgo(2), 'EUR'],
       ['other-currency', daysAgo(2), 'USD'],
+      ['tx/9+Q== a', daysAgo(3), 'EUR'],
+      ['4242', daysAgo(3), 'EUR'],
     ]);
     expect(got.cut).toBeNull();
     expect(readTransactions({ items: [] }, '1470', { start: daysAgo(1), end: null }, 'EUR')).toBeNull();
