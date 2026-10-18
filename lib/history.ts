@@ -712,7 +712,16 @@ export type StoredPoint = {
    *  (ACCOUNTS_PARTIAL_HASH): the moment that day's snapshot was taken
    *  (snapshotTakenAt) isn't this balance's. */
   partial?: true;
+  /** An account's estimated balance on a day past the estimated totals
+   *  (ACCOUNTS_EST_EXT_HASH), the breakdown of no total. */
+  extended?: true;
 };
+
+/** The balances each estimated total held flat (ACCOUNTS_EST_FLAT_BY_DATE),
+ *  by day, and those of totals from before they were kept by day
+ *  (ACCOUNTS_EST_FLAT_LEGACY), for the download of my data: what takes a
+ *  hidden account out of an estimated day, as the chart does. */
+export type FlatForExport = { days: Map<string, Record<string, number>>; before: Record<string, number> | null };
 
 /** The days a series has stored that can't be used, by why, each in date
  *  order, as the storage seam reports entries (lib/repo.ts getAllReport):
@@ -735,9 +744,12 @@ export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
  * totals include hidden accounts, lib/hidden.ts), no estimate between two
  * recorded days is replaced by a line (bridgeInteriorEstimates), and no
  * earlier id is joined to the account it was linked to (the download lists
- * the links). The flat balances behind estimated totals are not read: they
- * are balances of the day backfill ran, copied onto past days, not a history
- * of those accounts (see ACCOUNTS_EST_FLAT_BY_DATE).
+ * the links). A point kept outside its kind's own layer says so (`partial`,
+ * `extended`), so a download brought back puts it where it was. The flat
+ * balances behind estimated totals are read apart (`flat`): they are
+ * balances of the day backfill ran, copied onto past days, not a history of
+ * those accounts (see ACCOUNTS_EST_FLAT_BY_DATE), but what takes a hidden
+ * account out of an estimated day.
  *
  * A day that can't be used is NAMED, never dropped quietly and never a reason
  * to stop: `problems` lists it, by the storage seam's rules (lib/repo.ts
@@ -755,16 +767,23 @@ export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
  * also has a recorded value is superseded and not read, so it can never be
  * named.
  */
-export async function readHistoryForExport(
-  ctx: Ctx
-): Promise<{ totals: StoredPoint[]; accounts: Map<string, StoredPoint[]>; problems: { totals: UnusableDays; accounts: UnusableDays } }> {
-  const [real, est, realAcc, partialAcc, estAcc, extAcc] = await Promise.all(
-    [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx)].map(
-      async (key) => (await redis().hgetall<Record<string, unknown>>(key)) ?? {}
-    )
-  );
+export async function readHistoryForExport(ctx: Ctx): Promise<{
+  totals: StoredPoint[];
+  accounts: Map<string, StoredPoint[]>;
+  flat: FlatForExport;
+  problems: { totals: UnusableDays; accounts: UnusableDays; flat: UnusableDays };
+}> {
+  const [[real, est, realAcc, partialAcc, estAcc, extAcc, flatAcc], flatBefore] = await Promise.all([
+    Promise.all(
+      [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)].map(
+        async (key) => (await redis().hgetall<Record<string, unknown>>(key)) ?? {}
+      )
+    ),
+    redis().get<unknown>(ACCOUNTS_EST_FLAT_LEGACY(ctx)),
+  ]);
   const totalsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
   const accountsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
+  const flatNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
 
   /** A stored total, or null when it can't be used, named. */
   const total = async (date: string, blob: unknown): Promise<number | null> => {
@@ -789,10 +808,10 @@ export async function readHistoryForExport(
   ).filter((p): p is StoredPoint => p.value !== null);
 
   /** A stored map of balances, or null when it can't be used, named. */
-  const open = async (date: string, blob: unknown): Promise<Record<string, unknown> | null> => {
+  const open = async (date: string, blob: unknown, named = accountsNamed): Promise<Record<string, unknown> | null> => {
     const opened = await openStored(ctx, blob);
     if (!opened.ok) {
-      accountsNamed[opened.flaw].add(date);
+      named[opened.flaw].add(date);
       return null;
     }
     let map: unknown;
@@ -802,12 +821,12 @@ export async function readHistoryForExport(
       map = null;
     }
     if (!map || typeof map !== 'object' || Array.isArray(map)) {
-      accountsNamed.unrecognised.add(date);
+      named.unrecognised.add(date);
       return null;
     }
     // A balance that isn't a finite number is one this code doesn't know (no
     // writer stores one): the day is named, and the rest of the map is used.
-    if (Object.values(map).some((v) => typeof v !== 'number' || !Number.isFinite(v))) accountsNamed.unrecognised.add(date);
+    if (Object.values(map).some((v) => typeof v !== 'number' || !Number.isFinite(v))) named.unrecognised.add(date);
     return map as Record<string, unknown>;
   };
   /** A layer's maps that can be used, for the days given. */
@@ -847,8 +866,9 @@ export async function readHistoryForExport(
         const value = num(recorded, id);
         point = value === null ? null : { date, value, estimated: false };
       } else {
-        const value = num(ext, id) ?? num(estimate, id);
-        point = value === null ? null : { date, value, estimated: true };
+        const extended = num(ext, id);
+        const value = extended ?? num(estimate, id);
+        point = value === null ? null : { date, value, estimated: true, ...(extended !== null ? { extended: true as const } : {}) };
       }
       if (!point) continue;
       const series = accounts.get(id) ?? [];
@@ -858,11 +878,34 @@ export async function readHistoryForExport(
   }
   const byDate = (a: StoredPoint, b: StoredPoint) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
   for (const series of accounts.values()) series.sort(byDate);
+  // The flat balances of each estimated day kept (see FlatForExport): every
+  // one, as stored, whatever day it is for; one that can't be used is named.
+  const days = new Map<string, Record<string, number>>();
+  for (const [date, blob] of Object.entries(flatAcc)) {
+    const map = await open(date, blob, flatNamed);
+    if (!map) continue;
+    const balances: Record<string, number> = {};
+    for (const [id, v] of Object.entries(map)) if (typeof v === 'number' && Number.isFinite(v)) balances[id] = v;
+    days.set(date, balances);
+  }
+  let before: Record<string, number> | null = null;
+  if (flatBefore !== null && flatBefore !== undefined && flatBefore !== '') {
+    const map = await open('before', flatBefore, flatNamed);
+    if (map) {
+      before = {};
+      for (const [id, v] of Object.entries(map)) if (typeof v === 'number' && Number.isFinite(v)) before[id] = v;
+    }
+  }
   const sorted = (named: { unreadable: Set<string>; unrecognised: Set<string> }): UnusableDays => ({
     unreadable: [...named.unreadable].sort(),
     unrecognised: [...named.unrecognised].sort(),
   });
-  return { totals: totals.sort(byDate), accounts, problems: { totals: sorted(totalsNamed), accounts: sorted(accountsNamed) } };
+  return {
+    totals: totals.sort(byDate),
+    accounts,
+    flat: { days: new Map([...days].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))), before },
+    problems: { totals: sorted(totalsNamed), accounts: sorted(accountsNamed), flat: sorted(flatNamed) },
+  };
 }
 
 // The backfill flag makes /api/backfill idempotent; linking a new institution

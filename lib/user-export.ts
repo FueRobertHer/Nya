@@ -94,7 +94,7 @@ import {
 import { readInvStore, type InvStoreState } from './invstore';
 import { readOverridesStrict, readCarriedStrict, carriedCategories, type Carried } from './overrides';
 import { readRenamesStrict } from './renames';
-import { readHistoryForExport, type StoredPoint } from './history';
+import { readHistoryForExport, type FlatForExport, type StoredPoint } from './history';
 import { getGoalsReport } from './goals';
 import { exportedGoals } from './goal-export';
 import { mySharing } from './sharing';
@@ -560,7 +560,7 @@ export type UserData = {
   live: Set<string>;
   declined: DeclinedOffer[];
   carried: Carried;
-  history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]> };
+  history: { totals: StoredPoint[]; accounts: Map<string, StoredPoint[]>; flat: FlatForExport };
   /** The person's categories (lib/category-store.ts), as stored or, before
    *  the app has stored them, as it would seed them: what each transaction is
    *  filed under. */
@@ -690,13 +690,14 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
     live,
     declined,
     carried,
-    history: { totals: history.totals, accounts: history.accounts },
+    history: { totals: history.totals, accounts: history.accounts, flat: history.flat },
     taxonomy,
     sections: sections.map(([key, r]) => [key, r.value] as const),
     problems: [
       ...idProblems('manual_accounts', manual),
       ...idProblems('net_worth_history', history.problems.totals),
       ...idProblems('account_history', history.problems.accounts),
+      ...idProblems('estimate_flat', history.problems.flat),
       ...sections.flatMap(([, r]) => r.problems),
     ],
   };
@@ -821,7 +822,15 @@ export type UserExport = {
   manual_accounts: ExportManualAccount[];
   hidden_accounts: { account_id: string; type: string; hidden_at: string | null }[];
   net_worth_history: { includes_hidden_accounts: true; points: { date: string; total: number; kind: Kind }[] };
-  account_history: { account_id: string; points: { date: string; balance: number; kind: Kind }[] }[];
+  /** Each point's `layer` says where it was kept when that isn't its kind's
+   *  own: a recorded balance measured on a day no total was recorded
+   *  (`partial`), an estimate past the estimated totals (`extended`). */
+  account_history: { account_id: string; points: { date: string; balance: number; kind: Kind; layer?: 'partial' | 'extended' }[] }[];
+  /** The balances each estimated net worth total held flat, by day, and
+   *  those of totals from before Nya kept them by day (`before_days`): what
+   *  takes a hidden account out of an estimated day. Not an account's
+   *  history. */
+  estimate_flat: { days: { date: string; balances: Record<string, number> }[]; before_days: Record<string, number> | null };
   transactions: ExportTransaction[];
   category_overrides: { transaction_id: string; category: string }[];
   merchant_renames: { vendor_key: string; name: string }[];
@@ -846,7 +855,6 @@ export function notIncluded(people: boolean): string[] {
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
       : 'The app password: a credential, not your data.',
     'Internal ids and the machinery of the app: your storage container’s id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections and on accounts a bank stopped reporting). They are about running the app, not about you.',
-    'The balances an estimate held flat: for an account the estimate could not walk back through its transactions, estimated net-worth totals use that account’s balance on the day the estimate was made. That copied balance is part of the estimated totals, and is not listed as the account’s own history.',
     'What other people share with you, what they call you and how they introduced themselves: that is their data. Their record of each time what they share was shown to you is in, under sharing: it is about you, and they see the same one.',
     'Unused invite links: they work for 72 hours and are then gone.',
     ...(people ? [] : ['Sharing: with one shared password there are no separate people to share with.']),
@@ -890,6 +898,7 @@ function mentionedAccountIds(data: UserData): Set<string> {
     for (const row of Object.values(inv.state.txns)) add(row?.raw?.account_id);
   }
   for (const id of data.history.accounts.keys()) add(id);
+  for (const balances of [...data.history.flat.days.values(), ...(data.history.flat.before ? [data.history.flat.before] : [])]) for (const id of Object.keys(balances)) add(id);
   for (const id of data.hidden.keys()) add(id);
   for (const [old, l] of data.links) {
     add(old);
@@ -1121,6 +1130,14 @@ const PART_WORDS: Record<string, PartWords> = {
     missing: (noun, counts) => `Not all of your ${noun} could be read, so this file is missing those of ${counts}.`,
   },
   net_worth_history: { noun: 'net worth history', one: 'day', many: 'days', missing: missingFrom },
+  // The balances an estimated day's total held flat: without one, a hidden
+  // account can't be taken out of that day.
+  estimate_flat: {
+    noun: 'balances estimated totals held flat',
+    one: 'day',
+    many: 'days',
+    missing: (noun, counts) => `${missingFrom(noun, counts)} An estimated day among them can't have a hidden account taken out of it.`,
+  },
   // Counted, never named: a token's id is part of the token.
   api_tokens: { noun: 'API tokens', one: 'token', many: 'tokens', missing: missingFrom, listed: 'The API tokens card lists them, and can remove a damaged one.' },
   account_history: {
@@ -1347,7 +1364,12 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     .filter((id) => (data.history.accounts.get(id)?.length ?? 0) > 0)
     .map((id) => ({
       account_id: id,
-      points: data.history.accounts.get(id)!.map((p) => ({ date: p.date, balance: p.value, kind: kindOf(p) })),
+      points: data.history.accounts.get(id)!.map((p) => ({
+        date: p.date,
+        balance: p.value,
+        kind: kindOf(p),
+        ...(p.partial ? { layer: 'partial' as const } : p.extended ? { layer: 'extended' as const } : {}),
+      })),
     }));
 
   // Categories carried across a re-link, by the key of the row they apply to,
@@ -1492,6 +1514,10 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
       points: data.history.totals.map((p) => ({ date: p.date, total: p.value, kind: kindOf(p) })),
     },
     account_history,
+    estimate_flat: {
+      days: [...data.history.flat.days].map(([date, balances]) => ({ date, balances })),
+      before_days: data.history.flat.before,
+    },
     transactions,
     category_overrides: [...data.overrides]
       .map(([transaction_id, category]) => ({ transaction_id, category }))
