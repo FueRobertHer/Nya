@@ -36,7 +36,7 @@ mock.module('@/lib/plaid', () => ({
 const { setTransportForTests } = await import('@/lib/connectors/http');
 const { setLunchFlowApiForTests } = await import('@/lib/connectors/lunchflow');
 const { connect, trackAccounts, releaseAccounts, disconnect, reconnect, confirmSigns, forgetEnded } = await import('@/lib/connectors/manage');
-const { syncConnection, syncConnectorsDaily, HISTORY_DAYS } = await import('@/lib/connectors/sync');
+const { syncConnection, syncConnectorsDaily, takeRequest, HISTORY_DAYS } = await import('@/lib/connectors/sync');
 const { connectionsStore, connectorAccountsStore, secretsStore, endedAccountsStore } = await import('@/lib/connectors/store');
 const { computeNetWorth, isRecordable } = await import('@/lib/networth');
 const { manualTxnStore, editManualTxn } = await import('@/lib/manual-txns');
@@ -187,6 +187,27 @@ describe('connecting', () => {
 });
 
 describe('tracking and the daily fetch', () => {
+  test('accounts tracked while the day’s requests are spent wait for their first answer, never showing the listing’s word about another bank', async () => {
+    seedServer();
+    // The listing to choose from says ASB's link is broken: a problem that
+    // names no account, since nothing is tracked yet.
+    server.accounts[2].status = 'DISCONNECTED';
+    const { connection_id } = await connect(ctx, 'lunchflow', server.key, NOW);
+    expect((await connectionsStore.get(ctx, connection_id))!.last_fetch?.problems).toEqual([{ message: 'The connection to ASB is disconnected', side: 'connector', accounts: null }]);
+    while (await takeRequest(ctx));
+    const res = await trackAccounts(ctx, connection_id, [{ remote_id: '1470', type: 'depository' }], NOW);
+    expect(res?.skipped).toBe('budget');
+    expect((await connectionsStore.get(ctx, connection_id))!.last_fetch).toBeNull();
+    const monzo = await card('Monzo');
+    expect([monzo.health?.detail?.issue, monzo.health?.side]).toEqual(['waiting', 'connector']);
+    expect(connectorHealthText('Monzo', monzo.health!)).toContain("Waiting for Lunch Flow's answer about Monzo");
+    expect(connectorHealthText('Monzo', monzo.health!)).not.toContain('ASB');
+    // Its first answer, once requests come back, brings it.
+    await nextDay();
+    await syncConnection(ctx, connection_id, { purpose: 'refresh', now: NOW });
+    expect([(await card('Monzo')).error, (await card('Monzo')).health?.detail?.issue]).toEqual([null, 'ok']);
+  });
+
   test('the first fetch brings two years of the tracked accounts’ posted transactions, in Plaid’s sign, under Lunch Flow’s ids', async () => {
     const id = await connectAndTrack([
       ['1470', 'depository'],
