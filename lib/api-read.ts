@@ -100,7 +100,8 @@ import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
-import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
+import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, coveredOutOfDays, type NoTransactionsView } from './no-transactions';
+import { withImportedFiles } from './history-import/without-files';
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
 import { readBudgetMonth, windowStart, type BudgetMonthRead } from './budget-month';
@@ -1093,7 +1094,10 @@ export type ApiSource = { institution: string; synced_at: string | null; complet
 export type ActivityRead = {
   rows: Txn[];
   history: OlderTxn[];
+  /** The read layer's notes, the tags' among them (`tags_note`, also apart,
+   *  for an answer that shows no tags: lib/api-cash-flow.ts). */
   notes: string[];
+  tags_note: string | null;
   sources: ApiSource[];
   hidden: Set<string>;
   view: NoTransactionsView;
@@ -1112,27 +1116,32 @@ const apiSourceOf = (s: BankSource): ApiSource => ({
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts), the rows before them that recurring detection
- *  needs (`history`), and the categories they were filed by (`ix`), grown in
- *  memory where the app hasn't yet (see CATEGORIES). */
+ *  (lib/no-transactions.ts), each that doesn't bring its transactions in with
+ *  what the files imported into its accounts cover, as the app's are sent
+ *  (lib/history-import/without-files.ts, lenient), the rows before them that
+ *  recurring detection needs (`history`), and the categories they were filed
+ *  by (`ix`), grown in memory where the app hasn't yet (see CATEGORIES). */
 export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
+  const view = noTransactionsView(bank.payload);
+  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed, without] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
     // assembly's own notes. One that ended holds no bank.
     connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
+    withImportedFiles(ctx, view.without),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
     notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
+    tags_note,
     ix: indexTaxonomy(taxonomy),
     tags,
     sources: [...bank.sources.map(apiSourceOf), ...fedSources.sources],
     hidden: bank.hidden,
-    view: noTransactionsView(bank.payload),
+    view: { ...view, without },
   };
 }
 
@@ -1276,7 +1285,8 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     transactions: page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+    // A bank whose files cover the range in its place has its rows here.
+    notes: [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, q.from, q.to), activity.rows.length, 'list')],
   };
 }
 
@@ -1656,7 +1666,9 @@ export function importedNote(rows: readonly Txn[], range: { from: string; to: st
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  // The tags' note stays: spending by tag is in the answer. A bank whose
+  // files cover the range in its place is counted, as in the app.
+  const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   // Last, as under the month's totals: how many of the range's transactions
   // came from the bank's files rather than the bank.

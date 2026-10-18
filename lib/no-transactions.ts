@@ -203,8 +203,12 @@ const lastDayOf = (month: string): string => {
  * place, as a report and budget rollover count them. The rest as they are.
  */
 export function coveredOutOf(view: NoTransactionsView, month: string): NoTransactionsView {
-  const from = `${month}-01`;
-  const through = lastDayOf(month);
+  return coveredOutOfDays(view, `${month}-01`, lastDayOf(month));
+}
+
+/** coveredOutOf for any days, [from, through] (YYYY-MM-DD): a period the
+ *  read-only API answers for (lib/api-read.ts readSpending, lib/api-cash-flow.ts). */
+export function coveredOutOfDays(view: NoTransactionsView, from: string, through: string): NoTransactionsView {
   const without = view.without.filter((w) => !w.files || !filesCoverAll(w.files, null, from, through));
   return without.length === view.without.length ? view : { ...view, without };
 }

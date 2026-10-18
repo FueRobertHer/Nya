@@ -45,6 +45,8 @@ const { trailingMonths } = await import('@/lib/goal-projection');
 const MonthBreakdown = (await import('@/components/MonthBreakdown')).default;
 const routes = await import('@/app/api/history-import/route');
 const transactionsRoute = await import('@/app/api/transactions/route');
+const { readSpending, queryTransactions } = await import('@/lib/api-read');
+const { readCashFlow } = await import('@/lib/api-cash-flow');
 
 const ctx = TEST_CTX;
 const NOW = new Date().toISOString().slice(0, 7);
@@ -176,6 +178,24 @@ describe('a bank whose transactions Plaid doesn’t provide, and files that cove
     expect(says.chart([M1])).toEqual([]);
     expect(says.rollover(M1)).toEqual([]);
     expect(await says.report(M1)).toEqual([]);
+  });
+
+  test('the read-only API agrees with the chart: spending, the cash flow and the list over a month the files cover say nothing of the bank', async () => {
+    await importM1();
+    const of = (notes: string[]) => notes.filter((n) => n.includes('Credit Union'));
+    const range = (m: string) => ({ from: `${m}-01`, to: lastDayOf(m) });
+    const api = async (m: string) => [
+      of((await quietly(() => readSpending(ctx, range(m)))).notes),
+      of((await quietly(() => readCashFlow(ctx, range(m)))).notes),
+      of((await quietly(() => queryTransactions(ctx, { ...range(m), limit: 50 }))).notes),
+    ];
+    // M1: its files hold its transactions, as in the chart.
+    expect(await api(M1)).toEqual([[], [], []]);
+    expect((await quietly(() => readSpending(ctx, range(M1)))).groups.length).toBeGreaterThan(0);
+    // M2, and a range over both: nothing covers M2, so it is said, as the chart says it.
+    for (const said of await api(M2)) expect(said).toHaveLength(1);
+    const both = { from: `${M1}-01`, to: lastDayOf(M2) };
+    expect(of((await quietly(() => readCashFlow(ctx, both))).notes)).toHaveLength(1);
   });
 
   test('the Activity tab says it under the month only where the files don’t cover it', async () => {

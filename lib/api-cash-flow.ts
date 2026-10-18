@@ -27,6 +27,7 @@
 
 import type { Ctx } from './containers';
 import { firstDay, importedNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
+import { coveredOutOfDays } from './no-transactions';
 import { cashFlow, inPeriod } from './cash-flow';
 import { totalsCurrency, type LeftOut } from './spending';
 import { isProvisionalId, type CategoryKind } from './categories';
@@ -71,7 +72,13 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
   const inRange = inPeriod(opts);
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  // As the app's chart has them (app/api/transactions): never the tags'
+  // note, since tags change no figure here, and a bank whose files cover the
+  // range in its place is counted.
+  const notes = [
+    ...activity.notes.filter((n) => n !== activity.tags_note),
+    ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals'),
+  ];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
