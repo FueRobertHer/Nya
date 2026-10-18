@@ -501,7 +501,11 @@ describe('the snapshot gate and connection health', () => {
       ['waiting', false],
       ['waiting', false],
     ]);
-    const late = buildConnectorInstitutions(new Map([[id, conn]]), accounts, NOW + (FRESH_HOURS + 1) * 3_600_000);
+    // Balances as new as the answer, so only the answer's age is in question:
+    // the bank's own, from noon the day before, would be past
+    // OLD_BALANCE_HOURS by then when the test runs late in a UTC day.
+    const answered = accounts.map((a) => ({ ...a, balance_at: new Date(NOW).toISOString() }));
+    const late = buildConnectorInstitutions(new Map([[id, conn]]), answered, NOW + (FRESH_HOURS + 1) * 3_600_000);
     expect(late.map((i) => [i.health?.detail?.issue, i.health?.side, isRecordable(i)])).toEqual([
       ['stale', 'nya', false],
       ['stale', 'nya', false],
