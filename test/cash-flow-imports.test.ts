@@ -305,19 +305,19 @@ describe('what is said beside the chart', () => {
     const { rows, ix } = await activity();
     const notes = (p: ReturnType<typeof periodOf> | ReturnType<typeof monthPeriod>) =>
       cashFlowNotes({ flow: cashFlow(rows, inPeriod(p), 'USD', ix), period: p, rows, today, day }).counted;
-    expect(notes(periodOf('last-12-months', today))).toContain('4 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(notes(periodOf('last-12-months', today))).toContain('4 of this period’s transactions were imported from files, not sent by the bank.');
     // Each month, the month's own sentence (components/MonthBreakdown.tsx),
     // the month named.
     for (const m of periodOf('last-12-months', today).months) {
       const theirs = importedRowsNote(rows.filter((t) => t.date.slice(0, 7) === m));
-      const ours = notes(monthPeriod(m)).find((n) => n.includes('imported from your bank’s files')) ?? null;
+      const ours = notes(monthPeriod(m)).find((n) => n.includes('imported from files')) ?? null;
       expect([m, ours]).toEqual([m, theirs && theirs.replace('this month’s', `${monthName(m, today)}’s`)]);
     }
     // The bank sends the corner shop: one fewer is imported.
     await storeBank([...BANK, bankTxn('b_mid', 49, 60, { name: 'CORNER SHOP #12' })]);
     const sent = await activity();
     expect(cashFlowNotes({ flow: cashFlow(sent.rows, inPeriod(periodOf('last-12-months', today)), 'USD', sent.ix), period: periodOf('last-12-months', today), rows: sent.rows, today, day }).counted).toContain(
-      '3 of this period’s transactions were imported from your bank’s files, not sent by the bank.'
+      '3 of this period’s transactions were imported from files, not sent by the bank.'
     );
   });
 
@@ -355,14 +355,16 @@ describe('the API’s cash flow over imported rows', () => {
   test('the same figures as spending, before and after the bank stands for one; its notes spending’s, and how many were imported, as the chart says it', async () => {
     await importStatement();
     const range = { from: daysAgo(364), to: daysAgo(0) };
-    const imported = (n: number, of = 'this period') => `${n} of ${of}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+    const imported = (n: number, of = 'this period') => `${n} of ${of}’s transactions ${n === 1 ? 'was' : 'were'} imported from files, not sent by the bank.`;
     const same = async (count: number) => {
       const [f, s] = await Promise.all([readCashFlow(ctx, range), readSpending(ctx, range)]);
       expect([f.money_in, f.money_out, f.net, f.counted, f.transactions, f.excluded]).toEqual([s.money_in, s.money_out, s.net, s.counted, s.transactions, s.excluded]);
       const categories = f.groups.flatMap((g) => g.categories.map((c) => ({ category: c.name, category_id: c.id, group: g.name, group_id: g.id, spent: c.amount, transactions: c.transactions })));
       const sorted = [...categories].sort((a, b) => b.spent - a.spent || (a.category < b.category ? -1 : 1));
       expect(sorted).toEqual(s.categories as unknown as typeof sorted);
-      expect(f.notes).toEqual([...s.notes, imported(count)]);
+      // Spending's notes, the note on what was imported among them, last.
+      expect(f.notes).toEqual(s.notes);
+      expect(s.notes.at(-1)).toBe(imported(count));
       return f;
     };
     const before = await same(4);
@@ -371,6 +373,7 @@ describe('the API’s cash flow over imported rows', () => {
     // A month is named, as the chart names one; it holds the corner shop alone.
     const m = daysAgo(50).slice(0, 7);
     expect((await readCashFlow(ctx, { from: `${m}-01`, to: lastDayOf(m) })).notes).toContain(imported(1, monthName(m)));
+    expect((await readSpending(ctx, { from: `${m}-01`, to: lastDayOf(m) })).notes).toContain(imported(1, monthName(m)));
 
     await storeBank([...BANK, bankTxn('b_mid', 49, 60, { name: 'CORNER SHOP #12' })]);
     const after = await same(3);
@@ -425,7 +428,7 @@ describe('an imported row’s split (#39), carried to the bank row that comes to
     expect(bankRows(listed).map((t) => [t.transaction_id, t.amount, t.split_parts?.map((p) => p.amount)])).toEqual([['b_mid', 60, [15]]]);
     expect(countTransactions(listed)).toBe(1);
     // The bank's row isn't imported: three of the year's transactions are.
-    expect(cashFlowNotes({ flow, period: year, rows: sent.rows, today, day }).counted).toContain('3 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(cashFlowNotes({ flow, period: year, rows: sent.rows, today, day }).counted).toContain('3 of this period’s transactions were imported from files, not sent by the bank.');
 
     const range = { from: daysAgo(364), to: daysAgo(0) };
     const [f, s] = await Promise.all([readCashFlow(ctx, range), readSpending(ctx, range)]);

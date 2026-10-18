@@ -899,17 +899,22 @@ describe('never the same account twice', () => {
   });
 
   test('on another server, only the same bank, name and balance is a likely match, said and never refused', () => {
-    const account = { remote_id: 'X1', name: 'Everyday  Checking', institution_name: 'Big Bank', reported_balance: 50 } as Parameters<typeof trackedElsewhere>[2][number]['account'];
+    const account = { connector: 'simplefin', remote_id: 'X1', name: 'Everyday  Checking', institution_name: 'Big Bank', reported_balance: 50 } as Parameters<typeof trackedElsewhere>[2][number]['account'];
     const others = [{ account, host: 'one.host' }];
-    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 50 }, 'other.host', others)).toMatchObject({ host: 'one.host', certain: false });
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 50 }, { connector: 'simplefin', host: 'other.host' }, others)).toMatchObject({ host: 'one.host', certain: false });
     // Another balance, no balance known, or another name: no match.
-    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 51 }, 'other.host', others)).toBeNull();
-    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK' }, 'other.host', others)).toBeNull();
-    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank', balance: 50 }, 'other.host', others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK', balance: 51 }, { connector: 'simplefin', host: 'other.host' }, others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'Z9', name: 'everyday checking', institution: 'BIG BANK' }, { connector: 'simplefin', host: 'other.host' }, others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank', balance: 50 }, { connector: 'simplefin', host: 'other.host' }, others)).toBeNull();
     // The same id on the same host is the same account, for certain.
-    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, 'one.host', others)).toMatchObject({ host: 'one.host', certain: true });
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, { connector: 'simplefin', host: 'one.host' }, others)).toMatchObject({ host: 'one.host', certain: true });
     // On the same host, a name alone is never a match.
-    expect(trackedElsewhere({ remote_id: 'X2', name: 'Everyday Checking', institution: 'Big Bank', balance: 50 }, 'one.host', others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: 'X2', name: 'Everyday Checking', institution: 'Big Bank', balance: 50 }, { connector: 'simplefin', host: 'one.host' }, others)).toBeNull();
+    // Through another connector on that host (Lunch Flow's API beside its own
+    // SimpleFIN server), ids are another connector's: the same one is no
+    // certain match, and bank, name and balance are a likely one.
+    expect(trackedElsewhere({ remote_id: 'X1', name: 'Savings', institution: 'Big Bank' }, { connector: 'lunchflow', host: 'one.host' }, others)).toBeNull();
+    expect(trackedElsewhere({ remote_id: '1470', name: 'Everyday Checking', institution: 'Big Bank', balance: 50 }, { connector: 'lunchflow', host: 'one.host' }, others)).toMatchObject({ host: 'one.host', certain: false });
   });
 });
 

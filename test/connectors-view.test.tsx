@@ -189,7 +189,7 @@ describe('a connection’s card', () => {
     const html = renderToStaticMarkup(<ConnectorCardView conn={conn()} requests={{ left: 5, limit: 8, resets_in_seconds: 100 }} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
     expect(html).toContain('bridge.example · 1 account tracked · last answered');
     expect(html).toContain('5 of 8 requests left today');
-    expect(html).toContain('older ones arrive over the next few nights');
+    expect(html).toContain('Everything SimpleFIN has from Jul 11, 2026 on is in, and older transactions arrive over the next few nights.');
     expect(html).toContain('>Refresh</button>');
     expect(html).toContain('>Choose accounts</button>');
     expect(html).toContain('>Disconnect</button>');
@@ -203,7 +203,7 @@ describe('a connection’s card', () => {
     expect(html).toContain('SimpleFIN no longer accepts Nya’s access (HTTP 403).');
     expect(html).toContain('>Connect again</button>');
     expect(html).not.toContain('>Refresh</button>');
-    const reported = conn({ last_fetch: { ...conn().last_fetch!, problems: [{ message: 'Connection to My Bank may need attention', accounts: ['Checking'] }] } });
+    const reported = conn({ last_fetch: { ...conn().last_fetch!, problems: [{ message: 'Connection to My Bank may need attention', accounts: ['Checking'], retry: false }] } });
     expect(renderToStaticMarkup(<ConnectorCardView conn={reported} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />)).toContain(
       'SimpleFIN reports: “Connection to My Bank may need attention” (Checking)'
     );
@@ -268,7 +268,9 @@ describe('in connection health', () => {
     expect(dashboard).toContain('<ConnectorSheet ask={connectorAsk}');
     expect(dashboard.match(/<ConnectorCards /g)?.length).toBe(2);
     expect(dashboard.match(/onConnectSimpleFin=\{connectSimpleFin\}/g)?.length).toBe(2);
-    expect(dashboard).toContain("{inst.connector ? 'via SimpleFIN' : 'Manual'}");
+    expect(dashboard.match(/onConnectLunchFlow=\{connectLunchFlow\}/g)?.length).toBe(2);
+    expect(dashboard).toContain('const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;');
+    expect(dashboard).toContain("{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}");
     for (const gate of ['{inst.manual && !inst.connector && (', '{inst.manual && !inst.connector && !a.hidden && (', '{inst.manual && !inst.connector && manageMode && (']) {
       expect(dashboard).toContain(gate);
     }

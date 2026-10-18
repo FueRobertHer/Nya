@@ -46,7 +46,7 @@
 // A section whose store couldn't be read is UNREAD: left out, and the email
 // says some of the data couldn't be read rather than guessing.
 
-import { countsInTotals, leftOutByCurrency, uncategorizedFromConnector, type Countable } from '../spending';
+import { countsInTotals, leftOutByCurrency, uncategorizedFrom, uncategorizedFromConnector, type Countable } from '../spending';
 import { addDays, dismissedSeries, upcomingBills, type RecurringSeries } from '../recurring';
 import { plannedDates, type PlannedItem } from '../planned';
 import { availableMeters, monthGapsOf, type CoverageFacts, type MonthBudgets, type MonthGap } from '../rollover';
@@ -154,8 +154,12 @@ export type WeeklyFacts = {
   goals: GoalFact | Unread;
   connections: ConnectionFact[] | Unread;
   months: MonthFact[] | Unread;
-  /** Transactions this week from SimpleFIN with no category. */
+  /** Transactions this week from SimpleFIN or Lunch Flow with no category. */
   uncategorized: number | Unread;
+  /** The services they came through, as the words name them ("SimpleFIN",
+   *  "Lunch Flow", or both), so nobody is told of one they don't use; both
+   *  when absent (facts gathered before it was kept). */
+  uncategorized_from?: string;
 };
 
 // ---- Spending ----
@@ -377,7 +381,13 @@ export function monthsFact(months: readonly string[], facts: CoverageFacts): Mon
 
 // ---- Uncategorized ----
 
-/** The week's transactions from SimpleFIN with no category, that count. */
+/** The week's transactions from SimpleFIN or Lunch Flow with no category, that count. */
 export function uncategorizedFact(rows: readonly (Countable & { date: string; source?: string | null })[], first: string, last: string): number {
   return uncategorizedFromConnector(rows.filter((t) => t.date >= first && t.date <= last));
+}
+
+/** The services the week's uncategorized transactions came through, named
+ *  as the words name them (lib/spending.ts uncategorizedFrom). */
+export function uncategorizedSourcesFact(rows: readonly (Countable & { date: string; source?: string | null })[], first: string, last: string): string {
+  return uncategorizedFrom(rows.filter((t) => t.date >= first && t.date <= last));
 }

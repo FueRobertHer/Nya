@@ -103,14 +103,14 @@ async function checkJoining(ctx: Ctx, ids: readonly string[], found: ReadonlyMap
   for (const [id, rows] of stood) {
     if (rows.some((r) => carried.has(r))) {
       throw new GroupError(
-        `${quoted(found.get(id)!)} is split as you split the row you imported for it from your bank’s file, and its parts count on their own, so a group would count it twice. Unsplit it first.`,
+        `${quoted(found.get(id)!)} is split as the row imported for it is, and its parts count on their own, so a group would count it twice. Unsplit it first.`,
         409
       );
     }
     const held = rows.map((r) => everyGroup.get(r)).find((g) => g !== undefined);
     if (held) {
       throw new GroupError(
-        `${quoted(found.get(id)!)} is already in the group “${groups.get(held)!.name}”, in place of the row you imported for it from your bank’s file: take it out of that group first.`,
+        `${quoted(found.get(id)!)} is already in the group “${groups.get(held)!.name}”, in place of the row imported for it: take it out of that group first.`,
         409
       );
     }

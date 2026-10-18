@@ -27,6 +27,7 @@ import { archivedText, goalNotes, meterLabel, outlookText, sourceNote, splitText
 import { MAX_GOALS, type Goal } from '@/lib/goal-model';
 import { useGoalFlows, type GoalFlowsState } from './goal-flows-state';
 import GoalSheet from './GoalSheet';
+import GoalPlansRepair, { type GoalPlansDamage } from './GoalPlansRepair';
 import { Masked } from './HideAmounts';
 
 export type { Goal } from '@/lib/goal-model';
@@ -46,6 +47,11 @@ type CardProps = {
   error?: string | null;
   /** Why the last save did not go through; shown above the list. */
   saveError?: string | null;
+  /** When the goals couldn't load for plans that can't be read, how many of
+   *  each kind: the damaged ones can be removed here, once confirmed. */
+  damage?: GoalPlansDamage;
+  /** Loads the goals again once they are removed. */
+  onRepaired?: () => void;
   /** Every account, hidden ones too, and those that ended, each with its end
    *  (lib/goal-view.ts withAccountEnds): a goal tracking one says so, rather
    *  than "disconnected", which would be alarming and false. The editor
@@ -67,6 +73,8 @@ export function GoalsCardView({
   status = 'ready',
   error = null,
   saveError = null,
+  damage,
+  onRepaired,
   accounts,
   onSave,
   flows,
@@ -137,6 +145,10 @@ export function GoalsCardView({
           <div className="inst-name">Goals</div>
         </div>
         {status === 'loading' ? <p className="empty-note">Loading goals…</p> : <p className="stale-note">{error}</p>}
+        {/* Plans that can't be read: said with the load's error, with the repair. */}
+        {status === 'error' && damage && onRepaired && damage.unreadable + damage.unrecognised > 0 && (
+          <GoalPlansRepair damage={damage} onRepaired={onRepaired} />
+        )}
         {editor}
       </div>
     );

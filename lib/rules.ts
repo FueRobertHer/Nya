@@ -39,7 +39,8 @@
 //     went (lib/categories.ts categoryById);
 //   - source: where it came from: "plaid" (a bank), "manual" (entered by
 //     hand), "import" (from a file, of any format, into a manual account or
-//     a linked one: the account tells them apart) or "simplefin".
+//     a linked one: the account tells them apart), "simplefin" or
+//     "lunchflow".
 //
 // PRIORITY. Rules run in priority order, 1 first. When two rules that match
 // one transaction both set its category, or its name, the one that runs
@@ -83,7 +84,7 @@ export type AmountOp = (typeof AMOUNT_OPS)[number];
 export const DIRECTIONS = ['out', 'in'] as const;
 export type Direction = (typeof DIRECTIONS)[number];
 /** Where a transaction comes from, as a source condition names it. */
-export const SOURCE_KINDS = ['plaid', 'manual', 'import', 'simplefin'] as const;
+export const SOURCE_KINDS = ['plaid', 'manual', 'import', 'simplefin', 'lunchflow'] as const;
 
 export type RuleCondition =
   | { field: 'name'; op: TextOp; value: string }

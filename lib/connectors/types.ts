@@ -1,11 +1,12 @@
 // lib/connectors/types.ts
 //
 // The connector interface: what a service the person brings themselves (their
-// own SimpleFIN account first; a Lunch Flow key later) supplies, so the rest
-// of Nya never depends on which one it is. A connector is two calls:
+// own SimpleFIN account, or their own Lunch Flow API key) supplies, so the
+// rest of Nya never depends on which one it is. A connector is two calls:
 //
-//   exchange  what the person pastes (SimpleFIN's one-time Setup Token) for
-//             the credential Nya keeps (SimpleFIN's Access URL), which is
+//   exchange  what the person pastes (SimpleFIN's one-time Setup Token, or a
+//             Lunch Flow API key) for the credential Nya keeps (SimpleFIN's
+//             Access URL, or the key itself once Lunch Flow has taken it),
 //             stored as a per-container secret (lib/connectors/store.ts);
 //   fetch     with that credential: every account it can see, each with its
 //             balance and the day the institution gave it, the transactions
@@ -26,11 +27,42 @@
 import type { RawRecord } from '../import/record';
 import type { Side } from '../connection-state';
 
-/** The connectors Nya knows. Stored with each connection. */
-export const CONNECTOR_KINDS = ['simplefin'] as const;
+/** The connectors Nya knows. Stored with each connection, and as the
+ *  `source` of each transaction one brings (lib/connectors/sync.ts). */
+export const CONNECTOR_KINDS = ['simplefin', 'lunchflow'] as const;
 export type ConnectorKind = (typeof CONNECTOR_KINDS)[number];
 
 export const isConnectorKind = (v: unknown): v is ConnectorKind => typeof v === 'string' && (CONNECTOR_KINDS as readonly string[]).includes(v);
+
+/** How each connector is named, in the words every screen and message uses,
+ *  here so client code needs no connector module:
+ *    label        what the person calls it;
+ *    credential   what they paste to connect it;
+ *    again        what connecting again takes, after "Connect again with";
+ *    balance_date whose day a balance's date is: the institution's own
+ *                 (SimpleFIN's balance-date), or the day Nya received it,
+ *                 for a connector that gives no time with its balances
+ *                 (Lunch Flow: lib/connectors/lunchflow.ts). */
+export const CONNECTOR_WORDS: Readonly<Record<ConnectorKind, { label: string; credential: string; again: string; balance_date: 'institution' | 'received' }>> = {
+  simplefin: { label: 'SimpleFIN', credential: 'Setup Token', again: 'a new Setup Token', balance_date: 'institution' },
+  lunchflow: { label: 'Lunch Flow', credential: 'API key', again: 'an API key from Lunch Flow', balance_date: 'received' },
+};
+
+/** What the person calls a connector: "SimpleFIN", "Lunch Flow" (a kind this
+ *  release doesn't know, as it is). */
+export const connectorLabel = (kind: string): string => (isConnectorKind(kind) ? CONNECTOR_WORDS[kind].label : kind);
+
+/** Every connector's name, for words about them all ("SimpleFIN or Lunch Flow"). */
+export const ANY_CONNECTOR = CONNECTOR_KINDS.map(connectorLabel).join(' or ');
+
+/** The line under a connector account's balance on the Accounts tab, `day`
+ *  written for the person: the institution's own day (SimpleFIN's
+ *  balance-date), or, for a connector that gives none, the day Nya received
+ *  it, said as such, never as the bank's. */
+export function connectorBalanceDay(kind: string, day: string): string {
+  const words = isConnectorKind(kind) ? CONNECTOR_WORDS[kind] : null;
+  return words?.balance_date === 'received' ? `Balance as ${words.label} gave it on ${day}` : `Balance as of ${day}`;
+}
 
 /** One account as a connector reports it. */
 export type RemoteAccount = {
@@ -69,6 +101,15 @@ export type RemoteAccount = {
   left_out: { pending: number; unreadable: number };
 };
 
+/** What kind of problem one is, when it isn't the connector's own word about
+ *  a bank (which is fixed at the connector, and has no kind): `retry`, a
+ *  request about these accounts that brought nothing usable this time (no
+ *  answer, the connector's own error, an answer Nya couldn't read, or Nya's
+ *  own time for the fetch running out), which asking again should clear. It
+ *  holds the accounts' bank all the same, and is worded as a wait
+ *  (lib/connectors/institutions.ts, health.ts), never as something to fix. */
+export type ProblemKind = 'retry';
+
 /** A problem the connector reported. */
 export type RemoteProblem = {
   /** Its own words, as it sent them (cleaned of control characters, capped). */
@@ -77,7 +118,14 @@ export type RemoteProblem = {
   /** The remote ids of the accounts it concerns, when that can be told; null
    *  when it could concern any of them. */
   accounts: string[] | null;
+  /** Absent for the connector's word about a bank. */
+  kind?: ProblemKind;
 };
+
+/** An account a connector listed but wasn't asked about, since Nya already
+ *  offers it with what it needs (FetchRequest `offered`): its names, to keep
+ *  the offer up to date with. */
+export type ListedAccount = { remote_id: string; name: string; institution: RemoteAccount['institution'] };
 
 /** One answer: the accounts, and the problems reported beside them. */
 export type RemoteAnswer = {
@@ -86,6 +134,10 @@ export type RemoteAnswer = {
   /** Accounts listed in a shape Nya can't read (no id, no balance): counted,
    *  never guessed at. A tracked one among them reads as missing. */
   unreadable_accounts: number;
+  /** Accounts not tracked that the connector listed without being asked
+   *  about (a connector that asks account by account, for those in the
+   *  request's `offered`): still offered, as they were. */
+  listed?: ListedAccount[];
 };
 
 /** Why a request brought nothing usable, in kinds every connector maps its
@@ -129,13 +181,14 @@ export class ConnectorFailure extends Error {
 
 /** Why an exchange of what the person pasted didn't give Nya its access. */
 export type ExchangeFailureKind =
-  /** It isn't a token at all. */
+  /** It isn't a token (or a key) at all. */
   | 'invalid'
-  /** The connector refused it: already used (a token works once), or never valid. */
+  /** The connector refused it: already used (a SimpleFIN token works once),
+   *  or never valid (a key Lunch Flow doesn't accept). */
   | 'claimed'
   /** Its address isn't one Nya connects to. */
   | 'blocked'
-  /** No answer came. The token may have been used up all the same. */
+  /** No answer came. A SimpleFIN token may have been used up all the same. */
   | 'down'
   /** The answer wasn't a credential Nya can use. */
   | 'answer';
@@ -152,20 +205,39 @@ export class ExchangeFailure extends Error {
 
 /** What one fetch asks for: transactions posted from `start` (a UTC day) up
  *  to, not including, `end` (a UTC day; none for "until now"), or only the
- *  balances. */
-export type FetchRequest = { start: string; end: string | null; balancesOnly?: false } | { balancesOnly: true };
+ *  balances. One whose single answer holds every account (SimpleFIN) needs
+ *  nothing more; for a connector that asks account by account (Lunch Flow):
+ *    accounts  the remote ids whose transactions are wanted (the tracked
+ *              ones), asked about first; no others' transactions are asked;
+ *    offered   remote ids of accounts not tracked that Nya already offers,
+ *              with their currency: their balances needn't be asked again,
+ *              only their names listed (RemoteAnswer `listed`). Any other
+ *              account is still listed with its balance, to be offered;
+ *    since     the earliest day of transactions wanted at all (the
+ *              history's limit, lib/connectors/sync.ts HISTORY_DAYS): an
+ *              answer's rows from before `start` but not before it are kept,
+ *              for a connector whose rows can turn up after the days they are
+ *              dated (Lunch Flow dates a card's held purchase by its own day,
+ *              and sends it once it posts). */
+export type FetchRequest =
+  | { start: string; end: string | null; balancesOnly?: false; accounts?: readonly string[]; offered?: readonly string[]; since?: string }
+  | { balancesOnly: true };
 
 export type ConnectorDef = {
   kind: ConnectorKind;
-  /** What the person calls it: "SimpleFIN". */
+  /** What the person calls it: "SimpleFIN" (CONNECTOR_WORDS). */
   label: string;
   /** The longest window of days one request may ask for. */
   windowDays: number;
   /** How many days consecutive windows overlap, so a transaction that posts
    *  late into the day a window ends on is still caught. */
   overlapDays: number;
-  /** How many requests a day the connector allows per credential. */
-  providerDailyLimit: number;
+  /** How many requests a day the connector allows per credential, or null
+   *  when it documents no number. */
+  providerDailyLimit: number | null;
+  /** The longest text the connect route takes for what is pasted, before
+   *  checkInput reads it. */
+  maxInputChars: number;
   /** Checks what the person pasted before anything is sent or counted:
    *  throws ExchangeFailure('invalid') when it can't be what `exchange` takes. */
   checkInput(input: string): void;

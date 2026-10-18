@@ -678,6 +678,43 @@ describe('the route', () => {
     expect(budgets.budget_set.categories[named(after, 'Home improvement')!.id]).toEqual({ amount: 50 });
   });
 
+  test('what uses the categories is read once for all of them: an apply’s, and undoing Freelancer’s eleven', async () => {
+    const t = await ensureTaxonomy(ctx);
+    // Something filed by hand under a category Freelancer adds, once added.
+    const reads = { overrides: 0 };
+    const real = fake.hgetall.bind(fake);
+    (fake as any).hgetall = async (key: string) => {
+      if (key === ctxKey('txn-category-overrides')) reads.overrides++;
+      return real(key);
+    };
+    try {
+      const preview = await act({ action: 'preview', template: 'freelancer' });
+      // At most once, whatever it may archive.
+      expect(reads.overrides).toBeLessThanOrEqual(1);
+      const applied = await act({ action: 'apply', template: 'freelancer', basis: preview.body.preview.basis });
+      expect(applied.status).toBe(200);
+      expect(applied.body.undo.added.categories.length).toBeGreaterThan(4);
+      const used = applied.body.undo.added.categories[0];
+      await setOverride(ctx, 'txn_9', used.name);
+      // What one category's read makes.
+      reads.overrides = 0;
+      await (await import('@/lib/category-usage')).categoryUsage(ctx, applied.body.categories, used.id);
+      const once = reads.overrides;
+      expect(once).toBeGreaterThan(0);
+      reads.overrides = 0;
+      const undone = await act({ action: 'undo', undo: applied.body.undo });
+      expect(undone.status).toBe(200);
+      expect(reads.overrides).toBe(once);
+      // Still read for each: the one with a transaction stays, the rest go.
+      expect(undone.body.kept).toContainEqual({ name: used.name, why: 'used' });
+      expect(named(undone.body.categories, used.name)).toBeDefined();
+      for (const a of applied.body.undo.added.categories.slice(1)) expect(named(undone.body.categories, a.name)).toBeUndefined();
+      expect(named(t, used.name)).toBeUndefined();
+    } finally {
+      (fake as any).hgetall = real;
+    }
+  });
+
   test('refuses what isn’t a request: a template it doesn’t have, a basis that isn’t one, an undo that isn’t one, too large', async () => {
     expect((await act({ action: 'preview', template: 'fancy' })).status).toBe(400);
     expect((await act({ action: 'apply', template: 'simple' })).status).toBe(400);

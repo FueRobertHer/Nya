@@ -6,8 +6,9 @@ import { connectorOf } from '@/lib/connectors/registry';
 import { isManualId } from '@/lib/manual';
 import { connectorError, readJson } from '@/lib/connectors/respond';
 
-// The accounts a SimpleFIN connection fed that the person stopped tracking or
-// disconnected (connector-ended, lib/connectors/store.ts), which reports read
+// The accounts a SimpleFIN or Lunch Flow connection fed that the person
+// stopped tracking or disconnected (connector-ended, lib/connectors/store.ts),
+// which reports read
 // to say what a period may be missing: GET lists them, with when and how each
 // was let go, and DELETE forgets one at the person's word (lib/connectors/
 // manage.ts forgetEnded), after which reports no longer mention it.

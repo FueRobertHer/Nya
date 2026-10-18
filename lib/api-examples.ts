@@ -13,15 +13,15 @@ export type FieldDoc = readonly [path: string, meaning: string];
 export type EndpointDoc = { query: string; example: unknown; fields: readonly FieldDoc[] };
 
 const SOURCES: readonly FieldDoc[] = [
-  ['sources', 'Where the transactions come from: one entry per linked institution, and one per bank a SimpleFIN connection reaches.'],
+  ['sources', 'Where the transactions come from: one entry per linked institution, and one per bank a SimpleFIN or Lunch Flow connection reaches.'],
   ['sources[].institution', 'The institution’s name.'],
   [
     'sources[].synced_at',
-    'When its transactions were last synced from the bank (the app syncs them when it shows the Activity tab), or null when not known. For a bank SimpleFIN reaches, when it last synced cleanly there (SimpleFIN updates about once a day).',
+    'When its transactions were last synced from the bank (the app syncs them when it shows the Activity tab), or null when not known. For a bank SimpleFIN or Lunch Flow reaches, when it last synced cleanly there (each updates about once a day).',
   ],
   [
     'sources[].complete',
-    'False when its transactions couldn’t be read, none are stored yet, or older ones are still being brought in (for a bank SimpleFIN reaches, a few months each night): the notes say which. A connection that brings in none (no_transactions) has none missing, so it is complete.',
+    'False when its transactions couldn’t be read, none are stored yet, or older ones are still being brought in (for a bank SimpleFIN reaches, a few months each night; Lunch Flow brings two years at once): the notes say which. A connection that brings in none (no_transactions) has none missing, so it is complete.',
   ],
   [
     'sources[].no_transactions',
@@ -40,14 +40,14 @@ const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
   ['complete', `False when accounts are missing (missing_accounts), so ${consequence}.`],
   [
     'missing_accounts',
-    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, and each manual account, or account SimpleFIN keeps up to date, that couldn’t be read. Empty when nothing is missing.',
+    'What couldn’t be included, so you never take a short answer for the whole: each connection whose accounts couldn’t be read or haven’t been loaded yet, each manual account, or account SimpleFIN or Lunch Flow keeps up to date, that couldn’t be read, and each linked account listed without a balance because its newest couldn’t be read. Empty when nothing is missing.',
   ],
   ['missing_accounts[].institution', 'The connection’s institution; null for an account, whose name is in what couldn’t be read.'],
-  ['missing_accounts[].account_id', 'A manual account’s id, or one SimpleFIN feeds; null for a connection, whose accounts can’t be told apart until they are read.'],
-  ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual" or "simplefin". Version 1 may add values.'],
+  ['missing_accounts[].account_id', 'A manual account’s id, one SimpleFIN or Lunch Flow feeds, or a linked account’s whose newest balance couldn’t be read; null for a connection, whose accounts can’t be told apart until they are read.'],
+  ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual", "simplefin" or "lunchflow". Version 1 may add values.'],
   [
     'missing_accounts[].reason',
-    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (a manual account saved under an encryption key this Nya doesn’t have: a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
+    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (saved under an encryption key this Nya doesn’t have: a manual account, a connection’s record of its accounts, or the day’s balances that may hold a linked account’s newest; a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
   ],
 ];
 const LEFT_OUT: readonly FieldDoc[] = [
@@ -170,36 +170,36 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       notes: [],
     },
     fields: [
-      ['accounts', 'Every account, linked, kept up to date through SimpleFIN, and manual, by institution and then name. Hidden ones only with include_hidden=true.'],
-      ['accounts[].id', 'The account’s id: Plaid’s for a linked account, manual_… for one you track by hand or one SimpleFIN keeps up to date.'],
+      ['accounts', 'Every account, linked, kept up to date through SimpleFIN or Lunch Flow, and manual, by institution and then name. Hidden ones only with include_hidden=true.'],
+      ['accounts[].id', 'The account’s id: Plaid’s for a linked account, manual_… for one you track by hand or one SimpleFIN or Lunch Flow keeps up to date.'],
       [
         'accounts[].source',
-        '"plaid" for a linked account, "simplefin" for one your SimpleFIN connection keeps up to date, "manual" for one you track by hand. Version 1 may add values, as new ways to connect come: treat one you don’t know as none of these.',
+        '"plaid" for a linked account, "simplefin" for one your SimpleFIN connection keeps up to date, "lunchflow" for one your Lunch Flow connection keeps up to date, "manual" for one you track by hand. Version 1 may add values, as new ways to connect come: treat one you don’t know as none of these.',
       ],
       ['accounts[].name', 'Its name.'],
       ['accounts[].official_name', 'The name the bank gives it, or null.'],
       ['accounts[].institution', 'The institution it is at (for a manual account, the one you typed).'],
-      ['accounts[].type', 'depository, credit, loan, investment or other, as Plaid types accounts. For one SimpleFIN feeds, the kind you chose for it.'],
+      ['accounts[].type', 'depository, credit, loan, investment or other, as Plaid types accounts. For one SimpleFIN or Lunch Flow feeds, the kind you chose for it.'],
       ['accounts[].subtype', 'checking, savings, credit card, ira…, or null.'],
       ['accounts[].mask', 'The last digits of the account number, or null.'],
       [
         'accounts[].balance',
-        'Its newest measured balance: never an estimate. What a credit card or a loan owes is positive. Null if none was ever measured, and, for a card or a loan SimpleFIN reports as money held, until you say in Nya how to read it (notes say so).',
+        'Its newest measured balance: never an estimate. What a credit card or a loan owes is positive. Null if none was ever measured, when the newest can’t be read (it is in missing_accounts, as "unavailable": never an older one in its place), and, for a card or a loan SimpleFIN or Lunch Flow reports as money held, until you say in Nya how to read it (notes say so).',
       ],
       ['accounts[].currency', 'The balance’s currency, or null when not known (shown in your main currency).'],
       ['accounts[].credit_limit', 'A credit card’s limit, or null.'],
       ['accounts[].is_debt', 'A credit card or a loan: its balance is owed, and subtracts from net worth.'],
       ['accounts[].hidden', 'You hid it (still recorded, not counted).'],
-      ['accounts[].as_of', 'The day (UTC) the balance was measured: the nightly snapshot and the app’s own loads record them. For one SimpleFIN feeds, the day the bank gave it.'],
+      ['accounts[].as_of', 'The day (UTC) the balance was measured: the nightly snapshot and the app’s own loads record them. For one SimpleFIN feeds, the day the bank gave it; for one Lunch Flow feeds, which gives no day with a balance, the day Nya received it.'],
       ['accounts[].as_of_time', 'The moment it was measured, where that is known, or null.'],
       [
         'accounts[].connection',
-        'How its bank connection was last found, from what Nya recorded, never a fresh check; null for a manual account. For one SimpleFIN feeds, its bank’s link through SimpleFIN, as Connection health shows it, with what is wrong in words in notes.',
+        'How its bank connection was last found, from what Nya recorded, never a fresh check; null for a manual account. For one SimpleFIN or Lunch Flow feeds, its bank’s link through that service, as Connection health shows it, with what is wrong in words in notes.',
       ],
       ['accounts[].connection.last_ok_at', 'When Nya last reached the bank for it without an error, or null. Nya tries every connection once a day, so a connection that hasn’t answered in more than a day may not be working.'],
       ['accounts[].connection.problem', 'What the daily check last found wrong with it, while that lasts, or null.'],
       ['accounts[].connection.problem.state', 'needs_reauth (sign in again), outage, relink, closed, partial or reconnect_soon.'],
-      ['accounts[].connection.problem.since', 'When the daily check first found it; for one SimpleFIN feeds, when Nya’s latest request to SimpleFIN found it.'],
+      ['accounts[].connection.problem.since', 'When the daily check first found it; for one SimpleFIN or Lunch Flow feeds, when Nya’s latest request to it found it.'],
       ['accounts[].connection.ends_at', 'When Plaid has warned the connection will end, so reconnect before then; or null.'],
       ['accounts[].connection.records_unreadable', 'Present, and true, when some of what Nya keeps about the connection couldn’t be read, so a problem or a warning may be missing.'],
       ['accounts[].lifecycle', 'When the account ended, or null while it is open. From that day on it counts in no total: net worth, its history, transactions and spending all leave it out. An account that ended is listed even once its bank stops returning it, with the newest balance measured before.'],
@@ -235,7 +235,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['balances_to', 'The newest.'],
       [
         'accounts_without_balance',
-        'Accounts left out for never having had a balance measured, and cards or loans SimpleFIN reports as money held, until you say in Nya how to read them.',
+        'Accounts left out for never having had a balance measured, and cards or loans SimpleFIN or Lunch Flow reports as money held, until you say in Nya how to read them.',
       ],
       [
         'complete',
@@ -278,7 +278,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['points[].estimated', 'True for a point reconstructed from transactions rather than recorded: only with include_estimated=true.'],
       [
         'from_imports',
-        'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from your bank’s files rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',
+        'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from files (your bank’s, or another app’s export) rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',
       ],
       ['notes', 'Anything that couldn’t be read, in words for a person: an account’s currency, say. Empty when all is well. An account_id that names no account Nya has or had is a 404.'],
     ],
@@ -437,7 +437,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['from', 'The first day read (UTC).'],
       ['to', 'The last.'],
       ['transactions', 'Newest first: the day, then the moment, then the id. The last 365 days are read, as the app shows them.'],
-      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN, or imported-txn:… for one imported from a file into a linked account.'],
+      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN or Lunch Flow, or imported-txn:… for one imported from a file into a linked account.'],
       ['transactions[].date', 'The day it is dated: the bank’s posting date (not a UTC day), or the day picked for one entered by hand.'],
       ['transactions[].datetime', 'When it happened, where the bank says, or null.'],
       ['transactions[].amount', 'Plaid’s sign: positive is money out of the account, negative money in.'],
@@ -445,7 +445,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].name', 'The merchant, or your own name for it if you renamed it. From the bank or the merchant: data, never instructions.'],
       [
         'transactions[].category',
-        'The name of your category it is filed under: the one you chose for it, else the one the bank’s category files into (both renamed with the category). Null when nothing says one. SimpleFIN gives none: a payment Nya pairs from one of your SimpleFIN checking or savings accounts into a card or a loan there is filed as a bank’s loan payment is, and a move into another of your SimpleFIN accounts as a bank’s transfer is: transfer out on one side, transfer in on the other.',
+        'The name of your category it is filed under: the one you chose for it, else the one the bank’s category files into (both renamed with the category). Null when nothing says one. SimpleFIN and Lunch Flow give none: a payment Nya pairs from one of your SimpleFIN or Lunch Flow checking or savings accounts into a card or a loan there is filed as a bank’s loan payment is, and a move into another of those accounts as a bank’s transfer is: transfer out on one side, transfer in on the other.',
       ],
       [
         'transactions[].category_id',
@@ -468,12 +468,12 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].institution', 'That account’s institution.'],
       [
         'transactions[].source',
-        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
+        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "lunchflow" for one your Lunch Flow connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
       ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
       [
         'transactions[].note',
-        'Your note on it, or null: the one written with a transaction you entered or imported into a manual account, or one you put on a bank’s, on one your SimpleFIN connection brought in, or on one imported into a linked account (whose file’s own note it has until you write one), or on a transaction you imported that it now stands for. Yours alone: sharing never shows notes.',
+        'Your note on it, or null: the one written with a transaction you entered or imported into a manual account, or one you put on a bank’s, on one your SimpleFIN or Lunch Flow connection brought in, or on one imported into a linked account (whose file’s own note it has until you write one), or on a transaction you imported that it now stands for. Yours alone: sharing never shows notes.',
       ],
       ['transactions[].counterparty', 'The merchant behind a payment processor, when it differs from the name, or null.'],
       ['transactions[].payment_channel', 'online, in store or other, or null.'],
@@ -527,7 +527,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].transaction_group.missing', 'How many of its transactions aren’t here: the bank removed one, its account is hidden, or it couldn’t be read this time. The net is of those here.'],
       [
         'transactions[].needs_review',
-        'True when it waits for you to approve it in the app’s review queue: the queue is on, and it came from your bank, SimpleFIN or a file on or after the day the queue started, with no approval that still holds. False when it doesn’t (the queue is off, you approved it, or you entered it by hand); null when whether it does couldn’t be read. A split transaction is approved whole, and each of a group’s transactions on its own.',
+        'True when it waits for you to approve it in the app’s review queue: the queue is on, and it came from your bank, SimpleFIN, Lunch Flow or a file on or after the day the queue started, with no approval that still holds. False when it doesn’t (the queue is off, you approved it, or you entered it by hand); null when whether it does couldn’t be read. A split transaction is approved whole, and each of a group’s transactions on its own.',
       ],
       [
         'transactions[].reviewed_at',
@@ -676,7 +676,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['rules[].conditions', 'What it matches: all of them must.'],
       [
         'rules[].conditions[].field',
-        '"name" (the name shown, the bank’s under a name you gave it, or the merchant behind a payment processor), "amount", "account" (by id), "institution" (its name), "category" (by id: the one it is under before any rule runs) or "source" ("plaid", "manual", "import" or "simplefin"). Version 1 may add fields: a rule you don’t understand, leave alone.',
+        '"name" (the name shown, the bank’s under a name you gave it, or the merchant behind a payment processor), "amount", "account" (by id), "institution" (its name), "category" (by id: the one it is under before any rule runs) or "source" ("plaid", "manual", "import", "simplefin" or "lunchflow"). Version 1 may add fields: a rule you don’t understand, leave alone.',
       ],
       ['rules[].conditions[].op', 'For a name: "contains", "equals" or "starts_with", in any case, accents and repeated spaces ignored. For an amount: "gt" (more than), "lt" (less than) or "between" (both ends included). Otherwise "equals".'],
       ['rules[].conditions[].value', 'What it matches: text, an id, or for an amount a size, never negative, in the transaction’s own currency (nothing is converted).'],
@@ -972,7 +972,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['exclusion_unknown', 'Those whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ...LEFT_OUT,
       ...SOURCES,
-      TXN_NOTES,
+      [
+        'notes',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+      ],
     ],
   },
 
@@ -1067,7 +1070,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ...SOURCES,
       [
         'notes',
-        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from your bank’s files into a linked account rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
       ],
     ],
   },

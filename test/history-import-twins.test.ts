@@ -343,7 +343,7 @@ describe('through the read layer, and a total', () => {
     const costco = shown.find((t) => t.transaction_id === 'b_costco')!;
     expect(costco.imported_amount).toBe(150);
     expect(importedChangedNote(costco, (n) => `$${n.toFixed(2)}`)).toBe(
-      'This is the transaction you imported from your bank’s file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.'
+      'This is the transaction you imported from a file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.'
     );
     // And the route the Activity tab loads sends it.
     const sent = (await (await transactionsRoute.GET(new Request('http://localhost/api/transactions'))).json()).transactions;

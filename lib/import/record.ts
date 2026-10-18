@@ -21,8 +21,8 @@
 // parser; neither changes the rest.
 
 /** Where a record came from: a file's format, or a connector's name
- *  ('simplefin', lib/connectors/), each with its own parser. */
-export type SourceKind = 'ofx' | 'csv' | 'qif' | 'simplefin';
+ *  ('simplefin', 'lunchflow': lib/connectors/), each with its own parser. */
+export type SourceKind = 'ofx' | 'csv' | 'qif' | 'simplefin' | 'lunchflow';
 
 /** The formats a file can be in. QFX is OFX with Intuit's extra tags, read the
  *  same way. */
@@ -98,5 +98,5 @@ export function capField(s: string): string {
  *  "import:<format>", or a connector's own name, since its rows are not an
  *  import the person made but a feed Nya keeps up to date. */
 export function sourceOf(format: SourceKind): string {
-  return format === 'simplefin' ? 'simplefin' : `import:${format}`;
+  return format === 'simplefin' || format === 'lunchflow' ? format : `import:${format}`;
 }

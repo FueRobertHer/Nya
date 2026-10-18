@@ -221,6 +221,18 @@ export class KeyNotForContainerError extends Error {
   }
 }
 
+/**
+ * Whether a failed decrypt says only that this deployment can't use the
+ * value's key, never that the value is damaged: a failed decrypt under k0,
+ * which a replaced PLAID_ENCRYPTION_KEY looks exactly like (k0 commits to no
+ * key), or a data key the key store lacks. What a reader that names what it
+ * can't use calls `unavailable` (lib/manual.ts ManualAccountsReport), and
+ * never offers for removal nor passes over for an older value.
+ */
+export function sealedAway(err: unknown): boolean {
+  return (err instanceof DecryptFailedError && err.keyId === LEGACY_KEY_ID) || err instanceof UnknownKeyError;
+}
+
 // Raw key handling
 
 export function decodeKeyMaterial(material: string, name: string): Uint8Array {

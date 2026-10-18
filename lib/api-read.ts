@@ -58,7 +58,9 @@
 // waits for the person to say how to read it (an answer built on it says
 // complete: false), with each bank's health as Connection health shows it.
 // Their rows come from the same assembly as the rest, and each bank is among
-// the sources, with whether its older history is all in.
+// the sources, with whether its older history is all in. A Lunch Flow
+// connection's accounts are served the same way with source 'lunchflow', as
+// of when Nya received their balances (Lunch Flow gives no time with them).
 //
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
@@ -86,13 +88,13 @@ import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
 import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
-import { rememberedAccountsReport, type RememberedAccount } from './last-known';
+import { couldNotRead, rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
 import { connectorAccountsStore, endedAccountsStore } from './connectors/store';
-import { connectorOf } from './connectors/registry';
+import { ANY_CONNECTOR, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
 import type { InstitutionResult } from './networth';
 import { bankCurrencies } from './sharing';
 import { readHealthForDisplay } from './connection-health';
@@ -100,11 +102,12 @@ import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
-import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, type NoTransactionsView } from './no-transactions';
+import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, coveredOutOf, coveredOutOfDays, type NoTransactionsView } from './no-transactions';
+import { withImportedFiles } from './history-import/without-files';
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
 import { readBudgetMonth, windowStart, type BudgetMonthRead } from './budget-month';
-import { availableMeters, gapText, type Carry, type CarryFrom } from './rollover';
+import { availableMeters, gapText, monthName, type Carry, type CarryFrom } from './rollover';
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
@@ -121,7 +124,8 @@ import type { Authenticated } from './api-tokens';
 import { NotFound } from './api-spec';
 import { bankRows, PART_PREFIX, type WithParts } from './split-rows';
 import { readDrawState } from './history-import/extend';
-import { importedStretch } from './history-import/view';
+import { importedRowsNote, importedStretch } from './history-import/view';
+import { lastDayOf } from './cash-flow';
 import type { WalkState } from './history-import/store';
 
 const DAY_MS = 86_400_000;
@@ -178,10 +182,10 @@ export type ApiConnection = {
 
 export type ApiAccount = {
   id: string;
-  /** 'plaid' for a linked account, 'simplefin' for one a SimpleFIN
-   *  connection keeps up to date, 'manual' for one tracked by hand. Version
-   *  1 may add values (another way to connect): treat one you don't know as
-   *  none of these. */
+  /** 'plaid' for a linked account, 'simplefin' or 'lunchflow' for one a
+   *  SimpleFIN or Lunch Flow connection keeps up to date, 'manual' for one
+   *  tracked by hand. Version 1 may add values (another way to connect):
+   *  treat one you don't know as none of these. */
   source: string;
   name: string;
   official_name: string | null;
@@ -190,7 +194,8 @@ export type ApiAccount = {
   subtype: string | null;
   mask: string | null;
   /** Plaid's sign: what a credit card or a loan owes is positive. Null when
-   *  no balance was ever measured. */
+   *  no balance was ever measured, or the newest can't be read (named in
+   *  `missing`, as unavailable: never an older one in its place). */
   balance: number | null;
   currency: string | null;
   credit_limit: number | null;
@@ -239,17 +244,21 @@ export type ApiMissing = {
   /** The connection's institution; null for a manual account, whose name is
    *  in what couldn't be read. */
   institution: string | null;
-  /** A manual account's id, or one SimpleFIN feeds; null for a connection,
+  /** A manual account's id, one SimpleFIN feeds, or a linked account's whose
+   *  newest balance can't be read (listed with none); null for a connection,
    *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
   /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
-   *  accounts, 'manual', or 'simplefin'. */
+   *  accounts, 'manual', 'simplefin' or 'lunchflow'. */
   source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
-   *  version's), kept as it is. 'unavailable': a manual account sealed under
-   *  an encryption key this deployment doesn't have (lib/manual.ts
-   *  ManualAccountsReport): the deployment's problem, not damage.
+   *  version's), kept as it is. 'unavailable': sealed under an encryption
+   *  key this deployment doesn't have (lib/crypto.ts sealedAway): a manual
+   *  account (lib/manual.ts ManualAccountsReport), a connection's record of
+   *  its accounts (lib/last-known.ts), or the day's balances that may hold a
+   *  linked account's newest (lib/history.ts latestMeasuredBalances): the
+   *  deployment's problem, not damage.
    *  'not_loaded': a connection whose accounts the app hasn't loaded yet.
    *  Version 1 may add reasons. */
   reason: 'unreadable' | 'unrecognised' | 'unavailable' | 'not_loaded';
@@ -322,13 +331,16 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
+  // Sealed under a key this deployment can't use: named with a reason of its
+  // own, as a manual account's is, never as damaged (lib/last-known.ts).
+  const unavailable = new Set(remembered.unavailable);
 
   // Each stored Item's accounts, as its last good load recorded them.
   const linked: { item: StoredItem; account: RememberedAccount }[] = [];
   for (const item of items) {
-    if (unreadable.has(item.item_id)) {
+    if (unreadable.has(item.item_id) || unavailable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable', source: 'plaid' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: unavailable.has(item.item_id) ? 'unavailable' : 'unreadable', source: 'plaid' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
@@ -360,7 +372,16 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
   );
   const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
+  const [{ balances, unavailable: sealed }, currencies] = await Promise.all([
+    latestMeasuredBalances(ctx, ids),
+    bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem),
+  ]);
+  // Accounts whose newest balance is sealed under a key this deployment
+  // can't use: listed with none, and named, never answered with an older one,
+  // under the account's own source (ApiAccount.source).
+  const sealedOf = (account_id: string, institution: string, source: string) => {
+    if (sealed.has(account_id)) missing.push({ institution, account_id, reason: 'unavailable', source });
+  };
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -374,6 +395,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
 
   const accounts: ApiAccount[] = linked.map(({ item, account }) => {
     const b = balances.get(account.account_id) ?? null;
+    sealedOf(account.account_id, item.institution_name, 'plaid');
     return {
       id: account.account_id,
       source: 'plaid',
@@ -437,22 +459,26 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     }
   }
   const stored = new Set(items.map((i) => i.item_id));
-  // One SimpleFIN fed is SimpleFIN's: still tracked, or let go and removed
-  // (lib/connectors/store.ts connector-ended remembers it). LENIENT: one
-  // that can't be read is said as a manual account.
-  const fedIds = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
+  // One a connector fed is that connector's: still tracked, or let go and
+  // removed (lib/connectors/store.ts connector-ended remembers it, and which
+  // connector). LENIENT: one that can't be read is said as a manual account;
+  // one whose record can't say which connector is read as SimpleFIN's, the
+  // value readers before Lunch Flow know.
+  const fedKinds: Map<string, ConnectorKind | null> = endedOnly.some(([root]) => isManualId(root) && !fed.accounts.has(root))
     ? await endedAccountsStore.getAllReport(ctx).then(
-        (r) => new Set([...r.entries.keys(), ...r.unreadable, ...r.unrecognised]),
-        () => new Set<string>()
+        (r) => new Map([...[...r.entries].map(([id, e]) => [id, e.connector] as const), ...[...r.unreadable, ...r.unrecognised].map((id) => [id, null] as const)]),
+        () => new Map<string, ConnectorKind | null>()
       )
-    : new Set<string>();
-  for (const id of fed.accounts.keys()) fedIds.add(id);
+    : new Map<string, ConnectorKind | null>();
+  for (const [id, a] of fed.accounts) fedKinds.set(id, a.connector);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
+    const source = isManualId(root) ? (fedKinds.has(root) ? (fedKinds.get(root) ?? 'simplefin') : 'manual') : 'plaid';
+    sealedOf(root, entry.label.institution, source);
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
-      source: isManualId(root) ? (fedIds.has(root) ? 'simplefin' : 'manual') : 'plaid',
+      source,
       name: entry.label.name,
       official_name: null,
       institution: entry.label.institution,
@@ -471,20 +497,20 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       lifecycle: apiLifecycle(lifecycle, root),
     });
   }
-  // The accounts a SimpleFIN connection keeps up to date (see SIMPLEFIN
-  // above). One kept as a manual account on a disconnect that stopped part
-  // way is in both stores: the manual one, listed above, is it.
+  // The accounts a SimpleFIN or Lunch Flow connection keeps up to date (see
+  // SIMPLEFIN above). One kept as a manual account on a disconnect that
+  // stopped part way is in both stores: the manual one, listed above, is it.
   const own = new Set([...manual.accounts.map((a) => a.account_id), ...manual.unreadable, ...manual.unrecognised, ...manual.unavailable]);
-  const label = connectorOf('simplefin').label;
   for (const card of fed.cards) {
     const shown = card.accounts.filter((a) => !own.has(a.account_id) && asked(a.account_id));
     if (shown.length === 0) continue;
     const connection = fedConnection(card, fed);
+    const kind = card.connector ?? 'simplefin';
     for (const a of shown) {
       const at = realTime(a.updated_at);
       accounts.push({
         id: a.account_id,
-        source: 'simplefin',
+        source: kind,
         name: a.name,
         official_name: null,
         institution: card.institution_name,
@@ -498,7 +524,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         is_debt: isOwedType(a.type),
         hidden: hidden.has(a.account_id),
         // The time the bank gave the balance (its balance-date), else when
-        // Nya received it.
+        // Nya received it (Lunch Flow gives none).
         as_of: at ? at.slice(0, 10) : null,
         as_of_time: at,
         connection,
@@ -506,12 +532,22 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       });
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
-    if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+    if (said) notes.push(`${card.institution_name}, through ${connectorLabel(kind)}: ${said}`);
+  }
+  if (sealed.size > 0) {
+    const one = sealed.size === 1;
+    notes.push(`${one ? 'An account’s newest balance' : `${sealed.size} accounts’ newest balances`} couldn’t be read, so ${one ? 'it has' : 'they have'} none here`);
   }
   const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
-  for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
+  // Which connector one that can't be read came through: the connection that
+  // lists it says, when it can be read (else read as SimpleFIN's, as above).
+  const trackedBy = (id: string): ConnectorKind | null => [...fed.connections.values()].find((c) => c.tracked.some((t) => t.account_id === id))?.connector ?? null;
+  const unreadKinds = unread.map((u) => trackedBy(u.account_id));
+  unread.forEach((u, i) => missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: unreadKinds[i] ?? 'simplefin' }));
   if (unread.length > 0) {
     const one = unread.length === 1;
+    const kinds = new Set(unreadKinds);
+    const label = kinds.size === 1 && !kinds.has(null) ? connectorLabel(unreadKinds[0]!) : ANY_CONNECTOR;
     notes.push(`${one ? `An account ${label} keeps` : `${unread.length} accounts ${label} keeps`} up to date couldn’t be read, so ${one ? 'it isn’t' : 'they aren’t'} listed`);
   }
   const byText = (a: string, b: string) => a.localeCompare(b);
@@ -790,7 +826,7 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     const remembered = await rememberedAccountsReport(ctx);
     known ||= Object.values(remembered.byItem).some((accounts) => accounts.some((a) => a.account_id === id));
     currency = (await bankCurrencies(ctx, [id], remembered.byItem)).get(id) ?? null;
-    if (currency === null && remembered.unreadable.length > 0) {
+    if (currency === null && couldNotRead(remembered).length > 0) {
       notes.push('Some accounts’ records couldn’t be read, so this account’s currency isn’t known');
       // It may be one of theirs: not said to be unknown.
       known = true;
@@ -1070,7 +1106,10 @@ export type ApiSource = { institution: string; synced_at: string | null; complet
 export type ActivityRead = {
   rows: Txn[];
   history: OlderTxn[];
+  /** The read layer's notes, the tags' among them (`tags_note`, also apart,
+   *  for an answer that shows no tags: lib/api-cash-flow.ts). */
   notes: string[];
+  tags_note: string | null;
   sources: ApiSource[];
   hidden: Set<string>;
   view: NoTransactionsView;
@@ -1089,27 +1128,32 @@ const apiSourceOf = (s: BankSource): ApiSource => ({
 
 /** The Activity tab's rows, as stored (lib/activity.ts), never syncing, with
  *  the connections that bring in none, as the app's views weigh them
- *  (lib/no-transactions.ts), the rows before them that recurring detection
- *  needs (`history`), and the categories they were filed by (`ix`), grown in
- *  memory where the app hasn't yet (see CATEGORIES). */
+ *  (lib/no-transactions.ts), each that doesn't bring its transactions in with
+ *  what the files imported into its accounts cover, as the app's are sent
+ *  (lib/history-import/without-files.ts, lenient), the rows before them that
+ *  recurring detection needs (`history`), and the categories they were filed
+ *  by (`ix`), grown in memory where the app hasn't yet (see CATEGORIES). */
 export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<ActivityRead> {
   const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden, withAccountIds: true });
-  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed] = await Promise.all([
+  const view = noTransactionsView(bank.payload);
+  const [{ transactions, notes, tags_note, history, taxonomy, tags }, fed, without] = await Promise.all([
     finishActivity(ctx, bank.payload, includeHidden ? new Set() : bank.hidden),
     // LENIENT, for this display only: what can't be read is said by the
     // assembly's own notes. One that ended holds no bank.
     connectorBanksReport(ctx, Date.now(), endedNowIds(bank.lifecycle)),
+    withImportedFiles(ctx, view.without),
   ]);
   const fedSources = connectorSources(fed, includeHidden ? new Set() : bank.hidden);
   return {
     rows: transactions,
     history,
     notes: [...notes, ...(tags_note ? [tags_note] : []), ...fedSources.notes],
+    tags_note,
     ix: indexTaxonomy(taxonomy),
     tags,
     sources: [...bank.sources.map(apiSourceOf), ...fedSources.sources],
     hidden: bank.hidden,
-    view: noTransactionsView(bank.payload),
+    view: { ...view, without },
   };
 }
 
@@ -1122,9 +1166,10 @@ export async function readActivity(ctx: Ctx, includeHidden: boolean): Promise<Ac
 function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>): { sources: ApiSource[]; notes: string[] } {
   const sources: ApiSource[] = [];
   const notes: string[] = [];
-  const label = connectorOf('simplefin').label;
   for (const card of fed.cards) {
     if (card.accounts.every((a) => hidden.has(a.account_id))) continue;
+    const kind = card.connector ?? 'simplefin';
+    const label = connectorLabel(kind);
     const conn = card.connection_id ? fed.connections.get(card.connection_id) : undefined;
     const unread = !!card.connection_id && fed.unreadableConnections.has(card.connection_id);
     const history = conn?.history ?? null;
@@ -1133,7 +1178,9 @@ function connectorSources(fed: ConnectorBanksReport, hidden: ReadonlySet<string>
     if (complete) continue;
     if (unread) notes.push(`${card.institution_name}: what Nya keeps about its ${label} connection couldn’t be read, so whether its transactions are all here isn’t known`);
     else if (history === null) notes.push(`${card.institution_name}: no transactions have come from ${label} yet`);
-    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, a few months each night`);
+    // SimpleFIN's come 90 days a window; Lunch Flow's two years at once, and
+    // what is older in one more (lib/connectors/lunchflow.ts).
+    else notes.push(`${card.institution_name}: older transactions are still arriving from ${label}, ${kind === 'lunchflow' ? 'with its next daily update' : 'a few months each night'}`);
   }
   return { sources, notes };
 }
@@ -1253,7 +1300,8 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     transactions: page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+    // A bank whose files cover the range in its place has its rows here.
+    notes: [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, q.from, q.to), activity.rows.length, 'list')],
   };
 }
 
@@ -1515,7 +1563,9 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
     .sort((a, b) => a.category.localeCompare(b.category));
   const fed = connectorSources(activity.fed, opts.includeHidden ? new Set() : activity.hidden);
   const windowRows = activity.rows.filter((t) => t.date >= windowStart()).length;
-  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(activity.view, windowRows, 'totals')];
+  // A bank whose files cover the month in its place is counted, as the
+  // Budgets tab counts it (lib/no-transactions.ts coveredOutOf).
+  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(coveredOutOf(activity.view, opts.month), windowRows, 'totals')];
   const orphans = placeBudgets(read.budgetsNow, ix).orphans;
   if (orphans.length > 0) {
     notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);
@@ -1610,14 +1660,38 @@ export type ApiSpending = Summary & {
   notes: string[];
 };
 
+/**
+ * How many of the transactions of [from, to] were imported into linked
+ * accounts from files (the bank's, or another app's export: lib/migration)
+ * rather than sent by the bank (#52), in the
+ * words under the month's totals and beside the chart (lib/history-import/
+ * view.ts importedRowsNote): a whole month named as the chart names one
+ * ("September 2026"), any other range as this period. Null with none. The
+ * last of spending's notes, and of the cash flow's (lib/api-cash-flow.ts).
+ */
+export function importedNote(rows: readonly Txn[], range: { from: string; to: string }): string | null {
+  const { from, to } = range;
+  const whole = from.endsWith('-01') && to === lastDayOf(from.slice(0, 7));
+  return importedRowsNote(
+    rows.filter((t) => t.date >= from && t.date <= to),
+    whole ? monthName(from.slice(0, 7)) : 'this period'
+  );
+}
+
 /** Money in and out over [from, to], and spending by category and by group,
  *  in one currency: by default the one most transactions are in, as the
  *  app's totals. */
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  // The tags' note stays: spending by tag is in the answer. A bank whose
+  // files cover the range in its place is counted, as in the app.
+  const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
+  // Last, as under the month's totals: how many of the range's transactions
+  // came from files rather than the bank.
+  const imported = importedNote(activity.rows, opts);
+  if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
   // Groups add up what the categories do: money out that counts.
   const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: ReturnType<typeof transactionCounter> }>();
@@ -1784,10 +1858,11 @@ export type ApiHoldings = {
  * with the day they were recorded: what the nightly snapshot and the person's
  * loads kept, never a fresh fetch. Plaid keeps no history of holdings, so an
  * account is known only from the day recording began. With `accountId`, that
- * one account's; an id no account has is NotFound, but one that may be at a
- * connection whose accounts couldn't be read, or haven't been loaded, is said
- * to be so (complete: false, with the connections named), never "no such
- * account".
+ * one account's; an id no account has is NotFound, and so is one known not to
+ * be an investment account (listed as another kind, or kept by hand), but one
+ * that may be at a connection whose accounts couldn't be read, or haven't
+ * been loaded, is said to be so (complete: false, with the connections
+ * named), never "no such account".
  */
 export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; accountId?: string } = {}): Promise<ApiHoldings> {
   const read = await accountsRead(ctx, !!opts.includeHidden);
@@ -1797,9 +1872,17 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
   const investment = read.accounts.filter((a) => a.source === 'plaid' && isInvestmentType(a.type) && (opts.accountId === undefined || a.id === opts.accountId));
   if (opts.accountId !== undefined && investment.length === 0) {
     if (read.hidden.has(opts.accountId) && !opts.includeHidden) throw new NotFound('That account is hidden: ask with include_hidden=true to see it.');
-    if (read.accounts.some((a) => a.id === opts.accountId && a.source === 'simplefin')) {
-      throw new NotFound('That account is kept up to date through SimpleFIN, which reports balances, not positions: it has no holdings.');
+    const known = read.accounts.find((a) => a.id === opts.accountId);
+    if (known && isConnectorKind(known.source)) {
+      // Lunch Flow serves positions for some brokerages, which Nya doesn't
+      // read yet (lib/connectors/lunchflow.ts HOLDINGS): its words say so.
+      const why = known.source === 'lunchflow' ? 'and Nya reads its balance, not its positions' : 'which reports balances, not positions';
+      throw new NotFound(`That account is kept up to date through ${connectorLabel(known.source)}, ${why}: it has no holdings.`);
     }
+    // Known not to be an investment account (listed as another kind, or one
+    // kept by hand, which no connection holds): whatever connection can't be
+    // read, it has no holdings to be missing.
+    if (known || isManualId(opts.accountId)) throw new NotFound('That account isn’t an investment account linked through Plaid, so it has no holdings.');
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
     return {
       accounts: [],

@@ -63,6 +63,8 @@ const { categoryUsage } = await import('@/lib/category-usage');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { createToken } = await import('@/lib/api-tokens');
 const { markEnded } = await import('@/lib/lifecycle');
+const { linkAccounts } = await import('@/lib/links');
+const { readImported } = await import('@/lib/history-import/read');
 const mcp = await import('@/app/api/mcp/route');
 const routes = await import('@/app/api/history-import/route');
 
@@ -321,7 +323,7 @@ describe('an imported row splits and groups as the bank’s do', () => {
     );
     expect(refused.status).toBe(409);
     expect(refused.body).toMatchObject({ unreadable: true });
-    expect(refused.body.error).toContain('(transactions imported from your bank’s files)');
+    expect(refused.body.error).toContain('(transactions imported from files)');
     // Reconnecting a bank brings back nothing of a file's rows: not offered.
     expect(refused.body.error).not.toContain('reconnecting');
     // Nor a split or a group of a bank row of that account, which may stand
@@ -337,6 +339,44 @@ describe('an imported row splits and groups as the bank’s do', () => {
     expect([group.status, group.body.unreadable]).toEqual([409, true]);
     expect(await splitStore.getAll(ctx)).toEqual(new Map());
     expect(await groupStore.getAll(ctx)).toEqual(new Map());
+  });
+
+  test('what can’t be read of another connection refuses no edit of an account it can’t touch; once a link touches it, the edit is refused', async () => {
+    await importStatement();
+    // A second connection whose record of its accounts is damaged, and a
+    // book no live account claims (kept for a disconnected bank's account).
+    await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt(ctx, 'access-sandbox-ally') });
+    await fake.hset(ctxKey('accounts:meta'), { item_ally: DAMAGED });
+    await fake.hset(ctxKey('imported-transactions'), { acc_gone: DAMAGED });
+    // The read of every account can't tell whose that book is; a read of the
+    // checking account alone can: not its.
+    expect((await quietly(() => readImported(ctx, { links: new Map() }))).unresolved).toBe(true);
+    expect((await quietly(() => readImported(ctx, { links: new Map(), only: new Set(['acc_chk']) }))).unresolved).toBe(false);
+
+    const food = catId('food and drink');
+    const split = await quietly(() =>
+      splitPut('b_grocer', [
+        { amount: 15, category_id: food },
+        { amount: 5, category_id: catId('home improvement') },
+      ])
+    );
+    expect(split.status).toBe(200);
+    const group = await quietly(() => route('transaction-groups', 'POST', { name: 'Lunch', category_id: food, members: ['b_tip', 'b_payback'] }));
+    expect(group.status).toBe(200);
+
+    // Linked to an earlier account, whose id may be live again at the
+    // connection that can't be read (which would pause the link): which rows
+    // the checking account's bank rows stand for can't be told. Nothing saved.
+    await linkAccounts(ctx, 'acc_old', 'acc_chk', { old_type: 'depository' });
+    const refused = await quietly(() =>
+      splitPut('b_rent', [
+        { amount: 1000, category_id: catId('rent and utilities') },
+        { amount: 850, category_id: food },
+      ])
+    );
+    expect([refused.status, refused.body.unreadable]).toEqual([409, true]);
+    expect(refused.body.error).toContain('(transactions imported from files)');
+    expect(await splitStore.get(ctx, 'b_rent')).toBeNull();
   });
 });
 
@@ -496,12 +536,12 @@ describe('when the bank sends the same transaction', () => {
       { amount: 30, category_id: travel },
       { amount: 30, category_id: travel },
     ]);
-    expect(own).toEqual({ status: 409, body: { error: 'This transaction is split as you split the row you imported for it from your bank’s file: change that split instead, with Edit split.' } });
+    expect(own).toEqual({ status: 409, body: { error: 'This transaction is split as the row imported for it is: change that split instead, with Edit split.' } });
     const grouped = await route('transaction-groups', 'POST', { name: 'Errand', category_id: travel, members: ['b_corner', 'b_tip'] });
     expect(grouped).toEqual({
       status: 409,
       body: {
-        error: '“CORNER SHOP 0042” is split as you split the row you imported for it from your bank’s file, and its parts count on their own, so a group would count it twice. Unsplit it first.',
+        error: '“CORNER SHOP 0042” is split as the row imported for it is, and its parts count on their own, so a group would count it twice. Unsplit it first.',
       },
     });
 
@@ -605,7 +645,7 @@ describe('when the bank sends the same transaction', () => {
     await storeBank([...BANK, corner()]);
     // In the lunch, in the imported row's place: a group of its own, the
     // lunch again by its own id, or a split, would hide that place.
-    const held = '“CORNER SHOP 0042” is already in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file: take it out of that group first.';
+    const held = '“CORNER SHOP 0042” is already in the group “Lunch with Sam”, in place of the row imported for it: take it out of that group first.';
     expect(await route('transaction-groups', 'POST', { name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'] })).toEqual({ status: 409, body: { error: held } });
     expect(await route('transaction-groups', 'PATCH', { id: lunch.body.id, add: ['b_corner'] })).toEqual({ status: 409, body: { error: held } });
     expect(
@@ -616,7 +656,7 @@ describe('when the bank sends the same transaction', () => {
     ).toEqual({
       status: 409,
       body: {
-        error: 'This transaction counts in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file, and the group counts it whole: take it out of the group to split it.',
+        error: 'This transaction counts in the group “Lunch with Sam”, in place of the row imported for it, and the group counts it whole: take it out of the group to split it.',
       },
     });
 
@@ -868,7 +908,7 @@ describe('the month’s note on imported transactions', () => {
       { transaction_id: 'group:g1', group_members: [{ transaction_id: b }, { transaction_id: 'b_payback' }] },
       { transaction_id: 'b_grocer' },
     ];
-    expect(importedRowsNote(rows)).toBe('2 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(importedRowsNote(rows)).toBe('2 of this month’s transactions were imported from files, not sent by the bank.');
     expect(importedRowsNote(rows.slice(3))).toBeNull();
   });
 });

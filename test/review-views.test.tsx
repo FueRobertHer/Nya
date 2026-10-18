@@ -498,11 +498,11 @@ describe('the Activity tab', () => {
     // On the Activity tab the row's own note says it (lib/history-import/view.ts
     // importedChangedNote): the detail adds only the approval.
     const detail = text(renderToStaticMarkup(<ReviewNote t={twin} taxonomy={taxonomy} review={controls()} onChanged={() => {}} />));
-    expect(detail).toBe('You approved it at the amount imported from your bank’s file, before the bank changed it. Approve');
+    expect(detail).toBe('You approved it at the amount it was imported at, before the bank changed it. Approve');
     // Card Mode, without the row's note, says the two in one.
     const card = (t: Txn) => text(renderToStaticMarkup(<CardMode open txns={[t]} taxonomy={taxonomy} tags={[]} currency="USD" review={controls()} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />));
     const one = card(twin);
-    expect(one).toContain('You approved it at $150.00 out, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.');
+    expect(one).toContain('You approved it at $150.00 out, the amount it was imported at. The bank has changed its amount since, so it counts once, at the bank’s amount.');
     expect(one.match(/changed (?:its|the) amount/g)).toHaveLength(1);
     // Approved since at another amount the bank changed again: two things,
     // each with its own figure.
@@ -511,9 +511,9 @@ describe('the Activity tab', () => {
     expect(changedSinceWords(again.review_changed, again, true)).toBe('The bank changed the amount since you approved it at $158.25 out.');
     const two = card(again);
     expect(two).toContain('The bank changed the amount since you approved it at $158.25 out.');
-    expect(two).toContain('This is the transaction you imported from your bank’s file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.');
+    expect(two).toContain('This is the transaction you imported from a file at $150.00. The bank has changed its amount since, so it counts once, at the bank’s amount.');
     // Never approved: the card says what the row says; another currency is another amount.
-    expect(card({ ...twin, review_changed: undefined })).toContain('This is the transaction you imported from your bank’s file at $150.00.');
+    expect(card({ ...twin, review_changed: undefined })).toContain('This is the transaction you imported from a file at $150.00.');
     expect(approvedAsImported({ amount: 150, currency: 'CAD' }, twin)).toBe(false);
     expect(approvedAsImported({ amount: 150, currency: 'USD' }, { ...twin, imported_amount: undefined })).toBe(false);
     expect(changedSinceWords({ amount: 50, currency: 'USD' }, txn('t1'), false)).toBe(changedWords({ amount: 50, currency: 'USD' }));

@@ -159,7 +159,10 @@ export function aboutFromDirectory(entry: DirectoryEntry | undefined, item_id: s
  */
 async function lastMeasured(ctx: Ctx, ids: string[], links: ReadonlyMap<string, Link>): Promise<Map<string, { date: string; value: number }> | null> {
   try {
-    return await latestMeasuredBalances(ctx, new Map(ids.map((id) => [id, sameAccountIds(id, links as Map<string, Link>)])));
+    // One whose newest balance is sealed under a key this deployment can't
+    // use isn't among them: when it was last measured isn't known, as for a
+    // read that fails, never an older day.
+    return (await latestMeasuredBalances(ctx, new Map(ids.map((id) => [id, sameAccountIds(id, links as Map<string, Link>)])))).balances;
   } catch (err) {
     console.error('Account lifecycle: when a missing account was last measured could not be read', err instanceof Error ? err.name : typeof err);
     return null;

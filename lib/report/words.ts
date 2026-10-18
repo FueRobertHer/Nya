@@ -12,6 +12,7 @@
 
 import { joinNames } from '../month-coverage';
 import { sourceLabel } from '../manual-txn-input';
+import { isConnectorKind } from '../connectors/types';
 import type { HealthState } from '../connection-state';
 import type { NoTransactionsReason } from '../item-products';
 import type { Gap, Report, ReportEnded } from './build';
@@ -230,7 +231,9 @@ export const MANUAL_NOTE = 'Transactions on a manual account are the ones you en
 
 /** What is true of the period whatever the data: a year still running, days
  *  still settling, what the report covers, accounts left out, and what
- *  couldn't be read about the connections or the person's own choices. */
+ *  couldn't be read about the connections or the person's own choices (the
+ *  read's notes on how a rule, a category, a split or a group applies among
+ *  them, in its own words: none of them leaves a transaction out). */
 export function caveatLines(report: Report, day: DayFormat): string[] {
   const { caveats, period } = report;
   const out: string[] = [];
@@ -252,6 +255,8 @@ export function caveatLines(report: Report, day: DayFormat): string[] {
   if (caveats.marked === 'unreadable') out.push(MARKED_UNREAD);
   if (caveats.names_unread) out.push('Your names for merchants couldn’t be read, so the bank’s are shown.');
   if (caveats.health_unread) out.push('How each bank connection is doing couldn’t be read, so what is said of each may be missing something.');
+  // Absent from a report made before they were sent.
+  for (const n of caveats.notes ?? []) out.push(`${n.replace(/[.\s]+$/, '')}.`);
   return out;
 }
 
@@ -350,10 +355,11 @@ export function appendixSplitWords(
   row: { source?: string; split?: { part: number; parts: number; whole: number; remainder: boolean }; group?: { transactions: number; missing: number } },
   money: (n: number) => string
 ): string | null {
-  // The bank changes its own rows' amounts (through Plaid or SimpleFIN); one
-  // entered by hand or imported changes when it is edited or imported again.
+  // The bank changes its own rows' amounts (through Plaid, SimpleFIN or Lunch
+  // Flow); one entered by hand or imported changes when it is edited or
+  // imported again.
   if (row.split?.remainder) {
-    const bank = row.source === undefined || row.source === 'plaid' || row.source === 'simplefin';
+    const bank = row.source === undefined || row.source === 'plaid' || isConnectorKind(row.source);
     return bank ? `What the bank changed this ${money(row.split.whole)} transaction by since it was split` : `What this ${money(row.split.whole)} transaction changed by since it was split`;
   }
   if (row.split) return `Part ${row.split.part} of ${row.split.parts} of a ${money(row.split.whole)} transaction`;

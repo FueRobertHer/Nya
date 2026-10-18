@@ -177,7 +177,7 @@ const UNCHANGED = 'Nothing was changed: what could not be read is still stored a
 /** What transactions.csv says of a record of what was said that can't be
  *  read, for every kind of row (lib/user-export.ts). */
 const ANNOTATIONS_IN_CSV =
-  'Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank or SimpleFIN brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.';
+  'Not all of your notes, tags and exclusions could be read: 1 entry whose stored data is damaged. Those transactions are in this file without the tags you put on them, and whether you excluded them is empty: they count, as the app counts them. Your note on one the bank, SimpleFIN or Lunch Flow brought is missing too, as is yours on one imported into a linked account (its file’s own note, if it had one, is there instead); a note written with one you entered, or imported into a manual account, is on its row. A bank’s transaction standing for one you imported into a linked account is without the tags and note you put on that one, and whether it is excluded is empty unless you excluded or included the bank’s itself.';
 
 let categories: any;
 const catId = (name: string) => categories.categories.find((c: any) => c.name === name).id;
@@ -474,7 +474,7 @@ describe('parts the files are made from that can’t be read', () => {
     const ofx = await statement();
     expect(ofx.incomplete).toEqual(expect.arrayContaining(['carried-annotations', 'imported-transactions']));
     expect(ofx.notes).toContain(
-      `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+      `The transactions imported into this account from files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
     );
     expect(ofx.notes).toContain(
       `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
