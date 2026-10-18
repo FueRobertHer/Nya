@@ -100,7 +100,7 @@ import { noticesStore } from './connection-records';
 import { warningLapsed, type HealthState } from './connection-state';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import type { NoTransactionsReason } from './item-products';
-import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, coveredOutOfDays, type NoTransactionsView } from './no-transactions';
+import { missingEmptyNotes, missingFigureNotes, noSpending, withoutNote, noTransactionsView, coveredOutOf, coveredOutOfDays, type NoTransactionsView } from './no-transactions';
 import { withImportedFiles } from './history-import/without-files';
 import { budgetsForReading } from './budget-store';
 import { budgetMeters, placeBudgets, type GroupMeter } from './budget-set';
@@ -1548,7 +1548,9 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
     .sort((a, b) => a.category.localeCompare(b.category));
   const fed = connectorSources(activity.fed, opts.includeHidden ? new Set() : activity.hidden);
   const windowRows = activity.rows.filter((t) => t.date >= windowStart()).length;
-  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(activity.view, windowRows, 'totals')];
+  // A bank whose files cover the month in its place is counted, as the
+  // Budgets tab counts it (lib/no-transactions.ts coveredOutOf).
+  const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(coveredOutOf(activity.view, opts.month), windowRows, 'totals')];
   const orphans = placeBudgets(read.budgetsNow, ix).orphans;
   if (orphans.length > 0) {
     notes.push(`${orphans.length} budget${orphans.length === 1 ? ' is' : 's are'} on a category or group that no longer exists, and left out here`);

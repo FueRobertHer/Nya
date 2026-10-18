@@ -121,6 +121,9 @@ export type MonthActivity = {
   manual_unread: string[] | 'all';
   /** Each bank a SimpleFIN connection reaches (lib/connectors/institutions.ts). */
   fed: ConnectorBanksReport;
+  /** The connections that bring in no transactions, each that doesn't bring
+   *  its transactions in with what its files cover (`files`), as the app's
+   *  transactions route sends them. */
   view: NoTransactionsView;
   /** The first month with any stored transaction, hidden accounts' aside
    *  (unless asked for), or null with none: a bank's, one entered or
@@ -268,6 +271,19 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     if (at >= 0) others.splice(at, 1);
   }
 
+  // Each connection whose transactions don't come in with what its files
+  // cover, as the app's transactions route sends them (lib/history-import/
+  // without-files.ts), so a month's notes leave it out where its files cover
+  // the month, as the Budgets tab does (lib/no-transactions.ts coveredOutOf).
+  const withFiles: NoTransactionsView = {
+    ...view,
+    without: view.without.map((w) => {
+      if (!w.item_id || (w.reason !== 'refused' && w.reason !== 'no_consent')) return w;
+      const { files } = filesOf(w.item_id);
+      return files && files.some((a) => a.covers.length > 0) ? { ...w, files: files.map(({ covers, end }) => ({ covers, end })) } : w;
+    }),
+  };
+
   return {
     rows,
     notes: finished.notes,
@@ -279,7 +295,7 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     incomplete: finished.incomplete,
     manual_unread: finished.manual_unread,
     fed,
-    view,
+    view: withFiles,
     earliest: earliestDay ? monthOf(earliestDay) : null,
     facts: {
       incomplete: [...linkedIncomplete, ...others],
