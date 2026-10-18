@@ -63,6 +63,8 @@ const { categoryUsage } = await import('@/lib/category-usage');
 const { readTaxonomy } = await import('@/lib/category-store');
 const { createToken } = await import('@/lib/api-tokens');
 const { markEnded } = await import('@/lib/lifecycle');
+const { linkAccounts } = await import('@/lib/links');
+const { readImported } = await import('@/lib/history-import/read');
 const mcp = await import('@/app/api/mcp/route');
 const routes = await import('@/app/api/history-import/route');
 
@@ -337,6 +339,44 @@ describe('an imported row splits and groups as the bank’s do', () => {
     expect([group.status, group.body.unreadable]).toEqual([409, true]);
     expect(await splitStore.getAll(ctx)).toEqual(new Map());
     expect(await groupStore.getAll(ctx)).toEqual(new Map());
+  });
+
+  test('what can’t be read of another connection refuses no edit of an account it can’t touch; once a link touches it, the edit is refused', async () => {
+    await importStatement();
+    // A second connection whose record of its accounts is damaged, and a
+    // book no live account claims (kept for a disconnected bank's account).
+    await saveItem(ctx, { item_id: 'item_ally', institution_name: 'Ally', encrypted_access_token: await encrypt(ctx, 'access-sandbox-ally') });
+    await fake.hset(ctxKey('accounts:meta'), { item_ally: DAMAGED });
+    await fake.hset(ctxKey('imported-transactions'), { acc_gone: DAMAGED });
+    // The read of every account can't tell whose that book is; a read of the
+    // checking account alone can: not its.
+    expect((await quietly(() => readImported(ctx, { links: new Map() }))).unresolved).toBe(true);
+    expect((await quietly(() => readImported(ctx, { links: new Map(), only: new Set(['acc_chk']) }))).unresolved).toBe(false);
+
+    const food = catId('food and drink');
+    const split = await quietly(() =>
+      splitPut('b_grocer', [
+        { amount: 15, category_id: food },
+        { amount: 5, category_id: catId('home improvement') },
+      ])
+    );
+    expect(split.status).toBe(200);
+    const group = await quietly(() => route('transaction-groups', 'POST', { name: 'Lunch', category_id: food, members: ['b_tip', 'b_payback'] }));
+    expect(group.status).toBe(200);
+
+    // Linked to an earlier account, whose id may be live again at the
+    // connection that can't be read (which would pause the link): which rows
+    // the checking account's bank rows stand for can't be told. Nothing saved.
+    await linkAccounts(ctx, 'acc_old', 'acc_chk', { old_type: 'depository' });
+    const refused = await quietly(() =>
+      splitPut('b_rent', [
+        { amount: 1000, category_id: catId('rent and utilities') },
+        { amount: 850, category_id: food },
+      ])
+    );
+    expect([refused.status, refused.body.unreadable]).toEqual([409, true]);
+    expect(refused.body.error).toContain('(transactions imported from your bank’s files)');
+    expect(await splitStore.get(ctx, 'b_rent')).toBeNull();
   });
 });
 
