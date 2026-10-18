@@ -2406,14 +2406,47 @@ export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonl
   'balances-csv': ['net_worth_history', 'account_history', 'manual_accounts', 'account-lifecycle', 'timeline-notes'],
 };
 
+/**
+ * The banks whose transactions a restore brought back (`restored-accounts`,
+ * `restored-transactions`, lib/user-restore/), by name: those of the
+ * accounts that are, or are linked to, `account_id`, or of every account.
+ * Their rows are in the JSON file only: the transactions CSV and an OFX
+ * statement don't list them yet (the restore's second step), and say so.
+ */
+export function restoredBanksIn(doc: UserExport, account_id?: string): string[] {
+  const entries = doc['restored-accounts'];
+  if (!Array.isArray(entries)) return [];
+  const links = new Map(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id }]));
+  const names = new Set<string>();
+  for (const e of entries as { id?: unknown; value?: { institution_name?: unknown; rows?: { count?: unknown } | null } }[]) {
+    if (typeof e?.id !== 'string' || typeof e.value?.institution_name !== 'string' || !e.value.rows || !(Number(e.value.rows.count) > 0)) continue;
+    if (account_id !== undefined && e.id !== account_id && resolveId(e.id, links) !== account_id) continue;
+    names.add(e.value.institution_name);
+  }
+  return [...names].sort();
+}
+
+/** What a CSV or a statement says of the rows a restore brought back that
+ *  it doesn't list (restoredBanksIn). */
+export function restoredRowsNote(banks: readonly string[], what: 'this CSV' | 'this statement'): string[] {
+  if (banks.length === 0) return [];
+  const names = banks.length === 1 ? banks[0] : `${banks.slice(0, -1).join(', ')} and ${banks[banks.length - 1]}`;
+  return [`The transactions a download brought back from ${names} are in the JSON download only (restored-transactions): ${what} doesn’t list them yet.`];
+}
+
 export function exportFile(doc: UserExport, format: ExportFormat): ExportFile {
   const day = doc.exported_at.slice(0, 10);
   // What this file is missing, and its notes: the caveats, then a note for
   // each part it is made from that is missing something (problemNotes, which
-  // the document's own notes end with, for every part).
+  // the document's own notes end with, for every part), and for the
+  // transactions CSV, the rows a restore brought back that it doesn't list.
   const problems = format === 'json' ? doc.problems : doc.problems.filter((p) => CSV_SOURCES[format].includes(p.section));
   const everyPart = new Set(problemNotes(doc.problems));
-  const notes = [...doc.notes.filter((n) => !everyPart.has(n)), ...problemNotes(problems, format)];
+  const notes = [
+    ...doc.notes.filter((n) => !everyPart.has(n)),
+    ...problemNotes(problems, format),
+    ...(format === 'transactions-csv' ? restoredRowsNote(restoredBanksIn(doc), 'this CSV') : []),
+  ];
   const about = { notes, incomplete: [...new Set(problems.map((p) => p.section))] };
   switch (format) {
     case 'json':

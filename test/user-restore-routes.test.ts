@@ -164,6 +164,23 @@ describe('a round trip', () => {
     expect((await hold()).waiting).toEqual([]);
   });
 
+  test('the transactions CSV and a linked account’s statement say the rows brought back are in the JSON download only', async () => {
+    await restoreAll(OLD.text);
+    const { collectUserData, buildUserExport, exportFile } = await import('@/lib/user-export');
+    const { ofxFile } = await import('@/lib/ofx-export');
+    const note = (what: string) => `The transactions a download brought back from Chase are in the JSON download only (restored-transactions): ${what} doesn’t list them yet.`;
+    const doc = buildUserExport(await collectUserData({ ctx, userId: 'user_me' }), new Date());
+    expect(exportFile(doc, 'transactions-csv').notes).toContain(note('this CSV'));
+    expect(exportFile(doc, 'balances-csv').notes.join(' ')).not.toContain('restored-transactions');
+    await connectAgain(fake);
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {});
+    const data = await collectUserData({ ctx, userId: 'user_me' });
+    const statement = ofxFile(data, buildUserExport(data, new Date()), 'new_chk', new Date());
+    expect('file' in statement ? statement.file.notes : []).toContain(note('this statement'));
+    const card = ofxFile(data, buildUserExport(data, new Date()), 'new_card', new Date());
+    expect('file' in card ? card.file.notes.join(' ') : '').not.toContain('restored-transactions');
+  });
+
   test('or not connected again: stopping following each restored account lets the totals go on', async () => {
     await restoreAll(OLD.text);
     for (const account_id of ['acc_chk', 'acc_card']) {
