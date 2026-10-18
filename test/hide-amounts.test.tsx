@@ -1190,10 +1190,12 @@ describe('every module a page can load writes its amounts through the switch (a 
 const NOT_VIEWS = new Set(['hide-amounts.test.tsx', 'developers.test.tsx']);
 
 /** What a view draws that only looks like an amount: a file's example
- *  figures (EXAMPLES), SimpleFIN's own price, and a count written with
- *  thousands, followed by what it counts or after its name. */
+ *  figures (EXAMPLES), a sync service's own price (SimpleFIN's, Lunch
+ *  Flow's), and a count written with thousands, followed by what it counts
+ *  or after its name. */
+const PRICES = ['($15 a year', '(about $35 a year for two bank connections'];
 function withoutLookalikes(line: string): string {
-  return [...EXAMPLES, '($15 a year'].reduce((t, e) => t.split(e).join(''), line).replace(/\b\d{1,3}(?:,\d{3})+(?=(?:\s+[A-Z][\w-]*)*\s+[a-z])|(?<=^Transactions: )[\d,]+$/g, '#');
+  return [...EXAMPLES, ...PRICES].reduce((t, e) => t.split(e).join(''), line).replace(/\b\d{1,3}(?:,\d{3})+(?=(?:\s+[A-Z][\w-]*)*\s+[a-z])|(?<=^Transactions: )[\d,]+$/g, '#');
 }
 
 describe('a backstop over every view the suites draw, amounts hidden', () => {
@@ -1207,6 +1209,7 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       const suites = readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.tsx') && !NOT_VIEWS.has(f));
       // A fresh environment: the suites read what they set themselves, or
       // what the .env files say, never what an earlier file of this run set.
+      // The run reads bunfig.toml as any does: test/preload.ts loads first.
       const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI)$/.test(k)));
       const run = Bun.spawnSync([process.execPath, 'test', '--preload', './test/hidden-renders.ts', ...suites.map((f) => `./test/${f}`)], {
         cwd: ROOT,

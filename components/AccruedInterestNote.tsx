@@ -29,7 +29,7 @@ export default function AccruedInterestNote({
       )}
       {unread.map((line) => (
         <div className="as-of stale" key={line}>
-          {line}
+          <Masked>{line}</Masked>
         </div>
       ))}
     </>
