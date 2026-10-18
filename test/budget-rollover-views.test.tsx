@@ -9,7 +9,7 @@ import { IncomePoolHeader, IncomeSetting } from '@/components/IncomePool';
 import { lacksHistory, monthUrl, UNREADABLE_MONTHS, type BudgetMonthState, type BudgetMonthView } from '@/components/budget-month-state';
 import type { Txn } from '@/components/MonthBreakdown';
 import type { Carries, Carry, IncomePool } from '@/lib/rollover';
-import { addMonths } from '@/lib/rollover';
+import { addMonths, monthName } from '@/lib/rollover';
 import { localDate, localMonth } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 import { categoriesFor } from './category-fixture';
@@ -287,8 +287,10 @@ describe('income carryover', () => {
   test('available to allocate: last month’s leftover, plus this month’s income so far, less its spending', () => {
     const t = text(renderToStaticMarkup(<IncomePoolHeader pool={pool} currency="USD" month={NOW} today={NOW} />));
     expect(t).toContain('Available to allocate $3,350.25');
-    expect(t).toMatch(/\$2,140\.50 left from \w+, plus \$3,100\.00 income so far, less \$1,890\.25 spent/);
-    expect(t).toMatch(/May be off: \w+( \d{4})? is incomplete\./);
+    // Last month by name, with its year when it is in another one (in January).
+    const last = monthName(addMonths(NOW, -1), NOW);
+    expect(t).toContain(`$2,140.50 left from ${last}, plus $3,100.00 income so far, less $1,890.25 spent`);
+    expect(t).toContain(`May be off: ${last} is incomplete.`);
     expect(t).toContain('Show how it built up');
   });
 
