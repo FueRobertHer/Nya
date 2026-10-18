@@ -12,6 +12,7 @@ import { wholeMoney } from '@/components/plan-text';
 import { DEFAULT_PLAN, fiView, type Measured } from '@/lib/fire/plan';
 import type { InvestedAssets, TrailingFlows, WorkplaceSavings } from '@/lib/fire/inputs';
 import {
+  coveredOutOf,
   missingEmptyNotes,
   missingFigureNotes,
   missingMonthNotes,
@@ -102,6 +103,40 @@ describe('what /api/transactions says about them', () => {
     for (const connections of [-1, 1.5, '2', NaN, null]) {
       expect(noTransactionsView({ without_transactions: [], connections })).toEqual({ without: [] });
     }
+  });
+
+  test('what the files imported into its accounts cover is kept when well formed, and covers nothing when it isn’t', () => {
+    const files = [{ covers: [{ from: '2026-07-01', to: '2026-07-31' }], end: null }, { covers: [], end: '2026-07-20' }];
+    const view = (f: unknown) => noTransactionsView({ without_transactions: [{ item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused', files: f }] });
+    expect(view(files).without[0].files).toEqual(files);
+    // An account without an end, from a payload that leaves it out, has none.
+    expect(view([{ covers: [{ from: '2026-07-01', to: '2026-07-31' }] }]).without[0].files).toEqual([{ covers: [{ from: '2026-07-01', to: '2026-07-31' }], end: null }]);
+    for (const bad of ['all', [{ covers: [{ from: 'July', to: '2026-07-31' }] }], [{ covers: 'all' }], [{ covers: [], end: 5 }], [null]]) {
+      expect(view(bad).without).toEqual([{ item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused' }]);
+    }
+  });
+
+  test('a month the files cover for every bank account and card is left out of the month’s notes; the rest are said as before', () => {
+    const july = { covers: [{ from: '2026-07-01', to: '2026-07-31' }], end: null };
+    const view: NoTransactionsView = {
+      without: [
+        { item_id: 'item_acme', institution_name: 'Acme CU', reason: 'refused', files: [july, { covers: [{ from: '2026-06-15', to: '2026-08-02' }], end: null }] },
+        { item_id: 'item_fid', institution_name: 'Fidelity', reason: 'no_consent', files: [july, { covers: [], end: null }] },
+        { item_id: 'item_vg', institution_name: 'Vanguard', reason: 'investment_accounts' },
+      ],
+    };
+    expect(coveredOutOf(view, '2026-07').without.map((w) => w.institution_name)).toEqual(['Fidelity', 'Vanguard']);
+    expect(coveredOutOf(view, '2026-08').without.map((w) => w.institution_name)).toEqual(['Acme CU', 'Fidelity', 'Vanguard']);
+    // A card that ended on July 20 needs covering only through July 19.
+    const ended: NoTransactionsView = { without: [{ ...view.without[1], files: [july, { covers: [{ from: '2026-07-01', to: '2026-07-19' }], end: '2026-07-20' }] }] };
+    expect(coveredOutOf(ended, '2026-07').without).toEqual([]);
+    expect(missingMonthNotes(view, '2026-07')).toEqual([
+      "Doesn't include the bank or card accounts at Fidelity: you didn't allow Nya to see their transactions, so this month may be incomplete. To bring them in, choose Allow transactions on the Accounts tab.",
+    ]);
+    // Without a month, as before: every one.
+    expect(missingMonthNotes(view)).toHaveLength(2);
+    // Nothing covered: the very view comes back.
+    expect(coveredOutOf(view, '2026-09')).toBe(view);
   });
 
   test('no spending at all is said by what is true of the connections', () => {

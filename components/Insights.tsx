@@ -406,7 +406,7 @@ export default function Insights({
       insights: shown,
       leftOut: fromSpending ? leftOut : null,
       missing: fromSpending
-        ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions)]
+        ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions, thisMonthKey)]
         : [],
     };
     // `hidden` isn't read inside: it changes what formatMoney writes there.

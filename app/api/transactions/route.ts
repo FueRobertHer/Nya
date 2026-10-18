@@ -4,6 +4,7 @@ import { readCache, writeCache, CacheKey } from '@/lib/cache';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
 import { storeFailure } from '@/lib/store-failure';
+import { withImportedFiles } from '@/lib/history-import/without-files';
 
 // The Activity tab's transactions: every linked institution's, synced with
 // Plaid, and the rows entered on manual accounts, with what the person said
@@ -65,7 +66,14 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const { transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note } = await finishActivity(ctx, plaid, hidden, { grow: true });
+    const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note }, without_transactions] = await Promise.all([
+      finishActivity(ctx, plaid, hidden, { grow: true }),
+      // With what the files imported into each one's accounts cover, for one
+      // whose transactions don't come in: a month they cover isn't said to be
+      // missing them (lib/history-import/without-files.ts). Read on every
+      // load, never cached: the cached part is Plaid's alone.
+      withImportedFiles(ctx, plaid.without_transactions ?? []),
+    ]);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
@@ -84,7 +92,7 @@ export async function GET(req: Request) {
       // counts (the cash flow chart) says them among what may be missing.
       aside_notes: [...(tags_note ? [tags_note] : []), ...(review_note ? [review_note] : [])],
       incomplete,
-      without_transactions: plaid.without_transactions ?? [],
+      without_transactions,
       ...(plaid.connections === undefined ? {} : { connections: plaid.connections }),
       recurring_history: history,
       categories: taxonomy,

@@ -678,7 +678,9 @@ export default function MonthBreakdown({
   const gapNotes = selected
     ? [
         ...monthGapNotes(selected, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)),
-        ...missingMonthNotes(withoutTransactions),
+        // Not a bank whose files cover the month in its place (#52), as a
+        // report and budget rollover count it.
+        ...missingMonthNotes(withoutTransactions, selected),
         ...(uncategorized ? [uncategorized] : []),
       ]
     : [];

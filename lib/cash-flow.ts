@@ -80,7 +80,7 @@ import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
 import { joinNames, monthGaps, type Incomplete, type Stopped } from './month-coverage';
-import { refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from './no-transactions';
+import { coveredOutOf, refusedNames, unallowedNames, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from './no-transactions';
 import { importedRowsNote } from './history-import/view';
 import type { LabelSide, SankeyLinkInput } from './sankey';
 
@@ -543,7 +543,9 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * are still importing; a connection that stopped syncing, with the months it
  * may leave short (lib/month-coverage.ts, months as the Activity tab reads
  * them); a bank account or card whose transactions Plaid doesn't provide or
- * the person didn't allow; a period reaching before the transactions held
+ * the person didn't allow, with the months of the period the files imported
+ * into its connection's accounts don't cover in its place (each month as a
+ * report and budget rollover count it); a period reaching before the transactions held
  * (historyNote); and SimpleFIN rows that count without a category. Counted:
  * the transfers, exclusions and rule hides left out, exclusions that
  * couldn't be read, what is in another currency, that a refund is money in,
@@ -594,12 +596,27 @@ export function cashFlowNotes(input: {
   }
   const importing = [...new Set(byMonth.flatMap((g) => g.gaps.importing))];
   if (importing.length > 0) gaps.push(`${joinNames(importing)} ${importing.length === 1 ? 'is' : 'are'} still importing older transactions, so ${whole} may be incomplete.`);
-  const refused = refusedNames(view);
-  if (refused.length > 0) gaps.push(`Doesn't include the bank or card accounts at ${joinNames(refused)}: Plaid doesn't provide their transactions, so ${whole} may be incomplete.`);
-  const unallowed = unallowedNames(view);
-  if (unallowed.length > 0) {
+  // A bank account or card whose transactions don't come in, for the months
+  // the files imported into its connection's accounts don't cover in its
+  // place (lib/no-transactions.ts coveredOutOf), as each month's own notes
+  // say it; those short of the same months together.
+  const uncovered = (namesIn: (v: NoTransactionsView) => string[]) => {
+    const monthsOf = new Map<string, string[]>();
+    for (const m of period.months) for (const name of namesIn(coveredOutOf(view, m))) monthsOf.set(name, [...(monthsOf.get(name) ?? []), m]);
+    const together = new Map<string, { names: string[]; months: string[] }>();
+    for (const [name, months] of monthsOf) {
+      const same = together.get(months.join()) ?? { names: [], months };
+      same.names.push(name);
+      together.set(months.join(), same);
+    }
+    return [...together.values()];
+  };
+  for (const { names, months } of uncovered(refusedNames)) {
+    gaps.push(`Doesn't include the bank or card accounts at ${joinNames(names)}: Plaid doesn't provide their transactions, so ${touched(months)} may be incomplete.`);
+  }
+  for (const { names, months } of uncovered(unallowedNames)) {
     gaps.push(
-      `Doesn't include the bank or card accounts at ${joinNames(unallowed)}: you didn't allow Nya to see their transactions, so ${whole} may be incomplete. To bring them in, choose Allow transactions on the Accounts tab.`
+      `Doesn't include the bank or card accounts at ${joinNames(names)}: you didn't allow Nya to see their transactions, so ${touched(months)} may be incomplete. To bring them in, choose Allow transactions on the Accounts tab.`
     );
   }
   const history = historyNote(period, input.rows, input.now);

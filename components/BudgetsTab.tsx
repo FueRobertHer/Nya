@@ -330,7 +330,7 @@ export default function BudgetsTab({
   // With rows entered by hand, the connections that bring in none are named
   // beside the budgets instead, as where the spending comes from.
   const noSpending = txns ? noSpendingOf(withoutTransactions, txns.length) : null;
-  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions);
+  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions, thisMonth);
   const namedWithout = withoutNote(withoutTransactions, txns?.length ?? 0);
 
   // The currency the figures are in: this page's for this month, the
