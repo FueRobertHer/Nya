@@ -465,9 +465,13 @@ describe('a store that can’t be read', () => {
     await fake.hset(ctxKey('goal-plans'), { [ID(1)]: 'not-ciphertext-but-long-enough-to-be-tried' });
     const blob = await fake.get<string>(ctxKey('goals'));
     const loaded = await quietly(get);
-    expect(loaded).toEqual({ status: 409, body: { error: expect.stringContaining('goal plans'), unreadable: true, unreadable_ids: [ID(1)], unrecognised_ids: [] } });
+    // It names the repair the card can offer (below).
+    expect(loaded).toEqual({
+      status: 409,
+      body: { error: expect.stringContaining('goal plans'), unreadable: true, unreadable_ids: [ID(1)], unrecognised_ids: [], repair: 'goal-plans' },
+    });
     const saved = await quietly(() => put([G(1), G(2)]));
-    expect(saved.status).toBe(409);
+    expect(saved).toEqual({ status: 409, body: expect.objectContaining({ unreadable: true, unreadable_ids: [ID(1)], repair: 'goal-plans' }) });
     expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe('not-ciphertext-but-long-enough-to-be-tried');
     expect(await fake.get<string>(ctxKey('goals'))).toBe(blob);
   });
@@ -482,7 +486,10 @@ describe('a store that can’t be read', () => {
   test('a blob that can’t be read is the same 409, before any plan is touched', async () => {
     await put([{ ...G(1), plan: { allocation: 1000 } }]);
     await fake.set(ctxKey('goals'), 'unreadable');
-    expect((await quietly(get)).body).toMatchObject({ unreadable: true });
+    const loaded = (await quietly(get)).body;
+    expect(loaded).toMatchObject({ unreadable: true });
+    // Nothing the card can remove: it is the goals themselves that can't be read.
+    expect(loaded.repair).toBeUndefined();
     expect((await quietly(() => put([G(1)]))).status).toBe(409);
     expect((await entries())[ID(1)].plan.allocation).toEqual({ amount: 1000, account_id: 'acc_sav' });
   });
@@ -498,6 +505,75 @@ describe('a store that can’t be read', () => {
     (await import('@/lib/sessions')).forgetEpochs();
     expect((await quietly(get)).status).toBe(503);
     expect((await quietly(() => put([G(1)]))).status).toBe(503);
+  });
+});
+
+describe('removing the plans that are damaged, on the person’s word', () => {
+  const DAMAGED = 'not-ciphertext-but-long-enough-to-be-tried';
+  const repair = async (body: unknown) => {
+    const res: Response = await route.POST(new Request('http://x/api/goals', { method: 'POST', body: typeof body === 'string' ? body : JSON.stringify(body) }));
+    return { status: res.status, body: (await res.json()) as any };
+  };
+
+  test('only when it is asked for and confirmed, in so many words; nothing is touched otherwise', async () => {
+    await put([{ ...G(1), plan: { allocation: 1000 } }]);
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: DAMAGED });
+    for (const body of [{}, { action: 'repair' }, { action: 'repair', confirm: 'yes' }, { action: 'repair', confirm: true, ids: [ID(1)] }, { action: 'other', confirm: true }, 'not json', null]) {
+      expect(await repair(body)).toEqual({ status: 400, body: { error: 'Expected { action: "repair", confirm: true }' } });
+    }
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe(DAMAGED);
+  });
+
+  test('a damaged plan is removed: its goal reads again, name, target and account kept, with no plan, and the others keep theirs', async () => {
+    await put([{ ...G(1), plan: { allocation: 1000, target_date: '2030-01-01' } }, { ...G(2), plan: { monthly_target: 200 } }, G(3)]);
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: DAMAGED });
+    expect((await quietly(get)).status).toBe(409);
+    expect(await repair({ action: 'repair', confirm: true })).toEqual({ status: 200, body: { removed: 1, unrecognised: 0 } });
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBeNull();
+    const { status, body } = await get();
+    expect(status).toBe(200);
+    expect(body.goals.map((g: any) => g.id)).toEqual([ID(1), ID(2), ID(3)]);
+    expect(body.goals[0]).toEqual(G(1));
+    expect(body.goals[1].plan).toEqual({ monthly_target: 200 });
+    // Saves go through again.
+    expect((await put(body.goals)).status).toBe(200);
+    // Nothing left to remove: a second one removes nothing.
+    expect(await repair({ action: 'repair', confirm: true })).toEqual({ status: 200, body: { removed: 0, unrecognised: 0 } });
+  });
+
+  test('a plan a later release saved is never removed, only counted, and the goals still can’t be shown', async () => {
+    await put([{ ...G(1), plan: { allocation: 1000 } }, G(2)]);
+    const later = await encrypt(TEST_CTX, JSON.stringify({ v: 2, core: { name: 'Goal 2', target: 5000, account_id: 'acc_sav' }, plan: {}, before: null }));
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: DAMAGED, [ID(2)]: later });
+    expect((await quietly(get)).body).toMatchObject({ unreadable_ids: [ID(1)], unrecognised_ids: [ID(2)], repair: 'goal-plans' });
+    expect(await repair({ action: 'repair', confirm: true })).toEqual({ status: 200, body: { removed: 1, unrecognised: 1 } });
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBeNull();
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(2))).toBe(later);
+    expect((await quietly(get)).body).toMatchObject({ unreadable_ids: [], unrecognised_ids: [ID(2)] });
+  });
+
+  test('an entry this deployment can’t open (another k0) is not damage: it stays, and nothing is removed', async () => {
+    await put([{ ...G(1), plan: { allocation: 1000 } }]);
+    // Whole ciphertext that fails to open under this deployment's k0, as after
+    // PLAID_ENCRYPTION_KEY is replaced: k0 commits to no key, so it can't be
+    // told from damage, and is never removed as damage.
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const plain = JSON.stringify({ v: 1, core: { name: 'Goal 1', target: 5000, account_id: 'acc_sav' }, plan: {}, before: null });
+    const sealed = Buffer.concat([iv, new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)))]).toString('base64');
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: sealed });
+    const res = await quietly(() => repair({ action: 'repair', confirm: true }));
+    expect(res).toEqual({ status: 500, body: { error: 'Failed to repair goal plans' } });
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe(sealed);
+  });
+
+  test('a container being restored is a 503, and nothing is removed', async () => {
+    await put([{ ...G(1), plan: { allocation: 1000 } }]);
+    await fake.hset(ctxKey('goal-plans'), { [ID(1)]: DAMAGED });
+    await registerTestContainer(fake, 'restoring');
+    (await import('@/lib/sessions')).forgetEpochs();
+    expect((await quietly(() => repair({ action: 'repair', confirm: true }))).status).toBe(503);
+    expect(await fake.hget<string>(ctxKey('goal-plans'), ID(1))).toBe(DAMAGED);
   });
 });
 

@@ -11,6 +11,7 @@ import {
   monthsFact,
   spendingFact,
   uncategorizedFact,
+  uncategorizedSourcesFact,
   UNREAD,
   type SpendingInput,
   type WeeklyFacts,
@@ -512,6 +513,11 @@ describe('transactions with no category', () => {
       row('2026-10-07', 10, { category: null }),
     ];
     expect(uncategorizedFact(rows, '2026-10-05', '2026-10-11')).toBe(2);
+    // Named by the services they came through that week, and no other.
+    expect(uncategorizedSourcesFact(rows, '2026-10-05', '2026-10-11')).toBe('SimpleFIN');
+    const both = [...rows, row('2026-10-08', 5, { source: 'lunchflow', category: null }), row('2026-10-13', 5, { source: 'lunchflow', category: null })];
+    expect(uncategorizedSourcesFact(both, '2026-10-05', '2026-10-11')).toBe('SimpleFIN or Lunch Flow');
+    expect(uncategorizedSourcesFact(both.slice(rows.length), '2026-10-05', '2026-10-11')).toBe('Lunch Flow');
   });
 });
 
@@ -689,7 +695,10 @@ describe('the summary’s words', () => {
     // connecting it again would help, which the record doesn't say.
     expect(text).toContain("- A bank's connection can't be repaired.");
     expect(text).toContain("October may be missing transactions: Chase hasn't synced since Thursday, October 8 and whether you excluded 3 transactions couldn't be read.");
-    expect(text).toContain('2 transactions from SimpleFIN this week have no category, so they count as spending or income until you categorize them.');
+    expect(text).toContain('2 transactions from SimpleFIN or Lunch Flow this week have no category, so they count as spending or income until you categorize them.');
+    // Named by the service they came through, when the facts say which.
+    expect(composeWeekly(richFacts({ uncategorized_from: 'SimpleFIN' }), opts()).text).toContain('2 transactions from SimpleFIN this week have no category');
+    expect(composeWeekly(richFacts({ uncategorized: 1, uncategorized_from: 'Lunch Flow' }), opts()).text).toContain('1 transaction from Lunch Flow this week has no category');
     expect(text).toContain(`Open Nya to see the figures: ${LINK}/`);
     expect(text).toContain(`Nya sends you this every Monday because you turned on the weekly summary. It never includes balances, amounts or account numbers. To stop these summaries, open ${STOP} or turn them off in Nya, under Manage on the Accounts tab.`);
     expect(text).not.toContain('Nothing needs your attention');

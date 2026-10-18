@@ -145,6 +145,14 @@ describe('tags and notes on transactions, added to version 1', () => {
       const listed = await call('transactions', 'from=2000-01-01');
       expect(listed.status).toBe(200);
       expect(listed.body.notes).toContain("Your tags couldn't be read, so transactions show without them until they can be.");
+      // Spending answers by tag too, so it says so; the cash flow shows no
+      // tag and so doesn't, as the app's chart doesn't.
+      const spending = await call('spending', 'from=2000-01-01');
+      expect([spending.status, spending.body.tags]).toEqual([200, []]);
+      expect(spending.body.notes).toContain("Your tags couldn't be read, so transactions show without them until they can be.");
+      const flow = await call('cash-flow', 'from=2000-01-01');
+      expect(flow.status).toBe(200);
+      expect(flow.body.notes.some((n: string) => n.includes('tags'))).toBe(false);
     } finally {
       console.error = quiet;
     }

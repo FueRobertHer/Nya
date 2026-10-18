@@ -18,6 +18,12 @@ export const SIMPLEFIN_OPTION = {
   note: 'Bring your own sync: your own SimpleFIN account ($15 a year, paid to SimpleFIN) may reach banks Plaid doesn’t. Redbark, a separate paid service that works the same way, covers Australia and New Zealand.',
 } as const;
 
+/** The same, with your own Lunch Flow account's API key (lib/connectors/lunchflow.ts). */
+export const LUNCHFLOW_OPTION = {
+  label: 'Connect with Lunch Flow',
+  note: 'Bring your own sync: your own Lunch Flow account (about $35 a year for two bank connections, paid to Lunch Flow) reaches banks in many countries, through providers such as GoCardless and Akahu.',
+} as const;
+
 /** What each way is called, and what it is for. */
 export const CONNECT_OPTIONS: readonly { kind: LinkKind; label: string; note: string }[] = [
   {
@@ -37,6 +43,7 @@ export default function ConnectButtons({
   onConnect,
   brokerage,
   onConnectSimpleFin,
+  onConnectLunchFlow,
 }: {
   /** Whether a Link flow is starting (any of them): every button waits. */
   connecting: boolean;
@@ -45,6 +52,8 @@ export default function ConnectButtons({
   brokerage: boolean;
   /** Opens the SimpleFIN connection, when offered. */
   onConnectSimpleFin?: () => void;
+  /** Opens the Lunch Flow connection, when offered. */
+  onConnectLunchFlow?: () => void;
 }) {
   // Which button started the flow in progress, so only it says so. A flow
   // started elsewhere (Reconnect, say) disables them without naming one.
@@ -59,6 +68,7 @@ export default function ConnectButtons({
       starting={starting}
       brokerage={brokerage}
       onConnectSimpleFin={onConnectSimpleFin}
+      onConnectLunchFlow={onConnectLunchFlow}
       idBase={idBase}
       onConnect={(kind) => {
         setStarting(kind);
@@ -77,6 +87,7 @@ export function ConnectButtonsView({
   idBase,
   onConnect,
   onConnectSimpleFin,
+  onConnectLunchFlow,
 }: {
   connecting: boolean;
   starting: LinkKind | null;
@@ -84,6 +95,7 @@ export function ConnectButtonsView({
   idBase: string;
   onConnect: (kind: LinkKind) => void;
   onConnectSimpleFin?: () => void;
+  onConnectLunchFlow?: () => void;
 }) {
   const options = CONNECT_OPTIONS.filter((option) => brokerage || option.kind === 'bank');
   return (
@@ -114,6 +126,16 @@ export function ConnectButtonsView({
           </button>
           <p className="panel-note" id={`${idBase}-simplefin`}>
             {SIMPLEFIN_OPTION.note}
+          </p>
+        </div>
+      )}
+      {onConnectLunchFlow && (
+        <div>
+          <button className="secondary" onClick={onConnectLunchFlow} aria-describedby={`${idBase}-lunchflow`}>
+            {LUNCHFLOW_OPTION.label}
+          </button>
+          <p className="panel-note" id={`${idBase}-lunchflow`}>
+            {LUNCHFLOW_OPTION.note}
           </p>
         </div>
       )}

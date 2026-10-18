@@ -52,13 +52,13 @@ export function approvedAsImported(was: { amount: number; currency: string | nul
 
 /** Why an approved transaction is back in the queue, said once: as
  *  changedWords says it, unless it was approved at the amount it was
- *  imported from the bank's file at (approvedAsImported). Then, `beside` the
+ *  imported at (approvedAsImported). Then, `beside` the
  *  imported row's note (the Activity tab draws it on the row), only what the
  *  review adds; alone (Card Mode), the two in one. */
 export function changedSinceWords(was: { amount: number; currency: string | null }, t: Twin, beside: boolean): string {
   if (!approvedAsImported(was, t)) return changedWords(was, !t.source?.startsWith('import:'));
-  if (beside) return 'You approved it at the amount imported from your bank’s file, before the bank changed it.';
-  return `You approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}, the amount imported from your bank’s file. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
+  if (beside) return 'You approved it at the amount it was imported at, before the bank changed it.';
+  return `You approved it at ${formatMoney(Math.abs(was.amount), was.currency)} ${was.amount < 0 ? 'in' : 'out'}, the amount it was imported at. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
 }
 
 /** What would file an approved transaction elsewhere now, offered. */

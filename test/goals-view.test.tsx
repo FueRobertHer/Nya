@@ -136,6 +136,28 @@ describe('the card', () => {
     const html = card([goal('Trip', 'sav', 3000, { allocation: 1200, monthly_target: 100 }), goal('B', null, 5), goal('C', 'card', 5)]);
     expect(html).not.toMatch(/[\u2013\u2014]/);
   });
+
+  test('plans that can’t be read: said with the load’s error, the damaged ones offered for removal, never one a later version saved', () => {
+    const buttons = (html: string) => [...html.matchAll(/<button[^>]*>([^<]*)<\/button>/g)].map((m) => m[1].trim()).filter(Boolean);
+    const failed = { status: 'error' as const, error: 'Your saved goals could not be read, so they have been left untouched and editing is paused.', onRepaired: () => {} };
+    const one = card([], { ...failed, damage: { unreadable: 1, unrecognised: 0 } });
+    expect(text(one)).toContain('Your saved goals could not be read');
+    expect(text(one)).toContain('The plan of one goal is damaged and can’t be read. Goals can’t be shown or changed until it is removed.');
+    expect(text(one)).toContain('Removing it keeps that goal, with its name, target and account, and no plan');
+    expect(buttons(one)).toEqual(['Remove the damaged plan']);
+    const newer = card([], { ...failed, damage: { unreadable: 0, unrecognised: 2 } });
+    expect(text(newer)).toContain('The plans of 2 goals are in a form this version of Nya can’t read, though they look intact');
+    expect(buttons(newer)).toEqual([]);
+    // Both: removing the damaged ones isn't enough on its own, and it says so.
+    const both = card([], { ...failed, damage: { unreadable: 2, unrecognised: 1 } });
+    expect(text(both)).toContain('removing these isn’t enough on its own');
+    expect(buttons(both)).toEqual(['Remove the damaged plans']);
+    for (const html of [one, newer, both]) expect(html).not.toMatch(/[\u2013\u2014]/);
+    // No count (the goals themselves can't be read, or storage was out of
+    // reach): the error alone, nothing offered.
+    expect(buttons(card([], failed))).toEqual([]);
+    expect(text(card([], failed))).not.toContain('damaged');
+  });
 });
 
 describe('the card, with the months in', () => {

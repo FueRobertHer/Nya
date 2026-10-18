@@ -68,8 +68,9 @@ export type NormalizedRecord = {
 };
 
 /** Sources whose ids identify a transaction exactly (lib/import/match.ts):
- *  an OFX file's FITID, and SimpleFIN's transaction id (lib/connectors/). */
-export const ID_SOURCES: ReadonlySet<string> = new Set(['import:ofx', 'simplefin']);
+ *  an OFX file's FITID, and SimpleFIN's and Lunch Flow's transaction ids
+ *  (lib/connectors/). */
+export const ID_SOURCES: ReadonlySet<string> = new Set(['import:ofx', 'simplefin', 'lunchflow']);
 
 // Control characters, and the marks that reorder or hide text: zero-width
 // spaces and joiners, directional marks, embeddings and overrides, isolates.

@@ -665,9 +665,16 @@ async function readGeneration(store: BackupStore, g: Generation, signal?: AbortS
  * Rewrites every kept generation that lacks one of these tombstones, read
  * only where its name says so: each rewrite uploaded, read back, checked line
  * by line, and only then the file it replaces deleted. A generation that
- * doesn't read back intact is deleted if a newer one is intact, and throws if
- * it is the newest. Answers the files written, and the damaged ones deleted.
- * Under the lock.
+ * doesn't read back intact is deleted if a newer one reads back intact (one
+ * passed over by its name is read then, never trusted on its name alone),
+ * and kept otherwise: it alone may hold a key. The generations older than a
+ * kept one are rewritten all the same, so a key just destroyed leaves every
+ * file that can be rewritten, and then it throws, naming the newest kept,
+ * once the older files of each generation known intact (or deleted for a
+ * newer one intact) are gone: one passed over by its name that has older
+ * files is read for it, and those of any other may be the only ones of it
+ * that read, and stay. Answers the files written, and the damaged ones
+ * deleted. Under the lock.
  */
 export async function rewriteGenerations(
   store: BackupStore,
@@ -679,24 +686,50 @@ export async function rewriteGenerations(
   const want = tombstoneDigest(tombstones.keys());
   const written: string[] = [];
   const dropped: string[] = [];
-  // Whether a newer generation than the one at hand is intact: every one was
-  // built from the newest before it while that read back intact, so a newer
-  // one holds what an older held (but what was destroyed since).
+  // Whether a newer generation than the one at hand read back intact in this
+  // run: every one was built from the newest before it while that read back
+  // intact, so a newer one holds what an older held (but what was destroyed
+  // since).
   let newerIntact = false;
+  // Newer ones passed over because their name already holds every
+  // tombstone: checked when they were written, and read only when an older
+  // one's fate rests on them.
+  const passed: Generation[] = [];
+  // The generations (by `taken`) whose older files nothing needs: their
+  // newest file read back intact in this run, or they were deleted for a
+  // newer one that did.
+  const superseded = new Set<string>();
+  const someNewerIntact = async (): Promise<boolean> => {
+    while (!newerIntact && passed.length > 0) {
+      const g = passed.shift()!;
+      const read = await readGeneration(store, g, signal);
+      if ('archive' in read) {
+        newerIntact = true;
+        superseded.add(g.taken);
+      }
+    }
+    return newerIntact;
+  };
+  // The newest one kept for want of a newer one intact, said once the rest
+  // are rewritten.
+  let failed: Error | null = null;
   for (const g of generations) {
-    // Holding every tombstone, by its name: nothing to do, and not read. It
-    // was checked when it was written.
     if (g.tombstones === want) {
-      newerIntact = true;
+      passed.push(g);
       continue;
     }
     const read = await readGeneration(store, g, signal);
     if ('gone' in read) continue;
     if ('damaged' in read) {
-      if (!newerIntact) throw new Error(`The key archive ${g.pathname} doesn't read back intact (${read.damaged}), and no newer one holds what it held, so it can't be rewritten.`);
+      if (!(await someNewerIntact())) {
+        console.error(`Key archive: ${g.pathname} doesn't read back intact (${read.damaged}), and no newer one holds what it held, so it is kept as it is; the older ones are rewritten all the same.`);
+        failed ??= new Error(`The key archive ${g.pathname} doesn't read back intact (${read.damaged}), and no newer one holds what it held, so it can't be rewritten.`);
+        continue;
+      }
       console.error(`Key archive: ${g.pathname} doesn't read back intact (${read.damaged}). A newer generation holds what it held, so it is deleted.`);
       await store.del([g.pathname], signal);
       dropped.push(g.pathname);
+      superseded.add(g.taken);
       continue;
     }
     newerIntact = true;
@@ -704,7 +737,10 @@ export async function rewriteGenerations(
     // Always after the file it replaces, so the two never share a name.
     const at = new Date(Math.max(now.getTime(), Date.parse(old.header.written_at) + 1));
     const next = rewriteGeneration(old, tombstones, at);
-    if (next === null) continue;
+    if (next === null) {
+      superseded.add(g.taken);
+      continue;
+    }
     const checked = checkRewrite(old, next, tombstones);
     const pathname = keyArchiveName(old.header.taken_at, at, checked.tombstones.keys());
     if (pathname === g.pathname) refuse('A key archive would be rewritten under its own name.');
@@ -715,10 +751,39 @@ export async function rewriteGenerations(
     }
     await store.del([g.pathname], signal);
     written.push(pathname);
+    superseded.add(g.taken);
   }
   // Older files of a generation are the rewrite's leftovers: never newer
-  // than the file that replaced them, so never needed.
-  if (stale.length > 0) await store.del(stale, signal);
+  // than the file that replaced them, so never needed. When the run failed,
+  // only those of a generation known intact (or deleted for a newer one)
+  // go, since they may still hold the key just destroyed: an older file of
+  // any other may be the only one of it that reads. One passed over by its
+  // name (rewritten by an earlier run whose leftovers weren't all deleted)
+  // is read for it, never trusted on its name alone.
+  if (failed) {
+    const withOlder = new Set(stale.map((p) => parseKeyArchiveName(p)!.taken));
+    try {
+      for (const g of passed) {
+        if (withOlder.has(g.taken) && 'archive' in (await readGeneration(store, g, signal))) superseded.add(g.taken);
+      }
+    } catch (err) {
+      // As for the deletion below: the run's own failure is the one to say,
+      // and what wasn't read keeps its older files, for the next run.
+      console.error('Key archive: a generation passed over by its name could not be read for its older files; they stay for the next run.', err instanceof Error ? err.message : typeof err);
+    }
+  }
+  const leftovers = failed ? stale.filter((p) => superseded.has(parseKeyArchiveName(p)!.taken)) : stale;
+  if (leftovers.length > 0) {
+    try {
+      await store.del(leftovers, signal);
+    } catch (err) {
+      // The run's own failure names the archive kept: it is the one to say.
+      // These go the next time a run gets this far.
+      if (!failed) throw err;
+      console.error(`Key archive: ${leftovers.length} older file(s) of rewritten generations could not be deleted; the next run deletes them.`, err instanceof Error ? err.message : typeof err);
+    }
+  }
+  if (failed) throw failed;
   return { written, dropped };
 }
 

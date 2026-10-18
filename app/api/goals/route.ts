@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
 import { parseGoals } from '@/lib/goal-model';
-import { readGoalRecords, recordOf, wireGoal, witnessOf, writeGoalRecords } from '@/lib/goal-plans';
+import { goalPlansStore, readGoalRecords, recordOf, removeDamagedPlans, wireGoal, witnessOf, writeGoalRecords } from '@/lib/goal-plans';
+import { UnreadableEntriesError } from '@/lib/repo';
 import { planGoalSave } from '@/lib/goal-save';
 import { knownGoalAccounts } from '@/lib/goal-flows';
 import { addDays, isCalendarDay } from '@/lib/manual-txn-input';
@@ -23,7 +24,20 @@ import { addDays, isCalendarDay } from '@/lib/manual-txn-input';
 //
 // Errors are the storage seam's (lib/store-failure.ts): goals or plans that
 // can't be read are a flagged 409, never "none", so the client never shows an
-// empty list for the next save to write over what is there.
+// empty list for the next save to write over what is there. When it is plans
+// that can't be read, the 409 says so (`repair: "goal-plans"`, with their
+// goal ids, unreadable_ids and unrecognised_ids), and
+//
+//   POST { action: "repair", confirm: true }
+//     removes the plans whose bytes are damaged (lib/goal-plans.ts
+//     removeDamagedPlans), only on the person's word: their goals then read
+//     with no plan. Never one a later release saved, which stays, named.
+//     { removed, unrecognised }, as counts.
+
+/** What a failure answers: the seam's, and for plans that can't be read, the
+ *  repair the card can offer. */
+const failure = (err: unknown, fallback: string) =>
+  storeFailure(err, fallback, err instanceof UnreadableEntriesError && err.what === goalPlansStore.what ? { repair: 'goal-plans' } : undefined);
 
 export async function GET() {
   try {
@@ -31,7 +45,22 @@ export async function GET() {
     const { records, links } = await readGoalRecords(ctx);
     return NextResponse.json({ goals: records.map((r) => wireGoal(r, links)) });
   } catch (err) {
-    return storeFailure(err, 'Failed to load goals');
+    return failure(err, 'Failed to load goals');
+  }
+}
+
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => null);
+  // Only on the person's word: what is removed can't be put back here.
+  if (body?.action !== 'repair' || body?.confirm !== true || Object.keys(body).length !== 2) {
+    return NextResponse.json({ error: 'Expected { action: "repair", confirm: true }' }, { status: 400 });
+  }
+  try {
+    const ctx = await dataCtx();
+    const { removed, unrecognised } = await removeDamagedPlans(ctx);
+    return NextResponse.json({ removed: removed.length, unrecognised: unrecognised.length });
+  } catch (err) {
+    return failure(err, 'Failed to repair goal plans');
   }
 }
 
@@ -71,6 +100,6 @@ export async function PUT(req: Request) {
     const saved = planned.next.map((n) => recordOf(n.core, { v: 1, core: witnessOf(n.core), plan: n.plan, before: null }, read.links));
     return NextResponse.json({ goals: saved.map((r) => wireGoal(r, read.links)) });
   } catch (err) {
-    return storeFailure(err, 'Failed to save goals');
+    return failure(err, 'Failed to save goals');
   }
 }

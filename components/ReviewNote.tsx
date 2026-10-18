@@ -91,9 +91,9 @@ export default function ReviewNote({
   if (t.needs_review) {
     lines.push(
       <div className="review-note" key="needs">
-        {/* Beside the row's own note when it stands for a row imported from
-            the bank's file at the amount approved (components/MonthBreakdown.tsx),
-            so the change is said once. */}
+        {/* Beside the row's own note when it stands for a row imported at
+            the amount approved (components/MonthBreakdown.tsx), so the change
+            is said once. */}
         <span>
           <Masked>{t.review_changed ? changedSinceWords(t.review_changed, t, true) : 'Waiting for you to approve it as it is.'}</Masked>
         </span>

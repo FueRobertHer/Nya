@@ -583,13 +583,13 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
 
   test('the notes say how many of the period’s transactions were imported, counted or not, as the month’s totals do', () => {
     const said = notesOf(sep).counted;
-    expect(said[said.length - 1]).toBe('5 of September’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(said[said.length - 1]).toBe('5 of September’s transactions were imported from files, not sent by the bank.');
     // The month's summary says it of the same rows: the same count.
-    expect(importedRowsNote(rows.filter((t) => inSep(t.date)))).toBe('5 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(importedRowsNote(rows.filter((t) => inSep(t.date)))).toBe('5 of this month’s transactions were imported from files, not sent by the bank.');
     // Over several months, of the period; one is one.
-    expect(notesOf(periodOf('last-3-months', '2026-10-11')).counted).toContain('6 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(notesOf(periodOf('last-3-months', '2026-10-11')).counted).toContain('6 of this period’s transactions were imported from files, not sent by the bank.');
     const aug = periodOf('last-month', '2026-09-15');
-    expect(notesOf(aug).counted).toContain('1 of August’s transactions was imported from your bank’s files, not sent by the bank.');
+    expect(notesOf(aug).counted).toContain('1 of August’s transactions was imported from files, not sent by the bank.');
     // None imported, nothing said: a file imported into a manual account is
     // that account's own (SEPTEMBER's hardware store), as under the month.
     expect(cashFlowNotes({ flow, period: sep, rows: SEPTEMBER, today: '2026-10-11', now: Date.parse('2026-10-11T12:00:00Z'), day }).counted.join(' ')).not.toContain('imported');

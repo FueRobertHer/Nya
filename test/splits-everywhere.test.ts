@@ -42,6 +42,7 @@ const { readReport } = await import('@/lib/report/read');
 const { reportSettingsStore } = await import('@/lib/report/store');
 const { readActivity } = await import('@/lib/api-read');
 const { summarize } = await import('@/lib/totals');
+const { caveatLines, problemLines } = await import('@/lib/report/words');
 
 const WALLET_ROW = 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d';
 const NOW_ISO = new Date().toISOString();
@@ -342,5 +343,29 @@ describe('reports', () => {
     expect(report.appendix!.total).toBe(lines - card + 1 + 1);
     expect(report.appendix!.shown).toBe(report.appendix!.total);
     expect(report.totals.transactions).toBe(app.transactions);
+  });
+
+  test('a split that can’t be read is a caveat on the totals, never a gap: no transaction is missing, and no month is made uncertain', async () => {
+    await splitAndGroup();
+    const period = { kind: 'range' as const, start: daysAgo(30), end: daysAgo(0), through: daysAgo(0), today: daysAgo(0), time_zone: 'UTC' };
+    const before = await readReport(ctx, period);
+    expect(before.caveats.notes).toEqual([]);
+    await fake.hset(`test:c:${ctx.container}:transaction-splits`, { t_card: 'not-ciphertext-but-long-enough-to-be-tried' });
+    const [error, warn] = [console.error, console.warn];
+    console.error = console.warn = () => {};
+    const report = await readReport(ctx, period).finally(() => ([console.error, console.warn] = [error, warn]));
+    // The fixture's own gaps (a connection never loaded, one not synced), and
+    // nothing more: no gap of the split, and each month as it was.
+    expect(report.gaps).toEqual(before.gaps);
+    expect(report.gaps.some((g) => g.kind === 'unreadable')).toBe(false);
+    expect(report.months.map((m) => [m.month, m.uncertain, m.gaps])).toEqual(before.months.map((m) => [m.month, m.uncertain, m.gaps]));
+    expect(problemLines(report, (d) => d)).toEqual(problemLines(before, (d) => d));
+    expect(report.caveats.notes).toHaveLength(1);
+    expect(report.caveats.notes[0]).toContain('couldn’t be read');
+    expect(caveatLines(report, (d) => d).at(-1)).toBe(`${report.caveats.notes[0].replace(/[.\s]+$/, '')}.`);
+    // The transaction counts whole, as the Activity tab shows it.
+    const activity = await readActivity(ctx, false);
+    const app = summarize(activity.rows, (d) => d >= period.start && d <= period.end, report.currency);
+    expect([report.totals.money_in, report.totals.money_out]).toEqual([app.money_in, app.money_out]);
   });
 });

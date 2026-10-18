@@ -1759,3 +1759,57 @@ describe('the inventory', () => {
     expect(stale).toEqual([]);
   });
 });
+
+describe('every store the app declares exportable on the seam', () => {
+  // Each one with every entry damaged, or saved by a later version, in turn:
+  // named under problems, by its section, and never failing the download,
+  // nor any file in it. A store declared after this is covered as it is
+  // declared. Two are read into sections named otherwise: the budget set into
+  // the budgets on categories and on groups, the access log into sharing.
+  const SECTIONS: Record<string, string[]> = { 'budget-set': ['budgets', 'group_budgets'], 'sharing-access-log': ['sharing'] };
+  const exportable = () => declaredStores().filter((s) => s.exportable && s.kind !== 'counter' && s.kind !== 'counter-map');
+
+  test('the app declares some, so the test below reads them', () => {
+    expect(exportable().length).toBeGreaterThan(20);
+    // The goals' plans, and the record of imports from other apps among them.
+    expect(exportable().map((s) => s.name)).toEqual(expect.arrayContaining(['goal-plans', 'app-imports']));
+  });
+
+  for (const [mode, problem] of [
+    ['damaged', 'unreadable'],
+    ['saved by a later version', 'unrecognised'],
+  ] as const) {
+    test(`each one ${mode}: named, kept as it is, and the rest is downloaded`, async () => {
+      const wrong: string[] = [];
+      for (const store of exportable()) {
+        fake.reset();
+        (await import('@/lib/sessions')).forgetEpochs();
+        await registerTestContainer(fake);
+        await seedPerson();
+        await seedOther();
+        const key = ctxKey(store.name);
+        const bad = problem === 'unreadable' ? DAMAGED : await enc({ v: 999, later: 'shape' });
+        if (store.kind === 'value') await fake.set(key, bad);
+        else await fake.hset(key, Object.fromEntries([...(fake.hashes.get(key)?.keys() ?? []), 'entry_1'].map((id) => [id, bad])));
+        try {
+          const data = await collectUserData({ ctx, userId: 'user_me' });
+          const doc = buildUserExport(data, NOW);
+          for (const f of ['json', 'transactions-csv', 'balances-csv'] as const) [...exportFile(doc, f).pieces()].join('');
+          const { ofxFile } = await import('@/lib/ofx-export');
+          for (const a of doc.accounts) {
+            const made = ofxFile(data, doc, a.account_id, NOW);
+            if ('file' in made) [...made.file.pieces()].join('');
+          }
+          const sections = SECTIONS[store.name] ?? [store.name];
+          const named = doc.problems.filter((p) => sections.includes(p.section));
+          if (named.length === 0 || named.some((p) => p.problem !== problem)) wrong.push(`${store.name}: named as ${JSON.stringify(doc.problems)}`);
+          const still = store.kind === 'value' ? await fake.get<string>(key) : await fake.hget<string>(key, 'entry_1');
+          if (still !== bad) wrong.push(`${store.name}: changed`);
+        } catch (err) {
+          wrong.push(`${store.name}: the download failed (${(err as Error).name}: ${(err as Error).message})`);
+        }
+      }
+      expect(wrong).toEqual([]);
+    });
+  }
+});

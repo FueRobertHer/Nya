@@ -42,6 +42,7 @@ import { readNetWorthAndHistory, readNetWorth, type ApiMissing, type Interval } 
 import { MCP_MAX_RESULT_BYTES } from './api-limits';
 import { StoredDataUnreadableError } from './repo';
 import { loggable } from './log-safe';
+import { CONNECTOR_KINDS, connectorLabel, isConnectorKind } from './connectors/types';
 
 export { PROTOCOL_VERSIONS };
 export const LATEST_PROTOCOL = PROTOCOL_VERSIONS[0];
@@ -101,13 +102,14 @@ function missingAccounts(missing: readonly ApiMissing[], withoutBalance = 0): st
   const count = (pred: (m: ApiMissing) => boolean) => missing.filter(pred).length;
   const unreadable = count((m) => m.account_id === null && m.reason === 'unreadable');
   const notLoaded = count((m) => m.reason === 'not_loaded');
-  const manual = count((m) => m.account_id !== null && m.source !== 'simplefin');
-  const fed = count((m) => m.account_id !== null && m.source === 'simplefin');
+  const manual = count((m) => m.account_id !== null && !isConnectorKind(m.source));
+  // An account a connector feeds, counted by its connector (SimpleFIN, Lunch Flow).
+  const fed = CONNECTOR_KINDS.map((kind) => [connectorLabel(kind), count((m) => m.account_id !== null && m.source === kind)] as const);
   const parts = [
     unreadable > 0 ? `the accounts of ${plural(unreadable, 'connection')} couldn’t be read` : '',
     notLoaded > 0 ? `${plural(notLoaded, 'connection')} ${notLoaded === 1 ? 'hasn’t' : 'haven’t'} been loaded yet` : '',
     manual > 0 ? `${plural(manual, 'manual account')} couldn’t be read` : '',
-    fed > 0 ? `${plural(fed, 'SimpleFIN account')} couldn’t be read` : '',
+    ...fed.map(([label, n]) => (n > 0 ? `${plural(n, `${label} account`)} couldn’t be read` : '')),
     // Never measured, or a card SimpleFIN reports as money held, waiting for
     // the person's answer (the notes say which).
     withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no balance to count` : '',

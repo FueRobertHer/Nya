@@ -508,7 +508,7 @@ describe('getting to them', () => {
     expect(links).toContain('href="/privacy"');
     expect(links).not.toContain('aria-current');
     expect(text(renderToStaticMarkup(<CoverageNote />))).toContain(
-      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
+      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
     );
   });
 
@@ -568,10 +568,10 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     // Everything it tells the email service, and exactly what it counts
     // instead of naming (lib/weekly-summary/compose.ts NAMES).
     expect(priv).toContain(
-      'The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN have no category; and the currencies of transactions it didn’t count.'
+      'The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count.'
     );
     expect(priv).toContain(
-      'Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid or SimpleFIN gives it, with a digit or a currency or percent sign.'
+      'Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign.'
     );
     expect(priv).not.toContain('a name with a number in it is left out');
     expect(priv).toContain(
@@ -584,7 +584,7 @@ describe('email, on both pages, as this copy is set up (#51)', () => {
     const sec = security();
     expect(sec).toContain('If you turn it on, Nya emails you once a week what changed and what needs your attention. It never includes a balance, an amount, a percentage or an account number.');
     expect(sec).toContain(
-      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named; a bank’s name, which comes from Plaid or SimpleFIN, only when it has a digit or a currency or percent sign.'
+      'A name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named; a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent sign.'
     );
     expect(sec).toContain(
       'Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording, the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.'

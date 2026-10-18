@@ -468,9 +468,10 @@ export function ConnectionHealthView({
   );
 }
 
-/** What a SimpleFIN row offers: fixing it at SimpleFIN, then a Refresh;
- *  connecting again with a new Setup Token; choosing accounts; saying how to
- *  read a card's or a loan's balance; a Refresh. */
+/** What a SimpleFIN or Lunch Flow row offers: fixing it at the service, then a
+ *  Refresh; connecting again with a new Setup Token (or an API key);
+ *  choosing accounts; saying how to read a card's or a loan's balance; a
+ *  Refresh. */
 function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { health: Health }; onConnector?: (ask: ConnectorAsk) => void }) {
   const d = inst.health.detail;
   const id = d?.connection_id;
@@ -481,7 +482,7 @@ function ConnectorAction({ inst, onConnector }: { inst: HealthInstitution & { he
     case 'credentials':
       return (
         <div className="card-actions">
-          <button onClick={() => onConnector({ kind: 'token', connection_id: id })}>Connect again</button>
+          <button onClick={() => onConnector({ kind: 'token', connection_id: id, connector: d.connector })}>Connect again</button>
         </div>
       );
     case 'missing':

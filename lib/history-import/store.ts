@@ -187,7 +187,7 @@ export function isImportedBook(v: unknown): v is ImportedBook {
 export const importedTxnStore = defineMapStore<ImportedBook>('imported-transactions', {
   what: 'transactions imported into linked accounts',
   isValid: isImportedBook,
-  exportable: true, // the person's own history, from their bank's files
+  exportable: true, // the person's own history, from their bank's files or another app's export
   compress: true, // years of rows
 });
 
@@ -352,7 +352,7 @@ export function isHistoryImportEntry(v: unknown): v is HistoryImportEntry {
 export const historyImportStore = defineMapStore<HistoryImportEntry>('history-imports', {
   what: 'imports into linked accounts',
   isValid: isHistoryImportEntry,
-  exportable: true, // the person's own records, as their bank's files had them
+  exportable: true, // the person's own records, as the files had them
   compress: true, // a file's records can be large
 });
 

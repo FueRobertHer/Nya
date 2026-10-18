@@ -36,7 +36,7 @@ export function importedRowsNote(rows: readonly NotedRow[], period = 'this month
   }
   const n = imported.size;
   if (n === 0) return null;
-  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from your bank’s files, not sent by the bank.`;
+  return `${n.toLocaleString('en-US')} of ${period}’s transactions ${n === 1 ? 'was' : 'were'} imported from files, not sent by the bank.`;
 }
 
 /**
@@ -48,7 +48,7 @@ export function importedRowsNote(rows: readonly NotedRow[], period = 'this month
  */
 export function importedChangedNote(t: { imported_amount?: number }, money: (n: number) => string): string | null {
   if (t.imported_amount === undefined) return null;
-  return `This is the transaction you imported from your bank’s file at ${money(Math.abs(t.imported_amount))}. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
+  return `This is the transaction you imported from a file at ${money(Math.abs(t.imported_amount))}. The bank has changed its amount since, so it counts once, at the bank’s amount.`;
 }
 
 export type ImportedHistoryView = {
