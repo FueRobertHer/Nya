@@ -221,9 +221,10 @@ function issueOf(
   // it says nothing against SimpleFIN's link to the bank, however long Nya has
   // gone without asking since, which is Nya's to say (`stale`), never a
   // sign-in at the bank. The gate (answeredWhole) still judges it now: a
-  // balance three days old today is none to record, whatever the cause.
+  // balance three days old today is none to record, whatever the cause. An
+  // answer stamped after now (by another clock) is judged now.
   const last = conn.last_answer_at ? Date.parse(conn.last_answer_at) : NaN;
-  const answeredAt = Number.isFinite(last) ? last : now;
+  const answeredAt = Number.isFinite(last) ? Math.min(last, now) : now;
   const old = group.filter((a) => balanceTooOld(a, answeredAt)).sort((x, y) => (x.balance_at! < y.balance_at! ? -1 : 1));
   if (old.length > 0) return { issue: 'old_balance', messages: [old[0].balance_at!], accounts: old.map((a) => a.name) };
   if (!Number.isFinite(last) || now - last > FRESH_HOURS * HOUR) return { issue: 'stale', messages: [], accounts: [] };
