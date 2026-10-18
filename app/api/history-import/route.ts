@@ -551,6 +551,7 @@ export async function POST(req: Request) {
         imports,
         bank_from: context.bank_from,
         twins: context.twins,
+        restored: context.restored,
         choices: meta.choices,
         reviewed: meta.review!,
       });

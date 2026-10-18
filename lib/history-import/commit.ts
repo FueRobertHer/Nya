@@ -50,6 +50,7 @@ import type { StatementInfo } from '../import/read';
 import { importSettingsStore, type StoredStatement } from '../import/store';
 import { bankKey as keyOf, type BankRow, type Settled } from './match';
 import { planHistoryImport, type HistoryChoices, type HistoryPlan, type Period } from './plan';
+import { withRestoredRows, type RestoredContext } from '../user-restore/restored';
 import {
   carriedTwinsStore,
   historyImportStore,
@@ -155,6 +156,10 @@ export type HistoryCommitInput = {
   imports: ReadonlyMap<string, { covers: Period | null }>;
   bank_from: string | null;
   twins: ReadonlyMap<string, string>;
+  /** The rows a restore brought back that the review matched against, and
+   *  how they pair with the books' rows (lib/history-import/read.ts
+   *  AccountContext `restored`): the commit reads the books again. */
+  restored?: RestoredContext | null;
   choices: HistoryChoices;
   /** The digest of the review the person saw (reviewDigest). */
   reviewed: string;
@@ -285,7 +290,7 @@ export async function commitHistoryImport(ctx: Ctx, input: HistoryCommitInput): 
     planHistoryImport({
       rows: input.rows,
       problems: input.problems,
-      held: [...books.values()].flatMap((b) => b?.rows ?? []),
+      held: withRestoredRows([...books.values()].flatMap((b) => b?.rows ?? []), input.restored),
       banks: input.banks,
       order: input.order,
       bankFrom: input.bank_from,

@@ -160,7 +160,7 @@ describe('recordFetch', () => {
 
   test('records nothing when nothing is linked', async () => {
     fake.reset();
-    expect(await recordFetch(ctx, [], 0)).toEqual({ date: null, holdings: { recorded: 0, failed: 0 } });
+    expect(await recordFetch(ctx, [], 0)).toEqual({ date: null, holdings: { recorded: 0, failed: 0 }, hold: { unfinished: false, waiting: [], unreadable: false, history_last: null } });
     expect(await fake.hkeys(ctxKey('history:accounts:partial'))).toEqual([]);
   });
 

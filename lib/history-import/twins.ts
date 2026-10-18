@@ -89,6 +89,7 @@ import { liveAccountIds } from '../links';
 import { loggable } from '../log-safe';
 import { countedRows, readImported } from './read';
 import { carriedTwinsStore, importedTwinsStore, importedTxnStore, type CarriedTwins, type ImportedTwins } from './store';
+import { restoredTxnStore } from '../user-restore/store';
 
 /** Whether a row still says everything matching reads of it
  *  (lib/history-import/read.ts bankRowsOf). */
@@ -291,7 +292,9 @@ export async function keepImportedTwins(ctx: Ctx, item: StoredItem, before: Reco
     const replacing = replacedPending(before, after);
     const [carried, books, kept] = await Promise.all([
       carriedTwinsStore.getAllReport(ctx),
-      changing || replacing.size > 0 ? importedTxnStore.count(ctx) : Promise.resolve(0),
+      // Rows imported from files, or bank rows a restore brought back, which
+      // a re-linked account reads among them (lib/user-restore/restored.ts).
+      changing || replacing.size > 0 ? Promise.all([importedTxnStore.count(ctx), restoredTxnStore.count(ctx)]).then(([a, b]) => a + b) : Promise.resolve(0),
       changing ? importedTwinsStore.has(ctx, item.item_id) : Promise.resolve(false),
     ]);
     // Pairs to keep only where something was imported, or is kept here; and

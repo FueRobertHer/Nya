@@ -336,12 +336,15 @@ export async function assembleBankRows(
     // rename applies to them as to the bank's own. Matched once the syncs
     // are done, against the rows they wrote (never read twice), so a row the
     // sync just brought supersedes in this very answer.
-    banks.then((done) => {
+    Promise.all([banks, carried]).then(([done, c]) => {
       const bankStates = new Map<string, Record<string, StoredTxn> | null>();
       done.forEach((r, i) => {
         if (r.stored !== undefined) bankStates.set(items[i].item_id, r.stored);
       });
-      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since, endedFrom });
+      // What was carried across a re-link applies to a bank row a restore
+      // brought back as to the bank's own (lib/user-restore/restored.ts).
+      const carry = { categories: c.categories, excluded: c.excluded, annotations: c.annotations };
+      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since, endedFrom, carry });
     }),
   ]);
 

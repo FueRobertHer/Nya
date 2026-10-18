@@ -401,8 +401,10 @@ export function crossesEdge(rowDate: string, twinDate: string, bankFrom: string 
   return (bankFrom !== null && rowDate < bankFrom) || (covers !== null && (twinDate > covers.to || twinDate < covers.from));
 }
 
-/** A source dated by posting, as the bank's rows are: OFX's DTPOSTED. */
-export const POSTED_DATED = (source: string | undefined) => source === 'import:ofx';
+/** A source dated by posting, as the bank's rows are: OFX's DTPOSTED, and a
+ *  bank row a restore brought back ('restored', lib/user-restore/restored.ts),
+ *  which is one. */
+export const POSTED_DATED = (source: string | undefined) => source === 'import:ofx' || source === 'restored';
 
 /** What a duplicate stands for while it stands: the bank's row it claims, or
  *  the earlier import's row it names. */

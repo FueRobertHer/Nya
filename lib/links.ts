@@ -45,6 +45,7 @@ import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } f
 import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
+import { forgetRestoredAccount } from './user-restore/forget';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -100,6 +101,13 @@ async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, Direct
     })
   );
   return { entries, unreadable };
+}
+
+/** The ids the directory has an entry under, readable or not, without
+ *  reading any: a restored account is read for its rows only while it has
+ *  one (lib/user-restore/restored.ts), so forgetting it ends it. */
+export async function directoryIds(ctx: Ctx): Promise<Set<string>> {
+  return new Set((await redis().hkeys(directoryKey(ctx))) ?? []);
 }
 
 /** The whole directory, for the download of my data (lib/user-export.ts).
@@ -678,7 +686,8 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * Forgets an earlier account for good, at the user's request: its balances
  * in every per-account layer, its positions in holdings history, its
  * directory entry (name, mask, institution), the categories recorded to carry
- * across a re-link, the transactions imported into it from files, dismissed
+ * across a re-link, the transactions imported into it from files, the bank
+ * rows a restore brought back for it and what was said about them, dismissed
  * offers that name it, leftover remembered records naming it, and its hidden
  * entry. The past net-worth totals stay as they were
  * (they were the user's net worth on those dates); a hidden account is folded
@@ -766,6 +775,9 @@ export async function forgetEarlierAccount(
   // The transactions imported into it from files (#52), their records, and
   // what was said about them: kept past its disconnect for a re-link, gone now.
   await forgetImportedHistory(ctx, id);
+  // The bank rows a restore brought back for it, and what was said about
+  // them (lib/user-restore/forget.ts): no pruner takes those by itself.
+  await forgetRestoredAccount(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
   // read before the pass above could have written the account back, and a

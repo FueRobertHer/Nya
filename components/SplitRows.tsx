@@ -18,7 +18,7 @@ import { currencyOf } from '@/lib/spending';
 import { displayName, type Taxonomy } from '@/lib/categories';
 import { bankRows, PART_PREFIX, MIN_MEMBERS } from '@/lib/split-rows';
 import { isConnectorKind } from '@/lib/connectors/types';
-import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
+import { isFileImportedId } from '@/lib/history-import/view';
 
 /** What a row of the list says in place of its category: a split
  *  transaction's parts, a group's size; null for any other. */
@@ -50,7 +50,7 @@ export const bankKept = (t: Pick<Txn, 'source'>): boolean => !t.source || isConn
  *  adds up to another amount was saved while a bank row at that amount stood
  *  for it (an edit then adds up to the bank's), and none does now (the bank
  *  removed it), so it counts at the file's amount again. */
-export const splitAtBanksAmount = (t: Pick<Txn, 'transaction_id'>): boolean => t.transaction_id.startsWith(IMPORTED_TXN_PREFIX);
+export const splitAtBanksAmount = (t: Pick<Txn, 'transaction_id'>): boolean => isFileImportedId(t.transaction_id);
 
 /** Where a split transaction's split is kept, which an edit of it names: the
  *  transaction itself, or the row imported from a file that a bank row stands

@@ -54,7 +54,7 @@ import {
   withEndedAccounts,
 } from './AccountLifecycle';
 import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
-import { totalNotes } from './total-notes';
+import { totalNotes, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab from './BudgetsTab';
@@ -663,6 +663,8 @@ export default function Dashboard({
   // and the connection whose every account ended, which the disconnect sheet
   // then offers to remove.
   const [ended, setEnded] = useState<EndedAccount[]>([]);
+  // What a restore holds back of the total (components/total-notes.ts).
+  const [restoreHold, setRestoreHold] = useState<RestoreHoldNote | null>(null);
   const [lifecycleDamage, setLifecycleDamage] = useState<LifecycleDamage | null>(null);
   const [endedOffer, setEndedOffer] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
@@ -707,6 +709,7 @@ export default function Dashboard({
       setHiddenMeta(data.hidden ?? []);
       setImportedHistory(data.imported_history ?? null);
       setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
+      setRestoreHold(data.restore_hold ?? null);
       setAsOf(data.as_of ?? null);
       setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
@@ -1447,8 +1450,8 @@ export default function Dashboard({
   // recovered, so the total is short by all of each. Those last are MORE wrong
   // than the stale ones, so every such case is said, with when it was last seen.
   const missingNotes = useMemo(
-    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }),
-    [institutions]
+    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold),
+    [institutions, restoreHold]
   );
 
   // Connections Plaid says will end on a date, for the Home alert (Insights).

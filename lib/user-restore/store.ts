@@ -48,16 +48,21 @@
 import { defineCounterStore, defineMapStore, defineValueStore } from '../repo';
 import { BANK_FIELDS, isBankRecord, isCalendarDay, isCount, isInstant, isInstantOrNull, isInvestmentRecord, isPlaidId, isRecord, isText, isTextOrNull, onlyKeys } from './records';
 import type { StoredTxn } from '../transactions';
+import { RESTORED_TXN_PREFIX } from '../history-import/view';
 
 /** Rows in one book of restored rows, or one part of investment rows: far
  *  under the write ceiling even with every field, and a batch appends to the
  *  last book only, never recompressing years of rows. */
 export const BOOK_ROWS = 5_000;
 
+/** Books one restored account can have: 10,000 of 5,000 rows is far more
+ *  than any bank has served one account. */
+export const MAX_BOOKS = 10_000;
+
 /** How long after it finishes a restore can be undone (decision 4). */
 export const UNDO_DAYS = 7;
 
-const RESTORED_PREFIX = 'imported-txn:restored.';
+const RESTORED_PREFIX = RESTORED_TXN_PREFIX;
 
 /** The id a restored bank row is kept under: the imported rows' prefix and the
  *  bank's own id, so the same file always gives the same id (a batch sent
@@ -192,15 +197,19 @@ export type RestoredAccount = {
   type: string | null;
   subtype: string | null;
   currency: string | null;
-  /** The posted rows it brought back: the first and last day, and how many;
-   *  null when it had none. */
-  rows: { first: string; last: string; count: number } | null;
+  /** The posted rows it brought back: the first and last day, how many, and
+   *  in how many books (restoredBookId, parts 1 to `books`); null when it
+   *  had none. */
+  rows: { first: string; last: string; count: number; books: number } | null;
+  /** The day the download was made: what its rows can cover up to, as an
+   *  import's period does (lib/history-import/match.ts crossesEdge). */
+  downloaded: string;
   restored_at: string;
 };
 
 export function isRestoredAccount(v: unknown): v is RestoredAccount {
   if (!isRecord(v) || v.version !== 1) return false;
-  if (!onlyKeys(v, ['version', 'restore_id', 'item_id', 'institution_id', 'institution_name', 'name', 'mask', 'type', 'subtype', 'currency', 'rows', 'restored_at'])) return false;
+  if (!onlyKeys(v, ['version', 'restore_id', 'item_id', 'institution_id', 'institution_name', 'name', 'mask', 'type', 'subtype', 'currency', 'rows', 'downloaded', 'restored_at'])) return false;
   const r = v.rows;
   return (
     isUserRestoreId(v.restore_id) &&
@@ -212,7 +221,18 @@ export function isRestoredAccount(v: unknown): v is RestoredAccount {
     isTextOrNull(v.type, 40) &&
     isTextOrNull(v.subtype, 100) &&
     isTextOrNull(v.currency, 20) &&
-    (r === null || (isRecord(r) && onlyKeys(r, ['first', 'last', 'count']) && isCalendarDay(r.first) && isCalendarDay(r.last) && r.first <= r.last && isCount(r.count))) &&
+    (r === null ||
+      (isRecord(r) &&
+        onlyKeys(r, ['first', 'last', 'count', 'books']) &&
+        isCalendarDay(r.first) &&
+        isCalendarDay(r.last) &&
+        r.first <= r.last &&
+        isCount(r.count) &&
+        isCount(r.books) &&
+        r.books >= 1 &&
+        r.books <= MAX_BOOKS &&
+        r.count <= r.books * BOOK_ROWS)) &&
+    isCalendarDay(v.downloaded) &&
     isInstant(v.restored_at)
   );
 }
@@ -257,7 +277,7 @@ export function isRestoredTxn(v: unknown): v is RestoredTxn {
  *  id once. */
 export function isRestoredBook(v: unknown): v is RestoredBook {
   if (!isRecord(v) || v.version !== 1 || !onlyKeys(v, ['version', 'account_id', 'part', 'rows'])) return false;
-  if (!isPlaidId(v.account_id) || !(Number.isSafeInteger(v.part) && (v.part as number) >= 1 && (v.part as number) <= 10_000)) return false;
+  if (!isPlaidId(v.account_id) || !(Number.isSafeInteger(v.part) && (v.part as number) >= 1 && (v.part as number) <= MAX_BOOKS)) return false;
   if (!Array.isArray(v.rows) || v.rows.length > BOOK_ROWS) return false;
   const ids = new Set<string>();
   for (const r of v.rows) {

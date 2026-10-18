@@ -21,6 +21,8 @@ import type { UnshownAccount } from './last-known';
 import { loggable } from './log-safe';
 import { connectorInstitutions, unreadableConnectorInstitution } from './connectors/institutions';
 import { endedNowIds } from './lifecycle';
+import { liveAccountIds } from './links';
+import { holdsTotals, totalsHold, type TotalsHold } from './user-restore/restored';
 import type { ConnectorKind } from './connectors/types';
 
 /**
@@ -494,6 +496,9 @@ export type RecordedFetch = {
   /** The accounts whose positions went into holdings history, and those whose
    *  write failed. Never part of `date`. */
   holdings: HoldingsRecorded;
+  /** What a restore holds back (lib/user-restore/restored.ts totalsHold):
+   *  while it holds, no total is recorded, and the Home total says why. */
+  hold: TotalsHold;
 };
 
 /**
@@ -518,10 +523,15 @@ export async function recordFetch(
   netWorth: number
 ): Promise<RecordedFetch> {
   const holdings = recordHoldings(ctx, institutions);
+  // A restore still being written or undone, or a bank it brought back that
+  // waits to be linked or stopped, holds the total, as an institution that
+  // didn't answer does: one recorded without that bank would be short for
+  // good. Failing closed: what it can't read holds it too.
+  const hold = await totalsHold(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true }));
   const recorded =
-    institutions.length > 0 && institutions.every(isRecordable)
+    institutions.length > 0 && institutions.every(isRecordable) && !holdsTotals(hold)
       ? await recordSnapshot(ctx, netWorth, accountBalanceMap(institutions))
       : null;
   if (recorded === null) await recordPartialAccounts(ctx, measuredBalanceMap(institutions));
-  return { date: recorded, holdings: await holdings };
+  return { date: recorded, holdings: await holdings, hold };
 }

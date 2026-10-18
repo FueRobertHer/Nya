@@ -160,7 +160,8 @@ describe('restored accounts and investments', () => {
     type: 'depository',
     subtype: 'checking',
     currency: 'USD',
-    rows: { first: '2021-03-02', last: '2026-10-09', count: 4210 },
+    rows: { first: '2021-03-02', last: '2026-10-09', count: 4210, books: 1 },
+    downloaded: '2026-10-10',
     restored_at: '2026-10-17T10:00:00.000Z',
   };
 
@@ -168,7 +169,11 @@ describe('restored accounts and investments', () => {
     expect(S.isRestoredAccount(account)).toBe(true);
     expect(S.isRestoredAccount({ ...account, rows: null })).toBe(true);
     expect(S.isRestoredAccount({ ...account, balance: 5 })).toBe(false);
-    expect(S.isRestoredAccount({ ...account, rows: { first: '2026-10-09', last: '2021-03-02', count: 1 } })).toBe(false);
+    expect(S.isRestoredAccount({ ...account, rows: { first: '2026-10-09', last: '2021-03-02', count: 1, books: 1 } })).toBe(false);
+    // More rows than its books can hold.
+    expect(S.isRestoredAccount({ ...account, rows: { ...account.rows, count: 5_001 } })).toBe(false);
+    expect(S.isRestoredAccount({ ...account, rows: { ...account.rows, count: 5_001, books: 2 } })).toBe(true);
+    expect(S.isRestoredAccount({ ...account, downloaded: 'yesterday' })).toBe(false);
   });
 
   test('investment rows and coverage', () => {
