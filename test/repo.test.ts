@@ -1530,6 +1530,33 @@ function contract(b: Backend) {
       expect(await tags3.get(A, 't1')).toEqual({ name: 'a', color: 'gray' });
     });
 
+    test('check takes a value from outside as the store’s reads would, reading and writing nothing', async () => {
+      const tags2 = defineMapStore<V2>('seam-contract-tags', { what: 'tags', isValid: isV2, exportable: true, upgrade: upgradeTag });
+      const cats2 = defineValueStore<V2[]>('seam-contract-cats', {
+        what: 'categories',
+        isValid: (v): v is V2[] => Array.isArray(v) && v.every(isV2),
+        exportable: true,
+        upgrade: (v) => (Array.isArray(v) ? v.map(upgradeTag) : v),
+      });
+      const before = fakeSent.length;
+      // An earlier version's shape, upgraded as a read would.
+      expect(tags2.check({ name: 'a' })).toEqual({ name: 'a', color: 'gray' });
+      expect(cats2.check([{ name: 'Food' }])).toEqual([{ name: 'Food', color: 'gray' }]);
+      // What a read would take as unrecognised.
+      expect(tags2.check({ other: 1 })).toBeNull();
+      expect(cats2.check('not a list')).toBeNull();
+      // Checked as it would be written: after a JSON round trip, so a value
+      // holding what JSON drops or changes is checked as JSON has it.
+      expect(tags2.check({ name: 'a', color: undefined })).toEqual({ name: 'a', color: 'gray' });
+      expect(tags2.check({ name: 'a', color: 'x', when: new Date(0) }) as unknown).toEqual({ name: 'a', color: 'x', when: '1970-01-01T00:00:00.000Z' });
+      // A value JSON can't write at all is refused, never thrown.
+      const loop: Record<string, unknown> = { name: 'a' };
+      loop.self = loop;
+      expect(tags2.check(loop)).toBeNull();
+      expect(tags2.check(undefined)).toBeNull();
+      expect(fakeSent.length).toBe(before);
+    });
+
     test('an upgrade that throws is a bug, raised as it is, never blamed on the data', async () => {
       const tags1 = defineMapStore<V1>('seam-contract-tags', { what: 'tags', isValid: isV1, exportable: true });
       await tags1.set(A, 't1', { name: 'a' });
