@@ -42,7 +42,7 @@ import { storedAccountIds, storedTransactionIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
-import { rememberedIdsByItem, rememberedAccountsReport, forgetStaleRecords } from './last-known';
+import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
 
@@ -906,7 +906,7 @@ export async function liveAccountsReport(ctx: Ctx): Promise<{ ids: Set<string>; 
   const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
   const stored = new Set(items.map((i) => i.item_id));
   const ids = new Set(Object.entries(remembered.byItem).flatMap(([item_id, accounts]) => (stored.has(item_id) ? accounts.map((a) => a.account_id) : [])));
-  return { ids, unreadable: remembered.unreadable.filter((id) => stored.has(id)) };
+  return { ids, unreadable: couldNotRead(remembered).filter((id) => stored.has(id)) };
 }
 
 /**

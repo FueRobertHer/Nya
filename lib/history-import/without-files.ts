@@ -25,7 +25,7 @@ import type { Ctx } from '../containers';
 import { readLinks } from '../link-core';
 import { getEffectiveHidden } from '../links';
 import { getEffectiveLifecycle } from '../lifecycle';
-import { rememberedAccountsReport } from '../last-known';
+import { couldNotRead, rememberedAccountsReport } from '../last-known';
 import { loggable } from '../log-safe';
 import type { WithoutTransactions } from '../no-transactions';
 import { coveredAccountsOf, importedCoverage } from './read';
@@ -48,8 +48,10 @@ export async function withImportedFiles(ctx: Ctx, without: readonly WithoutTrans
     const [remembered, effective] = await Promise.all([rememberedAccountsReport(ctx), getEffectiveHidden(ctx, { readOnly: true })]);
     const lifecycle = await getEffectiveLifecycle(ctx, effective.links);
     const hidden = new Set(effective.hidden.keys());
+    // A connection whose accounts can't be read covers nothing here.
+    const unknown = couldNotRead(remembered);
     return without.map((w) => {
-      if (!standsIn(w) || remembered.unreadable.includes(w.item_id!)) return w;
+      if (!standsIn(w) || unknown.includes(w.item_id!)) return w;
       const accounts = coveredAccountsOf(w.item_id!, remembered.byItem[w.item_id!] ?? [], lifecycle, covered, hidden);
       return accounts.some((a) => a.covers.length > 0) ? { ...w, files: accounts.map(({ covers, end }) => ({ covers, end })) } : w;
     });

@@ -19,7 +19,7 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt, DecryptFailedError, UnknownKeyError } from './crypto';
+import { encrypt, decrypt, sealedAway } from './crypto';
 import { READ_ENTRIES, UPDATE_ENTRY, openStored, type Opened } from './repo';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
@@ -170,7 +170,7 @@ export async function getManualAccountsReport(ctx: Ctx): Promise<ManualAccountsR
         opened = await openStored(ctx, blob);
       } catch (err) {
         // The seam throws these rather than call them damage (see the type).
-        if ((err instanceof DecryptFailedError && err.keyId === 'k0') || err instanceof UnknownKeyError) {
+        if (sealedAway(err)) {
           unavailable.push(id);
           return;
         }

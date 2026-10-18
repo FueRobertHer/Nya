@@ -38,7 +38,7 @@
 
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
+import { encrypt, decrypt, sealedAway } from './crypto';
 import { getLatestAccountSnapshot, snapshotTakenAt } from './history';
 import { getLinks, effectiveLinks, sameAccountIds, type Link } from './link-core';
 
@@ -197,15 +197,20 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
  *  liveAccountIds). `tidy` (the default) also deletes the fields left in the
  *  old shape; a reader that must change nothing passes false (the download
  *  of my data, and the count an account deletion takes for its receipt).
- *  `unreadable`, when given, collects the Items whose record couldn't be read
- *  instead, and a failed read throws, as with `strict`
- *  (rememberedAccountsReport). */
-async function recallByItem(ctx: Ctx, strict = false, tidy = true, unreadable?: string[]): Promise<Record<string, RememberedAccount[]>> {
+ *  `report`, when given, collects the Items whose record couldn't be read
+ *  instead, by why (sealed under a key this deployment can't use, or not),
+ *  and a failed read throws, as with `strict` (rememberedAccountsReport). */
+async function recallByItem(
+  ctx: Ctx,
+  strict = false,
+  tidy = true,
+  report?: { unreadable: string[]; unavailable: string[] }
+): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH(ctx));
   } catch (err) {
-    if (strict || unreadable) throw err;
+    if (strict || report) throw err;
     return {};
   }
   if (!map) return {};
@@ -233,7 +238,8 @@ async function recallByItem(ctx: Ctx, strict = false, tidy = true, unreadable?: 
         if (strict) throw err;
         // Undecryptable: that Item just won't be recoverable. Left in place
         // rather than deleted, since a rotated key is fixed by restoring the key.
-        unreadable?.push(item_id);
+        // Under a key this deployment can't use, it isn't damaged at all.
+        (sealedAway(err) ? report?.unavailable : report?.unreadable)?.push(item_id);
       }
     })
   );
@@ -325,13 +331,22 @@ export async function rememberedIdsByItem(ctx: Ctx, strict = false, tidy = true)
 /** Every Item's remembered accounts, for the read-only API's list of accounts
  *  (lib/api-read.ts): a display that names what it can't show. Only reads (a
  *  field in the old shape is left where it is), a failed read throws, and an
- *  Item whose record can't be read is named in `unreadable` rather than read
- *  as having no accounts. */
-export async function rememberedAccountsReport(ctx: Ctx): Promise<{ byItem: Record<string, RememberedAccount[]>; unreadable: string[] }> {
-  const unreadable: string[] = [];
-  const byItem = await recallByItem(ctx, false, false, unreadable);
-  return { byItem, unreadable: unreadable.sort() };
+ *  Item whose record can't be read is named rather than read as having no
+ *  accounts: in `unavailable` when it is sealed under a key this deployment
+ *  can't use (a failed decrypt under k0, a data key the key store lacks:
+ *  lib/crypto.ts sealedAway), the deployment's problem and never damage, as
+ *  a manual account's is (lib/manual.ts ManualAccountsReport); else in
+ *  `unreadable`. Either way its accounts can't be known: a reader that only
+ *  needs that reads both (couldNotRead). */
+export async function rememberedAccountsReport(ctx: Ctx): Promise<{ byItem: Record<string, RememberedAccount[]>; unreadable: string[]; unavailable: string[] }> {
+  const report = { unreadable: [] as string[], unavailable: [] as string[] };
+  const byItem = await recallByItem(ctx, false, false, report);
+  return { byItem, unreadable: report.unreadable.sort(), unavailable: report.unavailable.sort() };
 }
+
+/** The Items a report (rememberedAccountsReport) couldn't read the record
+ *  of, for whatever reason: those whose accounts aren't known. */
+export const couldNotRead = (report: { unreadable: readonly string[]; unavailable: readonly string[] }): string[] => [...report.unreadable, ...report.unavailable].sort();
 
 /** Every Item's remembered accounts, whole, for the download of my data
  *  (lib/user-export.ts). Strict: throws on a failed read or any record that

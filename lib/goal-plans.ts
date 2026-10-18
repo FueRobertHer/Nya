@@ -70,7 +70,7 @@ import type { Ctx } from './containers';
 import { getGoals, setGoals, type Goal as StoredGoal } from './goals';
 import { getLinks, effectiveLinks, liveAccountIds, resolveId, type Link } from './links';
 import { readLinks } from './link-core';
-import { rememberedAccountsReport } from './last-known';
+import { couldNotRead, rememberedAccountsReport } from './last-known';
 import { getItems } from './storage';
 import { isCalendarDay } from './manual-txn-input';
 import { MAX_GOAL_AMOUNT, type Goal, type GoalPlan } from './goal-model';
@@ -271,7 +271,7 @@ export class GoalLinksUnreadableError extends StoreRefusedError {
 async function liveIdsForSave(ctx: Ctx): Promise<Set<string>> {
   const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
   const stored = new Set(items.map((i) => i.item_id));
-  if (remembered.unreadable.some((id) => stored.has(id))) throw new GoalLinksUnreadableError('accounts');
+  if (couldNotRead(remembered).some((id) => stored.has(id))) throw new GoalLinksUnreadableError('accounts');
   return new Set(Object.entries(remembered.byItem).flatMap(([item, accounts]) => (stored.has(item) ? accounts.map((a) => a.account_id) : [])));
 }
 

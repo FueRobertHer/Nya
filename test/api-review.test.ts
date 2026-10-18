@@ -243,6 +243,47 @@ describe('a damaged record elsewhere', () => {
     });
   });
 
+  // The same for what the Plaid side keeps: a connection's record of its
+  // accounts, and the day's balances, each sealed under another k0.
+  const underAnotherK0 = async (plain: string) => {
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+    return Buffer.concat([iv, sealed]).toString('base64');
+  };
+
+  test('of a connection whose record of its accounts is sealed under another PLAID_ENCRYPTION_KEY: named as unavailable, never as damaged', async () => {
+    await fake.hset(ctxKey('accounts:meta'), { item_broker: await underAnotherK0('[]') });
+    await quietly(async () => {
+      const { res, body } = await call('accounts');
+      expect(res.status).toBe(200);
+      expect(body.missing_accounts).toContainEqual({ institution: 'Broker', account_id: null, reason: 'unavailable', source: 'plaid' });
+      expect(body.missing_accounts.some((m: any) => m.reason === 'unreadable')).toBe(false);
+      expect(body.accounts.map((a: any) => a.id)).toContain('acc_chk');
+      expect(body.complete).toBe(false);
+    });
+  });
+
+  test('of a day’s balances sealed under another PLAID_ENCRYPTION_KEY: the accounts it may hold the newest of have none, named as unavailable, never an older one', async () => {
+    // Day 2's recorded map: the IRA was last measured then (day 1's partial
+    // map has only checking and the card).
+    await fake.hset(ctxKey('history:accounts'), { [daysAgo(2)]: await underAnotherK0(JSON.stringify({ acc_ira: 20500 })) });
+    await quietly(async () => {
+      const { res, body } = await call('accounts');
+      expect(res.status).toBe(200);
+      const byId = new Map<string, any>(body.accounts.map((a: any) => [a.id, a]));
+      expect(byId.get('acc_chk')).toMatchObject({ balance: 1250, as_of: daysAgo(1) });
+      // Never day 3's balance in its place.
+      expect(byId.get('acc_ira')).toMatchObject({ balance: null, as_of: null });
+      expect(body.missing_accounts).toContainEqual({ institution: 'Broker', account_id: 'acc_ira', reason: 'unavailable', source: 'plaid' });
+      expect(body.notes).toContain('An account’s newest balance couldn’t be read, so it has none here');
+      expect(body.complete).toBe(false);
+      const worth = (await call('net-worth')).body;
+      expect([worth.complete, worth.accounts_without_balance]).toEqual([false, 1]);
+      expect(worth.missing_accounts).toContainEqual({ institution: 'Broker', account_id: 'acc_ira', reason: 'unavailable', source: 'plaid' });
+    });
+  });
+
   test('a whole answer says it is whole', async () => {
     // The fixture's NewBank has never been loaded: a short answer, said so.
     expect((await call('net-worth')).body).toMatchObject({ complete: false, missing_accounts: [{ institution: 'NewBank', account_id: null, reason: 'not_loaded', source: 'plaid' }] });

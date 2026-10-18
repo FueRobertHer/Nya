@@ -86,7 +86,7 @@ import { getItems, type StoredItem } from './storage';
 import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
 import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
-import { rememberedAccountsReport, type RememberedAccount } from './last-known';
+import { couldNotRead, rememberedAccountsReport, type RememberedAccount } from './last-known';
 import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
@@ -191,7 +191,8 @@ export type ApiAccount = {
   subtype: string | null;
   mask: string | null;
   /** Plaid's sign: what a credit card or a loan owes is positive. Null when
-   *  no balance was ever measured. */
+   *  no balance was ever measured, or the newest can't be read (named in
+   *  `missing`, as unavailable: never an older one in its place). */
   balance: number | null;
   currency: string | null;
   credit_limit: number | null;
@@ -240,7 +241,8 @@ export type ApiMissing = {
   /** The connection's institution; null for a manual account, whose name is
    *  in what couldn't be read. */
   institution: string | null;
-  /** A manual account's id, or one SimpleFIN feeds; null for a connection,
+  /** A manual account's id, one SimpleFIN feeds, or a linked account's whose
+   *  newest balance can't be read (listed with none); null for a connection,
    *  whose accounts can't be told apart until they are read. */
   account_id: string | null;
   /** Where it comes from, as ApiAccount.source: 'plaid' for a connection's
@@ -248,9 +250,12 @@ export type ApiMissing = {
   source: string;
   /** 'unreadable': stored, and couldn't be read. 'unrecognised': a manual
    *  account stored intact in a form this version doesn't know (a later
-   *  version's), kept as it is. 'unavailable': a manual account sealed under
-   *  an encryption key this deployment doesn't have (lib/manual.ts
-   *  ManualAccountsReport): the deployment's problem, not damage.
+   *  version's), kept as it is. 'unavailable': sealed under an encryption
+   *  key this deployment doesn't have (lib/crypto.ts sealedAway): a manual
+   *  account (lib/manual.ts ManualAccountsReport), a connection's record of
+   *  its accounts (lib/last-known.ts), or the day's balances that may hold a
+   *  linked account's newest (lib/history.ts latestMeasuredBalances): the
+   *  deployment's problem, not damage.
    *  'not_loaded': a connection whose accounts the app hasn't loaded yet.
    *  Version 1 may add reasons. */
   reason: 'unreadable' | 'unrecognised' | 'unavailable' | 'not_loaded';
@@ -323,13 +328,16 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   const { hidden } = effective;
   const links = effective.links ?? new Map<string, Link>();
   const unreadable = new Set(remembered.unreadable);
+  // Sealed under a key this deployment can't use: named with a reason of its
+  // own, as a manual account's is, never as damaged (lib/last-known.ts).
+  const unavailable = new Set(remembered.unavailable);
 
   // Each stored Item's accounts, as its last good load recorded them.
   const linked: { item: StoredItem; account: RememberedAccount }[] = [];
   for (const item of items) {
-    if (unreadable.has(item.item_id)) {
+    if (unreadable.has(item.item_id) || unavailable.has(item.item_id)) {
       notes.push(`${item.institution_name}: its accounts couldn’t be read, so they aren’t listed`);
-      missing.push({ institution: item.institution_name, account_id: null, reason: 'unreadable', source: 'plaid' });
+      missing.push({ institution: item.institution_name, account_id: null, reason: unavailable.has(item.item_id) ? 'unavailable' : 'unreadable', source: 'plaid' });
       continue;
     }
     const accounts = remembered.byItem[item.item_id];
@@ -361,7 +369,15 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
       !(isManualId(root) && (manual.unreadable.includes(root) || manual.unrecognised.includes(root) || manual.unavailable.includes(root)))
   );
   const ids = new Map([...linked.map(({ account }) => account.account_id), ...endedOnly.map(([root]) => root)].map((id) => [id, sameAccountIds(id, links)]));
-  const [balances, currencies] = await Promise.all([latestMeasuredBalances(ctx, ids), bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem)]);
+  const [{ balances, unavailable: sealed }, currencies] = await Promise.all([
+    latestMeasuredBalances(ctx, ids),
+    bankCurrencies(ctx, linked.map(({ account }) => account.account_id), remembered.byItem),
+  ]);
+  // Accounts whose newest balance is sealed under a key this deployment
+  // can't use: listed with none, and named, never answered with an older one.
+  const sealedOf = (account_id: string, institution: string) => {
+    if (sealed.has(account_id)) missing.push({ institution, account_id, reason: 'unavailable', source: 'plaid' });
+  };
   // The moment behind each recorded day, where the snapshot kept it; only an
   // instant inside that UTC day is that snapshot's (lib/last-known.ts).
   const takenAt = new Map<string, string | null>();
@@ -375,6 +391,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
 
   const accounts: ApiAccount[] = linked.map(({ item, account }) => {
     const b = balances.get(account.account_id) ?? null;
+    sealedOf(account.account_id, item.institution_name);
     return {
       id: account.account_id,
       source: 'plaid',
@@ -450,6 +467,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
   for (const id of fed.accounts.keys()) fedIds.add(id);
   for (const [root, { entry }] of endedOnly) {
     const b = balances.get(root) ?? null;
+    sealedOf(root, entry.label.institution);
     const type = entry.type ?? 'other';
     accounts.push({
       id: root,
@@ -508,6 +526,10 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
     }
     const said = card.health ? connectorHealthText(card.institution_name, card.health) : null;
     if (said) notes.push(`${card.institution_name}, through ${label}: ${said}`);
+  }
+  if (sealed.size > 0) {
+    const one = sealed.size === 1;
+    notes.push(`${one ? 'An account’s newest balance' : `${sealed.size} accounts’ newest balances`} couldn’t be read, so ${one ? 'it has' : 'they have'} none here`);
   }
   const unread = fed.unreadable.filter((u) => asked(u.account_id) && !own.has(u.account_id));
   for (const u of unread) missing.push({ institution: null, account_id: u.account_id, reason: u.reason, source: 'simplefin' });
@@ -791,7 +813,7 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     const remembered = await rememberedAccountsReport(ctx);
     known ||= Object.values(remembered.byItem).some((accounts) => accounts.some((a) => a.account_id === id));
     currency = (await bankCurrencies(ctx, [id], remembered.byItem)).get(id) ?? null;
-    if (currency === null && remembered.unreadable.length > 0) {
+    if (currency === null && couldNotRead(remembered).length > 0) {
       notes.push('Some accounts’ records couldn’t be read, so this account’s currency isn’t known');
       // It may be one of theirs: not said to be unknown.
       known = true;

@@ -48,7 +48,7 @@
 
 import type { Ctx } from '../containers';
 import { getItems, type StoredItem } from '../storage';
-import { rememberedAccountsReport } from '../last-known';
+import { couldNotRead, rememberedAccountsReport } from '../last-known';
 import { effectiveLinks, getLinks, resolveId, sameAccountIds, type Link } from '../link-core';
 import { liveAccountIds } from '../links';
 import { readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
@@ -117,7 +117,7 @@ export async function liveLinkedAccounts(
     });
   }
   const live = new Set(stored.map((i) => i.item_id));
-  return { accounts, unreadable: remembered.unreadable.filter((id) => live.has(id)), endsUnread: { unreadable: ends.unreadable, unrecognised: ends.unrecognised } };
+  return { accounts, unreadable: couldNotRead(remembered).filter((id) => live.has(id)), endsUnread: { unreadable: ends.unreadable, unrecognised: ends.unrecognised } };
 }
 
 /** The bank's rows as matching reads them: each with the id its account is
