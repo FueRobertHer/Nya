@@ -1807,7 +1807,7 @@ export async function readHoldings(ctx: Ctx, opts: { includeHidden?: boolean; ac
     if (fedBy && isConnectorKind(fedBy)) {
       // Lunch Flow serves positions for some brokerages, which Nya doesn't
       // read yet (lib/connectors/lunchflow.ts HOLDINGS): its words say so.
-      const why = fedBy === 'lunchflow' ? 'whose holdings Nya doesn’t read: only its balance' : 'which reports balances, not positions';
+      const why = fedBy === 'lunchflow' ? 'and Nya reads its balance, not its positions' : 'which reports balances, not positions';
       throw new NotFound(`That account is kept up to date through ${connectorLabel(fedBy)}, ${why}: it has no holdings.`);
     }
     if (missing.length === 0) throw new NotFound('No linked investment account has that id. The ids are in /api/v1/accounts.');
