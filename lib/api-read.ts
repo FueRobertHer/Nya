@@ -1645,7 +1645,8 @@ export type ApiSpending = Summary & {
 
 /**
  * How many of the transactions of [from, to] were imported into linked
- * accounts from the bank's files rather than sent by the bank (#52), in the
+ * accounts from files (the bank's, or another app's export: lib/migration)
+ * rather than sent by the bank (#52), in the
  * words under the month's totals and beside the chart (lib/history-import/
  * view.ts importedRowsNote): a whole month named as the chart names one
  * ("September 2026"), any other range as this period. Null with none. The
@@ -1671,7 +1672,7 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
   const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   // Last, as under the month's totals: how many of the range's transactions
-  // came from the bank's files rather than the bank.
+  // came from files rather than the bank.
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;

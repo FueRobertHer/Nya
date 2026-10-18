@@ -908,7 +908,7 @@ describe('the month’s note on imported transactions', () => {
       { transaction_id: 'group:g1', group_members: [{ transaction_id: b }, { transaction_id: 'b_payback' }] },
       { transaction_id: 'b_grocer' },
     ];
-    expect(importedRowsNote(rows)).toBe('2 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(importedRowsNote(rows)).toBe('2 of this month’s transactions were imported from files, not sent by the bank.');
     expect(importedRowsNote(rows.slice(3))).toBeNull();
   });
 });

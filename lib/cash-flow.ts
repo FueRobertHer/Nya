@@ -551,7 +551,8 @@ const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? o
  * couldn't be read, what is in another currency, that a refund is money in,
  * the connections that hold no bank account or card when only rows entered
  * by hand are here, and how many of the period's transactions were imported
- * from the bank's files, counted or not, as the month's totals say it
+ * from files (the bank's, or another app's export), counted or not, as the
+ * month's totals say it
  * (importedRowsNote). `day` names an instant's local day ("Sep 12").
  */
 export function cashFlowNotes(input: {
@@ -645,8 +646,8 @@ export function cashFlowNotes(input: {
   if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
   const named = withoutNote(view, input.rows.length);
   if (named) counted.push(named);
-  // Last, as under the month's totals: the period's rows that came from the
-  // bank's files, imported into linked accounts, rather than from the bank.
+  // Last, as under the month's totals: the period's rows that came from
+  // files, imported into linked accounts, rather than from the bank.
   const imported = importedRowsNote(inRows, whole);
   if (imported) counted.push(imported);
   return { gaps, counted };

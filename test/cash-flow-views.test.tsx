@@ -387,10 +387,10 @@ describe('rows imported into a linked account from its bank’s files (#52)', ()
     expect(html.split(`<div class="summary-value inflow">${formatMoney(s.money_in, 'USD')}</div>`).length - 1).toBe(2);
     expect(html.split(`<div class="summary-value">${formatMoney(s.money_out, 'USD')}</div>`).length - 1).toBe(2);
     const t = text(html);
-    expect(t).toContain('2 of this month’s transactions were imported from your bank’s files, not sent by the bank.');
-    expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from your bank’s files, not sent by the bank.`);
+    expect(t).toContain('2 of this month’s transactions were imported from files, not sent by the bank.');
+    expect(t).toContain(`2 of ${periodCaption(periodOf('this-month', today), today)}’s transactions were imported from files, not sent by the bank.`);
     // Over a longer period, of the period.
-    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from your bank’s files, not sent by the bank.');
+    expect(text(sankey({ txns: rows, initialPeriod: 'last-3-months' }))).toContain('2 of this period’s transactions were imported from files, not sent by the bank.');
     // Without them, nothing.
     expect(text(sankey())).not.toContain('imported from your bank');
   });

@@ -974,7 +974,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ...SOURCES,
       [
         'notes',
-        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from your bank’s files into a linked account rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
       ],
     ],
   },
@@ -1070,7 +1070,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ...SOURCES,
       [
         'notes',
-        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from your bank’s files into a linked account rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
+        'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; and how many of these transactions were imported from files into a linked account (your bank’s, or another app’s export) rather than sent by the bank, as the app says under each month. Empty when there is nothing to say.',
       ],
     ],
   },

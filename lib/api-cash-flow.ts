@@ -21,7 +21,8 @@
 // Its notes are spending's (what couldn't be read, the connections that
 // bring in no transactions, in the words under the month's totals, and, as
 // under the month's totals and beside the chart, how many of the range's
-// transactions were imported into linked accounts from the bank's files:
+// transactions were imported into linked accounts from files (the bank's,
+// or another app's export):
 // #52, lib/api-read.ts importedNote), rows that come through the same
 // assembly, each only where no bank row stands for it.
 
