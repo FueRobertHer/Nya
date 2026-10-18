@@ -11,6 +11,8 @@ import { REQUESTS_PER_MINUTE, RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } fro
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 import { SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
+import { restoreEnabled } from '@/lib/user-restore/enabled';
+import { UNDO_DAYS } from '@/lib/user-restore/ids';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -27,8 +29,9 @@ export const metadata: Metadata = {
 // rule the deletion receipt uses too, and DATABASE_BACKUP_DAYS) and whether
 // this copy sends email
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
-// write to, which also decides whether a download is emailed), since each
-// changes what is true of this copy.
+// write to, which also decides whether a download is emailed) and whether it
+// offers bringing a download back (RESTORE_ENABLED, lib/user-restore/
+// enabled.ts), since each changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -65,7 +68,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.',
+          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.',
         ],
       ] as [string, string][])
     : []),
@@ -195,6 +198,7 @@ export default function SecurityPage() {
   const backups = backupRetention();
   const mail = sendsEmail();
   const keys = keyDeletionText({ envelope, backups, databaseDays: databaseBackupDays() });
+  const restore = restoreEnabled();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -368,6 +372,27 @@ export default function SecurityPage() {
           one.
         </p>
       </InfoSection>
+
+      {restore && (
+        <InfoSection title="Bringing a download back">
+          <p>
+            Bring back a download reads the file in your browser, a few megabytes at a time, and checks every part of it
+            there; a protected one is opened there with its passphrase, which is never sent. Nya gets its records in
+            batches, each with a SHA-256 checksum listed in the restore’s record before the first one is written, takes them
+            only in that order and only if each matches, checks every record again before writing it into your account,
+            encrypted as the rest of your data is, and keeps nothing of the file but what it holds: not the file, not a
+            batch, not in a log.
+          </p>
+          <p>
+            It needs a fresh sign-in, as a download does, and goes only into an account with nothing in it yet. Nothing in
+            the file can bring back a credential: no access to a bank, no SimpleFIN access, no API token, no sharing.
+            {mail ? ' Starting a restore, undoing one and emptying an account are each emailed to you.' : ''} While a
+            restore hasn’t finished, the read-only API, the MCP server and what you share answer nothing from it. Undo, for{' '}
+            {UNDO_DAYS} days after it finishes, empties the account again, as emptying it does: both need a fresh sign-in and
+            are refused while a bank is connected, so a connection is never left running at Plaid or SimpleFIN.
+          </p>
+        </InfoSection>
+      )}
 
       {mail && (
         <InfoSection title="The weekly summary">
