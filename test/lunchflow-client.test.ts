@@ -328,15 +328,13 @@ describe('what Lunch Flow answers', () => {
     seed();
     server.accounts.push(lfAccount({ id: 3001, name: 'New Pot', institution_name: 'Second Bank', provider: 'akahu', balance: { amount: 5, currency: 'NZD' } }));
     const answer = await fetchLunchFlow(server.key, { ...window(10), offered: ['2001'] }, T);
-    // The tracked accounts first, balance then transactions; then the new one.
-    expect(server.seen.map((r) => r.path)).toEqual([
-      '/api/v1/accounts',
-      '/api/v1/accounts/1470/balance',
-      '/api/v1/accounts/1471/balance',
-      '/api/v1/accounts/1470/transactions',
-      '/api/v1/accounts/1471/transactions',
-      '/api/v1/accounts/3001/balance',
-    ]);
+    // The listing; the tracked accounts, each its balance then its
+    // transactions (the two at once, so in either order); then the new one.
+    const paths = server.seen.map((r) => r.path);
+    expect(paths[0]).toBe('/api/v1/accounts');
+    expect(paths.slice(1, 5).sort()).toEqual(['/api/v1/accounts/1470/balance', '/api/v1/accounts/1470/transactions', '/api/v1/accounts/1471/balance', '/api/v1/accounts/1471/transactions']);
+    for (const id of ['1470', '1471']) expect(paths.indexOf(`/api/v1/accounts/${id}/balance`)).toBeLessThan(paths.indexOf(`/api/v1/accounts/${id}/transactions`));
+    expect(paths.slice(5)).toEqual(['/api/v1/accounts/3001/balance']);
     expect(answer.accounts.map((a) => a.remote_id)).toEqual(['1470', '1471', '3001']);
     expect(answer.listed).toEqual([{ remote_id: '2001', name: 'Savings', institution: { name: 'Second Bank', key: 'name:akahu:second bank', domain: null } }]);
   });
@@ -344,7 +342,7 @@ describe('what Lunch Flow answers', () => {
   test('at most four requests at once, the tracked accounts first; past the fetch’s time the rest are Nya’s, asked again', async () => {
     seed();
     server.accounts = Array.from({ length: 10 }, (_, i) => lfAccount({ id: 5000 + i, name: `Pot ${i}`, transactions: [lfTxn(`t${i}`, 1, -1, 'Shop')] }));
-    server.slowMs = 60;
+    server.slowMs = 200;
     const tracked = server.accounts.slice(0, 6).map((a) => String(a.id));
     const answer = await fetchLunchFlow(server.key, { start: daysAgo(10), end: null, accounts: tracked }, T);
     expect(server.maxInFlight).toBe(4);
