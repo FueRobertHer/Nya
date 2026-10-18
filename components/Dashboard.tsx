@@ -588,6 +588,9 @@ export default function Dashboard({
         showRefusal: true,
         // What a save dates (an archive) is dated on the person's own day.
         extra: () => ({ today: localDate() }),
+        // Plans that can't be read stop the load: the card offers to remove
+        // the damaged ones (components/GoalPlansRepair.tsx).
+        repair: 'goal-plans',
       }),
     []
   );
@@ -2797,6 +2800,8 @@ export default function Dashboard({
                 goalsStatus={goalsState.status}
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
+                goalsDamage={goalsState.damage}
+                onGoalsRepaired={() => goalsStore.load()}
                 onSaveGoals={goalsStore.save}
                 // Hidden accounts stay in this list, and those that ended join
                 // it with their end (#50): GoalsCard needs them to tell "you hid

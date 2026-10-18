@@ -715,7 +715,7 @@ A goal reached is archived rather than deleted, so its record survives: archivin
 
 ### Where they are kept
 
-A goal's name, target and account stay in the `goals` value, as they always have. Its plan is kept by goal id in the `goal-plans` store on the [storage seam](architecture.md#storage-seam), because the release before rewrites `goals` with those four fields only, and would drop anything else there on its first save. What a rollback sees, and the order a save writes the two in, is in [operations.md](operations.md#goals-plans-and-rolling-back). Goals or plans that can't be read pause the card, as goals that can't be read always have, rather than show goals without their plans and let the next save write over them.
+A goal's name, target and account stay in the `goals` value, as they always have. Its plan is kept by goal id in the `goal-plans` store on the [storage seam](architecture.md#storage-seam), because the release before rewrites `goals` with those four fields only, and would drop anything else there on its first save. What a rollback sees, and the order a save writes the two in, is in [operations.md](operations.md#goals-plans-and-rolling-back). Goals or plans that can't be read pause the card, as goals that can't be read always have, rather than show goals without their plans and let the next save write over them. When it is plans whose bytes are damaged, the card says how many and offers to remove them, once you confirm: their goals then show again, with their names, targets and accounts, and no plan, to set again. A plan a newer version of Nya saved is never offered for removal, only counted: it waits for that version.
 
 ### In the API and the download
 
