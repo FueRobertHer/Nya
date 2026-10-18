@@ -48,7 +48,7 @@
 
 import type { Ctx } from '../containers';
 import { getItems, type StoredItem } from '../storage';
-import { rememberedAccountsReport } from '../last-known';
+import { couldNotRead, rememberedAccountsReport } from '../last-known';
 import { effectiveLinks, getLinks, resolveId, sameAccountIds, type Link } from '../link-core';
 import { directoryIds, liveAccountIds } from '../links';
 import { bankRowDisplay, bankRowOlder, readStoredItem, vendorKey, StateUnreadableError, LOOKBACK_DAYS, type OlderTxn, type StoredTxn, type Txn } from '../transactions';
@@ -132,7 +132,7 @@ export async function liveLinkedAccounts(
     });
   }
   const live = new Set(stored.map((i) => i.item_id));
-  return { accounts, unreadable: remembered.unreadable.filter((id) => live.has(id)), endsUnread: { unreadable: ends.unreadable, unrecognised: ends.unrecognised } };
+  return { accounts, unreadable: couldNotRead(remembered).filter((id) => live.has(id)), endsUnread: { unreadable: ends.unreadable, unrecognised: ends.unrecognised } };
 }
 
 /** The bank's rows as matching reads them: each with the id its account is
@@ -325,14 +325,18 @@ export async function readImported(
   // be told: with the links unread, filed under its earlier id; with a
   // connection's accounts unread, one of those; with an end unread under one
   // of the ids its account has had, an account that ended its bank no longer
-  // returns, live through that end (liveLinkedAccounts), unless it is one not
-  // read here either way (hidden, or not among `only`).
+  // returns, live through that end (liveLinkedAccounts). The last two only
+  // for a book not left out here either way (hidden, or not among `only`):
+  // with the links read, the id a book resolves to is its account's, so one
+  // resolving to an account not read here is no book of an account that is.
+  // Unread links leave that open (its id may be an earlier one of an account
+  // read here), so they count for every book.
   const unclaimed = (bookId: string) => {
     const current = resolveId(bookId, links);
     if (live.has(current)) return;
     if (!opts.links) unlinked = true;
-    if (unknownItems.length > 0) unowned = true;
     const readHere = !leftOut.has(current) && !leftOut.has(bookId) && (!opts.only || opts.only.has(current));
+    if (readHere && unknownItems.length > 0) unowned = true;
     if (readHere && sameAccountIds(current, links).some((id) => unreadEnds.has(id))) unended = true;
   };
 

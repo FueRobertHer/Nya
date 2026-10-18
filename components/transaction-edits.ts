@@ -116,6 +116,7 @@ export function useTransactionEdits({
   txns,
   setTxns,
   setTxnNotes,
+  setTxnAside,
   setTxnUnread,
   setTxnIncomplete,
   setTxnWithout,
@@ -128,6 +129,8 @@ export function useTransactionEdits({
   txns: Txn[] | null;
   setTxns: Dispatch<SetStateAction<Txn[] | null>>;
   setTxnNotes: Dispatch<SetStateAction<string[]>>;
+  /** What only the list says, beside the notes (the answer's `aside_notes`). */
+  setTxnAside?: Dispatch<SetStateAction<string[]>>;
   /** Of the notes, those that say transactions couldn't all be read (the
    *  answer's `unread_notes`, lib/fire/inputs.ts unreadNotesOf). */
   setTxnUnread?: Dispatch<SetStateAction<string[]>>;
@@ -176,13 +179,14 @@ export function useTransactionEdits({
       if (changes.current !== at || !Array.isArray(data?.transactions)) return;
       setTxns(data.transactions);
       setTxnNotes(Array.isArray(data.notes) ? data.notes : []);
+      setTxnAside?.(Array.isArray(data.aside_notes) ? data.aside_notes : []);
       setTxnUnread?.(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout?.(noTransactionsView(data));
     } catch {
       // The list shown is the server's answer to the save; the next load reads it again.
     }
-  }, [setTxns, setTxnNotes, setTxnUnread, setTxnIncomplete, setTxnWithout]);
+  }, [setTxns, setTxnNotes, setTxnAside, setTxnUnread, setTxnIncomplete, setTxnWithout]);
 
   /** After a save or delete: the row in the list, or out of it, at once, and
    *  when the balance moved too, net worth as after the account's Update form:

@@ -38,6 +38,16 @@
 //   - the bank's latest balance is more than OLD_BALANCE_HOURS old: SimpleFIN
 //     answers, but its link to the bank has stopped updating;
 //   - no answer has come for FRESH_HOURS (the daily update didn't run).
+// The same holds for Lunch Flow's accounts (lib/connectors/lunchflow.ts),
+// with one difference: Lunch Flow gives no time with a balance, so its
+// balance is as of when Nya received it, the old-balance rule never applies,
+// and a link of its that broke is a problem it reports (the account's
+// status), which holds the bank as any reported problem does.
+// A problem of kind `retry` (a request about an account that brought nothing
+// this time, lib/connectors/types.ts ProblemKind) holds the bank too, but is
+// a wait, `down`, on Nya's side when Nya's own time ran out: the
+// connector's word about the bank, to fix there, is `reported`, and comes
+// first when both concern one bank.
 // Its last balances are still shown, with their own date, as last known;
 // never written as measured, and never recovered from the history layer.
 //
@@ -78,7 +88,7 @@ import { connectionsStore, connectorAccountsStore, type ConnectorAccount, type C
 import { connectorHealth, shortDay } from './health';
 import { formatMoney } from '../format';
 import { connectorOf } from './registry';
-import type { ConnectorDetail, ConnectorIssue, ConnectorKind } from './types';
+import { ANY_CONNECTOR, type ConnectorDetail, type ConnectorIssue, type ConnectorKind } from './types';
 import type { Side } from '../connection-state';
 
 /** How long the last answer counts as current: a day and a half, so a
@@ -135,27 +145,30 @@ export type Elsewhere = { account: ConnectorAccount; host: string | null; certai
 
 /**
  * The account another connection already tracks that an offered one is, or
- * null. For certain when it has the same connector id on the same host:
- * tracking it again would count it twice, so it is refused
- * (lib/connectors/manage.ts trackAccounts). Only likely when, on another
- * host, it has the same bank and account name and the same balance as that
- * account last reported (`offer.balance`, known only in the answer to
- * connecting): said, never refused, since two accounts can share all three
- * (two people's "Checking" at one bank, on one server, are two accounts, and
- * are never matched by name at all).
+ * null. For certain when it has the same id from the same connector on the
+ * same host, one space of ids: tracking it again would count it twice, so it
+ * is refused (lib/connectors/manage.ts trackAccounts). Only likely when,
+ * through another connector or on another host (Lunch Flow's own API and its
+ * SimpleFIN server answer on one host, with ids of their own), it has the
+ * same bank and account name and the same balance as that account last
+ * reported (`offer.balance`, known only in the answer to connecting): said,
+ * never refused, since two accounts can share all three (two people's
+ * "Checking" at one bank, in one space of ids, are two accounts, and are never
+ * matched by name at all).
  */
 export function trackedElsewhere(
   offer: { remote_id: string; name: string; institution: string; balance?: number },
-  host: string,
+  where: { connector: ConnectorKind; host: string },
   others: readonly { account: ConnectorAccount; host: string | null }[]
 ): Elsewhere | null {
-  const same = others.find(({ account, host: there }) => there === host && account.remote_id === offer.remote_id);
+  const sameSpace = (account: ConnectorAccount, host: string | null) => account.connector === where.connector && host === where.host;
+  const same = others.find(({ account, host }) => sameSpace(account, host) && account.remote_id === offer.remote_id);
   if (same) return { ...same, certain: true };
   if (offer.balance === undefined) return null;
   const print = fingerprint(offer.institution, offer.name);
   const likely = others.find(
-    ({ account, host: there }) =>
-      there !== host && account.reported_balance !== null && account.reported_balance === offer.balance && fingerprint(account.institution_name, account.name) === print
+    ({ account, host }) =>
+      !sameSpace(account, host) && account.reported_balance !== null && account.reported_balance === offer.balance && fingerprint(account.institution_name, account.name) === print
   );
   return likely ? { ...likely, certain: false } : null;
 }
@@ -203,9 +216,16 @@ function issueOf(
   const ids = new Set(group.map((a) => a.account_id));
   const fetch = conn.last_fetch;
   if (fetch?.failure) return { issue: fetch.failure.kind, messages: [fetch.failure.message], accounts: [], side: fetch.failure.side };
-  const reported = (fetch?.problems ?? []).filter((p) => p.accounts === null || p.accounts.some((id) => ids.has(id)));
+  const concerned = (fetch?.problems ?? []).filter((p) => p.accounts === null || p.accounts.some((id) => ids.has(id)));
+  // The connector's word about the bank is fixed at the connector; a request
+  // that brought nothing this time (ProblemKind `retry`) clears when asked
+  // again, so it is a wait, on Nya's side when Nya's own time ran out.
+  const reported = concerned.filter((p) => p.kind !== 'retry');
   if (reported.length > 0) {
     return { issue: 'reported', messages: reported.map((p) => p.message), accounts: [], side: reported[0].side };
+  }
+  if (concerned.length > 0) {
+    return { issue: 'down', messages: concerned.map((p) => p.message), accounts: [], side: concerned.every((p) => p.side === 'nya') ? 'nya' : 'connector' };
   }
   const missing = group.filter((a) => fetch?.missing.includes(a.account_id));
   if (missing.length > 0) return { issue: 'missing', messages: [], accounts: missing.map((a) => a.name) };
@@ -418,9 +438,11 @@ export async function connectorBanksReport(
 }
 
 /** The card for connector accounts that couldn't be read: no accounts, an
- *  error, so the snapshot gate stays shut rather than a total going short. */
+ *  error, so the snapshot gate stays shut rather than a total going short.
+ *  Which connector they came through can't be read either, so its words name
+ *  every one (its `connector` is only the shape's placeholder). */
 export function unreadableConnectorInstitution(): InstitutionResult {
-  const label = connectorOf('simplefin').label;
+  const label = ANY_CONNECTOR;
   return {
     institution_name: `${label} accounts`,
     item_id: 'connector:unreadable',

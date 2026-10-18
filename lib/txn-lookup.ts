@@ -27,7 +27,7 @@ import { isFileImportedId, RESTORED_TXN_PREFIX } from './history-import/view';
 import { restoredTxnStore } from './user-restore/store';
 import { countedRows, readImported, standsFor } from './history-import/read';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
-import { liveAccountIds } from './links';
+import { liveAccountsReport } from './links';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
 
@@ -48,7 +48,7 @@ export type FoundTxn = {
 
 /** Where a row imported into a linked account is looked for, as a refusal
  *  names it, and what says which bank row stands for one. */
-const IMPORTED_BOOKS = 'transactions imported from your bank’s files';
+const IMPORTED_BOOKS = 'transactions imported from files';
 const RESTORED_BOOKS = 'transactions brought back from your download';
 const IMPORTED_PAIRS = 'which of the bank’s transactions stand for the ones you imported';
 
@@ -196,9 +196,14 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
  * shows (lib/split-rows.ts), which a split or a group of its own would hide.
  * Only the banks' own rows among `found` are looked at, on the links that
  * apply now, with the pairs the sync kept (lib/history-import/twins.ts), so
- * a bank row the bank modified stands for what the read layer says. Strict: the links, the live accounts or one of these accounts'
- * imported rows that can't be read throw (LookupUnreadableError for the
- * rows), never an answer of "none". One read of the books when nothing was
+ * a bank row the bank modified stands for what the read layer says. Strict
+ * about these accounts only: the links, or what these accounts' imported
+ * rows are, that can't be read throw (LookupUnreadableError for the rows),
+ * never an answer of "none"; what can't be read of other accounts doesn't. A
+ * connection whose accounts can't be read matters only to an account a link
+ * touches (one of its ids may be live there again, which pauses the link,
+ * lib/link-core.ts effectiveLinks) or to one of its own (whose imported rows
+ * no live account claims then). One read of the books when nothing was
  * imported.
  */
 export async function importedStoodFor(ctx: Ctx, found: Iterable<FoundTxn>): Promise<Map<string, string[]>> {
@@ -209,8 +214,12 @@ export async function importedStoodFor(ctx: Ctx, found: Iterable<FoundTxn>): Pro
   if (bank.length === 0) return out;
   const [files, brought] = await Promise.all([importedTxnStore.count(ctx), restoredTxnStore.count(ctx)]);
   if (files + brought === 0) return out;
-  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
-  const applied = effectiveLinks(links, live);
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountsReport(ctx)]);
+  if (live.unreadable.length > 0) {
+    const roots = new Set(bank.map((t) => resolveId(t.account_id, links)));
+    if ([...links.keys()].some((old) => roots.has(resolveId(old, links)))) throw new LookupUnreadableError([IMPORTED_BOOKS]);
+  }
+  const applied = effectiveLinks(links, live.ids);
   const accounts = new Set(bank.map((t) => resolveId(t.account_id, applied)));
   const read = await readImported(ctx, { links: applied, only: accounts });
   if (read.unresolved || [...accounts].some((a) => read.flawed.has(a))) throw new LookupUnreadableError([IMPORTED_BOOKS]);

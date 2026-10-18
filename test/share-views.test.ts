@@ -382,6 +382,38 @@ describe('spending', () => {
     expect(sp.may_be_incomplete).toBe(true);
   });
 
+  test('not once its files cover every month shown, through today, as the owner’s Activity tab counts them', async () => {
+    await shareViews({ spending: { detail: 'amounts', by: 'group' } });
+    await connectWithoutTransactions(fake, { item_id: 'item_refused', name: 'Refused Bank', accounts: [{ account_id: 'acc_ref', type: 'depository' }], refused: { code: 'PRODUCTS_NOT_SUPPORTED' } });
+    const shown = (await quietly(partnerViews)).spending;
+    const oldest = shown.months[shown.months.length - 1].month;
+    const today = new Date().toISOString().slice(0, 10);
+    const { historyImportSummaryStore } = await import('@/lib/history-import/store');
+    const covering = (from: string, to: string) =>
+      historyImportSummaryStore.set(ctx, 'history-import:0f1e2d3c-4b5a-4968-8776-655443322110', {
+        version: 1,
+        account_id: 'acc_ref',
+        format: 'csv',
+        file_name: null,
+        imported_at: new Date().toISOString(),
+        currency: 'USD',
+        first_date: from,
+        last_date: to,
+        covers: { from, to, stated: true },
+        bank_from: null,
+        counts: { imported: 1, duplicates: 0, already: 0, present: 0, repeated: 0, skipped: 0, unreadable: 0 },
+        statement: null,
+      });
+    // Through last month only, short of this one: still short.
+    expect(shown.months.length).toBeGreaterThan(1);
+    const [y, m] = shown.months[1].month.split('-').map(Number);
+    await covering(`${oldest}-01`, new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10));
+    expect((await quietly(partnerViews)).spending.may_be_incomplete).toBe(true);
+    // Every month shown, through today: the files hold its transactions.
+    await covering(`${oldest}-01`, today);
+    expect((await quietly(partnerViews)).spending.may_be_incomplete).toBeUndefined();
+  });
+
   test('never a transaction, its merchant, note, tags, split parts or group', async () => {
     const categories = (await as('user_owner', () => route('categories', 'GET'))).body.categories;
     const id = (name: string) => categories.categories.find((c: any) => c.name === name).id;

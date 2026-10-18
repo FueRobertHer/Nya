@@ -42,7 +42,7 @@ import { storedAccountIds, storedTransactionIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
 import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
-import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
+import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
 import { forgetRestoredAccount } from './user-restore/forget';
@@ -905,6 +905,20 @@ export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean; readOnl
     if (opts.strict) throw err;
     return new Set();
   }
+}
+
+/**
+ * The live account ids, as liveAccountIds reads them, and the stored Items
+ * whose record of their accounts can't be read (`unreadable`), named rather
+ * than thrown or taken for none: for a reader that can tell whether those
+ * matter to its answer (lib/txn-lookup.ts importedStoodFor). Only reads.
+ * Storage failing throws.
+ */
+export async function liveAccountsReport(ctx: Ctx): Promise<{ ids: Set<string>; unreadable: string[] }> {
+  const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
+  const stored = new Set(items.map((i) => i.item_id));
+  const ids = new Set(Object.entries(remembered.byItem).flatMap(([item_id, accounts]) => (stored.has(item_id) ? accounts.map((a) => a.account_id) : [])));
+  return { ids, unreadable: couldNotRead(remembered).filter((id) => stored.has(id)) };
 }
 
 /**

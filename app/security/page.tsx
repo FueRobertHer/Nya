@@ -61,6 +61,10 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     'Your bank connections, which you make and pay for in your own SimpleFIN account (or another paid service that speaks its protocol, such as Redbark), under its own terms, and when Nya reads your accounts there. Nya contacts only the host in the Setup Token you paste, to claim it, and the host of the access that claim returns, to read your accounts; never a private or internal address.',
   ],
   [
+    'Lunch Flow, if you connect it',
+    'Your bank connections, which you make and pay for in your own Lunch Flow account, under its own terms, and when Nya reads your accounts there and which ones. Nya sends the API key you paste only to Lunch Flow’s own address (lunchflow.app, and its www name), never to another host a redirect points to, and never to a private or internal address.',
+  ],
+  [
     'Clerk, the sign-in service',
     'Your email address and your sign-in activity, and your name and picture if you sign in with Google or another account. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs. Only when this copy of Nya uses Clerk accounts rather than a shared password.',
   ],
@@ -91,7 +95,8 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
     <>
       <p>
         These values are encrypted with AES-256-GCM before they are written to the database: the tokens that connect
-        your banks through Plaid, the access your own SimpleFIN account gives Nya, balances, net-worth history,
+        your banks through Plaid, the access your own SimpleFIN account gives Nya, the API key of your own Lunch Flow
+        account, balances, net-worth history,
         transactions, budgets, goals, the categories you set and the names you give merchants, manual accounts, how
         each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies of
         what the dashboard last showed. Some details around them are not; they are listed below.
@@ -160,7 +165,8 @@ function Backups({ backups, envelope }: { backups: BackupRetention; envelope: bo
         text listed above{envelope ? ', and, in a file of their own kept beside it, the data keys in their locked form' : ''}. Its encrypted parts cannot be read
         without the keys kept in the server’s environment. API tokens are never backed up, so restoring a backup ends every
         token, and none revoked before it can work again. It never holds the access a SimpleFIN account gives Nya, which
-        works on its own: restoring a backup ends that access, and you connect again with a new Setup Token.
+        works on its own: restoring a backup ends that access, and you connect again with a new Setup Token. Nor does it
+        hold a Lunch Flow API key, for the same reason: after a restore you connect again with one.
       </p>
       {envelope && (
         <p>
@@ -216,7 +222,8 @@ export default function SecurityPage() {
             protects against someone who gets the database or a backup without those keys.
           </li>
           <li>
-            Bank connections through Plaid work for US institutions only; your own SimpleFIN account may reach others.
+            Bank connections through Plaid work for US institutions only; your own SimpleFIN account, or your own Lunch
+            Flow account where this copy of Nya offers it, may reach others.
           </li>
           <li>No outside security audit has been done yet.</li>
         </ul>
@@ -232,8 +239,8 @@ export default function SecurityPage() {
           <li>dates and times: which days have a recorded balance, and when things were saved;</li>
           <li>
             ids: of your accounts, transactions and bank connections (random strings from Plaid, or made by Nya for
-            manual accounts and a SimpleFIN connection), of your sign-in account, and of your API tokens (random, and
-            not enough to use one);
+            manual accounts and a SimpleFIN or Lunch Flow connection), of your sign-in account, and of your API tokens
+            (random, and not enough to use one);
           </li>
           <li>the names of the banks you linked, and whether Plaid included transactions when each connection was linked;</li>
           <li>the merchant names you renamed (the new names you gave them are encrypted);</li>
@@ -405,7 +412,7 @@ export default function SecurityPage() {
             written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese,
             French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept,
             seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead
-            of named; a bank’s name, which comes from Plaid or SimpleFIN, only when it has a digit or a currency or percent
+            of named; a bank’s name, which comes from Plaid, SimpleFIN or Lunch Flow, only when it has a digit or a currency or percent
             sign. Before it goes, the whole email is checked again, and it isn’t sent if, outside its links, its own wording,
             the banks’ names and the currency codes it names, it holds a number other than one of its days or counts, a
             currency or percent sign, a number or a currency written as a word, or a letter outside the Latin alphabet.
@@ -461,6 +468,13 @@ export default function SecurityPage() {
           into Nya. Nya exchanges the token, once, for read-only access, keeps that access encrypted, never writes it to a
           log, and asks for your accounts about once a day. It brings no pending transactions, no holdings and no
           categories.
+        </p>
+        <p>
+          Where this copy of Nya offers it, your own Lunch Flow account may reach banks in other countries too: you pay
+          Lunch Flow, connect your banks there, and paste the API key of an API destination into Nya. Nya checks the key with Lunch Flow once, keeps it
+          encrypted, never writes it to a log or shows it again, and asks for your accounts about once a day. It brings
+          no pending transactions, no holdings and no categories, and gives no date with a balance, so Nya shows the day
+          it received each one.
         </p>
       </InfoSection>
     </InfoPage>

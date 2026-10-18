@@ -22,11 +22,15 @@
 
 import type { NoTransactionsReason } from './item-products';
 import { joinNames } from './month-coverage';
+import { filesCoverAll, type CoveredAccount } from './history-import/coverage';
 
 /** One connection that brings in no transactions, and why. `item_id` matches
  *  it to the connection's health; absent on a payload cached before it was
- *  sent. */
-export type WithoutTransactions = { item_id?: string; institution_name: string; reason: NoTransactionsReason };
+ *  sent. `files`, for one whose transactions exist and don't come in
+ *  (`refused`, `no_consent`): its bank accounts and cards, with the days the
+ *  files imported into each cover (#52, lib/history-import/without-files.ts),
+ *  absent when none was imported into any. */
+export type WithoutTransactions = { item_id?: string; institution_name: string; reason: NoTransactionsReason; files?: CoveredAccount[] };
 
 /** What /api/transactions says about them, as the views take it: the
  *  connections without transactions, and how many connections there are
@@ -36,6 +40,24 @@ export type NoTransactionsView = { without: WithoutTransactions[]; connections?:
 export const NO_CONNECTIONS_WITHOUT: NoTransactionsView = { without: [] };
 
 const REASONS: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_accounts', 'refused', 'no_consent']);
+
+const DAY = /^\d{4}-\d{2}-\d{2}$/;
+/** Days a file covers, as sent: each a range of YYYY-MM-DD days. */
+const isRange = (r: unknown): r is { from: string; to: string } =>
+  !!r && typeof (r as { from?: unknown }).from === 'string' && DAY.test((r as { from: string }).from) && typeof (r as { to?: unknown }).to === 'string' && DAY.test((r as { to: string }).to);
+/** A connection's accounts with what its files cover, as sent, or undefined
+ *  when they aren't well formed (then nothing is taken as covered). */
+function filesOf(raw: unknown): CoveredAccount[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: CoveredAccount[] = [];
+  for (const a of raw) {
+    const end = (a as { end?: unknown })?.end;
+    const covers = (a as { covers?: unknown })?.covers;
+    if (!Array.isArray(covers) || !covers.every(isRange) || !(end === undefined || end === null || (typeof end === 'string' && DAY.test(end)))) return undefined;
+    out.push({ covers: covers.map((c) => ({ from: c.from, to: c.to })), end: end ?? null });
+  }
+  return out;
+}
 /** The reasons that mean a connection holds no bank account or card: it never
  *  brings transactions in, whatever happens to it. */
 const BY_DESIGN: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_accounts']);
@@ -45,11 +67,11 @@ const BY_DESIGN: ReadonlySet<string> = new Set(['investment_accounts', 'no_cash_
 export function noTransactionsView(payload: unknown): NoTransactionsView {
   const p = (payload ?? {}) as { without_transactions?: unknown; connections?: unknown };
   const without = Array.isArray(p.without_transactions)
-    ? p.without_transactions.flatMap((w): WithoutTransactions[] =>
-        !!w && typeof w.institution_name === 'string' && REASONS.has(w.reason)
-          ? [{ ...(typeof w.item_id === 'string' ? { item_id: w.item_id } : {}), institution_name: w.institution_name, reason: w.reason }]
-          : []
-      )
+    ? p.without_transactions.flatMap((w): WithoutTransactions[] => {
+        if (!w || typeof w.institution_name !== 'string' || !REASONS.has(w.reason)) return [];
+        const files = filesOf(w.files);
+        return [{ ...(typeof w.item_id === 'string' ? { item_id: w.item_id } : {}), institution_name: w.institution_name, reason: w.reason, ...(files ? { files } : {}) }];
+      })
     : [];
   const connections = typeof p.connections === 'number' && Number.isSafeInteger(p.connections) && p.connections >= 0 ? p.connections : undefined;
   return connections === undefined ? { without } : { without, connections };
@@ -167,10 +189,36 @@ export function withoutNote(view: NoTransactionsView, rows: number): string | nu
  *  each such connection's card (components/Dashboard.tsx). */
 const ALLOW_THEM = 'To bring them in, choose Allow transactions on the Accounts tab.';
 
+/** The last day of a month (YYYY-MM). */
+const lastDayOf = (month: string): string => {
+  const [y, m] = month.split('-').map(Number);
+  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
+};
+
+/**
+ * The view for one month (YYYY-MM): without the connections whose files
+ * cover the whole month for every one of their bank accounts and cards
+ * (`files`, each through the day before its end, by lib/history-import/
+ * coverage.ts filesCoverAll), which hold its transactions in the bank's
+ * place, as a report and budget rollover count them. The rest as they are.
+ */
+export function coveredOutOf(view: NoTransactionsView, month: string): NoTransactionsView {
+  return coveredOutOfDays(view, `${month}-01`, lastDayOf(month));
+}
+
+/** coveredOutOf for any days, [from, through] (YYYY-MM-DD): a period the
+ *  read-only API answers for (lib/api-read.ts readSpending, lib/api-cash-flow.ts). */
+export function coveredOutOfDays(view: NoTransactionsView, from: string, through: string): NoTransactionsView {
+  const without = view.without.filter((w) => !w.files || !filesCoverAll(w.files, null, from, through));
+  return without.length === view.without.length ? view : { ...view, without };
+}
+
 /** Under a month's totals (Activity, budgets, Home's spending insights): each
  *  bank account or card whose transactions the month lacks, and why. Empty
- *  when none does. */
-export function missingMonthNotes(view: NoTransactionsView): string[] {
+ *  when none does. With `month` (YYYY-MM), not one whose files cover the
+ *  month in its bank's place (coveredOutOf). */
+export function missingMonthNotes(all: NoTransactionsView, month?: string): string[] {
+  const view = month ? coveredOutOf(all, month) : all;
   const refused = refusedNames(view);
   const unallowed = unallowedNames(view);
   return [

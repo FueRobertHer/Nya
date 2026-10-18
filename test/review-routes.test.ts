@@ -91,7 +91,7 @@ const route = async (path: string, method: string, body?: unknown, raw?: string)
   const res = await mod[method](new Request(`http://x/api/${path}`, { method, body: raw ?? (body !== undefined ? JSON.stringify(body) : undefined) }));
   return { status: res.status, body: await res.json() };
 };
-type Listed = { transactions: any[]; notes: string[]; review: { on: boolean; since: string | null; unread: boolean; unknown: number } };
+type Listed = { transactions: any[]; notes: string[]; aside_notes: string[]; review: { on: boolean; since: string | null; unread: boolean; unknown: number } };
 const listed = async () => (await route('transactions', 'GET')).body as Listed;
 const resync = async () => {
   const mod: any = await import('@/app/api/transactions/route');
@@ -402,7 +402,9 @@ describe('what can’t be read', () => {
     await fake.set(ctxKey('review-settings'), DAMAGED);
     const read = await quietly(listed);
     expect(read.review).toEqual({ on: false, since: null, unread: true, unknown: 0 });
-    expect(read.notes).toContain('Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.');
+    // Said by the list, apart from what its figures bear (the chart's notes).
+    expect(read.aside_notes).toEqual(['Your review queue’s settings couldn’t be read, so nothing is marked to review until they can be.']);
+    expect(read.notes).toEqual([]);
     expect(read.transactions.some((t) => t.needs_review)).toBe(false);
     expect((await quietly(() => route('review', 'GET'))).body).toMatchObject({ unreadable: true, repairable: true });
     expect((await quietly(start)).status).toBe(409);

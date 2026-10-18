@@ -178,7 +178,7 @@ import { splitStore } from './splits';
 import { groupStore } from './groups';
 import { importedTwinsStore, importedTxnStore } from './history-import/store';
 import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
-import { isConnectorKind } from './connectors/types';
+import { ANY_CONNECTOR, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
 import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
 import { lastEndDay } from './lifecycle';
 import { formatMoney } from './format';
@@ -578,13 +578,13 @@ const noteDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'shor
  * ENDED): when it ended in Nya, that the statement still lists every
  * transaction Nya stored for it, with how many are dated from then, and the
  * day of the balance it gives, when it gives one (`ledger`), with where that
- * comes from: set by hand, the newest Nya recorded, or the latest SimpleFIN
- * gave. Pure.
+ * comes from: set by hand, the newest Nya recorded, or the latest its
+ * connector (SimpleFIN, Lunch Flow) gave. Pure.
  */
 export function endedNote(
   lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>,
   rows: readonly Pick<OfxRow, 'date'>[],
-  ledger: { as_of: string; from: 'set' | 'recorded' | 'simplefin' } | null
+  ledger: { as_of: string; from: 'set' | 'recorded' | ConnectorKind } | null
 ): string {
   const when = noteDay(lifecycle.date);
   const what =
@@ -600,33 +600,35 @@ export function endedNote(
     after > 0
       ? `the statement still lists every transaction Nya stored for it, ${after.toLocaleString('en-US')} of them dated from then, which Nya leaves out of every total`
       : 'the statement lists every transaction Nya stored for it, none dated from then';
-  const from = ledger?.from === 'set' ? 'the one last set, on' : ledger?.from === 'simplefin' ? 'the latest SimpleFIN gave, from' : 'the newest Nya recorded, from';
+  const from =
+    ledger?.from === 'set' ? 'the one last set, on' : ledger && isConnectorKind(ledger.from) ? `the latest ${connectorLabel(ledger.from)} gave, from` : 'the newest Nya recorded, from';
   const balance = ledger ? `, and its balance is ${from} ${noteDay(ledger.as_of)}` : '';
   return `${what}: ${listed}${balance}.`;
 }
 
 /**
- * What a SimpleFIN account's statement may be missing although its
- * connection's history covers it (see AN ACCOUNT THAT ENDED): the days
+ * What a SimpleFIN or Lunch Flow account's statement may be missing although
+ * its connection's history covers it (see AN ACCOUNT THAT ENDED): the days
  * answers left it out of (`windows`, lib/connectors/store.ts LeftOut), one
  * still open running to `until` when it was let go, else said as since its
  * first day; and, for one let go and kept by hand, the days its connection's
- * history reached back to after (`letGo`). Pure.
+ * history reached back to after (`letGo`). `label` is its connector's name.
+ * Pure.
  */
-export function leftOutNotes(windows: readonly LeftOut[] | undefined, until: string | null, letGo: { from: string; to: string } | null): string[] {
+export function leftOutNotes(windows: readonly LeftOut[] | undefined, until: string | null, letGo: { from: string; to: string } | null, label = 'SimpleFIN'): string[] {
   const days = (from: string, to: string) => (from === to ? shownDay(from) : `${shownDay(from)} to ${shownDay(to)}`);
   const out: string[] = [];
   for (const w of windows ?? []) {
     const to = w.to === null || (until !== null && w.to > until) ? until : w.to;
     if (to === null) {
-      out.push(`SimpleFIN has left this account out of its answers since ${shownDay(w.from)}, so the statement may be missing its transactions from then.`);
+      out.push(`${label} has left this account out of its answers since ${shownDay(w.from)}, so the statement may be missing its transactions from then.`);
     } else if (w.from <= to) {
-      out.push(`SimpleFIN left this account out of its answers about ${days(w.from, to)}, so the statement may be missing its transactions from ${w.from === to ? 'that day' : 'those days'}.`);
+      out.push(`${label} left this account out of its answers about ${days(w.from, to)}, so the statement may be missing its transactions from ${w.from === to ? 'that day' : 'those days'}.`);
     }
   }
   if (letGo && letGo.from <= letGo.to) {
     const span = letGo.from === letGo.to ? `on ${shownDay(letGo.from)}` : `from ${shownDay(letGo.from)} to ${shownDay(letGo.to)}`;
-    out.push(`You stopped tracking this account through SimpleFIN before its transactions ${span} came in, so the statement may be missing them.`);
+    out.push(`You stopped tracking this account through ${label} before its transactions ${span} came in, so the statement may be missing them.`);
   }
   return out;
 }
@@ -657,13 +659,15 @@ export function ofxFile(
 ): { file: ExportFile } | OfxRefused {
   const linked = doc.accounts.find((a) => a.account_id === account_id);
   const manual = doc.manual_accounts.find((m) => m.account_id === account_id);
-  // An account SimpleFIN keeps up to date (or kept until it was let go): its
-  // rows are in a book, as a manual account's are, and its balance is the
-  // one SimpleFIN last gave (see the header).
+  // An account SimpleFIN or Lunch Flow keeps up to date (or kept until it was
+  // let go): its rows are in a book, as a manual account's are, and its
+  // balance is the one its connector last gave (see the header).
   const fed = linked && isConnectorKind(linked.provider) ? linked : null;
+  // Its connector, by name, for the statement's words.
+  const via = fed && isConnectorKind(fed.provider) ? connectorLabel(fed.provider) : ANY_CONNECTOR;
   if (!manual && missingIds(doc.problems, connectorAccountsStore.name).includes(account_id)) {
     return {
-      refused: 'What Nya keeps about this account from SimpleFIN couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.',
+      refused: `What Nya keeps about this account from ${ANY_CONNECTOR} couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.`,
       status: 409,
     };
   }
@@ -675,7 +679,7 @@ export function ofxFile(
   }
   if (fed && !data.connected.has(account_id)) {
     return {
-      refused: 'You stopped tracking this account through SimpleFIN and removed it, with its transactions, so it has no statement. Its balance history is in the JSON download.',
+      refused: `You stopped tracking this account through ${via} and removed it, with its transactions, so it has no statement. Its balance history is in the JSON download.`,
       status: 400,
     };
   }
@@ -779,23 +783,23 @@ export function ofxFile(
     const unreadConnection = missingIds(doc.problems, connectionsStore.name).includes(entry.connection_id);
     if (unreadConnection) {
       notes.push(
-        `What Nya keeps about the SimpleFIN connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. ${UNCHANGED}`
+        `What Nya keeps about the ${via} connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. ${UNCHANGED}`
       );
       incomplete.add(connectionsStore.name);
     } else if (conn && !conn.history) {
-      notes.push('SimpleFIN hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.');
+      notes.push(`${via} hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.`);
     } else if (conn?.history && !conn.history.complete) {
       // Older transactions still arriving, a few months a night
       // (lib/connectors/sync.ts). The day is the connection's, which starts
       // again when another account is tracked, so this account's statement
       // may already go back further: it may be missing some, never "has none".
       notes.push(
-        `SimpleFIN is still bringing in older transactions, a few months each night, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
+        `${via} is still bringing in older transactions, ${fed.provider === 'lunchflow' ? 'with its next daily update' : 'a few months each night'}, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
       );
     }
     // The days answers left it out of once it had ended (see AN ACCOUNT THAT
     // ENDED).
-    notes.push(...leftOutNotes(entry.left_out, null, null));
+    notes.push(...leftOutNotes(entry.left_out, null, null, via));
     // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
     // date for it, where the person is: none while Nya holds it, as the
     // Accounts tab does (lib/connectors/institutions.ts), for which an
@@ -810,13 +814,13 @@ export function ofxFile(
     const waiting = needsSign(entry);
     const amount = nyaBalance(entry);
     const at = entry.balance_at ?? entry.fetched_at;
-    let no_balance = 'SimpleFIN hasn’t given a balance for this account yet.';
+    let no_balance = `${via} hasn’t given a balance for this account yet.`;
     if (unreadConnection) {
-      no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s SimpleFIN connection can’t be read, as the Accounts tab does.`;
+      no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s ${via} connection can’t be read, as the Accounts tab does.`;
     } else if (waiting) {
-      no_balance = `SimpleFIN reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
+      no_balance = `${via} reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
     } else if (bank?.error) {
-      no_balance = `Nya holds ${entry.institution_name}’s balances while SimpleFIN’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
+      no_balance = `Nya holds ${entry.institution_name}’s balances while ${via}’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
     }
     account = {
       account_id,
@@ -894,12 +898,12 @@ export function ofxFile(
     }
     if (fromFiles.length > 0) {
       notes.push(
-        `${plural(fromFiles.length, 'transaction you imported from your bank’s files is', 'transactions you imported from your bank’s files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
+        `${plural(fromFiles.length, 'transaction you imported from files is', 'transactions you imported from files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
       );
     }
     if (missingIds(doc.problems, importedTxnStore.name).some((id) => resolveId(id, links) === account_id)) {
       notes.push(
-        `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+        `The transactions imported into this account from files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
       );
       incomplete.add(importedTxnStore.name);
     }
@@ -945,15 +949,15 @@ export function ofxFile(
   } else {
     const m = manual!;
     rows = bookRows();
-    // Let go from SimpleFIN and kept by hand: what it may be missing from
-    // then (see AN ACCOUNT THAT ENDED).
+    // Let go from SimpleFIN or Lunch Flow and kept by hand: what it may be
+    // missing from then (see AN ACCOUNT THAT ENDED).
     const letGo = data.ended.get(account_id);
     if (letGo?.kept) {
       const history = data.connections.get(letGo.connection_id)?.history;
       const before = letGo.history_from && history && history.from < letGo.history_from ? { from: history.from, to: addDays(letGo.history_from, -1) } : null;
-      notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before));
+      notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before, connectorLabel(letGo.connector)));
     }
-    // Kept in US dollars (lib/manual.ts), unless SimpleFIN fed it in
+    // Kept in US dollars (lib/manual.ts), unless a connector fed it in
     // another currency before it was kept as a manual account.
     const currency = m.currency ?? MANUAL_CURRENCY;
     account = {
@@ -1000,7 +1004,7 @@ export function ofxFile(
             ? one
               ? ' (its note, written with it, is)'
               : ' (their notes, written with them, are)'
-            : ', nor are your notes on those the bank or SimpleFIN brought (a note written with one you entered, or imported into this account, is there)';
+            : `, nor are your notes on those the bank, ${ANY_CONNECTOR} brought (a note written with one you entered, or imported into this account, is there)`;
       said.push(
         `Whether ${plural(theirs.length, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}.`
       );
@@ -1057,7 +1061,7 @@ export function ofxFile(
   const ended = linked ? linked.lifecycle : manual!.lifecycle;
   if (ended) {
     const ledger = statementsOf({ ...account, rows }).statements.find((s) => s.ledger !== null)?.ledger ?? null;
-    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, from: manual ? 'set' : fed ? 'simplefin' : 'recorded' } : null));
+    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, from: manual ? 'set' : fed && isConnectorKind(fed.provider) ? fed.provider : 'recorded' } : null));
   }
 
   const written = ofxDocument({ ...account, rows }, now);

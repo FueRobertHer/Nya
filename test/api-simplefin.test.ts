@@ -309,7 +309,7 @@ describe('an entry that can’t be read', () => {
     const csv = exportFile(doc, 'transactions-csv');
     expect(csv.incomplete).toEqual(['connector-accounts']);
     expect(csv.notes).toContain(
-      'Not all of your accounts from SimpleFIN could be read: 1 entry whose stored data is damaged. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as SimpleFIN gave it, with no category. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
+      'Not all of your accounts from SimpleFIN or Lunch Flow could be read: 1 entry whose stored data is damaged. Their rows in this file are under their account ids, with no account name, and a payment between one of them and another of your accounts is listed as it came, with no category. The JSON download lists them under problems. Nothing was changed: what could not be read is still stored as it was.'
     );
     expect(exportFile(doc, 'balances-csv').incomplete).toEqual([]);
   });

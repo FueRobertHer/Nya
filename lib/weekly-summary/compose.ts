@@ -31,7 +31,7 @@
 //     (due, once, sept, seize, elf, null);
 //   - a letter outside the Latin alphabet, since no list of words can tell
 //     whether "五百元" or "пятьдесят рублей" spells an amount.
-// A bank's name (safeBankName) comes from Plaid or SimpleFIN, never from the
+// A bank's name (safeBankName) comes from Plaid, SimpleFIN or Lunch Flow, never from the
 // person, so it can't carry their amount, and the connection notices have
 // always named it: it is held to the first rule only, so "Capital One" and
 // "Five Star Bank" are named. Every name is tidied first: control and format
@@ -63,6 +63,7 @@ import { dayIn } from '../report/period';
 import { WEEKDAY_NAMES, type Weekday } from './settings';
 import { weekBefore } from './week';
 import { isUnread, type BillFact, type ConnectionFact, type Level, type SpendingFact, type WeeklyFacts } from './content';
+import { ANY_CONNECTOR } from '../connectors/types';
 
 /** From this many on, a count is written "over 99". */
 export const COUNT_CAP = 100;
@@ -511,7 +512,7 @@ export function composeWeekly(f: WeeklyFacts, o: ComposeOptions): ComposedSummar
   else if (f.uncategorized > 0) {
     const one = f.uncategorized === 1;
     paragraphs.push(
-      `${plural(f.uncategorized, 'transaction')} from SimpleFIN this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
+      `${plural(f.uncategorized, 'transaction')} from ${f.uncategorized_from ?? ANY_CONNECTOR} this week ${one ? 'has' : 'have'} no category, so ${one ? 'it counts' : 'they count'} as spending or income until you categorize ${one ? 'it' : 'them'}.`
     );
     attention = true;
   }

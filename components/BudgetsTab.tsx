@@ -46,6 +46,7 @@ import { spendingByCategory } from '@/lib/totals';
 import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
+import type { GoalPlansDamage } from './GoalPlansRepair';
 import ForecastCard from './ForecastCard';
 import CalendarView from './CalendarView';
 import RecurringCard from './RecurringCard';
@@ -115,6 +116,8 @@ export default function BudgetsTab({
   goalsStatus = 'ready',
   goalsError = null,
   goalsSaveError = null,
+  goalsDamage,
+  onGoalsRepaired,
   onSaveGoals,
   accounts,
   loading,
@@ -155,6 +158,11 @@ export default function BudgetsTab({
   goalsStatus?: ListStatus;
   goalsError?: string | null;
   goalsSaveError?: string | null;
+  /** When goals can't load for plans that can't be read, how many (the
+   *  repair the card offers: components/GoalPlansRepair.tsx). */
+  goalsDamage?: GoalPlansDamage;
+  /** Loads the goals again once damaged plans are removed. */
+  onGoalsRepaired?: () => void;
   onSaveGoals: (next: Goal[]) => Promise<boolean>;
   accounts: GoalAccount[];
   loading: boolean;
@@ -330,7 +338,7 @@ export default function BudgetsTab({
   // With rows entered by hand, the connections that bring in none are named
   // beside the budgets instead, as where the spending comes from.
   const noSpending = txns ? noSpendingOf(withoutTransactions, txns.length) : null;
-  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions);
+  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions, thisMonth);
   const namedWithout = withoutNote(withoutTransactions, txns?.length ?? 0);
 
   // The currency the figures are in: this page's for this month, the
@@ -443,6 +451,8 @@ export default function BudgetsTab({
         status={goalsStatus}
         error={goalsError}
         saveError={goalsSaveError}
+        damage={goalsDamage}
+        onRepaired={onGoalsRepaired}
         accounts={accounts}
         onSave={onSaveGoals}
       />

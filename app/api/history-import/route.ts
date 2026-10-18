@@ -42,6 +42,7 @@ import { countedRows, liveLinkedAccounts, readAccountContext, type AccountContex
 import { drawImportedHistory, importedRowsChanged, readDrawState } from '@/lib/history-import/extend';
 import { importedTxnStore, isHistoryImportId, type Covers } from '@/lib/history-import/store';
 import { connectorAccountsStore } from '@/lib/connectors/store';
+import { connectorLabel } from '@/lib/connectors/types';
 import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore, type EndedLifecycle } from '@/lib/lifecycle';
 import { readHistoryMeta, type HistoryMeta } from '@/lib/history-import/request';
 
@@ -167,17 +168,18 @@ async function linkedAccount(ctx: Ctx, account_id: unknown): Promise<{ account: 
 }
 
 /** Why a manual account's id isn't one to import history into, in words:
- *  one SimpleFIN keeps up to date brings its own history, matched by
- *  SimpleFIN's own ids, which a file's rows can't be matched against here;
- *  a manual account imports a file through its own Import. Whether it is
- *  SimpleFIN's is read leniently: unknown, the words cover both. */
+ *  one SimpleFIN or Lunch Flow keeps up to date brings its own history,
+ *  matched by the connector's own ids, which a file's rows can't be matched
+ *  against here; a manual account imports a file through its own Import.
+ *  Whether it is a connector's is read leniently: unknown, the words cover
+ *  both. */
 async function notLinked(ctx: Ctx, account_id: string): Promise<string> {
   const fed = await connectorAccountsStore.get(ctx, account_id).then(
-    (a) => a !== null,
+    (a) => a?.connector ?? false,
     () => null
   );
-  if (fed === true) {
-    return 'This account is kept up to date through SimpleFIN, which brings its older transactions itself, up to two years: importing history from a file isn’t offered for it.';
+  if (fed) {
+    return `This account is kept up to date through ${connectorLabel(fed)}, which brings its older transactions itself, up to two years: importing history from a file isn’t offered for it.`;
   }
   if (fed === false) return 'This is a manual account: import a file into it with Import on its row.';
   return 'Importing history from a file is for accounts linked through Plaid: a manual account imports a file with Import on its row.';

@@ -364,7 +364,7 @@ describe('everywhere else, like any account', () => {
     expect(shown('PAYMENT TO VISA')).toEqual(['loan payments', 'credit card payment', null, 'card']);
     expect(shown('PAYMENT THANK YOU')).toEqual(['loan payments', 'credit card payment', null, 'card']);
     expect(shown('COFFEE')).toEqual([null, null, null, null]);
-    const { isTransfer, uncategorizedFromConnector, uncategorizedNote } = await import('@/lib/spending');
+    const { isTransfer, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } = await import('@/lib/spending');
     const { planFlow } = await import('@/lib/fire/inputs');
     const payments = rows.filter((t: any) => t.name.startsWith('PAYMENT'));
     expect(payments.every(isTransfer)).toBe(true);
@@ -372,7 +372,7 @@ describe('everywhere else, like any account', () => {
     expect(Object.fromEntries(payments.map((t: any) => [t.name, planFlow(t)]))).toEqual({ 'PAYMENT TO VISA': 'card-payment', 'PAYMENT THANK YOU': 'transfer' });
     // COFFEE, PAYROLL and DINER count, uncategorized: said under the totals.
     expect(uncategorizedFromConnector(rows)).toBe(3);
-    expect(uncategorizedNote(3)).toContain('3 transactions from SimpleFIN have no category');
+    expect(uncategorizedNote(3, uncategorizedFrom(rows))).toContain('3 transactions from SimpleFIN have no category');
     // Categorized, it counts as the person said, and is no longer one of them.
     const coffee = rows.find((t: any) => t.name === 'COFFEE');
     await call(recategorize.POST, 'POST', { transaction_id: coffee.transaction_id, category: 'food', account_id: coffee.account_id });
@@ -412,7 +412,7 @@ describe('everywhere else, like any account', () => {
     await fake.hset(`test:c:${ctx.container}:connector-accounts`, { 'manual_00000000-0000-4000-8000-0000000000cc': 'not-ciphertext-but-long-enough-to-be-tried' });
     const { result: body } = await quietly(async () => (await transactions.GET(new Request('http://localhost/api/transactions'))).json());
     expect(body.transactions.map((t: any) => t.name)).toEqual(['TEA']);
-    expect(body.notes).toContain("SimpleFIN accounts: couldn't be read, so their transactions aren't shown");
+    expect(body.notes).toContain("SimpleFIN or Lunch Flow accounts: couldn't be read, so their transactions aren't shown");
     expect(body.notes).not.toContain("Manual accounts: couldn't be read, so transactions entered for them aren't shown");
   });
 

@@ -336,6 +336,48 @@ describe('opted in: what the server said about a save (goals)', () => {
     expect(store.get().saveError).toBe('Could not save goals. Showing what is saved.');
   });
 
+  test('a load stopped by entries the screen can remove keeps how many, and only for the repair it was told of', async () => {
+    const answers: [number, unknown][] = [];
+    const fetch = (async () => {
+      const [status, body] = answers.shift()!;
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof globalThis.fetch;
+    const store = (repair?: string) =>
+      createWholeListStore<{ id: string }[]>({
+        url: '/api/goals',
+        field: 'goals',
+        noun: 'goals',
+        empty: [],
+        isValid: (v): v is { id: string }[] => Array.isArray(v),
+        onChange: () => {},
+        fetch,
+        ...(repair ? { repair } : {}),
+      });
+    const damaged = { error: 'x', unreadable: true, unreadable_ids: ['g1', 'g2'], unrecognised_ids: ['g3'], repair: 'goal-plans' };
+    const goalsStore = store('goal-plans');
+    answers.push([409, damaged]);
+    await goalsStore.load();
+    expect(goalsStore.get()).toMatchObject({ status: 'error', damage: { unreadable: 2, unrecognised: 1 } });
+    expect(goalsStore.get().error).toContain('could not be read');
+    // Loaded again once repaired, the count goes.
+    answers.push([200, { goals: [{ id: 'g1' }] }]);
+    await goalsStore.load();
+    expect(goalsStore.get()).toMatchObject({ status: 'ready', value: [{ id: 'g1' }] });
+    expect(goalsStore.get().damage).toBeUndefined();
+    // Another repair's name, no repair asked for, or a 409 naming none: no count.
+    for (const [s, body] of [
+      [store('budget-set'), damaged],
+      [store(), damaged],
+      [store('goal-plans'), { error: 'x', unreadable: true, unreadable_ids: ['g1'], unrecognised_ids: [] }],
+      [store('goal-plans'), { error: 'x', repair: 'goal-plans', unreadable_ids: ['g1'] }],
+    ] as const) {
+      answers.push([body === damaged || 'unreadable' in body ? 409 : 500, body]);
+      await s.load();
+      expect(s.get().status).toBe('error');
+      expect(s.get().damage).toBeUndefined();
+    }
+  });
+
   test('what a save sends beside the list is read as each one is sent, and never takes the list’s place', async () => {
     const bodies: unknown[] = [];
     const fetch = (async (_url: string, init?: RequestInit) => {

@@ -4549,13 +4549,16 @@ button.tag-suggestion.chosen {
   accent-color: var(--accent);
 }
 
-/* Closures that can't be read, and their repair. */
-.lifecycle-repair p {
+/* Closures that can't be read, and their repair; goal plans the same way
+   (components/GoalPlansRepair.tsx). */
+.lifecycle-repair p,
+.goal-plans-repair p {
   margin: 0 0 8px;
   line-height: 1.45;
 }
 
-.lifecycle-repair > button {
+.lifecycle-repair > button,
+.goal-plans-repair > button {
   width: auto;
   padding: 8px 14px;
   font-size: 13px;

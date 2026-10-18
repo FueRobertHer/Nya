@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -10,12 +10,21 @@ const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // A ceiling a fixture can actually cross. The real one is 8M characters, which
-// would take roughly a hundred megabytes of JSON to reach after gzip — far too
+// would take roughly a hundred megabytes of JSON to reach after gzip, far too
 // slow to build in a unit test. A one-row blob encodes to about 800 characters,
 // so this sits well clear of the ordinary fixtures and is crossed only by the
-// deliberately bulky one. Read at import time, so it must be set before the
-// module below is imported.
-process.env.MAX_TXN_BLOB_CHARS = '5000';
+// deliberately bulky one. lib/blob.ts reads it each time it is used, so it is
+// set before each test here (test/preload.ts puts it back before every test),
+// and put back as it was once this file is done: every test file runs in one
+// process, and a ceiling left lowered refuses the next files' saves.
+const BLOB_CEILING_BEFORE = process.env.MAX_TXN_BLOB_CHARS;
+beforeEach(() => {
+  process.env.MAX_TXN_BLOB_CHARS = '5000';
+});
+afterAll(() => {
+  if (BLOB_CEILING_BEFORE === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
+  else process.env.MAX_TXN_BLOB_CHARS = BLOB_CEILING_BEFORE;
+});
 
 // Drives /transactions/sync deterministically. Declared before mock.module
 // because that call is hoisted above the imports below it (same hazard as
@@ -60,6 +69,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
 const { setExcluded } = await import('@/lib/txn-annotations');
+const { setOverride, getOverrides } = await import('@/lib/overrides');
 const {
   syncItemTransactions,
   readItemTransactions,
@@ -604,6 +614,34 @@ describe('what was said about a transaction the bank removed', () => {
     }
   });
 
+  test('a category chosen for it goes too, by the same rules; one of a transaction still stored, or of a row imported from a file, stays', async () => {
+    await seed();
+    const IMPORTED = 'import:00000000-0000-4000-8000-000000000002';
+    for (const id of ['t1', 't2', 't6', IMPORTED]) await setOverride(ctx, id, 'travel');
+    removing('t2', 'never_stored');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual([IMPORTED, 't1', 't6'].sort());
+    // Not while another Item's store can't be read: it may hold the row.
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify({ ...ITEM, item_id: 'item_b' }) });
+    await fake.set(ctxKey('txns:item_b'), 'not-ciphertext');
+    removing('t6');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx))).toContain('t6');
+    // Nor when the sync's own save fails.
+    await fake.del(ctxKey('txns:item_b'));
+    await fake.hdel(ctxKey('plaid:items'), 'item_b');
+    removing('t1');
+    fake.failNext('set');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await syncItemTransactions(ctx, ITEM);
+    } finally {
+      console.warn = warn;
+    }
+    expect(Object.keys(await getOverrides(ctx))).toContain('t1');
+  });
+
   // The removal and the row's return in one sync: the store it saves has the
   // row, so the record is on a transaction still shown.
   test('removed on one page and added back on a later page of the same sync: it stays', async () => {
@@ -615,5 +653,19 @@ describe('what was said about a transaction the bank removed', () => {
     const res = await syncItemTransactions(ctx, ITEM);
     expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
     expect(recordOf('t1')).toBeDefined();
+  });
+
+  test('and the category chosen for it stays with it, as its other records do', async () => {
+    await seed();
+    await setOverride(ctx, 't1', 'travel');
+    await setOverride(ctx, 't2', 'travel');
+    pages = [
+      { removed: [{ transaction_id: 't1' }, { transaction_id: 't2' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    // t1 came back in the store the sync saved; t2 didn't.
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual(['t1']);
   });
 });

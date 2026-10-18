@@ -8,9 +8,10 @@
 // stored, and with the import it came in (`import_id`), so one import can be
 // taken out whole.
 //
-// FROM SIMPLEFIN. An account a connector feeds (lib/connectors/) keeps its
-// rows in a book here too, under its own id, each with source 'simplefin' and
-// SimpleFIN's id as its source_id (lib/connectors/sync.ts writes them, matched
+// FROM SIMPLEFIN OR LUNCH FLOW. An account a connector feeds (lib/connectors/)
+// keeps its rows in a book here too, under its own id, each with the
+// connector's kind as its source ('simplefin', 'lunchflow') and the
+// connector's id as its source_id (lib/connectors/sync.ts writes them, matched
 // by that id). They are the bank's record: their category is the person's to
 // change, as a bank's transaction's category is, but never their date,
 // amount, payee, account or note, and they are never deleted one by one
@@ -91,7 +92,7 @@ import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { getManualAccounts, toInstitutions, type ManualAccount } from './manual';
 import { keptFrom } from './kept-accounts';
-import { isConnectorKind } from './connectors/types';
+import { ANY_CONNECTOR, connectorLabel, isConnectorKind } from './connectors/types';
 import { connectionsStore, connectorAccountsStore, type ConnectorAccount } from './connectors/store';
 import { amountUnitsError, isCalendarDay, isCurrencyCode, MANUAL_TXN_PREFIX, newManualTxnId, type TxnFields } from './manual-txn-input';
 import type { Txn } from './transactions';
@@ -233,11 +234,14 @@ export class InvalidTxnError extends Error {
   }
 }
 
-/** Whether a row came from a connector the person brought (SimpleFIN): its
- *  source is the connector's name (lib/connectors/sync.ts). */
+/** Whether a row came from a connector the person brought (SimpleFIN, Lunch
+ *  Flow): its source is the connector's name (lib/connectors/sync.ts). */
 export function isConnectorRow(row: Pick<ManualTxn, 'source'>): boolean {
   return isConnectorKind(row.source);
 }
+
+/** The connector a row came through, by name ("SimpleFIN"). */
+const throughWhom = (row: Pick<ManualTxn, 'source'>) => (isConnectorKind(row.source) ? connectorLabel(row.source) : ANY_CONNECTOR);
 
 /** Why a change can't be made to a connector's row, or null: only its
  *  category is the person's (see the header). */
@@ -245,7 +249,7 @@ function connectorRowRefusal(row: ManualTxn, changes: ManualTxnChanges): string 
   if (!isConnectorRow(row)) return null;
   const banks = (['date', 'amount', 'currency', 'name', 'account_id', 'note'] as const).filter((k) => changes[k] !== undefined && changes[k] !== row[k]);
   return banks.length > 0
-    ? 'This transaction came from your bank through SimpleFIN, so it stays as the bank gave it. Its category is yours to change, and you can leave it out of budgets.'
+    ? `This transaction came from your bank through ${throughWhom(row)}, so it stays as the bank gave it. Its category is yours to change, and you can leave it out of budgets.`
     : null;
 }
 
@@ -395,7 +399,7 @@ export async function deleteManualTxn(ctx: Ctx, id: string, from?: string): Prom
       // The bank's record: left out of budgets if the person wants, never
       // deleted alone (the next fetch would only bring it back).
       if (row && isConnectorRow(row)) {
-        throw new InvalidTxnError('This transaction came from your bank through SimpleFIN, so it can’t be deleted here. You can leave it out of budgets instead.');
+        throw new InvalidTxnError(`This transaction came from your bank through ${throughWhom(row)}, so it can’t be deleted here. You can leave it out of budgets instead.`);
       }
       removed = !!row;
       return removed ? new Map([[found.account_id, withoutRow(book, id)]]) : new Map();
@@ -664,8 +668,8 @@ export async function readManualTxnsForDisplay(
     notes.push("Manual accounts: couldn't be read, so transactions entered for them aren't shown");
   }
   if (!fed.ok) {
-    console.error('manual-txns: the accounts SimpleFIN feeds could not be read', why(fed.err));
-    notes.push("SimpleFIN accounts: couldn't be read, so their transactions aren't shown");
+    console.error('manual-txns: the accounts connectors feed could not be read', why(fed.err));
+    notes.push(`${ANY_CONNECTOR} accounts: couldn't be read, so their transactions aren't shown`);
   }
   const tracked: ConnectorAccount[] = fed.ok ? [...fed.value.values()] : [];
   // Every account whose rows are shown, a connector's with no balance to count
@@ -688,8 +692,8 @@ export async function readManualTxnsForDisplay(
   const institutionOf = institutionsOf(accounts);
   const unshown = accounts.filter((a) => flawed.has(a.account_id) && !opts.hidden.has(a.account_id));
   notes.push(
-    // An account SimpleFIN feeds holds its rows, not ones entered by hand.
-    ...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions ${a.connector ? 'from SimpleFIN' : 'entered'} for ${a.name} couldn't be read`)
+    // An account a connector feeds holds its rows, not ones entered by hand.
+    ...unshown.map((a) => `${institutionOf.get(a.account_id) ?? 'Manual'}: transactions ${a.connector ? `from ${connectorLabel(a.connector)}` : 'entered'} for ${a.name} couldn't be read`)
   );
   return {
     txns: manualRowsForDisplay(accounts, entries, opts),

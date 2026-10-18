@@ -40,6 +40,7 @@ import MigrationSheet, { SwitchingLink } from './MigrationSheet';
 import ImportedHistoryNote from './ImportedHistoryNote';
 import type { ImportedHistoryView } from '@/lib/history-import/view';
 import { ConnectorCards, ConnectorSheet, type ConnectorAsk } from './Connectors';
+import { connectorBalanceDay, connectorLabel } from '@/lib/connectors/types';
 import { useTransactionEdits } from './transaction-edits';
 import Insights, { type IdleCashAccount } from './Insights';
 import ConnectionHealth, { ReconnectSoonNote } from './ConnectionHealth';
@@ -81,6 +82,7 @@ import { createWholeListStore, initialListState, type ListState } from '@/lib/wh
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
 import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import AccruedInterestNote from './AccruedInterestNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
@@ -463,6 +465,7 @@ export default function Dashboard({
   viewer,
   admin = false,
   brokerageLink = false,
+  lunchFlow = false,
 }: {
   clerk?: boolean;
   viewer?: string;
@@ -471,6 +474,10 @@ export default function Dashboard({
   /** Set by the server (app/page.tsx): whether to offer connecting a brokerage
    *  or retirement account (PLAID_BROKERAGE_LINK, lib/item-products.ts). */
   brokerageLink?: boolean;
+  /** Set by the server (app/page.tsx): whether to offer connecting Lunch Flow
+   *  (LUNCHFLOW_ENABLED, lib/connectors/switch.ts). Connections made before it
+   *  was turned off are still shown and work. */
+  lunchFlow?: boolean;
 }) {
   const cacheKey = cacheKeyFor(viewer);
   // Hiding amounts (components/hide-amounts.ts) changes what every formatter
@@ -523,6 +530,9 @@ export default function Dashboard({
   // Your rules (components/rules-state.ts), and the rule drawer.
   const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // What only the list says, beside them (the answer's `aside_notes`: tags
+  // or the review queue's settings that couldn't be read), never the chart.
+  const [txnAside, setTxnAside] = useState<string[]>([]);
   // Of those, the ones that say transactions couldn't all be read, which the
   // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
   // that says how a rule, a category, a split or a group applies.
@@ -588,6 +598,9 @@ export default function Dashboard({
         showRefusal: true,
         // What a save dates (an archive) is dated on the person's own day.
         extra: () => ({ today: localDate() }),
+        // Plans that can't be read stop the load: the card offers to remove
+        // the damaged ones (components/GoalPlansRepair.tsx).
+        repair: 'goal-plans',
       }),
     []
   );
@@ -771,6 +784,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnAside([]);
         setTxnUnread(['Could not load transactions.']);
         setTxnsFailed(true);
         return;
@@ -782,6 +796,7 @@ export default function Dashboard({
       acceptTags(data.tags);
       acceptReview(data.review);
       setTxnNotes(data.notes ?? []);
+      setTxnAside(Array.isArray(data.aside_notes) ? data.aside_notes : []);
       setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -789,6 +804,7 @@ export default function Dashboard({
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnAside([]);
       setTxnUnread(['Could not load transactions.']);
       setTxnsFailed(true);
     } finally {
@@ -930,6 +946,7 @@ export default function Dashboard({
     txns,
     setTxns,
     setTxnNotes,
+    setTxnAside,
     setTxnUnread,
     setTxnIncomplete,
     setTxnWithout,
@@ -1195,6 +1212,9 @@ export default function Dashboard({
     [loadNetWorth, requestBackfill, loadTransactions, txns]
   );
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
+  const askLunchFlow = useCallback(() => setConnectorAsk({ kind: 'connect', connector: 'lunchflow' }), []);
+  // Offered only where the deployment turned it on (app/page.tsx).
+  const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;
 
   // A restore (components/RestoreCard.tsx) changes everything: read it all again.
   const restoreChanged = useCallback(() => {
@@ -1807,7 +1827,7 @@ export default function Dashboard({
         ) : !connected ? (
           <>
             <div className="card">
-              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+              <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
               <CoverageNote />
               {/* Also offered here, not just on the Accounts tab: with nothing
                   connected the tab bar is hidden, so this is the only reachable
@@ -1860,6 +1880,9 @@ export default function Dashboard({
                       {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
                     </div>
                   )}
+                  {/* What the total leaves out in student loans' accrued
+                      interest, or couldn't read of it (lib/accrued-interest.ts). */}
+                  <AccruedInterestNote institutions={institutions} currency={accountCurrency} />
                   {mixedAccountCurrency && (
                     <div className="as-of">
                       Accounts use multiple currencies; totals aren&apos;t converted.
@@ -1963,7 +1986,7 @@ export default function Dashboard({
             {tab === 'accounts' && (
               <>
                 <div className="card">
-                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} brokerage={brokerageLink} />
+                  <ConnectButtons connecting={connecting} onConnect={startConnect} onConnectSimpleFin={connectSimpleFin} onConnectLunchFlow={connectLunchFlow} brokerage={brokerageLink} />
                   <CoverageNote />
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
@@ -2073,7 +2096,7 @@ export default function Dashboard({
                       <div className="inst-header">
                         <div className="inst-name">
                           {inst.institution_name}
-                          {inst.manual && <span className="manual-badge">{inst.connector ? 'via SimpleFIN' : 'Manual'}</span>}
+                          {inst.manual && <span className="manual-badge">{inst.connector ? `via ${inst.health?.detail?.label ?? connectorLabel(inst.connector)}` : 'Manual'}</span>}
                         </div>
                         <div className="inst-header-right">
                           <div className="inst-total">
@@ -2136,8 +2159,8 @@ export default function Dashboard({
                                         typed one has to say when it was set. */}
                                     {inst.manual && a.updated_at && (
                                       <div className="manual-updated">
-                                        {/* SimpleFIN's balance is as of the day the bank gave it. */}
-                                        {inst.connector ? `Balance as of ${fmtInstantDay(a.updated_at)}` : `Updated ${fmtAsOf(a.updated_at)}`}
+                                        {/* SimpleFIN's balance is as of the day the bank gave it; Lunch Flow gives no day, so its is the day Nya received it. */}
+                                        {inst.connector ? connectorBalanceDay(inst.connector, fmtInstantDay(a.updated_at)) : `Updated ${fmtAsOf(a.updated_at)}`}
                                       </div>
                                     )}
                                     {/* Missing from its bank's answer, held
@@ -2776,6 +2799,7 @@ export default function Dashboard({
               <MonthBreakdown
                 txns={txns}
                 notes={txnNotes}
+                asideNotes={txnAside}
                 loading={txnsLoading}
                 taxonomy={categories.taxonomy}
                 onRecategorize={txnEdits.recategorize}
@@ -2830,6 +2854,8 @@ export default function Dashboard({
                 goalsStatus={goalsState.status}
                 goalsError={goalsState.error}
                 goalsSaveError={goalsState.saveError}
+                goalsDamage={goalsState.damage}
+                onGoalsRepaired={() => goalsStore.load()}
                 onSaveGoals={goalsStore.save}
                 // Hidden accounts stay in this list, and those that ended join
                 // it with their end (#50): GoalsCard needs them to tell "you hid

@@ -159,6 +159,10 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     'Only if you connect your own SimpleFIN account, which you pay SimpleFIN for (or another paid service that speaks its protocol, such as Redbark). It holds your bank connections, made through the provider it uses to reach banks, under its own terms, and sees when Nya asks. Nya keeps the read-only access it gives Nya, encrypted. About once a day Nya reads your accounts there, and keeps the balances and transactions of the ones you choose to track, and only the names of the others.',
   ],
   [
+    'Lunch Flow, if you connect it',
+    'Only if you connect your own Lunch Flow account, which you pay Lunch Flow for. It holds your bank connections, made through the providers it uses to reach banks (such as GoCardless, Akahu and MX), under its own terms, and sees when Nya asks and which of your accounts it asks about. Nya keeps the API key you give it, encrypted, and never shows it again. About once a day Nya reads your accounts there, and keeps the balances and transactions of the ones you choose to track, and only the names of the others.',
+  ],
+  [
     'Clerk',
     'Signs you in, when this copy of Nya uses accounts rather than a shared password. Holds your email address and sign-in activity, and your name and picture if you sign in with Google or another account, and may email you sign-in codes and invitations. Its bot check runs on Cloudflare (Turnstile), which sees your IP address and browser when it runs.',
   ],
@@ -166,7 +170,7 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid or SimpleFIN gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -209,6 +213,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   [
     'A SimpleFIN connection',
     'The access SimpleFIN gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with a new Setup Token, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the access; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking (its name, its bank and when) stays, so a report on a period it was tracked in can say what may be missing, until you forget it on the Reports page, or delete your account. SimpleFIN keeps what it holds under its own terms: remove Nya in your SimpleFIN account too.',
+  ],
+  [
+    'A Lunch Flow connection',
+    'The API key you gave Nya, encrypted, never in your download and never in backups: until you disconnect it, or delete your account. Restoring a backup ends it: you connect again with an API key, and the accounts carry on. Its accounts and their transactions are kept like any account’s. Disconnecting deletes the key; you choose to keep the accounts as manual accounts, or to remove them and their transactions (their past balances stay in your net-worth history). A note of each account you stop tracking stays as for SimpleFIN, until you forget it on the Reports page, or delete your account. Lunch Flow keeps what it holds under its own terms, and the key works there until you delete its API destination in Lunch Flow.',
   ],
   ['Nightly backups', backupsRow(backups)],
   [
@@ -332,9 +340,9 @@ export default function PrivacyPage() {
           never keeps the passphrase, so a lost one can’t be recovered.
         </p>
         <p>
-          The file leaves out the tokens that reach your banks and the access a SimpleFIN account gives Nya, which are
-          credentials rather than your data, your API tokens themselves (each one’s name and dates are in), your sign-in,
-          and other people’s data; the JSON file lists what it leaves out.
+          The file leaves out the tokens that reach your banks, the access a SimpleFIN account gives Nya and the Lunch
+          Flow API key you give it, which are credentials rather than your data, your API tokens themselves (each one’s
+          name and dates are in), your sign-in, and other people’s data; the JSON file lists what it leaves out.
         </p>
         {restore && (
           <p>
@@ -383,6 +391,10 @@ export default function PrivacyPage() {
           <li>
             SimpleFIN keeps your bank connections under its own terms. Deleting your account deletes the access it gave
             Nya; to end it on SimpleFIN’s side too, remove Nya in your SimpleFIN account.
+          </li>
+          <li>
+            Lunch Flow keeps your bank connections under its own terms. Deleting your account deletes the API key you gave
+            Nya; to end it on Lunch Flow’s side too, delete its API destination in Lunch Flow.
           </li>
           <li>The first account on a copy of Nya, the operator’s own, cannot be deleted from the app.</li>
           <li>With the shared password there is no delete button: ask the operator.</li>
