@@ -11,6 +11,8 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import RestoreCard from './RestoreCard';
+import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
@@ -1194,6 +1196,21 @@ export default function Dashboard({
   );
   const connectSimpleFin = useCallback(() => setConnectorAsk({ kind: 'connect' }), []);
 
+  // A restore (components/RestoreCard.tsx) changes everything: read it all again.
+  const restoreChanged = useCallback(() => {
+    void loadNetWorth(true);
+    loadTransactions(true);
+    budgetsStore.load();
+    goalsStore.load();
+    plannedItemsStore.load();
+  }, [loadNetWorth, loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
+  /** The banner's way to the card: the Accounts tab, behind Manage. */
+  const openRestore = useCallback(() => {
+    setTab('accounts');
+    setManageMode(true);
+    requestAnimationFrame(() => document.getElementById('bring-back')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  }, []);
+
   const startAddManual = useCallback(() => {
     setManualError('');
     setEditingManual(false);
@@ -1815,6 +1832,11 @@ export default function Dashboard({
               {error && <div className="error">{error}</div>}
               {lifecycleRepair}
             </div>
+            {/* Bringing back a download goes only into an empty account, so
+                it is offered here first (components/RestoreCard.tsx). */}
+            <div id="bring-back">
+              <RestoreCard clerk={clerk} onChanged={restoreChanged} />
+            </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
             <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
@@ -1822,6 +1844,8 @@ export default function Dashboard({
           </>
         ) : (
           <>
+            {/* An unfinished restore, said on every tab. */}
+            <RestoreBanner hold={restoreHold} onOpen={openRestore} />
             {tab === 'home' && (
               <>
                 <div className="card">
@@ -2691,6 +2715,14 @@ export default function Dashboard({
                       ended
                     )}
                   />
+                )}
+
+                {/* Bringing a download back, and its undo, beside the
+                    download (components/RestoreCard.tsx). */}
+                {manageMode && (
+                  <div id="bring-back">
+                    <RestoreCard clerk={clerk} onChanged={restoreChanged} />
+                  </div>
                 )}
 
                 {/* Reports for an accountant (app/reports), beside the other
