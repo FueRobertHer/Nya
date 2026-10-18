@@ -23,6 +23,13 @@
 //   [holdings]    https://www.lunchflow.app/docs/api/personal-api/getAccountHoldings:
 //                 holdings for accounts from SnapTrade, MX, Finicity and
 //                 Pluggy only.
+//   [guides]      https://www.lunchflow.app/docs/guides/destinations/lunch-money:
+//                 its Lunch Money destination imports 90 days at first, then
+//                 syncs the last seven days each day. And
+//                 https://lunchflow.app/docs/guides/destinations/actual-budget:
+//                 a SimpleFIN Bridge destination, for Actual Budget "and other
+//                 compatible apps", whose Setup Token works once, within 7
+//                 days (not tried with Nya's SimpleFIN connector).
 //   [changelog]   https://feedback.lunchflow.app/changelog/electricplug-new-rest-api-your-data-your-way:
 //                 the REST API, and transactions dated by their own date when
 //                 the bank gives one, else the day the bank confirmed them.
@@ -667,7 +674,7 @@ export const LUNCHFLOW = {
   // history is one more request.
   windowDays: 731,
   // Lunch Flow's own Lunch Money destination syncs the last seven days each
-  // day ([docs], its Lunch Money guide), as late as rows are taken to come.
+  // day ([guides]), as late as rows are taken to come.
   overlapDays: 7,
   providerDailyLimit: null,
   maxInputChars: MAX_KEY_CHARS + 200,

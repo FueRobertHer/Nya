@@ -31,7 +31,7 @@
 //     (due, once, sept, seize, elf, null);
 //   - a letter outside the Latin alphabet, since no list of words can tell
 //     whether "五百元" or "пятьдесят рублей" spells an amount.
-// A bank's name (safeBankName) comes from Plaid or SimpleFIN, never from the
+// A bank's name (safeBankName) comes from Plaid, SimpleFIN or Lunch Flow, never from the
 // person, so it can't carry their amount, and the connection notices have
 // always named it: it is held to the first rule only, so "Capital One" and
 // "Five Star Bank" are named. Every name is tidied first: control and format
