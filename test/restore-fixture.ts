@@ -157,3 +157,26 @@ export async function seedOld(fake: FakeRedis, ctx: Ctx): Promise<void> {
   await budgetSetStore.set(ctx, { version: 1, ...budgets, mirror: copy, mirror_before: null });
   await setBudgets(ctx, copy);
 }
+
+/** A restore's record (lib/user-restore/store.ts), unfinished unless `over`
+ *  says otherwise, for tests that need one there without running a restore. */
+export function restoreRecord(over: Record<string, unknown> = {}) {
+  return {
+    version: 1 as const,
+    id: 'user-restore:7f0c2a1e-4b3d-4c5e-8f6a-9b0c1d2e3f4a',
+    status: 'writing' as 'writing' | 'finished' | 'undoing',
+    started_at: '2026-10-07T09:00:00.000Z',
+    finished_at: null as string | null,
+    undo_until: null as string | null,
+    last_batch_at: null as string | null,
+    source: { exported_at: NOW, version: 2 as const, bytes: 20_000, protected: false },
+    plan: { digest: 'a'.repeat(64), batches: [{ part: 'store:tags', count: 1, digest: 'b'.repeat(64) }] },
+    done: 0,
+    brought: { 'store:tags': 1 },
+    left_out: {},
+    without: {},
+    history: null as { first: string; last: string } | null,
+    earlier: [] as { exported_at: string; restored_at: string }[],
+    ...over,
+  };
+}

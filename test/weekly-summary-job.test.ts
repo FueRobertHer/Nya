@@ -161,6 +161,20 @@ describe('one summary per container per week', () => {
     expect(delivered[1].key).toBe(weekKey(ME, '2026-10-19'));
   });
 
+  test('waits while a restore is being written or undone here, and goes once it has finished', async () => {
+    await turnOn();
+    const { userRestoreStore } = await import('@/lib/user-restore/store');
+    const { restoreRecord } = await import('./restore-fixture');
+    await userRestoreStore.set(TEST_CTX, restoreRecord() as never);
+    expect((await run(MONDAY)).get(ME)).toBe('deferred');
+    await userRestoreStore.set(TEST_CTX, restoreRecord({ status: 'undoing' }) as never);
+    expect((await run(MONDAY + HOUR)).get(ME)).toBe('deferred');
+    expect(delivered).toHaveLength(0);
+    expect(syncs).toEqual([]);
+    await userRestoreStore.set(TEST_CTX, restoreRecord({ status: 'finished', done: 1, finished_at: '2026-10-07T09:05:00.000Z', undo_until: '2026-10-14T09:05:00.000Z' }) as never);
+    expect((await run(MONDAY + 2 * HOUR)).get(ME)).toBe('sent');
+  });
+
   test('brought up to date before it is read, and sent all the same when that fails', async () => {
     await turnOn();
     const order: string[] = [];

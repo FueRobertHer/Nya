@@ -228,6 +228,23 @@ describe('finding people: nobody can', () => {
   });
 });
 
+describe('while the owner’s account is being restored', () => {
+  test('nothing of theirs is shown, in the share or its preview, until the restore has finished', async () => {
+    await share({ acct_joint: 'balance' });
+    expect((await sharedWithPartner()).length).toBe(1);
+    const { userRestoreStore } = await import('@/lib/user-restore/store');
+    const { restoreRecord } = await import('./restore-fixture');
+    const owner = await containerOf('user_owner');
+    for (const status of ['writing', 'undoing'] as const) {
+      await userRestoreStore.set(owner, restoreRecord({ status }) as never);
+      expect(await sharedWithPartner()).toEqual([]);
+      expect((await previewOf('user_owner')).body).toMatchObject({ view: null });
+    }
+    await userRestoreStore.set(owner, restoreRecord({ status: 'finished', done: 1, finished_at: '2026-10-07T09:05:00.000Z', undo_until: '2026-10-14T09:05:00.000Z' }) as never);
+    expect((await sharedWithPartner()).length).toBe(1);
+  });
+});
+
 describe('connecting by invite link', () => {
   test('each side names the other: the sender suggests a name, the one accepting can change it', async () => {
     const token = await invite('user_owner', { from_name: 'Olive', their_label: 'Pat' });

@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, testKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
-import { seedOld, bankTxn, TXNS } from './restore-fixture';
+import { seedOld, TXNS } from './restore-fixture';
 import { clerk } from './clerk-mock';
 
 // Bringing a download back through the routes (app/api/user-restore and its
@@ -20,89 +20,24 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { collectUserData, buildUserExport, exportFile, fileChunks } = await import('@/lib/user-export');
 const { collect, previewOf } = await import('@/lib/user-restore/file');
-const { makePlan, startBody, startRestore, sendBatches, finishRestore, RestoreStopped } = await import('@/lib/user-restore/send');
-type Fetcher = import('@/lib/user-restore/send').Fetcher;
+const { startBody, startRestore, sendBatches, finishRestore, RestoreStopped } = await import('@/lib/user-restore/send');
 const { newUserRestoreId, restoredId, MAX_BATCH_BODY } = await import('@/lib/user-restore/ids');
 const { userRestoreStore, restoredTxnStore, startsCount, STARTS_PER_DAY } = await import('@/lib/user-restore/store');
 const { scanAccount } = await import('@/lib/user-restore/empty');
-const { totalsHold, restoreUnfinished } = await import('@/lib/user-restore/restored');
+const { restoreUnfinished } = await import('@/lib/user-restore/restored');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { encrypt } = await import('@/lib/crypto');
-const { encodeJsonBlob } = await import('@/lib/blob');
 const { saveItem } = await import('@/lib/storage');
 const { saveManualAccount } = await import('@/lib/manual');
-const { linkAccounts, liveAccountIds } = await import('@/lib/links');
+const { linkAccounts } = await import('@/lib/links');
 const { reportSettingsStore } = await import('@/lib/report/store');
-const { assembleBankRows, finishActivity } = await import('@/lib/activity');
-const restoreRoute = await import('@/app/api/user-restore/route');
-const batchRoute = await import('@/app/api/user-restore/batch/route');
 const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
+const { EXPORTED, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
+type Source = import('./restore-run').Source;
 
 const ctx = TEST_CTX;
 const OTHER = { container: '9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
-const EXPORTED = new Date('2026-10-06T12:00:00.000Z');
-
-/** The routes, as the page's fetch reaches them. `calls` counts batches sent. */
-const sent = { batches: 0, failAfter: Infinity };
-const fetcher: Fetcher = async (input, init) => {
-  const url = new URL(input, 'http://localhost');
-  const req = new Request(url, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), 'x-forwarded-for': '203.0.113.9' } });
-  if (url.pathname === '/api/user-restore') return (restoreRoute as unknown as Record<string, (r: Request) => Promise<Response>>)[init?.method ?? 'GET'](req);
-  if (url.pathname === '/api/user-restore/batch') {
-    if (url.searchParams.has('index')) {
-      if (sent.batches >= sent.failAfter) throw new TypeError('Failed to fetch');
-      sent.batches++;
-    }
-    return batchRoute.POST(req);
-  }
-  throw new Error(`no route ${url.pathname}`);
-};
-const call = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
-  const res = await fetcher(path, { method, ...(body === undefined ? {} : { headers: { 'content-type': 'application/json' }, body: typeof body === 'string' ? body : JSON.stringify(body) }) });
-  return { status: res.status, body: await res.json() };
-};
-
-async function downloadText(at: Date, c = ctx): Promise<string> {
-  const doc = buildUserExport(await collectUserData({ ctx: c, userId: 'user_me' }), at);
-  return new TextDecoder().decode(Buffer.concat([...fileChunks(exportFile(doc, 'json'))]));
-}
-const sourceOf = (text: string, piece = 4096) => {
-  const bytes = new TextEncoder().encode(text);
-  return {
-    size: bytes.length,
-    protected: false,
-    async *bytes() {
-      for (let i = 0; i < bytes.length; i += piece) yield bytes.slice(i, i + piece);
-    },
-  };
-};
-const activity = async () => {
-  const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, withAccountIds: true });
-  return finishActivity(ctx, bank.payload, bank.hidden);
-};
-const rowsOf = (a: { transactions: any[] }) => a.transactions.map((t) => [t.transaction_id, t.date, t.amount, t.category, t.note ?? null, t.tags ?? null]);
-const hold = () => totalsHold(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true }));
-
-type Source = ReturnType<typeof sourceOf>;
-
-/** Read, planned and checked, as the page does before the start. */
-async function planned(text: string | Source) {
-  const source = typeof text === 'string' ? sourceOf(text) : text;
-  const c = await collect(source);
-  const p = previewOf(c);
-  expect(p.refuse).toBeNull();
-  const plan = await makePlan(source, c, { fetcher });
-  return { source, c, p, plan };
-}
-/** The whole restore, as the page does it. */
-async function restoreAll(text: string | Source) {
-  const { source, c, p, plan } = await planned(text);
-  const record = await startRestore(fetcher, startBody(p, plan, source, newUserRestoreId(), 'hunter2'));
-  await sendBatches(source, c, record, { fetcher, plan });
-  return finishRestore(fetcher, record.id);
-}
 
 /** Every key the fake holds, with its value(s) as stored. */
 function snapshot(prefix = ''): Record<string, unknown> {
@@ -215,7 +150,7 @@ describe('a round trip', () => {
 
   test('connected again and linked: each restored row counts once, the bank’s own taking its place where its window reaches, with what was said', async () => {
     await restoreAll(OLD.text);
-    await connectAgain();
+    await connectAgain(fake);
     // Not linked yet: the new connection's rows alone.
     expect(rowsOf(await activity()).map((r) => r[0])).toEqual(['n_new', 'manual-txn:00000000-0000-4000-8000-000000000001', 'n_gas', 'n_card', 'n_coffee']);
     await linkAccounts(ctx, 'acc_chk', 'new_chk', {});
@@ -238,39 +173,6 @@ describe('a round trip', () => {
     expect((await hold()).waiting).toEqual([]);
   });
 });
-
-/** The bank connected again: a new Item, new ids, the same rows. */
-async function connectAgain() {
-  await saveItem(ctx, { item_id: 'item_new', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(ctx, 'access-sandbox-b') } as never);
-  await fake.hset(ctxKey('accounts:meta'), {
-    item_new: await encrypt(
-      ctx,
-      JSON.stringify([
-        { account_id: 'new_chk', name: 'Checking', official_name: 'Total Checking', mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' },
-        { account_id: 'new_card', name: 'Sapphire', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', limit: 5000, currency: 'USD' },
-      ])
-    ),
-  });
-  const txns = {
-    n_coffee: bankTxn({ transaction_id: 'n_coffee', account_id: 'new_chk' }),
-    n_gas: bankTxn({ transaction_id: 'n_gas', account_id: 'new_chk', amount: 20.5, date: '2026-01-04', name: 'GAS', merchant_name: 'Shell', merchant_entity_id: null }),
-    n_new: bankTxn({ transaction_id: 'n_new', account_id: 'new_chk', amount: 9.99, date: '2026-02-01', name: 'NEW ROW', merchant_name: null, merchant_entity_id: null }),
-    n_card: bankTxn({ transaction_id: 'n_card', account_id: 'new_card', amount: 30, date: '2026-01-03', account_name: 'Sapphire', name: 'BOOKS', merchant_name: 'Green Apple', merchant_entity_id: 'ent_ga' }),
-  };
-  const balances = (current: number, limit: number | null) => ({ available: current, current, limit, iso_currency_code: 'USD', unofficial_currency_code: null });
-  await fake.set(
-    ctxKey('txns:item_new'),
-    await encodeJsonBlob(ctx, {
-      schema_version: 2,
-      cursor: 'c-new',
-      accounts: {
-        new_chk: { name: 'Checking', official_name: 'Total Checking', type: 'depository', subtype: 'checking', mask: '1111', balances: balances(1700, null) },
-        new_card: { name: 'Sapphire', official_name: null, type: 'credit', subtype: 'credit card', mask: '2222', balances: balances(500, 5000) },
-      },
-      txns,
-    })
-  );
-}
 
 describe('the routes', () => {
   test('off unless RESTORE_ENABLED=1: what is recorded is still said, and still undone; the rest refused', async () => {
