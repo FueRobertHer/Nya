@@ -16,6 +16,7 @@ import { undoRestore, emptyAccount, UndoRefused, EMPTY_WORDS } from '@/lib/user-
 import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 import { waitingAccounts } from '@/lib/user-restore/restored';
 import { liveAccountIds } from '@/lib/links';
+import { myConnections } from '@/lib/sharing';
 
 // Bringing a download back into this account (docs/data-export.md,
 // "Bringing it back"): the record of the restore, and what is done to the
@@ -27,7 +28,10 @@ import { liveAccountIds } from '@/lib/links';
 //                             neither linked nor ended, for the card's next
 //                             steps; and with ?scan=1 whether this account is
 //                             empty enough (a scan of its keys, counted:
-//                             PREVIEWS_PER_HOUR)
+//                             PREVIEWS_PER_HOUR), and, with Clerk, the people
+//                             this account shares with already (`sharing`),
+//                             who would see what a restore brings back as it
+//                             is shared
 //   POST { action: "start", restore_id, plan, source, brought, left_out,
 //          without, history, earlier, password? }
 //                             the record claimed, after a fresh sign-in, and
@@ -67,6 +71,22 @@ async function isDemo(): Promise<boolean> {
 }
 
 const scanView = (scan: AccountScan) => ({ ...scan, message: scan.found.length > 0 ? inUseMessage(scan) : null });
+
+/** Whom this account shares with now, and what: sharing is between people,
+ *  outside the account, so an empty account can share already (a net worth,
+ *  spending), and a restore's data is then shown as it is shared. What I
+ *  call each, the kinds and how many accounts; none with the shared
+ *  password, which has no people. */
+async function sharingNow(): Promise<{ label: string; kinds: string[]; accounts: number }[]> {
+  if (!clerkEnabled()) return [];
+  const { auth } = await import('@clerk/nextjs/server');
+  const { userId } = await auth();
+  if (!userId) return [];
+  const { connections } = await myConnections(userId);
+  return connections
+    .map((c) => ({ label: c.label, kinds: Object.keys(c.views).sort(), accounts: Object.keys(c.sharing).length }))
+    .filter((c) => c.kinds.length > 0 || c.accounts > 0);
+}
 
 function tooMany(retryAfterSeconds: number): NextResponse {
   return NextResponse.json(
@@ -139,6 +159,7 @@ export async function GET(req: Request) {
         );
       }
       answer.scan = scanView(await scanAccount(ctx));
+      answer.sharing = await sharingNow();
     }
     return NextResponse.json(answer, { headers: NO_STORE });
   } catch (err) {

@@ -19,7 +19,28 @@ export type RestoreState = {
   undo_days: number;
   waiting: WaitingAccount[];
   scan?: ScanView;
+  /** With the scan: whom this account shares with already, and what. */
+  sharing?: SharingNow[];
 };
+
+/** One person this account shares with already (app/api/user-restore). */
+export type SharingNow = { label: string; kinds: string[]; accounts: number };
+
+const KIND_WORDS: Readonly<Record<string, string>> = {
+  net_worth: 'your net worth',
+  spending: 'your spending',
+  holdings: 'your holdings',
+  budgets: 'your budgets',
+  goals: 'goals you chose',
+};
+
+const joined = (list: readonly string[]) => (list.length <= 1 ? list.join('') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+
+/** Whom the account shares with already, each with what, in words: they
+ *  see what a restore brings back as it is shared. */
+export function sharingLines(sharing: readonly SharingNow[]): string[] {
+  return sharing.map((s) => `${s.label}: ${joined([...s.kinds.map((k) => KIND_WORDS[k] ?? k), ...(s.accounts > 0 ? [plural(s.accounts, 'account')] : [])])}`);
+}
 
 /** The emptiness scan (lib/user-restore/empty.ts), as the route says it. */
 export type ScanView = {

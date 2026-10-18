@@ -36,7 +36,7 @@ import type { RecordView } from '@/lib/user-restore/store';
 import { formatMoney } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, waitingBanks, type RestoreState } from './restore-state';
+import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, waitingBanks, type RestoreState } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -395,6 +395,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged }: { ask: typeof ask;
           {(phase.kind === 'preview' || phase.kind === 'starting') && (
             <PreviewView
               loaded={phase.loaded}
+              sharing={sharingLines(state.sharing ?? [])}
               withoutOk={withoutOk}
               onWithoutOk={setWithoutOk}
               passwordField={passwordField}
@@ -518,6 +519,7 @@ export function RecordSummary({ record }: { record: RecordView }) {
 /** What the file would bring back and what it wouldn't, before the start. */
 export function PreviewView({
   loaded,
+  sharing = [],
   withoutOk,
   onWithoutOk,
   passwordField,
@@ -528,6 +530,7 @@ export function PreviewView({
   clerk,
 }: {
   loaded: Loaded;
+  sharing?: readonly string[];
   withoutOk: boolean;
   onWithoutOk: (ok: boolean) => void;
   passwordField: ReactNode;
@@ -555,6 +558,17 @@ export function PreviewView({
           <li key={l}>{l}</li>
         ))}
       </ul>
+      {sharing.length > 0 && (
+        <>
+          <div className="section-label">Shared already</div>
+          <p className="panel-note">This account already shares with these people, so they will see what comes back as you share it:</p>
+          <ul className="restore-list">
+            {sharing.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
       {p.collected.notes.length > 0 && (
         <>
           <div className="section-label">What the file says</div>

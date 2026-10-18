@@ -376,6 +376,29 @@ describe('who may', () => {
     }
   });
 
+  test('the scan says whom the account shares with already, and what: they would see what comes back', async () => {
+    const saved = { ...process.env };
+    try {
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+      process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+      process.env.CLERK_ALLOWED_USER_IDS = 'user_me,user_pat';
+      await fake.hset(testKey('owners'), { user_me: TEST_CTX.container, user_pat: OTHER.container });
+      await fake.hset(testKey('containers'), { [OTHER.container]: JSON.stringify({ status: 'active', primary: false, created_at: '2026-01-01T00:00:00.000Z' }) });
+      const { createInvite, acceptInvite, saveConnection } = await import('@/lib/sharing');
+      const { token } = await createInvite('user_me', { theirLabel: 'Pat' });
+      const { id } = await acceptInvite('user_pat', token, 'Me');
+      await saveConnection(ctx, 'user_me', id, { views: { net_worth: { detail: 'total', accounts: false } } });
+      clerk.signedIn = 'user_me';
+      const scan = await call('GET', '/api/user-restore?scan=1');
+      expect(scan.status).toBe(200);
+      expect(scan.body.sharing).toEqual([{ label: 'Pat', kinds: ['net_worth'], accounts: 0 }]);
+      expect(scan.body.scan).toMatchObject({ empty: true });
+    } finally {
+      process.env = saved;
+      clerk.signedIn = null;
+    }
+  });
+
   test('a protected file, opened in the page with its passphrase, is brought back; a wrong passphrase opens nothing', async () => {
     const { protectFile } = await import('@/lib/protected-download');
     const { openFile } = await import('@/components/OpenProtectedDownload');

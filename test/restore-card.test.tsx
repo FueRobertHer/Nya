@@ -14,7 +14,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { MASK, setAmountsHidden } = await import('@/lib/format');
-const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords } = await import('@/components/restore-state');
+const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords, sharingLines } = await import('@/components/restore-state');
 const { PreviewView, RecordSummary } = await import('@/components/RestoreCard');
 const { collect, previewOf } = await import('@/lib/user-restore/file');
 const { downloadText, sourceOf, EXPORTED } = await import('./restore-run');
@@ -87,6 +87,10 @@ describe('what comes back, in words', () => {
     expect(text(hidden)).not.toContain('61.20');
     expect(spoken(hidden)).toContain('2025-11-20 · Rainbow · hidden');
     expect(text(hidden)).toContain('Bring it back without them');
+  });
+
+  test('whom the account shares with already, and what, so they know who will see it', () => {
+    expect(sharingLines([{ label: 'Pat', kinds: ['net_worth', 'spending'], accounts: 0 }, { label: 'Sam', kinds: [], accounts: 2 }])).toEqual(['Pat: your net worth and your spending', 'Sam: 2 accounts']);
   });
 
   test('a finished restore says when, from which download, and what came back', () => {
