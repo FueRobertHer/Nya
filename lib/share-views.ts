@@ -597,10 +597,15 @@ export async function shareableGoals(ctx: Ctx): Promise<ShareableGoal[]> {
  *  shared as percentages: a kept account's own type, a linked one's as its
  *  last good load remembered it, else as the account directory has it.
  *  LENIENT, for those warnings only, which nothing writes, deletes or records
- *  on: a remembered record that can't be read leaves its accounts to the
- *  directory. */
+ *  on: a remembered record that can't be read, or records that can't be read
+ *  at all just now (the report throws for a key that can't be had), leave
+ *  their accounts to the directory. */
 export async function investmentAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
-  const [types, kept, remembered] = await Promise.all([directoryTypes(ctx, [...ids]), getKeptAccounts(ctx), rememberedAccountsReport(ctx)]);
+  const [types, kept, remembered] = await Promise.all([
+    directoryTypes(ctx, [...ids]),
+    getKeptAccounts(ctx),
+    rememberedAccountsReport(ctx).catch(() => ({ byItem: {} as Awaited<ReturnType<typeof rememberedAccountsReport>>['byItem'] })),
+  ]);
   const typeOf = new Map<string, string>();
   for (const accounts of Object.values(remembered.byItem)) for (const a of accounts) typeOf.set(a.account_id, a.type);
   for (const k of kept) typeOf.set(k.account_id, k.type);

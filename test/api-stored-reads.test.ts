@@ -288,6 +288,31 @@ describe('remembered accounts, for a display that names what it can’t show', (
     expect(couldNotRead(report)).toEqual(['item_b', 'item_c']);
   });
 
+  test('a record that isn’t text, or text that isn’t JSON, is damaged; a master key that can’t open its data key says nothing of it, and throws', async () => {
+    await fake.hset(ctxKey('accounts:meta'), {
+      item_a: await encrypt(TEST_CTX, JSON.stringify([{ account_id: 'a1', name: 'Checking', type: 'depository' }])),
+      // Read back as a number, as Upstash's client parses what is JSON.
+      item_n: '12345',
+      item_t: await encrypt(TEST_CTX, 'not json'),
+    });
+    expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: { item_a: [expect.objectContaining({ account_id: 'a1' })] }, unreadable: ['item_n', 'item_t'], unavailable: [] });
+    // Under a data key, with no master key here to open it: the deployment's
+    // problem, as for manual accounts (lib/manual.ts), so no connection is
+    // called damaged for it.
+    const { forgetActiveKey, MasterKeyError } = await import('@/lib/crypto');
+    const master = process.env.MASTER_KEY;
+    delete process.env.MASTER_KEY;
+    forgetActiveKey();
+    try {
+      await fake.hset(ctxKey('accounts:meta'), { item_v2: `v2.k9-0badc0de.-.${'A'.repeat(38)}` });
+      expect(await rememberedAccountsReport(ctx).catch((e) => e)).toBeInstanceOf(MasterKeyError);
+    } finally {
+      if (master === undefined) delete process.env.MASTER_KEY;
+      else process.env.MASTER_KEY = master;
+      forgetActiveKey();
+    }
+  });
+
   test('changes nothing (a field in the old shape stays), and storage failing throws', async () => {
     await fake.hset(ctxKey('accounts:meta'), { a1: await encrypt(TEST_CTX, JSON.stringify({ account_id: 'a1', name: 'old shape', type: 'depository' })) });
     expect(await rememberedAccountsReport(ctx)).toEqual({ byItem: {}, unreadable: [], unavailable: [] });
