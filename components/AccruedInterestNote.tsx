@@ -2,9 +2,10 @@
 
 // The lines under the total on Home about student loans' accrued interest
 // (lib/accrued-interest.ts): how much the total leaves out, which Plaid
-// reports apart from the balances, and the loans whose interest couldn't be
-// read on this load, in amber as the total's other notes are. The total
-// itself is the balances, as everywhere else, so nothing here moves it.
+// reports apart from the balances, and the loans whose interest isn't known
+// on this load, why, and what to do when there is something, in amber as the
+// total's other notes are. The total itself is the balances, as everywhere
+// else, so nothing here moves it.
 
 import { formatMoney } from '@/lib/format';
 import { accruedLines, homeAccrued } from '@/lib/accrued-interest';
@@ -26,7 +27,11 @@ export default function AccruedInterestNote({
           <Masked>{leftOut}</Masked>
         </div>
       )}
-      {unread && <div className="as-of stale">{unread}</div>}
+      {unread.map((line) => (
+        <div className="as-of stale" key={line}>
+          {line}
+        </div>
+      ))}
     </>
   );
 }

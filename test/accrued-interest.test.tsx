@@ -16,7 +16,7 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const plaid = { institution_id: 'ins_1', accounts: [] as any[], student: [] as any[], liabilitiesFail: false, accountsFail: false };
+const plaid = { institution_id: 'ins_1', accounts: [] as any[], student: [] as any[], liabilitiesFail: null as string | null, accountsFail: false };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     accountsGet: async () => {
@@ -25,7 +25,9 @@ mock.module('@/lib/plaid', () => ({
     },
     investmentsHoldingsGet: async () => ({ data: { accounts: [], holdings: [], securities: [] } }),
     liabilitiesGet: async () => {
-      if (plaid.liabilitiesFail) throw { response: { status: 500, data: { error_type: 'API_ERROR', error_code: 'INTERNAL_SERVER_ERROR' } } };
+      // INTERNAL_SERVER_ERROR: the call failed; PRODUCT_NOT_READY: still
+      // importing; PRODUCTS_NOT_SUPPORTED: payment details aren't on.
+      if (plaid.liabilitiesFail) throw { response: { status: 400, data: { error_type: 'API_ERROR', error_code: plaid.liabilitiesFail } } };
       return { data: { liabilities: { credit: [], mortgage: [], student: plaid.student } } };
     },
     itemRemove: async () => ({ data: {} }),
@@ -68,7 +70,7 @@ beforeEach(async () => {
   fake.reset();
   forgetEpochs();
   await registerTestContainer(fake);
-  Object.assign(plaid, { institution_id: 'ins_1', liabilitiesFail: false, accountsFail: false });
+  Object.assign(plaid, { institution_id: 'ins_1', liabilitiesFail: null, accountsFail: false });
   plaid.accounts = [account('chk', 'depository', 'checking', 5000), account('stu', 'loan', 'student', 12_000)];
   plaid.student = [loan('stu', 612.4)];
   await saveItem(ctx, { item_id: 'item_nelnet', institution_name: 'Nelnet', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
@@ -111,7 +113,7 @@ describe('Home, from what the server sends', () => {
   });
 
   test('the liabilities call fails: the total doesn’t move, and the line says the interest couldn’t be read', async () => {
-    plaid.liabilitiesFail = true;
+    plaid.liabilitiesFail = 'INTERNAL_SERVER_ERROR';
     const { status, body } = await quietly(load);
     expect(status).toBe(200);
     expect(body.netWorth).toBe(-7000);
@@ -134,7 +136,32 @@ describe('Home, from what the server sends', () => {
     expect(body.institutions[0].error).not.toBeNull();
     expect(body.netWorth).toBe(-7000);
     expect(body.institutions[0].accounts.find((a: any) => a.account_id === 'stu')).toMatchObject({ balance: 12_000, stale: true });
-    expect(home(body.institutions)).toEqual([{ amber: true, text: UNREAD_ONE }]);
+    expect(home(body.institutions)).toEqual([{ amber: true, text: 'Nelnet couldn’t be reached, so the accrued interest on your student loan there isn’t known until it answers.' }]);
+  });
+
+  test('payment details that aren’t on, or are still importing: said, with what to do', async () => {
+    plaid.liabilitiesFail = 'PRODUCTS_NOT_SUPPORTED';
+    let { body } = await quietly(load);
+    expect([body.institutions[0].liabilities, body.netWorth]).toEqual(['off', -7000]);
+    expect(home(body.institutions)).toEqual([
+      {
+        amber: true,
+        text: 'Payment details aren’t enabled for Nelnet, so the accrued interest on your student loan there isn’t known. To see it, tap Enable payment details on its card on the Accounts tab.',
+      },
+    ]);
+    plaid.liabilitiesFail = 'PRODUCT_NOT_READY';
+    ({ body } = await quietly(load));
+    expect(body.institutions[0].liabilities).toBe('loading');
+    expect(home(body.institutions)).toEqual([{ amber: true, text: 'Payment details are still importing from Nelnet, so the accrued interest on your student loan there isn’t known yet.' }]);
+  });
+
+  test('beside a loan whose interest was reported as none, the one not read is a student loan, never “your” one', async () => {
+    plaid.accounts = [...plaid.accounts, account('stu2', 'loan', 'student', 3000)];
+    plaid.student = [loan('stu', 0), loan('stu2', null)];
+    const { body } = await load();
+    expect(home(body.institutions)).toEqual([
+      { amber: true, text: 'The accrued interest on a student loan at Nelnet couldn’t be read, so how much interest the total leaves out for it isn’t known.' },
+    ]);
   });
 
   test('Sallie Mae’s balance includes it already, and a hidden loan counts in nothing: no line', async () => {
@@ -212,12 +239,31 @@ describe('the rule', () => {
     expect(view).toEqual({
       total: 100.3,
       loans: 3,
+      none: 1,
       unread: [
-        { institution: 'Nelnet', loans: 3 },
-        { institution: 'MOHELA', loans: 1 },
+        { institution: 'Nelnet', loans: 3, why: 'not-reported' },
+        { institution: 'MOHELA', loans: 1, why: 'not-reported' },
       ],
     });
-    expect(homeAccrued([])).toEqual({ total: 0, loans: 0, unread: [] });
+    expect(homeAccrued([])).toEqual({ total: 0, loans: 0, none: 0, unread: [] });
+  });
+
+  test('why each isn’t known, as the payoff plan tells it: unreachable first, then the payment details’ state', () => {
+    const loanRow = { type: 'loan', subtype: 'student', balance: 1000 };
+    const view = homeAccrued([
+      { institution_name: 'Nelnet', liabilities: 'off', stale_as_of: '2026-10-01', accounts: [loanRow] },
+      { institution_name: 'MOHELA', liabilities: 'off', accounts: [loanRow, loanRow] },
+      { institution_name: 'Aidvantage', liabilities: 'loading', accounts: [loanRow] },
+      { institution_name: 'Navient', liabilities: 'unavailable', accounts: [loanRow] },
+      { institution_name: 'Old', accounts: [loanRow] },
+    ] as any);
+    expect(view.unread).toEqual([
+      { institution: 'Nelnet', loans: 1, why: 'unreachable' },
+      { institution: 'MOHELA', loans: 2, why: 'not-enabled' },
+      { institution: 'Aidvantage', loans: 1, why: 'loading' },
+      { institution: 'Navient', loans: 1, why: 'not-reported' },
+      { institution: 'Old', loans: 1, why: 'not-reported' },
+    ]);
   });
 
   test('the payoff plan plans on the same figure, and keeps its own choice to leave it out', () => {
@@ -242,30 +288,51 @@ describe('the rule', () => {
 
 describe('the lines', () => {
   const money = (n: number) => `$${n.toFixed(2)}`;
-  const lines = (total: number, loans: number, unread: { institution: string; loans: number }[] = []) => accruedLines({ total, loans, unread }, money);
+  type Unread = { institution: string; loans: number; why?: 'unreachable' | 'not-enabled' | 'loading' | 'not-reported' };
+  const lines = (total: number, loans: number, unread: Unread[] = [], none = 0) =>
+    accruedLines({ total, loans, none, unread: unread.map((u) => ({ why: 'not-reported' as const, ...u })) }, money);
 
   test('how much the total leaves out, on how many loans, as a figure owed, never signed', () => {
-    expect(lines(612.4, 1)).toEqual({ leftOut: LEFT_OUT_ONE, unread: null });
+    expect(lines(612.4, 1)).toEqual({ leftOut: LEFT_OUT_ONE, unread: [] });
     expect(lines(1200, 2).leftOut).toBe(
       'Leaves out $1200.00 of accrued interest on 2 student loans, which Plaid reports apart from their balances. The payoff plan counts it, unless you leave it out there.'
     );
   });
 
   test('loans whose interest couldn’t be read: named by where they are, alone or beside the ones that could', () => {
-    expect(lines(0, 0, [{ institution: 'Nelnet', loans: 1 }])).toEqual({ leftOut: null, unread: UNREAD_ONE });
-    expect(lines(0, 0, [{ institution: 'Nelnet', loans: 2 }, { institution: 'MOHELA', loans: 1 }]).unread).toBe(
-      'The accrued interest on 3 student loans at Nelnet and MOHELA couldn’t be read, so how much interest the total leaves out for them isn’t known.'
-    );
+    expect(lines(0, 0, [{ institution: 'Nelnet', loans: 1 }])).toEqual({ leftOut: null, unread: [UNREAD_ONE] });
+    expect(lines(0, 0, [{ institution: 'Nelnet', loans: 2 }, { institution: 'MOHELA', loans: 1 }]).unread).toEqual([
+      'The accrued interest on 3 student loans at Nelnet and MOHELA couldn’t be read, so how much interest the total leaves out for them isn’t known.',
+    ]);
     expect(lines(612.4, 1, [{ institution: 'MOHELA', loans: 1 }])).toEqual({
       leftOut: LEFT_OUT_ONE,
-      unread: 'The accrued interest on another student loan at MOHELA couldn’t be read, so how much interest the total leaves out for it isn’t known.',
+      unread: ['The accrued interest on another student loan at MOHELA couldn’t be read, so how much interest the total leaves out for it isn’t known.'],
     });
-    expect(lines(612.4, 1, [{ institution: 'MOHELA', loans: 2 }]).unread).toStartWith('The accrued interest on 2 other student loans at MOHELA');
+    expect(lines(612.4, 1, [{ institution: 'MOHELA', loans: 2 }]).unread[0]).toStartWith('The accrued interest on 2 other student loans at MOHELA');
+    // Beside one reported as none: a student loan, never "your" one.
+    expect(lines(0, 0, [{ institution: 'Nelnet', loans: 1 }], 1).unread[0]).toStartWith('The accrued interest on a student loan at Nelnet');
+  });
+
+  test('a line for each reason, what can be done about first, and only one “your student loan” ever', () => {
+    expect(
+      lines(0, 0, [
+        { institution: 'Navient', loans: 1 },
+        { institution: 'Nelnet', loans: 1, why: 'unreachable' },
+        { institution: 'Aidvantage', loans: 2, why: 'loading' },
+        { institution: 'MOHELA', loans: 1, why: 'not-enabled' },
+        { institution: 'EdFinancial', loans: 1, why: 'not-enabled' },
+      ]).unread
+    ).toEqual([
+      'Payment details aren’t enabled for MOHELA and EdFinancial, so the accrued interest on 2 student loans there isn’t known. To see it, tap Enable payment details on their cards on the Accounts tab.',
+      'Payment details are still importing from Aidvantage, so the accrued interest on 2 student loans there isn’t known yet.',
+      'Nelnet couldn’t be reached, so the accrued interest on a student loan there isn’t known until it answers.',
+      'The accrued interest on a student loan at Navient couldn’t be read, so how much interest the total leaves out for it isn’t known.',
+    ]);
   });
 
   test('nothing to say without any, and never an em or en dash', () => {
-    expect(lines(0, 0)).toEqual({ leftOut: null, unread: null });
-    const all = lines(5, 3, [{ institution: 'Nelnet', loans: 2 }]);
-    expect(`${all.leftOut} ${all.unread}`).not.toMatch(/[\u2013\u2014]/);
+    expect(lines(0, 0)).toEqual({ leftOut: null, unread: [] });
+    const all = lines(5, 3, [{ institution: 'Nelnet', loans: 2 }, { institution: 'MOHELA', loans: 1, why: 'not-enabled' }, { institution: 'A', loans: 1, why: 'loading' }, { institution: 'B', loans: 1, why: 'unreachable' }]);
+    expect(`${all.leftOut} ${all.unread.join(' ')}`).not.toMatch(/[\u2013\u2014]/);
   });
 });
