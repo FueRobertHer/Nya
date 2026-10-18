@@ -114,6 +114,9 @@ export function CurrencyChoiceBody({
   const known = new Set([...mine, ...ecb, ...rest]);
   const priced = new Set(view?.own.map((o) => o.currency) ?? []);
   const unpriceable = view !== null && !published.includes(chosen) && !priced.has(chosen);
+  // The person's currencies nothing can convert yet: left out of the total
+  // until they set a rate for each.
+  const unrated = view !== null ? mine.filter((c) => c !== chosen && !published.includes(c) && !priced.has(c)) : [];
   const same = view !== null && view.home === chosen;
   const option = (c: string) => (
     <option key={c} value={c}>
@@ -138,6 +141,12 @@ export function CurrencyChoiceBody({
         <p className="stale-note">
           The ECB doesn’t publish a rate for {chosen}, so nothing can be converted into it until you set a rate of your own for it, on the Currency card under
           Manage on the Accounts tab.
+        </p>
+      )}
+      {!unpriceable && unrated.length > 0 && (
+        <p className="stale-note">
+          The ECB doesn’t publish {list(unrated)}, so your accounts in {unrated.length === 1 ? 'it' : 'them'} are left out of the total until you set a rate of your
+          own for {unrated.length === 1 ? 'it' : 'each'}, on the Currency card under Manage on the Accounts tab.
         </p>
       )}
       {view?.problem && <p className="stale-note">Your currency settings couldn’t be read, so nothing can be saved over them. See the Currency card under Manage on the Accounts tab.</p>}

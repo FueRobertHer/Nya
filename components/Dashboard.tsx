@@ -1965,6 +1965,9 @@ export default function Dashboard({
                       {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
                       {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
                     </>
+                  ) : base && history.length >= 2 ? (
+                    // A history there is, that couldn't be converted: why.
+                    <ChartCurrencyNote base={base} main={accountCurrency} />
                   ) : (
                     <p className="empty-note">
                       History builds as you use the app — check back tomorrow for your first

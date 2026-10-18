@@ -202,15 +202,20 @@ describe('the offer to show totals in one currency (decision 1)', () => {
   });
 
   test('for more than one: the budgets’ currency, and the accounts’ main one beside it when they differ', () => {
-    expect(offerFor({ accounts: ['USD', 'EUR', 'EUR'], transactions: ['USD', 'USD'], budgets: 'USD', main: 'EUR' })).toEqual({ budgets: 'USD', accounts: 'EUR' });
-    expect(offerFor({ accounts: ['USD', 'EUR'], transactions: ['USD'], budgets: 'USD', main: 'USD' })).toEqual({ budgets: 'USD', accounts: null });
+    expect(offerFor({ accounts: ['USD', 'EUR', 'EUR'], transactions: ['USD', 'USD'], budgets: 'USD', main: 'EUR' })).toEqual({ budgets: 'USD', accounts: 'EUR', mixedAccounts: true });
+    expect(offerFor({ accounts: ['USD', 'EUR'], transactions: ['USD'], budgets: 'USD', main: 'USD' })).toEqual({ budgets: 'USD', accounts: null, mixedAccounts: true });
     // Transactions alone in another currency are enough.
-    expect(offerFor({ accounts: ['USD'], transactions: ['USD', 'JPY'], budgets: 'USD', main: 'USD' })).toEqual({ budgets: 'USD', accounts: null });
+    expect(offerFor({ accounts: ['USD'], transactions: ['USD', 'JPY'], budgets: 'USD', main: 'USD' })).toEqual({ budgets: 'USD', accounts: null, mixedAccounts: false });
   });
 
   test('says nothing changes until the person chooses, and offers each with why', () => {
-    const html = renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: 'EUR' }} onChoose={noop} onDismiss={noop} />);
+    const html = renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: 'EUR', mixedAccounts: true }} onChoose={noop} onDismiss={noop} />);
+    expect(text(html)).toContain('Your accounts are in more than one currency, and your net worth adds them up unconverted.');
     expect(text(html)).toContain('Nothing changes until you do.');
+    // Only the transactions mixed: said as it is.
+    expect(text(renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: null, mixedAccounts: false }} onChoose={noop} onDismiss={noop} />))).toContain(
+      'Your transactions are in more than one currency.'
+    );
     expect(buttons(html)).toEqual(['Use USD your budgets are in it', 'Use EUR most of your accounts are in it', 'Choose another', 'Not now']);
   });
 });
@@ -256,6 +261,14 @@ describe('the sheet that chooses a home currency', () => {
     expect(text(body({ chosen: 'ARS' }))).toContain('The ECB doesn’t publish a rate for ARS, so nothing can be converted into it until you set a rate of your own for it');
     const priced = { ...VIEW, own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] };
     expect(text(body({ chosen: 'ARS', view: priced }))).not.toContain('doesn’t publish');
+  });
+
+  test('the person’s accounts in a currency the ECB doesn’t publish are said to be left out until they set a rate', () => {
+    expect(text(body({ first: ['USD', 'BTC', 'ARS'] }))).toContain(
+      'The ECB doesn’t publish BTC and ARS, so your accounts in them are left out of the total until you set a rate of your own for each'
+    );
+    const priced = { ...VIEW, own: [{ currency: 'BTC', rate: '61000', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] };
+    expect(text(body({ first: ['USD', 'BTC'], view: priced }))).not.toContain('left out of the total');
   });
 
   test('settings that can’t be read are never saved over', () => {

@@ -71,26 +71,33 @@ export function dismissOffer(): void {
   }
 }
 
-/** What to suggest: the currency the budgets are read in today (so what was
- *  typed keeps its meaning), and the accounts' main one beside it when the
- *  two differ. Null when everything is in one currency: nothing is offered. */
-export function offerFor(input: { accounts: readonly (string | null)[]; transactions: readonly (string | null)[]; budgets: string | null; main: string | null }): { budgets: string | null; accounts: string | null } | null {
+/** What the offer suggests: the currency the budgets are read in today (so
+ *  what was typed keeps its meaning), the accounts' main one beside it when
+ *  the two differ, and whether the accounts themselves mix currencies (net
+ *  worth adds them unconverted) or only the transactions do. */
+export type Offer = { budgets: string | null; accounts: string | null; mixedAccounts: boolean };
+
+/** The offer, or null when everything is in one currency: nothing is
+ *  offered. */
+export function offerFor(input: { accounts: readonly (string | null)[]; transactions: readonly (string | null)[]; budgets: string | null; main: string | null }): Offer | null {
   const seen = new Set([...input.accounts, ...input.transactions].filter((c): c is string => !!c));
   if (seen.size < 2) return null;
   const budgets = input.budgets;
   const accounts = input.main && input.main !== budgets ? input.main : null;
-  return { budgets, accounts };
+  return { budgets, accounts, mixedAccounts: new Set(input.accounts.filter(Boolean)).size > 1 };
 }
 
-export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: { budgets: string | null; accounts: string | null }; onChoose: (code: string | null) => void; onDismiss: () => void }) {
+export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: Offer; onChoose: (code: string | null) => void; onDismiss: () => void }) {
   return (
     <div className="card currency-offer">
       <div className="inst-header">
         <div className="inst-name">Show your totals in one currency</div>
       </div>
       <p className="panel-note">
-        Your accounts and transactions are in more than one currency, and your net worth adds them up unconverted. Choose one, and Nya shows your net worth in
-        it, converted at the European Central Bank’s daily rates. Nothing changes until you do.
+        {offer.mixedAccounts
+          ? 'Your accounts are in more than one currency, and your net worth adds them up unconverted.'
+          : 'Your transactions are in more than one currency.'}{' '}
+        Choose one, and Nya shows your net worth in it, converted at the European Central Bank’s daily rates. Nothing changes until you do.
       </p>
       <div className="currency-offer-choices">
         {offer.budgets && (
