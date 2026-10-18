@@ -235,11 +235,20 @@ describe('reading what a request converts with', () => {
   test('everything in the home currency: no rates read', async () => {
     await seedLatest();
     await currencySettingsStore.set(TEST_CTX, { ...NO_SETTINGS, home: 'USD' });
-    const sent = fake.commandLog?.length ?? 0;
-    const { fx } = await readFx(TEST_CTX, { currencies: ['USD'], from: '2026-09-01', to: '2026-09-14' });
-    expect(fx.home).toBe('USD');
-    expect(fx.latest).toBeNull();
-    void sent;
+    const hmget = fake.hmget.bind(fake);
+    let asked = 0;
+    fake.hmget = (async (...args: Parameters<typeof hmget>) => {
+      asked++;
+      return hmget(...args);
+    }) as typeof fake.hmget;
+    try {
+      const { fx } = await readFx(TEST_CTX, { currencies: ['USD'], from: '2026-09-01', to: '2026-09-14' });
+      expect(fx.home).toBe('USD');
+      expect(fx.latest).toBeNull();
+      expect(asked).toBe(0);
+    } finally {
+      fake.hmget = hmget;
+    }
   });
 
   test('another currency: the newest rates and the series it needs, once', async () => {
