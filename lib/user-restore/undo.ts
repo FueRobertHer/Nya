@@ -40,6 +40,13 @@ import { unfinished } from './restored';
 /** Longer than a batch can run (app/api/user-restore/batch maxDuration). */
 export const UNDO_PAUSE_MS = 65_000;
 
+/** The pause the routes take: UNDO_PAUSE_MS, but under test (NODE_ENV=test)
+ *  RESTORE_UNDO_PAUSE_MS when set, since a test run can't wait a minute. */
+export function undoPauseMs(): number {
+  const set = process.env.NODE_ENV === 'test' ? Number(process.env.RESTORE_UNDO_PAUSE_MS ?? NaN) : NaN;
+  return Number.isFinite(set) && set >= 0 ? set : UNDO_PAUSE_MS;
+}
+
 /** Why an undo or an emptying can't go ahead, in words for the person. */
 export class UndoRefused extends Error {
   constructor(
@@ -93,7 +100,7 @@ export async function undoRestore(
   await userRestoreStore.update(ctx, (cur) => (cur && cur.id === id ? { ...cur, status: 'undoing' } : cur));
   const keep = (key: string) => keepMachinery(key) || key === userRestoreStore.name;
   let deleted = await sweepContainerExcept(ctx, keep);
-  await (opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(opts.pauseMs ?? UNDO_PAUSE_MS);
+  await (opts.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms))))(opts.pauseMs ?? undoPauseMs());
   deleted += await sweepContainerExcept(ctx, keep);
   await userRestoreStore.remove(ctx);
   await clearCaches(ctx);
