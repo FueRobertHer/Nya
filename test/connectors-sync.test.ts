@@ -508,7 +508,7 @@ describe('the snapshot gate and connection health', () => {
     ]);
   });
 
-  test('a balance current at the last answer is never blamed on the bank link once no answer comes; one old already when it came is', async () => {
+  test('a balance current at the last answer is never blamed on the bank link once no answer comes; one old already when it came is; one too old now is never recorded', async () => {
     const id = await connectAndTrack();
     const conn = (await connectionsStore.get(ctx, id))!;
     const answered = Date.parse(conn.last_answer_at!);
@@ -535,6 +535,27 @@ describe('the snapshot gate and connection health', () => {
         ['old_balance', 'connector', false],
       ]);
     }
+    // One that passes it while the answer is still fresh is held out too, and
+    // is the link's: 80 hours old now, from an answer 30 hours old (50 hours
+    // old then), and the like. Never recorded as today's.
+    for (const [ageThen, after] of [
+      [50, 30],
+      [65, 35],
+      [71, 3],
+    ]) {
+      expect([ageThen + after, health(at(ageThen), after)]).toEqual([
+        ageThen + after,
+        [
+          ['old_balance', 'connector', false],
+          ['old_balance', 'connector', false],
+        ],
+      ]);
+    }
+    // A balance current now, from a fresh answer, is recorded.
+    expect(health(at(OLD_BALANCE_HOURS - 10), 5).map(([issue, , recordable]) => [issue, recordable])).toEqual([
+      ['ok', true],
+      ['ok', true],
+    ]);
   });
 
   test('SimpleFIN refusing Nya’s access asks to connect again, on the person’s side; a new token carries the same accounts on', async () => {

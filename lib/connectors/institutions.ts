@@ -35,11 +35,13 @@
 //     since it was connected again;
 //   - a card or a loan reports a positive balance the person hasn't said how
 //     to read (below);
-//   - the bank's latest balance is more than OLD_BALANCE_HOURS old: SimpleFIN
-//     answers, but its link to the bank has stopped updating, when the balance
-//     was that old already at SimpleFIN's last answer; one that has grown that
-//     old since, with no answer to bring a newer, is the next case's;
+//   - the bank's latest balance is more than OLD_BALANCE_HOURS old now:
+//     SimpleFIN answers, but its link to the bank has stopped updating; but
+//     one that was current at SimpleFIN's last answer, with no answer since
+//     for FRESH_HOURS to bring a newer, is the next case's;
 //   - no answer has come for FRESH_HOURS (the daily update didn't run).
+// Either way a balance that old now is held out: the answer's time only
+// chooses whose side the card says it is.
 // The same holds for Lunch Flow's accounts (lib/connectors/lunchflow.ts),
 // with one difference: Lunch Flow gives no time with a balance, so its
 // balance is as of when Nya received it, the old-balance rule never applies,
@@ -237,17 +239,22 @@ function issueOf(
   if (unsure.length > 0) {
     return { issue: 'sign', messages: unsure.map((a) => `${a.name} (+${formatMoney(a.reported_balance!, a.currency)})`), accounts: unsure.map((a) => a.name) };
   }
-  // The bank's balance is judged as SimpleFIN last answered it: current then,
-  // it says nothing against SimpleFIN's link to the bank, however long Nya has
-  // gone without asking since, which is Nya's to say (`stale`), never a
-  // sign-in at the bank. The gate (answeredWhole) still judges it now: a
-  // balance three days old today is none to record, whatever the cause. An
+  // A balance too old now holds the card, which is what keeps it out of the
+  // day's total (isRecordable reads the issue's error); SimpleFIN's last
+  // answer only says whose it is. Old already then, SimpleFIN's link to the
+  // bank has stopped updating (`old_balance`); current then, with no answer
+  // for a day and a half since, it is the answer Nya didn't ask for (`stale`),
+  // never a sign-in at the bank; with a fresh answer, the link's again. An
   // answer stamped after now (by another clock) is judged now.
   const last = conn.last_answer_at ? Date.parse(conn.last_answer_at) : NaN;
   const answeredAt = Number.isFinite(last) ? Math.min(last, now) : now;
-  const old = group.filter((a) => balanceTooOld(a, answeredAt)).sort((x, y) => (x.balance_at! < y.balance_at! ? -1 : 1));
-  if (old.length > 0) return { issue: 'old_balance', messages: [old[0].balance_at!], accounts: old.map((a) => a.name) };
+  const oldAt = (at: number) => group.filter((a) => balanceTooOld(a, at)).sort((x, y) => (x.balance_at! < y.balance_at! ? -1 : 1));
+  const oldBalance = (old: ConnectorAccount[]) => ({ issue: 'old_balance' as const, messages: [old[0].balance_at!], accounts: old.map((a) => a.name) });
+  const oldThen = oldAt(answeredAt);
+  if (oldThen.length > 0) return oldBalance(oldThen);
   if (!Number.isFinite(last) || now - last > FRESH_HOURS * HOUR) return { issue: 'stale', messages: [], accounts: [] };
+  const oldNow = oldAt(now);
+  if (oldNow.length > 0) return oldBalance(oldNow);
   return { issue: 'ok', messages: [], accounts: [] };
 }
 

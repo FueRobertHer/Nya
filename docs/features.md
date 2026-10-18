@@ -365,7 +365,7 @@ A request that fails changes nothing: no balance and no transaction. A bank's ac
 | What happened | Whose side | What to do |
 | --- | --- | --- |
 | SimpleFIN reports a problem with a bank ("Connection to My Bank may need attention") | SimpleFIN's: between it and your bank | Fix it in SimpleFIN, often by signing in to the bank there again (**Open SimpleFIN** links to it), then **Refresh**. |
-| SimpleFIN's latest balance from a bank was more than three days old when it answered: its link there has stopped updating | SimpleFIN's | The same: fix it in SimpleFIN, then **Refresh**. The row says the balance's date. |
+| SimpleFIN's latest balance from a bank is more than three days old: its link there has stopped updating (unless Nya's daily update stopped first: that is Nya's row below) | SimpleFIN's | The same: fix it in SimpleFIN, then **Refresh**. The row says the balance's date. |
 | A card or a loan comes with a positive balance | Yours | **Answer** whether it is money held or what you owe, once. |
 | SimpleFIN no longer accepts Nya's access: removed or reset there, or the subscription ended | Yours | **Connect again** with a new Setup Token: the same accounts carry on, with their history. |
 | SimpleFIN wants the subscription paid | Yours | Renew it at SimpleFIN; Nya picks up at its next update. |
