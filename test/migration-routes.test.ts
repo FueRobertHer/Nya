@@ -863,8 +863,10 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
   const COSTCO = bankTxn('b_costco', 'acc_chk', 20, 120, { name: 'COSTCO WHSE #0012', merchant_name: 'Costco' });
   const linkedTo = { accounts: { Checking: { to: 'linked', id: 'acc_chk' } } };
   const ynabHeader = '"Account","Flag","Date","Payee","Category Group/Category","Category Group","Category","Memo","Outflow","Inflow","Cleared"';
-  const ynabRow = (days: number, payee: string, group: string, category: string, memo: string, out: number, inn = 0) =>
-    `"Checking","","${mdy(daysAgo(days))}","${payee}","${group ? `${group}: ${category}` : ''}","${group}","${category}","${memo}",$${out.toFixed(2)},$${inn.toFixed(2)},"Cleared"`;
+  /** A row of YNAB's register, on a day (`ynabOn`) or so many days ago. */
+  const ynabOn = (day: string, payee: string, group: string, category: string, memo: string, out: number, inn = 0) =>
+    `"Checking","","${mdy(day)}","${payee}","${group ? `${group}: ${category}` : ''}","${group}","${category}","${memo}",$${out.toFixed(2)},$${inn.toFixed(2)},"Cleared"`;
+  const ynabRow = (days: number, payee: string, group: string, category: string, memo: string, out: number, inn = 0) => ynabOn(daysAgo(days), payee, group, category, memo, out, inn);
   /** What counts of Costco, as every total reads it: the bank's whole row
    *  (or its parts, split as the app had it), never the file's lines beside it. */
   async function costco() {
@@ -1004,22 +1006,32 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
     expect(await counted()).toBe(11);
   });
 
-  test('a group dated inside a bank file imported before is left out, since that file has its transactions one by one', async () => {
-    // On a clock of its own: every day here is a fixed one.
+  /** On a clock of its own (every day in these tests is a fixed one): the
+   *  account's bank rows from 2026-08-18, and the bank's own file of a year
+   *  before, through its history import, as reviewed. The clock moves on
+   *  after it, so the app's import is made later, as it always is in use
+   *  (the order of imports is by when they were made: lib/history-import/
+   *  read.ts importOrder). */
+  async function bankFileFirst(lines: string[]) {
     setSystemTime(new Date('2026-10-17T12:00:00Z'));
+    await seed(ctx, [bankTxn('b_first', 'acc_chk', 0, 1, { name: 'FIRST ROW', date: '2026-08-18' })]);
+    const bankCsv = ['Date,Description,Amount', ...lines].join('\n');
+    const form = (meta: object) => {
+      const f = new FormData();
+      f.set('file', new Blob([new TextEncoder().encode(bankCsv) as Uint8Array<ArrayBuffer>]), 'bank.csv');
+      f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
+      return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
+    };
+    const hp = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
+    expect((await asRes(await historyRoutes.POST(form({ action: 'import', review: hp.body.preview.review })))).status).toBe(200);
+    setSystemTime(new Date('2026-10-17T12:05:00Z'));
+  }
+
+  test('a group dated inside a bank file imported before is left out, since that file has its transactions one by one', async () => {
     try {
-      await seed(ctx, [bankTxn('b_first', 'acc_chk', 0, 1, { name: 'FIRST ROW', date: '2026-08-18' })]);
-      // The bank's own file of a year before, through its history import:
-      // the dinner as the bank has it, a charge and a friend's repayment.
-      const bankCsv = ['Date,Description,Amount', '2025-08-23,GROCER,-30.00', '2025-09-12,DINNER PLACE,-135.00', '2025-09-13,VENMO FROM SAM,90.00', '2025-10-02,GROCER,-20.00'].join('\n');
-      const form = (meta: object) => {
-        const f = new FormData();
-        f.set('file', new Blob([new TextEncoder().encode(bankCsv) as Uint8Array<ArrayBuffer>]), 'bank.csv');
-        f.set('meta', JSON.stringify({ file_name: 'bank.csv', account_id: 'acc_chk', options: { csv: { columns: { date: 0, description: 1, amount: 2 }, sign: 'negative-out' } }, ...meta }));
-        return new Request('http://localhost/api/history-import', { method: 'POST', body: f });
-      };
-      const hp = await asRes(await historyRoutes.POST(form({ action: 'preview' })));
-      expect((await asRes(await historyRoutes.POST(form({ action: 'import', review: hp.body.preview.review })))).status).toBe(200);
+      // The bank's own file: the dinner as the bank has it, a charge and a
+      // friend's repayment.
+      await bankFileFirst(['2025-08-23,GROCER,-30.00', '2025-09-12,DINNER PLACE,-135.00', '2025-09-13,VENMO FROM SAM,90.00', '2025-10-02,GROCER,-20.00']);
       expect(await counted()).toBe(1 + 30 + 135 + 20);
       // Lunch Money's export of the same days: the dinner as a group at its net.
       const lm = [
@@ -1040,6 +1052,34 @@ describe('into a linked account, nothing its bank has is brought beside it', () 
       // Spent as the bank's file says, the dinner once: never the group's 45 beside it.
       expect(await counted()).toBe(1 + 30 + 135 + 20);
       expect(((await activity()).transactions as any[]).some((t) => t.name === 'Dinner with friends')).toBe(false);
+    } finally {
+      setSystemTime();
+    }
+  });
+
+  test('a split dated inside a bank file imported before, which has the transaction: its lines left out without their whole, whole when Nya can’t hold it', async () => {
+    try {
+      await bankFileFirst(['2025-09-12,COSTCO WHSE #0012,-120.00', '2025-09-20,TARGET T-1234,-22.00']);
+      expect(await counted()).toBe(1 + 120 + 22);
+      // YNAB's split of three lines, its second missing from the file; and
+      // one with a line of no category, which a split in Nya can't have.
+      const ynab = [
+        ynabHeader,
+        ynabOn('2025-09-12', 'Costco', 'Food', 'Groceries', 'Split (1/3) ', 80),
+        ynabOn('2025-09-12', 'Costco', 'Home', 'Household', 'Split (3/3) ', 15),
+        ynabOn('2025-09-20', 'Target', 'Food', 'Groceries', 'Split (1/2) ', 10),
+        ynabOn('2025-09-20', 'Target', '', '', 'Split (2/2) ', 12),
+      ].join('\n');
+      const { preview, done } = await importReviewed(ynab, { ...linkedTo, options: { date_order: 'mdy' } });
+      const [target] = preview.targets;
+      expect(target.left_out).toEqual({ opening: 0, groups: 0, lines: 2 });
+      expect(target.whole.reduce((n: number, w: any) => n + w.count, 0)).toBe(2);
+      expect(target.proposals.map((p: any) => [p.file.name, p.file.amount, p.twin.kind, p.choice])).toEqual([['Target', 22, 'imported', 'same']]);
+      expect(target.counts.new ?? 0).toBe(0);
+      expect(done.status).toBe(200);
+      // Each once, as the bank's file says: never Costco's two lines' 95 nor
+      // Target's lines beside them.
+      expect(await counted()).toBe(1 + 120 + 22);
     } finally {
       setSystemTime();
     }
