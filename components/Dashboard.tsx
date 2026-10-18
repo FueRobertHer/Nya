@@ -1857,7 +1857,7 @@ export default function Dashboard({
                     </>
                   ) : (
                     <p className="empty-note">
-                      History builds as you use the app — check back tomorrow for your first
+                      History builds as you use the app: check back tomorrow for your first
                       trend line.
                     </p>
                   )}

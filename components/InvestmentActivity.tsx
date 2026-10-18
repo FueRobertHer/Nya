@@ -165,7 +165,7 @@ export default function InvestmentActivity({
         </tbody>
       </table>
       <p className="chart-note">
-        Amounts are cash moving in and out of the account, not change in its value — a buy spends
+        Amounts are cash moving in and out of the account, not change in its value: a buy spends
         cash to hold securities worth the same.
       </p>
     </div>

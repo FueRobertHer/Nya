@@ -10,7 +10,7 @@ const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // A ceiling a fixture can actually cross. The real one is 8M characters, which
-// would take roughly a hundred megabytes of JSON to reach after gzip — far too
+// would take roughly a hundred megabytes of JSON to reach after gzip, far too
 // slow to build in a unit test. A one-row blob encodes to about 800 characters,
 // so this sits well clear of the ordinary fixtures and is crossed only by the
 // deliberately bulky one. Read at import time, so it must be set before the
@@ -339,7 +339,7 @@ describe('a blob too large to persist', () => {
     const res = await readItemTransactions(ctx, ITEM, 1000);
 
     // THE point of the change. The old code trimmed oldest-first until the blob
-    // fit, mutating the caller's state in place — and syncItem returns that same
+    // fit, mutating the caller's state in place, and syncItem returns that same
     // object, so the trimmed set reached lib/backfill.ts through this very
     // function and reconstructed balances from a set with a hole in it.
     expect(res.txns).toHaveLength(140);
@@ -409,8 +409,8 @@ describe('a blob too large to persist', () => {
   test('raising the ceiling unblocks the item', async () => {
     // The legitimate fix is a bigger plan and a bigger limit. Before this was
     // handled, the short-circuit fired before any size was computed, so raising
-    // the limit did nothing and reconnecting — which discards the stored
-    // history — was the only way out.
+    // the limit did nothing and reconnecting (which discards the stored
+    // history) was the only way out.
     await blockedAt(1000); // under the 5000 ceiling now in force
 
     pages = [{ added: [txn()] }];

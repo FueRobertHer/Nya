@@ -264,7 +264,7 @@ export default function Insights({
       if (l.is_overdue) {
         overdue.push({
           key: `overdue-${i}-${a.name}`,
-          text: `${a.name} is overdue${l.minimum_payment != null ? ` — ${formatMoney(l.minimum_payment, a.currency)} minimum` : ''}`,
+          text: `${a.name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`,
           tone: 'down',
         });
         continue;

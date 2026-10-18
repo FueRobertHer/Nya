@@ -1,7 +1,7 @@
 "use client";
 
 // Activity tab: month-by-month breakdown of the last ~12 months of
-// transactions. A scrollable "Net by month" column row selects the month —
+// transactions. A scrollable "Net by month" column row selects the month:
 // each column's height is that month's net magnitude and its color the sign
 // (green positive, red negative). Below it, a two-line chart traces cumulative
 // income vs spend across the days of the selected month. Then a summary shows
@@ -278,9 +278,9 @@ export function categoryOptions(txns: Txn[] | null): string[] {
 }
 
 // "What is this charge?" detail panel, shown inside the expanded row. Surfaces
-// the Plaid fields that answer the question — the real merchant behind a
-// processor, channel, place, time, website, reference/check numbers, and (for
-// joint accounts) the owner — skipping any the row doesn't carry.
+// the Plaid fields that answer the question (the real merchant behind a
+// processor, channel, place, time, website, reference/check numbers, and, for
+// joint accounts, the owner), skipping any the row doesn't carry.
 function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) {
   const rows: { label: string; value: React.ReactNode }[] = [];
   const time = fmtTime(t.datetime);
@@ -990,7 +990,7 @@ export default function MonthBreakdown({
                               {isLowConfidence(t) && (
                                 <span
                                   className="low-conf-tag"
-                                  title="Plaid was unsure of this category — tap to fix it"
+                                  title="Plaid was unsure of this category: tap to fix it"
                                 >
                                   {" "}
                                   · check category
