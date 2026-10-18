@@ -18,10 +18,16 @@
 // fewer days than stored, never a newest publication older than the stored
 // one. `full` compares and rewrites every year.
 //
-// TIME LIMITS. The download has its own timeout and the writes a deadline, so
-// a hang is an ordinary failure, recorded in the store's `fetch` field and
-// answered 500, rather than Vercel ending the function with nothing recorded
-// (the reason lib/backup.ts gives every step a limit).
+// TIME LIMITS. Upstash doesn't time a request out on its own, and Vercel ends
+// the function at its maxDuration without running anything after (the reason
+// lib/backup.ts gives every step a limit). So every call here is raced against
+// what is left of the run (RUN_BUDGET_MS, inside the route's 60 seconds): the
+// reads of what is stored, the download (also aborted at its own limit) and
+// each year's write, and the writes stop between years at their deadline. A
+// call over its time is an ordinary failure that names the step, recorded in
+// the store's `fetch` field and answered 500. The record itself has time kept
+// for it (RECORD_MS), and is raced too: a record that never lands is logged,
+// and the route still answers 500 in time.
 
 import { listZip, readEntry, type ZipEntry, type ZipProblem } from '../zip';
 import { ecbStore, readEcbFields } from './ecb-store';
@@ -30,10 +36,17 @@ import { parseEcbCsv, planWrites } from './ecb-parse';
 import type { EcbFetch } from './rates';
 
 export const ECB_HISTORY_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip';
+/** Everything but the record of the outcome: within the route's 60 seconds,
+ *  with RECORD_MS kept after it and a margin. */
+export const RUN_BUDGET_MS = 48_000;
+/** The record of the outcome, raced on its own after the run. */
+export const RECORD_MS = 6_000;
+/** The reads of what is stored (the field names, the calendars). */
+export const READ_TIMEOUT_MS = 10_000;
 /** The download's limit: the file is about 640 KB. */
 export const DOWNLOAD_TIMEOUT_MS = 20_000;
-/** The writes' limit, within the route's 60 seconds. */
-export const WRITE_DEADLINE_MS = 25_000;
+/** The writes stop between years after this long from the start. */
+export const WRITE_DEADLINE_MS = 40_000;
 /** Far more than the file's 640 KB zipped and 1.9 MB of CSV. */
 const MAX_DOWNLOAD_BYTES = 8 * 1024 * 1024;
 const ZIP_LIMITS = { maxEntries: 4, maxEntryBytes: 32 * 1024 * 1024 };
@@ -92,9 +105,33 @@ function csvOf(bytes: Uint8Array): string | { reason: string } {
   }
 }
 
+/** A step that ran out of its time: what it was, and how long it had. */
+class StepTimeout extends Error {
+  constructor(what: string, ms: number) {
+    super(ms > 0 ? `${what} took longer than ${ms / 1000}s` : `${what} had no time left in the run`);
+    this.name = 'StepTimeout';
+  }
+}
+
+/** A call raced against `ms`: over it, a StepTimeout naming `what`, whether
+ *  or not the call ever settles (one that lands later lands whole: each write
+ *  is one atomic HSET). */
+async function within<T>(what: string, ms: number, call: () => Promise<T>): Promise<T> {
+  if (ms <= 0) throw new StepTimeout(what, 0);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new StepTimeout(what, ms)), ms);
+  });
+  try {
+    return await Promise.race([call(), timeout]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 /** Why an error happened, for an operator, without what it carried. */
-const reasonOf = (err: unknown): string => {
-  if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) return `the download took longer than ${DOWNLOAD_TIMEOUT_MS / 1000}s`;
+const reasonOf = (err: unknown, downloadMs: number = DOWNLOAD_TIMEOUT_MS): string => {
+  if (err instanceof Error && (err.name === 'TimeoutError' || err.name === 'AbortError')) return `the download took longer than ${downloadMs / 1000}s`;
   return err instanceof Error ? err.message.slice(0, 200) : 'an unknown error';
 };
 
@@ -104,13 +141,26 @@ const reasonOf = (err: unknown): string => {
  * is logged, and the outcome still answered). Never throws.
  */
 export async function fetchEcbRates(
-  opts: { now?: () => number; download?: Downloader; full?: boolean; downloadTimeoutMs?: number; writeDeadlineMs?: number } = {}
+  opts: {
+    now?: () => number;
+    download?: Downloader;
+    full?: boolean;
+    /** Tests shorten these (see TIME LIMITS). */
+    budgetMs?: number;
+    recordMs?: number;
+    readTimeoutMs?: number;
+    downloadTimeoutMs?: number;
+    writeDeadlineMs?: number;
+  } = {}
 ): Promise<FetchOutcome> {
   const now = opts.now ?? Date.now;
   const started = now();
   const written: string[] = [];
   let previous: EcbFetch | null = null;
   let newest: string | null = null;
+  const end = started + (opts.budgetMs ?? RUN_BUDGET_MS);
+  /** What is left of the run, at most `cap`. */
+  const left = (cap: number) => Math.min(cap, end - now());
 
   const record = async (outcome: FetchOutcome): Promise<FetchOutcome> => {
     const at = new Date(now()).toISOString();
@@ -118,7 +168,7 @@ export async function fetchEcbRates(
       ? { at, ok: true, newest: outcome.newest, last_ok: at }
       : { at, ok: false, reason: outcome.reason.slice(0, 500), newest, last_ok: previous?.last_ok ?? null };
     try {
-      await ecbStore.setMany([[FETCH_FIELD, entry]]);
+      await within('recording the outcome', opts.recordMs ?? RECORD_MS, () => ecbStore.setMany([[FETCH_FIELD, entry]]));
     } catch (err) {
       console.error('ECB rates: the outcome could not be recorded', reasonOf(err));
     }
@@ -126,8 +176,10 @@ export async function fetchEcbRates(
     return outcome;
   };
 
+  const readMs = opts.readTimeoutMs ?? READ_TIMEOUT_MS;
+  const downloadMs = opts.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS;
   try {
-    const known = await ecbStore.ids();
+    const known = await within('reading the stored rates’ names', left(readMs), () => ecbStore.ids());
     const current = new Date(started).toISOString().slice(0, 4);
     const stored = new Map<string, readonly string[] | null>();
     // Every year's calendar (about 3 KB each), so one that is missing or
@@ -136,7 +188,7 @@ export async function fetchEcbRates(
     // (no rate on its days) and mended by a full run.
     const toRead = new Set<string>([FETCH_FIELD, LATEST_FIELD]);
     for (const id of known) if (id.startsWith('days:')) toRead.add(id);
-    const { fields } = await readEcbFields([...toRead]);
+    const { fields } = await within('reading the stored calendars', left(readMs), () => readEcbFields([...toRead]));
     const fetched = fields.get(FETCH_FIELD);
     previous = isFetch(fetched) ? fetched : null;
     for (const id of toRead) {
@@ -149,10 +201,13 @@ export async function fetchEcbRates(
     const storedLatest = isLatest(latest) ? latest.date : null;
 
     let download: { status: number; bytes: Uint8Array };
+    const allowed = left(downloadMs);
     try {
-      download = await (opts.download ?? downloadWithFetch)(ECB_HISTORY_URL, AbortSignal.timeout(opts.downloadTimeoutMs ?? DOWNLOAD_TIMEOUT_MS));
+      // Aborted at its limit, and raced too, for a downloader that doesn't
+      // honour the signal.
+      download = await within(`the download`, allowed, () => (opts.download ?? downloadWithFetch)(ECB_HISTORY_URL, AbortSignal.timeout(Math.max(1, allowed))));
     } catch (err) {
-      return record({ ok: false, reason: `the download failed: ${reasonOf(err)}`, written });
+      return record({ ok: false, reason: err instanceof StepTimeout ? err.message : `the download failed: ${reasonOf(err, allowed)}`, written });
     }
     if (download.status !== 200) return record({ ok: false, reason: `the ECB answered ${download.status}`, written });
 
@@ -173,13 +228,13 @@ export async function fetchEcbRates(
       if (now() > deadline) {
         return record({ ok: false, reason: `the writes took longer than ${(opts.writeDeadlineMs ?? WRITE_DEADLINE_MS) / 1000}s, after ${written.length} of ${plan.years.length} years`, written });
       }
-      await ecbStore.setMany(step.fields);
+      await within(`writing ${step.year}`, end - now(), () => ecbStore.setMany(step.fields));
       written.push(step.year);
     }
     if (plan.refused.length > 0) console.warn(`ECB rates: kept the stored ${plan.refused.join(', ')}, which held days the file didn’t`);
     return record({ ok: true, newest, written, refused: plan.refused });
   } catch (err) {
-    return record({ ok: false, reason: reasonOf(err), written });
+    return record({ ok: false, reason: err instanceof StepTimeout ? `${err.message}, after ${written.length} years written` : reasonOf(err, downloadMs), written });
   }
 }
 

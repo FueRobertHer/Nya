@@ -137,8 +137,19 @@ describe('the nightly fetch', () => {
   });
 
   test('writes past their deadline stop between years, each year whole', async () => {
+    // Each year's write takes ten seconds, on the run's clock.
     let t = NOW;
-    const outcome = await quiet(() => run({ now: () => (t += 10_000), writeDeadlineMs: 25_000 }));
+    const hset = fake.hset.bind(fake);
+    fake.hset = (async (key: string, fields: Record<string, string>) => {
+      t += 10_000;
+      return hset(key, fields);
+    }) as typeof fake.hset;
+    let outcome: Awaited<ReturnType<typeof run>>;
+    try {
+      outcome = await quiet(() => run({ now: () => t, writeDeadlineMs: 25_000 }));
+    } finally {
+      fake.hset = hset;
+    }
     expect(outcome.ok).toBe(false);
     expect(outcome.written.length).toBeGreaterThan(0);
     expect(outcome.written.length).toBeLessThan(6);
@@ -150,6 +161,58 @@ describe('the nightly fetch', () => {
     fake.failNext('hkeys');
     const outcome = await quiet(() => run());
     expect(outcome.ok).toBe(false);
+  });
+
+  // Upstash doesn't time a request out on its own, and Vercel ends the
+  // function at maxDuration with nothing after: every call is raced.
+  test('a read of the store that never answers is a failure within the run’s time, recorded', async () => {
+    const hkeys = fake.hkeys.bind(fake);
+    fake.hkeys = (() => new Promise(() => {})) as typeof fake.hkeys;
+    try {
+      const outcome = await quiet(() => run({ now: Date.now, readTimeoutMs: 30 }));
+      expect(outcome).toMatchObject({ ok: false, reason: 'reading the stored rates’ names took longer than 0.03s, after 0 years written' });
+    } finally {
+      fake.hkeys = hkeys;
+    }
+    expect(await fetchRecord()).toMatchObject({ ok: false, reason: expect.stringContaining('took longer') });
+  });
+
+  test('a write that never answers is a failure naming its year, and the next night writes it', async () => {
+    const hset = fake.hset.bind(fake);
+    let calls = 0;
+    // The first year's write hangs; the record of the outcome lands.
+    fake.hset = ((key: string, fields: Record<string, string>) => (++calls === 1 ? new Promise(() => {}) : hset(key, fields))) as typeof fake.hset;
+    try {
+      const outcome = await quiet(() => run({ now: Date.now, budgetMs: 60 }));
+      expect(outcome).toMatchObject({ ok: false, written: [] });
+      if (!outcome.ok) expect(outcome.reason).toMatch(/^writing 2026 took longer than 0\.0\d+s, after 0 years written$/);
+    } finally {
+      fake.hset = hset;
+    }
+    expect(await fetchRecord()).toMatchObject({ ok: false });
+    // Nothing of the year was half written, and the next run fills it.
+    expect(stored().has('days:2026')).toBe(false);
+    expect((await run()).ok).toBe(true);
+    expect(stored().has('days:2026')).toBe(true);
+  });
+
+  test('a record of the outcome that never lands still ends the run in time, its failure said', async () => {
+    const hset = fake.hset.bind(fake);
+    fake.hset = (() => new Promise(() => {})) as typeof fake.hset;
+    const errors: string[] = [];
+    const [e, w] = [console.error, console.warn];
+    console.error = (...args: unknown[]) => void errors.push(args.join(' '));
+    console.warn = () => {};
+    try {
+      const started = Date.now();
+      const outcome = await run({ now: Date.now, budgetMs: 40, recordMs: 40 });
+      expect(outcome.ok).toBe(false);
+      expect(Date.now() - started).toBeLessThan(2_000);
+    } finally {
+      fake.hset = hset;
+      [console.error, console.warn] = [e, w];
+    }
+    expect(errors.some((m) => m.includes('the outcome could not be recorded') && m.includes('recording the outcome took longer than 0.04s'))).toBe(true);
   });
 });
 
