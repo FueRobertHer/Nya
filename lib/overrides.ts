@@ -367,3 +367,22 @@ export function carryCounts(
   }
   return out;
 }
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** Categories chosen for transactions, as a restore brings them back. */
+export async function restoreOverrides(ctx: Ctx, entries: readonly (readonly [string, string])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, category] of entries) fields[id] = await encrypt(ctx, category);
+  await redis().hset(OVERRIDES_HASH(ctx), fields);
+}
+
+/** Categories carried for earlier accounts, as a restore brings them back:
+ *  each account's record whole. */
+export async function restoreCarried(ctx: Ctx, entries: readonly (readonly [string, CarriedRows])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, rows] of entries) fields[id] = await encrypt(ctx, JSON.stringify(rows));
+  await redis().hset(CARRY_HASH(ctx), fields);
+}

@@ -1744,3 +1744,36 @@ export async function replaceEstimatedBefore(
     await redis().hset(ESTIMATED_HASH(ctx), totals);
   }
 }
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** The layers a restore writes days into, by the name its plan gives each
+ *  (lib/user-restore/check.ts HISTORY_LAYERS). */
+const RESTORE_LAYERS: Readonly<Record<string, (ctx: Ctx) => string>> = {
+  'net-worth': HISTORY_HASH,
+  'net-worth:est': ESTIMATED_HASH,
+  accounts: ACCOUNTS_HASH,
+  'accounts:partial': ACCOUNTS_PARTIAL_HASH,
+  'accounts:est': ACCOUNTS_EST_HASH,
+  'accounts:est:ext': ACCOUNTS_EST_EXT_HASH,
+  'accounts:est:flatd': ACCOUNTS_EST_FLAT_BY_DATE,
+};
+
+/** Days of one layer as a restore brings them back: each as the download
+ *  has it, a total or a map of balances, checked by the restore (real days,
+ *  finite numbers, no measurement after the download). Breakdowns before
+ *  totals, as recordSnapshot writes them, is the plan's order. */
+export async function restoreHistoryDays(ctx: Ctx, layer: string, days: readonly { date: string; value: number | Record<string, number> }[]): Promise<void> {
+  const key = RESTORE_LAYERS[layer];
+  if (!key) throw new TypeError(`No history layer ${layer} to restore into.`);
+  if (days.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const d of days) fields[d.date] = await encrypt(ctx, typeof d.value === 'number' ? String(d.value) : JSON.stringify(d.value));
+  await redis().hset(key(ctx), fields);
+}
+
+/** The flat balances of estimated totals from before they were kept by day,
+ *  as a restore brings them back: the one value that describes those days. */
+export async function restoreFlatBefore(ctx: Ctx, balances: Record<string, number>): Promise<void> {
+  await redis().set(ACCOUNTS_EST_FLAT_LEGACY(ctx), await encrypt(ctx, JSON.stringify(balances)));
+}

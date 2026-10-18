@@ -382,3 +382,10 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
 
   return [...byInstitution.values()];
 }
+
+/** The ids of the manual accounts stored, readable or not, without reading
+ *  any: what a restore counts before it writes more (lib/user-restore/
+ *  commit.ts). */
+export async function manualAccountIds(ctx: Ctx): Promise<string[]> {
+  return (await redis().hkeys(ACCOUNTS_HASH(ctx))) ?? [];
+}

@@ -1046,3 +1046,29 @@ export function hiddenForClient(hidden: HiddenMap, links: Map<string, Link>): Hi
   }
   return [...seen].map(([account_id, type]) => ({ account_id, type }));
 }
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** Directory entries as a restore brings them back: each as the old copy had
+ *  it (its days its own, never restarted), checked by the restore. */
+export async function restoreDirectoryEntries(ctx: Ctx, entries: readonly (readonly [string, DirectoryEntry])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, entry] of entries) fields[id] = await encrypt(ctx, JSON.stringify(entry));
+  await redis().hset(directoryKey(ctx), fields);
+}
+
+/** Links as a restore brings them back, each with its own time and evidence. */
+export async function restoreLinks(ctx: Ctx, links: readonly (readonly [string, Link])[]): Promise<void> {
+  if (links.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [old, link] of links) fields[old] = await encrypt(ctx, JSON.stringify(link));
+  await redis().hset(linksKey(ctx), fields);
+}
+
+/** Declined offers as a restore brings them back ("<old>><new>", or
+ *  "<old>>*" for "None of these"), each with when it was declined. */
+export async function restoreDeclined(ctx: Ctx, offers: readonly (readonly [string, string])[]): Promise<void> {
+  if (offers.length === 0) return;
+  await redis().hset(dismissedKey(ctx), Object.fromEntries(offers));
+}

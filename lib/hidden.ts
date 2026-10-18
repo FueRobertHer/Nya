@@ -158,3 +158,12 @@ export function applyHidden(institutions: MarkableInstitution[], hidden: HiddenM
   }
   return visible;
 }
+
+/** Hidden accounts as a restore brings them back (lib/user-restore/
+ *  commit.ts), each with when it was hidden, checked there. */
+export async function restoreHiddenAccounts(ctx: Ctx, entries: readonly (readonly [string, HiddenAccount])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, entry] of entries) fields[id] = await encrypt(ctx, JSON.stringify(entry));
+  await redis().hset(HIDDEN_HASH(ctx), fields);
+}

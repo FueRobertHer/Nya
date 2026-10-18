@@ -36,8 +36,14 @@ import { noticeRecipients } from './notice-recipients';
 import type { DownloadFormat } from './download-options';
 
 /** What happened: a download (its format, and whether a passphrase protects
- *  it), or a new API token. */
-export type AccessEvent = { kind: 'download'; format: DownloadFormat; protected: boolean } | { kind: 'api-token' };
+ *  it), a new API token, or, bringing a download back (lib/user-restore/),
+ *  a restore begun, a restore undone, or the account emptied. */
+export type AccessEvent =
+  | { kind: 'download'; format: DownloadFormat; protected: boolean }
+  | { kind: 'api-token' }
+  | { kind: 'restore' }
+  | { kind: 'restore-undone' }
+  | { kind: 'emptied' };
 
 /** What became of the email. */
 export type NoticeOutcome = 'sent' | 'off' | 'no-recipient' | 'failed';
@@ -75,7 +81,34 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
     : 'use Sign out everywhere in Nya (beside Log out) to end every session, and change the app password, or ask whoever runs Nya to.';
   const open = opts.link ? `Open Nya: ${opts.link}/` : 'Open Nya to do it.';
   const footer =
-    'Nya emails you each time your data is downloaded or an API token is made to read it. Its emails never include balances, amounts or account numbers.';
+    'Nya emails you each time your data is downloaded, brought back or emptied, or an API token is made to read it. Its emails never include balances, amounts or account numbers.';
+  if (event.kind === 'restore') {
+    return {
+      subject: 'A download was brought back into your Nya account',
+      text:
+        [
+          `A download of Nya data was brought back into your Nya account on ${when}: everything in it, in place of what the account had.`,
+          "If that was you, there's nothing to do.",
+          `If it wasn't you, undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: ${secure}`,
+          open,
+          footer,
+        ].join('\n\n') + '\n',
+    };
+  }
+  if (event.kind === 'restore-undone' || event.kind === 'emptied') {
+    const what = event.kind === 'restore-undone' ? 'A restore of a download into your Nya account was undone' : 'Your Nya account was emptied';
+    return {
+      subject: event.kind === 'restore-undone' ? 'A restore into your Nya account was undone' : 'Your Nya account was emptied',
+      text:
+        [
+          `${what} on ${when}: everything in it is gone, but your sign-in and API tokens.`,
+          "If that was you, there's nothing to do.",
+          `If it wasn't you, someone else has signed in as you: ${secure} A download of your data made earlier can be brought back.`,
+          open,
+          footer,
+        ].join('\n\n') + '\n',
+    };
+  }
   if (event.kind === 'download') {
     return {
       subject: 'Your Nya data was downloaded',
@@ -135,7 +168,7 @@ const retryable = (err: unknown) => err instanceof MailError && (err.status === 
  * sent. `at` is when it happened.
  */
 export async function sendAccessNotice(ctx: Ctx, event: AccessEvent, at: Date, deps: NoticeDeps = {}): Promise<NoticeOutcome> {
-  const label = event.kind === 'download' ? 'Download notice' : 'API token notice';
+  const label = { download: 'Download notice', 'api-token': 'API token notice', restore: 'Restore notice', 'restore-undone': 'Restore undone notice', emptied: 'Emptied notice' }[event.kind];
   if (!mailConfigured()) return 'off';
   let to: string[];
   try {
