@@ -563,6 +563,42 @@ describe('a key archive that doesn’t read back intact', () => {
     expect(await quietly(() => rewriteKeyArchivesAfterDeletion(s, B))).toEqual({ pending: true });
   });
 
+  describe('the older files a rewrite that stopped left of a generation', () => {
+    /** Three generations, each with an older file of its own beside its
+     *  newest (the same keys, written a second before), as a rewrite that
+     *  stopped before deleting what it replaced leaves them; and B deleted. */
+    async function withOlderFiles() {
+      const s = memoryStore();
+      for (let n = 0; n < 3; n++) await backup(s, night(n));
+      const gens = await generations(s);
+      const older = gens.map((g) => {
+        const f = s.files.get(g.pathname)!;
+        const { header } = ka.verifyKeyArchive(f.body);
+        const pathname = ka.keyArchiveName(header.taken_at, new Date(Date.parse(header.written_at) - 1000), []);
+        s.files.set(pathname, { ...f });
+        return pathname;
+      });
+      expect((await ka.listGenerations(s)).stale).toEqual([...older].sort());
+      await deleteB();
+      return { s, gens, older };
+    }
+
+    test('a run that finishes deletes them all', async () => {
+      const { s, older } = await withOlderFiles();
+      await ka.rewriteGenerations(s, tombstonesNow(), night(3));
+      expect(older.map((p) => s.files.has(p))).toEqual([false, false, false]);
+    });
+
+    test('a run that fails on a kept one deletes those of the generations it rewrote, which hold the key just destroyed, and keeps the kept one’s', async () => {
+      const { s, gens, older } = await withOlderFiles();
+      damage(s, gens[0].pathname);
+      await expect(quietly(() => ka.rewriteGenerations(s, tombstonesNow(), night(3)))).rejects.toThrow(`The key archive ${gens[0].pathname} doesn't read back intact`);
+      // The kept one's older file may be the only one of it that reads.
+      expect(older.map((p) => s.files.has(p))).toEqual([true, false, false]);
+      expect(ka.verifyKeyArchive(s.files.get(older[0])!.body).keys.has(keyB)).toBe(true);
+    });
+  });
+
   describe('a newer one passed over by its name', () => {
     /** Three generations, B deleted, and its rewrite stopped part way: the
      *  newest rewritten (its name holds every tombstone), the older two not. */
