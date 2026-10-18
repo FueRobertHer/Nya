@@ -332,10 +332,18 @@ export type SpendingView = {
   /** The exclusions the owner carried across a reconnected account couldn't
    *  be read: the transactions may count. */
   exclusions_unread?: true;
-  /** The owner's own categories couldn't all be read: some spending is filed
-   *  as the bank files it. */
-  categories_unread?: true;
+  /** Some of how the owner files transactions couldn't be read just now (see
+   *  FilingUnread): some spending may be filed otherwise than they file it. */
+  filing_unread?: true;
 };
+
+// FilingUnread: what files a row that couldn't be read, so the read layer
+// (lib/activity.ts finishActivity) files the row without it, and the owner's
+// own screens say so in their notes: the categories they chose for rows,
+// their merchants' default categories (lib/vendor-default-store.ts), or
+// their approvals of rows in the review queue (lib/review-store.ts), which
+// keep a row where it was approved. A total is then whole, but some of it
+// may be under another category than the owner's.
 
 export type HoldingsLine = { slot: string; name: string; pct: number | null; label: string | null; amount?: number };
 export type HoldingsPosition = { ticker: string | null; name: string | null; class: string; pct: number | null; label: string | null; amount?: number };
@@ -377,6 +385,9 @@ export type BudgetsView = {
   currency: string | null;
   /** This month, then last month. */
   months: BudgetsMonth[];
+  /** As spending's (FilingUnread): what is spent may count against another
+   *  budget than the owner's filing would. */
+  filing_unread?: true;
 };
 
 export type GoalLine = {

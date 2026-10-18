@@ -175,10 +175,11 @@ export function KindsEditor({
     onChange({ ...views, goals: { detail: views.goals!.detail, goals: ids } });
   };
   const unlisted = [...chosen].filter((id) => !(goals ?? []).some((g) => g.id === id));
-  // A box under a kind's choice, for what else it shows.
-  const option = (label: string, checked: boolean, set: (on: boolean) => void) => (
+  // A box under a kind's choice, for what else it shows, named with its kind
+  // wherever two kinds' boxes say the same, so a screen reader tells them apart.
+  const option = (label: string, checked: boolean, set: (on: boolean) => void, name?: string) => (
     <label className="plan-check">
-      <input type="checkbox" checked={checked} onChange={(e) => set(e.target.checked)} />
+      <input type="checkbox" checked={checked} onChange={(e) => set(e.target.checked)} {...(name ? { 'aria-label': name } : {})} />
       {label}
     </label>
   );
@@ -207,13 +208,23 @@ export function KindsEditor({
             )}
           {kind === 'spending' &&
             views.spending &&
-            option('By category too, within each group', views.spending.by === 'category', (on) => onChange({ ...views, spending: { ...views.spending!, by: on ? 'category' : 'group' } }))}
+            option(
+              'By category too, within each group',
+              views.spending.by === 'category',
+              (on) => onChange({ ...views, spending: { ...views.spending!, by: on ? 'category' : 'group' } }),
+              'Spending by category too, within each group'
+            )}
           {kind === 'holdings' &&
             views.holdings &&
             option('With the positions in them', views.holdings.positions, (on) => onChange({ ...views, holdings: { ...views.holdings!, positions: on } }))}
           {kind === 'budgets' &&
             views.budgets &&
-            option('By category too, within each group', views.budgets.by === 'category', (on) => onChange({ ...views, budgets: { ...views.budgets!, by: on ? 'category' : 'group' } }))}
+            option(
+              'By category too, within each group',
+              views.budgets.by === 'category',
+              (on) => onChange({ ...views, budgets: { ...views.budgets!, by: on ? 'category' : 'group' } }),
+              'Budgets by category too, within each group'
+            )}
           {kind === 'goals' && views.goals && (
             <>
               {goals === null ? (

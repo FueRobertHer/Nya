@@ -110,6 +110,10 @@ export type MonthActivity = {
   /** Of `notes`, those that say transactions couldn't all be read or aren't
    *  all in (lib/activity.ts finishActivity). */
   unread_notes: string[];
+  /** Whether the merchants' defaults couldn't be read, and how many of the
+   *  rows' approvals couldn't be (lib/activity.ts finishActivity): the rows
+   *  they would file are filed otherwise, which the notes say. */
+  review_unread: { defaults: boolean; approvals: number };
   taxonomy: Taxonomy;
   hidden: Set<string>;
   bank: { sources: BankSource[]; payload: PlaidPayload; own_read: { categories: boolean; names: boolean; exclusions: boolean } };
@@ -268,6 +272,7 @@ export async function readMonthActivity(ctx: Ctx, opts: { since: string; include
     rows,
     notes: finished.notes,
     unread_notes: finished.unread_notes,
+    review_unread: { defaults: finished.defaults_unread, approvals: finished.review.unknown },
     taxonomy: finished.taxonomy,
     hidden: bank.hidden,
     bank: { sources: bank.sources, payload: bank.payload, own_read: bank.own_read },

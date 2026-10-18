@@ -353,6 +353,26 @@ describe('spending', () => {
     expect(v.budgets.months.find((x: any) => x.month === month).may_be_incomplete).toBe(true);
   });
 
+  test('when how the owner files rows can’t be read, their merchants’ defaults or their approvals in the review queue, spending and budgets say so', async () => {
+    await shareViews({ spending: { detail: 'amounts', by: 'group' }, budgets: { detail: 'amounts', by: 'group' } });
+    const flags = (v: any) => [v.spending.filing_unread ?? null, v.budgets.filing_unread ?? null];
+    expect(flags(await partnerViews())).toEqual([null, null]);
+    // The merchants' default categories damaged: none files a row, as the
+    // owner's own Activity tab says in its notes.
+    await fake.set(ctxKey('vendor-defaults'), 'garbage');
+    const defaults = await quietly(partnerViews);
+    expect(flags(defaults)).toEqual([true, true]);
+    // Every figure is still shown: nothing is missing, only how it is filed.
+    expect(defaults.spending.unreadable).toBeUndefined();
+    expect(defaults.budgets.unreadable).toBeUndefined();
+    await fake.del(ctxKey('vendor-defaults'));
+    // An approval that keeps a row where it was approved, damaged.
+    await fake.hset(ctxKey('transaction-approvals'), { t_coffee: 'garbage' });
+    expect(flags(await quietly(partnerViews))).toEqual([true, true]);
+    // As the owner's own budgets say it.
+    expect((await quietly(() => readBudgets(ctx, { month: MONTH }))).notes.join(' ')).toContain('Your approval of 1 transaction couldn’t be read');
+  });
+
   test('a bank account whose transactions don’t come in leaves spending that may be short, and says so', async () => {
     await shareViews({ spending: { detail: 'amounts', by: 'group' } });
     expect((await partnerViews()).spending.may_be_incomplete).toBeUndefined();

@@ -67,10 +67,12 @@
 // history, one not synced yet, a bank account or card whose transactions
 // don't come in) is shown, and says it may be incomplete, as the owner's own
 // Budgets tab says it; so is spending that counts transactions whose
-// exclusion couldn't be read, or files some by the bank's categories because
-// the owner's couldn't be read, as the owner's Activity tab counts and says
-// them. Storage out of reach says nothing of the data, and throws
-// (lib/sharing.ts then shows nothing of the share, as for its accounts).
+// exclusion couldn't be read, and spending or budgets that file some rows
+// otherwise because how the owner files them couldn't be read (their
+// categories, their merchants' defaults, their approvals in the review
+// queue), as the owner's Activity tab counts and says them. Storage out of
+// reach says nothing of the data, and throws (lib/sharing.ts then shows
+// nothing of the share, as for its accounts).
 
 import type { Ctx } from './containers';
 import { readAccounts, readHoldings, readNetWorth, readNetWorthAndHistory, budgetsAnswer, type ApiAccount, type ApiAccounts } from './api-read';
@@ -217,6 +219,14 @@ function transactionsDamaged(sources: readonly BankSource[], manualUnread: reado
   return unread !== undefined && unread > sources.filter((s) => s.coverage !== 'complete').length;
 }
 
+/** Whether some of how the owner files rows couldn't be read
+ *  (lib/share-kinds.ts FilingUnread): the categories they chose, their
+ *  merchants' defaults, or approvals of the rows read, as the read layer
+ *  reports each. */
+function filingUnread(ownCategoriesRead: boolean, defaultsUnread: boolean, approvalsUnknown: number): boolean {
+  return !ownCategoriesRead || defaultsUnread || approvalsUnknown > 0;
+}
+
 function addMonths(month: string, n: number): string {
   const [y, m] = month.split('-').map(Number);
   const d = new Date(Date.UTC(y, m - 1 + n, 1));
@@ -310,7 +320,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
     months,
     ...(incomplete ? { may_be_incomplete: true as const } : {}),
     ...(bank.own_read.exclusions ? {} : { exclusions_unread: true as const }),
-    ...(bank.own_read.categories ? {} : { categories_unread: true as const }),
+    ...(filingUnread(bank.own_read.categories, finished.defaults_unread, finished.review.unknown) ? { filing_unread: true as const } : {}),
   };
 }
 
@@ -364,7 +374,8 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, today: string): Promise
         answer.incomplete_months.some((m) => m.month === read.month) || (read.earliest !== null && read.month < read.earliest) || carriesUncertain,
     };
   });
-  return { detail: s.detail, by: s.by, currency: reads[0].currency, months };
+  const filing = filingUnread(activity.bank.own_read.categories, activity.review_unread.defaults, activity.review_unread.approvals);
+  return { detail: s.detail, by: s.by, currency: reads[0].currency, months, ...(filing ? { filing_unread: true as const } : {}) };
 }
 
 // ---- Holdings ----

@@ -1,7 +1,7 @@
 import { describe, expect, test, afterEach } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { SharingPanelView, SharedWithMeView, PreviewView, type Choice } from '@/components/Sharing';
+import { SharingPanelView, SharedWithMeView, PreviewView, sharedProblem, type Choice } from '@/components/Sharing';
 import { SharedViewsList, outlookWords } from '@/components/SharedViews';
 import { seenText, kindsText, viewsToSave, sameViews } from '@/components/ShareKinds';
 import { shownText } from '@/components/SharingDates';
@@ -261,9 +261,13 @@ describe('on the card of the one it is shared with', () => {
 
   test('spending says what it counts that it can’t be sure of, and that a month may be short, with or without a month to show', () => {
     const sp = VIEWS.spending as any;
-    const unsure = text(card({ spending: { ...sp, months: [{ ...sp.months[0], exclusions_unknown: true }], categories_unread: true } }));
+    const unsure = text(card({ spending: { ...sp, months: [{ ...sp.months[0], exclusions_unknown: true }], filing_unread: true } }));
     expect(unsure).toContain('Whether they left some transactions out of their totals couldn’t be read, so those are counted here.');
-    expect(unsure).toContain('Their own categories couldn’t all be read, so some spending is filed as their bank files it.');
+    expect(unsure).toContain('Some of how they file their transactions couldn’t be read just now, so some of this may be under another category than the one they chose.');
+    // Budgets say it the same way.
+    const budgets = text(card({ budgets: { ...(VIEWS.budgets as any), filing_unread: true } }));
+    expect(budgets).toContain('Some of how they file their transactions couldn’t be read just now');
+    expect(text(card())).not.toContain('Some of how they file');
     const none = text(card({ spending: { ...sp, months: [], may_be_incomplete: true } }));
     expect(none).toContain('No spending recorded yet.');
     expect(none).toContain('Some transactions aren’t all in yet, so a month may be short.');
@@ -376,8 +380,11 @@ describe('in the drawer', () => {
     expect(html).toContain('class="kind-choice"');
     const page = text(html);
     expect(page.match(/By category too, within each group/g)).toHaveLength(2);
-    // The box says whether categories are shared.
-    expect(html).toMatch(/<input type="checkbox" checked=""\/>By category too/);
+    // The box says whether categories are shared, and a screen reader tells the two kinds' boxes apart.
+    expect(html).toContain('<input type="checkbox" aria-label="Spending by category too, within each group" checked=""/>By category too');
+    expect(html).toContain('aria-label="Budgets by category too, within each group"');
+    const names = [...html.matchAll(/<input type="checkbox"[^>]*aria-label="([^"]*)"/g)].map((m) => m[1]);
+    expect(new Set(names).size).toBe(names.length);
   });
 
   test('says, before anything is saved, what they could work out from all of it together, and never stops a save', () => {
@@ -492,6 +499,33 @@ test('a record’s day names the kinds shown on it, each as widely as it was sho
   } as const;
   expect(shownText(others, new Date('2026-10-20T12:00:00'))).toBe('Shown twice on Oct 4, the balance of 1 account, holdings with positions in amounts, budgets by category and 2 goals.');
   expect(shownText({ day: '2026-10-04', times: 1, levels: { exists: 0, balance: 1, transactions: 0 } }, new Date('2026-10-20T12:00:00'))).toBe('Shown once on Oct 4, the balance of 1 account.');
+});
+
+describe('a read of what is shared turned away or failing', () => {
+  const shown = { shared: [{ connection: 'c1', label: 'Sam', accounts: [], expires_at: null, views: VIEWS }] };
+
+  test('keeps what was shown and says why it couldn’t be refreshed', () => {
+    const problem = sharedProblem(429, { error: 'What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.' }, '420');
+    const page = text(renderToStaticMarkup(<SharedWithMeView data={shown} problem={problem} />));
+    expect(page).toContain('This is what was last shown: it couldn’t be refreshed. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes.');
+    expect(page).toContain('Shared by Sam');
+    expect(page).toContain('Rainy day');
+    // With nothing shown yet, it says so alone.
+    expect(text(renderToStaticMarkup(<SharedWithMeView data={null} problem={problem} />))).toBe(' What is shared with you couldn’t be shown just now. What is shared can be read 60 times in 10 minutes. Try again in 7 minutes. ');
+    // And with nothing wrong, nothing is said.
+    expect(renderToStaticMarkup(<SharedWithMeView data={null} />)).toBe('');
+  });
+
+  test('why, in words: past the limit, when to come back, by the answer or its Retry-After; else what the answer said', () => {
+    expect(sharedProblem(429, null, '61')).toBe('Try again in 2 minutes.');
+    expect(sharedProblem(429, null, '30')).toBe('Try again in a minute.');
+    expect(sharedProblem(429, null, null)).toBe('Try again in a few minutes.');
+    expect(sharedProblem(503, { error: 'The limit on reading what is shared couldn’t be checked just now, so nothing was read. Try again in a minute.' }, null)).toBe(
+      'The limit on reading what is shared couldn’t be checked just now, so nothing was read. Try again in a minute.'
+    );
+    expect(sharedProblem(500, { error: 'Could not read what is shared with you' }, null)).toBe('Could not read what is shared with you. Try again later.');
+    expect(sharedProblem(0, null, null)).toBe('Nya couldn’t be reached. Try again later.');
+  });
 });
 
 test('the card for a kind lists itself under its own name, whoever’s it is', () => {

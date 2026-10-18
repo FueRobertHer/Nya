@@ -140,13 +140,17 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
 
 // ---- Spending ----
 
+/** Some of how they file their transactions couldn't be read
+ *  (lib/share-kinds.ts FilingUnread): said under spending and budgets alike. */
+const FILING_UNREAD = 'Some of how they file their transactions couldn’t be read just now, so some of this may be under another category than the one they chose.';
+
 /** What may make a month's spending off, in words: the same for each month
  *  but whether its exclusions could all be read. */
 function spendingNotes(v: SpendingView, m: SpendingView['months'][number] | undefined): string[] {
   return [
     ...(m?.left_out ? [m.left_out] : []),
     ...(m?.exclusions_unknown || v.exclusions_unread ? ['Whether they left some transactions out of their totals couldn’t be read, so those are counted here.'] : []),
-    ...(v.categories_unread ? ['Their own categories couldn’t all be read, so some spending is filed as their bank files it.'] : []),
+    ...(v.filing_unread ? [FILING_UNREAD] : []),
     ...(v.may_be_incomplete ? ['Some transactions aren’t all in yet, so a month may be short.'] : []),
   ];
 }
@@ -335,6 +339,7 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
         </div>
       ))}
       <p className="panel-note">Spent against what is available, with what rolled over, by their own budgets.</p>
+      {v.filing_unread && <p className="stale-note">{FILING_UNREAD}</p>}
     </>
   );
 }
