@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, testKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { seedOld, bankTxn, TXNS } from './restore-fixture';
+import { clerk } from './clerk-mock';
 
 // Bringing a download back through the routes (app/api/user-restore and its
 // batch route), as the page does it (lib/user-restore/file.ts collect and
@@ -84,9 +85,11 @@ const activity = async () => {
 const rowsOf = (a: { transactions: any[] }) => a.transactions.map((t) => [t.transaction_id, t.date, t.amount, t.category, t.note ?? null, t.tags ?? null]);
 const hold = () => totalsHold(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true }));
 
+type Source = ReturnType<typeof sourceOf>;
+
 /** Read, planned and checked, as the page does before the start. */
-async function planned(text: string) {
-  const source = sourceOf(text);
+async function planned(text: string | Source) {
+  const source = typeof text === 'string' ? sourceOf(text) : text;
   const c = await collect(source);
   const p = previewOf(c);
   expect(p.refuse).toBeNull();
@@ -94,7 +97,7 @@ async function planned(text: string) {
   return { source, c, p, plan };
 }
 /** The whole restore, as the page does it. */
-async function restoreAll(text: string) {
+async function restoreAll(text: string | Source) {
   const { source, c, p, plan } = await planned(text);
   const record = await startRestore(fetcher, startBody(p, plan, source, newUserRestoreId(), 'hunter2'));
   await sendBatches(source, c, record, { fetcher, plan });
@@ -392,6 +395,74 @@ describe('the routes', () => {
     const day = await call('POST', '/api/user-restore/batch?check=1&exported=2026-10-06', '{"part":"history:net-worth","records":[{"date":"2026-10-07","value":1}]}');
     expect(day.status).toBe(400);
     expect(day.body.problem).toContain('after the download');
+  });
+});
+
+describe('who may', () => {
+  test('a demo account is refused, and told why before being asked to confirm it’s them', async () => {
+    const saved = { ...process.env };
+    try {
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+      process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+      process.env.CLERK_ALLOWED_USER_IDS = '';
+      process.env.VERCEL_ENV = 'preview';
+      process.env.DEMO_USER_IDS = 'user_demo:Alex';
+      await fake.hset(testKey('owners'), { user_demo: TEST_CTX.container });
+      clerk.signedIn = 'user_demo';
+      clerk.reverified = false;
+      expect((await call('GET', '/api/user-restore')).body).toMatchObject({ enabled: true, demo: true });
+      const { source, p, plan } = await planned(OLD.text);
+      for (const [method, body] of [
+        ['POST', startBody(p, plan, source, newUserRestoreId(), null)],
+        ['POST', { action: 'empty', confirm: 'empty my account' }],
+        ['DELETE', { restore_id: newUserRestoreId(), confirm: true }],
+      ] as const) {
+        const res = await call(method, '/api/user-restore', body);
+        expect(res.status).toBe(403);
+        expect(res.body.error).toContain('demo account');
+      }
+      expect(await userRestoreStore.get(ctx)).toBeNull();
+    } finally {
+      process.env = saved;
+      clerk.signedIn = null;
+      clerk.reverified = true;
+    }
+  });
+
+  test('with Clerk, a sign-in that isn’t fresh is asked to confirm it’s them first', async () => {
+    const saved = { ...process.env };
+    try {
+      process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_placeholder';
+      process.env.CLERK_SECRET_KEY = 'sk_test_placeholder';
+      process.env.CLERK_ALLOWED_USER_IDS = 'user_me';
+      await fake.hset(testKey('owners'), { user_me: TEST_CTX.container });
+      clerk.signedIn = 'user_me';
+      clerk.reverified = false;
+      const { source, p, plan } = await planned(OLD.text);
+      const body = startBody(p, plan, source, newUserRestoreId(), null);
+      const stale = await call('POST', '/api/user-restore', body);
+      expect(stale.status).toBe(403);
+      expect(stale.body.clerk_error).toMatchObject({ type: 'forbidden', reason: 'reverification-error' });
+      clerk.reverified = true;
+      expect((await call('POST', '/api/user-restore', body)).status).toBe(200);
+    } finally {
+      process.env = saved;
+      clerk.signedIn = null;
+      clerk.reverified = true;
+    }
+  });
+
+  test('a protected file, opened in the page with its passphrase, is brought back; a wrong passphrase opens nothing', async () => {
+    const { protectFile } = await import('@/lib/protected-download');
+    const { openFile } = await import('@/components/OpenProtectedDownload');
+    const { blobSource } = await import('@/lib/user-restore/file');
+    const plain = new TextEncoder().encode(OLD.text);
+    const file = await protectFile({ filename: 'nya.json', chunks: () => [plain] }, plain.length, 'correct horse battery', { workFactor: 10 });
+    const sealed = new Blob([...file.chunks()] as BlobPart[]);
+    expect(await openFile(sealed, 'wrong horse', () => {}).catch((err) => err)).toBeInstanceOf(Error);
+    const opened = await openFile(sealed, 'correct horse battery', () => {});
+    const record = await restoreAll(blobSource(opened, true) as Source);
+    expect(record.source).toEqual({ exported_at: EXPORTED.toISOString(), version: 2, bytes: plain.length, protected: true });
   });
 });
 
