@@ -490,14 +490,14 @@ export function SignView({
             <label className="download-format">
               <input type="radio" name={`connector-sign-${a.account_id}`} checked={signs[a.account_id] === 'owed_positive'} onChange={() => onSign(a.account_id, 'owed_positive')} />
               <span>
-                <span className="download-format-name">I owe {amount}</span>
+                <span className="download-format-name">I owe <Masked>{amount}</Masked></span>
                 <span className="download-format-note">{label} reports what you owe on it as positive: Nya counts it as a debt, from now on.</span>
               </span>
             </label>
             <label className="download-format">
               <input type="radio" name={`connector-sign-${a.account_id}`} checked={signs[a.account_id] === 'as_reported'} onChange={() => onSign(a.account_id, 'as_reported')} />
               <span>
-                <span className="download-format-name">It’s money held, {amount}</span>
+                <span className="download-format-name">It’s money held, <Masked>{amount}</Masked></span>
                 <span className="download-format-note">A credit, as on a card paid past zero: Nya counts it as yours.</span>
               </span>
             </label>

@@ -14,6 +14,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { ReviewControls } from './review-state';
 import { setActivityKeys, useActivityKeys } from './activity-keys';
 import { localDate } from '@/lib/local-date';
+import { plainNumber } from '@/lib/format';
 
 /** The first days the queue can start from, as offered: today, a week back,
  *  a month back (lib/review-layer.ts MAX_SINCE_DAYS). */
@@ -44,7 +45,7 @@ function day(iso: string): string {
   return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-const count = (n: number) => n.toLocaleString();
+const count = (n: number) => plainNumber(n);
 
 export default function ReviewSettingsCard({ review, toReview }: { review: ReviewControls; toReview: number }) {
   const today = localDate();

@@ -232,3 +232,27 @@ export function dominantCurrency(
   }
   return best;
 }
+
+/**
+ * A number that is nobody's amount, grouped as the locale groups it
+ * ("1,470"): a count of things, or a bound the app sets on what a field
+ * takes. The same whatever the switch says. The scan of the source
+ * (test/amount-sources.ts) takes a number written by toLocaleString, with
+ * nothing beside it to say what it is, for an amount written past the
+ * formatters, so one that is none is written through this instead.
+ */
+export function plainNumber(n: number): string {
+  return n.toLocaleString();
+}
+
+/**
+ * An amount as a form's field holds it to be edited: its figures alone, to
+ * `places` decimals ("1234.50"), with no symbol or grouping. Written whatever
+ * the switch says, as the person's own figure in their own field, which the
+ * CSS hook covers with one mask while amounts are hidden (app/globals.css,
+ * "Hide amounts"). Never for text drawn on a page, where it would show: the
+ * scan of the source reports any that is.
+ */
+export function fieldAmount(amount: number, places = 2): string {
+  return amount.toFixed(places);
+}

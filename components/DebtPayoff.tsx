@@ -16,7 +16,7 @@
 import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Sheet } from './Sheet';
 import { Masked } from './HideAmounts';
-import { compactMoney, formatMoney, hiddenFigure } from '@/lib/format';
+import { compactMoney, fieldAmount, formatMoney, hiddenFigure } from '@/lib/format';
 import { instantDay, localMonth } from '@/lib/local-date';
 import {
   HORIZON_MONTHS,
@@ -802,7 +802,7 @@ function DebtRow({
       : null;
   const plaidPayment =
     a.plaidMinimumCents !== null && a.plaidMinimumCents > 0 && a.plaidMinimumCents <= MAX_CENTS ? a.plaidMinimumCents : null;
-  const cents = (c: number) => (c / 100).toFixed(2);
+  const cents = (c: number) => fieldAmount(c / 100);
   const aprText = typed.apr ?? (plaidApr !== null ? String(plaidApr) : '');
   const minimumText = typed.minimum ?? (fallback !== null ? cents(fallback) : '');
   const minimumNeeded = minimum.value === null && !minimum.error;
@@ -1004,7 +1004,7 @@ function SharedNote({
           </Masked>
         </p>
         {s.named ? (
-          <button className="link-btn" onClick={() => onTerm('minimum', (s.totalCents / 100).toFixed(2))}>
+          <button className="link-btn" onClick={() => onTerm('minimum', fieldAmount(s.totalCents / 100))}>
             Billed separately? Use <Masked>{total}</Masked> for this loan
           </button>
         ) : (

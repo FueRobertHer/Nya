@@ -953,8 +953,10 @@ describe('every module a page can load writes its amounts through the switch (a 
       // The memo of the imported helper's label, not the one that lists the switch.
       expect(staleMemos(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 10]]);
       expect(unspokenLabels(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 15]]);
-      // The figure drawn bare, not the one in <Masked> nor the chart's own text.
-      expect(unmaskedChildren(dir, mods).map((s) => [s.file, s.line])).toEqual([['components/Flow.tsx', 16]]);
+      // The figure drawn bare, and each variable holding one drawn bare, not
+      // the one in <Masked> nor the chart's own text. Every other shape is
+      // test/amount-sources.test.ts's.
+      expect(unmaskedChildren(dir, mods).map((s) => [s.file, s.line])).toEqual([16, 19, 19, 19, 19].map((line) => ['components/Flow.tsx', line]));
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

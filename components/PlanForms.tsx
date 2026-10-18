@@ -6,6 +6,7 @@
 // through onSave, closing only once the server has it.
 
 import { useState } from 'react';
+import { plainNumber } from '@/lib/format';
 import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
@@ -34,7 +35,7 @@ function readNumber(text: string, what: string, min: number, max: number, opts: 
   const n = Number(t);
   const scale = opts.scale ?? 1;
   if (!Number.isFinite(n) || n * scale < min - 1e-12 || n * scale > max + 1e-12) {
-    const show = (v: number) => (scale === 1 ? v.toLocaleString() : `${Number((v / scale).toFixed(2))}%`);
+    const show = (v: number) => (scale === 1 ? plainNumber(v) : `${Number((v / scale).toFixed(2))}%`);
     throw new FieldError(`${what} must be from ${show(min)} to ${show(max)}.`);
   }
   if (opts.integer && !Number.isInteger(n)) throw new FieldError(`${what} must be a whole number.`);

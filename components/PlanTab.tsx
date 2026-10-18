@@ -90,6 +90,7 @@ import { BLOCK_MONTHS, DEFAULT_RUNS, DEFAULT_SEED, type GridCell, type SimResult
 import { canRunOut, vpwExpectedReturn } from '@/lib/fire/rules';
 import type { PlanJob } from '@/lib/fire/jobs';
 import { Masked } from './HideAmounts';
+import { plainNumber } from '@/lib/format';
 
 /** The grid's rows and columns; the plan's own rate and length are added. */
 const GRID_RATES = [0.03, 0.035, 0.04, 0.045, 0.05];
@@ -1118,7 +1119,7 @@ export function SimulationCard({
           <div className="plan-stat">
             <span className="plan-stat-value">{successText(r.successRate, 1)}</span>
             <span className="plan-stat-label">
-              of {r.paths.toLocaleString()} {nouns}
+              of {plainNumber(r.paths)} {nouns}
               {r.firstStart && r.lastStart ? ` (${monthName(r.firstStart)} to ${monthName(r.lastStart)})` : ''} lasted {sim.years} years
             </span>
           </div>

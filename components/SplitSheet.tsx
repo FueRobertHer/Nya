@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { formatMoney, hideFiguresIn } from '@/lib/format';
+import { fieldAmount, formatMoney, hideFiguresIn } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
@@ -39,7 +39,7 @@ const newKey = () => `part-${++keys}`;
 
 /** An amount as the form shows it, unsigned, in the currency's places. */
 function typed(amount: number, scale: number): string {
-  return (Math.abs(toUnits(amount, scale)) / scale).toFixed(Math.round(Math.log10(scale)));
+  return fieldAmount(Math.abs(toUnits(amount, scale)) / scale, Math.round(Math.log10(scale)));
 }
 
 /** The parts the form starts from: the split's own (what the bank changed

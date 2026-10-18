@@ -162,7 +162,7 @@ export default function GoalSheet({
       <p className="panel-note">
         An allocation is the part of the account’s balance this goal counts as its own: the money stays in the account, and goals never count more than it holds.
       </p>
-      {attempted && saveError && <div className="error">{hideAmountsIn(saveError)}</div>}
+      {attempted && saveError && <div className="error"><Masked>{hideAmountsIn(saveError)}</Masked></div>}
       {confirmDelete && goal ? (
         <>
           <p className="panel-note">Delete {goal.name} for good? Archiving keeps it, with its history.</p>
