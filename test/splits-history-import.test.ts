@@ -323,7 +323,7 @@ describe('an imported row splits and groups as the bank’s do', () => {
     );
     expect(refused.status).toBe(409);
     expect(refused.body).toMatchObject({ unreadable: true });
-    expect(refused.body.error).toContain('(transactions imported from your bank’s files)');
+    expect(refused.body.error).toContain('(transactions imported from files)');
     // Reconnecting a bank brings back nothing of a file's rows: not offered.
     expect(refused.body.error).not.toContain('reconnecting');
     // Nor a split or a group of a bank row of that account, which may stand
@@ -375,7 +375,7 @@ describe('an imported row splits and groups as the bank’s do', () => {
       ])
     );
     expect([refused.status, refused.body.unreadable]).toEqual([409, true]);
-    expect(refused.body.error).toContain('(transactions imported from your bank’s files)');
+    expect(refused.body.error).toContain('(transactions imported from files)');
     expect(await splitStore.get(ctx, 'b_rent')).toBeNull();
   });
 });
@@ -536,12 +536,12 @@ describe('when the bank sends the same transaction', () => {
       { amount: 30, category_id: travel },
       { amount: 30, category_id: travel },
     ]);
-    expect(own).toEqual({ status: 409, body: { error: 'This transaction is split as you split the row you imported for it from your bank’s file: change that split instead, with Edit split.' } });
+    expect(own).toEqual({ status: 409, body: { error: 'This transaction is split as the row imported for it is: change that split instead, with Edit split.' } });
     const grouped = await route('transaction-groups', 'POST', { name: 'Errand', category_id: travel, members: ['b_corner', 'b_tip'] });
     expect(grouped).toEqual({
       status: 409,
       body: {
-        error: '“CORNER SHOP 0042” is split as you split the row you imported for it from your bank’s file, and its parts count on their own, so a group would count it twice. Unsplit it first.',
+        error: '“CORNER SHOP 0042” is split as the row imported for it is, and its parts count on their own, so a group would count it twice. Unsplit it first.',
       },
     });
 
@@ -645,7 +645,7 @@ describe('when the bank sends the same transaction', () => {
     await storeBank([...BANK, corner()]);
     // In the lunch, in the imported row's place: a group of its own, the
     // lunch again by its own id, or a split, would hide that place.
-    const held = '“CORNER SHOP 0042” is already in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file: take it out of that group first.';
+    const held = '“CORNER SHOP 0042” is already in the group “Lunch with Sam”, in place of the row imported for it: take it out of that group first.';
     expect(await route('transaction-groups', 'POST', { name: 'Errand', category_id: food, members: ['b_corner', 'b_tip'] })).toEqual({ status: 409, body: { error: held } });
     expect(await route('transaction-groups', 'PATCH', { id: lunch.body.id, add: ['b_corner'] })).toEqual({ status: 409, body: { error: held } });
     expect(
@@ -656,7 +656,7 @@ describe('when the bank sends the same transaction', () => {
     ).toEqual({
       status: 409,
       body: {
-        error: 'This transaction counts in the group “Lunch with Sam”, in place of the row you imported for it from your bank’s file, and the group counts it whole: take it out of the group to split it.',
+        error: 'This transaction counts in the group “Lunch with Sam”, in place of the row imported for it, and the group counts it whole: take it out of the group to split it.',
       },
     });
 

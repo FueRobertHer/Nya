@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -10,12 +10,21 @@ const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // A ceiling a fixture can actually cross. The real one is 8M characters, which
-// would take roughly a hundred megabytes of JSON to reach after gzip — far too
+// would take roughly a hundred megabytes of JSON to reach after gzip, far too
 // slow to build in a unit test. A one-row blob encodes to about 800 characters,
 // so this sits well clear of the ordinary fixtures and is crossed only by the
-// deliberately bulky one. Read at import time, so it must be set before the
-// module below is imported.
-process.env.MAX_TXN_BLOB_CHARS = '5000';
+// deliberately bulky one. lib/blob.ts reads it each time it is used, so it is
+// set before each test here (test/preload.ts puts it back before every test),
+// and put back as it was once this file is done: every test file runs in one
+// process, and a ceiling left lowered refuses the next files' saves.
+const BLOB_CEILING_BEFORE = process.env.MAX_TXN_BLOB_CHARS;
+beforeEach(() => {
+  process.env.MAX_TXN_BLOB_CHARS = '5000';
+});
+afterAll(() => {
+  if (BLOB_CEILING_BEFORE === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
+  else process.env.MAX_TXN_BLOB_CHARS = BLOB_CEILING_BEFORE;
+});
 
 // Drives /transactions/sync deterministically. Declared before mock.module
 // because that call is hoisted above the imports below it (same hazard as

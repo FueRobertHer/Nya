@@ -46,7 +46,7 @@ export type FoundTxn = {
 
 /** Where a row imported into a linked account is looked for, as a refusal
  *  names it, and what says which bank row stands for one. */
-const IMPORTED_BOOKS = 'transactions imported from your bank’s files';
+const IMPORTED_BOOKS = 'transactions imported from files';
 const IMPORTED_PAIRS = 'which of the bank’s transactions stand for the ones you imported';
 
 /** Some of the stores that could hold what was asked for couldn't be read,

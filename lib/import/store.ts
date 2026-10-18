@@ -235,7 +235,7 @@ function isBalanceUpdate(v: unknown): boolean {
 export const importStore = defineMapStore<ImportEntry>('imports', {
   what: 'file imports',
   isValid: isImportEntry,
-  exportable: true, // the person's own records, as their bank's files had them
+  exportable: true, // the person's own records, as the files had them
   compress: true, // a file's records can be large
 });
 

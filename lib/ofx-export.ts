@@ -894,12 +894,12 @@ export function ofxFile(
     }
     if (fromFiles.length > 0) {
       notes.push(
-        `${plural(fromFiles.length, 'transaction you imported from your bank’s files is', 'transactions you imported from your bank’s files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
+        `${plural(fromFiles.length, 'transaction you imported from files is', 'transactions you imported from files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
       );
     }
     if (missingIds(doc.problems, importedTxnStore.name).some((id) => resolveId(id, links) === account_id)) {
       notes.push(
-        `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+        `The transactions imported into this account from files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
       );
       incomplete.add(importedTxnStore.name);
     }

@@ -27,6 +27,8 @@ import type { Ctx } from './containers';
 //
 // Read when used, not at module load: two stores import it, and whichever loads
 // first would otherwise fix the value before anything else (tests do) set it.
+// So a value a test sets holds until something sets it back: every test file
+// runs in one process, and test/preload.ts puts it back before each test.
 const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
 let resolved: { raw: string | undefined; value: number } | null = null;
 export function maxBlobChars(): number {

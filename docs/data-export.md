@@ -20,7 +20,7 @@ On the Accounts tab, tap **Manage**, then **Download my data** at the bottom. Pi
 | Format | File | What it holds |
 | --- | --- | --- |
 | Everything (JSON) | `nya-data-<date>.json` | Every part described below. |
-| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, those SimpleFIN or Lunch Flow brought, those on manual accounts, entered by hand or imported, and those imported into linked accounts from your bank's files. |
+| Transactions (CSV) | `nya-transactions-<date>.csv` | Every transaction, one per row: those stored from your banks, those SimpleFIN or Lunch Flow brought, those on manual accounts, entered by hand or imported, and those imported into linked accounts from files (your bank's, or another app's export). |
 | Balance history (CSV) | `nya-balances-<date>.csv` | Net worth and each account's balance, day by day. |
 | Bank or card statement (OFX) | `nya-<institution>-<account>-<date>.ofx` | One bank account's or card's posted transactions, for another money app, or to import into Nya again ([below](#one-account-as-ofx)). |
 
@@ -189,7 +189,7 @@ Each account's own balance by day, one point per day, by the same rules the app'
 
 ### `transactions[]`
 
-Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions), and those imported into linked accounts from your bank's files in [`imported-transactions`](#imported-transactions)):
+Every transaction stored from your banks, all of history (not just the year the Activity tab shows), newest first. Each has every field Nya stores, as Plaid sent it (transactions on manual accounts, entered by hand or imported, are in [`manual-transactions`](#manual-transactions), and those imported into linked accounts from files in [`imported-transactions`](#imported-transactions)):
 
 | Field | Meaning |
 | --- | --- |
@@ -582,7 +582,7 @@ Adding one doesn't change the account's balance unless you asked, so the rows ne
 
 #### `imported-transactions`
 
-Transactions imported into linked accounts from your bank's files ([Importing history into a linked account](features.md#importing-history-into-a-linked-account)), all of them: those counted, those kept as a duplicate of a transaction already there (the bank's, or one an earlier file brought in), and those a transaction the bank sent later now stands for. One entry per account they were imported into: `id` is that account's id then (an account re-added after a reconnect has a new id, and `account_links` says which ids are the same account), and `value` holds `version` (1) and `rows`, in the order they were added:
+Transactions imported into linked accounts from files ([Importing history into a linked account](features.md#importing-history-into-a-linked-account), or [from another app](features.md#switching-from-another-app)), all of them: those counted, those kept as a duplicate of a transaction already there (the bank's, or one an earlier file brought in), and those a transaction the bank sent later now stands for. One entry per account they were imported into: `id` is that account's id then (an account re-added after a reconnect has a new id, and `account_links` says which ids are the same account), and `value` holds `version` (1) and `rows`, in the order they were added:
 
 | Field | Meaning |
 | --- | --- |

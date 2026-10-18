@@ -278,7 +278,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['points[].estimated', 'True for a point reconstructed from transactions rather than recorded: only with include_estimated=true.'],
       [
         'from_imports',
-        'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from your bank’s files rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',
+        'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from files (your bank’s, or another app’s export) rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',
       ],
       ['notes', 'Anything that couldn’t be read, in words for a person: an account’s currency, say. Empty when all is well. An account_id that names no account Nya has or had is a 404.'],
     ],

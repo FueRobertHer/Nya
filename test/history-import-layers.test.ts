@@ -474,7 +474,7 @@ describe('parts the files are made from that can’t be read', () => {
     const ofx = await statement();
     expect(ofx.incomplete).toEqual(expect.arrayContaining(['carried-annotations', 'imported-transactions']));
     expect(ofx.notes).toContain(
-      `The transactions imported into this account from your bank’s files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+      `The transactions imported into this account from files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
     );
     expect(ofx.notes).toContain(
       `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
