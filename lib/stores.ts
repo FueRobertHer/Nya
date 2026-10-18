@@ -42,6 +42,7 @@ import './splits';
 import './tags';
 import './timeline-notes';
 import './txn-annotations';
+import './user-restore/store';
 import './vendor-default-store';
 import './weekly-summary/store';
 

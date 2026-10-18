@@ -1194,6 +1194,9 @@ describe('stores built on the storage seam', () => {
       'manual-transactions',
       'planned-items',
       'report-settings',
+      'restored-accounts',
+      'restored-investment-transactions',
+      'restored-transactions',
       'review-settings',
       'rules',
       'tags',
@@ -1202,6 +1205,7 @@ describe('stores built on the storage seam', () => {
       'transaction-approvals',
       'transaction-groups',
       'transaction-splits',
+      'user-restore',
       'vendor-defaults',
       'weekly-summary',
     ]);
