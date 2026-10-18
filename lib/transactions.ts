@@ -773,23 +773,31 @@ export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null
 
 /**
  * After a sync saved an Item's store without rows the bank removed: what the
- * person said about those transactions (an exclusion) can never be shown
- * again, so it goes, by the rules every such prune keeps (nothing while a
- * store can't be read or is behind, nor a record this release doesn't
- * recognise; lib/txn-annotations.ts pruneOrphanAnnotations). Only those
- * transactions' records, and the stores are read only when one has one.
- * Never fails the sync: a record left is pruned by the next disconnect or
- * forget, and is never shown meanwhile, its transaction being gone. A split
- * of one goes the same way, and one in a group leaves it (lib/split-gone.ts),
- * and so does its approval, but a pending one's, which first moves to the
- * posted row that replaced it among `rows` (the store as just saved), being
- * the same transaction (lib/review-store.ts carryApprovalsToPosted).
+ * person said about those transactions (an exclusion, a category) can never
+ * be shown again, so it goes, by the rules every such prune keeps (nothing
+ * while a store can't be read or is behind, nor a record this release doesn't
+ * recognise; lib/txn-annotations.ts pruneOrphanAnnotations, lib/overrides.ts
+ * pruneOrphanOverrides). Only those transactions' records, and the stores
+ * are read only when one has one. Never fails the sync: a record left is
+ * pruned by the next disconnect or forget, and is never shown meanwhile, its
+ * transaction being gone. A split of one goes the same way, and one in a
+ * group leaves it (lib/split-gone.ts), and so does its approval, but a
+ * pending one's, which first moves to the posted row that replaced it among
+ * `rows` (the store as just saved), being the same transaction
+ * (lib/review-store.ts carryApprovalsToPosted).
  */
 async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>, rows: Iterable<StoredTxn>): Promise<void> {
   try {
     await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
   } catch (err) {
     console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    // Imported here, when needed, as lib/overrides.ts reads this module's
+    // rows itself (the sync imports lib/history-import/twins.ts so too).
+    await (await import('./overrides')).pruneOrphanOverrides(ctx, { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the categories of transactions the bank removed', err instanceof Error ? err.name : err);
   }
   try {
     await carryApprovalsToPosted(ctx, removed, rows);

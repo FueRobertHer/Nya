@@ -242,7 +242,7 @@ A transaction you split or grouped is here whole, as stored, filed as it would b
 
 ### `category_overrides[]` and `merchant_renames[]`
 
-Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), including any whose transaction is no longer stored (the bank removed it), and every merchant you renamed (`vendor_key`, `name`).
+Every category you set (`transaction_id`, `category`), on a bank's transaction or on one imported into a linked account ([`imported-transactions`](#imported-transactions)), and every merchant you renamed (`vendor_key`, `name`). One whose transaction the bank removed goes once a sync saves the removal, as what you said about it does (nothing goes while a store of transactions can't be read), and so do those of an institution you disconnect, after they are kept in `txn-category-carry`; until then it is in the file too, though no transaction shows it.
 
 ### `investment_transactions[]`
 

@@ -273,12 +273,15 @@ export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
  * overrides are live); otherwise nothing (lib/transactions.ts
  * storedTransactionIds). A row imported into a linked account is in no Item's
  * store: its override goes with the row (lib/history-import/commit.ts).
+ * `among` keeps it to the overrides of those transactions (the ones a sync
+ * just saved the bank's removal of, lib/transactions.ts), and the stores are
+ * read only if one of them has an override.
  */
-export async function pruneOrphanOverrides(ctx: Ctx): Promise<number> {
+export async function pruneOrphanOverrides(ctx: Ctx, opts: { among?: ReadonlySet<string> } = {}): Promise<number> {
   // The overrides first, then the Items and their stores: a category set on a
   // row saved meanwhile, of an Item linked meanwhile too, is then always
   // checked against a read that has the row.
-  const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
+  const ids = (await redis().hkeys(OVERRIDES_HASH(ctx))).filter((id) => !opts.among || opts.among.has(id));
   if (ids.length === 0) return 0;
   const known = await storedTransactionIds(ctx);
   if (!known) return 0;

@@ -60,6 +60,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
 const { setExcluded } = await import('@/lib/txn-annotations');
+const { setOverride, getOverrides } = await import('@/lib/overrides');
 const {
   syncItemTransactions,
   readItemTransactions,
@@ -602,6 +603,34 @@ describe('what was said about a transaction the bank removed', () => {
     } finally {
       fake.get = get;
     }
+  });
+
+  test('a category chosen for it goes too, by the same rules; one of a transaction still stored, or of a row imported from a file, stays', async () => {
+    await seed();
+    const IMPORTED = 'import:00000000-0000-4000-8000-000000000002';
+    for (const id of ['t1', 't2', 't6', IMPORTED]) await setOverride(ctx, id, 'travel');
+    removing('t2', 'never_stored');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual([IMPORTED, 't1', 't6'].sort());
+    // Not while another Item's store can't be read: it may hold the row.
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify({ ...ITEM, item_id: 'item_b' }) });
+    await fake.set(ctxKey('txns:item_b'), 'not-ciphertext');
+    removing('t6');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx))).toContain('t6');
+    // Nor when the sync's own save fails.
+    await fake.del(ctxKey('txns:item_b'));
+    await fake.hdel(ctxKey('plaid:items'), 'item_b');
+    removing('t1');
+    fake.failNext('set');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await syncItemTransactions(ctx, ITEM);
+    } finally {
+      console.warn = warn;
+    }
+    expect(Object.keys(await getOverrides(ctx))).toContain('t1');
   });
 
   // The removal and the row's return in one sync: the store it saves has the
