@@ -1202,7 +1202,7 @@ export default function MonthBreakdown({
                                 <ul className="rule-matched">
                                   {t.rule_ids!.map((id) => {
                                     const sentence = ruleSentenceOf(id);
-                                    return sentence ? <li key={id}>{sentence}</li> : null;
+                                    return sentence ? <li key={id}><Masked>{sentence}</Masked></li> : null;
                                   })}
                                 </ul>
                               </div>

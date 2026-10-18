@@ -10,7 +10,10 @@
 // It reads TypeScript as text, not as a syntax tree: enough for the shapes
 // this codebase writes (functions, arrow functions, imports and exports by
 // name, JSX), and each check errs towards reporting, so a false report is
-// fixed by writing the code the plain way, never by loosening the scan.
+// fixed by writing the code the plain way, never by loosening the scan. One
+// reader (lex) tells its code from all that is none (strings, template text,
+// regular expressions, comments, JSX's text), so a bracket, a quote or a "//"
+// in any of those hides nothing after it.
 //
 // WHAT IT TAKES FOR AN AMOUNT. A call to a formatter (FORMATTERS), or to a
 // function that writes one, its module's or imported, to a fixed point; one
@@ -29,73 +32,382 @@ import { dirname, join, relative } from 'node:path';
 
 export type Source = { path: string; text: string };
 
-/** The source without its comments, its string and template text kept (a
- *  template's ${...} is code). Keeps every offset's line. */
-export function withoutComments(text: string): string {
-  let out = '';
-  let i = 0;
-  while (i < text.length) {
-    const c = text[i];
-    const next = text[i + 1];
-    if (c === '/' && next === '/') {
-      while (i < text.length && text[i] !== '\n') i++;
-      continue;
-    }
-    if (c === '/' && next === '*') {
-      const end = text.indexOf('*/', i + 2);
-      const body = text.slice(i, end < 0 ? text.length : end + 2);
-      out += body.replace(/[^\n]/g, ' ');
-      i += body.length;
-      continue;
-    }
-    if (c === "'" || c === '"') {
-      let j = i + 1;
-      while (j < text.length && text[j] !== c && text[j] !== '\n') j += text[j] === '\\' ? 2 : 1;
-      out += text.slice(i, j + 1);
-      i = j + 1;
-      continue;
-    }
-    out += c;
-    i++;
-  }
-  return out;
+// ---- Reading the text ----
+
+/** An element as written: its name ('' for a fragment), from its "<" to the
+ *  end of its closing tag. */
+type Element = { name: string; start: number; end: number };
+/** An expression in braces in JSX, `open` and `close` its braces: an
+ *  attribute's (`attr` its name, '...' for a spread) or a child's (`attr`
+ *  null), in `element`. */
+type JsxExpr = { open: number; close: number; element: Element; attr: string | null };
+/** A module's elements and JSX expressions, and its code's braces (for where
+ *  a variable can be read). */
+export type Jsx = { elements: Element[]; exprs: JsxExpr[]; blocks: [number, number][] };
+
+/**
+ * A text read as TypeScript, and as JSX too in a .tsx module: what of it is
+ * code, and how its brackets pair. What is no code is passed over whole: a
+ * string, a template literal's text (its ${...} is code), a regular
+ * expression, a comment, and JSX's own text and quoted attributes. So a
+ * bracket, a quote or a "//" in any of them is read as the text it is.
+ */
+export type Lexed = {
+  /** The text, its comments written over with spaces: every offset kept. */
+  code: string;
+  /** The text with all that is no code written over with spaces, its line
+   *  breaks kept: the names and the operators it is made of, where they are. */
+  names: string;
+  /** Where each stretch of no code ends, by where it starts. */
+  opaque: Map<number, number>;
+  /** Each bracket of the code and the one pairing it, both ways (a
+   *  template's ${...} and a JSX expression's braces among them). */
+  pairs: Map<number, number>;
+  /** Where each element ends, by where it starts. */
+  elementEnd: Map<number, number>;
+  jsx: Jsx;
+};
+
+const IDENT = /[\w$]/;
+const OPENER: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
+
+/** The word ending at `i`. */
+function wordAt(text: string, i: number): string {
+  let j = i;
+  while (j >= 0 && IDENT.test(text[j])) j--;
+  return text.slice(j + 1, i + 1);
 }
 
-/** The index of the bracket closing the one at `open`, or -1. Skips string
- *  and template text, but not a template's code. */
-export function closing(text: string, open: number): number {
-  const pairs: Record<string, string> = { '(': ')', '[': ']', '{': '}' };
-  const stack: string[] = [];
-  for (let i = open; i < text.length; i++) {
-    const c = text[i];
-    if (c === "'" || c === '"') {
-      i++;
-      while (i < text.length && text[i] !== c && text[i] !== '\n') i += text[i] === '\\' ? 2 : 1;
-      continue;
-    }
-    if (pairs[c]) stack.push(pairs[c]);
-    else if (c === ')' || c === ']' || c === '}') {
-      if (stack.pop() !== c) return -1;
-      if (stack.length === 0) return i;
-    }
+/** The index past a string literal at `at`: a JSX attribute's may span lines
+ *  and has no escapes. */
+function pastString(text: string, at: number, jsx = false): number {
+  const q = text[at];
+  let j = at + 1;
+  while (j < text.length && text[j] !== q && (jsx || text[j] !== '\n')) j += !jsx && text[j] === '\\' ? 2 : 1;
+  return Math.min(j + 1, text.length);
+}
+
+/** The index past a regular expression literal at `at`, or -1 when its line
+ *  holds none. */
+function pastRegex(text: string, at: number): number {
+  let j = at + 1;
+  let inClass = false;
+  while (j < text.length && text[j] !== '\n') {
+    const c = text[j];
+    if (c === '\\') j += 2;
+    else if (c === '[') (inClass = true), j++;
+    else if (c === ']') (inClass = false), j++;
+    else if (c === '/' && !inClass) {
+      j++;
+      while (/[a-z]/.test(text[j] ?? '')) j++;
+      return j;
+    } else j++;
   }
   return -1;
+}
+
+/** `text` written over with spaces in `ranges` (in order), its line breaks
+ *  kept. */
+function blankIn(text: string, ranges: readonly [number, number][]): string {
+  let out = '';
+  let at = 0;
+  for (const [from, to] of ranges) {
+    out += text.slice(at, from) + text.slice(from, to).replace(/[^\n]/g, ' ');
+    at = to;
+  }
+  return out + text.slice(at);
+}
+
+/**
+ * `text` read as TypeScript, and as JSX too when `jsx` (Lexed). A "<" that
+ * turns out to start no element (a generic arrow function's `<T,>`) is read
+ * as code again, with nothing recorded from it.
+ */
+export function lex(text: string, jsx: boolean): Lexed {
+  const passed: [number, number][] = [];
+  const comments: [number, number][] = [];
+  const pairs: [number, number][] = [];
+  const out: Jsx = { elements: [], exprs: [], blocks: [] };
+  const mark = () => [passed.length, comments.length, pairs.length, out.elements.length, out.exprs.length, out.blocks.length];
+  const undo = (m: number[]) => {
+    [passed.length, comments.length, pairs.length, out.elements.length, out.exprs.length, out.blocks.length] = m;
+    return -1;
+  };
+  const pass = (from: number, to: number) => (passed.push([from, to]), to);
+
+  // A comment at `at`, to past its end.
+  const comment = (at: number): number => {
+    const end = text[at + 1] === '/' ? text.indexOf('\n', at) : text.indexOf('*/', at + 2);
+    const to = end < 0 ? text.length : text[at + 1] === '/' ? end : end + 2;
+    comments.push([at, to]);
+    return pass(at, to);
+  };
+
+  // The last index before `at` that is neither a space nor in a comment.
+  const previous = (at: number): number => {
+    let i = at - 1;
+    let k = comments.length - 1;
+    for (;;) {
+      while (i >= 0 && /\s/.test(text[i])) i--;
+      while (k >= 0 && comments[k][0] > i) k--;
+      if (k < 0 || i >= comments[k][1]) return i;
+      i = comments[k][0] - 1;
+    }
+  };
+
+  // Whether a "<" at `at`, in code, starts an element rather than comparing
+  // or naming a type: after an operator, a bracket or `return`, never after a
+  // name, a number or a closing bracket.
+  const startsElement = (at: number): boolean => {
+    if (!/[A-Za-z_$>]/.test(text[at + 1] ?? '')) return false;
+    const i = previous(at);
+    if (i < 0) return true;
+    if (IDENT.test(text[i])) return /^(?:return|yield|await|default|case)$/.test(wordAt(text, i));
+    return !/[)\]'"`.]/.test(text[i]);
+  };
+
+  // Whether a "/" at `at`, in code, starts a regular expression rather than
+  // dividing: after an operator, a bracket or a keyword.
+  const startsRegex = (at: number): boolean => {
+    const i = previous(at);
+    if (i < 0) return true;
+    if (IDENT.test(text[i])) return /^(?:return|typeof|instanceof|in|of|new|delete|void|throw|case|do|else|yield|await)$/.test(wordAt(text, i));
+    return !/[)\]'"`]/.test(text[i]);
+  };
+
+  // Code from `i`: to the "}" closing it (`inBraces`), whose index is
+  // returned, or to the end.
+  const code = (i: number, inBraces: boolean): number => {
+    const open: number[] = [];
+    while (i < text.length) {
+      const c = text[i];
+      if (c === '/' && (text[i + 1] === '/' || text[i + 1] === '*')) {
+        i = comment(i);
+        continue;
+      }
+      if (c === "'" || c === '"') {
+        i = pass(i, pastString(text, i));
+        continue;
+      }
+      if (c === '`') {
+        i = template(i);
+        continue;
+      }
+      if (c === '/' && startsRegex(i)) {
+        const past = pastRegex(text, i);
+        if (past > 0) {
+          i = pass(i, past);
+          continue;
+        }
+      }
+      if (c === '(' || c === '[' || c === '{') open.push(i);
+      else if (c === ')' || c === ']' || c === '}') {
+        const top = open[open.length - 1];
+        if (top !== undefined && text[top] === OPENER[c]) {
+          open.pop();
+          pairs.push([top, i]);
+          if (c === '}') out.blocks.push([top, i]);
+        } else if (c === '}' && inBraces && !open.some((o) => text[o] === '{')) return i;
+      } else if (jsx && c === '<' && startsElement(i)) {
+        const past = element(i);
+        if (past > 0) {
+          i = past;
+          continue;
+        }
+      }
+      i++;
+    }
+    return i;
+  };
+
+  // A template literal at `i`, to past its closing backtick.
+  const template = (i: number): number => {
+    let from = i;
+    let j = i + 1;
+    while (j < text.length) {
+      const c = text[j];
+      if (c === '\\') j += 2;
+      else if (c === '`') return pass(from, j + 1);
+      else if (c === '$' && text[j + 1] === '{') {
+        pass(from, j + 1);
+        const close = code(j + 2, true);
+        if (close >= text.length) return close;
+        pairs.push([j + 1, close]);
+        from = j = close + 1;
+      } else j++;
+    }
+    return pass(from, text.length);
+  };
+
+  // Past spaces and comments, in a tag.
+  const pastSpace = (j: number): number => {
+    for (;;) {
+      while (j < text.length && /\s/.test(text[j])) j++;
+      if (text[j] !== '/' || (text[j + 1] !== '/' && text[j + 1] !== '*')) return j;
+      j = comment(j);
+    }
+  };
+
+  // A JSX expression whose "{" is at `j`, in `el`, to past its "}", or -1
+  // for none.
+  const expr = (j: number, el: Element, attr: string | null): number => {
+    const close = code(j + 1, true);
+    if (close >= text.length) return -1;
+    pairs.push([j, close]);
+    out.exprs.push({ open: j, close, element: el, attr });
+    return close + 1;
+  };
+
+  // An element at `i`, to past its end, or -1 for none.
+  const element = (i: number): number => {
+    const before = mark();
+    const name = /^[A-Za-z_$][\w$.:-]*/.exec(text.slice(i + 1, i + 200))?.[0] ?? '';
+    let j = i + 1 + name.length;
+    // A generic arrow function's type parameters, `<T,>` or `<T extends ...>`.
+    if (name && /^\s*(?:,|extends\b)/.test(text.slice(j, j + 20))) return -1;
+    const el: Element = { name, start: i, end: -1 };
+    if (!name) {
+      if (text[j] !== '>') return -1;
+      j++;
+    } else {
+      for (;;) {
+        j = pastSpace(j);
+        if (j >= text.length) return undo(before);
+        if (text.startsWith('/>', j)) {
+          el.end = j + 2;
+          out.elements.push(el);
+          return el.end;
+        }
+        if (text[j] === '>') {
+          j++;
+          break;
+        }
+        if (text[j] === '{') {
+          j = expr(j, el, '...');
+          if (j < 0) return undo(before);
+          continue;
+        }
+        const attr = /^[\w$:.-]+/.exec(text.slice(j, j + 100))?.[0];
+        if (!attr) return undo(before);
+        j = pastSpace(j + attr.length);
+        if (text[j] !== '=') continue;
+        j = pastSpace(j + 1);
+        if (text[j] === '"' || text[j] === "'") j = pass(j, pastString(text, j, true));
+        else if (text[j] === '{') j = expr(j, el, attr);
+        else if (text[j] === '<') j = element(j);
+        else return undo(before);
+        if (j < 0) return undo(before);
+      }
+    }
+    // Its children, their text passed over, to its closing tag.
+    let from = j;
+    while (j < text.length) {
+      const c = text[j];
+      if (c === '<' || c === '{') {
+        if (j > from) pass(from, j);
+        if (text.startsWith('</', j)) {
+          const close = text.indexOf('>', j);
+          if (close < 0 || text.slice(j + 2, close).trim() !== name) return undo(before);
+          el.end = close + 1;
+          out.elements.push(el);
+          return el.end;
+        }
+        j = c === '<' ? element(j) : expr(j, el, null);
+        if (j < 0) return undo(before);
+        from = j;
+        continue;
+      }
+      j++;
+    }
+    return undo(before);
+  };
+
+  code(0, false);
+  return {
+    code: blankIn(text, comments),
+    names: blankIn(text, passed),
+    opaque: new Map(passed),
+    pairs: new Map(pairs.flatMap(([a, b]) => [[a, b] as const, [b, a] as const])),
+    elementEnd: new Map(out.elements.map((el) => [el.start, el.end])),
+    jsx: out,
+  };
+}
+
+const recent = new Map<string, Lexed>();
+
+/** A part of an expression read as code (lex): the last few kept, as the
+ *  same part is read again and again. */
+function lexed(text: string): Lexed {
+  let lx = recent.get(text);
+  if (!lx) {
+    lx = lex(text, false);
+    recent.set(text, lx);
+    if (recent.size > 64) recent.delete(recent.keys().next().value!);
+  }
+  return lx;
+}
+
+/** The source without its comments, written over with spaces. */
+export function withoutComments(text: string, jsx = true): string {
+  return lex(text, jsx).code;
+}
+
+/** The elements, JSX expressions and code blocks of a module's text. */
+export function jsxOf(text: string): Jsx {
+  return lex(text, true).jsx;
+}
+
+/** The index of the bracket closing the one at `open`, or -1, in code (lex):
+ *  past strings, template text, regular expressions and comments. */
+export function closing(text: string | Lexed, open: number): number {
+  const close = (typeof text === 'string' ? lexed(text) : text).pairs.get(open);
+  return close !== undefined && close > open ? close : -1;
 }
 
 /** The index of the bracket opening the one at `close`, or -1: closing(),
  *  backwards. */
-function opening(text: string, close: number): number {
-  const pairs: Record<string, string> = { ')': '(', ']': '[', '}': '{' };
-  const stack: string[] = [];
-  for (let i = close; i >= 0; i--) {
-    const c = text[i];
-    if (pairs[c]) stack.push(pairs[c]);
-    else if (c === '(' || c === '[' || c === '{') {
-      if (stack.pop() !== c) return -1;
-      if (stack.length === 0) return i;
-    }
+function opening(lx: Lexed, close: number): number {
+  const open = lx.pairs.get(close);
+  return open !== undefined && open < close ? open : -1;
+}
+
+/** The indexes of `code` at its outermost level: in no bracket, and in no
+ *  string, template or regular expression. */
+function topLevel(code: string): number[] {
+  const lx = lexed(code);
+  const out: number[] = [];
+  for (let i = 0; i < code.length; i++) {
+    const past = lx.opaque.get(i);
+    const pair = lx.pairs.get(i);
+    if (past !== undefined) i = past - 1;
+    else if (pair !== undefined) i = Math.max(i, pair);
+    else out.push(i);
   }
-  return -1;
+  return out;
+}
+
+/** Where the statement at `at` ends: at the first ";" or line end at its
+ *  outermost level that ends it, or at the bracket closing what it is in;
+ *  an element, a string or a template being read whole. */
+function statementEnd(lx: Lexed, at: number): number {
+  const t = lx.code;
+  let i = at;
+  for (; i < t.length; i++) {
+    const past = lx.opaque.get(i) ?? lx.elementEnd.get(i);
+    if (past !== undefined) {
+      i = past - 1;
+      continue;
+    }
+    const pair = lx.pairs.get(i);
+    if (pair !== undefined && pair > i) {
+      i = pair;
+      continue;
+    }
+    const c = t[i];
+    if (c === ')' || c === ']' || c === '}' || c === ';') break;
+    if (c === '\n' && !/^\s*[.?:&|+]/.test(t.slice(i + 1, i + 40)) && !/[=(,?:&|+]\s*$/.test(t.slice(Math.max(0, i - 40), i))) break;
+  }
+  return i;
 }
 
 /** Every .ts and .tsx file under `dir`. */
@@ -179,7 +491,8 @@ export type Bypass = { file: string; line: number; text: string };
 /** Where the expression a method is called on starts, `dot` being the "."
  *  before the method: back over names, members, calls, indexes, a group in
  *  parentheses and non-null assertions. */
-function receiverStart(text: string, dot: number): number {
+function receiverStart(lx: Lexed, dot: number): number {
+  const text = lx.code;
   let i = dot - 1;
   for (;;) {
     const c = text[i];
@@ -188,7 +501,7 @@ function receiverStart(text: string, dot: number): number {
       continue;
     }
     if (c === ')' || c === ']') {
-      const open = opening(text, i);
+      const open = opening(lx, i);
       if (open < 0) return i + 1;
       // A call's callee, or an index's object, is part of it; a group stands alone.
       if (open > 0 && /[\w$)\]!]/.test(text[open - 1])) {
@@ -227,8 +540,9 @@ const COLOR_BEFORE = /\b(?:rgba?|hsla?)\([^()`]*\$\{$/;
  * word saying what it counts, or by its noun chosen by it, or a length) or a
  * date. Anything else is taken for an amount.
  */
-function saysWhatItIs(text: string, dot: number, end: number, method: 'toFixed' | 'toLocaleString'): boolean {
-  const start = receiverStart(text, dot);
+function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | 'toLocaleString'): boolean {
+  const text = lx.code;
+  const start = receiverStart(lx, dot);
   const receiver = text.slice(start, dot);
   const before = text.slice(Math.max(0, start - 60), start);
   // Past the calls wrapping it, and the template's or JSX's brace closing it.
@@ -249,16 +563,17 @@ function saysWhatItIs(text: string, dot: number, end: number, method: 'toFixed' 
   return new RegExp(`^\\s*\\$?\\{\\s*${name}!?\\s*===\\s*1\\b`).test(after);
 }
 
-/** Where `text` formats a number as an amount itself (Intl or
+/** Where a module's code formats a number as an amount itself (Intl or
  *  toLocaleString with an amount's options, toFixed or toLocaleString with
  *  none and nothing beside it to say otherwise, or a "$" by hand), by
  *  offset. */
-function numberFormats(text: string): number[] {
+function numberFormats(lx: Lexed): number[] {
+  const text = lx.code;
   const out: number[] = [];
   for (const rx of [NUMBER_FORMAT, LOCALE_STRING, TO_FIXED]) {
-    for (const m of text.matchAll(rx)) {
+    for (const m of lx.names.matchAll(rx)) {
       const open = m.index! + m[0].length - 1;
-      const end = closing(text, open);
+      const end = closing(lx, open);
       if (end < 0) continue;
       const args = text.slice(open + 1, end);
       if (rx === NUMBER_FORMAT || args.includes('{')) {
@@ -266,7 +581,7 @@ function numberFormats(text: string): number[] {
         if (!AMOUNT_OPTIONS.test(args)) continue;
         // Asked what a currency's minor unit is, not to write one.
         if (/^\s*\.resolvedOptions\(/.test(text.slice(end + 1))) continue;
-      } else if (saysWhatItIs(text, m.index!, end, rx === TO_FIXED ? 'toFixed' : 'toLocaleString')) {
+      } else if (saysWhatItIs(lx, m.index!, end, rx === TO_FIXED ? 'toFixed' : 'toLocaleString')) {
         continue;
       }
       out.push(m.index!);
@@ -287,9 +602,10 @@ const lineText = (text: string, at: number) => {
 export function bypasses(sources: readonly Source[]): Bypass[] {
   const out: Bypass[] = [];
   for (const { path, text: raw } of sources) {
-    const text = withoutComments(raw.replace(/\r/g, ''));
+    const lx = lex(raw.replace(/\r/g, ''), path.endsWith('.tsx'));
+    const text = lx.code;
     const lines = new Set<number>();
-    for (const at of numberFormats(text)) {
+    for (const at of numberFormats(lx)) {
       const line = lineOf(text, at);
       if (guarded(text, at) || lines.has(line)) continue;
       lines.add(line);
@@ -299,309 +615,39 @@ export function bypasses(sources: readonly Source[]): Bypass[] {
   return out;
 }
 
-// ---- JSX ----
+// ---- What a module writes ----
 
-/** An element as written: its name ('' for a fragment), from its "<" to the
- *  end of its closing tag. */
-type Element = { name: string; start: number; end: number };
-/** An expression in braces in JSX, `open` and `close` its braces: an
- *  attribute's (`attr` its name, '...' for a spread) or a child's (`attr`
- *  null), in `element`. */
-type JsxExpr = { open: number; close: number; element: Element; attr: string | null };
-/** A module's elements and JSX expressions, and its code's braces (for where
- *  a variable can be read). */
-export type Jsx = { elements: Element[]; exprs: JsxExpr[]; blocks: [number, number][] };
-
-const IDENT = /[\w$]/;
-
-/** The last character before `at` that is not a space, and where. */
-function previousSignificant(text: string, at: number): { c: string; i: number } {
-  let i = at - 1;
-  while (i >= 0 && /\s/.test(text[i])) i--;
-  return { c: i >= 0 ? text[i] : '', i };
-}
-
-/** The word ending at `i`. */
-function wordAt(text: string, i: number): string {
-  let j = i;
-  while (j >= 0 && IDENT.test(text[j])) j--;
-  return text.slice(j + 1, i + 1);
-}
-
-/** Whether a "<" at `at`, in code, starts an element rather than comparing or
- *  naming a type: after an operator, a bracket or `return`, never after a
- *  name, a number or a closing bracket. */
-function startsElement(text: string, at: number): boolean {
-  if (!/[A-Za-z_$>]/.test(text[at + 1] ?? '')) return false;
-  const { c, i } = previousSignificant(text, at);
-  if (c === '') return true;
-  if (IDENT.test(c)) return /^(?:return|yield|await|default|case)$/.test(wordAt(text, i));
-  return !/[)\]'"`.]/.test(c);
-}
-
-/** Whether a "/" at `at`, in code, starts a regular expression rather than
- *  dividing: after an operator, a bracket or a keyword. */
-function startsRegex(text: string, at: number): boolean {
-  if (text[at + 1] === '/' || text[at + 1] === '*') return false;
-  const { c, i } = previousSignificant(text, at);
-  if (c === '') return true;
-  if (IDENT.test(c)) return /^(?:return|typeof|case|do|else|in|of|void|yield|await)$/.test(wordAt(text, i));
-  return !/[)\]'"`]/.test(c);
-}
-
-/** The index past a string literal at `at`: a JSX attribute's may span lines
- *  and has no escapes. */
-function pastString(text: string, at: number, jsx = false): number {
-  const q = text[at];
-  let j = at + 1;
-  while (j < text.length && text[j] !== q && (jsx || text[j] !== '\n')) j += !jsx && text[j] === '\\' ? 2 : 1;
-  return j + 1;
-}
-
-/** The index past a regular expression literal at `at`, or -1 when its line
- *  holds none. */
-function pastRegex(text: string, at: number): number {
-  let j = at + 1;
-  let inClass = false;
-  while (j < text.length && text[j] !== '\n') {
-    const c = text[j];
-    if (c === '\\') j += 2;
-    else if (c === '[') (inClass = true), j++;
-    else if (c === ']') (inClass = false), j++;
-    else if (c === '/' && !inClass) {
-      j++;
-      while (/[a-z]/.test(text[j] ?? '')) j++;
-      return j;
-    } else j++;
+/** Where the body of a function whose parameters close at `paramsEnd`
+ *  opens, past its return type (whose object types are types, not its
+ *  body: a "{" after ":", "|", "&", "<", "," or a bracket), or -1. */
+function bodyOpen(lx: Lexed, paramsEnd: number): number {
+  const t = lx.names;
+  for (let i = paramsEnd + 1; i < t.length; i++) {
+    const c = t[i];
+    if (c === ';' || c === ')' || c === ']' || c === '}') return -1;
+    if (c !== '(' && c !== '[' && c !== '{') continue;
+    let p = i - 1;
+    while (p >= 0 && /\s/.test(lx.code[p])) p--;
+    if (c === '{' && !/[:|&<,([]/.test(lx.code[p])) return i;
+    i = lx.pairs.get(i) ?? i;
   }
   return -1;
 }
 
-/**
- * The elements, JSX expressions and code blocks of a module's text (without
- * its comments), read as JSX is written. A "<" that turns out to start no
- * element (a generic arrow function's `<T,>`) is read as code again, with
- * nothing recorded from it.
- */
-export function jsxOf(text: string): Jsx {
-  const out: Jsx = { elements: [], exprs: [], blocks: [] };
-  const mark = () => [out.elements.length, out.exprs.length, out.blocks.length] as const;
-  const undo = ([e, x, b]: readonly [number, number, number]) => {
-    out.elements.length = e;
-    out.exprs.length = x;
-    out.blocks.length = b;
-    return -1;
-  };
-
-  // Code from `i`: to the "}" closing it (`inBraces`), or to the end.
-  const code = (i: number, inBraces: boolean): number => {
-    const opens: number[] = [];
-    while (i < text.length) {
-      const c = text[i];
-      if (c === "'" || c === '"') {
-        i = pastString(text, i);
-        continue;
-      }
-      if (c === '`') {
-        i = template(i);
-        continue;
-      }
-      if (c === '/' && startsRegex(text, i)) {
-        const past = pastRegex(text, i);
-        if (past > 0) {
-          i = past;
-          continue;
-        }
-      }
-      if (c === '{') opens.push(i);
-      else if (c === '}') {
-        if (opens.length === 0) {
-          if (inBraces) return i;
-        } else out.blocks.push([opens.pop()!, i]);
-      } else if (c === '<' && startsElement(text, i)) {
-        const past = element(i);
-        if (past > 0) {
-          i = past;
-          continue;
-        }
-      }
-      i++;
-    }
-    return i;
-  };
-
-  // A template literal at `i`, to past its closing backtick.
-  const template = (i: number): number => {
-    let j = i + 1;
-    while (j < text.length) {
-      const c = text[j];
-      if (c === '\\') j += 2;
-      else if (c === '`') return j + 1;
-      else if (c === '$' && text[j + 1] === '{') j = code(j + 2, true) + 1;
-      else j++;
-    }
-    return j;
-  };
-
-  // An element at `i`, to past its end, or -1 for none.
-  const element = (i: number): number => {
-    const before = mark();
-    const name = /^[A-Za-z_$][\w$.:-]*/.exec(text.slice(i + 1, i + 200))?.[0] ?? '';
-    let j = i + 1 + name.length;
-    // A generic arrow function's type parameters, `<T,>` or `<T extends ...>`.
-    if (name && /^\s*(?:,|extends\b)/.test(text.slice(j, j + 20))) return -1;
-    const el: Element = { name, start: i, end: -1 };
-    if (!name) {
-      if (text[j] !== '>') return -1;
-      j++;
-    } else {
-      for (;;) {
-        while (/\s/.test(text[j] ?? '')) j++;
-        if (j >= text.length) return undo(before);
-        if (text.startsWith('/>', j)) {
-          el.end = j + 2;
-          out.elements.push(el);
-          return el.end;
-        }
-        if (text[j] === '>') {
-          j++;
-          break;
-        }
-        if (text[j] === '{') {
-          const close = code(j + 1, true);
-          out.exprs.push({ open: j, close, element: el, attr: '...' });
-          j = close + 1;
-          continue;
-        }
-        const attr = /^[\w$:.-]+/.exec(text.slice(j, j + 100))?.[0];
-        if (!attr) return undo(before);
-        j += attr.length;
-        while (/\s/.test(text[j] ?? '')) j++;
-        if (text[j] !== '=') continue;
-        j++;
-        while (/\s/.test(text[j] ?? '')) j++;
-        if (text[j] === '"' || text[j] === "'") j = pastString(text, j, true);
-        else if (text[j] === '{') {
-          const close = code(j + 1, true);
-          out.exprs.push({ open: j, close, element: el, attr });
-          j = close + 1;
-        } else if (text[j] === '<') {
-          const past = element(j);
-          if (past < 0) return undo(before);
-          j = past;
-        } else return undo(before);
-      }
-    }
-    // Its children, to its closing tag.
-    while (j < text.length) {
-      if (text.startsWith('</', j)) {
-        const close = text.indexOf('>', j);
-        if (close < 0 || text.slice(j + 2, close).trim() !== name) return undo(before);
-        el.end = close + 1;
-        out.elements.push(el);
-        return el.end;
-      }
-      if (text[j] === '<') {
-        const past = element(j);
-        if (past < 0) return undo(before);
-        j = past;
-        continue;
-      }
-      if (text[j] === '{') {
-        const close = code(j + 1, true);
-        out.exprs.push({ open: j, close, element: el, attr: null });
-        j = close + 1;
-        continue;
-      }
-      j++;
-    }
-    return undo(before);
-  };
-
-  code(0, false);
-  return out;
-}
-
-/** `code` with its strings' and templates' text, and its regular
- *  expressions, written over with spaces (a template's ${...} kept): what is
- *  left are the names it uses. */
-function namesOnly(code: string): string {
-  let out = '';
-  let i = 0;
-  const blank = (s: string) => s.replace(/[^\n]/g, ' ');
-  const template = (): void => {
-    out += ' ';
-    i++;
-    while (i < code.length) {
-      const c = code[i];
-      if (c === '\\') {
-        out += '  ';
-        i += 2;
-      } else if (c === '`') {
-        out += ' ';
-        i++;
-        return;
-      } else if (c === '$' && code[i + 1] === '{') {
-        const close = closing(code, i + 1);
-        const end = close < 0 ? code.length : close;
-        out += '  ' + namesOnly(code.slice(i + 2, end)) + ' ';
-        i = end + 1;
-      } else {
-        out += c === '\n' ? '\n' : ' ';
-        i++;
-      }
-    }
-  };
-  while (i < code.length) {
-    const c = code[i];
-    if (c === "'" || c === '"') {
-      const past = Math.min(pastString(code, i), code.length);
-      out += blank(code.slice(i, past));
-      i = past;
-    } else if (c === '`') template();
-    else if (c === '/' && startsRegex(code, i) && pastRegex(code, i) > 0) {
-      const past = pastRegex(code, i);
-      out += blank(code.slice(i, past));
-      i = past;
-    } else {
-      out += c;
-      i++;
-    }
-  }
-  return out;
-}
-
-// ---- What a module writes ----
-
 /** Each function a module defines, by name, with where its body is: a
  *  function's braces, or a const's arrow to the end of its statement. */
-function functionRanges(text: string): Map<string, [number, number]> {
+function functionRanges(lx: Lexed): Map<string, [number, number]> {
   const out = new Map<string, [number, number]>();
-  for (const m of text.matchAll(/\bfunction\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g)) {
-    const paramsEnd = closing(text, m.index! + m[0].length - 1);
-    const open = text.indexOf('{', paramsEnd);
-    const end = open < 0 ? -1 : closing(text, open);
+  for (const m of lx.names.matchAll(/\bfunction\s+(\w+)\s*(?:<[^>]*>)?\s*\(/g)) {
+    const paramsEnd = closing(lx, m.index! + m[0].length - 1);
+    const open = paramsEnd < 0 ? -1 : bodyOpen(lx, paramsEnd);
+    const end = open < 0 ? -1 : closing(lx, open);
     if (end > 0) out.set(m[1], [open, end + 1]);
   }
-  for (const m of text.matchAll(/\bconst\s+(\w+)\s*(?::[^=\n]+)?=\s*(?:async\s*)?(?:\(|\w+\s*=>)/g)) {
-    if (!out.has(m[1])) out.set(m[1], [m.index!, statementEnd(text, m.index!)]);
+  for (const m of lx.names.matchAll(/\bconst\s+(\w+)\s*(?::[^=\n]+)?=\s*(?:async\s*)?(?:\(|\w+\s*=>)/g)) {
+    if (!out.has(m[1])) out.set(m[1], [m.index!, statementEnd(lx, m.index!)]);
   }
   return out;
-}
-
-/** Where the statement at `at` ends: the first ; or line end at its
- *  outermost level that ends it. */
-function statementEnd(text: string, at: number): number {
-  let depth = 0;
-  let i = at;
-  for (; i < text.length; i++) {
-    const c = text[i];
-    if (c === '(' || c === '[' || c === '{') depth++;
-    else if (c === ')' || c === ']' || c === '}') depth--;
-    else if (depth === 0 && (c === ';' || (c === '\n' && !/^\s*[.?:&|+]/.test(text.slice(i + 1, i + 40)) && !/[=(,?:&|+]\s*$/.test(text.slice(Math.max(0, i - 40), i))))) break;
-    if (depth < 0) break;
-  }
-  return i;
 }
 
 /** What each name a module calls refers to: its own functions, and what it
@@ -639,6 +685,8 @@ type AmountVar = { name: string; from: number; to: number };
 
 type ModuleFacts = {
   file: string;
+  lx: Lexed;
+  /** Its text, without its comments (lx.code). */
   text: string;
   jsx: Jsx;
   /** Where it formats a number as an amount (numberFormats). */
@@ -663,10 +711,10 @@ type Model = { facts: ModuleFacts[]; byFile: Map<string, ModuleFacts>; writers: 
  *  figures. */
 type Pick = (file: string, name: string) => boolean;
 
-/** Whether a function of `f` builds elements: `</` or `/>` in it. */
+/** Whether a function of `f` builds elements: `</` or `/>` in its code. */
 function builds(f: ModuleFacts | undefined, name: string): boolean {
   const [from, to] = f?.ranges.get(name) ?? [0, 0];
-  return /<\/|\/>/.test(f?.text.slice(from, to) ?? '');
+  return /<\/|\/>/.test(f?.lx.names.slice(from, to) ?? '');
 }
 
 const amountPick = (model: Model): Pick => (file, name) => model.writers.get(file)?.has(name) ?? false;
@@ -674,47 +722,6 @@ const textPick = (model: Model): Pick => (file, name) => (model.writers.get(file
 const fieldPick = (model: Model): Pick => (file, name) => model.fieldWriters.get(file)?.has(name) ?? false;
 
 const ARROW = /^\s*(?:async\s*)?(?:\([^)]*\)|[\w$]+)\s*(?::[^=]+)?=>|^\s*(?:async\s+)?function\b/;
-
-/** The index past a template literal at `at`, its ${...} and all. */
-function pastTemplate(code: string, at: number): number {
-  let j = at + 1;
-  while (j < code.length) {
-    const c = code[j];
-    if (c === '\\') j += 2;
-    else if (c === '`') return j + 1;
-    else if (c === '$' && code[j + 1] === '{') {
-      let depth = 1;
-      j += 2;
-      while (j < code.length && depth > 0) {
-        const d = code[j];
-        if (d === "'" || d === '"') j = pastString(code, j);
-        else if (d === '`') j = pastTemplate(code, j);
-        else {
-          if (d === '{') depth++;
-          else if (d === '}') depth--;
-          j++;
-        }
-      }
-    } else j++;
-  }
-  return j;
-}
-
-/** The indexes of `code` at its outermost level: outside brackets, strings
- *  and templates. */
-function topLevel(code: string): number[] {
-  const out: number[] = [];
-  let depth = 0;
-  for (let i = 0; i < code.length; i++) {
-    const c = code[i];
-    if (c === "'" || c === '"') i = pastString(code, i) - 1;
-    else if (c === '`') i = pastTemplate(code, i) - 1;
-    else if (c === '(' || c === '[' || c === '{') depth++;
-    else if (c === ')' || c === ']' || c === '}') depth--;
-    else if (depth === 0) out.push(i);
-  }
-  return out;
-}
 
 /** A ternary's "?", not optional chaining's "?." nor "??". */
 const isQuestion = (e: string, i: number) => e[i] === '?' && e[i + 1] !== '.' && e[i + 1] !== '?' && e[i - 1] !== '?';
@@ -728,20 +735,17 @@ function returnsOf(callback: string): string[] {
   if (!arrow) return [/^\s*[\w$.]+\s*$/.test(callback) ? `${callback.trim()}()` : callback];
   const body = callback.slice(arrow[0].length).trim();
   if (!body.startsWith('{')) return drawnParts(body);
+  const lx = lexed(body);
   const out: string[] = [];
-  for (const m of body.matchAll(/(?<![\w$.])return\b/g)) {
+  for (const m of lx.names.matchAll(/(?<![\w$.])return\b/g)) {
     const from = m.index! + m[0].length;
-    let depth = 0;
     let i = from;
     for (; i < body.length; i++) {
-      const c = body[i];
-      if (c === "'" || c === '"') i = pastString(body, i) - 1;
-      else if (c === '`') i = pastTemplate(body, i) - 1;
-      else if (c === '(' || c === '[' || c === '{') depth++;
-      else if (c === ')' || c === ']' || c === '}') {
-        if (depth === 0) break;
-        depth--;
-      } else if (c === ';' && depth === 0) break;
+      const past = lx.opaque.get(i);
+      const pair = lx.pairs.get(i);
+      if (past !== undefined) i = past - 1;
+      else if (pair !== undefined && pair > i) i = pair;
+      else if (/[)\]};]/.test(body[i])) break;
     }
     out.push(...drawnParts(body.slice(from, i)));
   }
@@ -812,17 +816,20 @@ type Reading = 'all' | 'own' | 'drawn';
 /** A part drawn as it is said to a screen reader: through spoken(). */
 const SAID = /^\s*(?:spoken|spokenLabel)\s*\(/;
 
-/** [from, to) of `f` as `how` reads it, its strings' text left out, and, of
- *  what is drawn, what is said through spoken(); and whether a number is
- *  formatted as an amount in it. */
+/** [from, to) of `f` as `how` reads it, the names its code is made of (no
+ *  string's or template's text), and, of what is drawn, but what is said
+ *  through spoken(); and whether a number is formatted as an amount in it. */
 function region(f: ModuleFacts, from: number, to: number, how: Reading): { names: string; formats: boolean } {
   const nested = how === 'all' ? [] : f.jsx.elements.filter((el) => el.start >= from && el.end <= to);
-  let code = f.text.slice(from, to);
-  for (const el of nested) code = code.slice(0, el.start - from) + ' '.repeat(el.end - el.start) + code.slice(el.end - from);
+  const read = (text: string) => {
+    let out = text.slice(from, to);
+    for (const el of nested) out = out.slice(0, el.start - from) + ' '.repeat(el.end - el.start) + out.slice(el.end - from);
+    return out;
+  };
   const formats = f.formats.some((p) => p >= from && p < to && !nested.some((el) => p >= el.start && p < el.end));
-  if (how !== 'drawn') return { names: namesOnly(code), formats };
-  const parts = drawnParts(code).filter((part) => !(SAID.test(part) && closing(part, part.indexOf('(')) === part.trimEnd().length - 1));
-  return { names: namesOnly(parts.join(' ;\n')), formats: formats && parts.length > 0 };
+  if (how !== 'drawn') return { names: read(f.lx.names), formats };
+  const parts = drawnParts(read(f.text)).filter((part) => !(SAID.test(part) && closing(part, part.indexOf('(')) === part.trimEnd().length - 1));
+  return { names: lexed(parts.join(' ;\n')).names, formats: formats && parts.length > 0 };
 }
 
 /** The component whose body `at` is in: the innermost function named as one. */
@@ -887,10 +894,10 @@ function writesFieldFigures(f: ModuleFacts, from: number, to: number, model: Mod
 /** The variables of `f` given an amount, with where each can be read. */
 function amountVarsOf(f: ModuleFacts, model: Model): AmountVar[] {
   const out: AmountVar[] = [];
-  for (const m of f.text.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=(?![=>])/g)) {
+  for (const m of f.lx.names.matchAll(/\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=\n]+)?=(?![=>])/g)) {
     const from = m.index! + m[0].length;
-    const end = statementEnd(f.text, from);
-    if (ARROW.test(f.text.slice(from, end))) continue; // a function, not a value
+    const end = statementEnd(f.lx, from);
+    if (ARROW.test(f.lx.names.slice(from, end))) continue; // a function, not a value
     if (!writesAmount(f, from, end, textPick(model), 'drawn')) continue;
     let to = f.text.length;
     for (const [open, close] of f.jsx.blocks) if (open < m.index! && close > m.index! && close < to) to = close;
@@ -931,18 +938,17 @@ function modelOf(root: string, modules: readonly string[]): Model {
   if (known) return known;
   const facts: ModuleFacts[] = modules.map((m) => {
     const file = join(root, m);
-    const text = withoutComments(readFileSync(file, 'utf8').replace(/\r/g, ''));
-    const jsx = jsxOf(text);
-    // A module without JSX has only its blocks: a "<" in it is never an element.
-    if (!m.endsWith('.tsx')) (jsx.elements = []), (jsx.exprs = []);
+    // A module without JSX has only code: a "<" in it is never an element.
+    const lx = lex(readFileSync(file, 'utf8').replace(/\r/g, ''), m.endsWith('.tsx'));
     return {
       file,
-      text,
-      jsx,
+      lx,
+      text: lx.code,
+      jsx: lx.jsx,
       // lib/format.ts writes amounts with the switch: how it formats a number is its own.
-      formats: m === 'lib/format.ts' ? [] : numberFormats(text),
-      ranges: functionRanges(text),
-      bindings: bindingsOf(root, file, text),
+      formats: m === 'lib/format.ts' ? [] : numberFormats(lx),
+      ranges: functionRanges(lx),
+      bindings: bindingsOf(root, file, lx.code),
       writers: new Set<string>(),
       fieldWriters: new Set<string>(),
       propWriters: new Map(),
@@ -1019,9 +1025,9 @@ export function staleMemos(root: string, modules: readonly string[]): StaleMemo[
     const text = f.text;
     const flags = [...text.matchAll(/\bconst\s+(\w+)\s*=\s*useAmountsHidden\(\)/g)].map((x) => x[1]);
     const report = (at: number) => out.push({ file: m, line: lineOf(text, at), text: lineText(text, at) });
-    for (const call of text.matchAll(/\b(useMemo|useState|memo)\s*(?:<[^()]*>)?\s*\(/g)) {
+    for (const call of f.lx.names.matchAll(/\b(useMemo|useState|memo)\s*(?:<[^()]*>)?\s*\(/g)) {
       const open = call.index! + call[0].length - 1;
-      const end = closing(text, open);
+      const end = closing(f.lx, open);
       if (end < 0) continue;
       const args = text.slice(open + 1, end);
       const writes = (from: number, to: number) => {

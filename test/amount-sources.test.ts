@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from 'bun:test';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
-import { bypasses, clientModules, drawnParts, fieldsWithoutPlaceholder, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
+import { bypasses, clientModules, closing, drawnParts, fieldsWithoutPlaceholder, lex, staleMemos, unmaskedChildren, unspokenLabels } from './amount-sources';
 
 // The scan of the source (test/amount-sources.ts) on its own: each shape an
 // amount can be written in that it is there to catch, each in a component of
@@ -75,6 +75,41 @@ function scan(cases: Record<string, Case>): Record<'bypasses' | 'memos' | 'label
     fields: byCase(fieldsWithoutPlaceholder(dir, modules)),
   };
 }
+
+describe('the reader', () => {
+  test('passes over what is no code: strings, template text, regular expressions, comments, and JSX text and quoted attributes', () => {
+    const text = [
+      "const a = f(`it's (${g(')')} at https://x.io`, /^https?:\\/\\/[)]/, 'b)', \"c(\");",
+      '// a comment: (',
+      '/* another ( */',
+      "const el = <p title=\"(\">Don't ( {h(1)} </p>;",
+      '',
+    ].join('\n');
+    const lx = lex(text, true);
+    expect(closing(lx, text.indexOf('f(') + 1)).toBe(text.indexOf(');'));
+    expect(closing(lx, text.indexOf('${') + 1)).toBe(text.indexOf('} at'));
+    expect(closing(lx, text.indexOf('{h(1)'))).toBe(text.indexOf('} </p>'));
+    // The comments go, every offset kept; what is no code is left out of its names.
+    expect(lx.code.length).toBe(text.length);
+    expect(lx.code).not.toContain('comment');
+    expect(lx.names).not.toMatch(/https|another|Don|it's/);
+    expect(lx.names).toContain('g(');
+    expect(lx.names).toContain('h(1)');
+  });
+
+  test('so a "//" in a template or a regular expression, or an apostrophe in a template, hides nothing after it', () => {
+    const found = scan({
+      // A link's template and the expression testing it, before an amount drawn bare.
+      Slashes: ['const site = `https://${flag}`; const web = /^https?:\\/\\//.test(site); return <a href={site}>{web ? 1 : 0}</a>;', ['export function Later({ n }: any) { return <b>{fmt(n)}</b>; }']],
+      // A component whose template says "it's", given a formatter to draw with.
+      Apostrophe: ['return <Note money={fmt} />;', ['function Note({ money }: any) {', '  const s = String(`it\'s`);', '  return <p>{s}{money(2)}</p>;', '}']],
+      // A memo whose template says it.
+      Memo: 'const s = useMemo(() => `It\'s ${fmt(n)}`, [n]); return <i>{s ? 1 : 0}</i>;',
+    });
+    expect(found.children).toEqual({ Slashes: [9], Apostrophe: [11] });
+    expect(found.memos).toEqual({ Memo: [7] });
+  });
+});
 
 describe('a number written as an amount past the formatters', () => {
   test('toFixed, and toLocaleString given no options, are amounts', () => {
