@@ -160,11 +160,35 @@ describe('with a home currency', () => {
     expect(map).toEqual({ chk: 1000, eur: 2000, btc: 0.5 });
   });
 
+  test('everything in the home currency: nothing converted, no rate read, none said to be old', async () => {
+    await chooseHome('EUR');
+    plaid.accounts = [EUR];
+    await fake.hset(ctxKey('history:accounts'), { '2026-09-11': await encrypt(TEST_CTX, JSON.stringify({ eur: 2000 })) });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-09-11': await encrypt(TEST_CTX, '2000') });
+    const hmget = fake.hmget.bind(fake);
+    const asked: string[] = [];
+    fake.hmget = (async (key: string, ...fields: string[]) => {
+      asked.push(key);
+      return hmget(key, ...fields);
+    }) as typeof fake.hmget;
+    try {
+      const { body } = await load();
+      expect(body.base).toMatchObject({ currency: 'EUR', net_worth: 2000, left_out: [], rates: { day: null, stale: false } });
+      expect(body.base.history.map((p: any) => p.value)).toEqual([2000, 2000]);
+      expect(asked.filter((k) => k.includes('fx:'))).toEqual([]);
+    } finally {
+      fake.hmget = hmget;
+    }
+  });
+
   test('settings that can’t be read convert nothing, and say so', async () => {
     await fake.set(ctxKey('currency-settings'), 'not-ciphertext-but-long-enough-to-be-tried');
     const { status, body } = await load();
     expect(status).toBe(200);
     expect(body.base).toBeUndefined();
+    expect(body.currency_problem).toBe('unreadable');
     expect(body.netWorth).toBe(3000.5);
+    // A cached load says it too.
+    expect((await load('')).body).toMatchObject({ from_cache: true, currency_problem: 'unreadable' });
   });
 });

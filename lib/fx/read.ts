@@ -13,7 +13,7 @@
 // conversion. A deployment problem (storage out of reach) still throws.
 
 import type { Ctx } from '../containers';
-import { readSettingsForDisplay } from './settings';
+import { readSettingsForDisplay, type CurrencySettings } from './settings';
 import { readEcbFields } from './ecb-store';
 import { fieldsFor, tableFromFields, yearsFor, LATEST_FIELD, FETCH_FIELD } from './fields';
 import { NO_FX, type FxTable } from './rates';
@@ -51,8 +51,10 @@ function currenciesFor(given: Iterable<string>, fx: Pick<FxTable, 'home' | 'own'
   return out;
 }
 
-export async function readFx(ctx: Ctx, need: FxNeed): Promise<FxRead> {
-  const { settings, problem } = await readSettingsForDisplay(ctx);
+/** `known`: the settings as this request already read them, so they are
+ *  read once. */
+export async function readFx(ctx: Ctx, need: FxNeed, known?: { settings: CurrencySettings; problem: FxRead['problem'] }): Promise<FxRead> {
+  const { settings, problem } = known ?? (await readSettingsForDisplay(ctx));
   if (!settings.home) return { fx: { ...NO_FX, own: settings.own }, problem, unusable: [] };
   const base = { home: settings.home, own: settings.own };
   const given = [...need.currencies];

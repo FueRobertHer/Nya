@@ -53,10 +53,16 @@ type NetWorthPayload = {
  *  `history` keep what they always meant, so a page from the release before,
  *  or this one's own snapshot in the browser, never shows a converted figure
  *  under another currency's label. */
-async function baseFields(ctx: Ctx, institutions: InstitutionResult[], split: HistorySplit | undefined): Promise<{ base?: NetWorthBase; currency_problem?: string }> {
-  if (!split) return {};
-  const { base, problem } = await readNetWorthBase(ctx, { institutions, split, now: Date.now() });
-  return { ...(base ? { base } : {}), ...(problem ? { currency_problem: problem } : {}) };
+async function baseFields(
+  ctx: Ctx,
+  institutions: InstitutionResult[],
+  split: HistorySplit | undefined,
+  known: Awaited<ReturnType<typeof readSettingsForDisplay>>
+): Promise<{ base?: NetWorthBase; currency_problem?: string }> {
+  if (known.problem) return { currency_problem: known.problem };
+  if (!known.settings.home || !split) return {};
+  const { base } = await readNetWorthBase(ctx, { institutions, split, now: Date.now(), known });
+  return base ? { base } : {};
 }
 
 // Whether the estimated layer was built by an older algorithm and should be
@@ -160,17 +166,17 @@ export async function GET(req: Request) {
     const settingsPromise = eager(readSettingsForDisplay(ctx));
 
     if (!refresh) {
-      const [cached, { settings }] = await Promise.all([readCache<NetWorthPayload>(ctx, CacheKey.NetWorth), settingsPromise]);
+      const [cached, known] = await Promise.all([readCache<NetWorthPayload>(ctx, CacheKey.NetWorth), settingsPromise]);
       // A payload cached before a home currency was chosen has no split to
       // convert the chart from: load afresh once, which caches one.
-      if (cached && (!settings.home || cached.history_split)) {
+      if (cached && (!known.settings.home || cached.history_split)) {
         const { history_split, ...shown } = cached;
         return NextResponse.json({
           ...shown,
           // A cached payload holds only institutions that answered, when it was made.
           ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
-          ...(settings.home ? await baseFields(ctx, cached.institutions, history_split) : {}),
+          ...(await baseFields(ctx, cached.institutions, history_split, known)),
           from_cache: true,
         });
       }
@@ -379,7 +385,7 @@ export async function GET(req: Request) {
       ...shown,
       ...healthFields(withNewAccounts(payload.institutions, await newAccountsPromise), await healthPromise, answeredAt),
       ...(await stalePromise),
-      ...(await baseFields(ctx, payload.institutions, history_split)),
+      ...(await baseFields(ctx, payload.institutions, history_split, await settingsPromise)),
       from_cache: false,
     });
   } catch (err: any) {

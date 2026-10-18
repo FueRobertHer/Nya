@@ -37,6 +37,9 @@ export type NetWorthBase = {
   history: HistoryPoint[];
   gaps: HistoryGaps & { unknown_currency: number };
   delta: { value: number; pct: number; days: number; from: string; to: string; from_rates: number | null } | null;
+  /** The newest publication's day and whether it is older than it should be
+   *  (lib/fx/rates.ts isStale), when anything needed a rate; and the
+   *  person's own rates. */
   rates: { day: string | null; stale: boolean; own: OwnRate[] };
   /** For the page's own figures (an institution's total, connection
    *  health's share): the newest publication, only its rates for these
@@ -86,6 +89,9 @@ export function netWorthBase(input: {
   const delta = d ? { ...d, from_rates: rateEffect(earlier, d.to, split.main, fx, home) } : null;
 
   const used = currenciesOf(rows, split);
+  // No rate is needed when everything is in the home currency: none is said
+  // to be old.
+  const foreign = [...used].some((c) => c !== home);
   const latest = fx.latest ? { date: fx.latest.date, rates: Object.fromEntries(Object.entries(fx.latest.rates).filter(([c]) => used.has(c) || c === home || fx.own.some((o) => o.quote === c))) } : null;
   return {
     currency: home,
@@ -96,7 +102,7 @@ export function netWorthBase(input: {
     history,
     gaps: { ...converted.gaps, unknown_currency: split.unknown_currency },
     delta,
-    rates: { day: fx.latest?.date ?? null, stale: isStale(fx, now), own: [...fx.own] },
+    rates: { day: foreign ? (fx.latest?.date ?? null) : null, stale: foreign && isStale(fx, now), own: [...fx.own] },
     fx: { home, latest, own: [...fx.own] },
   };
 }

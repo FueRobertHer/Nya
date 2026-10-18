@@ -99,13 +99,13 @@ export function historySplit(input: {
  *  Null with no home currency (nothing converts). */
 export async function readNetWorthBase(
   ctx: Ctx,
-  input: { institutions: readonly Listed[]; split: HistorySplit; now: number }
+  input: { institutions: readonly Listed[]; split: HistorySplit; now: number; known?: Parameters<typeof readFx>[2] }
 ): Promise<{ base: NetWorthBase | null; problem: 'unreadable' | 'unrecognised' | null }> {
   const rows = visibleRows(input.institutions);
   const main = mainCurrency(input.institutions);
   const today = new Date(input.now).toISOString().slice(0, 10);
   const from = input.split.points[0]?.date ?? today;
-  const { fx, problem } = await readFx(ctx, { currencies: [...currenciesOf(rows, input.split), ...(main ? [main] : [])], from, to: today });
+  const { fx, problem } = await readFx(ctx, { currencies: [...currenciesOf(rows, input.split), ...(main ? [main] : [])], from, to: today }, input.known);
   if (!fx.home) return { base: null, problem };
   return { base: netWorthBase({ fx, rows, main, split: input.split, now: input.now }), problem };
 }

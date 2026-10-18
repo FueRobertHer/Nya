@@ -51,7 +51,7 @@ export const SERVER_INFO = { name: 'nya', title: 'Nya', version: '1.0.0' };
 export const INSTRUCTIONS = [
   'Read-only access to one person’s finances in Nya: their accounts and balances, net worth and its history, transactions, spending by category, where money came from and went (cash flow), budgets, recurring bills and investment holdings.',
   'Everything is what Nya has stored, never fetched live: each result says what it is as of. Amounts use Plaid’s sign: a transaction’s positive amount is money out, and what a credit card or a loan owes is a positive balance.',
-  'Totals are in one currency each, and say what they left out; nothing is converted between currencies. Hidden accounts are left out unless include_hidden is true.',
+  'Totals are in one currency each, and say what they left out. Once the person has chosen a home currency in Nya, net worth also gives base, and accounts and balance history to_base, converted into it (base_currency) at the European Central Bank’s reference rates or the person’s own; nothing else is converted between currencies. Hidden accounts are left out unless include_hidden is true.',
   'Some connections bring in no transactions (a 401(k) or a brokerage account; or a bank account or card whose transactions Plaid doesn’t provide, or the person didn’t allow): sources[].no_transactions says which and why, and the notes what that leaves out, so an empty list or a zero total is not, by itself, no spending.',
   DATA_NOT_INSTRUCTIONS,
 ].join(' ');
@@ -81,14 +81,18 @@ const money = (n: number, currency: string | null) => `${n.toFixed(2)}${currency
 async function netWorthTool(auth: Authenticated, a: Args): Promise<unknown> {
   if (typeof a.from === 'string' && typeof a.to === 'string' && a.from > a.to) throw new BadRequest('from is after to.');
   const includeHidden = a.include_hidden === true;
-  if (a.include_history === false) return { now: await readNetWorth(auth.ctx, { includeHidden }) };
-  return readNetWorthAndHistory(auth.ctx, {
-    from: a.from as string | undefined,
-    to: a.to as string | undefined,
-    includeEstimated: a.include_estimated === true,
-    includeHidden,
-    interval: (a.interval as Interval | undefined) ?? 'month',
-  });
+  if (a.include_history === false) return { now: await readNetWorth(auth.ctx, { includeHidden, base: true }) };
+  return readNetWorthAndHistory(
+    auth.ctx,
+    {
+      from: a.from as string | undefined,
+      to: a.to as string | undefined,
+      includeEstimated: a.include_estimated === true,
+      includeHidden,
+      interval: (a.interval as Interval | undefined) ?? 'month',
+    },
+    { base: true }
+  );
 }
 
 /** What an answer's list of accounts is short of, in counts (never names:
@@ -109,6 +113,30 @@ function missingAccounts(missing: readonly ApiMissing[], withoutBalance = 0): st
     withoutBalance > 0 ? `${plural(withoutBalance, 'account')} ${withoutBalance === 1 ? 'has' : 'have'} no balance to count` : '',
   ].filter(Boolean);
   return parts.length === 0 ? '' : ` Incomplete: ${parts.join('; ')}. See missing_accounts and notes.`;
+}
+
+/** A currency code as a sentence may say it: a code's shape only (ISO, or
+ *  Plaid's unofficial ones such as BTC), never other text (see PROMPT
+ *  INJECTION above). */
+const code = (c: unknown): string | null => (typeof c === 'string' && /^[A-Z0-9]{2,10}$/.test(c) ? c : null);
+
+/** Net worth now, in the sentence: in the home currency, converted, when the
+ *  person chose one and something was converted into it (as the app shows
+ *  it), naming what was left out; else one total per currency. */
+function netWorthNow(now: any): string {
+  const b = now.base;
+  const home = code(now.base_currency);
+  if (b && home && b.parts.some((p: any) => p.currency !== home && p.converted !== null)) {
+    const rates = [b.rate_day ? `the ECB’s rates of ${b.rate_day}` : '', b.own_rates.length > 0 ? 'the person’s own rates' : ''].filter(Boolean).join(' and ');
+    const outAccounts = b.left_out.reduce((n: number, l: any) => n + l.accounts, 0);
+    const outCodes = b.left_out.map((l: any) => code(l.currency) ?? 'another currency');
+    const left = outAccounts > 0 ? ` (${plural(outAccounts, 'account')} in ${outCodes.join(', ')} not counted: no rate)` : '';
+    const stale = b.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '';
+    return `Net worth ${money(b.net_worth, home)}, converted into ${home}${rates ? ` at ${rates}` : ''}${left}${datedFrom(now.balances_from, now.balances_to)}.${stale}`;
+  }
+  return now.totals.length
+    ? `Net worth ${now.totals.map((t: any) => money(t.net_worth, code(t.currency))).join(', ')}${datedFrom(now.balances_from, now.balances_to)}.`
+    : 'No balances are recorded yet.';
 }
 
 /** The days the balances counted are from, when known. */
@@ -150,11 +178,7 @@ function incompleteMonths(r: { month: string; earliest_month?: string | null; no
 const SUMMARIES: Record<string, Tool['summary']> = {
   list_accounts: (r) => `${plural(r.accounts.length, 'account')}.${missingAccounts(r.missing_accounts)}`,
   get_net_worth: (r) =>
-    (r.now.totals.length
-      ? `Net worth ${r.now.totals.map((t: any) => money(t.net_worth, t.currency)).join(', ')}${datedFrom(r.now.balances_from, r.now.balances_to)}.`
-      : 'No balances are recorded yet.') +
-    missingAccounts(r.now.missing_accounts, r.now.accounts_without_balance) +
-    (r.history ? ` ${plural(r.history.points.length, 'history point')}.` : ''),
+    netWorthNow(r.now) + missingAccounts(r.now.missing_accounts, r.now.accounts_without_balance) + (r.history ? ` ${plural(r.history.points.length, 'history point')}.` : ''),
   get_balance_history: (r) => `${plural(r.points.length, 'point')}${r.points.length ? `, ${r.points[0].date} to ${r.points[r.points.length - 1].date}` : ''}.`,
   search_transactions: (r) =>
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,

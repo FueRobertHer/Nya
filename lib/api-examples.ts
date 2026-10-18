@@ -57,6 +57,20 @@ const LEFT_OUT: readonly FieldDoc[] = [
   ['left_out_text', 'The same in words, or null when nothing was left out.'],
 ];
 
+/** The person's own rates, as me and net worth's base give them. */
+const OWN_RATES = (path: string, what: string): FieldDoc[] => [
+  [path, what],
+  [`${path}[].currency`, 'The currency it prices: an ISO code, or an unofficial one such as BTC.'],
+  [`${path}[].rate`, 'What one unit of it is worth in quote, as you typed it.'],
+  [`${path}[].quote`, 'The currency the rate is in: the euro, or one the ECB publishes.'],
+  [`${path}[].from`, 'The first day it applies (YYYY-MM-DD), or null for every day, past ones included.'],
+];
+const BASE_CURRENCY = (what: string): FieldDoc => [
+  'base_currency',
+  `The home currency you chose in Nya, which ${what} is in, or null: none chosen (nothing is converted), or your currency settings couldn’t be read (notes say so).`,
+];
+const EXAMPLE_OWN_RATES = [{ currency: 'BTC', rate: 61000, quote: 'USD', from: '2026-10-01' }];
+
 const EXAMPLE_SOURCES = [
   { institution: 'Chase', synced_at: '2026-10-09T08:02:11.000Z', complete: true, no_transactions: null },
   { institution: 'Fidelity', synced_at: null, complete: true, no_transactions: 'investment_accounts' },
@@ -70,6 +84,8 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       token: { label: 'Raycast', hint: 'nya_3f9a0c1e', created_at: '2026-10-01T15:04:05.000Z', last_used_at: '2026-10-09T08:12:00.000Z' },
       data_since: '2026-01-14T19:20:31.000Z',
       rate_limit: { requests: 100, per_seconds: 60 },
+      base_currency: 'USD',
+      own_rates: EXAMPLE_OWN_RATES,
     },
     fields: [
       ['api_version', 'The version of the API: "1".'],
@@ -82,6 +98,11 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['rate_limit', 'How many requests the token may make.'],
       ['rate_limit.requests', 'Requests in each window.'],
       ['rate_limit.per_seconds', 'The window, in seconds.'],
+      [
+        'base_currency',
+        'The home currency you chose in Nya, or null: none chosen, or your currency settings couldn’t be read. Once you choose one, net-worth’s base, and to_base on accounts and balance history, are converted into it at the European Central Bank’s reference rates (or your own). Every other field keeps its meaning: nothing else is converted.',
+      ],
+      ...OWN_RATES('own_rates', 'Your own exchange rates, set in Nya: each wins over the ECB’s for its currency from its day on. The ECB doesn’t publish every currency (none of the cryptocurrencies, for one), and a bank’s own rate can differ from its reference rates.'),
     ],
   },
 
@@ -106,6 +127,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of: '2026-10-09',
           as_of_time: '2026-10-09T02:00:00.000Z',
           connection: { last_ok_at: '2026-10-09T02:00:00.000Z', problem: null, ends_at: null },
+          to_base: 2076.35,
         },
         {
           id: 'BxBXxLj1m4HMXBm9WZZmCWVbPjX16EHwv99vp',
@@ -125,6 +147,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of_time: '2026-10-09T13:00:41.000Z',
           connection: { last_ok_at: '2026-10-09T13:00:40.000Z', problem: null, ends_at: null },
           lifecycle: null,
+          to_base: 1250.5,
         },
         {
           id: 'lPNjeW1nR6CDn5okmGQ6hEpMo4lLNoSrzqDje',
@@ -144,6 +167,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of_time: '2026-08-31T13:00:38.000Z',
           connection: { last_ok_at: '2026-10-09T13:00:40.000Z', problem: null, ends_at: null },
           lifecycle: { state: 'closed', date: '2026-09-01', note: 'Paid off and closed', assumed: false },
+          to_base: 0,
         },
         {
           id: 'manual_6b1f3e2a-1c4d-4e5f-8a9b-0c1d2e3f4a5b',
@@ -163,8 +187,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
           as_of_time: '2026-09-30T18:21:07.000Z',
           connection: null,
           lifecycle: null,
+          to_base: 412000,
         },
       ],
+      base_currency: 'USD',
       complete: true,
       missing_accounts: [],
       notes: [],
@@ -207,6 +233,11 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['accounts[].lifecycle.date', 'The day (YYYY-MM-DD) it stopped counting. Every day before it still counts.'],
       ['accounts[].lifecycle.note', 'What you wrote about it, or null.'],
       ['accounts[].lifecycle.assumed', 'True when Nya assumed it closed because nobody answered whether it had, after its bank stopped returning it. You can confirm or correct that in the app.'],
+      [
+        'accounts[].to_base',
+        'The balance in base_currency, at the newest ECB rates (or your own); one whose currency isn’t known counts in your main currency. Null without a home currency, a balance or a rate. Each account converts on its own, so these can add up to a cent per currency away from net-worth’s base.net_worth, which converts each currency’s total once.',
+      ],
+      BASE_CURRENCY('accounts[].to_base'),
       ...MISSING_ACCOUNTS('the list is short of them'),
       NOTES,
     ],
@@ -215,17 +246,40 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
   'net-worth': {
     query: '',
     example: {
-      totals: [{ currency: 'USD', net_worth: 431870.25, assets: 434120.75, debts: 2250.5, accounts: 7 }],
+      totals: [
+        { currency: 'USD', net_worth: 431870.25, assets: 434120.75, debts: 2250.5, accounts: 6 },
+        { currency: 'AUD', net_worth: 3150.4, assets: 3150.4, debts: 0, accounts: 1 },
+        { currency: 'BTC', net_worth: 0.25, assets: 0.25, debts: 0, accounts: 1 },
+      ],
       balances_from: '2026-10-08',
       balances_to: '2026-10-09',
       accounts_without_balance: 0,
       complete: true,
       missing_accounts: [],
-      recorded: { date: '2026-10-09', value: 431870.25, currency: 'USD', mixed_currencies: false },
+      recorded: { date: '2026-10-09', value: 435020.9, currency: 'USD', mixed_currencies: true },
+      base_currency: 'USD',
+      base: {
+        net_worth: 449196.6,
+        assets: 451447.1,
+        debts: 2250.5,
+        accounts: 8,
+        parts: [
+          { currency: 'USD', net_worth: 431870.25, converted: 431870.25, rate: null, rate_source: null, accounts: 6 },
+          { currency: 'AUD', net_worth: 3150.4, converted: 2076.35, rate: 0.659075458872, rate_source: 'ecb', accounts: 1 },
+          { currency: 'BTC', net_worth: 0.25, converted: 15250, rate: 61000, rate_source: 'own', accounts: 1 },
+        ],
+        left_out: [],
+        rate_day: '2026-10-09',
+        rates_stale: false,
+        own_rates: EXAMPLE_OWN_RATES,
+      },
       notes: [],
     },
     fields: [
-      ['totals', 'Net worth now, one total per currency, most accounts first: nothing is converted. Each account counts its newest measured balance; one whose currency isn’t known counts in your main currency, as the app shows it. An account that ended (accounts[].lifecycle) doesn’t count.'],
+      [
+        'totals',
+        'Net worth now, one total per currency, most accounts first: nothing is converted here (base is). Each account counts its newest measured balance; one whose currency isn’t known counts in your main currency, as the app shows it, and one in a cryptocurrency counts under the code Plaid gives it (BTC, say). An account that ended (accounts[].lifecycle) doesn’t count.',
+      ],
       ['totals[].currency', 'The currency.'],
       ['totals[].net_worth', 'assets less debts.'],
       ['totals[].assets', 'The balances of everything but credit cards and loans.'],
@@ -247,6 +301,32 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['recorded.value', 'Its value. Recorded totals add every account’s balance whatever its currency, as the chart does.'],
       ['recorded.currency', 'The currency most of your accounts are in, which the app labels it with.'],
       ['recorded.mixed_currencies', 'True when your accounts are in more than one currency, so the recorded value adds them unconverted.'],
+      BASE_CURRENCY('base'),
+      [
+        'base',
+        'Net worth in base_currency, or null without one: each currency’s balances added up, then converted once at the newest rates, as the app shows your net worth. Every account in totals counts in it, but those in a currency with no rate (left_out).',
+      ],
+      ['base.net_worth', 'Each currency’s assets less debts, converted, added up.'],
+      ['base.assets', 'The balances of everything but credit cards and loans, each currency’s converted once on its own, so assets less debts can be a cent per currency away from net_worth.'],
+      ['base.debts', 'What credit cards and loans owe, converted the same way.'],
+      ['base.accounts', 'The accounts counted: those in a currency with a rate.'],
+      ['base.parts', 'Each currency’s part: base_currency’s first, then those converted, then those left out, each by most accounts.'],
+      ['base.parts[].currency', 'The currency.'],
+      ['base.parts[].net_worth', 'Its accounts’ net worth, in it.'],
+      ['base.parts[].converted', 'What that came to in base_currency, or null with no rate.'],
+      ['base.parts[].rate', 'What one unit of it is worth in base_currency, for showing (the conversion itself is exact); null for base_currency and for a currency with no rate.'],
+      ['base.parts[].rate_source', '"ecb" for the European Central Bank’s reference rates, "own" where your own rate was used; null with no rate.'],
+      ['base.parts[].accounts', 'How many accounts.'],
+      ['base.left_out', 'The currencies left out of base for having no rate, most accounts first: never guessed. You can set your own rate for one in the app.'],
+      ['base.left_out[].currency', 'The currency.'],
+      ['base.left_out[].accounts', 'How many accounts in it.'],
+      [
+        'base.left_out[].why',
+        '"no_rate" (the ECB doesn’t publish it, and you set no rate of your own), "not_fetched" (Nya doesn’t have the ECB’s rates yet) or "quote_has_no_rate" (your own rate for it is in a currency with no rate). Version 1 may add reasons.',
+      ],
+      ['base.rate_day', 'The day of the ECB’s rates used, their newest publication (each working day, around 16:00 CET), or null when none was.'],
+      ['base.rates_stale', 'True when those rates are older than they should be, because Nya couldn’t fetch newer ones.'],
+      ...OWN_RATES('base.own_rates', 'Your own rates used in it, as me gives them.'),
       NOTES,
     ],
   },
@@ -256,13 +336,14 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
     example: {
       account_id: null,
       currency: 'USD',
+      base_currency: 'USD',
       mixed_currencies: false,
       interval: 'month',
       points: [
-        { date: '2026-07-31', value: 418200.1, estimated: false },
-        { date: '2026-08-31', value: 425010.4, estimated: false },
-        { date: '2026-09-30', value: 429600.0, estimated: false },
-        { date: '2026-10-09', value: 431870.25, estimated: false },
+        { date: '2026-07-31', value: 418200.1, estimated: false, to_base: 418200.1 },
+        { date: '2026-08-31', value: 425010.4, estimated: false, to_base: 425010.4 },
+        { date: '2026-09-30', value: 429600.0, estimated: false, to_base: 429600.0 },
+        { date: '2026-10-09', value: 431870.25, estimated: false, to_base: 431870.25 },
       ],
       from_imports: null,
       notes: [],
@@ -276,6 +357,11 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['points[].date', 'The day (UTC).'],
       ['points[].value', 'Net worth, or the account’s balance (what a card or a loan owes is positive).'],
       ['points[].estimated', 'True for a point reconstructed from transactions rather than recorded: only with include_estimated=true.'],
+      BASE_CURRENCY('points[].to_base'),
+      [
+        'points[].to_base',
+        'The value in base_currency: net worth at each day’s rates, from what each currency held that day, as the app’s chart draws it; one account’s balance from its own currency. Null without a home currency, or for a point that couldn’t be converted (notes say why).',
+      ],
       [
         'from_imports',
         'With include_estimated=true: { "from", "until" }, the days whose estimated points are walked back through transactions you imported from your bank’s files rather than through the bank’s own (from "from" up to, not including, "until"); null when none are, and always without include_estimated.',

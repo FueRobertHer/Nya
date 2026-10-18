@@ -1,0 +1,169 @@
+// lib/fx/api-base.ts
+//
+// What the read-only API (lib/api-read.ts) adds once the person has chosen a
+// home currency (lib/fx/settings.ts): `base_currency` on the answers that
+// carry balances, each account's `to_base`, net worth's `base`, and each
+// history point's `to_base`. Version 1's own fields keep their meaning (one
+// total per currency, nothing converted): conversion arrives only in these
+// new ones, each null without a home currency, or without a rate.
+//
+// THE APP'S RULES (lib/fx/net-worth.ts): balances now at the newest rates,
+// each currency's subtotal converted once, so `base.net_worth` is what Home
+// shows from the same balances; an account's own `to_base` converts it on its
+// own, so the accounts' can add up to a cent per currency away from it. A day
+// of net worth's history converts at that day's rates, from its split by
+// currency, bridged as the chart is. A currency with no rate is left out and
+// named, never guessed. Pure, given what was read once (FxTable).
+
+import { bridgeInteriorEstimates, type HistoryPoint } from '../history';
+import { balancesIn, convertHistory, type HistoryGaps, type SplitPoint } from './net-worth';
+import { convert, ecbRate, isStale, ownRateOn, type FxTable, type NoRate, type OwnRate } from './rates';
+
+/** An own rate as the API gives it: 1 `currency` is `rate` `quote`, from
+ *  the day `from` on (every day when null). */
+export type ApiOwnRate = { currency: string; rate: number; quote: string; from: string | null };
+
+export const apiOwnRates = (own: readonly OwnRate[]): ApiOwnRate[] => own.map((o) => ({ currency: o.currency, rate: Number(o.rate), quote: o.quote, from: o.from }));
+
+/** Why a currency has no rate, in the API's words: the ECB doesn't publish
+ *  it (or didn't that day) and the person set none of their own; Nya doesn't
+ *  have the ECB's rates for that day yet; or the person's own rate is quoted
+ *  in a currency with no rate that day. Version 1 may add reasons. */
+export type ApiNoRate = 'no_rate' | 'not_fetched' | 'quote_has_no_rate';
+
+export const apiNoRate = (why: NoRate): ApiNoRate => (why === 'not-fetched' ? 'not_fetched' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate');
+
+export type ApiBasePart = {
+  currency: string;
+  /** The currency's balances added up, in it (assets less debts). */
+  net_worth: number;
+  /** What it came to in base_currency, or null with no rate. */
+  converted: number | null;
+  /** One unit of it in base_currency, for showing (never rounded to convert
+   *  with), or null for base_currency itself and for one with no rate. */
+  rate: number | null;
+  /** 'ecb', or 'own' where the person's own rate was used. */
+  rate_source: 'ecb' | 'own' | null;
+  accounts: number;
+};
+
+export type ApiBase = {
+  /** Net worth in base_currency: each currency's balances added up, then
+   *  converted once, as the app's net worth is. */
+  net_worth: number;
+  /** The assets and the debts, each converted the same way on its own: so
+   *  assets less debts can be a cent per currency away from net_worth. */
+  assets: number;
+  debts: number;
+  /** The accounts counted in it: those with a rate. */
+  accounts: number;
+  /** Each currency's part: base_currency's first, then those converted, then
+   *  those left out, each by most accounts. */
+  parts: ApiBasePart[];
+  /** The currencies left out for having no rate, with how many accounts and
+   *  why. Never guessed. */
+  left_out: { currency: string; accounts: number; why: ApiNoRate }[];
+  /** The day of the ECB's rates used (their newest publication), or null
+   *  when none was. */
+  rate_day: string | null;
+  /** True when those rates are older than they should be: the nightly fetch
+   *  hasn't worked in over 30 hours, or they are over 5 days old. */
+  rates_stale: boolean;
+  /** The person's own rates used, as me.own_rates gives them. */
+  own_rates: ApiOwnRate[];
+};
+
+/** An account as net worth counts it: its balance in Plaid's sign (what a
+ *  debt owes is positive), its currency (null: the main one). */
+export type BaseAccount = { balance: number; currency: string | null; is_debt: boolean };
+
+const utcDay = (now: number) => new Date(now).toISOString().slice(0, 10);
+
+/** The ECB publication a currency's rate on `day` is taken from (through the
+ *  quote of the person's own rate for it), or null for the euro's and for
+ *  none. */
+function ecbDayOf(fx: FxTable, currency: string, day: string): string | null {
+  const own = ownRateOn(fx, currency, day);
+  const c = own ? own.quote : currency;
+  if (c === 'EUR') return null;
+  const r = ecbRate(fx, c, day);
+  return r.ok ? r.day : null;
+}
+
+/** Net worth's `base`, from the accounts counted now, at the newest rates. */
+export function apiBase(accounts: readonly BaseAccount[], fx: FxTable, main: string | null, now: number): ApiBase {
+  const home = fx.home!;
+  const day = utcDay(now);
+  const of = (list: readonly BaseAccount[], sign: (a: BaseAccount) => number) => balancesIn(list.map((a) => ({ amount: sign(a) * a.balance, currency: a.currency })), fx, home, day, main);
+  const net = of(accounts, (a) => (a.is_debt ? -1 : 1));
+  const assets = of(accounts.filter((a) => !a.is_debt), () => 1);
+  const debts = of(accounts.filter((a) => a.is_debt), () => 1);
+  const rated = net.parts.filter((p) => p.currency !== home && p.converted !== null).map((p) => p.currency);
+  const days = rated.length > 0 ? [...rated, home].map((c) => ecbDayOf(fx, c, day)).filter((d): d is string => d !== null).sort() : [];
+  const rateDay = days[days.length - 1] ?? null;
+  const used = fx.own.filter((o) => ownRateOn(fx, o.currency, day) === o && (o.currency === home ? rated.length > 0 : rated.includes(o.currency)));
+  return {
+    net_worth: net.total,
+    assets: assets.total,
+    debts: debts.total,
+    accounts: net.parts.filter((p) => p.converted !== null).reduce((n, p) => n + p.accounts, 0),
+    parts: net.parts.map((p) => ({ currency: p.currency, net_worth: p.amount, converted: p.converted, rate: p.rate?.value ?? null, rate_source: p.rate?.source ?? null, accounts: p.accounts })),
+    left_out: net.left_out.map((l) => ({ currency: l.currency, accounts: l.accounts, why: apiNoRate(l.why) })),
+    rate_day: rateDay,
+    rates_stale: rateDay !== null && isStale(fx, now),
+    own_rates: apiOwnRates(used),
+  };
+}
+
+/** One balance in base_currency (an account's `to_base`): at the newest
+ *  rates, or a day's (a history point). Null with no balance or no rate. */
+export function toBase(fx: FxTable, balance: number | null, currency: string | null, day: string): number | null {
+  if (balance === null || currency === null || !fx.home) return null;
+  const c = convert(fx, balance, currency, fx.home, day, { tidy: true });
+  return c.ok ? c.amount : null;
+}
+
+/** Net worth's history in base_currency by day: each point from its split
+ *  by currency at that day's rates, bridged over the same end days as the
+ *  chart (lib/history.ts bridgeInteriorEstimates). A day with no value is a
+ *  point that couldn't be converted (its split can't be told, or its main
+ *  currency has no rate that day); `gaps` says what couldn't be. */
+export function historyInBase(split: { points: readonly SplitPoint[]; breaks: readonly string[]; main: string | null }, fx: FxTable): { byDay: Map<string, number>; gaps: HistoryGaps } {
+  const { points, gaps } = convertHistory(split.points, split.main, fx, fx.home!);
+  return { byDay: new Map(bridgeInteriorEstimates(points as HistoryPoint[], split.breaks).map((p) => [p.date, p.value])), gaps };
+}
+
+/** What a person should know of a converted history, in words: the points
+ *  with no to_base, and the currencies left out of some. */
+export function historyNotes(gaps: HistoryGaps, home: string): string[] {
+  const notes: string[] = [];
+  const days = (n: number) => (n === 1 ? '1 point has' : `${n} points have`);
+  if (gaps.unsplit > 0) notes.push(`${days(gaps.unsplit)} no to_base: Nya didn’t keep their balances by account, so they can’t be converted`);
+  if (gaps.main_unrated > 0) notes.push(`${days(gaps.main_unrated)} no to_base: there is no rate into ${home} on their days`);
+  for (const l of gaps.left_out) {
+    const span = l.from === l.to ? `on ${l.from}` : `from ${l.from} to ${l.to}`;
+    notes.push(`${l.currency} isn’t in to_base ${span} (${l.days === 1 ? '1 point' : `${l.days} points`}): there is no rate for it on those days`);
+  }
+  return notes;
+}
+
+/** What a person should know of `base`, in words: what it left out and why,
+ *  and rates older than they should be. */
+export function baseNotes(base: ApiBase, home: string): string[] {
+  const notes: string[] = [];
+  for (const l of base.left_out) {
+    const which = l.accounts === 1 ? `1 account in ${l.currency} isn’t` : `${l.accounts} accounts in ${l.currency} aren’t`;
+    const why =
+      l.why === 'not_fetched'
+        ? 'Nya doesn’t have the ECB’s rates yet'
+        : l.why === 'quote_has_no_rate'
+          ? `the currency your own rate for ${l.currency} is quoted in has no rate`
+          : `there is no rate for ${l.currency}; you can set your own in the app`;
+    notes.push(`${which} in base, which is in ${home}: ${why}`);
+  }
+  if (base.rates_stale) notes.push(`The newest exchange rates Nya has are from ${base.rate_day}, so base may be out of date`);
+  return notes;
+}
+
+/** The note when the settings that say the home currency can't be read. */
+export const SETTINGS_UNREADABLE_NOTE = 'Your currency settings couldn’t be read, so nothing is converted into your home currency';
