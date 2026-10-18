@@ -51,13 +51,14 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |
 | `PLAID_UNUSED_DAYS` | optional | Days before an unused connection is flagged (default 60, minimum 14). |
 | `PLAID_BROKERAGE_LINK` | optional | `1` offers **Connect a brokerage or retirement account** beside the bank option. Off by default, and turned on only after this release has run for a while. See [Brokerage and retirement connections](#brokerage-and-retirement-connections). |
+| `RESTORE_ENABLED` | optional | `1` offers **Bring back a download**, which brings a person's JSON download into an empty account ([data-export.md](data-export.md#bringing-it-back)). Off by default; turned on only after the release that reads what a restore writes has run for a while, and never rolled back past it once on. See [operations.md](operations.md#turning-on-restores). |
 | `MAX_TXN_BLOB_CHARS` | optional | Ceiling on one institution's stored transactions (default 8,388,608 characters). See [architecture.md](architecture.md#storage-and-encryption). |
 | `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`, `CLERK_SECRET_KEY`, `CLERK_ALLOWED_USER_IDS` | optional | Sign in with Clerk instead of the shared password. See [authentication.md](authentication.md). |
 | `CSP_MODE` | optional | How pages send their Content-Security-Policy: `report-only` (the default), `enforce` or `off`. See [Security headers](#security-headers-and-the-content-security-policy). |
 | `CONTAINER_ID` | optional | Which container this deployment serves. See [operations.md](operations.md#containers). |
 | `REDIS_PREFIX` | optional | Overrides the key namespace (defaults to the Vercel environment name, or `dev` locally). |
 | `DEMO_USER_IDS` | optional | Preview only: one-click demo accounts. |
-| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, and about each download of someone's data or new API token, and the weekly summary for those who turn it on, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
+| `RESEND_API_KEY`, `MAIL_FROM` | optional | Email notices about bank connections that need you, and about each download of someone's data, new API token, restore, undo or emptying of an account, and the weekly summary for those who turn it on, sent through Resend. Both set turns them on; without them nothing is sent and the log says so once. See [Email notices](#email-notices). |
 | `NOTIFY_EMAIL` | optional | With the shared password, where those notices go (one address, or a few separated by commas). Without it nothing is sent, and `/privacy` and `/security` name no email service. Ignored with Clerk, where each account's notices go to its own verified address. |
 | `APP_URL` | optional | The app's public `https` address, for the link in a notice email (`http://localhost:3000` works locally). Unset, the email says to open Nya without a link, and no weekly summary goes: each must carry its link to turn it off. |
 
