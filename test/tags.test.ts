@@ -187,11 +187,12 @@ describe('the tags', () => {
     expect(shown).toEqual({ set: null, note: "Your tags couldn't be read, so transactions show without them until they can be." });
   });
 
-  test('that note is for what shows tags: the Activity tab has it, a report’s gaps don’t', async () => {
+  test('that note is for what shows tags: the Activity tab has it, apart from the notes the figures bear (the chart’s), and a report’s gaps don’t', async () => {
     await addItem('item_a', 'acct_a', [row('t_a', 'acct_a')]);
     await fake.set(ctxKey('tags'), 'not-ciphertext-but-long-enough-to-be-tried');
     const note = "Your tags couldn't be read, so transactions show without them until they can be.";
-    expect((await quietly(() => listed())).notes).toContain(note);
+    const answer = await quietly(() => listed());
+    expect([answer.aside_notes, answer.notes.includes(note), answer.unread_notes.includes(note)]).toEqual([[note], false, false]);
     const { assembleBankRows, finishActivity } = await import('@/lib/activity');
     const bank = await assembleBankRows(ctx, { sync: false, readOnly: true });
     const read = await quietly(() => finishActivity(ctx, bank.payload, bank.hidden));

@@ -72,6 +72,7 @@ export function pairedWords(t: Pick<Txn, "paired" | "transaction_code" | "catego
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
 const NO_TAGS: Tag[] = [];
+const NO_NOTES: string[] = [];
 
 export type Txn = {
   transaction_id: string;
@@ -332,6 +333,7 @@ function TxnDetail({ t, noteEditor = false }: { t: Txn; noteEditor?: boolean }) 
 export default function MonthBreakdown({
   txns,
   notes,
+  asideNotes = NO_NOTES,
   loading,
   taxonomy = null,
   onRecategorize,
@@ -353,7 +355,12 @@ export default function MonthBreakdown({
   review,
 }: {
   txns: Txn[] | null;
+  /** What the load couldn't read, or couldn't apply as it says: said under
+   *  the list and beside the chart, whose figures it bears on. */
   notes: string[];
+  /** What only the list says, after those: what no figure reads (tags, the
+   *  review queue's settings), so never beside the chart. */
+  asideNotes?: string[];
   loading: boolean;
   /** Your categories (components/categories-state.ts): the list to choose
    *  one from, and the groups top spending rolls up to. Null until loaded. */
@@ -640,7 +647,7 @@ export default function MonthBreakdown({
     </div>
   );
 
-  if (!txns || (txns.length === 0 && notes.length === 0)) {
+  if (!txns || (txns.length === 0 && notes.length === 0 && asideNotes.length === 0)) {
     // Connections that can't bring any in are not an empty year.
     const none = txns ? noSpending(withoutTransactions, txns.length) : null;
     const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
@@ -1243,7 +1250,7 @@ export default function MonthBreakdown({
           </table>
         )}
 
-        {notes.map((n) => (
+        {[...new Set([...notes, ...asideNotes])].map((n) => (
           <div className="error" key={n}>
             {n}
           </div>

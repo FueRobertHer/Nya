@@ -520,6 +520,9 @@ export default function Dashboard({
   // Your rules (components/rules-state.ts), and the rule drawer.
   const rules = useRules();
   const [txnNotes, setTxnNotes] = useState<string[]>([]);
+  // What only the list says, beside them (the answer's `aside_notes`: tags
+  // or the review queue's settings that couldn't be read), never the chart.
+  const [txnAside, setTxnAside] = useState<string[]>([]);
   // Of those, the ones that say transactions couldn't all be read, which the
   // Plan weighs its figures by (lib/fire/inputs.ts unreadNotesOf): never one
   // that says how a rule, a category, a split or a group applies.
@@ -765,6 +768,7 @@ export default function Dashboard({
       const res = await fetch(`/api/transactions${force ? '?refresh=1' : ''}`);
       if (!res.ok) {
         setTxnNotes(['Could not load transactions.']);
+        setTxnAside([]);
         setTxnUnread(['Could not load transactions.']);
         setTxnsFailed(true);
         return;
@@ -776,6 +780,7 @@ export default function Dashboard({
       acceptTags(data.tags);
       acceptReview(data.review);
       setTxnNotes(data.notes ?? []);
+      setTxnAside(Array.isArray(data.aside_notes) ? data.aside_notes : []);
       setTxnUnread(unreadNotesOf(data));
       setTxnIncomplete(Array.isArray(data.incomplete) ? data.incomplete : []);
       setTxnWithout(noTransactionsView(data));
@@ -783,6 +788,7 @@ export default function Dashboard({
       setTxnsFailed(false);
     } catch {
       setTxnNotes(['Could not load transactions.']);
+      setTxnAside([]);
       setTxnUnread(['Could not load transactions.']);
       setTxnsFailed(true);
     } finally {
@@ -924,6 +930,7 @@ export default function Dashboard({
     txns,
     setTxns,
     setTxnNotes,
+    setTxnAside,
     setTxnUnread,
     setTxnIncomplete,
     setTxnWithout,
@@ -2735,6 +2742,7 @@ export default function Dashboard({
               <MonthBreakdown
                 txns={txns}
                 notes={txnNotes}
+                asideNotes={txnAside}
                 loading={txnsLoading}
                 taxonomy={categories.taxonomy}
                 onRecategorize={txnEdits.recategorize}

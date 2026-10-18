@@ -557,7 +557,9 @@ export function cashFlowNotes(input: {
   period: Period;
   /** Every row loaded, counted or not. */
   rows: readonly FlowRow[];
-  /** What the load couldn't read, as the Activity list says it. */
+  /** What the load couldn't read, as the Activity list says it: the
+   *  answer's `notes`, never its `aside_notes` (tags, the review queue's
+   *  settings), which no figure here reads. */
   read?: readonly string[];
   incomplete?: readonly Incomplete[];
   stopped?: readonly Stopped[];
