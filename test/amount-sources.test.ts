@@ -142,6 +142,31 @@ describe('a number written as an amount past the formatters', () => {
     expect(found.children).toEqual({});
   });
 
+  test('Intl with `new` or without, toPrecision, a number rounded as one but drawn as it is, and a count’s exemption not taken by an amount’s words', () => {
+    const found = scan({
+      NoNew: "return <span>{Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD' }).format(n)}</span>;",
+      Precision: 'return <span>{balance.toPrecision(6)}</span>;',
+      RoundedDrawn: 'return <span>{Number(balance.toFixed(2))}</span>;',
+      Spent: 'return <p>{balance.toLocaleString()} spent</p>;',
+      Monthly: 'return <p>{balance.toLocaleString()} a month</p>;',
+    });
+    expect(found.bypasses).toEqual({ NoNew: [7], Precision: [7], RoundedDrawn: [7], Spent: [7], Monthly: [7] });
+  });
+
+  test('guarded only by what writes the mask in its place: hiddenFigure around it, its own statement’s switch, or its function’s early return', () => {
+    const found = scan({
+      Around: 'return <p><Masked>{hiddenFigure((cents / 100).toFixed(2))}</Masked></p>;',
+      Dollar: 'return <p><Masked>{`$${hiddenFigure(String(cents))}`}</Masked></p>;',
+      Chosen: "return <p><Masked>{amountsHidden() ? '•••' : (cents / 100).toFixed(2)}</Masked></p>;",
+      Early: ['return <p><Masked>{cell(n)}</Masked></p>;', ['function cell(n: number) { if (amountsHidden()) return hiddenMoney(n, null); return n.toFixed(2); }']],
+      // A hidden figure earlier in the function guards nothing after it.
+      Earlier: 'const q = hiddenFigure(String(n)); return <p><Masked>{q}</Masked><Masked>{(cents / 100).toFixed(2)}</Masked></p>;',
+      // Nor does an early return of another function.
+      Elsewhere: ['return <p><Masked>{cell(n)}</Masked></p>;', ['function cell(n: number) { const hide = () => { if (amountsHidden()) return 1; return 0; }; return `${hide()}${n.toFixed(2)}`; }']],
+    });
+    expect(found.bypasses).toEqual({ Earlier: [7], Elsewhere: [9] });
+  });
+
   test('kept in a memo the switch can’t change', () => {
     const found = scan({
       Memo: 'const rows = useMemo(() => [n].map((v: number) => ({ text: `${v.toFixed(2)} USD` })), [n]); return <i>{rows.length}</i>;',

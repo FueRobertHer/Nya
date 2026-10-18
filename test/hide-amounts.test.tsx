@@ -1184,3 +1184,42 @@ describe('every module a page can load writes its amounts through the switch (a 
     }
   });
 });
+
+/** View suites the backstop leaves out: this one (it would run itself), and
+ *  the developers page's, whose API samples are figures by design. */
+const NOT_VIEWS = new Set(['hide-amounts.test.tsx', 'developers.test.tsx']);
+
+/** What a view draws that only looks like an amount: a file's example
+ *  figures (EXAMPLES), SimpleFIN's own price, and a count written with
+ *  thousands, followed by what it counts or after its name. */
+function withoutLookalikes(line: string): string {
+  return [...EXAMPLES, '($15 a year'].reduce((t, e) => t.split(e).join(''), line).replace(/\b\d{1,3}(?:,\d{3})+(?=(?:\s+[A-Z][\w-]*)*\s+[a-z])|(?<=^Transactions: )[\d,]+$/g, '#');
+}
+
+describe('a backstop over every view the suites draw, amounts hidden', () => {
+  test('each render the view suites make, made again with amounts hidden, shows no figure: in its text, a label read alone or an option', () => {
+    // test/hidden-renders.ts makes each render twice in a run of the view
+    // suites, and writes down what the hidden one shows: a figure the scan of
+    // the source can't tell from text (a number drawn as it is) shows there.
+    const dir = mkdtempSync(join(tmpdir(), 'nya-hidden-renders-'));
+    try {
+      const out = join(dir, 'shown.txt');
+      const suites = readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.tsx') && !NOT_VIEWS.has(f));
+      const run = Bun.spawnSync([process.execPath, 'test', '--preload', './test/hidden-renders.ts', ...suites.map((f) => `./test/${f}`)], {
+        cwd: ROOT,
+        env: { ...process.env, NYA_HIDDEN_RENDERS: out },
+        stdout: 'pipe',
+        stderr: 'pipe',
+      });
+      const said = `${run.stdout.toString()}${run.stderr.toString()}`;
+      expect(said).toContain(`across ${suites.length} files`);
+      // The one test the second render fails counts the renders it is drawn in.
+      expect([...said.matchAll(/^\(fail\) (.+?) \[[\d.]+m?s\]$/gm)].map((m) => m[1])).toEqual(['NetWorthChart time ranges > the baseline is computed from the range shown']);
+      const shown = readFileSync(out, 'utf8').split('\n').filter(Boolean);
+      expect(shown.length).toBeGreaterThan(1000);
+      expect(shown.filter((l) => AMOUNT.test(withoutLookalikes(l.slice(l.indexOf('\t') + 1))))).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
+});

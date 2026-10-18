@@ -25,11 +25,13 @@
 // in, a callback's parameter given their items, what a function returns and
 // what is destructured from it), by the members that hold one; and a number
 // written as one past the formatters: Intl's or toLocaleString's currency,
-// fraction digits or compact notation, a "$" written by hand, toFixed, or a
-// toLocaleString given no options, unless the code beside it says it is
-// something else (saysWhatItIs). An amount drawn as text is one anywhere in a
-// child expression: alone, in a template literal, a ternary or a list, or in
-// a call given a formatter as a callback.
+// fraction digits or compact notation, a "$" written by hand, toFixed,
+// toPrecision, or a toLocaleString given no options, unless the code beside
+// it says it is something else (saysWhatItIs). An amount drawn as text is one
+// anywhere in a child expression: alone, in a template literal, a ternary or
+// a list, or in a call given a formatter as a callback. A number drawn as it
+// is can't be told from a count by its text: test/hide-amounts.test.tsx's
+// backstop renders the views with amounts hidden for it.
 
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -462,32 +464,64 @@ export const FORMATTERS = ['formatMoney', 'signedMoney', 'compactMoney', 'hidden
  *  where they would show while amounts are hidden, in <Masked> or not. */
 export const FIELD_WRITERS = ['fieldAmount'];
 
-/** A number formatted as an amount without lib/format.ts: Intl's or
- *  toLocaleString's currency, fraction digits or compact notation (not a
- *  date's or a count's), toFixed or a toLocaleString given no options (but
- *  where the code beside it says it is something else: saysWhatItIs), or a
- *  "$" written before a figure by hand. */
-const NUMBER_FORMAT = /new\s+Intl\.NumberFormat\s*\(/g;
+/** A number formatted as an amount without lib/format.ts: Intl's (with
+ *  `new` or without) or toLocaleString's currency, fraction digits or
+ *  compact notation (not a date's or a count's), toFixed, toPrecision or a
+ *  toLocaleString given no options (but where the code beside it says it is
+ *  something else: saysWhatItIs), or a "$" written before a figure by hand. */
+const NUMBER_FORMAT = /(?<![\w$.])(?:new\s+)?Intl\.NumberFormat\s*\(/g;
 const LOCALE_STRING = /\.toLocaleString\s*\(/g;
-const TO_FIXED = /\.toFixed\s*\(/g;
+const TO_FIXED = /\.to(?:Fixed|Precision)\s*\(/g;
 const AMOUNT_OPTIONS = /currency|FractionDigits|notation|style:\s*['"]currency['"]/;
 const DOLLAR_BY_HAND = /`[^`]*?\$\$\{|['"]-?\$['"]\s*\+|\+\s*['"]-?\$['"]|\?\s*['"]-?\$['"]\s*:/g;
 
-/** Where the enclosing function starts: the last line before `at` that
- *  starts one at the outermost level of a module or a component. */
-function functionStart(text: string, at: number): number {
-  const before = text.slice(0, at);
-  let start = 0;
-  for (const m of before.matchAll(/\n[ \t]*(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function\s+\w+|const\s+\w+\s*=\s*(?:\([^)]*\)|\w+)\s*(?::[^=\n]+)?=>)/g)) start = m.index! + 1;
-  return start;
+/** Where the statement around `at` starts: past the ";" or the "{" before
+ *  it, out of the parentheses and brackets `at` is in. */
+function statementStart(lx: Lexed, at: number): number {
+  const t = lx.names;
+  for (let i = at - 1; i >= 0; i--) {
+    const open = lx.pairs.get(i);
+    if (open !== undefined && open < i) i = open;
+    else if (t[i] === ';' || t[i] === '{') return i + 1;
+  }
+  return 0;
 }
 
-/** A call formatting an amount is guarded when its function hides it while
- *  amounts are hidden: it checks the switch (amountsHidden()) or writes the
- *  figure through hiddenFigure or hiddenMoney before it. */
-function guarded(text: string, at: number): boolean {
-  const lineEnd = text.indexOf('\n', at);
-  return /\bamountsHidden\(\)|\bhiddenFigure\(|\bhiddenMoney\(/.test(text.slice(functionStart(text, at), lineEnd < 0 ? text.length : lineEnd));
+/**
+ * A number formatted as an amount at `at` is guarded when the mask is written
+ * in its place while amounts are hidden: its figure goes through
+ * hiddenFigure or hiddenMoney (it is in their call, or a "$" by hand is
+ * followed by one), its own statement chooses by the switch (`amountsHidden()
+ * ? ...`), or the function it is in has returned before it when amounts are
+ * hidden (`if (amountsHidden()) return ...`). Nothing else in the function
+ * says anything of it.
+ */
+function guarded(lx: Lexed, ranges: Map<string, [number, number]>, at: number): boolean {
+  const t = lx.names;
+  if (/^`[^`]*?\$\$\{\s*(?:hiddenFigure|hiddenMoney)\s*\(/.test(lx.code.slice(at))) return true;
+  for (const m of t.matchAll(/(?<![\w$.])(?:hiddenFigure|hiddenMoney)\s*\(/g)) {
+    const open = m.index! + m[0].length - 1;
+    if (open < at && at < closing(lx, open)) return true;
+  }
+  if (/\bamountsHidden\(\)/.test(t.slice(statementStart(lx, at), at))) return true;
+  let fn: [number, number] | null = null;
+  for (const r of ranges.values()) if (r[0] <= at && at < r[1] && (!fn || r[1] - r[0] < fn[1] - fn[0])) fn = r;
+  if (!fn) return false;
+  // Its own early return, not one of a function written inside it.
+  const inner = innerBodies(lx, fn[0], at);
+  for (const m of t.slice(fn[0], at).matchAll(/\bif\s*\(\s*amountsHidden\(\)\s*\)\s*\{?\s*return\b/g)) {
+    const p = fn[0] + m.index!;
+    if (!inner.some(([a, b]) => p >= a && p < b)) return true;
+  }
+  return false;
+}
+
+/** Whether `at` is in what an element draws: its innermost JSX expression
+ *  is a child's, or a label's a screen reader reads (LABELS). */
+function drawnAt(lx: Lexed, at: number): boolean {
+  let inner: JsxExpr | null = null;
+  for (const x of lx.jsx.exprs) if (x.open < at && at < x.close && (!inner || x.open > inner.open)) inner = x;
+  return !!inner && (inner.attr === null || LABELS.has(inner.attr));
 }
 
 export type Bypass = { file: string; line: number; text: string };
@@ -535,14 +569,20 @@ const COORDINATE_AFTER = /^\},(?:\$\{|-?\d)/;
 /** A channel of a CSS color. */
 const COLOR_BEFORE = /\b(?:rgba?|hsla?)\([^()`]*\$\{$/;
 
+/** The words an amount is followed by in a sentence ("$40 spent", "$40 a
+ *  month"): after a number, they say it is none of the counts below. */
+const AMOUNT_WORDS = /^\s+(?:a|per|each|spent|left|saved|owed|earned|paid|received|due|available|allocated|budgeted|remaining|less|off|back|net|total|income|over|under)\b/;
+
 /**
- * Whether the code beside a number written with toFixed, or with a
- * toLocaleString given no options, says it is no amount: a percentage (a "%"
- * after it, or a fraction made one by a hundred), a size or a time after it,
- * a drawn shape's coordinate, a color's channel, or a number rounded as a
- * number (in Number(...)); and, for toLocaleString, a count (followed by a
- * word saying what it counts, or by its noun chosen by it, or a length) or a
- * date. Anything else is taken for an amount.
+ * Whether the code beside a number written with toFixed or toPrecision, or
+ * with a toLocaleString given no options, says it is no amount: a percentage
+ * (a "%" after it, or a fraction made one by a hundred), a size or a time
+ * after it, a drawn shape's coordinate, a color's channel, or a number
+ * rounded as a number (in Number(...), but not drawn as it is: drawnAt); and,
+ * for toLocaleString, a count (followed by a word saying what it counts or
+ * going on with its sentence, not one an amount is followed by, or by its
+ * noun chosen by it, or a length) or a date. Anything else is taken for an
+ * amount.
  */
 function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | 'toLocaleString'): boolean {
   const text = lx.code;
@@ -557,9 +597,9 @@ function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | '
   if (MEASURE_AFTER.test(after)) return true;
   if (/\*\s*100\s*\)$/.test(receiver)) return true;
   if (COORDINATE_BEFORE.test(before) || COORDINATE_AFTER.test(next) || COLOR_BEFORE.test(before)) return true;
-  if (/\bNumber\($/.test(before) && text[end + 1] === ')') return true;
+  if (/\bNumber\($/.test(before) && text[end + 1] === ')' && !drawnAt(lx, dot)) return true;
   if (method !== 'toLocaleString') return false;
-  if (/^\s+[a-z]/.test(after)) return true;
+  if (/^\s+[a-z]/.test(after) && !AMOUNT_WORDS.test(after)) return true;
   if (/\.length$/.test(receiver)) return true;
   if (/\bnew\s+$/.test(before) && /^Date\b/.test(receiver)) return true;
   // "3 rows", its noun chosen by it: `${n.toLocaleString()} ${n === 1 ? ...`.
@@ -608,10 +648,11 @@ export function bypasses(sources: readonly Source[]): Bypass[] {
   for (const { path, text: raw } of sources) {
     const lx = lex(raw.replace(/\r/g, ''), path.endsWith('.tsx'));
     const text = lx.code;
+    const { ranges } = functionRanges(lx);
     const lines = new Set<number>();
     for (const at of numberFormats(lx)) {
       const line = lineOf(text, at);
-      if (guarded(text, at) || lines.has(line)) continue;
+      if (guarded(lx, ranges, at) || lines.has(line)) continue;
       lines.add(line);
       out.push({ file: path, line, text: lineText(text, at) });
     }
@@ -783,17 +824,22 @@ function bodyIn(lx: Lexed, from: number, to: number): { block: boolean; from: nu
   return t[j] === '{' ? block(j) : { block: false, from: j, to };
 }
 
+/** The blocks of the functions written in [from, to) of a module. */
+function innerBodies(lx: Lexed, from: number, to: number): [number, number][] {
+  const out: [number, number][] = [];
+  for (const m of lx.names.slice(from, to).matchAll(/=>|\bfunction\b/g)) {
+    const body = bodyIn(lx, from + m.index!, to);
+    if (body?.block) out.push([body.from, body.to]);
+  }
+  return out;
+}
+
 /** Where each return of a function's block [from, to) gives its value: its
  *  own, not those of a function written inside it. */
 function ownReturns(lx: Lexed, from: number, to: number): [number, number][] {
-  const t = lx.names;
-  const inner: [number, number][] = [];
-  for (const m of t.slice(from, to).matchAll(/=>|\bfunction\b/g)) {
-    const body = bodyIn(lx, from + m.index!, to);
-    if (body?.block) inner.push([body.from, body.to]);
-  }
+  const inner = innerBodies(lx, from, to);
   const out: [number, number][] = [];
-  for (const m of t.slice(from, to).matchAll(/(?<![\w$.])return\b/g)) {
+  for (const m of lx.names.slice(from, to).matchAll(/(?<![\w$.])return\b/g)) {
     const at = from + m.index!;
     if (inner.some(([a, b]) => at >= a && at < b)) continue;
     out.push([at + m[0].length, statementEnd(lx, at + m[0].length)]);
