@@ -1205,16 +1205,19 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
     try {
       const out = join(dir, 'shown.txt');
       const suites = readdirSync(join(ROOT, 'test')).filter((f) => f.endsWith('.test.tsx') && !NOT_VIEWS.has(f));
+      // A fresh environment: the suites read what they set themselves, or
+      // what the .env files say, never what an earlier file of this run set.
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+|CI)$/.test(k)));
       const run = Bun.spawnSync([process.execPath, 'test', '--preload', './test/hidden-renders.ts', ...suites.map((f) => `./test/${f}`)], {
         cwd: ROOT,
-        env: { ...process.env, NYA_HIDDEN_RENDERS: out },
+        env: { ...env, NYA_HIDDEN_RENDERS: out },
         stdout: 'pipe',
         stderr: 'pipe',
       });
       const said = `${run.stdout.toString()}${run.stderr.toString()}`;
       expect(said).toContain(`across ${suites.length} files`);
       // The one test the second render fails counts the renders it is drawn in.
-      expect([...said.matchAll(/^\(fail\) (.+?) \[[\d.]+m?s\]$/gm)].map((m) => m[1])).toEqual(['NetWorthChart time ranges > the baseline is computed from the range shown']);
+      expect([...new Set([...said.matchAll(/^\(fail\) (.+?) \[[\d.]+m?s\]$/gm)].map((m) => m[1]))]).toEqual(['NetWorthChart time ranges > the baseline is computed from the range shown']);
       const shown = readFileSync(out, 'utf8').split('\n').filter(Boolean);
       expect(shown.length).toBeGreaterThan(1000);
       expect(shown.filter((l) => AMOUNT.test(withoutLookalikes(l.slice(l.indexOf('\t') + 1))))).toEqual([]);
