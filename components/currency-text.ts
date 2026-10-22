@@ -161,3 +161,9 @@ export function institutionNote(b: Pick<BalancesIn, 'currency' | 'left_out'>): s
   const out = b.left_out.map((l) => `${l.currency} isn’t in it (${l.why === 'not-fetched' ? 'no rates yet' : 'no rate'})`);
   return `Mixed currencies, converted into ${b.currency} at the ECB’s newest rates${out.length > 0 ? `; ${out.join('; ')}` : ''}.`;
 }
+
+/** What correcting a manual account's currency doesn't change, said on its
+ *  form and in the choice of a home currency: relabelling the transactions
+ *  already on it is the next step's. */
+export const CORRECTION_KEEPS =
+  'The transactions already on it keep the currency they were entered in, so budgets and Activity, which add up one currency, may name them rather than count them.';

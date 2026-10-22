@@ -338,6 +338,11 @@ describe('the sheet that chooses a home currency', () => {
     const fixed = body({ manual, fixes: { manual_flat: 'GBP' } });
     expect([chosenFor(fixed, 'House'), chosenFor(fixed, 'Flat')]).toEqual(['USD', 'GBP']);
     expect(text(fixed)).toContain('Your manual accounts House and Flat stay in their own currencies; their balances are converted for the total.');
+    // What a correction doesn't change, said once one is made.
+    const keeps =
+      'Correcting an account changes only its currency. The transactions already on it keep the currency they were entered in, so budgets and Activity, which add up one currency, may name them rather than count them.';
+    expect(text(fixed)).toContain(keeps);
+    expect(text(html)).not.toContain(keeps);
     // One account: said of it alone.
     expect(text(body({ manual: manual.slice(0, 1) }))).toContain('Your manual account is counted in the currency below.');
     // With the home currency already chosen, corrections alone can be saved.

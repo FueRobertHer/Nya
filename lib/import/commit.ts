@@ -560,6 +560,43 @@ export async function rememberSettings(ctx: Ctx, account_id: string, patch: Part
   }
 }
 
+/**
+ * After a manual account's currency is corrected from `from` to `to`
+ * (app/api/manual-accounts): what its last files taught keeps no currency
+ * that was the account's old one, so the next file that doesn't say its own
+ * is read in the account's new currency, never in the old one "as chosen for
+ * this account". An OFX file's is dropped (the account's own is then the
+ * default); a CSV or QIF file's, which the stored settings always hold
+ * (lib/import/store.ts), becomes the new one. A currency chosen apart from the
+ * account's stays. Best effort, as remembering is: the correction stands
+ * either way.
+ */
+export async function followAccountCurrency(ctx: Ctx, account_id: string, from: string, to: string): Promise<void> {
+  if (from === to) return;
+  try {
+    // Read first: with nothing in the old currency, nothing is written.
+    const now = await importSettingsStore.get(ctx, account_id);
+    if (!now || ![now.csv?.currency, now.qif?.currency, now.ofx?.currency].includes(from)) return;
+    await importSettingsStore.update(ctx, account_id, (current) => (current ? followed(current, from, to) : null));
+  } catch (err) {
+    console.warn('import: what a file taught could not follow the account’s new currency', loggable(err));
+  }
+}
+
+/** Import settings with each currency that was `from` made `to`, or, for an
+ *  OFX file's (optional), dropped. */
+function followed(s: ImportSettings, from: string, to: string): ImportSettings {
+  const next: ImportSettings = { ...s };
+  if (s.csv && s.csv.currency === from) next.csv = { ...s.csv, currency: to };
+  if (s.qif && s.qif.currency === from) next.qif = { ...s.qif, currency: to };
+  if (s.ofx && s.ofx.currency === from) {
+    const ofx = { ...s.ofx };
+    delete ofx.currency;
+    next.ofx = ofx;
+  }
+  return next;
+}
+
 // ---- Undo ----
 
 /** No import with that id on that account. */

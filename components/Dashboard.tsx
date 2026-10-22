@@ -71,7 +71,7 @@ import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
-import { institutionNote, rateEffectText } from './currency-text';
+import { CORRECTION_KEEPS, institutionNote, rateEffectText } from './currency-text';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { totalsCurrency } from '@/lib/spending';
@@ -3149,7 +3149,8 @@ export default function Dashboard({
             </div>
             {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
               <p className="panel-note">
-                The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.
+                The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.{' '}
+                {CORRECTION_KEEPS}
               </p>
             )}
             <p className="panel-note">

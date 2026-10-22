@@ -263,10 +263,10 @@ export async function setManualBalance(ctx: Ctx, account_id: string, balance: nu
  * its field (as moveManualBalance does), so a balance pushed meanwhile (the
  * ingest endpoint, another device) is never written over. For the choice of
  * a home currency, which corrects an account's currency before it converts.
- * Answers 'set', 'same' (already in it: nothing written) or 'missing'.
- * Throws if the account can't be read.
+ * Answers the currency it was in when it was set (`from`), 'same' (already
+ * in it: nothing written) or 'missing'. Throws if the account can't be read.
  */
-export async function setManualCurrency(ctx: Ctx, account_id: string, currency: string): Promise<'set' | 'same' | 'missing'> {
+export async function setManualCurrency(ctx: Ctx, account_id: string, currency: string): Promise<{ from: string } | 'same' | 'missing'> {
   const key = ACCOUNTS_HASH(ctx);
   for (let attempt = 0; attempt < 5; attempt++) {
     const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
@@ -278,12 +278,13 @@ export async function setManualCurrency(ctx: Ctx, account_id: string, currency: 
     } catch (err) {
       throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
     }
-    if ((account.currency ?? MANUAL_CURRENCY) === currency) return 'same';
+    const from = account.currency ?? MANUAL_CURRENCY;
+    if (from === currency) return 'same';
     const changed: ManualAccount = { ...account };
     delete changed.currency;
     const next = await encrypt(ctx, JSON.stringify({ ...changed, ...currencyField(currency) }));
     const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
-    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return 'set';
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return { from };
   }
   throw new Error(`Manual account ${account_id} kept changing, so its currency wasn't set`);
 }

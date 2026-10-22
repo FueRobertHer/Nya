@@ -15,6 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { currencyName, errorOf, everyCurrency, useCurrencySettings, type CurrencySettingsView } from './currency-state';
+import { CORRECTION_KEEPS } from './currency-text';
 
 type Props = {
   open: boolean;
@@ -224,6 +225,7 @@ export function CurrencyChoiceBody({
               </select>
             </label>
           ))}
+          {fixing && <p className="panel-note">Correcting an account changes only its currency. {CORRECTION_KEEPS}</p>}
         </div>
       )}
       {unpriceable && (

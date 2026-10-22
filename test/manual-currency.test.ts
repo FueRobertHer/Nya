@@ -31,6 +31,7 @@ const { getManualAccount, getManualAccounts, setManualBalance, toInstitutions } 
 const { markBackfillDone } = await import('@/lib/history');
 const { readCache, writeCache, CacheKey } = await import('@/lib/cache');
 const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+const { importSettingsStore } = await import('@/lib/import/store');
 const route = await import('@/app/api/manual-accounts/route');
 const netWorth = await import('@/app/api/net-worth/route');
 
@@ -128,6 +129,42 @@ describe('correcting it alone', () => {
     expect(await fake.hget<string>(ctxKey('manual:accounts'), account.account_id)).toBe(before);
     expect((await update({ account_id: 'manual_gone', currency: 'EUR' })).status).toBe(404);
     expect(await update({ account_id: account.account_id, currency: 'XYZ' })).toEqual({ status: 400, body: { error: 'The currency is a three-letter ISO code, like USD or EUR' } });
+  });
+});
+
+describe('what its imported files taught', () => {
+  /** What files of each kind taught; `ofx` null for an OFX file whose
+   *  statement said its currency, so none was kept. */
+  const taught = (currency: string, ofx: string | null = currency) => ({
+    version: 1 as const,
+    csv: { columns: { Date: 'date', Amount: 'amount' }, sign: 'negative-out' as const, decimal: null, date_order: null, delimiter: ',', currency },
+    ofx: { statement: null, flip: false, ...(ofx ? { currency: ofx } : {}) },
+    qif: { date_order: null, decimal: null, flip: false, currency },
+    updated_at: '2026-10-01T12:00:00.000Z',
+  });
+
+  test('follows a correction: the old currency goes, so the next file is read in the new one', async () => {
+    const { account } = (await add(FORM)).body;
+    await importSettingsStore.set(ctx, account.account_id, taught('USD'));
+    expect((await update({ account_id: account.account_id, currency: 'EUR' })).status).toBe(200);
+    const after = await importSettingsStore.get(ctx, account.account_id);
+    // OFX's falls back to the account's own; CSV's and QIF's, which the
+    // settings always hold, become it. The rest is as it was.
+    expect(after).toEqual(taught('EUR', null));
+    // Through the form too.
+    expect((await update({ ...FORM, account_id: account.account_id, currency: 'GBP' })).status).toBe(200);
+    expect((await importSettingsStore.get(ctx, account.account_id))?.qif?.currency).toBe('GBP');
+  });
+
+  test('keeps a currency chosen apart from the account’s, and writes nothing without settings', async () => {
+    const { account } = (await add(FORM)).body;
+    await importSettingsStore.set(ctx, account.account_id, taught('CHF'));
+    const before = await fake.hget<string>(ctxKey('import-settings'), account.account_id);
+    expect((await update({ account_id: account.account_id, currency: 'EUR' })).status).toBe(200);
+    expect(await fake.hget<string>(ctxKey('import-settings'), account.account_id)).toBe(before);
+    const other = (await add({ ...FORM, name: 'Other' })).body.account;
+    expect((await update({ account_id: other.account_id, currency: 'EUR' })).status).toBe(200);
+    expect(await importSettingsStore.get(ctx, other.account_id)).toBeNull();
   });
 });
 
