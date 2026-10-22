@@ -13,7 +13,8 @@
 // What the download leaves out because the entries hold it is worked out at
 // the finish, from what was written: the imports' summaries (with how many
 // of their rows each was handed by an import undone in the old copy), and the
-// holdings index.
+// holdings index; and so is what readers find restored rows by, each
+// restored account's span of rows, never the page's word for it.
 
 import type { Ctx } from '../containers';
 import { StoreRefusedError, type MapStore, type ValueStore } from '../repo';
@@ -34,7 +35,7 @@ import { manualTxnStore } from '../manual-txns';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
 import { storeOfPart } from './check';
-import { restoredAccountsStore, restoredTxnStore, type RestoredBook, type RestoredTxn, type UserRestoreRecord } from './store';
+import { restoredAccountsStore, restoredTxnStore, type RestoredAccount, type RestoredBook, type RestoredTxn, type UserRestoreRecord } from './store';
 
 /** A batch that can't be written as it is: refused, nothing written. */
 export class BatchNotWritten extends StoreRefusedError {
@@ -175,12 +176,42 @@ function takenOver(rows: Iterable<{ id: string; import_id?: string | null }>, en
   return out;
 }
 
+/** Each restored account's `rows` (its first and last day, how many, in how
+ *  many books), worked out from the books written rather than taken from
+ *  the page's plan: readers find an account's books by it, and say the
+ *  months it holds by it (lib/user-restore/restored.ts bookIdsOf). */
+async function restoredSpans(ctx: Ctx): Promise<void> {
+  const accounts = await restoredAccountsStore.getAll(ctx);
+  if (accounts.size === 0) return;
+  const books = await restoredTxnStore.getAll(ctx);
+  const spans = new Map<string, NonNullable<RestoredAccount['rows']>>();
+  for (const b of books.values()) {
+    const s = spans.get(b.account_id) ?? { first: '', last: '', count: 0, books: 0 };
+    for (const r of b.rows) {
+      if (s.first === '' || r.bank.date < s.first) s.first = r.bank.date;
+      if (s.last === '' || r.bank.date > s.last) s.last = r.bank.date;
+      s.count++;
+    }
+    s.books = Math.max(s.books, b.part);
+    spans.set(b.account_id, s);
+  }
+  const changed: [string, RestoredAccount][] = [];
+  for (const [id, a] of accounts) {
+    const s = spans.get(id);
+    const rows = s && s.count > 0 ? s : null;
+    if (JSON.stringify(a.rows) !== JSON.stringify(rows)) changed.push([id, { ...a, rows }]);
+  }
+  if (changed.length > 0) await restoredAccountsStore.setMany(ctx, changed);
+}
+
 /**
- * What the finish works out from what was written (see the header): the
- * imports' summaries, and the holdings index. Then the caches go, since net
- * worth and transactions changed. Run again, it writes the same.
+ * What the finish works out from what was written (see the header): each
+ * restored account's rows, the imports' summaries, and the holdings index.
+ * Then the caches go, since net worth and transactions changed. Run again,
+ * it writes the same.
  */
 export async function finishWrites(ctx: Ctx): Promise<void> {
+  await restoredSpans(ctx);
   const [imports, historyImports, manualBooks, importedBooks] = await Promise.all([
     importStore.getAll(ctx),
     historyImportStore.getAll(ctx),

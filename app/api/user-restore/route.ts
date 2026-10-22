@@ -126,6 +126,9 @@ async function recordOfStart(raw: Record<string, unknown>, now: Date): Promise<U
   if (!isUserRestoreRecord(record)) return 'This start isn’t one Nya can record. Choose the file again.';
   if (!record.plan.batches.every((b) => isPartName(b.part) && b.count >= 1)) return 'This plan names a part this version of Nya doesn’t write. Choose the file again.';
   if (Date.parse(record.source.exported_at) > now.getTime() + 5 * 60_000) return 'This file says it was made after now.';
+  // The backfill never estimates over the restored history's last day
+  // (app/api/backfill): no day of it can be after the download was made.
+  if (record.history && record.history.last > new Date(record.source.exported_at).toISOString().slice(0, 10)) return 'This plan names balance history after the day its file was made. Choose the file again.';
   if ((await planDigest(record.plan.batches)) !== record.plan.digest) return 'This plan’s digest isn’t of its batches. Choose the file again.';
   return record;
 }

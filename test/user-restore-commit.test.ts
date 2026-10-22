@@ -36,6 +36,7 @@ const { EXPORTED, downloadText, restoreAll } = await import('./restore-run');
 
 const ctx = TEST_CTX;
 const RECORD = restoreRecord() as never;
+const RESTORE_ID = restoreRecord().id;
 
 beforeEach(async () => {
   fake.reset();
@@ -123,6 +124,24 @@ const row = (i: number) => ({
   updated_at: '2026-10-01T00:00:00.000Z',
 });
 const piece = (from: number, rows: number[], head: Record<string, unknown> = {}) => [{ id: 'manual_house', from, value: { version: 1, ...head, rows: rows.map(row) } }];
+
+describe('each restored account’s rows', () => {
+  test('are worked out at the finish from the books written, whatever the plan said', async () => {
+    const { restoredAccountsStore, restoredTxnStore } = await import('@/lib/user-restore/store');
+    const { restoredId } = await import('@/lib/user-restore/ids');
+    const { TXNS } = await import('./restore-fixture');
+    const row = (t: (typeof TXNS)[keyof typeof TXNS]) => ({ id: restoredId(t.transaction_id), account_id: 'acc_chk', import_id: RESTORE_ID, bank: t, created_at: '2026-10-07T09:00:00.000Z' });
+    const account = { version: 1, restore_id: RESTORE_ID, restored_at: '2026-10-07T09:00:00.000Z', item_id: 'item_chase', institution_id: 'ins_3', institution_name: 'Chase', name: 'Checking', mask: '1111', type: 'depository', subtype: 'checking', currency: 'USD', downloaded: '2026-10-06' };
+    // The plan said one row in one book; two books hold three.
+    await restoredAccountsStore.set(ctx, 'acc_chk', { ...account, rows: { first: '2026-01-02', last: '2026-01-02', count: 1, books: 1 } } as never);
+    await restoredAccountsStore.set(ctx, 'acc_none', { ...account, name: 'Savings', mask: '3333', rows: { first: '2026-01-02', last: '2026-01-02', count: 1, books: 1 } } as never);
+    await restoredTxnStore.set(ctx, 'acc_chk.1', { version: 1, account_id: 'acc_chk', part: 1, rows: [row(TXNS.t_coffee), row(TXNS.t_old)] } as never);
+    await restoredTxnStore.set(ctx, 'acc_chk.2', { version: 1, account_id: 'acc_chk', part: 2, rows: [row(TXNS.t_posted)] } as never);
+    await finishWrites(ctx);
+    expect((await restoredAccountsStore.get(ctx, 'acc_chk'))!.rows).toEqual({ first: '2025-11-20', last: '2026-01-04', count: 3, books: 2 });
+    expect((await restoredAccountsStore.get(ctx, 'acc_none'))!.rows).toBeNull();
+  });
+});
 
 describe('a batch', () => {
   test('a piece of a large entry written twice is written once; one that would leave a gap, or says another head, is refused', async () => {

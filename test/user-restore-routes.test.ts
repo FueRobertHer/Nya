@@ -289,6 +289,9 @@ describe('the routes', () => {
     expect((await call('POST', '/api/user-restore', { ...body, password: 'nope' })).body).toMatchObject({ wrong_password: true });
     expect((await call('POST', '/api/user-restore', { ...body, plan: { ...plan, digest: '0'.repeat(64) } })).status).toBe(400);
     expect((await call('POST', '/api/user-restore', { ...body, later: 1 })).status).toBe(400);
+    const late = await call('POST', '/api/user-restore', { ...body, history: { first: '2025-12-29', last: '2026-10-07' } });
+    expect(late.status).toBe(400);
+    expect(late.body.error).toContain('balance history after the day its file was made');
     expect((await call('POST', '/api/user-restore', { ...body, source: { ...(body.source as object), name: 'my file.json' } })).status).toBe(400);
     expect(await userRestoreStore.get(ctx)).toBeNull();
   });
