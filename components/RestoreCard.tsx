@@ -223,6 +223,21 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
     onChanged?.();
   };
 
+  /** Finishes a restore every batch of which is written (a finish that
+   *  stopped, or took too long): no file needed. */
+  const finishNow = async (id: string) => {
+    setError(null);
+    setPhase({ kind: 'finishing' });
+    try {
+      await finishRestore(pageFetch, id);
+    } catch (err) {
+      setError(err instanceof RestoreStopped ? err.problem : 'The restore couldn’t be finished. Try again.');
+    }
+    setPhase({ kind: 'idle' });
+    await load(false);
+    onChanged?.();
+  };
+
   const start = async (loaded: Loaded, plan: Plan) => {
     setError(null);
     setPhase({ kind: 'starting', loaded, plan });
@@ -335,11 +350,17 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
 
           {record && <RecordSummary record={record} />}
 
-          {unfinished && record?.status === 'writing' && (
+          {unfinished && record?.status === 'writing' && record.done < record.plan.batches && (
             <p className="stale-note">
               This restore hasn’t finished: {plainNumber(record.done)} of {plainNumber(record.plan.batches)} parts are written, so what you see is only part
               of your data, and no net worth total is recorded meanwhile. Choose the same file to go on, or undo it.
             </p>
+          )}
+          {unfinished && record?.status === 'writing' && record.done === record.plan.batches && (
+            <>
+              <p className="stale-note">Every part of this restore is written, but it hasn’t finished: no net worth total is recorded until it does.</p>
+              {state.enabled && phase.kind === 'idle' && <button onClick={() => void finishNow(record.id)}>Finish the restore</button>}
+            </>
           )}
           {record?.status === 'undoing' && <p className="stale-note">This restore is being undone. If that stopped part way, undo it again to finish.</p>}
 
@@ -352,7 +373,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
                 </button>
               )}
               {!record && scan && !scan.empty && scan.message && <p className="stale-note">{scan.message}</p>}
-              {(record || scan?.empty === true) && phase.kind === 'idle' && (
+              {(record ? record.done < record.plan.batches : scan?.empty === true) && phase.kind === 'idle' && (
                 <>
                   <input
                     ref={fileInput}

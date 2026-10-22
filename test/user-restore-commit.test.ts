@@ -143,6 +143,30 @@ describe('each restored account’s rows', () => {
   });
 });
 
+describe('the finish, held', () => {
+  test('asks before each of its writes, and stops at the first it is refused', async () => {
+    const { restoredAccountsStore, restoredTxnStore } = await import('@/lib/user-restore/store');
+    const { restoredId } = await import('@/lib/user-restore/ids');
+    const { TXNS } = await import('./restore-fixture');
+    const account = { version: 1, restore_id: RESTORE_ID, restored_at: '2026-10-07T09:00:00.000Z', item_id: 'item_chase', institution_id: 'ins_3', institution_name: 'Chase', name: 'Checking', mask: '1111', type: 'depository', subtype: 'checking', currency: 'USD', downloaded: '2026-10-06', rows: null };
+    await restoredAccountsStore.set(ctx, 'acc_chk', account as never);
+    await restoredTxnStore.set(ctx, 'acc_chk.1', { version: 1, account_id: 'acc_chk', part: 1, rows: [{ id: restoredId('t_coffee'), account_id: 'acc_chk', import_id: RESTORE_ID, bank: TXNS.t_coffee, created_at: '2026-10-07T09:00:00.000Z' }] } as never);
+    let asked = 0;
+    const refused = await finishWrites(ctx, {
+      before: async () => {
+        if (++asked > 1) throw new BatchNotWritten('Finishing this restore took too long. Finish it again.', 503);
+      },
+    }).catch((err) => err);
+    expect(refused).toBeInstanceOf(BatchNotWritten);
+    expect(refused.status).toBe(503);
+    // The account's rows were written; the holdings index, asked for after, wasn't.
+    expect((await restoredAccountsStore.get(ctx, 'acc_chk'))!.rows).toMatchObject({ count: 1, books: 1 });
+    expect(asked).toBe(2);
+    // Run again, unhindered, it finishes.
+    await finishWrites(ctx);
+  });
+});
+
 describe('a batch', () => {
   test('a piece of a large entry written twice is written once; one that would leave a gap, or says another head, is refused', async () => {
     await writeBatch(ctx, 'store:manual-transactions', piece(0, [1, 2, 3]), RECORD);

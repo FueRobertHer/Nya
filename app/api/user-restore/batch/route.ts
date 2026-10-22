@@ -43,7 +43,8 @@ import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 // a batch or a finish that passed its last look at the record before an undo
 // began has ended before the undo's second sweep. Vercel enforces it; a host
 // that doesn't (a Node server of one's own) is held to WRITE_BY_MS below for
-// everything before the write, and docs/operations.md says what is left.
+// everything before a batch's write and before each of the finish's, and
+// docs/operations.md says what is left.
 export const maxDuration = 60;
 
 /** How long after it arrived a batch may still begin writing: well inside
@@ -203,13 +204,24 @@ async function write(ctx: Ctx, req: Request, id: string, indexText: string | nul
 }
 
 async function finish(ctx: Ctx, id: string): Promise<NextResponse> {
+  const began = Date.now();
   const record = await userRestoreStore.get(ctx);
   if (record && record.id === id && record.status === 'finished') return NextResponse.json({ record: recordView(record) }, { headers: NO_STORE });
   if (!stillWriting(record, id)) return notWriting(record);
   if (record.done < record.plan.batches.length) {
     return refuse(`This restore has ${record.plan.batches.length - record.done} batches left to send.`, 409, { done: record.done });
   }
-  await finishWrites(ctx);
+  // Held as a batch is (WRITE_BY_MS), before each of its writes, and the
+  // record looked at again then: an undo begun since refuses what is left.
+  await finishWrites(ctx, {
+    before: async () => {
+      if (Date.now() - began > WRITE_BY_MS) throw new BatchNotWritten('Finishing this restore took too long. Finish it again.', 503);
+      const now = await userRestoreStore.get(ctx);
+      if (now === null || now.id !== id) throw new BatchNotWritten('There is no restore here to finish.', 404);
+      // Finished meanwhile (a second tab): these writes are its own again.
+      if (now.status === 'undoing') throw new BatchNotWritten('This restore is being undone.', 409);
+    },
+  });
   const at = new Date();
   const finished = await userRestoreStore.update(ctx, (cur) =>
     stillWriting(cur, id) ? { ...cur, status: 'finished', finished_at: at.toISOString(), undo_until: new Date(at.getTime() + UNDO_DAYS * 24 * 60 * 60 * 1000).toISOString() } : cur

@@ -180,7 +180,7 @@ function takenOver(rows: Iterable<{ id: string; import_id?: string | null }>, en
  *  many books), worked out from the books written rather than taken from
  *  the page's plan: readers find an account's books by it, and say the
  *  months it holds by it (lib/user-restore/restored.ts bookIdsOf). */
-async function restoredSpans(ctx: Ctx): Promise<void> {
+async function restoredSpans(ctx: Ctx, before: () => Promise<void>): Promise<void> {
   const accounts = await restoredAccountsStore.getAll(ctx);
   if (accounts.size === 0) return;
   const books = await restoredTxnStore.getAll(ctx);
@@ -201,17 +201,22 @@ async function restoredSpans(ctx: Ctx): Promise<void> {
     const rows = s && s.count > 0 ? s : null;
     if (JSON.stringify(a.rows) !== JSON.stringify(rows)) changed.push([id, { ...a, rows }]);
   }
-  if (changed.length > 0) await restoredAccountsStore.setMany(ctx, changed);
+  if (changed.length > 0) {
+    await before();
+    await restoredAccountsStore.setMany(ctx, changed);
+  }
 }
 
 /**
  * What the finish works out from what was written (see the header): each
  * restored account's rows, the imports' summaries, and the holdings index.
  * Then the caches go, since net worth and transactions changed. Run again,
- * it writes the same.
+ * it writes the same. `before` runs before each write, and may refuse it by
+ * throwing (the finish route: its time, and the record looked at again).
  */
-export async function finishWrites(ctx: Ctx): Promise<void> {
-  await restoredSpans(ctx);
+export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void> } = {}): Promise<void> {
+  const before = opts.before ?? (async () => {});
+  await restoredSpans(ctx, before);
   const [imports, historyImports, manualBooks, importedBooks] = await Promise.all([
     importStore.getAll(ctx),
     historyImportStore.getAll(ctx),
@@ -222,12 +227,19 @@ export async function finishWrites(ctx: Ctx): Promise<void> {
     [...manualBooks.values()].flatMap((b) => b.rows),
     imports as ReadonlyMap<string, ImportEntry>
   );
-  if (imports.size > 0) await importSummaryStore.setMany(ctx, [...imports].map(([id, e]) => [id, summaryOf(e, manualTaken.get(id) ?? 0)] as const));
+  if (imports.size > 0) {
+    await before();
+    await importSummaryStore.setMany(ctx, [...imports].map(([id, e]) => [id, summaryOf(e, manualTaken.get(id) ?? 0)] as const));
+  }
   const historyTaken = takenOver(
     [...importedBooks.values()].flatMap((b) => b.rows),
     historyImports as ReadonlyMap<string, HistoryImportEntry>
   );
-  if (historyImports.size > 0) await historyImportSummaryStore.setMany(ctx, [...historyImports].map(([id, e]) => [id, summaryOfEntry(e, historyTaken.get(id) ?? 0)] as const));
+  if (historyImports.size > 0) {
+    await before();
+    await historyImportSummaryStore.setMany(ctx, [...historyImports].map(([id, e]) => [id, summaryOfEntry(e, historyTaken.get(id) ?? 0)] as const));
+  }
+  await before();
   await restoreHoldingsIndex(ctx);
   await clearCaches(ctx);
 }
