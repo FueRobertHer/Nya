@@ -1959,7 +1959,7 @@ export default function Dashboard({
                   )}
                   {/* What the total leaves out in student loans' accrued
                       interest, or couldn't read of it (lib/accrued-interest.ts). */}
-                  <AccruedInterestNote institutions={institutions} currency={accountCurrency} />
+                  <AccruedInterestNote institutions={institutions} main={accountCurrency} fx={base?.fx ?? null} />
                   {base ? (
                     <HeroCurrencyNote base={base} main={accountCurrency} onOpen={openCurrency} />
                   ) : currencyProblem ? (

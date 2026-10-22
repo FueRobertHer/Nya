@@ -40,7 +40,8 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { getHistory } = await import('@/lib/history');
 const { MASK, setAmountsHidden } = await import('@/lib/format');
 const netWorthRoute = await import('@/app/api/net-worth/route');
-const { accruedApart, accruedLines, homeAccrued, SALLIE_MAE } = await import('@/lib/accrued-interest');
+const { accruedApart, accruedAmountsText, accruedLines, homeAccrued, SALLIE_MAE } = await import('@/lib/accrued-interest');
+const { formatMoney } = await import('@/lib/format');
 const { debtAccounts } = await import('@/lib/payoff');
 const AccruedInterestNote = (await import('@/components/AccruedInterestNote')).default;
 
@@ -93,7 +94,7 @@ const quietly = async <T,>(fn: () => Promise<T>): Promise<T> => {
 };
 /** What Home shows under the total, as text, with which lines are amber. */
 const home = (institutions: unknown) => {
-  const html = renderToStaticMarkup(<AccruedInterestNote institutions={institutions as any} currency="USD" />);
+  const html = renderToStaticMarkup(<AccruedInterestNote institutions={institutions as any} main="USD" />);
   const lines = [...html.matchAll(/<div class="([^"]+)">(.*?)<\/div>/g)].map((m) => ({ amber: m[1].includes('stale'), text: m[2].replace(/<[^>]+>/g, '').replace(/&#x27;/g, "'") }));
   return lines;
 };
@@ -175,6 +176,17 @@ describe('Home, from what the server sends', () => {
     expect(home(body.institutions)).toEqual([]);
   });
 
+  test('in the loan’s own currency when most accounts are in another, and converted with a home currency chosen', async () => {
+    const { body } = await load();
+    const text = (html: string) => html.replace(/<[^>]+>/g, '');
+    // Most accounts in euros: the loan's interest is still its dollars.
+    expect(text(renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="EUR" />))).toBe(LEFT_OUT_ONE);
+    const fx = { home: 'EUR', latest: { date: '2026-09-14', rates: { USD: '1.1551' } }, own: [] };
+    expect(text(renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="USD" fx={fx} />))).toBe(
+      'Leaves out €530.17 (converted from USD) of accrued interest on a student loan, which Plaid reports apart from its balance. The payoff plan counts it, unless you leave it out there.'
+    );
+  });
+
   test('with amounts hidden, the figure is masked, and said as hidden', async () => {
     const { body } = await load();
     const g = globalThis as Record<string, unknown>;
@@ -184,7 +196,7 @@ describe('Home, from what the server sends', () => {
     } finally {
       delete g.window;
     }
-    const html = renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} currency="USD" />);
+    const html = renderToStaticMarkup(<AccruedInterestNote institutions={body.institutions} main="USD" />);
     expect(html).toContain(`Leaves out $${MASK} of accrued interest`);
     expect(html).toContain('Leaves out hidden of accrued interest');
     expect(html).not.toContain('612');
@@ -237,7 +249,7 @@ describe('the rule', () => {
       { institution_name: 'Bridge', connector: 'simplefin', accounts: [row(undefined, { liability: undefined })] },
     ] as any);
     expect(view).toEqual({
-      total: 100.3,
+      amounts: [{ currency: null, total: 100.3 }],
       loans: 3,
       none: 1,
       unread: [
@@ -245,7 +257,7 @@ describe('the rule', () => {
         { institution: 'MOHELA', loans: 1, why: 'not-reported' },
       ],
     });
-    expect(homeAccrued([])).toEqual({ total: 0, loans: 0, none: 0, unread: [] });
+    expect(homeAccrued([])).toEqual({ amounts: [], loans: 0, none: 0, unread: [] });
   });
 
   test('why each isn’t known, as the payoff plan tells it: unreachable first, then the payment details’ state', () => {
@@ -264,6 +276,29 @@ describe('the rule', () => {
       { institution: 'Navient', loans: 1, why: 'not-reported' },
       { institution: 'Old', loans: 1, why: 'not-reported' },
     ]);
+  });
+
+  test('in the loans’ own currencies, summed apart, never in the one the total is labelled with', () => {
+    const row = (outstanding: number, currency: string | null) => ({ type: 'loan', subtype: 'student', balance: 1000, currency, liability: { kind: 'student', outstanding_interest: outstanding } });
+    const view = homeAccrued([{ institution_name: 'Nelnet', institution_id: 'ins_1', accounts: [row(500, 'USD'), row(112.4, 'USD'), row(80, 'CAD')] }] as any);
+    expect([view.amounts, view.loans]).toEqual([
+      [
+        { currency: 'USD', total: 612.4 },
+        { currency: 'CAD', total: 80 },
+      ],
+      3,
+    ]);
+    const money = (n: number, c: string | null) => formatMoney(n, c);
+    // No home currency: each in its own, whatever most accounts are in.
+    expect(accruedAmountsText(view.amounts, null, 'EUR', money)).toBe('$612.40 and CA$80.00');
+    expect(accruedAmountsText([{ currency: null, total: 612.4 }], null, 'USD', money)).toBe('$612.40');
+    // A home currency: converted at the newest rates, as the total is, from
+    // what; what has no rate stays in its own, marked so.
+    const fx = { home: 'EUR', latest: { date: '2026-09-14', rates: { USD: '1.1551' } }, own: [] };
+    expect(accruedAmountsText(view.amounts.slice(0, 1), fx, 'EUR', money)).toBe('€530.17 (converted from USD)'); // 612.40 / 1.1551
+    expect(accruedAmountsText(view.amounts, fx, 'EUR', money)).toBe('€530.17 (converted from USD) and CA$80.00 (in CAD, not converted)');
+    expect(accruedAmountsText(view.amounts.slice(0, 1), { ...fx, home: 'USD' }, 'USD', money)).toBe('$612.40');
+    expect(accruedAmountsText(view.amounts.slice(0, 1), { ...fx, home: 'ARS' }, 'USD', money)).toBe('$612.40 (in USD, not converted)');
   });
 
   test('the payoff plan plans on the same figure, and keeps its own choice to leave it out', () => {
@@ -290,7 +325,10 @@ describe('the lines', () => {
   const money = (n: number) => `$${n.toFixed(2)}`;
   type Unread = { institution: string; loans: number; why?: 'unreachable' | 'not-enabled' | 'loading' | 'not-reported' };
   const lines = (total: number, loans: number, unread: Unread[] = [], none = 0) =>
-    accruedLines({ total, loans, none, unread: unread.map((u) => ({ why: 'not-reported' as const, ...u })) }, money);
+    accruedLines(
+      { amounts: total > 0 ? [{ currency: 'USD', total }] : [], loans, none, unread: unread.map((u) => ({ why: 'not-reported' as const, ...u })) },
+      (amounts) => amounts.map((a) => money(a.total)).join(' and ')
+    );
 
   test('how much the total leaves out, on how many loans, as a figure owed, never signed', () => {
     expect(lines(612.4, 1)).toEqual({ leftOut: LEFT_OUT_ONE, unread: [] });

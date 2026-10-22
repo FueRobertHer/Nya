@@ -19,9 +19,16 @@
 // saying why, and what to do when there is something, never passed over. So
 // a failure moves no total: only the lines change, to say what isn't known.
 //
+// IN THE LOANS' OWN CURRENCY: the interest is summed by currency and said in
+// it, never in the currency the total is labelled with; with a home currency
+// chosen, converted into it at the newest rates, as the total above it is
+// (lib/fx/view.ts), and what can't be converted kept in its own, marked so
+// (accruedAmountsText).
+//
 // Pure: no I/O, so the browser bundle can import it.
 
 import { joinNames } from './month-coverage';
+import { balancesNow, type PageFx } from './fx/view';
 
 /** Plaid's institution id for Sallie Mae, whose student loan balances already
  *  include accrued interest (Plaid's AccountBalance.current documentation). */
@@ -45,6 +52,8 @@ type Row = {
   type: string;
   subtype?: string | null;
   balance: number | null;
+  /** The currency its balance is in, and so its interest. */
+  currency?: string | null;
   hidden?: boolean;
   liability?: { kind?: string | null; outstanding_interest?: number | null } | null;
 };
@@ -73,8 +82,10 @@ export type UnreadWhy = 'unreachable' | 'not-enabled' | 'loading' | 'not-reporte
 
 /** What the total on Home leaves out in accrued interest. */
 export type HomeAccrued = {
-  /** Reported on this load: how much, on how many loans. */
-  total: number;
+  /** Reported on this load: how much in each of the loans' currencies (null
+   *  for a loan that says none), in the order first met, and on how many
+   *  loans. */
+  amounts: { currency: string | null; total: number }[];
   loans: number;
   /** Student loans whose interest was reported as none. */
   none: number;
@@ -104,7 +115,7 @@ function whyUnread(inst: HomeInstitution): UnreadWhy {
  * include it.
  */
 export function homeAccrued(institutions: readonly HomeInstitution[]): HomeAccrued {
-  let cents = 0;
+  const cents = new Map<string | null, number>();
   let loans = 0;
   let none = 0;
   const unread = new Map<string, { institution: string; loans: number; why: UnreadWhy }>();
@@ -127,11 +138,37 @@ export function homeAccrued(institutions: readonly HomeInstitution[]): HomeAccru
         none++;
         continue;
       }
-      cents += Math.round(reported * 100);
+      const currency = a.currency ?? null;
+      cents.set(currency, (cents.get(currency) ?? 0) + Math.round(reported * 100));
       loans++;
     }
   }
-  return { total: cents / 100, loans, none, unread: [...unread.values()] };
+  return { amounts: [...cents].map(([currency, n]) => ({ currency, total: n / 100 })), loans, none, unread: [...unread.values()] };
+}
+
+/**
+ * The interest's amounts in words, each in its loans' own currency ("$612.40",
+ * "$612.40 and CA$80.00"; `main` for a loan that says none), or, with a home
+ * currency chosen (`fx`, what the page converts with), converted into it at
+ * the newest rates as the total above is, saying from what ("€530.17
+ * (converted from USD)"); an amount that can't be converted stays in its own
+ * currency, marked so ("$612.40 (in USD, not converted)"), and the note under
+ * the total says why. `money` writes an amount in a currency, as the total is.
+ */
+export function accruedAmountsText(
+  amounts: HomeAccrued['amounts'],
+  fx: PageFx | null,
+  main: string | null,
+  money: (n: number, currency: string | null) => string
+): string {
+  const own = amounts.map((a) => ({ total: a.total, currency: a.currency ?? main }));
+  if (!fx || own.every((a) => a.currency === fx.home)) return joinNames(own.map((a) => money(a.total, a.currency)));
+  const b = balancesNow(own.map((a) => ({ amount: a.total, currency: a.currency })), fx, main);
+  const said: string[] = [];
+  const from = b.parts.filter((p) => p.converted !== null && p.currency !== fx.home).map((p) => p.currency);
+  if (b.parts.some((p) => p.converted !== null)) said.push(`${money(b.total, fx.home)}${from.length > 0 ? ` (converted from ${joinNames(from)})` : ''}`);
+  for (const p of b.parts) if (p.converted === null) said.push(`${money(p.amount, p.currency)} (in ${p.currency}, not converted)`);
+  return joinNames(said);
 }
 
 /** The order the lines take: what the person can do something about first. */
@@ -142,13 +179,14 @@ const WHY_ORDER: readonly UnreadWhy[] = ['not-enabled', 'loading', 'unreachable'
  * Plaid reports it apart from the balances (`leftOut`), and, one for each
  * reason, the loans whose interest isn't known on this load, with what to do
  * when there is something (`unread`). Null, or none, when there is nothing to
- * say. `money` formats an amount as the total is.
+ * say. `amountsText` writes the amounts (accruedAmountsText).
  */
-export function accruedLines(view: HomeAccrued, money: (n: number) => string): { leftOut: string | null; unread: string[] } {
+export function accruedLines(view: HomeAccrued, amountsText: (amounts: HomeAccrued['amounts']) => string): { leftOut: string | null; unread: string[] } {
   const one = view.loans === 1;
+  const owed = view.amounts.filter((a) => a.total > 0);
   const leftOut =
-    view.loans > 0 && view.total > 0
-      ? `Leaves out ${money(view.total)} of accrued interest on ${one ? 'a student loan' : `${view.loans} student loans`}, which Plaid reports apart from ${one ? 'its balance' : 'their balances'}. The payoff plan counts it, unless you leave it out there.`
+    view.loans > 0 && owed.length > 0
+      ? `Leaves out ${amountsText(owed)} of accrued interest on ${one ? 'a student loan' : `${view.loans} student loans`}, which Plaid reports apart from ${one ? 'its balance' : 'their balances'}. The payoff plan counts it, unless you leave it out there.`
       : null;
   const unreadLoans = view.unread.reduce((sum, u) => sum + u.loans, 0);
   // "Your student loan" only when it is the one student loan counted: beside
