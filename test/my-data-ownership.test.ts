@@ -832,6 +832,23 @@ describe('the email, on its own', () => {
     expect(mail.text).toContain('Open Nya: https://nya.example/');
   });
 
+  test('a restore begun, undone, or an account emptied: what happened and what to do, never what was in it', () => {
+    const begun = composeAccessNotice({ kind: 'restore' }, AT, { clerk: false, link: 'https://nya.example' });
+    expect(begun.subject).toBe('A download is being brought back into your Nya account');
+    expect(begun.text).toStartWith('A download of Nya data began to be brought back into your Nya account on Saturday, October 10, 2026, at 14:32 UTC: everything in it, in place of what the account had.\n\n');
+    expect(begun.text).toContain('undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: use Sign out everywhere');
+    const undone = composeAccessNotice({ kind: 'restore-undone' }, AT, { clerk: true, link: null });
+    expect(undone.subject).toBe('A restore into your Nya account was undone');
+    expect(undone.text).toStartWith('A restore of a download into your Nya account was undone on Saturday, October 10, 2026, at 14:32 UTC: everything in it is gone, but your sign-in and API tokens.');
+    const emptied = composeAccessNotice({ kind: 'emptied' }, AT, { clerk: true, link: null });
+    expect(emptied.subject).toBe('Your Nya account was emptied');
+    expect(emptied.text).toContain('A download of your data made earlier can be brought back.');
+    for (const m of [begun, undone, emptied]) {
+      expect(m.text).toContain('Nya emails you each time your data is downloaded, brought back or emptied, or an API token is made to read it.');
+      expect(`${m.subject}${m.text}`).not.toMatch(/[\u2013\u2014]/);
+    }
+  });
+
   test('to the owners of the container it is about, and nobody else', async () => {
     process.env.RESEND_API_KEY = 're_test';
     process.env.MAIL_FROM = 'alerts@example.com';

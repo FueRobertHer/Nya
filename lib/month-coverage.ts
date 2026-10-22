@@ -22,7 +22,13 @@ import { localDate } from './local-date';
 /** The health states in which a connection's transactions stop arriving. */
 const STOPPED: ReadonlySet<string> = new Set(['needs_reauth', 'outage', 'relink', 'closed']);
 
-export type Incomplete = { institution_name: string; coverage: 'missing' | 'importing' };
+export type Incomplete =
+  | { institution_name: string; coverage: 'missing' | 'importing' }
+  /** A bank a restore brought back whose transactions wait to be linked to
+   *  the bank connected again (lib/user-restore/restored.ts): counted in no
+   *  month from `from` to `to` (its first and last restored days) until
+   *  then. */
+  | { institution_name: string; coverage: 'held'; from: string; to: string };
 export type Stopped = { institution_name: string; last_ok_at: string | null };
 
 /** The connections whose transactions have stopped arriving, from the
@@ -50,22 +56,36 @@ function nextMonthStart(month: string): string {
 }
 
 /** Which institutions leave a month's totals possibly incomplete, and why. An
- *  institution missing from the load is named once, as missing. */
+ *  institution missing from the load is named once, as missing. One a
+ *  restore brought back is named for the months its rows reach (`held`). */
 export function monthGaps(
   month: string,
   incomplete: Incomplete[],
   stopped: Stopped[]
-): { missing: string[]; importing: string[]; stopped: Stopped[] } {
+): { missing: string[]; importing: string[]; stopped: Stopped[]; held: string[] } {
   const missing = [...new Set(incomplete.filter((i) => i.coverage === 'missing').map((i) => i.institution_name))];
   const importing = [...new Set(incomplete.filter((i) => i.coverage === 'importing').map((i) => i.institution_name))].filter((n) => !missing.includes(n));
   const end = nextMonthStart(month);
+  const start = `${month}-01`;
+  const held = [
+    ...new Set(incomplete.flatMap((i) => (i.coverage === 'held' && i.from < end && i.to >= start && !missing.includes(i.institution_name) ? [i.institution_name] : []))),
+  ];
   const behind = stopped.filter((s) => {
     if (missing.includes(s.institution_name)) return false;
     if (s.last_ok_at === null) return true;
     const at = new Date(s.last_ok_at);
     return Number.isNaN(at.getTime()) || localDate(at) < end;
   });
-  return { missing, importing, stopped: behind };
+  return { missing, importing, stopped: behind, held };
+}
+
+/** The words for banks a restore brought back that a period's totals leave
+ *  out (monthGaps `held`), and what to do. `period` names the days ("this
+ *  month", "October"). */
+export function heldNote(names: readonly string[], period = 'this month'): string {
+  return names.length === 1
+    ? `Doesn't include ${names[0]}'s transactions from your download: they count once its accounts are linked to the bank connected again (Accounts tab), so ${period} may be incomplete.`
+    : `Doesn't include the transactions from your download of ${joinNames([...names])}: they count once each bank's accounts are linked to the bank connected again (Accounts tab), so ${period} may be incomplete.`;
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -92,5 +112,6 @@ export function monthGapNotes(month: string, incomplete: Incomplete[], stopped: 
   if (gaps.importing.length > 0) {
     notes.push(`${joinNames(gaps.importing)} ${gaps.importing.length === 1 ? 'is' : 'are'} still importing older transactions, so this month may be incomplete.`);
   }
+  if (gaps.held.length > 0) notes.push(heldNote(gaps.held));
   return notes;
 }

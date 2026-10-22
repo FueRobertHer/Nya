@@ -316,6 +316,11 @@ export type ValueStore<T> = Declared & {
   /** How much it stores (StoreSize), readable or not, without reading the
    *  value. One request. */
   size(ctx: Ctx): Promise<StoreSize>;
+  /** Pure, reading nothing: `value` as this store's reads would take it (after
+   *  a JSON round trip, upgraded, checked with isValid), or null when they
+   *  would take it as unrecognised. For a value from outside the store (a
+   *  download being brought back, lib/user-restore/) before it is written. */
+  check(value: unknown): T | null;
 };
 
 export type MapStore<T> = Declared & {
@@ -377,6 +382,9 @@ export type MapStore<T> = Declared & {
   /** How much it stores (StoreSize), readable or not, without reading any
    *  value. One request (MAP_SIZE). */
   size(ctx: Ctx): Promise<StoreSize>;
+  /** Pure, reading nothing: an entry's `value` as this store's reads would
+   *  take it, or null (see ValueStore.check). */
+  check(value: unknown): T | null;
 };
 
 /**
@@ -793,6 +801,22 @@ function serialize<T>(c: Codec<T>, value: T): string {
   return json;
 }
 
+/** A value from outside as a store's reads would take it: after a JSON round
+ *  trip (so what is checked is what would be written), upgraded, and valid;
+ *  null otherwise. Never throws on a value that can't be written as JSON. */
+function checked<T>(c: Codec<T>, value: unknown): T | null {
+  let json: string | undefined;
+  try {
+    json = JSON.stringify(value);
+  } catch {
+    return null;
+  }
+  if (json === undefined) return null;
+  const parsed: unknown = JSON.parse(json);
+  const v = c.upgrade ? c.upgrade(parsed) : parsed;
+  return c.isValid(v) ? v : null;
+}
+
 /** Exactly the checked JSON, encrypted for the container, and compressed
  *  first if asked. */
 function encode<T>(ctx: Ctx, c: Codec<T>, json: string): Promise<string> {
@@ -900,6 +924,7 @@ export function defineValueStore<T>(name: string, opts: StoreOptions<T>): ValueS
       if (!Number.isSafeInteger(chars) || chars < 0) throw new Error(`repo: unexpected answer measuring ${name}`);
       return chars === 0 ? { entries: 0, chars: 0, largest: null } : { entries: 1, chars, largest: { id: null, chars } };
     },
+    check: (value) => checked(codec, value),
   });
 }
 
@@ -1085,6 +1110,7 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
       if (![entries, chars, most].every((n) => Number.isSafeInteger(n) && n >= 0)) throw new Error(`repo: unexpected answer measuring ${name}`);
       return { entries, chars, largest: entries === 0 ? null : { id: answer[2].slice(1), chars: most } };
     },
+    check: (value) => checked(codec, value),
     async replaceUnreadable(ctx, id, value) {
       checkId(what, id);
       const written = await encode(ctx, codec, serialize(codec, value));

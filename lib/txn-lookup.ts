@@ -23,6 +23,8 @@ import { readStoredTxns, StateUnreadableError } from './transactions';
 import { manualTxnStore } from './manual-txns';
 import { MANUAL_TXN_PREFIX } from './manual-txn-input';
 import { importedTwinsStore, importedTxnStore, IMPORTED_TXN_PREFIX } from './history-import/store';
+import { isFileImportedId, RESTORED_TXN_PREFIX } from './history-import/view';
+import { restoredTxnStore } from './user-restore/store';
 import { countedRows, readImported, standsFor } from './history-import/read';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 import { liveAccountsReport } from './links';
@@ -47,6 +49,7 @@ export type FoundTxn = {
 /** Where a row imported into a linked account is looked for, as a refusal
  *  names it, and what says which bank row stands for one. */
 const IMPORTED_BOOKS = 'transactions imported from files';
+const RESTORED_BOOKS = 'transactions brought back from your download';
 const IMPORTED_PAIRS = 'which of the bank’s transactions stand for the ones you imported';
 
 /** Some of the stores that could hold what was asked for couldn't be read,
@@ -56,7 +59,7 @@ export class LookupUnreadableError extends Error {
   constructor(readonly where: string[]) {
     // Reconnecting a bank, or reading a manual account again, brings back
     // what it holds; nothing does that for an imported row.
-    const lasting = where.some((w) => w !== IMPORTED_BOOKS && w !== IMPORTED_PAIRS) ? '; if it lasts, reconnecting the bank, or reading the manual account again, brings them back' : '';
+    const lasting = where.some((w) => w !== IMPORTED_BOOKS && w !== IMPORTED_PAIRS && w !== RESTORED_BOOKS) ? '; if it lasts, reconnecting the bank, or reading the manual account again, brings them back' : '';
     super(`Some of your stored transactions couldn’t be read just now (${where.join(', ')}), so nothing was changed. Try again later${lasting}.`);
     this.name = 'LookupUnreadableError';
   }
@@ -78,8 +81,9 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
   let unreadBooks = false;
   let unreadImported = false;
   const manual = new Set(ids.filter((id) => id.startsWith(MANUAL_TXN_PREFIX)));
-  const imported = new Set(ids.filter((id) => id.startsWith(IMPORTED_TXN_PREFIX)));
-  const bank = new Set(ids.filter((id) => !manual.has(id) && !imported.has(id)));
+  const restored = new Set(ids.filter((id) => id.startsWith(RESTORED_TXN_PREFIX)));
+  const imported = new Set(ids.filter((id) => id.startsWith(IMPORTED_TXN_PREFIX) && !restored.has(id)));
+  const bank = new Set(ids.filter((id) => !manual.has(id) && !imported.has(id) && !restored.has(id)));
   if (bank.size > 0) {
     for (const item of await getItems(ctx)) {
       if ([...bank].every((id) => found.has(id))) break;
@@ -153,11 +157,27 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
       }
     }
   }
+  // A bank row a restore brought back, in the books of every restored
+  // account (lib/user-restore/store.ts), held or not: a split or a group of
+  // one is made as on any row (lib/user-restore/restored.ts).
+  let unreadRestored = false;
+  if (restored.size > 0) {
+    const { entries, unreadable, unrecognised } = await restoredTxnStore.getAllReport(ctx);
+    for (const book of entries.values()) {
+      for (const r of book.rows) {
+        if (!restored.has(r.id)) continue;
+        const b = r.bank;
+        found.set(r.id, { transaction_id: r.id, account_id: r.account_id, date: b.date, amount: b.amount, currency: b.iso_currency_code ?? b.unofficial_currency_code ?? null, pending: false, name: b.merchant_name || b.name });
+      }
+    }
+    unreadRestored = unreadable.length + unrecognised.length > 0;
+  }
   const missing = (among: Set<string>) => [...among].some((id) => !found.has(id));
   const where = [
     ...(unreadBanks.length > 0 && missing(bank) ? unreadBanks : []),
     ...(unreadBooks && missing(manual) ? ['a manual account'] : []),
     ...(unreadImported && missing(imported) ? [IMPORTED_BOOKS] : []),
+    ...(unreadRestored && missing(restored) ? [RESTORED_BOOKS] : []),
     // Found, but whether a bank row now stands for it at another amount
     // can't be told: no amount is answered for it.
     ...(unreadPairs && imported.size > 0 ? [IMPORTED_PAIRS] : []),
@@ -187,9 +207,13 @@ export async function findTransactions(ctx: Ctx, ids: readonly string[]): Promis
  * imported.
  */
 export async function importedStoodFor(ctx: Ctx, found: Iterable<FoundTxn>): Promise<Map<string, string[]>> {
-  const bank = [...found].filter((t) => !t.transaction_id.startsWith(MANUAL_TXN_PREFIX) && !t.transaction_id.startsWith(IMPORTED_TXN_PREFIX));
+  // A bank row a restore brought back stands for rows as a bank row does
+  // (lib/history-import/read.ts standsFor).
+  const bank = [...found].filter((t) => !t.transaction_id.startsWith(MANUAL_TXN_PREFIX) && !isFileImportedId(t.transaction_id));
   const out = new Map<string, string[]>();
-  if (bank.length === 0 || (await importedTxnStore.count(ctx)) === 0) return out;
+  if (bank.length === 0) return out;
+  const [files, brought] = await Promise.all([importedTxnStore.count(ctx), restoredTxnStore.count(ctx)]);
+  if (files + brought === 0) return out;
   const [links, live] = await Promise.all([getLinks(ctx), liveAccountsReport(ctx)]);
   if (live.unreadable.length > 0) {
     const roots = new Set(bank.map((t) => resolveId(t.account_id, links)));

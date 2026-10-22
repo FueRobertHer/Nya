@@ -219,6 +219,27 @@ async function sweep(ctx: Ctx): Promise<number> {
   return deleted;
 }
 
+/** Every key in a container, by its name inside it (without the
+ *  environment's prefix and the container's), for a restore's scan of
+ *  whether an account is empty (lib/user-restore/empty.ts). A SCAN of the
+ *  whole keyspace, page by page: call it only where it is counted. */
+export async function containerKeys(ctx: Ctx): Promise<string[]> {
+  const prefix = containerPrefix(ctx);
+  return (await keysIn(ctx)).filter((k) => k.startsWith(prefix)).map((k) => k.slice(prefix.length));
+}
+
+/** Deletes every key in a container but those `keep` names (by its name
+ *  inside the container), as the sweep above does, for a restore's undo and
+ *  its emptying of an account (lib/user-restore/undo.ts). Returns how many
+ *  it deleted. */
+export async function sweepContainerExcept(ctx: Ctx, keep: (key: string) => boolean): Promise<number> {
+  const prefix = containerPrefix(ctx);
+  const keys = (await keysIn(ctx)).filter((k) => k.startsWith(prefix) && !keep(k.slice(prefix.length)));
+  let deleted = 0;
+  for (let i = 0; i < keys.length; i += PAGE) deleted += Number(await redis().del(...keys.slice(i, i + PAGE)));
+  return deleted;
+}
+
 /** What deleting this account would remove, or why it can't be deleted. */
 export async function deletionCheck(userId: string): Promise<{ allowed: true } | { allowed: false; reason: string }> {
   if (isDemoUser(userId)) return { allowed: false, reason: 'This is a demo account, shared by everyone who tries the app. It can’t be deleted.' };

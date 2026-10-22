@@ -229,6 +229,10 @@ export type RemovedFacts = {
   first_seen: string;
   last_seen: string;
   accounts: RemovedAccountFacts[];
+  /** Every one of its accounts is one a restore brought back
+   *  (lib/user-restore/restored.ts): its transactions are kept, and wait to
+   *  be linked to the bank connected again, rather than gone. */
+  restored?: true;
 };
 
 /** An account of a connection stored now: what a removed account is matched
@@ -343,7 +347,7 @@ export type Gap =
     }
   | { kind: 'refused'; item_id: string; institution: string }
   | { kind: 'no_consent'; item_id: string; institution: string }
-  | { kind: 'removed'; item_id: null; institution: string; last_seen: string; accounts: string[]; partly_back: boolean }
+  | { kind: 'removed'; item_id: null; institution: string; last_seen: string; accounts: string[]; partly_back: boolean; restored?: true }
   /** Let go on `since` and kept as manual accounts (KeptFacts). */
   | { kind: 'disconnected'; item_id: null; institution: string; since: string; accounts: string[] }
   | { kind: 'removed_unknown'; item_id: null; institution: null }
@@ -858,6 +862,7 @@ export function buildReport(input: ReportInput): Report {
         last_seen: r.last_seen,
         accounts: missing.map(accountLabel),
         partly_back: notBack.length < r.accounts.length,
+        ...(r.restored ? { restored: true as const } : {}),
       })),
     // Let go during the period and kept by hand since: later days may be short.
     ...(input.kept ?? [])

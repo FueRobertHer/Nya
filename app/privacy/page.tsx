@@ -9,6 +9,8 @@ import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules'
 import { sendsEmail } from '@/lib/notice-recipients';
 import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
+import { restoreEnabled } from '@/lib/user-restore/enabled';
+import { UNDO_DAYS } from '@/lib/user-restore/ids';
 
 export const metadata: Metadata = {
   title: 'Privacy · Nya',
@@ -27,14 +29,15 @@ export const metadata: Metadata = {
 // (lib/deletion-receipt.ts), as the security page says it; whether it names an email
 // provider, or says a download is emailed, from sendsEmail()
 // (lib/notice-recipients.ts): mail set up, and someone it may write to, which
-// is whether this copy sends email at all.
+// is whether this copy sends email at all; whether it offers bringing a
+// download back, from RESTORE_ENABLED (lib/user-restore/enabled.ts).
 // test/public-pages.test.tsx holds the figures to the code.
 
 type Commitment = {
   promise: string;
   today: ReactNode;
   /** What is still to come, if anything. */
-  next?: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned'; text: ReactNode };
+  next?: { label: 'Being built' | 'Not built yet' | 'Not written yet' | 'Planned' | 'Not turned on here'; text: ReactNode };
 };
 
 /** What happens to a deleted account's data in the nightly backups here. */
@@ -56,7 +59,7 @@ const downloadEmail = (mail: boolean) =>
 /** What the pages say of a data key per account, as this copy is set up. */
 type Keys = ReturnType<typeof keyDeletionText>;
 
-const commitments = (backups: BackupRetention, mail: boolean, keys: Keys): Commitment[] => [
+const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -65,11 +68,19 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys): Commi
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}`,
-    next: {
-      label: 'Not built yet',
-      text: 'A way to bring a download into another copy of Nya.',
-    },
+    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}${
+      restore
+        ? ' Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.'
+        : ''
+    }`,
+    ...(restore
+      ? {}
+      : {
+          next: {
+            label: 'Not turned on here' as const,
+            text: 'Bringing a download into another copy of Nya, or into a new account: built, and off on this copy of Nya until whoever runs it turns it on.',
+          },
+        }),
   },
   {
     promise: 'You can delete everything, and it reaches backups and connected services.',
@@ -118,7 +129,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys): Commi
     ),
     next: {
       label: 'Not built yet',
-      text: 'Writing through the API, a way to bring your download into another copy of Nya, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
+      text: 'Writing through the API, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
     },
   },
 ];
@@ -159,7 +170,7 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
+          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
         ],
       ] as [string, string][])
     : []),
@@ -194,6 +205,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   [
     'A bank you disconnect',
     'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
+  ],
+  [
+    'A download you brought back',
+    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you connect it again and link its accounts (then they count as its own), or Forget it. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
   ],
   [
     'A SimpleFIN connection',
@@ -250,6 +265,7 @@ export default function PrivacyPage() {
   const mail = sendsEmail();
   const dbDays = databaseBackupDays();
   const keys = keyDeletionText({ envelope: masterKeyConfigured(), backups, databaseDays: dbDays });
+  const restore = restoreEnabled();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -257,7 +273,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {commitments(backups, mail, keys).map((c) => (
+      {commitments(backups, mail, keys, restore).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -336,6 +352,16 @@ export default function PrivacyPage() {
           Flow API key you give it, which are credentials rather than your data, your API tokens themselves (each one’s
           name and dates are in), your sign-in, and other people’s data; the JSON file lists what it leaves out.
         </p>
+        {restore && (
+          <p>
+            Bring back a download, beside it, brings a JSON download into an account with nothing in it yet, in this copy of
+            Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
+            account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
+            {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
+            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again. Undo,
+            offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
+          </p>
+        )}
       </InfoSection>
 
       <InfoSection title="Delete your account">

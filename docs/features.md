@@ -40,6 +40,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [The API and the MCP server](#the-api-and-the-mcp-server)
 - [Sharing with someone](#sharing-with-someone)
 - [Downloading your data](#downloading-your-data)
+- [Bringing back a download](#bringing-back-a-download)
 - [Planning](#planning)
 
 ## Connecting accounts
@@ -1124,7 +1125,16 @@ Under **Manage** on the Accounts tab, **Download my data** gives you everything 
 - **A passphrase.** Any format can be protected with a passphrase of at least 12 characters, typed twice. The file is then encrypted as it is sent, in the [age](https://age-encryption.org) format, and saved with `.age` at the end of its name. It opens on the public **Open a protected download** page (`/open-download`), in the browser, without signing in and without the file leaving the device, or with the age app (`age -d`). Nya never keeps the passphrase, so a lost one can't be recovered.
 - **An email each time.** With email set up, each download emails you when it happened and which format, never what is in it, with what to do if it wasn't you; so does making an API token. The download never waits for the email or fails because of it.
 
-Bringing a download into another copy of Nya, or into a new account, comes later.
+## Bringing back a download
+
+A JSON download brings everything in it back into another copy of Nya, or into a new account after you deleted yours: **Manage**, then **Bring back a download**, or on the first screen of an account with nothing in it yet. Where it is offered is the operator's choice (`RESTORE_ENABLED`, [operations.md](operations.md#turning-on-restores)). In full, with what is checked and why, in [data-export.md](data-export.md#bringing-it-back).
+
+- **Into an empty account only**, since it brings back a whole copy; settings alone are allowed, and the file's replace them. An account that has data can be emptied first (a fresh sign-in, and typing `empty my account`), refused while a bank, SimpleFIN or Lunch Flow is connected.
+- **The file stays on your device.** It is read and checked in the page, a few megabytes at a time, a protected one opened with its passphrase there; anything this version doesn't know refuses the whole file. The page says what comes back and what doesn't before anything is written, and a damaged entry the file names is left out only once you have seen which transactions it affects.
+- **Everything you made comes back with its ids**: categories, tags, rules, manual accounts and their transactions, imports, what you said about transactions, links, budgets and their months, goals and their plans, the Plan, holdings history, every layer of balance history, settings. A connection to SimpleFIN or Lunch Flow comes back waiting for a new Setup Token or API key.
+- **A bank connected through Plaid** comes back as earlier accounts with its posted transactions held, not counted, until you connect it again and link each account to its new one ([Removing an institution and adding it back](#removing-an-institution-and-adding-it-back)); then they count once. Or stop following it. Until then no net worth total is recorded, and the total says why.
+- **Never**: pending transactions, credentials (bank access, the SimpleFIN Access URL, the Lunch Flow API key, API tokens), sharing and the app's machinery. Investment transactions are kept for your next download, not shown yet.
+- **Unfinished**, every tab says so, no total is recorded, the API answers 503, shares show nothing and the weekly summary waits; go on with the same file, or undo. **Undo** empties the account again, offered while unfinished and for 7 days after, with the download offered first. Starts, undos and emptyings are limited to 5 a day, and each emails you.
 
 ## Planning
 

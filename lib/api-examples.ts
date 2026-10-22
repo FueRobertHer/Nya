@@ -523,7 +523,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['from', 'The first day read (UTC).'],
       ['to', 'The last.'],
       ['transactions', 'Newest first: the day, then the moment, then the id. The last 365 days are read, as the app shows them.'],
-      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN or Lunch Flow, or imported-txn:… for one imported from a file into a linked account.'],
+      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN or Lunch Flow, imported-txn:… for one imported from a file into a linked account, or imported-txn:restored.… and the bank’s own id for one of a bank’s transactions brought back from a download, served once its account is linked to the bank connected again.'],
       ['transactions[].date', 'The day it is dated: the bank’s posting date (not a UTC day), or the day picked for one entered by hand.'],
       ['transactions[].datetime', 'When it happened, where the bank says, or null.'],
       ['transactions[].amount', 'Plaid’s sign: positive is money out of the account, negative money in.'],
@@ -554,7 +554,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['transactions[].institution', 'That account’s institution.'],
       [
         'transactions[].source',
-        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "lunchflow" for one your Lunch Flow connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
+        '"plaid" for a bank’s; "simplefin" for one your SimpleFIN connection brought in; "lunchflow" for one your Lunch Flow connection brought in; "manual" for one you entered by hand; "import:ofx", "import:csv" or "import:qif" for one imported from a file (OFX or QFX, CSV, QIF): into a manual account, served as the ones you entered are, or into a linked account, served beside the bank’s own where the bank has nothing like it (once the bank sends the same transaction, its own takes the imported one’s place). A bank’s transaction brought back from a download is "plaid", as it was, with an imported-txn:restored.… id. Version 1 may add values (rows pulled from another service, say): treat one you don’t know as a row on a manual account.',
       ],
       ['transactions[].hidden', 'Its account is hidden: only with include_hidden=true.'],
       [

@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { holdsTotals, type TotalsHold } from '@/lib/user-restore/restored';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
   getHistoryWithSplit,
@@ -46,6 +47,9 @@ type NetWorthPayload = {
   // currency, unconverted, so a cached load converts them as a fresh one does
   // (lib/fx/net-worth-base.ts). Server only: never sent, never converted here.
   history_split?: HistorySplit;
+  /** Why no total is recorded while a restore holds it (lib/user-restore/
+   *  restored.ts totalsHold), said under the Home total: absent otherwise. */
+  restore_hold?: TotalsHold;
 };
 
 /** The answer's figures in the home currency, when one is chosen, worked out
@@ -251,7 +255,7 @@ export async function GET(req: Request) {
     // actually written even if the request straddles UTC midnight. When it didn't
     // land, the accounts that did answer are still recorded for their own charts.
     // Their positions go into holdings history the same way (lib/holdings-history.ts).
-    const { date: snapshotDate } = await recordFetch(ctx, institutions, netWorth);
+    const { date: snapshotDate, hold } = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
@@ -369,6 +373,7 @@ export async function GET(req: Request) {
       lifecycle: lifecycleForClient(lifecycle),
       as_of: new Date().toISOString(),
       ...(split ? { history_split: split } : {}),
+      ...(holdsTotals(hold) ? { restore_hold: hold } : {}),
     };
 
     // Don't cache payloads containing errors: an institution that needs reauth

@@ -45,6 +45,7 @@ import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } f
 import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
+import { forgetRestoredAccount } from './user-restore/forget';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -118,6 +119,13 @@ export async function directoryCurrencies(ctx: Ctx): Promise<{ account_id: strin
   return Object.entries(entries)
     .filter(([, e]) => e && typeof e === 'object')
     .map(([account_id, e]) => ({ account_id, currency: typeof e.currency === 'string' ? e.currency : null, type: typeof e.type === 'string' ? e.type : null }));
+}
+
+/** The ids the directory has an entry under, readable or not, without
+ *  reading any: a restored account is read for its rows only while it has
+ *  one (lib/user-restore/restored.ts), so forgetting it ends it. */
+export async function directoryIds(ctx: Ctx): Promise<Set<string>> {
+  return new Set((await redis().hkeys(directoryKey(ctx))) ?? []);
 }
 
 /** The whole directory, for the download of my data (lib/user-export.ts).
@@ -416,6 +424,9 @@ export function lastSeenOf(id: string, directory: Record<string, DirectoryEntry>
 const normal = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const label = (e: DirectoryEntry | undefined, id: string) =>
   e ? `${e.institution_name} ${e.name ?? 'account'}${e.mask ? ` ••${e.mask}` : ''}` : id;
+/** How the Earlier accounts list names an account its directory knows
+ *  ("Chase Checking ••1111"), for a note that must name it the same way. */
+export const earlierAccountLabel = (e: DirectoryEntry): string => label(e, '');
 const sameInstitution = (a: DirectoryEntry, b: DirectoryEntry) =>
   a.institution_id && b.institution_id
     ? a.institution_id === b.institution_id
@@ -698,7 +709,8 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * Forgets an earlier account for good, at the user's request: its balances
  * in every per-account layer, its positions in holdings history, its
  * directory entry (name, mask, institution), the categories recorded to carry
- * across a re-link, the transactions imported into it from files, dismissed
+ * across a re-link, the transactions imported into it from files, the bank
+ * rows a restore brought back for it and what was said about them, dismissed
  * offers that name it, leftover remembered records naming it, and its hidden
  * entry. The past net-worth totals stay as they were
  * (they were the user's net worth on those dates); a hidden account is folded
@@ -786,6 +798,9 @@ export async function forgetEarlierAccount(
   // The transactions imported into it from files (#52), their records, and
   // what was said about them: kept past its disconnect for a re-link, gone now.
   await forgetImportedHistory(ctx, id);
+  // The bank rows a restore brought back for it, and what was said about
+  // them (lib/user-restore/forget.ts): no pruner takes those by itself.
+  await forgetRestoredAccount(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
   // read before the pass above could have written the account back, and a
@@ -1067,4 +1082,30 @@ export function hiddenForClient(hidden: HiddenMap, links: Map<string, Link>): Hi
     if (!seen.has(current)) seen.set(current, type);
   }
   return [...seen].map(([account_id, type]) => ({ account_id, type }));
+}
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** Directory entries as a restore brings them back: each as the old copy had
+ *  it (its days its own, never restarted), checked by the restore. */
+export async function restoreDirectoryEntries(ctx: Ctx, entries: readonly (readonly [string, DirectoryEntry])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, entry] of entries) fields[id] = await encrypt(ctx, JSON.stringify(entry));
+  await redis().hset(directoryKey(ctx), fields);
+}
+
+/** Links as a restore brings them back, each with its own time and evidence. */
+export async function restoreLinks(ctx: Ctx, links: readonly (readonly [string, Link])[]): Promise<void> {
+  if (links.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [old, link] of links) fields[old] = await encrypt(ctx, JSON.stringify(link));
+  await redis().hset(linksKey(ctx), fields);
+}
+
+/** Declined offers as a restore brings them back ("<old>><new>", or
+ *  "<old>>*" for "None of these"), each with when it was declined. */
+export async function restoreDeclined(ctx: Ctx, offers: readonly (readonly [string, string])[]): Promise<void> {
+  if (offers.length === 0) return;
+  await redis().hset(dismissedKey(ctx), Object.fromEntries(offers));
 }

@@ -128,6 +128,7 @@ import { readLifecycleView, lifecycleOf, endedNow, endOf, accountWords } from '.
 import { getKeptAccounts, heldAccountIds, heldAccounts } from './kept-accounts';
 import { manualTxnStore, type ManualTxn } from './manual-txns';
 import { importedForShare } from './history-import/read';
+import { restoreUnfinished } from './user-restore/restored';
 import { getAccountHistory } from './history';
 import { clerkUserAllowed } from './auth-mode';
 import { readStoredItem, readStoredTxns, StateUnreadableError, type StoredAccount } from './transactions';
@@ -1216,6 +1217,10 @@ async function projectShare(c: Conn, owner: string, now: number): Promise<Projec
   if (!(await clerkUserAllowed(owner))) return null;
   const theirs = await theirCtx(owner);
   if (!theirs) return null;
+  // Nothing of theirs is shown while a restore is being written or undone in
+  // their container (lib/user-restore/restored.ts): part of their data would
+  // read as all of it. As while the operator restores it (theirCtx).
+  if (await restoreUnfinished(theirs)) return null;
   // The accounts, and the other kinds beside them, read at once. A net worth
   // with its accounts lists only those whose balances the accounts show
   // (lib/share-views.ts), so it waits for them once its own reads are done.

@@ -150,7 +150,9 @@ export async function importedFlowsForBackfill(
   opts: { items: StoredItem[]; walked: ReadonlyMap<string, string | null>; since: string; today: string }
 ): Promise<{ flows: { date: string; account_id: string; amount: number }[]; unreadable: string[] }> {
   const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
-  const read = await readImported(ctx, { items: opts.items, links: effectiveLinks(links, live), only: new Set(opts.walked.keys()) });
+  // A bank row a restore brought back is never walked: the balance history
+  // it belongs to was restored with it (lib/user-restore/restored.ts).
+  const read = await readImported(ctx, { items: opts.items, links: effectiveLinks(links, live), only: new Set(opts.walked.keys()), restored: false });
   const flows: { date: string; account_id: string; amount: number }[] = [];
   for (const a of read.accounts) {
     const currency = opts.walked.get(a.account.account_id) ?? a.account.currency;
@@ -283,7 +285,9 @@ export async function drawImportedHistory(ctx: Ctx, opts: { today?: string } = {
   // The links that apply now, strictly: a link that can't be read would put
   // an account's earlier rows on the wrong account, or none.
   const [items, links, live] = await Promise.all([getItems(ctx), getLinks(ctx), liveAccountIds(ctx, { strict: true })]);
-  const read = await readImported(ctx, { items, links: effectiveLinks(links, live) });
+  // Restored bank rows are left out: they are live for rows, never for a
+  // balance, whose history was restored with them (lib/user-restore/restored.ts).
+  const read = await readImported(ctx, { items, links: effectiveLinks(links, live), restored: false });
   // Everything it needs, read: an account's rows, its bank's, every import's
   // period and order, and whose each book is.
   if (read.flawed.size > 0 || read.unresolved || read.summariesUnreadable.length > 0) {
