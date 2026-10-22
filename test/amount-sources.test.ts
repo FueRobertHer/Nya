@@ -153,6 +153,14 @@ describe('a number written as an amount past the formatters', () => {
     expect(found.bypasses).toEqual({ NoNew: [7], Precision: [7], RoundedDrawn: [7], Spent: [7], Monthly: [7] });
   });
 
+  test('a toLocaleString() is a count only by the words the app writes after one, never by an amount’s', () => {
+    const amounts = ['dollars', 'in your account', 'of your budget', 'more than last month', 'worth of stock', 'charged', 'withdrawn', 'to spend', 'from savings', 'with interest'];
+    const counts = ['transactions', 'of them', 'of your stored transactions', 'more not listed', 'to answer', 'with no category', 'already in Nya', 'kept as they were'];
+    const cases = Object.fromEntries([...amounts, ...counts].map((words, i) => [`Words${i}`, `return <p>{balance.toLocaleString()} ${words}</p>;`]));
+    const found = scan(cases);
+    expect(found.bypasses).toEqual(Object.fromEntries(amounts.map((_, i) => [`Words${i}`, [7]])));
+  });
+
   test('guarded only by what writes the mask in its place: hiddenFigure around it, its own statement’s switch, or its function’s early return', () => {
     const found = scan({
       Around: 'return <p><Masked>{hiddenFigure((cents / 100).toFixed(2))}</Masked></p>;',

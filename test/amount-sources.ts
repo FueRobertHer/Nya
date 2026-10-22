@@ -569,9 +569,14 @@ const COORDINATE_AFTER = /^\},(?:\$\{|-?\d)/;
 /** A channel of a CSS color. */
 const COLOR_BEFORE = /\b(?:rgba?|hsla?)\([^()`]*\$\{$/;
 
-/** The words an amount is followed by in a sentence ("$40 spent", "$40 a
- *  month"): after a number, they say it is none of the counts below. */
-const AMOUNT_WORDS = /^\s+(?:a|per|each|spent|left|saved|owed|earned|paid|received|due|available|allocated|budgeted|remaining|less|off|back|net|total|income|over|under)\b/;
+/** The words the app writes after a count ("3 rows", "3 of them", "3 more
+ *  not listed"): what it counts, or how its sentence goes on. A number
+ *  followed by any other word is taken for an amount ("40 spent", "40
+ *  dollars", "40 a month"), and so is one these begin an amount's words
+ *  with (AMOUNT_WORDS). A count said some other way goes through
+ *  plainNumber. */
+const COUNT_WORDS = /^\s+(?:accounts?|already|an|categor(?:y|ies)|characters?|days?|end|files?|kept|lines?|listed|months?|more|new|of|opening|parts?|put|rows?|rules?|runs?|skipped|starts?|still|tagged|tags?|to|transactions?|updated|with|years?)\b/;
+const AMOUNT_WORDS = /^\s+(?:of\s+(?:your|the|its|their)\s+(?:budgets?|balances?|income|spending|savings|money|limits?|cash)|more\s+than|to\s+(?:spend|save|pay|cover)|with\s+(?:interest|fees?))\b/;
 
 /**
  * Whether the code beside a number written with toFixed or toPrecision, or
@@ -579,10 +584,9 @@ const AMOUNT_WORDS = /^\s+(?:a|per|each|spent|left|saved|owed|earned|paid|receiv
  * (a "%" after it, or a fraction made one by a hundred), a size or a time
  * after it, a drawn shape's coordinate, a color's channel, or a number
  * rounded as a number (in Number(...), but not drawn as it is: drawnAt); and,
- * for toLocaleString, a count (followed by a word saying what it counts or
- * going on with its sentence, not one an amount is followed by, or by its
- * noun chosen by it, or a length) or a date. Anything else is taken for an
- * amount.
+ * for toLocaleString, a count (followed by one of the words the app writes
+ * after a count, COUNT_WORDS, but not an amount's, or by its noun chosen by
+ * it, or a length) or a date. Anything else is taken for an amount.
  */
 function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | 'toLocaleString'): boolean {
   const text = lx.code;
@@ -599,7 +603,7 @@ function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | '
   if (COORDINATE_BEFORE.test(before) || COORDINATE_AFTER.test(next) || COLOR_BEFORE.test(before)) return true;
   if (/\bNumber\($/.test(before) && text[end + 1] === ')' && !drawnAt(lx, dot)) return true;
   if (method !== 'toLocaleString') return false;
-  if (/^\s+[a-z]/.test(after) && !AMOUNT_WORDS.test(after)) return true;
+  if (COUNT_WORDS.test(after) && !AMOUNT_WORDS.test(after)) return true;
   if (/\.length$/.test(receiver)) return true;
   if (/\bnew\s+$/.test(before) && /^Date\b/.test(receiver)) return true;
   // "3 rows", its noun chosen by it: `${n.toLocaleString()} ${n === 1 ? ...`.
