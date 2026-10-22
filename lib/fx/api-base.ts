@@ -190,7 +190,7 @@ export function baseNotes(base: ApiBase, home: string): string[] {
   if (homeOut.length > 0) {
     const n = homeOut.reduce((s, l) => s + l.accounts, 0);
     notes.push(
-      `Nothing can be converted into ${home} yet: the ECB doesn’t publish ${home}, so ${n === 1 ? '1 account' : `${n} accounts`} in other currencies ${n === 1 ? 'isn’t' : 'aren’t'} in base. You can set a rate of your own for ${home} in the app`
+      `Nothing can be converted into ${home} yet: the ECB doesn’t publish ${home}, so ${n === 1 ? '1 account in another currency isn’t' : `${n} accounts in other currencies aren’t`} in base. You can set a rate of your own for ${home} in the app`
     );
   }
   for (const l of base.left_out) {

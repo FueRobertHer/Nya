@@ -18,13 +18,14 @@ export const homeUnrated = (currency: string, why: NoRate | string, unrated: str
 /**
  * Why `currency` couldn't be converted into `home`, as the end of a
  * sentence: "there is no rate for BTC", "Nya doesn't have the ECB's rates for
- * those days yet", "nothing can be converted into ARS: the ECB doesn't
- * publish ARS". `days`: said of several days (a chart's), or one moment.
+ * those days yet", "nothing can be converted into ARS, as the ECB doesn't
+ * publish it" (no colon of its own, as it often follows one). `days`: said
+ * of several days (a chart's), or one moment.
  */
 export function reasonText(currency: string, why: NoRate | string, unrated: string, home: string, days: 'now' | 'one' | 'many' = 'now'): string {
   if (why === 'not-fetched') return days === 'now' ? 'Nya doesn’t have the ECB’s rates yet' : `Nya doesn’t have the ECB’s rates for ${days === 'one' ? 'that day' : 'those days'} yet`;
   if (homeUnrated(currency, why, unrated, home)) {
-    return why === 'quote' ? `nothing can be converted into ${home}: your rate for ${home} is in a currency the ECB has no rate for` : `nothing can be converted into ${home}: the ECB doesn’t publish ${home}`;
+    return why === 'quote' ? `nothing can be converted into ${home}, as your rate for it is in a currency the ECB has no rate for` : `nothing can be converted into ${home}, as the ECB doesn’t publish it`;
   }
   if (why === 'quote') return `your rate for ${unrated} is in a currency the ECB has no rate for`;
   if (why === 'before') return `there is no rate for ${unrated} that far back`;

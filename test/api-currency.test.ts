@@ -246,6 +246,22 @@ describe('with a home currency', () => {
   });
 });
 
+describe('the notes’ words', () => {
+  test('one account is in another currency, and a reason follows one colon only', async () => {
+    const { baseNotes, historyNotes } = await import('@/lib/fx/api-base');
+    expect(baseNotes({ left_out: [{ currency: 'USD', accounts: 1, why: 'base_has_no_rate' }], rates_stale: false, rate_day: '2026-09-14' } as never, 'ARS')).toEqual([
+      'Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 1 account in another currency isn’t in base. You can set a rate of your own for ARS in the app',
+    ]);
+    const unpublished = { why: 'not-published' as const, unrated: 'ARS', from: '2026-09-11', to: '2026-09-12', days: 2 };
+    const notes = historyNotes({ unsplit: 0, main_unrated: [unpublished], left_out: [{ currency: 'EUR', ...unpublished }] }, 'ARS', 'USD');
+    expect(notes).toEqual([
+      '2 points have no to_base, from 2026-09-11 to 2026-09-12: nothing can be converted into ARS, as the ECB doesn’t publish it',
+      'EUR isn’t in to_base from 2026-09-11 to 2026-09-12 (2 points): nothing can be converted into ARS, as the ECB doesn’t publish it',
+    ]);
+    for (const n of notes) expect(n.split(':')).toHaveLength(2);
+  });
+});
+
 describe('with a home currency the ECB doesn’t publish', () => {
   beforeEach(() => chooseHome('ARS', []));
 
@@ -268,9 +284,9 @@ describe('with a home currency the ECB doesn’t publish', () => {
   test('the history says it too', async () => {
     const history = await call('balance-history');
     expect(history.points.every((p: any) => p.to_base === null)).toBe(true);
-    expect(history.notes).toContain('2 points have no to_base, from 2026-09-11 to 2026-09-12: nothing can be converted into ARS: the ECB doesn’t publish ARS');
+    expect(history.notes).toContain('2 points have no to_base, from 2026-09-11 to 2026-09-12: nothing can be converted into ARS, as the ECB doesn’t publish it');
     // One account's: the home currency named, never the account's own.
     const account = await call('balance-history', 'account_id=acc_chk&include_estimated=true');
-    expect(account.notes).toEqual(['4 points have no to_base: nothing can be converted into ARS: the ECB doesn’t publish ARS']);
+    expect(account.notes).toEqual(['4 points have no to_base: nothing can be converted into ARS, as the ECB doesn’t publish it']);
   });
 });

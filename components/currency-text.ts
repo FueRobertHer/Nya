@@ -72,7 +72,8 @@ export function convertedText(b: Pick<BalancesIn, 'currency' | 'parts'>, own: re
  * none for it), one sentence naming it, as a rate for any other currency
  * would change nothing: "Nothing can be converted into ARS yet: the ECB
  * doesn't publish ARS, so 2 accounts in other currencies aren't in this
- * total." Each with the currency a rate of the person's own would mend it
+ * total" (one: "1 account in another currency isn't"). Each with the
+ * currency a rate of the person's own would mend it
  * for, and none when the rates simply haven't been fetched yet.
  */
 export function leftOutLines(b: Pick<BalancesIn, 'currency' | 'left_out'>, where = 'this total'): NoteLine[] {
@@ -82,7 +83,7 @@ export function leftOutLines(b: Pick<BalancesIn, 'currency' | 'left_out'>, where
   if (homeOut.length > 0) {
     const n = homeOut.reduce((s, l) => s + l.accounts, 0);
     const why = homeOut[0].why === 'quote' ? `your rate for ${home} is in a currency the ECB has no rate for` : `the ECB doesn’t publish ${home}`;
-    lines.push({ text: `Nothing can be converted into ${home} yet: ${why}, so ${accounts(n)} in other currencies ${n === 1 ? 'isn’t' : 'aren’t'} in ${where}.`, rateFor: home });
+    lines.push({ text: `Nothing can be converted into ${home} yet: ${why}, so ${accounts(n)} in ${n === 1 ? 'another currency isn’t' : 'other currencies aren’t'} in ${where}.`, rateFor: home });
   }
   for (const l of b.left_out) {
     if (homeOut.includes(l)) continue;

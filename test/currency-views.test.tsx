@@ -167,7 +167,7 @@ describe('the words of a converted figure', () => {
     ]);
     // A home currency with no rate: the days not drawn say so.
     expect(chartGapLines({ unsplit: 0, main_unrated: [{ why: 'not-published', unrated: 'ARS', from: '2026-09-01', to: '2026-09-14', days: 10 }], left_out: [], unknown_currency: 0 }, 'ARS', 'USD')).toEqual([
-      '10 days aren’t drawn, from Sep 1, 2026 to Sep 14, 2026: nothing can be converted into ARS: the ECB doesn’t publish ARS.',
+      '10 days aren’t drawn, from Sep 1, 2026 to Sep 14, 2026: nothing can be converted into ARS, as the ECB doesn’t publish it.',
     ]);
     expect(chartGapLines({ unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, 'EUR', 'USD')).toEqual([]);
   });
@@ -242,7 +242,7 @@ describe('Home’s notes', () => {
     const asked: (string | null)[] = [];
     const node = <HeroCurrencyNote base={{ ...base([]), currency: 'ARS', net_worth: b.total, parts: b.parts, left_out: b.left_out }} main="USD" onOpen={(c) => asked.push(c)} />;
     const html = renderToStaticMarkup(node);
-    expect(text(html)).toBe('Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 1 account in other currencies isn’t in this total. Set a rate for ARS');
+    expect(text(html)).toBe('Nothing can be converted into ARS yet: the ECB doesn’t publish ARS, so 1 account in another currency isn’t in this total. Set a rate for ARS');
     expect(text(html)).not.toContain('no rate for USD');
     // The link opens the form for ARS's rate.
     const [link] = tappable(node);
