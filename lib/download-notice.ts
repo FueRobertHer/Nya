@@ -84,10 +84,10 @@ export function composeAccessNotice(event: AccessEvent, at: Date, opts: { clerk:
     'Nya emails you each time your data is downloaded, brought back or emptied, or an API token is made to read it. Its emails never include balances, amounts or account numbers.';
   if (event.kind === 'restore') {
     return {
-      subject: 'A download was brought back into your Nya account',
+      subject: 'A download is being brought back into your Nya account',
       text:
         [
-          `A download of Nya data was brought back into your Nya account on ${when}: everything in it, in place of what the account had.`,
+          `A download of Nya data began to be brought back into your Nya account on ${when}: everything in it, in place of what the account had.`,
           "If that was you, there's nothing to do.",
           `If it wasn't you, undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: ${secure}`,
           open,

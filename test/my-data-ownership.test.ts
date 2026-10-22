@@ -834,8 +834,8 @@ describe('the email, on its own', () => {
 
   test('a restore begun, undone, or an account emptied: what happened and what to do, never what was in it', () => {
     const begun = composeAccessNotice({ kind: 'restore' }, AT, { clerk: false, link: 'https://nya.example' });
-    expect(begun.subject).toBe('A download was brought back into your Nya account');
-    expect(begun.text).toStartWith('A download of Nya data was brought back into your Nya account on Saturday, October 10, 2026, at 14:32 UTC: everything in it, in place of what the account had.\n\n');
+    expect(begun.subject).toBe('A download is being brought back into your Nya account');
+    expect(begun.text).toStartWith('A download of Nya data began to be brought back into your Nya account on Saturday, October 10, 2026, at 14:32 UTC: everything in it, in place of what the account had.\n\n');
     expect(begun.text).toContain('undo it now (Manage, Bring back a download, Undo), which empties the account again, then secure it: use Sign out everywhere');
     const undone = composeAccessNotice({ kind: 'restore-undone' }, AT, { clerk: true, link: null });
     expect(undone.subject).toBe('A restore into your Nya account was undone');
