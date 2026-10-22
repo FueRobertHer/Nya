@@ -36,6 +36,7 @@ import type { RecordView } from '@/lib/user-restore/store';
 import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
+import DownloadMyData from './DownloadMyData';
 import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
@@ -109,6 +110,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
   const [passphrase, setPassphrase] = useState('');
   const [withoutOk, setWithoutOk] = useState(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
+  const [downloadFirst, setDownloadFirst] = useState(false);
   const [emptyWords, setEmptyWords] = useState('');
   const [stopFrom, setStopFrom] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -459,9 +461,17 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
               <div className="section-label">Undo</div>
               <p className="panel-note">
                 Undo empties this account again. Everything in it goes: what the restore brought back{record.started_at ? ` on ${day(record.started_at)}` : ''} and
-                anything added or changed since. Your sign-in and API tokens stay. Download your data first (Download my data, above) to keep anything since.
+                anything added or changed since. Your sign-in and API tokens stay. Download your data first to keep anything since.
                 {record.status === 'finished' && record.undo_until ? ` Offered until ${day(record.undo_until)}.` : ''}
               </p>
+              {/* The download first, here, whichever screen this card is on. */}
+              {downloadFirst ? (
+                <DownloadMyData clerk={!needsPassword} />
+              ) : (
+                <button className="secondary" onClick={() => setDownloadFirst(true)}>
+                  Download my data first
+                </button>
+              )}
               <label className="plan-check">
                 <input type="checkbox" checked={confirmUndo} onChange={(e) => setConfirmUndo(e.target.checked)} /> Empty this account again
               </label>

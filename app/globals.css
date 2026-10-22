@@ -5856,3 +5856,10 @@ button.review-keys-toggle {
 .restore-banner button {
   width: auto;
 }
+
+/* The download offered before an undo, inside the restore card. */
+.restore-card .download-card {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+}
