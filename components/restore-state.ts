@@ -11,6 +11,7 @@ import { plainNumber } from '@/lib/format';
 import { ANY_CONNECTOR, CONNECTOR_KINDS, CONNECTOR_WORDS } from '@/lib/connectors/types';
 import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
+import { idEnds, type Unlisted } from '@/lib/earlier-names';
 
 /** What GET /api/user-restore answers. */
 export type RestoreState = {
@@ -21,9 +22,12 @@ export type RestoreState = {
    *  out. */
   record_unreadable: boolean;
   /** The restored accounts whose entry can't be read, each as the Earlier
-   *  accounts list names it, and whether the end of one that would wait
-   *  can't be: totals hold, and each has a repair of its own. */
-  accounts_unreadable: { entries: UnreadableAccount[]; ends: boolean };
+   *  accounts list names it or said why it isn't listed (`unnamed`: what
+   *  names them couldn't be read just now; `broken_links`: a saved link
+   *  can't be read, which holds back every forget), and whether the end of
+   *  one that would wait can't be: totals hold, and each has a repair of its
+   *  own. */
+  accounts_unreadable: { entries: UnreadableAccount[]; ends: boolean; unnamed: boolean; broken_links: boolean };
   undo_days: number;
   waiting: WaitingAccount[];
   scan?: ScanView;
@@ -31,11 +35,24 @@ export type RestoreState = {
   sharing?: SharingNow[];
 };
 
-/** A restored account whose entry can't be read, as the Earlier accounts list
- *  (Manage) shows it: its label there (null: listed as "Balance history"),
- *  its days, and whether it is listed (one linked to another isn't, until
- *  the link goes). */
-export type UnreadableAccount = { account_id: string; label: string | null; first: string | null; last: string | null; listed: boolean };
+/** A restored account whose entry can't be read (app/api/user-restore): what
+ *  the directory calls it ("Chase Checking ••1111"; null: nothing it can
+ *  read); where the Earlier accounts list (Manage) lists it, by the name it
+ *  shows there (lib/earlier-names.ts) and its days; or, for one it doesn't,
+ *  why not (lib/earlier-names.ts Unlisted), the accounts a link joins it to
+ *  by what the directory calls them, and whether it would be listed once
+ *  that is undone. Both null: not named (`unnamed`). */
+export type UnreadableAccount = {
+  account_id: string;
+  label: string | null;
+  listed: { name: string; first: string | null; last: string | null } | null;
+  unlisted: { why: Unlisted; others: (string | null)[]; listable: boolean } | null;
+};
+
+/** A note on what can't be read (unreadableNotes): its words; whether
+ *  emptying the account is the way out; and the account the card offers to
+ *  forget, with what to ask before it does. */
+export type UnreadableNote = { key: string; words: string; empty: boolean; remove?: { account_id: string; confirm: string } };
 
 /** One person this account shares with already (app/api/user-restore). */
 export type SharingNow = { label: string; kinds: string[]; accounts: number };
@@ -151,43 +168,108 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   return out;
 }
 
+const ASK = 'or ask whoever runs this copy of Nya.';
+
+/** How a restored account whose entry can't be read is forgotten, when the
+ *  Earlier accounts list doesn't show it: why it doesn't, and what works
+ *  (see UnreadableAccount). `remove`: this card does it. */
+function unlistedWay(u: NonNullable<UnreadableAccount['unlisted']>): { words: string; remove: boolean } {
+  const then = u.listable ? 'then forget it under Earlier accounts' : 'then forget it here';
+  const left = (why: string, way: string) => `It isn’t listed under Earlier accounts (Manage), since ${why}. To forget it, ${way}, ${then}; ${ASK}`;
+  switch (u.why) {
+    case 'unknown':
+      return { words: `Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage). Forget it here for good, ${ASK}`, remove: true };
+    case 'live':
+      return { words: left('it is one of your connected accounts', 'disconnect its bank (Accounts tab)'), remove: false };
+    case 'connected':
+      return { words: left('its bank is still connected', 'disconnect that bank (Accounts tab)'), remove: false };
+    case 'link-unreadable':
+      return { words: left('a link saved for it can’t be read', 'remove that link (Manage, Reconnected accounts, Unreadable)'), remove: false };
+    case 'linked':
+      return { words: left(`it is linked to ${u.others[0] ?? 'another account'}, whose history it is part of`, 'unlink it (Manage, Reconnected accounts, Linked)'), remove: false };
+    case 'linked-to': {
+      const known = u.others.filter((o): o is string => o !== null);
+      const rest = u.others.length - known.length;
+      const from = [...known, ...(rest === 0 ? [] : [rest === 1 ? (known.length > 0 ? 'another earlier account' : 'an earlier account') : `${plainNumber(rest)} ${known.length > 0 ? 'other ' : ''}earlier accounts`])];
+      const many = u.others.length > 1;
+      return { words: left(`${joined(from)} ${many ? 'are' : 'is'} linked to it`, `unlink ${many ? 'them' : 'that one'} (Manage, Reconnected accounts, Linked)`), remove: false };
+    }
+    case 'manual':
+      return { words: `It has a manual account’s id, so it can’t be forgotten as an earlier account: ask whoever runs this copy of Nya.`, remove: false };
+  }
+}
+
 /** What can't be read of a restore here, in words, each with whether
  *  emptying the account is the way out (only for the record itself, and only
  *  while this copy offers restores: a restored account's entry or end has a
  *  repair of its own). Each account to forget is named as the Earlier
  *  accounts list names it, its days written by `day`, since forgetting is
- *  for good. */
+ *  for good; one the list doesn't show is said why, with what works. Two
+ *  notes that would read the same are told apart by the end of each
+ *  account's id. */
 export function unreadableNotes(
   state: Pick<RestoreState, 'enabled' | 'record_unreadable' | 'accounts_unreadable'>,
   day: (iso: string) => string = (iso) => iso
-): { words: string; empty: boolean }[] {
-  const out: { words: string; empty: boolean }[] = [];
+): UnreadableNote[] {
+  const out: UnreadableNote[] = [];
   if (state.record_unreadable) {
     const record = 'Nya can’t read the record of a restore here, so it can’t tell whether one finished. No net worth total is recorded meanwhile.';
     out.push(
       state.enabled
-        ? { words: `${record} Empty this account (below) to start again, or ask whoever runs this copy of Nya.`, empty: true }
-        : { words: `${record} Bringing back a download, and emptying an account, are turned off on this copy of Nya: ask whoever runs it.`, empty: false }
+        ? { key: 'record', words: `${record} Empty this account (below) to start again, ${ASK}`, empty: true }
+        : { key: 'record', words: `${record} Bringing back a download, and emptying an account, are turned off on this copy of Nya: ask whoever runs it.`, empty: false }
     );
   }
   if (state.accounts_unreadable.ends) {
     out.push({
+      key: 'ends',
       words:
         'How one of the accounts a restore brought back ended can’t be read, so no net worth total is recorded until it can be. Remove the damaged closure on the Accounts tab, then mark that account again if it ended.',
       empty: false,
     });
   }
-  for (const a of state.accounts_unreadable.entries) {
-    const name = a.label ?? 'Balance history';
-    const days = a.first || a.last ? ` (${a.first ? day(a.first) : 'unknown'} to ${a.last ? day(a.last) : 'unknown'})` : '';
-    const what = `What Nya keeps about ${a.label ?? 'an account'}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
+  const entries = state.accounts_unreadable.entries;
+  if (entries.length === 0) return out;
+  if (state.accounts_unreadable.unnamed) {
+    const one = entries.length === 1;
     out.push({
-      words: a.listed
-        ? `${what} Forget it under Earlier accounts (Manage), where it is listed as ${name}${days}, or ask whoever runs this copy of Nya.`
-        : `${what} It is linked to another account, so it can be forgotten only once that link is removed (Manage, Reconnected accounts); or ask whoever runs this copy of Nya.`,
+      key: 'unnamed',
+      words: `What Nya keeps about ${one ? 'an account' : plural(entries.length, 'account')} a restore brought back can’t be read, so no net worth total is recorded until it can be. ${
+        one ? 'Its name' : 'Their names'
+      } couldn’t be read just now either, so this card can’t say how to forget ${one ? 'it' : 'them'}: try again later, ${ASK}`,
+      empty: false,
+    });
+    return out;
+  }
+  if (state.accounts_unreadable.broken_links && entries.some((a) => a.unlisted?.why !== 'link-unreadable')) {
+    out.push({
+      key: 'broken-links',
+      words: 'A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Manage, Reconnected accounts, Unreadable).',
       empty: false,
     });
   }
+  /** `end`: the end of its id, to tell it from another that would read the
+   *  same. */
+  const noteOf = (a: UnreadableAccount, end?: string): UnreadableNote => {
+    const told = end ? ` (…${end})` : '';
+    const what = `What Nya keeps about ${a.label ?? 'an account'}${told}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
+    const key = `account:${a.account_id}`;
+    if (a.listed) {
+      const { name, first, last } = a.listed;
+      const days = first || last ? ` (${first ? day(first) : 'unknown'} to ${last ? day(last) : 'unknown'})` : '';
+      return { key, words: `${what} Forget it under Earlier accounts (Manage), where it is listed as ${name}${days}, ${ASK}`, empty: false };
+    }
+    if (!a.unlisted) return { key, words: `${what} Ask whoever runs this copy of Nya.`, empty: false };
+    const way = unlistedWay(a.unlisted);
+    const confirm = `Forget ${a.label ?? 'this account'}${told} for good? The transactions a restore brought back for it, and what you said about them, are deleted, and this can’t be undone.`;
+    return { key, words: `${what} ${way.words}`, empty: false, ...(way.remove ? { remove: { account_id: a.account_id, confirm } } : {}) };
+  };
+  const drafts = entries.map((a) => noteOf(a));
+  const alike = new Map<string, string[]>();
+  entries.forEach((a, i) => alike.set(drafts[i].words, [...(alike.get(drafts[i].words) ?? []), a.account_id]));
+  const ends = new Map<string, string>();
+  for (const ids of alike.values()) if (ids.length > 1) for (const [id, end] of idEnds(ids)) ends.set(id, end);
+  out.push(...entries.map((a, i) => (ends.has(a.account_id) ? noteOf(a, ends.get(a.account_id)) : drafts[i])));
   return out;
 }
 
