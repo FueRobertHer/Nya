@@ -230,6 +230,35 @@ describe('the routes', () => {
     expect(await reportSettingsStore.get(ctx)).toEqual({ v: 1, marked: ['food and drink'] });
   });
 
+  test('an account that has only been opened is empty: what the dashboard writes on its first open counts as nothing', async () => {
+    const month = new Date().toISOString().slice(0, 7);
+    // The dashboard's loads as it opens, then the Budgets tab's and the goals'.
+    for (const path of ['net-worth', 'transactions', 'budgets', 'goals', 'planned-items', 'categories', `budgets/month?month=${month}&today=${month}`, `goals/progress?month=${month}`]) {
+      const route = await import(`@/app/api/${path.split('?')[0]}/route`);
+      const res: Response = await route.GET(new Request(`http://localhost/api/${path}`));
+      expect([path, res.status]).toEqual([path, 200]);
+    }
+    const { budgetSetStore } = await import('@/lib/budget-store');
+    const { setBudgets } = await import('@/lib/budgets');
+    // The first read of budgets stored a set that holds none; a save that
+    // leaves none, an empty copy by name.
+    expect(await budgetSetStore.get(ctx)).toMatchObject({ categories: {}, groups: {}, mirror: {} });
+    await setBudgets(ctx, {});
+    expect((await call('GET', '/api/user-restore?scan=1')).body.scan).toMatchObject({ empty: true, found: [] });
+    const record = await restoreAll(OLD.text);
+    expect(record.status).toBe('finished');
+    // The file's budgets in their place.
+    const restored = await budgetSetStore.get(ctx);
+    expect(Object.values(restored!.categories)).toEqual([{ amount: 400 }]);
+
+    // A set that holds a budget is budgets.
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    await budgetSetStore.set(ctx, { ...restored!, mirror_before: null });
+    expect((await call('GET', '/api/user-restore?scan=1')).body.scan).toMatchObject({ empty: false, found: ['budgets'] });
+  });
+
   test('two starts at once: one claims the record; the same start sent again answers it', async () => {
     const { source, p, plan } = await planned(OLD.text);
     const one = startBody(p, plan, source, newUserRestoreId(), 'hunter2');

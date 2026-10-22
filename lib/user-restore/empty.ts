@@ -11,12 +11,20 @@
 // The scan is a SCAN of the environment's keyspace (lib/account-deletion.ts
 // containerKeys), so it runs where it is counted: the preview, the start, and
 // before emptying. Never for the banner's state.
+//
+// WHAT AN ACCOUNT HOLDS ONCE OPENED. The app writes as soon as it is opened:
+// the first read of budgets stores an empty budget set (lib/budget-store.ts
+// loadBudgets), and a save that leaves no budget an empty copy of them by
+// name. Those can't be judged by their name, so they are read: one that holds
+// no budget is nothing, one that holds any, or can't be read, is budgets.
 
 import type { Ctx } from '../containers';
 import { containerKeys } from '../account-deletion';
 import { getItems } from '../storage';
 import { secretsStore } from '../connectors/store';
 import { classOfKey } from './classes';
+import { budgetSetStore } from '../budget-store';
+import { getBudgetsReport } from '../budgets';
 
 /** What a scan found, grouped as the person would name it. */
 export type AccountScan = {
@@ -80,6 +88,22 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
 const GROUP_OF = new Map<string, string>(GROUPS.flatMap(([words, families]) => families.map((f) => [f, words] as const)));
 const UNSEEN = 'data Nya doesn’t show';
 
+/** Whether a key of budgets holds none (see WHAT AN ACCOUNT HOLDS ONCE
+ *  OPENED): the set with no category or group budget and an empty copy, or
+ *  the copy by name with nothing in it. False for any other key, and for one
+ *  that can't be read. */
+async function holdsNoBudget(ctx: Ctx, family: string): Promise<boolean> {
+  if (family === budgetSetStore.name) {
+    const { value } = await budgetSetStore.getReport(ctx);
+    return value !== null && Object.keys(value.categories).length === 0 && Object.keys(value.groups).length === 0 && Object.keys(value.mirror).length === 0;
+  }
+  if (family === 'budgets') {
+    const { budgets } = await getBudgetsReport(ctx);
+    return budgets !== null && Object.keys(budgets).length === 0;
+  }
+  return false;
+}
+
 /** Scans the account's container (see the header). Strict: a failure to scan
  *  or read throws, never reads as empty. */
 export async function scanAccount(ctx: Ctx): Promise<AccountScan> {
@@ -101,6 +125,7 @@ export async function scanAccount(ctx: Ctx): Promise<AccountScan> {
       settings.add(family!);
       continue;
     }
+    if (family && (await holdsNoBudget(ctx, family))) continue;
     const words = family ? GROUP_OF.get(family) : undefined;
     if (words) found.add(words);
     else {
