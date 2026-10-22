@@ -984,6 +984,40 @@ type HiddenSources = {
 };
 
 /**
+ * The stored layers a read of net worth's history is made from: the recorded
+ * and estimated totals, and, when something is to be taken out of the points
+ * or split by currency, the per-account maps behind them (`sources`, null
+ * when not read). Read once, in parallel: a caller that knows it will need
+ * them before it knows what it will take out or split (net worth's route,
+ * which learns the accounts in other currencies only from the fetch) starts
+ * the read early and hands it to readHistoryPoints.
+ */
+export type HistoryLayers = {
+  realMap: Record<string, string> | null;
+  estMap: Record<string, string> | null;
+  sources: HiddenSources | null;
+};
+
+export async function readHistoryLayers(ctx: Ctx, perAccount: boolean): Promise<HistoryLayers> {
+  const [realMap, estMap, sources] = await Promise.all([
+    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    perAccount ? readPerAccountSources(ctx) : null,
+  ]);
+  return { realMap, estMap, sources };
+}
+
+async function readPerAccountSources(ctx: Ctx): Promise<HiddenSources> {
+  const [realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
+    redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+    getEstimatedFlat(ctx),
+  ]);
+  return { realAccounts, estAccounts, estFlatByDate, legacyFlat };
+}
+
+/**
  * Accounts that stop counting from a day (lib/lifecycle.ts: closed, left or
  * untracked), by every id each has had: the day, and the kind each id is
  * subtracted as, or null when it isn't known (a point naming such an id with
@@ -1095,9 +1129,10 @@ export async function getHistoryWithSplit(
   hidden: HiddenMap | undefined,
   ended: EndedAccounts | undefined,
   short: ReadonlySet<string> | undefined,
-  foreign: ForeignAccounts | null
+  foreign: ForeignAccounts | null,
+  layers?: PromiseLike<HistoryLayers> | HistoryLayers
 ): Promise<{ points: HistoryPoint[]; breaks: string[]; raw: SplitHistoryPoint[] }> {
-  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short, foreign ?? undefined);
+  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short, foreign ?? undefined, layers);
   const plain = points.map(({ date, value, estimated }) => ({ date, value, ...(estimated ? { estimated: true } : {}) }));
   return { points: bridgeInteriorEstimates(plain, breaks), breaks, raw: points };
 }
@@ -1113,7 +1148,8 @@ export async function readHistoryPoints(
   hidden?: HiddenMap,
   ended?: EndedAccounts,
   short?: ReadonlySet<string>,
-  foreign?: ForeignAccounts
+  foreign?: ForeignAccounts,
+  layers?: PromiseLike<HistoryLayers> | HistoryLayers
 ): Promise<{ points: SplitHistoryPoint[]; breaks: string[] }> {
   const ending = [...(ended ?? [])].filter(([id]) => !hidden?.has(id));
   const hiding = (!!hidden && hidden.size > 0) || ending.length > 0;
@@ -1122,17 +1158,14 @@ export async function readHistoryPoints(
 
   // Per-account maps are read only when something is hidden, or a point is to
   // be split by currency: decrypting a year of them on every load to subtract
-  // nothing would be waste.
+  // nothing would be waste. Layers read already (readHistoryLayers, started
+  // before what this waited for) are used as they are, the per-account maps
+  // read now only if they lack them and they are needed.
   const perAccount = hiding || splitting;
-  const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
-    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
-    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
-    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)) : null,
-    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)) : null,
-    perAccount ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
-    perAccount ? getEstimatedFlat(ctx) : null,
-  ]);
-  const sources: HiddenSources = { realAccounts, estAccounts, estFlatByDate, legacyFlat };
+  let read = layers ? await layers : await readHistoryLayers(ctx, perAccount);
+  if (perAccount && !read.sources) read = { ...read, sources: await readPerAccountSources(ctx) };
+  const { realMap, estMap } = read;
+  const sources: HiddenSources = read.sources ?? { realAccounts: null, estAccounts: null, estFlatByDate: null, legacyFlat: null };
 
   const entries: { date: string; blob: string; estimated: boolean }[] = [];
   for (const [date, blob] of Object.entries(realMap ?? {})) {

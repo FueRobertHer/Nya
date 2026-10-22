@@ -6,6 +6,7 @@ import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } fr
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
   getHistoryWithSplit,
+  readHistoryLayers,
   withTodayPoint,
   isBackfillDone,
   type ForeignAccounts,
@@ -200,9 +201,11 @@ export async function GET(req: Request) {
     let lifecyclePromise = readLifecycle();
     // With a home currency, the history is split by currency as it is read
     // (lib/history.ts getHistoryWithSplit), which needs the accounts in other
-    // currencies: known once the fetch is in, so its read waits for them
-    // (`foreign`, settled below). Without one it is settled at once, and the
-    // read overlaps the fetch as it always has.
+    // currencies: known once the fetch is in (`foreign`, settled below). So
+    // its stored layers, the per-account maps with them, are read at once,
+    // overlapping the fetch as the history's read always has, and only
+    // working out the points waits for them. Without one, `foreign` is
+    // settled at once and nothing changes.
     let settleForeign: (f: ForeignAccounts | null) => void = () => {};
     const foreignPromise = new Promise<ForeignAccounts | null>((resolve) => (settleForeign = resolve));
     settingsPromise.then(
@@ -212,11 +215,14 @@ export async function GET(req: Request) {
       () => settleForeign(null)
     );
     const directoryPromise = eager(settingsPromise.then(({ settings }) => (settings.home ? directoryCurrencies(ctx) : [])));
+    const layersPromise = eager(settingsPromise.then(({ settings }) => (settings.home ? readHistoryLayers(ctx, true) : undefined)));
     // The days known short of an account that came back after an assumed
     // closure are left out (lib/lifecycle.ts shortDays).
     const readHistory = () =>
       eager(
-        Promise.all([hiddenPromise, lifecyclePromise, foreignPromise]).then(([h, l, f]) => getHistoryWithSplit(ctx, h.hidden, l.ended, shortDays(l, h.hidden), f))
+        Promise.all([hiddenPromise, lifecyclePromise, foreignPromise, layersPromise]).then(([h, l, f, layers]) =>
+          getHistoryWithSplit(ctx, h.hidden, l.ended, shortDays(l, h.hidden), f, layers)
+        )
       );
     let historyPromise = readHistory();
 

@@ -12,10 +12,14 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const plaid = { accounts: [] as any[] };
+const plaid = { accounts: [] as any[], events: [] as string[], delayMs: 0 };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
-    accountsGet: async () => ({ data: { item: { institution_id: 'ins_1' }, accounts: plaid.accounts } }),
+    accountsGet: async () => {
+      if (plaid.delayMs > 0) await new Promise((r) => setTimeout(r, plaid.delayMs));
+      plaid.events.push('plaid answered');
+      return { data: { item: { institution_id: 'ins_1' }, accounts: plaid.accounts } };
+    },
     investmentsHoldingsGet: async () => ({ data: { accounts: [], holdings: [], securities: [] } }),
     liabilitiesGet: async () => ({ data: { liabilities: {} } }),
     itemRemove: async () => ({ data: {} }),
@@ -107,11 +111,31 @@ describe('with a home currency', () => {
       ['2026-09-11', 2862.66], // 2,000 + 1,000 / 1.1592
       ['2026-09-14', 2865.73],
     ]);
-    // Today's stored point is read too, its total recorded before the
-    // history is (with a home currency the read waits for the accounts).
-    expect(body.base.gaps.left_out).toEqual([{ currency: 'BTC', why: 'not-published', unrated: 'BTC', from: '2026-09-11', to: '2026-09-14', days: 2 }]);
+    // The stored layers are read while Plaid is asked, before today's point
+    // is recorded: today's is the live one, so BTC is left out of Friday's.
+    expect(body.base.gaps.left_out).toEqual([{ currency: 'BTC', why: 'not-published', unrated: 'BTC', from: '2026-09-11', to: '2026-09-11', days: 1 }]);
     // The change is all exchange rates: the balances held still.
     expect(body.base.delta).toMatchObject({ value: 3.07, from: '2026-09-11', to: '2026-09-14', from_rates: 3.07 });
+  });
+
+  test('the history’s stored layers are read while Plaid is asked, not after it', async () => {
+    await chooseHome('EUR');
+    plaid.events = [];
+    plaid.delayMs = 30;
+    const hgetall = fake.hgetall.bind(fake);
+    fake.hgetall = (async (key: string) => {
+      if (key.endsWith(':history:net-worth') || key.endsWith(':history:accounts')) plaid.events.push(`read ${key.split(':').slice(-2).join(':')}`);
+      return hgetall(key);
+    }) as typeof fake.hgetall;
+    try {
+      await load();
+    } finally {
+      fake.hgetall = hgetall;
+      plaid.delayMs = 0;
+    }
+    const answered = plaid.events.indexOf('plaid answered');
+    expect(plaid.events.indexOf('read history:net-worth')).toBeLessThan(answered);
+    expect(plaid.events.indexOf('read history:accounts')).toBeLessThan(answered);
   });
 
   test('a cached load converts the same, and never sends the split', async () => {
