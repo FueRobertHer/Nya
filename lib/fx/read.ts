@@ -63,7 +63,7 @@ export async function readFx(ctx: Ctx, need: FxNeed, known?: { settings: Currenc
   const years = yearsFor(need.from <= need.to ? need.from : need.to, need.to >= need.from ? need.to : need.from);
   const ids = fieldsFor(currenciesFor(given, base), years);
   const { fields, unusable } = await readEcbFields(ids);
-  return { fx: tableFromFields(fields, years, settings.home, settings.own), problem, unusable };
+  return { fx: tableFromFields(fields, years, settings.home, settings.own, unusable), problem, unusable };
 }
 
 /** The newest publication and the last fetch alone, for the Currency card. */

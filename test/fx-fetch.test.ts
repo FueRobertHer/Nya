@@ -73,7 +73,7 @@ afterEach(() => {
 describe('the nightly fetch', () => {
   test('fills an empty store from the whole history, newest year first, and records it worked', async () => {
     const outcome = await run();
-    expect(outcome).toEqual({ ok: true, newest: '2026-09-14', written: ['2026', '2025', '2022', '2011', '2010', '1999'], refused: [] });
+    expect(outcome).toEqual({ ok: true, newest: '2026-09-14', written: ['2026', '2025', '2022', '2011', '2010', '1999'], refused: [], mended: [] });
     const fields = await ecbStore.getMany(['latest', 'days:2026', 'USD:2026', 'RUB:2022', 'BGN:2026']);
     expect((fields.get('latest') as any).date).toBe('2026-09-14');
     expect((fields.get('USD:2026') as any)['2026-09-14']).toBe('1.1551');
@@ -95,11 +95,80 @@ describe('the nightly fetch', () => {
     expect(await run({ full: true })).toMatchObject({ ok: true, written: ['2026', '2025', '2022', '2011', '2010', '1999'] });
   });
 
-  test('a stored calendar that can’t be used is written again', async () => {
+  test('a stored calendar that can’t be used is written again, and named', async () => {
     await run();
     fake.hashes.get(KEY)!.set('days:2010', 'damaged');
-    expect((await run()).ok).toBe(true);
+    const outcome = await quiet(() => run());
+    expect(outcome).toMatchObject({ ok: true, written: ['2026', '2025', '2010'], mended: ['days:2010'] });
     expect(JSON.parse(stored().get('days:2010')!)[0]).toBe('2010-12-27');
+    expect(await fetchRecord()).toMatchObject({ ok: true, mended: ['days:2010'] });
+  });
+
+  test.each([
+    ['can’t be read', (h: Map<string, string>) => h.set('USD:2010', 'damaged')],
+    ['isn’t a series', (h: Map<string, string>) => h.set('USD:2010', JSON.stringify({ '2010-12-27': 'abc' }))],
+    ['is missing', (h: Map<string, string>) => h.delete('USD:2010')],
+    ['differs from the file', (h: Map<string, string>) => h.set('USD:2010', JSON.stringify({ ...JSON.parse(h.get('USD:2010')!), '2010-12-27': '9.9999' }))],
+  ])('a past year whose stored series %s is written again the next night, and named', async (_, damage) => {
+    await run();
+    const before = stored().get('USD:2010');
+    damage(fake.hashes.get(KEY)!);
+    const outcome = await quiet(() => run());
+    expect(outcome).toMatchObject({ ok: true, written: ['2026', '2025', '2010'], mended: ['USD:2010'] });
+    expect(stored().get('USD:2010')).toBe(before);
+    expect(await fetchRecord()).toMatchObject({ ok: true, mended: ['USD:2010'] });
+    // Mended: the night after writes only the recent years, and names nothing.
+    expect(await run()).toMatchObject({ ok: true, written: ['2026', '2025'], mended: [] });
+    expect(await fetchRecord()).not.toHaveProperty('mended');
+  });
+
+  test('the newest publication and the record, when they can’t be used, are written again and named', async () => {
+    await run();
+    fake.hashes.get(KEY)!.set('latest', JSON.stringify({ date: '2026-09-14', rates: { USD: 'abc' } }));
+    fake.hashes.get(KEY)!.set('fetch', 'damaged');
+    const outcome = await quiet(() => run());
+    expect(outcome).toMatchObject({ ok: true, written: ['2026', '2025'], mended: ['fetch', 'latest'] });
+    expect(JSON.parse(stored().get('latest')!).rates.USD).toBe('1.1551');
+    expect(await fetchRecord()).toMatchObject({ ok: true, mended: ['fetch', 'latest'] });
+  });
+
+  test('a past year whose stored calendar holds a day the file lacks is kept as it is, and said', async () => {
+    await run();
+    const h = fake.hashes.get(KEY)!;
+    h.set('days:2010', JSON.stringify(['2010-12-24', ...JSON.parse(h.get('days:2010')!)]));
+    h.set('USD:2010', 'damaged');
+    const outcome = await quiet(() => run());
+    expect(outcome).toMatchObject({ ok: true, written: ['2026', '2025'], refused: ['2010'], mended: [] });
+    expect(h.get('USD:2010')).toBe('damaged');
+  });
+
+  test('the check of past years stops at the writes’ deadline, and starts from another year the next night', async () => {
+    await run();
+    // Each read takes ten seconds on the run's clock; the deadline allows
+    // the calendars' read and one past year's.
+    let t = NOW;
+    const checked: string[] = [];
+    const hmget = fake.hmget.bind(fake);
+    fake.hmget = (async (key: string, ...ids: string[]) => {
+      t += 10_000;
+      const series = ids.find((id) => /^[A-Z]{3}:/.test(id));
+      if (series) checked.push(series.slice(4));
+      return hmget(key, ...ids);
+    }) as typeof fake.hmget;
+    const warned: string[] = [];
+    const w = console.warn;
+    console.warn = (...args: unknown[]) => void warned.push(args.join(' '));
+    try {
+      expect(await run({ now: () => t, writeDeadlineMs: 15_000 })).toMatchObject({ ok: true, written: ['2026', '2025'] });
+      t = NOW + 86_400_000;
+      expect(await run({ now: () => t, writeDeadlineMs: 15_000 })).toMatchObject({ ok: true });
+    } finally {
+      fake.hmget = hmget;
+      console.warn = w;
+    }
+    expect(checked).toHaveLength(2);
+    expect(checked[0]).not.toBe(checked[1]);
+    expect(warned.filter((m) => m.includes('3 of 4 past years weren’t checked tonight'))).toHaveLength(2);
   });
 
   test('a stale copy of the file changes nothing, and says so', async () => {
@@ -173,6 +242,20 @@ describe('the nightly fetch', () => {
       expect(outcome).toMatchObject({ ok: false, reason: 'reading the stored rates’ names took longer than 0.03s, after 0 years written' });
     } finally {
       fake.hkeys = hkeys;
+    }
+    expect(await fetchRecord()).toMatchObject({ ok: false, reason: expect.stringContaining('took longer') });
+  });
+
+  test('a check of a past year that never answers is a failure naming the year, after tonight’s writes', async () => {
+    await run();
+    const hmget = fake.hmget.bind(fake);
+    fake.hmget = ((key: string, ...ids: string[]) => (ids.some((id) => /^[A-Z]{3}:/.test(id)) ? new Promise(() => {}) : hmget(key, ...ids))) as typeof fake.hmget;
+    try {
+      const outcome = await quiet(() => run({ now: Date.now, readTimeoutMs: 30 }));
+      expect(outcome).toMatchObject({ ok: false, written: ['2026', '2025'] });
+      if (!outcome.ok) expect(outcome.reason).toMatch(/^checking (2022|2011|2010|1999) took longer than 0\.03s, after 2 years written$/);
+    } finally {
+      fake.hmget = hmget;
     }
     expect(await fetchRecord()).toMatchObject({ ok: false, reason: expect.stringContaining('took longer') });
   });

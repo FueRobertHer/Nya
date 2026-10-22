@@ -18,6 +18,15 @@
 // fewer days than stored, never a newest publication older than the stored
 // one. `full` compares and rewrites every year.
 //
+// WHAT IT MENDS. A field that can't be used reads as no rate on its days,
+// said by every reader that meets it (lib/fx/read.ts); the next run writes it
+// again. A calendar or the newest publication that can't be used is written
+// with its year. A past year's series are checked after tonight's writes
+// (lib/fx/ecb-parse.ts unlikeStored): one read a year (about 170 KB), from a
+// different year each night, until the writes' deadline, and a year with a
+// series missing, unusable or unlike the file's is written again whole. What
+// was mended is named in the record (`mended`) and the log.
+//
 // TIME LIMITS. Upstash doesn't time a request out on its own, and Vercel ends
 // the function at its maxDuration without running anything after (the reason
 // lib/backup.ts gives every step a limit). So every call here is raced against
@@ -31,8 +40,8 @@
 
 import { listZip, readEntry, type ZipEntry, type ZipProblem } from '../zip';
 import { ecbStore, readEcbFields } from './ecb-store';
-import { FETCH_FIELD, LATEST_FIELD, isDays, isFetch, isLatest } from './fields';
-import { parseEcbCsv, planWrites } from './ecb-parse';
+import { FETCH_FIELD, LATEST_FIELD, MAX_MENDED, daysField, isDays, isFetch, isLatest } from './fields';
+import { parseEcbCsv, planWrites, unlikeStored, yearStep } from './ecb-parse';
 import type { EcbFetch } from './rates';
 
 export const ECB_HISTORY_URL = 'https://www.ecb.europa.eu/stats/eurofxref/eurofxref-hist.zip';
@@ -53,8 +62,8 @@ const ZIP_LIMITS = { maxEntries: 4, maxEntryBytes: 32 * 1024 * 1024 };
 const ENTRY = 'eurofxref-hist.csv';
 
 export type FetchOutcome =
-  | { ok: true; newest: string; written: string[]; refused: string[] }
-  | { ok: false; reason: string; written: string[] };
+  | { ok: true; newest: string; written: string[]; refused: string[]; mended: string[] }
+  | { ok: false; reason: string; written: string[]; mended: string[] };
 
 /** What a download is: the bytes, or why there are none. */
 export type Downloader = (url: string, signal: AbortSignal) => Promise<{ status: number; bytes: Uint8Array }>;
@@ -156,17 +165,22 @@ export async function fetchEcbRates(
   const now = opts.now ?? Date.now;
   const started = now();
   const written: string[] = [];
+  /** Fields found missing, unusable or unlike the file, and written again. */
+  const mended: string[] = [];
   let previous: EcbFetch | null = null;
   let newest: string | null = null;
   const end = started + (opts.budgetMs ?? RUN_BUDGET_MS);
   /** What is left of the run, at most `cap`. */
   const left = (cap: number) => Math.min(cap, end - now());
 
-  const record = async (outcome: FetchOutcome): Promise<FetchOutcome> => {
+  const record = async (given: FetchOutcome): Promise<FetchOutcome> => {
+    const outcome: FetchOutcome = { ...given, mended: [...new Set(given.mended)].sort() };
     const at = new Date(now()).toISOString();
+    const named = outcome.mended.length > 0 ? { mended: outcome.mended.slice(0, MAX_MENDED) } : {};
     const entry: EcbFetch = outcome.ok
-      ? { at, ok: true, newest: outcome.newest, last_ok: at }
-      : { at, ok: false, reason: outcome.reason.slice(0, 500), newest, last_ok: previous?.last_ok ?? null };
+      ? { at, ok: true, newest: outcome.newest, last_ok: at, ...named }
+      : { at, ok: false, reason: outcome.reason.slice(0, 500), newest, last_ok: previous?.last_ok ?? null, ...named };
+    if (outcome.mended.length > 0) console.warn(`ECB rates: wrote again ${outcome.mended.join(', ')}, which were missing, couldn’t be used or didn’t match the file`);
     try {
       await within('recording the outcome', opts.recordMs ?? RECORD_MS, () => ecbStore.setMany([[FETCH_FIELD, entry]]));
     } catch (err) {
@@ -183,12 +197,15 @@ export async function fetchEcbRates(
     const current = new Date(started).toISOString().slice(0, 4);
     const stored = new Map<string, readonly string[] | null>();
     // Every year's calendar (about 3 KB each), so one that is missing or
-    // can't be used is written again with its year, tonight. A damaged
-    // series under an intact calendar is named by every reader that meets it
-    // (no rate on its days) and mended by a full run.
+    // can't be used is written again with its year, tonight. A past year's
+    // series are checked after the writes (see WHAT IT MENDS).
     const toRead = new Set<string>([FETCH_FIELD, LATEST_FIELD]);
     for (const id of known) if (id.startsWith('days:')) toRead.add(id);
-    const { fields } = await within('reading the stored calendars', left(readMs), () => readEcbFields([...toRead]));
+    const { fields, unusable } = await within('reading the stored calendars', left(readMs), () => readEcbFields([...toRead]));
+    // Written again tonight: a calendar with its year, the newest publication
+    // with the newest year, the record of the fetch by this run's.
+    const damaged = new Set(unusable);
+    if (damaged.has(FETCH_FIELD)) mended.push(FETCH_FIELD);
     const fetched = fields.get(FETCH_FIELD);
     previous = isFetch(fetched) ? fetched : null;
     for (const id of toRead) {
@@ -207,34 +224,65 @@ export async function fetchEcbRates(
       // honour the signal.
       download = await within(`the download`, allowed, () => (opts.download ?? downloadWithFetch)(ECB_HISTORY_URL, AbortSignal.timeout(Math.max(1, allowed))));
     } catch (err) {
-      return record({ ok: false, reason: err instanceof StepTimeout ? err.message : `the download failed: ${reasonOf(err, allowed)}`, written });
+      return record({ ok: false, reason: err instanceof StepTimeout ? err.message : `the download failed: ${reasonOf(err, allowed)}`, written, mended });
     }
-    if (download.status !== 200) return record({ ok: false, reason: `the ECB answered ${download.status}`, written });
+    if (download.status !== 200) return record({ ok: false, reason: `the ECB answered ${download.status}`, written, mended });
 
     const csv = csvOf(download.bytes);
-    if (typeof csv !== 'string') return record({ ok: false, reason: csv.reason, written });
+    if (typeof csv !== 'string') return record({ ok: false, reason: csv.reason, written, mended });
     const file = parseEcbCsv(csv);
-    if ('error' in file) return record({ ok: false, reason: `the file isn’t the ECB’s: ${file.error}`, written });
+    if ('error' in file) return record({ ok: false, reason: `the file isn’t the ECB’s: ${file.error}`, written, mended });
     newest = file.days[file.days.length - 1];
     // A stale copy (a cache still serving yesterday's file): nothing to take
     // from it, and the rates are no fresher for having asked.
     if (storedLatest && newest < storedLatest) {
-      return record({ ok: false, reason: `the file's newest day, ${newest}, is older than the stored ${storedLatest}`, written });
+      return record({ ok: false, reason: `the file's newest day, ${newest}, is older than the stored ${storedLatest}`, written, mended });
     }
 
     const plan = planWrites(file, { days: stored, latest: storedLatest }, { current, all: opts.full });
     const deadline = started + (opts.writeDeadlineMs ?? WRITE_DEADLINE_MS);
-    for (const step of plan.years) {
-      if (now() > deadline) {
-        return record({ ok: false, reason: `the writes took longer than ${(opts.writeDeadlineMs ?? WRITE_DEADLINE_MS) / 1000}s, after ${written.length} of ${plan.years.length} years`, written });
-      }
+    const write = async (step: { year: string; fields: Map<string, unknown> }) => {
       await within(`writing ${step.year}`, end - now(), () => ecbStore.setMany(step.fields));
       written.push(step.year);
+      for (const id of step.fields.keys()) if (damaged.has(id)) mended.push(id);
+    };
+    for (const step of plan.years) {
+      if (now() > deadline) {
+        return record({ ok: false, reason: `the writes took longer than ${(opts.writeDeadlineMs ?? WRITE_DEADLINE_MS) / 1000}s, after ${written.length} of ${plan.years.length} years`, written, mended });
+      }
+      await write(step);
     }
-    if (plan.refused.length > 0) console.warn(`ECB rates: kept the stored ${plan.refused.join(', ')}, which held days the file didn’t`);
-    return record({ ok: true, newest, written, refused: plan.refused });
+
+    // The past years tonight's plan left alone, checked against the file
+    // (see WHAT IT MENDS), from a different one each night, so a night that
+    // runs out of time leaves the rest to be checked first another night.
+    const refused = [...plan.refused];
+    if (!opts.full) {
+      const inFile = new Set(file.days.map((d) => d.slice(0, 4)));
+      const past = [...stored.keys()].filter((y) => stored.get(y) && inFile.has(y) && !written.includes(y) && !refused.includes(y)).sort().reverse();
+      const turn = past.length > 0 ? Math.floor(started / 86_400_000) % past.length : 0;
+      const order = [...past.slice(turn), ...past.slice(0, turn)];
+      for (let i = 0; i < order.length; i++) {
+        if (now() > deadline) {
+          console.warn(`ECB rates: ${order.length - i} of ${order.length} past years weren’t checked tonight, for lack of time`);
+          break;
+        }
+        const year = order[i];
+        const step = yearStep(file, year);
+        const ids = [...step.fields.keys()].filter((id) => id !== daysField(year));
+        const { fields: series } = await within(`checking ${year}`, left(readMs), () => readEcbFields(ids));
+        const unlike = unlikeStored(step, stored.get(year)!, series);
+        if (unlike === null) refused.push(year);
+        else if (unlike.length > 0) {
+          await write(step);
+          mended.push(...unlike);
+        }
+      }
+    }
+    if (refused.length > 0) console.warn(`ECB rates: kept the stored ${refused.join(', ')}, which held days the file didn’t`);
+    return record({ ok: true, newest, written, refused, mended });
   } catch (err) {
-    return record({ ok: false, reason: err instanceof StepTimeout ? `${err.message}, after ${written.length} years written` : reasonOf(err, downloadMs), written });
+    return record({ ok: false, reason: err instanceof StepTimeout ? `${err.message}, after ${written.length} years written` : reasonOf(err, downloadMs), written, mended });
   }
 }
 

@@ -38,9 +38,10 @@ export type NetWorthBase = {
   gaps: HistoryGaps & { unknown_currency: number };
   delta: { value: number; pct: number; days: number; from: string; to: string; from_rates: number | null } | null;
   /** The newest publication's day and whether it is older than it should be
-   *  (lib/fx/rates.ts isStale), when anything needed a rate; and the
-   *  person's own rates. */
-  rates: { day: string | null; stale: boolean; own: OwnRate[] };
+   *  (lib/fx/rates.ts isStale), when anything needed a rate; the person's
+   *  own rates; and the fields of rates read that couldn't be used (their
+   *  days have none until the nightly fetch writes them again). */
+  rates: { day: string | null; stale: boolean; own: OwnRate[]; unusable: string[] };
   /** For the page's own figures (an institution's total, connection
    *  health's share): the newest publication, only its rates for these
    *  currencies, and the person's own rates. Never a series. */
@@ -102,7 +103,7 @@ export function netWorthBase(input: {
     history,
     gaps: { ...converted.gaps, unknown_currency: split.unknown_currency },
     delta,
-    rates: { day: foreign ? (fx.latest?.date ?? null) : null, stale: foreign && isStale(fx, now), own: [...fx.own] },
+    rates: { day: foreign ? (fx.latest?.date ?? null) : null, stale: foreign && isStale(fx, now), own: [...fx.own], unusable: (fx.unusable ?? []).filter((id) => id !== 'fetch') },
     fx: { home, latest, own: [...fx.own] },
   };
 }

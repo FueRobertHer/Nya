@@ -141,7 +141,11 @@ export function CurrencyCardBody({ load, busy, confirm, error, ...on }: { load: 
                 : 'Nya shows each balance in its own currency, and adds your net worth up in the currency most of your accounts are in, unconverted. Choose a home currency to see your net worth converted into it at the European Central Bank’s daily reference rates.'}
             </p>
             <p className="as-of">
-              {view.ecb.date ? `The ECB’s newest rates: ${rateDay(view.ecb.date)}.` : 'Nya has no ECB rates yet.'}
+              {view.ecb.date
+                ? `The ECB’s newest rates: ${rateDay(view.ecb.date)}.`
+                : view.ecb.unusable?.includes('latest')
+                  ? 'Nya couldn’t read the newest ECB rates it keeps. The nightly fetch writes them again.'
+                  : 'Nya has no ECB rates yet.'}
               {view.ecb.date && view.ecb.stale ? ' Nya couldn’t fetch newer ones, so converted figures may be out of date.' : ''}
             </p>
             {homeNeedsRate(view) && (

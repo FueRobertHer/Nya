@@ -30,3 +30,24 @@ export function reasonText(currency: string, why: NoRate | string, unrated: stri
   if (why === 'before') return `there is no rate for ${unrated} that far back`;
   return `there is no rate for ${unrated}${days === 'now' ? '' : days === 'one' ? ' on that day' : ' on those days'}`;
 }
+
+const list = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+
+/**
+ * The fields of the ECB's rates Nya keeps that couldn't be read
+ * (lib/fx/ecb-store.ts readEcbFields), in words, or null for none that
+ * matters to a conversion: "Some of the ECB's rates Nya keeps couldn't be
+ * read (the USD rates of 2025), so those days have no rate until the nightly
+ * fetch writes them again." The fetch's own record is no rate, and left out.
+ */
+export function unusableText(ids: readonly string[]): string | null {
+  const parts = ids.flatMap((id) => {
+    if (id === 'fetch') return [];
+    if (id === 'latest') return ['the newest rates'];
+    if (id.startsWith('days:')) return [`the ECB’s calendar of ${id.slice(5)}`];
+    const [code, year] = id.split(':');
+    return year ? [`the ${code} rates of ${year}`] : [];
+  });
+  if (parts.length === 0) return null;
+  return `Some of the ECB’s rates Nya keeps couldn’t be read (${list(parts)}), so those days have no rate until the nightly fetch writes them again.`;
+}

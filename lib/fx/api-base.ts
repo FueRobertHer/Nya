@@ -161,6 +161,25 @@ export function historyNotes(gaps: HistoryGaps, home: string, main: string | nul
   return notes;
 }
 
+/** Why an account's points have no to_base, in words, one note a reason,
+ *  naming the currency whose rate is missing: "2 points have no to_base:
+ *  there is no rate for AED on those days". */
+export function pointNotes(fx: FxTable, points: readonly { date: string; value: number; to_base?: number | null }[], currency: string): string[] {
+  const home = fx.home;
+  if (!home) return [];
+  const by = new Map<string, { why: NoRate; unrated: string; n: number }>();
+  for (const p of points) {
+    if (p.to_base !== null) continue;
+    const c = convert(fx, p.value, currency, home, p.date, { tidy: true });
+    if (c.ok) continue;
+    const k = `${c.why}|${c.currency}`;
+    const g = by.get(k) ?? { why: c.why, unrated: c.currency, n: 0 };
+    g.n++;
+    by.set(k, g);
+  }
+  return [...by.values()].map((g) => `${g.n === 1 ? '1 point has' : `${g.n} points have`} no to_base: ${reasonText(currency, g.why, g.unrated, home, g.n === 1 ? 'one' : 'many')}`);
+}
+
 /** What a person should know of `base`, in words: what it left out and why,
  *  and rates older than they should be. */
 export function baseNotes(base: ApiBase, home: string): string[] {

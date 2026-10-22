@@ -14,7 +14,9 @@
 // series (lib/fx/fields.ts), and the newest publication whole. Never a year
 // whose days aren't all the stored year's and more (a stale copy of the file
 // would otherwise remove the newest day), and never a newest publication
-// older than the stored one.
+// older than the stored one. A past year is written once, and checked each
+// night against the file (unlikeStored): one whose stored fields went
+// missing, can't be used or differ from the file's is written again.
 
 import { isCalendarDay } from '../manual-txn-input';
 import { ECB_CODE, daysField, isRateText, seriesField, LATEST_FIELD } from './fields';
@@ -80,9 +82,12 @@ function yearOfFile(file: EcbFile, year: string): { days: string[]; series: Map<
  *  year has none or it can't be used) and the newest publication's day. */
 export type StoredState = { days: ReadonlyMap<string, readonly string[] | null>; latest: string | null };
 
+/** One year's write: its calendar and every series, in one HSET. */
+export type WriteStep = { year: string; fields: Map<string, unknown> };
+
 export type WritePlan = {
   /** One step per year, newest first, each written whole and on its own. */
-  years: { year: string; fields: Map<string, unknown> }[];
+  years: WriteStep[];
   /** Years left as they are because the file holds fewer of their days than
    *  are stored (a stale copy), named for the fetch's record. */
   refused: string[];
@@ -110,15 +115,12 @@ export function planWrites(file: EcbFile, stored: StoredState, opts: { current: 
     // than reading its 29 series to compare. A stored calendar that can't be
     // used (null) is written again: the file mends it.
     if (has && !opts.all && !recent.has(year)) continue;
-    const { days, series } = yearOfFile(file, year);
-    if (has) {
-      const now = new Set(days);
-      if (has.some((d) => !now.has(d))) {
-        plan.refused.push(year);
-        continue;
-      }
+    const step = yearStep(file, year);
+    if (has && fewerDays(step, has)) {
+      plan.refused.push(year);
+      continue;
     }
-    plan.years.push({ year, fields: new Map<string, unknown>([[daysField(year), days], ...series]) });
+    plan.years.push(step);
   }
   // The newest publication goes with its own year's step, so a reader never
   // sees it ahead of that year's series. If that year was refused, so is it.
@@ -130,4 +132,45 @@ export function planWrites(file: EcbFile, stored: StoredState, opts: { current: 
     else plan.years.unshift({ year: newestYear, fields: new Map<string, unknown>([[LATEST_FIELD, plan.latest]]) });
   }
   return plan;
+}
+
+/** One year of the file as one write: its calendar and each series. */
+export function yearStep(file: EcbFile, year: string): WriteStep {
+  const { days, series } = yearOfFile(file, year);
+  return { year, fields: new Map<string, unknown>([[daysField(year), days], ...series]) };
+}
+
+/** Whether the file holds fewer of a year's days than are stored (a stale
+ *  copy): such a year is never written from it. */
+function fewerDays(step: WriteStep, stored: readonly string[]): boolean {
+  const days = new Set(step.fields.get(daysField(step.year)) as string[]);
+  return stored.some((d) => !days.has(d));
+}
+
+/** A stored series that is the file's, day for day. */
+function sameSeries(v: unknown, s: EcbSeries): boolean {
+  if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
+  const stored = v as Record<string, unknown>;
+  const days = Object.keys(s);
+  return Object.keys(stored).length === days.length && days.every((d) => Object.hasOwn(stored, d) && stored[d] === s[d]);
+}
+
+/**
+ * A past year's stored fields checked against the file's (the nightly run's
+ * check, lib/fx/ecb-fetch.ts): the ids of the year's fields that are stored
+ * missing, unusable or unlike the file's, so the year is written again whole;
+ * none when the store matches. `days` is the stored calendar, `series` the
+ * usable values read for the year's series (one absent, or that couldn't be
+ * used, isn't in it). Null when the file holds fewer of the year's days than
+ * are stored: never written from a stale copy.
+ */
+export function unlikeStored(step: WriteStep, days: readonly string[], series: ReadonlyMap<string, unknown>): string[] | null {
+  if (fewerDays(step, days)) return null;
+  const out: string[] = [];
+  for (const [id, v] of step.fields) {
+    if (id === daysField(step.year)) {
+      if ((v as string[]).length !== days.length) out.push(id);
+    } else if (!sameSeries(series.get(id), v as EcbSeries)) out.push(id);
+  }
+  return out.sort();
 }

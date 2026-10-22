@@ -16,7 +16,9 @@ export type CurrencySettingsView = {
    *  kept), or null. */
   problem: 'unreadable' | 'unrecognised' | null;
   removable: boolean;
-  ecb: { date: string | null; rates: Record<string, string>; stale: boolean; fetch_ok: boolean | null };
+  /** `unusable`: the ECB's fields read that couldn't be used (absent from a
+   *  server before it). */
+  ecb: { date: string | null; rates: Record<string, string>; stale: boolean; fetch_ok: boolean | null; unusable?: string[] };
 };
 
 export type CurrencyLoad = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; view: CurrencySettingsView };

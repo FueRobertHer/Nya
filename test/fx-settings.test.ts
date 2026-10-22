@@ -150,7 +150,12 @@ describe('the home currency route', () => {
   test('nothing chosen: no home, no rates, and the ECB’s newest beside them', async () => {
     await seedLatest();
     const body = await json(await home.GET());
-    expect(body).toMatchObject({ home: null, own: [], problem: null, removable: false, ecb: { date: '2026-09-14', rates: LATEST.rates, stale: true } });
+    expect(body).toMatchObject({ home: null, own: [], problem: null, removable: false, ecb: { date: '2026-09-14', rates: LATEST.rates, stale: true, unusable: [] } });
+  });
+
+  test('the ECB’s newest rates that can’t be used: none, and said', async () => {
+    await fake.hset(testKey('fx:ecb'), { latest: JSON.stringify({ date: '2026-09-14', rates: { USD: 'abc' } }) });
+    expect((await json(await home.GET())).ecb).toMatchObject({ date: null, rates: {}, unusable: ['latest'] });
   });
 
   test('the person chooses, changes and clears it, each recorded, one change a day', async () => {
@@ -306,5 +311,7 @@ describe('reading what a request converts with', () => {
     expect(fx.latest?.date).toBe('2026-09-14');
     expect(Object.keys(fx.series)).toEqual(['USD:2026']);
     expect(unusable).toEqual(['GBP:2026']);
+    // Said as rates Nya doesn't have, never as ones the ECB didn't publish.
+    expect(fx.unusable).toEqual(['GBP:2026']);
   });
 });

@@ -11,7 +11,9 @@ import { isStale } from '@/lib/fx/rates';
 // GET answers the settings (none saved: no home currency, no rates), whether
 // they can be used (`problem`, and `removable` only when their bytes are
 // damaged, never for a value this release doesn't understand), and the ECB's
-// newest publication: its day, its rates and whether they are stale.
+// newest publication: its day, its rates, whether they are stale, and which of
+// the two fields read couldn't be used (`unusable`: the nightly fetch writes
+// them again).
 // PUT { home } chooses the home currency, or none with null: only the person
 // ever writes it (docs/architecture.md, "Exchange rates"). Strict, through a
 // compare-and-set: settings that can't be read are never written over (409).
@@ -38,6 +40,7 @@ export async function GET() {
         rates: ecb.latest?.rates ?? {},
         stale: isStale(ecb, Date.now()),
         fetch_ok: ecb.fetch?.ok ?? null,
+        unusable: ecb.unusable,
       },
     });
   } catch (err) {

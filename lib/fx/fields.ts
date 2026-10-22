@@ -26,6 +26,10 @@ export const ECB_CODE = /^[A-Z]{3}$/;
 /** A rate as the ECB publishes one: digits, maybe a fraction, nothing else. */
 const RATE = /^\d{1,9}(\.\d{1,9})?$/;
 const YEAR = /^\d{4}$/;
+/** A field's id, as the fetch's record names one it mended. */
+const FIELD_ID = /^(latest|fetch|days:\d{4}|[A-Z]{3}:\d{4})$/;
+/** More fields than the store holds (about 900). */
+export const MAX_MENDED = 2000;
 
 export const isRateText = (v: unknown): v is string => typeof v === 'string' && RATE.test(v) && Number(v) > 0;
 
@@ -58,14 +62,15 @@ export function isLatest(v: unknown): v is EcbLatest {
 export function isFetch(v: unknown): v is EcbFetch {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const f = v as Record<string, unknown>;
-  if (Object.keys(f).some((k) => !['at', 'ok', 'reason', 'newest', 'last_ok'].includes(k))) return false;
+  if (Object.keys(f).some((k) => !['at', 'ok', 'reason', 'newest', 'last_ok', 'mended'].includes(k))) return false;
   const time = (t: unknown) => typeof t === 'string' && Number.isFinite(Date.parse(t));
   return (
     time(f.at) &&
     typeof f.ok === 'boolean' &&
     (f.reason === undefined || (typeof f.reason === 'string' && f.reason.length <= 500)) &&
     (f.newest === null || isCalendarDay(f.newest)) &&
-    (f.last_ok === null || time(f.last_ok))
+    (f.last_ok === null || time(f.last_ok)) &&
+    (f.mended === undefined || (Array.isArray(f.mended) && f.mended.length <= MAX_MENDED && f.mended.every((id) => typeof id === 'string' && FIELD_ID.test(id))))
   );
 }
 
@@ -105,7 +110,7 @@ export function fieldsFor(currencies: Iterable<string>, years: readonly string[]
  * it asked for, `home` and `own` the person's settings. A year asked for with
  * no usable calendar is `missing_years`: no rate on its days.
  */
-export function tableFromFields(fields: ReadonlyMap<string, unknown>, years: readonly string[], home: string | null, own: readonly OwnRate[]): FxTable {
+export function tableFromFields(fields: ReadonlyMap<string, unknown>, years: readonly string[], home: string | null, own: readonly OwnRate[], unusable: readonly string[] = []): FxTable {
   const days: Record<string, readonly string[]> = {};
   const series: Record<string, EcbSeries> = {};
   const missing: string[] = [];
@@ -120,5 +125,5 @@ export function tableFromFields(fields: ReadonlyMap<string, unknown>, years: rea
   }
   const latest = fields.get(LATEST_FIELD);
   const fetch = fields.get(FETCH_FIELD);
-  return { home, own, latest: isLatest(latest) ? latest : null, days, series, missing_years: missing, fetch: isFetch(fetch) ? fetch : null };
+  return { home, own, latest: isLatest(latest) ? latest : null, days, series, missing_years: missing, fetch: isFetch(fetch) ? fetch : null, unusable: [...unusable].sort() };
 }

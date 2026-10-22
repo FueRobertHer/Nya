@@ -13,6 +13,7 @@
 
 import { Masked } from './HideAmounts';
 import { chartGapLines, convertedHeading, convertedText, leftOutLines, staleText, unknownText } from './currency-text';
+import { unusableText } from '@/lib/fx/words';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 
 /** `onOpen`: the Currency card, at the form for a rate for that currency. */
@@ -41,6 +42,7 @@ export function HeroCurrencyNote({ base, main, onOpen }: { base: NetWorthBase; m
         </div>
       ))}
       {base.rates.stale && <div className="as-of stale">{staleText(base.rates.day)}</div>}
+      {unusableText(base.rates.unusable ?? []) && <div className="as-of stale">{unusableText(base.rates.unusable ?? [])}</div>}
       {base.unknown > 0 && <div className="as-of">{unknownText(base.unknown, main)}</div>}
     </>
   );

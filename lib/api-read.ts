@@ -140,7 +140,15 @@ import { readFx } from './fx/read';
 import { foreignFor, lifecycleAccounts } from './fx/net-worth-read';
 import type { SplitPoint } from './fx/net-worth';
 import type { FxTable } from './fx/rates';
-import { apiBase, apiOwnRates, baseNotes, historyInBase, historyNotes, toBase, SETTINGS_UNREADABLE_NOTE, type ApiBase, type ApiOwnRate } from './fx/api-base';
+import { apiBase, apiOwnRates, baseNotes, historyInBase, historyNotes, pointNotes, toBase, SETTINGS_UNREADABLE_NOTE, type ApiBase, type ApiOwnRate } from './fx/api-base';
+import { unusableText } from './fx/words';
+
+/** What the rates an answer converted with couldn't use, in words: none or
+ *  one note (lib/fx/words.ts unusableText). */
+const ratesNotes = (fx: FxTable | null): string[] => {
+  const said = fx ? unusableText(fx.unusable ?? []) : null;
+  return said ? [said] : [];
+};
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -660,7 +668,7 @@ export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean; ba
     base_currency: home.settings?.home ?? null,
     complete: missing.length === 0,
     missing_accounts: missing,
-    notes: home.note ? [...notes, home.note] : notes,
+    notes: [...notes, ...(home.note ? [home.note] : []), ...ratesNotes(fx)],
   };
 }
 
@@ -784,7 +792,7 @@ function netWorthOf({ read, history, home }: NetWorthRead, fx: FxTable | null, n
     missing_accounts: read.missing,
     recorded: last ? { date: last.date, value: tidy(last.value), currency: main, mixed_currencies: mixed } : null,
     ...(conv ?? {}),
-    notes: [...read.notes, ...(home?.note ? [home.note] : []), ...(conv?.base ? baseNotes(conv.base, conv.base_currency!) : [])],
+    notes: [...read.notes, ...(home?.note ? [home.note] : []), ...(conv?.base ? [...baseNotes(conv.base, conv.base_currency!), ...ratesNotes(fx)] : [])],
   };
 }
 
@@ -906,7 +914,7 @@ function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState |
       (p) => (q.includeEstimated || !p.estimated) && (q.from === undefined || p.date >= q.from) && (q.to === undefined || p.date <= q.to)
     );
     base = { currency: fx.home, of: (p) => byDay.get(p.date) ?? null };
-    notes.push(...historyNotes(gaps, fx.home, nw.split.main));
+    notes.push(...historyNotes(gaps, fx.home, nw.split.main), ...ratesNotes(fx));
   }
   return seriesOf(
     nw.history,
@@ -972,8 +980,7 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     currency: home.settings?.home ?? null,
     of: fx ? (p) => toBase(fx, p.value, currency, p.date) : null,
   });
-  const unrated = fx ? series.points.filter((p) => p.to_base === null).length : 0;
-  if (unrated > 0) series.notes.push(`${unrated === 1 ? '1 point has' : `${unrated} points have`} no to_base: there is no rate for ${currency} on their days`);
+  if (fx && currency !== null) series.notes.push(...pointNotes(fx, series.points, currency), ...ratesNotes(fx));
   return series;
 }
 

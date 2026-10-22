@@ -48,6 +48,10 @@ export type EcbFetch = {
   newest: string | null;
   /** When a run last worked, an ISO time (this one's, when ok). */
   last_ok: string | null;
+  /** Fields this run found missing, unusable or unlike the file, and wrote
+   *  again from it, by id ("USD:2019", "days:2010", "latest"); absent when
+   *  none. */
+  mended?: string[];
 };
 
 /** A rate the person set (lib/fx/settings.ts). */
@@ -82,6 +86,10 @@ export type FxTable = {
    *  used (damaged): no rate on their days. */
   missing_years: readonly string[];
   fetch: EcbFetch | null;
+  /** Fields read that couldn't be used (damaged): their days have no rate,
+   *  said as rates Nya doesn't have, never as rates the ECB didn't publish,
+   *  until the nightly fetch writes them again (lib/fx/ecb-fetch.ts). */
+  unusable?: readonly string[];
 };
 
 /** A table with nothing in it: no home currency, so nothing converts. */
@@ -148,10 +156,14 @@ export function ecbRate(fx: FxTable, currency: string, day: string): RateOn {
   }
   const p = publicationOn(fx, day);
   if ('why' in p) return { ok: false, why: p.why };
-  const series = fx.series[`${currency}:${yearOf(p.day)}`];
+  const id = `${currency}:${yearOf(p.day)}`;
+  const series = fx.series[id];
   const r = series?.[p.day];
   const f = r === undefined ? null : parseDecimal(r);
-  return f && f.n > 0n ? { ok: true, per_eur: f, day: p.day, source: 'ecb' } : { ok: false, why: 'not-published' };
+  if (f && f.n > 0n) return { ok: true, per_eur: f, day: p.day, source: 'ecb' };
+  // A series Nya keeps but couldn't read: rates it doesn't have, not ones the
+  // ECB didn't publish.
+  return { ok: false, why: fx.unusable?.includes(id) ? 'not-fetched' : 'not-published' };
 }
 
 /** The own rate that applies to a currency on a day, if any. */

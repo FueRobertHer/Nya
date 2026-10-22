@@ -248,7 +248,7 @@ describe('the formatters, with amounts hidden', () => {
     // Net worth's note under the hero: its amounts hidden, its rate kept.
     const fx = ecbTable({ home: 'EUR' });
     const b = balancesIn([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }], fx, 'EUR', '2026-09-14', 'USD');
-    const base = { currency: 'EUR', net_worth: b.total, parts: b.parts, left_out: b.left_out, unknown: 0, history: [], gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, delta: null, rates: { day: '2026-09-14', stale: false, own: [] }, fx: { home: 'EUR', latest: fx.latest, own: [] } };
+    const base = { currency: 'EUR', net_worth: b.total, parts: b.parts, left_out: b.left_out, unknown: 0, history: [], gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 }, delta: null, rates: { day: '2026-09-14', stale: false, own: [], unusable: [] }, fx: { home: 'EUR', latest: fx.latest, own: [] } };
     const html = renderToStaticMarkup(<HeroCurrencyNote base={base} main="USD" onOpen={() => {}} />);
     expect(exposed(html)).toContain('1 USD = 0.86573 EUR');
     expectNoAmounts(html.replace(/1 [A-Z]{3,10} = [\d.,]+ [A-Z]{3,10}/g, ''));

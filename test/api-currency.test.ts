@@ -214,6 +214,21 @@ describe('with a home currency', () => {
     expect(worth.notes).toContain('The newest exchange rates Nya has are from 2026-09-14, so base may be out of date');
   });
 
+  test('rates Nya keeps that can’t be read: no rate on their days, said as rates it doesn’t have, and named', async () => {
+    await fake.hset(testKey('fx:ecb'), { 'USD:2026': 'damaged' });
+    const named = 'Some of the ECB’s rates Nya keeps couldn’t be read (the USD rates of 2026), so those days have no rate until the nightly fetch writes them again.';
+    const history = await call('balance-history');
+    expect(history.points.map((p: any) => p.to_base)).toEqual([null, null]);
+    expect(history.notes).toEqual(['2 points have no to_base, from 2026-09-11 to 2026-09-12: Nya doesn’t have the ECB’s rates for those days yet', named]);
+    const account = await call('balance-history', 'account_id=acc_chk&include_estimated=true');
+    expect(account.points.map((p: any) => p.to_base)).toEqual([null, null, null, null]);
+    expect(account.notes).toEqual(['4 points have no to_base: Nya doesn’t have the ECB’s rates for those days yet', named]);
+    // Today's figures take the newest publication, which reads: only named.
+    const worth = await call('net-worth');
+    expect(worth.base.left_out).toEqual([{ currency: 'AED', accounts: 1, why: 'no_rate' }]);
+    expect(worth.notes).toContain(named);
+  });
+
   test('settings that can’t be read convert nothing, and say so', async () => {
     await fake.set(ctxKey('currency-settings'), 'not-ciphertext-but-long-enough-to-be-tried');
     const worth = await call('net-worth');
@@ -254,5 +269,8 @@ describe('with a home currency the ECB doesn’t publish', () => {
     const history = await call('balance-history');
     expect(history.points.every((p: any) => p.to_base === null)).toBe(true);
     expect(history.notes).toContain('2 points have no to_base, from 2026-09-11 to 2026-09-12: nothing can be converted into ARS: the ECB doesn’t publish ARS');
+    // One account's: the home currency named, never the account's own.
+    const account = await call('balance-history', 'account_id=acc_chk&include_estimated=true');
+    expect(account.notes).toEqual(['4 points have no to_base: nothing can be converted into ARS: the ECB doesn’t publish ARS']);
   });
 });

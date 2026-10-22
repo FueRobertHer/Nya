@@ -77,7 +77,7 @@ function base(rows: { amount: number; currency: string | null }[], over: Partial
     history: [],
     gaps: { unsplit: 0, main_unrated: [], left_out: [], unknown_currency: 0 },
     delta: null,
-    rates: { day: DAY, stale: false, own },
+    rates: { day: DAY, stale: false, own, unusable: [] },
     fx: { home: 'EUR', latest: fx.latest, own },
     ...over,
   };
@@ -221,7 +221,7 @@ describe('what the page converts itself, at the newest rates', () => {
 
 describe('Home’s notes', () => {
   test('under the hero: converted into what, at whose rates, each part, what was left out with the way to set a rate, and old rates', () => {
-    const b = base([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }, { amount: 0.5, currency: 'BTC' }], { rates: { day: DAY, stale: true, own: [] } });
+    const b = base([{ amount: 1000, currency: 'USD' }, { amount: 2000, currency: 'EUR' }, { amount: 0.5, currency: 'BTC' }], { rates: { day: DAY, stale: true, own: [], unusable: [] } });
     const html = renderToStaticMarkup(<HeroCurrencyNote base={b} main="USD" onOpen={noop} />);
     expect(text(html)).toBe(
       [
@@ -249,6 +249,19 @@ describe('Home’s notes', () => {
     expect(link.text).toBe('Set a rate for ARS');
     link.tap();
     expect(asked).toEqual(['ARS']);
+  });
+
+  test('rates Nya keeps that couldn’t be read are named, and their days said as rates it lacks', () => {
+    const b = base([{ amount: 1000, currency: 'USD' }], { rates: { day: DAY, stale: false, own: [], unusable: ['USD:2025', 'days:2024', 'fetch'] } });
+    expect(text(renderToStaticMarkup(<HeroCurrencyNote base={b} main="USD" onOpen={noop} />))).toContain(
+      'Some of the ECB’s rates Nya keeps couldn’t be read (the USD rates of 2025 and the ECB’s calendar of 2024), so those days have no rate until the nightly fetch writes them again.'
+    );
+    // A series that couldn't be read: no rate on its days, said as rates Nya lacks.
+    const fx = { ...ecbTable({ home: 'EUR' }), unusable: ['USD:2026'] };
+    const series = { ...fx.series };
+    delete (series as Record<string, unknown>)['USD:2026'];
+    const day = balancesIn([{ amount: 1000, currency: 'USD' }], { ...fx, series, latest: null }, 'EUR', '2026-09-11', 'USD');
+    expect(day.left_out).toEqual([{ currency: 'USD', accounts: 1, why: 'not-fetched', unrated: 'USD' }]);
   });
 
   test('under the chart: the days it couldn’t convert, or nothing', () => {
@@ -388,6 +401,12 @@ describe('the Currency card', () => {
     expect(text(card(ready({ home: 'EUR', ecb: { date: '2026-09-09', rates: {}, stale: true, fetch_ok: false } })))).toContain(
       'The ECB’s newest rates: Sep 9, 2026. Nya couldn’t fetch newer ones, so converted figures may be out of date.'
     );
+  });
+
+  test('newest rates Nya keeps but couldn’t read are said as such, never as no rates', () => {
+    const html = text(card(ready({ home: 'EUR', ecb: { date: null, rates: {}, stale: true, fetch_ok: true, unusable: ['latest'] } })));
+    expect(html).toContain('Nya couldn’t read the newest ECB rates it keeps. The nightly fetch writes them again.');
+    expect(html).not.toContain('Nya has no ECB rates yet');
   });
 
   test('damaged settings can be removed once confirmed; a newer release’s are kept as they are', () => {
