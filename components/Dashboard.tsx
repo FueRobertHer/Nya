@@ -11,6 +11,8 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import RestoreCard from './RestoreCard';
+import RestoreBanner from './RestoreBanner';
 import { downloadAccounts } from './DownloadOptions';
 import ReportsEntry from './ReportsEntry';
 import ApiTokens from './ApiTokens';
@@ -55,7 +57,7 @@ import {
   withEndedAccounts,
 } from './AccountLifecycle';
 import { useTimelineNotes, TimelineNotesCard } from './TimelineNotes';
-import { totalNotes } from './total-notes';
+import { totalNotes, type RestoreHoldNote } from './total-notes';
 import { stoppedConnections, type Incomplete } from '@/lib/month-coverage';
 import type { ConnectionHealth as Health } from '@/lib/connection-state';
 import BudgetsTab from './BudgetsTab';
@@ -678,6 +680,8 @@ export default function Dashboard({
   // and the connection whose every account ended, which the disconnect sheet
   // then offers to remove.
   const [ended, setEnded] = useState<EndedAccount[]>([]);
+  // What a restore holds back of the total (components/total-notes.ts).
+  const [restoreHold, setRestoreHold] = useState<RestoreHoldNote | null>(null);
   const [lifecycleDamage, setLifecycleDamage] = useState<LifecycleDamage | null>(null);
   const [endedOffer, setEndedOffer] = useState<string | null>(null);
   // Guards the one-shot estimated-history backfill per page load; the server
@@ -722,6 +726,7 @@ export default function Dashboard({
       setHiddenMeta(data.hidden ?? []);
       setImportedHistory(data.imported_history ?? null);
       setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
+      setRestoreHold(data.restore_hold ?? null);
       setAsOf(data.as_of ?? null);
       setBalancesSaved(false);
       setBackupProblem(data.backup_problem ?? null);
@@ -1213,6 +1218,21 @@ export default function Dashboard({
   // Offered only where the deployment turned it on (app/page.tsx).
   const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;
 
+  // A restore (components/RestoreCard.tsx) changes everything: read it all again.
+  const restoreChanged = useCallback(() => {
+    void loadNetWorth(true);
+    loadTransactions(true);
+    budgetsStore.load();
+    goalsStore.load();
+    plannedItemsStore.load();
+  }, [loadNetWorth, loadTransactions, budgetsStore, goalsStore, plannedItemsStore]);
+  /** The banner's way to the card: the Accounts tab, behind Manage. */
+  const openRestore = useCallback(() => {
+    setTab('accounts');
+    setManageMode(true);
+    requestAnimationFrame(() => document.getElementById('bring-back')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
+  }, []);
+
   const startAddManual = useCallback(() => {
     setManualError('');
     setEditingManual(false);
@@ -1469,8 +1489,8 @@ export default function Dashboard({
   // recovered, so the total is short by all of each. Those last are MORE wrong
   // than the stale ones, so every such case is said, with when it was last seen.
   const missingNotes = useMemo(
-    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }),
-    [institutions]
+    () => totalNotes(institutions, { snapshot: fmtStaleDay, instant: fmtInstantDay }, restoreHold),
+    [institutions, restoreHold]
   );
 
   // Connections Plaid says will end on a date, for the Home alert (Insights).
@@ -1834,6 +1854,11 @@ export default function Dashboard({
               {error && <div className="error">{error}</div>}
               {lifecycleRepair}
             </div>
+            {/* Bringing back a download goes only into an empty account, so
+                it is offered here first (components/RestoreCard.tsx). */}
+            <div id="bring-back">
+              <RestoreCard clerk={clerk} onChanged={restoreChanged} autoScan />
+            </div>
             {/* A SimpleFIN connection whose accounts aren't chosen yet. */}
             <ConnectorCards refreshKey={asOf} onAsk={setConnectorAsk} onChanged={() => connectorChanged(false)} />
             {/* Someone who only follows what others share needs no bank of their own. */}
@@ -1841,6 +1866,8 @@ export default function Dashboard({
           </>
         ) : (
           <>
+            {/* An unfinished restore, said on every tab. */}
+            <RestoreBanner hold={restoreHold} onOpen={openRestore} />
             {tab === 'home' && (
               <>
                 <div className="card">
@@ -2713,6 +2740,14 @@ export default function Dashboard({
                       ended
                     )}
                   />
+                )}
+
+                {/* Bringing a download back, and its undo, beside the
+                    download (components/RestoreCard.tsx). */}
+                {manageMode && (
+                  <div id="bring-back">
+                    <RestoreCard clerk={clerk} onChanged={restoreChanged} />
+                  </div>
                 )}
 
                 {/* Reports for an accountant (app/reports), beside the other

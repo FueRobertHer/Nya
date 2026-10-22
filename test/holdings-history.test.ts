@@ -1311,7 +1311,7 @@ describe('beside the net-worth snapshot', () => {
 
   test('and recordFetch reports both, the total never waiting on the positions', async () => {
     const result = await recordFetch(ctx, [broker(['acct_1'], [hold('acct_1', 'vti')], [sec('vti')])], 1000);
-    expect(result).toEqual({ date: today(), holdings: { recorded: 1, failed: 0 } });
+    expect(result).toEqual({ date: today(), holdings: { recorded: 1, failed: 0 }, hold: { unfinished: false, waiting: [], unreadable: false, history_last: null } });
   });
 });
 

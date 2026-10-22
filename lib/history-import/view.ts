@@ -15,6 +15,16 @@ import type { ExcludedImport, WalkState, WalkWhy } from './store';
  *  never edited as a manual row is, and named under a month's totals. */
 export const IMPORTED_TXN_PREFIX = 'imported-txn:';
 
+/** The prefix of the id of a bank row a restore brought back from a
+ *  download (lib/user-restore/store.ts restoredId): an imported row's, on
+ *  purpose, so no pruner takes what is said about it for a vanished bank
+ *  row's, but a bank's row, shown as one, never one from a file. */
+export const RESTORED_TXN_PREFIX = `${IMPORTED_TXN_PREFIX}restored.`;
+
+/** Whether a row was imported into a linked account from a file (#52), and
+ *  not a bank row a restore brought back, whose id has the same prefix. */
+export const isFileImportedId = (id: string): boolean => id.startsWith(IMPORTED_TXN_PREFIX) && !id.startsWith(RESTORED_TXN_PREFIX);
+
 /** A month's row as importedRowsNote reads it: a transaction's, a part of a
  *  split one's (#39, lib/split-rows.ts: `split_of`, the transaction's id), or
  *  a group's, its transactions inside it. */
@@ -31,7 +41,7 @@ export function importedRowsNote(rows: readonly NotedRow[], period = 'this month
   for (const t of rows) {
     for (const m of t.group_members ?? [t]) {
       const id = m.split_of ?? m.transaction_id;
-      if (id.startsWith(IMPORTED_TXN_PREFIX)) imported.add(id);
+      if (isFileImportedId(id)) imported.add(id);
     }
   }
   const n = imported.size;

@@ -164,6 +164,8 @@ import {
   layeredImportedRows,
   missingIds,
   manualTransactionsIn,
+  restoredBanksIn,
+  restoredRowsNote,
   splitFactRows,
   type ExportFile,
   type ExportLifecycle,
@@ -685,7 +687,9 @@ export function ofxFile(
   const kind = ofxKindOf(type);
   if (!kind) return { refused: ofxRefusal(type)!, status: 400 };
 
-  const notes: string[] = [];
+  // The rows a restore brought back for this account (lib/user-restore/),
+  // which a statement doesn't list yet: said.
+  const notes: string[] = restoredRowsNote(restoredBanksIn(doc, account_id), 'this statement');
   const incomplete = new Set<string>();
   // A moment as the day it was where the person is (see the header); a
   // stored day, or any moment without a time zone sent, as it is.

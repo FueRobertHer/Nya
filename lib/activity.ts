@@ -90,6 +90,7 @@ import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleS
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 import { readReviewBasics, readReviewParts } from './review-read';
 import { reviewLayerOf } from './review-layer';
+import type { Incomplete } from './month-coverage';
 
 /**
  * How a rule's account condition knows an account now (lib/rules.ts): through
@@ -139,7 +140,7 @@ export type PlaidPayload = {
   // time (`missing`), or older ones still arriving (`importing`). Activity
   // says so under every month it totals (#51). Empty on any payload that is
   // cached, since only a payload without notes is.
-  incomplete?: { institution_name: string; coverage: 'missing' | 'importing' }[];
+  incomplete?: Incomplete[];
   // The connections that bring in no transactions, and why (lib/item-products.ts):
   // investment accounts only, no bank account or card, or a bank account Plaid
   // doesn't provide transactions for. Not problems, so outside `notes`, and the
@@ -336,12 +337,15 @@ export async function assembleBankRows(
     // rename applies to them as to the bank's own. Matched once the syncs
     // are done, against the rows they wrote (never read twice), so a row the
     // sync just brought supersedes in this very answer.
-    banks.then((done) => {
+    Promise.all([banks, carried]).then(([done, c]) => {
       const bankStates = new Map<string, Record<string, StoredTxn> | null>();
       done.forEach((r, i) => {
         if (r.stored !== undefined) bankStates.set(items[i].item_id, r.stored);
       });
-      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since, endedFrom });
+      // What was carried across a re-link applies to a bank row a restore
+      // brought back as to the bank's own (lib/user-restore/restored.ts).
+      const carry = { categories: c.categories, excluded: c.excluded, annotations: c.annotations };
+      return importedForActivity(ctx, { items, links, leftOut, withAccountIds: opts.withAccountIds, bankStates, since: opts.since, endedFrom, carry });
     }),
   ]);
 
@@ -385,9 +389,12 @@ export async function assembleBankRows(
   }
   const notes = [...results.map((r) => r.note).filter((n): n is string => n !== null), ...imported.notes];
   // Every one of these comes with a note, so a payload holding any is never cached.
-  const incomplete = results.flatMap((r, i) =>
-    r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }]
-  );
+  const incomplete: Incomplete[] = [
+    ...results.flatMap((r, i): Incomplete[] => (r.coverage === 'complete' ? [] : [{ institution_name: items[i].institution_name, coverage: r.coverage }])),
+    // A bank a restore brought back, waiting to be linked: its months say so
+    // (lib/month-coverage.ts `held`).
+    ...imported.held.map((h): Incomplete => ({ institution_name: h.institution_name, coverage: 'held', from: h.from, to: h.to })),
+  ];
   // Not problems, so not notes, and they don't keep the answer from the cache.
   // By id as well as name: the dashboard matches them to connection health by
   // id, since two connections can share a name.

@@ -15,7 +15,8 @@
 //                         don't work from this address; Retry-After says when
 //   500 internal          anything else; the log has it, the answer doesn't
 //   503 unavailable       the data can't be reached just now (the token is
-//                         good: its data is being restored, say)
+//                         good: its data is being restored, say, by the
+//                         operator or from a download)
 //
 // A token that isn't in a token's form is a 401 before anything is read; one
 // in the right form that doesn't work is counted against its address
@@ -42,6 +43,7 @@ import { ContainerError } from './containers';
 import { StoredDataUnreadableError } from './repo';
 import { loggable } from './log-safe';
 import { argsFromQuery, BadRequest, NotFound, type Operation } from './api-ops';
+import { restoreUnfinished } from './user-restore/restored';
 
 export type ApiErrorCode = 'invalid_request' | 'unauthorized' | 'not_found' | 'unreadable' | 'rate_limited' | 'internal' | 'unavailable' | 'method_not_allowed';
 
@@ -118,6 +120,16 @@ export async function admit(req: Request, now: number = Date.now()): Promise<{ a
     });
   }
   await noteUse(auth, now);
+  // A restore still being written or undone here (lib/user-restore/
+  // restored.ts): a program can't be shown the app's banner, so it is told
+  // to wait, never answered from part of the data.
+  try {
+    if (await restoreUnfinished(auth.ctx)) {
+      return apiError(503, 'unavailable', 'Your data is being brought back from a download, or that is being undone. Try again once it has finished.', limits);
+    }
+  } catch (err) {
+    return failed(err, 'checking for a restore');
+  }
   return { auth, limits };
 }
 

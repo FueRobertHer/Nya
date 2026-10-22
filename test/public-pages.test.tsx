@@ -403,22 +403,45 @@ describe('the privacy page', () => {
     expect(page).not.toContain('Until then there is no way to download');
   });
 
-  // Built now: OFX, the passphrase and the email. Bringing a download into
-  // another copy of Nya is still to come, and says so.
-  test('lists as not built yet only what isn’t: bringing a download into another copy of Nya', () => {
-    const html = privacyHtml();
-    const card = text(html.slice(html.indexOf('You can download everything stored about you'), html.indexOf('You can delete everything')));
-    expect(card).toContain('Not built yet A way to bring a download into another copy of Nya.');
-    expect(card).not.toMatch(/OFX files for other money apps, a passphrase|an email each time a download happens\./);
+  // Built now: OFX, the passphrase, the email, and bringing a download back,
+  // which says whether this copy of Nya has turned it on (RESTORE_ENABLED).
+  test('says bringing a download back is built, and whether this copy has turned it on', () => {
+    const card = () => {
+      const html = privacyHtml();
+      return text(html.slice(html.indexOf('You can download everything stored about you'), html.indexOf('You can delete everything')));
+    };
+    const saved = process.env.RESTORE_ENABLED;
+    try {
+      delete process.env.RESTORE_ENABLED;
+      expect(card()).toContain('Not turned on here Bringing a download into another copy of Nya, or into a new account: built, and off on this copy of Nya until whoever runs it turns it on.');
+      expect(card()).not.toContain('Not built yet');
+      expect(card()).not.toMatch(/OFX files for other money apps, a passphrase|an email each time a download happens\./);
+      expect(security()).not.toContain('Bringing a download back');
+      process.env.RESTORE_ENABLED = '1';
+      expect(card()).toContain('Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.');
+      expect(card()).not.toContain('Not turned on here');
+      expect(privacy()).toContain('The file is read in your browser and never stored: only what it holds is written, into your account, encrypted as the rest of your data is.');
+      expect(security()).toContain('Bring back a download reads the file in your browser, a few megabytes at a time, and checks every part of it there');
+      expect(security()).toContain('Undo, while a restore is unfinished and for 7 days after it finishes, empties the account again, as emptying it does');
+      expect(security()).toContain('no SimpleFIN or Lunch Flow access');
+      expect(security()).toContain('never left running at Plaid, SimpleFIN or Lunch Flow.');
+      expect(privacy()).toContain('Undo, offered while a restore is unfinished and for 7 days after it finishes, empties the account again.');
+      expect(privacy()).toContain('until you connect it again and link its accounts (then they count as its own)');
+    } finally {
+      if (saved === undefined) delete process.env.RESTORE_ENABLED;
+      else process.env.RESTORE_ENABLED = saved;
+    }
+    // Kept as the rest of the data is, the file itself never.
+    expect(privacy()).toContain('A download you brought back What it held is your data, kept as the rest is.');
   });
 
   test('says a download is emailed only where this copy sends email', () => {
     mailIs(true);
     expect(privacy()).toContain('Each download is emailed to you: when it happened and which format, never what is in it.');
-    expect(privacy()).toContain('And one each time your data is downloaded or an API token is made, and the weekly summary, if you turn it on.');
+    expect(privacy()).toContain('And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on.');
     expect(security()).toContain('Each download is emailed to you, so one you didn’t make shows.');
     expect(security()).toContain(
-      'each time your data is downloaded or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.'
+      'each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.'
     );
     mailIs(false);
     for (const page of [privacy(), security()]) {
@@ -650,7 +673,7 @@ describe('API tokens, on both pages', () => {
     );
     expect(page).toContain('A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the Developers page');
     // The API exists now: only writing through it is to come.
-    expect(page).toContain('Not built yet Writing through the API, a way to bring your download into another copy of Nya');
+    expect(page).toContain('Not built yet Writing through the API, and a license that lets anyone run their own copy of Nya.');
     expect(page).not.toContain('A public API');
     expect(page).toContain(
       'API tokens Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.'

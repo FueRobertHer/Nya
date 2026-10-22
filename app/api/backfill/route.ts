@@ -24,6 +24,11 @@ import { clearCaches } from '@/lib/cache';
 import { loggable } from '@/lib/log-safe';
 import { classifyFailure, CAUSES } from '@/lib/connection-state';
 import { drawImportedHistory, drawIsStale, importedFlowsForBackfill, rowsUnchangedSince, rowsVersion, yieldToBackfill } from '@/lib/history-import/extend';
+import { liveAccountIds } from '@/lib/links';
+import { holdsTotals, totalsHold } from '@/lib/user-restore/restored';
+
+/** The calendar day after `day`. */
+const dayAfter = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -181,6 +186,14 @@ export async function POST() {
     if (items.length === 0) {
       return NextResponse.json({ skipped: true, reason: 'no linked institutions' });
     }
+    // Held while a restore is being written or undone, or a bank it brought
+    // back waits to be linked or stopped (lib/user-restore/restored.ts): every
+    // estimated day would be short by that bank. Not done, so a later load
+    // runs it once the hold lifts. And never over the balance history it
+    // brought back (`floor`), which is the old copy's own.
+    const hold = await totalsHold(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true }));
+    if (holdsTotals(hold)) return NextResponse.json({ skipped: true, reason: 'restore waiting' });
+    const floor = hold.history_last;
     // Which imported rows this run walks, as of now (see the header).
     const rowsSeen = await rowsVersion(ctx);
 
@@ -396,12 +409,14 @@ export async function POST() {
       lookbackDays: LOOKBACK_DAYS,
     });
 
-    // Real snapshots always win -- never overwrite one with an estimate.
+    // Real snapshots always win -- never overwrite one with an estimate. Nor
+    // does it estimate over the balance history a restore brought back.
     const realDates = await getRealSnapshotDates(ctx);
+    const ours = (date: string) => !realDates.has(date) && (floor === null || date > floor);
     const estimatedTotals = totalPoints
-      .filter((p) => !realDates.has(p.date))
+      .filter((p) => ours(p.date))
       .map((p) => ({ date: p.date, value: p.walked + rest }));
-    const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
+    const estimatedAccounts = accountPoints.filter((p) => ours(p.date));
 
     // An institution disconnected while this ran (the Plaid pulls are slow) may
     // have had an account forgotten since, and writing its balances back would
@@ -430,7 +445,7 @@ export async function POST() {
     await replaceEstimatedAccounts(ctx, estimatedAccounts.filter((p) => p.date >= oldestTxn));
     await replaceEstimatedExtension(ctx, 
       estimatedAccounts.filter((p) => p.date < oldestTxn),
-      oldestTxn
+      floor !== null && oldestTxn <= floor ? dayAfter(floor) : oldestTxn
     );
     // One map per date, over exactly the dates this run wrote. The balances are
     // identical across them; what varies is which run a date belongs to, so a

@@ -741,6 +741,21 @@ describe('with a data key per container', () => {
     expect(mine.body.transactions.length).toBeGreaterThan(0);
   });
 
+  test('while a restore is being written or undone here, every endpoint is unavailable; once it has finished, as before', async () => {
+    const { userRestoreStore } = await import('@/lib/user-restore/store');
+    const { restoreRecord } = await import('./restore-fixture');
+    for (const status of ['writing', 'undoing'] as const) {
+      await userRestoreStore.set(ctx, restoreRecord({ status }) as never);
+      for (const op of OPERATIONS) {
+        const { res, body } = await call(op.name, op.name === 'transactions' ? `month=${month}` : '');
+        expect([op.name, res.status, body.error?.code]).toEqual([op.name, 503, 'unavailable']);
+        expect(body.error.message).toContain('brought back from a download');
+      }
+    }
+    await userRestoreStore.set(ctx, restoreRecord({ status: 'finished', done: 1, finished_at: '2026-10-07T09:05:00.000Z', undo_until: '2026-10-14T09:05:00.000Z' }) as never);
+    expect((await call('accounts')).res.status).toBe(200);
+  });
+
   test('a container whose key can’t be opened is unavailable, and its answer says nothing of the key', async () => {
     await fake.hdel(keysHashKey(), keyOf[ctx.container]);
     forgetActiveKey();

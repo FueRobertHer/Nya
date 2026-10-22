@@ -8,7 +8,9 @@
 // a manual or imported row (every one, of any date), a row imported into a
 // linked account from its bank's files (every one, of any date, whether or
 // not it counts now: a bank row standing for one today may be gone
-// tomorrow), and a transaction from before Plaid's values were kept; a
+// tomorrow), a bank row a restore brought back (every one, of any date,
+// held or not: lib/user-restore/restored.ts), and a transaction from before
+// Plaid's values were kept; a
 // budget, by id; a rule, by id, in a condition or as the category it files
 // into (lib/rules.ts); a part of a split transaction or a group of
 // transactions, by id (lib/splits.ts, lib/groups.ts: every one, of any
@@ -25,6 +27,7 @@ import { assembleBankRows, finishActivity } from './activity';
 import { readOverridesStrict, readCarriedStrict } from './overrides';
 import { manualTxnStore } from './manual-txns';
 import { importedTxnStore } from './history-import/store';
+import { restoredTxnStore } from './user-restore/store';
 import { loadBudgets } from './budget-store';
 import { placeBudgets } from './budget-set';
 import { categoryById, indexTaxonomy, textKey, TEXT, type CategoryUsage, type Taxonomy } from './categories';
@@ -53,12 +56,13 @@ export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly
   for (const id of ids) if (!wanted.includes(id)) out.set(id, { transactions: 0, budget: false });
   if (wanted.length === 0) return out;
 
-  const [bank, overrides, carried, books, imported, budgets, rules, splits, groups, approvals, defaults] = await Promise.all([
+  const [bank, overrides, carried, books, imported, restored, budgets, rules, splits, groups, approvals, defaults] = await Promise.all([
     assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, keepEnded: true }),
     readOverridesStrict(ctx),
     readCarriedStrict(ctx),
     manualTxnStore.getAll(ctx),
     importedTxnStore.getAll(ctx),
+    restoredTxnStore.getAll(ctx),
     loadBudgets(ctx),
     readRuleSet(ctx),
     splitStore.getAll(ctx),
@@ -89,6 +93,9 @@ export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly
     // Every transaction approved under it, of any date: it stays filed there.
     for (const [tid, a] of approvals) if (a.category_id && isIt(a.category_id)) counted.add(tid);
     for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
+    // A restored bank row is filed by its own words where Plaid's values
+    // don't file it, as the bank's are.
+    for (const book of restored.values()) for (const row of book.rows) if (uses(row.bank.category)) counted.add(row.id);
     // A rule naming it, or a category merged into it.
     const ruleUses = (rules?.rules ?? []).filter((r) => ruleCategories(r).some(isIt)).length;
     // The keys counted for: the delete refuses if they change before it lands.

@@ -48,8 +48,39 @@ function accountsAt(insts: TotalNoteInstitution[], count: (i: TotalNoteInstituti
 const holdUp = (i: TotalNoteInstitution) =>
   i.health?.detail?.issue === 'sign' ? 'has a card or loan waiting for your answer' : i.needs_reauth ? 'needs reconnecting' : "couldn't refresh";
 
-/** The notes for the total, in the order they were always shown. */
-export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat): string[] {
+/** What a restore holds back, as /api/net-worth sends it (lib/user-restore/
+ *  restored.ts totalsHold): no total is recorded while it holds. */
+export type RestoreHoldNote = { unfinished: boolean; waiting: { institution_name: string; last: string | null }[]; unreadable: boolean };
+
+/** The notes for the total, in the order they were always shown, then what
+ *  a restore holds back (`hold`), said every day while it holds. */
+export function totalNotes(institutions: TotalNoteInstitution[], day: DayFormat, hold?: RestoreHoldNote | null): string[] {
+  const notes = institutionNotes(institutions, day);
+  if (hold) notes.push(...restoreNotes(hold, day));
+  return notes;
+}
+
+/** What a restore holds back, in words: why no total is recorded, and what
+ *  to do. A restored bank's own balances count in no total here: it isn't
+ *  connected. */
+export function restoreNotes(hold: RestoreHoldNote, day: DayFormat): string[] {
+  const notes: string[] = [];
+  if (hold.unfinished) notes.push("A restore of your download hasn't finished, so no total is recorded until it does: resume it or undo it under Manage");
+  if (hold.waiting.length === 1) {
+    const [w] = hold.waiting;
+    notes.push(
+      `${w.institution_name}, brought back from your download${w.last ? ` with transactions to ${day.snapshot(w.last)}` : ''}, isn't connected here and isn't counted in this total · no total is recorded until you connect it again and link its accounts, or stop following them (Manage)`
+    );
+  } else if (hold.waiting.length > 1) {
+    notes.push(
+      `${joinNames(hold.waiting.map((w) => w.institution_name))}, brought back from your download, aren't connected here and aren't counted in this total · no total is recorded until you connect each again and link its accounts, or stop following them (Manage)`
+    );
+  }
+  if (hold.unreadable) notes.push("What a restore brought back can't be read just now, so no total is recorded until it can be");
+  return notes;
+}
+
+function institutionNotes(institutions: TotalNoteInstitution[], day: DayFormat): string[] {
   const notes: string[] = [];
 
   // Recovered: shown at last known balances. They share one snapshot, so one date.

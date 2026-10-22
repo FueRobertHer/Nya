@@ -73,3 +73,11 @@ export async function setRename(ctx: Ctx, vendor_key: string, name: string): Pro
 export async function clearRename(ctx: Ctx, vendor_key: string): Promise<void> {
   await redis().hdel(RENAMES_HASH(ctx), vendor_key);
 }
+
+/** Merchant names as a restore brings them back (lib/user-restore/commit.ts). */
+export async function restoreRenames(ctx: Ctx, entries: readonly (readonly [string, string])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [key, name] of entries) fields[key] = await encrypt(ctx, name);
+  await redis().hset(RENAMES_HASH(ctx), fields);
+}

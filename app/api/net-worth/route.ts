@@ -3,6 +3,7 @@ import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { holdsTotals, type TotalsHold } from '@/lib/user-restore/restored';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
   getHistoryWithBreaks,
@@ -37,6 +38,9 @@ type NetWorthPayload = {
   // stored set, so one whose institution is gone is still listed.
   lifecycle: LifecycleForClient[];
   as_of: string;
+  /** Why no total is recorded while a restore holds it (lib/user-restore/
+   *  restored.ts totalsHold), said under the Home total: absent otherwise. */
+  restore_hold?: TotalsHold;
 };
 
 // Whether the estimated layer was built by an older algorithm and should be
@@ -196,7 +200,7 @@ export async function GET(req: Request) {
     // actually written even if the request straddles UTC midnight. When it didn't
     // land, the accounts that did answer are still recorded for their own charts.
     // Their positions go into holdings history the same way (lib/holdings-history.ts).
-    const { date: snapshotDate } = await recordFetch(ctx, institutions, netWorth);
+    const { date: snapshotDate, hold } = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
@@ -277,6 +281,7 @@ export async function GET(req: Request) {
       hidden: hiddenList,
       lifecycle: lifecycleForClient(lifecycle),
       as_of: new Date().toISOString(),
+      ...(holdsTotals(hold) ? { restore_hold: hold } : {}),
     };
 
     // Don't cache payloads containing errors: an institution that needs reauth

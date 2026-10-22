@@ -1301,8 +1301,6 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
   const carriedAnnotations = await inputs.carriedAnnotationsIn;
   const cutoff = inputs.since ?? daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(state.txns);
-  // `name` is merchant_name || raw name, which recurring detection and search
-  // depend on; StoredTxn keeps both parts.
   return Object.values(state.txns)
     .filter(
       (t) =>
@@ -1311,42 +1309,72 @@ async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn
         !hiddenAccountIds?.has(t.account_id) &&
         !afterEnd(endedFrom, t)
     )
-    .map((t) => ({
-      transaction_id: t.transaction_id,
-      date: t.date,
-      name: t.merchant_name || t.name,
-      amount: t.amount,
-      pending: t.pending,
-      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
-      account_type: state.accounts[t.account_id]?.type ?? null,
-      institution_name: t.institution_name,
-      ...categoryFacts(t, carried),
-      iso_currency_code: t.iso_currency_code,
-      unofficial_currency_code: t.unofficial_currency_code ?? null,
-      vendor_key: vendorKey(t),
-      logo_url: t.logo_url,
-      category_icon_url: t.personal_finance_category_icon_url,
-      subcategory: humanizeSubcategory(t.personal_finance_category),
-      category_confidence: t.personal_finance_category?.confidence_level ?? null,
-      transaction_code: t.transaction_code ?? null,
-      payment_channel: t.payment_channel,
-      datetime: t.datetime ?? t.authorized_datetime,
-      website: t.website,
-      check_number: t.check_number,
-      account_owner: t.account_owner,
-      city: t.location?.city ?? null,
-      region: t.location?.region ?? null,
-      counterparty: resolveCounterparty(t),
-      payment_processor: resolveProcessor(t),
-      payment_reference: t.payment_meta?.reference_number ?? null,
-      ...(carriedExclusions?.size && !t.pending && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
-      ...carriedFacts(t, carriedAnnotations),
-      ...(inputs.withAccountIds ? { account_id: t.account_id } : {}),
-      account_ref: t.account_id,
-      // The pending row a posted one replaced, whose approval is its own
-      // (lib/review-layer.ts); never sent.
-      ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
-    }));
+    .map((t) =>
+      bankRowDisplay(t, {
+        account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+        account_type: state.accounts[t.account_id]?.type ?? null,
+        carried,
+        carriedExclusions,
+        carriedAnnotations,
+        withAccountIds: inputs.withAccountIds,
+      })
+    );
+}
+
+/** What a stored bank row is shown with besides itself: the account it is
+ *  shown on, and what was carried to it across a re-link (DisplayInputs). */
+export type BankRowContext = {
+  account_name: string;
+  account_type: string | null;
+  carried?: Map<string, string>;
+  carriedExclusions?: Set<string>;
+  carriedAnnotations?: Map<string, CarriedAnnotation>;
+  withAccountIds?: boolean;
+};
+
+/**
+ * One stored bank row as the Activity tab shows it (displayRows). Also how a
+ * bank row brought back from a download is shown (lib/history-import/read.ts),
+ * so the two can never differ: `name` is merchant_name || raw name, which
+ * recurring detection and search depend on, and StoredTxn keeps both parts.
+ */
+export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
+  return {
+    transaction_id: t.transaction_id,
+    date: t.date,
+    name: t.merchant_name || t.name,
+    amount: t.amount,
+    pending: t.pending,
+    account_name: c.account_name,
+    account_type: c.account_type,
+    institution_name: t.institution_name,
+    ...categoryFacts(t, c.carried),
+    iso_currency_code: t.iso_currency_code,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+    vendor_key: vendorKey(t),
+    logo_url: t.logo_url,
+    category_icon_url: t.personal_finance_category_icon_url,
+    subcategory: humanizeSubcategory(t.personal_finance_category),
+    category_confidence: t.personal_finance_category?.confidence_level ?? null,
+    transaction_code: t.transaction_code ?? null,
+    payment_channel: t.payment_channel,
+    datetime: t.datetime ?? t.authorized_datetime,
+    website: t.website,
+    check_number: t.check_number,
+    account_owner: t.account_owner,
+    city: t.location?.city ?? null,
+    region: t.location?.region ?? null,
+    counterparty: resolveCounterparty(t),
+    payment_processor: resolveProcessor(t),
+    payment_reference: t.payment_meta?.reference_number ?? null,
+    ...(c.carriedExclusions?.size && !t.pending && c.carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    ...carriedFacts(t, c.carriedAnnotations),
+    ...(c.withAccountIds ? { account_id: t.account_id } : {}),
+    account_ref: t.account_id,
+    // The pending row a posted one replaced, whose approval is its own
+    // (lib/review-layer.ts); never sent.
+    ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
+  };
 }
 
 /** What a posted row carries from an earlier account's row besides an
@@ -1376,26 +1404,40 @@ async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<Older
   const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
   return Object.values(state.txns)
     .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id) && !afterEnd(endedFrom, t))
-    .map((t) => ({
-      transaction_id: t.transaction_id,
-      date: t.date,
-      name: t.merchant_name || t.name,
-      amount: t.amount,
-      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
-      account_type: state.accounts[t.account_id]?.type ?? null,
-      institution_name: t.institution_name,
-      ...categoryFacts(t, carried),
-      subcategory: humanizeSubcategory(t.personal_finance_category),
-      iso_currency_code: t.iso_currency_code,
-      unofficial_currency_code: t.unofficial_currency_code ?? null,
-      transaction_code: t.transaction_code ?? null,
-      vendor_key: vendorKey(t),
-      logo_url: t.logo_url,
-      ...(carriedExclusions?.size && carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
-      ...carriedFacts(t, carriedAnnotations),
-      ...counterpartyOf(t),
-      account_ref: t.account_id,
-    }));
+    .map((t) =>
+      bankRowOlder(t, {
+        account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+        account_type: state.accounts[t.account_id]?.type ?? null,
+        carried,
+        carriedExclusions,
+        carriedAnnotations,
+      })
+    );
+}
+
+/** One posted bank row before the lookback, compact, as olderRows gives it
+ *  (and a restored bank row, lib/history-import/read.ts). */
+export function bankRowOlder(t: StoredTxn, c: BankRowContext): OlderTxn {
+  return {
+    transaction_id: t.transaction_id,
+    date: t.date,
+    name: t.merchant_name || t.name,
+    amount: t.amount,
+    account_name: c.account_name,
+    account_type: c.account_type,
+    institution_name: t.institution_name,
+    ...categoryFacts(t, c.carried),
+    subcategory: humanizeSubcategory(t.personal_finance_category),
+    iso_currency_code: t.iso_currency_code,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+    transaction_code: t.transaction_code ?? null,
+    vendor_key: vendorKey(t),
+    logo_url: t.logo_url,
+    ...(c.carriedExclusions?.size && c.carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    ...carriedFacts(t, c.carriedAnnotations),
+    ...counterpartyOf(t),
+    account_ref: t.account_id,
+  };
 }
 
 /**

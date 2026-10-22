@@ -1145,3 +1145,18 @@ export async function repairHoldingsIndex(ctx: Ctx): Promise<{ months: number; d
   }
   return { months: Object.keys(derived.months).length, damaged_months: months.unreadable.length };
 }
+
+/**
+ * The index of the months a restore brought back (lib/user-restore/
+ * commit.ts finish), derived from the months, as a repair derives it: the
+ * download leaves it out because the months hold it. Strict: a month that
+ * can't be read stops it (UnreadableEntriesError), as nothing a restore
+ * writes can be. Merged into an index already there.
+ */
+export async function restoreHoldingsIndex(ctx: Ctx): Promise<{ months: number }> {
+  const months = await historyStore.getAll(ctx);
+  if (months.size === 0) return { months: 0 };
+  const { index: derived } = deriveIndex(months);
+  await indexStore.update(ctx, INDEX_ID, (current) => mergeIndexes(current, derived));
+  return { months: Object.keys(derived.months).length };
+}

@@ -5790,3 +5790,76 @@ button.review-keys-toggle {
   cursor: pointer;
   color: var(--muted);
 }
+
+/* --- bringing a download back (components/RestoreCard.tsx, RestoreBanner.tsx) --- */
+
+.restore-section {
+  margin-top: 16px;
+}
+
+.restore-section .section-label {
+  margin-top: 14px;
+}
+
+/* What comes back and what doesn't: plain lists, wrapping on a narrow phone. */
+.restore-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.restore-list li {
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+  margin-bottom: 4px;
+  overflow-wrap: anywhere;
+}
+
+/* A bank brought back that waits for an answer: its accounts, and the day
+   Stop following starts from. */
+.restore-bank {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.restore-bank-name {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.restore-bank .field input[type='date'] {
+  max-width: 220px;
+}
+
+.restore-without {
+  margin-top: 8px;
+}
+
+.restore-card .card-actions {
+  margin-top: 12px;
+}
+
+/* The unfinished restore, above every tab. */
+.restore-banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.restore-banner .stale-note {
+  flex: 1 1 240px;
+  margin: 0;
+}
+
+.restore-banner button {
+  width: auto;
+}
+
+/* The download offered before an undo, inside the restore card. */
+.restore-card .download-card {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+}

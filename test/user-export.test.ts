@@ -278,6 +278,8 @@ describe('everything stored, decrypted, and nothing else', () => {
       'hidden_accounts',
       'net_worth_history',
       'account_history',
+      // Added in version 2, as an added part leaves the version alone.
+      'estimate_flat',
       'transactions',
       'category_overrides',
       'merchant_renames',
@@ -731,8 +733,15 @@ describe('everything stored, decrypted, and nothing else', () => {
     for (const machinery of ['cursor-SECRET', 'CACHED-SECRET', 'acc_vanished', '2026-01-03T13:00:00.000Z', TEST_CTX.container, 'transactions_billed']) {
       expect(text).not.toContain(machinery);
     }
-    // The flat balances behind estimated totals are not an account's history.
-    expect(text).not.toContain('25000.25');
+  });
+
+  test('the balances an estimate held flat are in, by day, never as an account’s history', async () => {
+    const doc = await download();
+    expect(doc.estimate_flat).toEqual({ days: [{ date: '2025-12-30', balances: { acc_brk: 25000.25 } }], before_days: null });
+    expect(JSON.stringify(doc.account_history)).not.toContain('25000.25');
+    // And those from before they were kept by day, kept as one set.
+    await fake.set(ctxKey('history:accounts:est:flat'), await enc({ acc_brk: 18000 }));
+    expect((await download()).estimate_flat.before_days).toEqual({ acc_brk: 18000 });
   });
 
   test('reading changes nothing, not even a remembered record of the old shape the app would tidy away', async () => {
@@ -765,15 +774,16 @@ describe('history, marked', () => {
     const series = Object.fromEntries(doc.account_history.map((s) => [s.account_id, s.points]));
     expect(series.acc_chk).toEqual([
       { date: '2025-12-30', balance: 1400, kind: 'estimated' },
-      // The extension wins over the estimate on the same day.
-      { date: '2025-12-31', balance: 1449, kind: 'estimated' },
+      // The extension wins over the estimate on the same day, and says where
+      // it was kept, so a restore puts it back there.
+      { date: '2025-12-31', balance: 1449, kind: 'estimated', layer: 'extended' },
       { date: '2026-01-01', balance: 1500, kind: 'recorded' },
       { date: '2026-01-02', balance: 1600.5, kind: 'recorded' },
       // A partial measurement beside a recorded map is the newer one.
-      { date: '2026-01-03', balance: 1555, kind: 'recorded' },
-      { date: '2026-01-04', balance: 1700, kind: 'recorded' },
+      { date: '2026-01-03', balance: 1555, kind: 'recorded', layer: 'partial' },
+      { date: '2026-01-04', balance: 1700, kind: 'recorded', layer: 'partial' },
     ]);
-    expect(series.acc_brk).toEqual([{ date: '2025-12-29', balance: 20000, kind: 'estimated' }]);
+    expect(series.acc_brk).toEqual([{ date: '2025-12-29', balance: 20000, kind: 'estimated', layer: 'extended' }]);
     expect(series.acc_card.map((p) => p.date)).toEqual(['2025-12-30', '2026-01-01', '2026-01-02', '2026-01-03']);
   });
 
@@ -783,7 +793,7 @@ describe('history, marked', () => {
     expect(doc.net_worth_history.points).toEqual(app.map((p) => ({ date: p.date, total: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
     for (const { account_id, points } of doc.account_history) {
       const own = await getAccountHistory(ctx, account_id);
-      expect(points).toEqual(own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
+      expect(points.map(({ layer: _, ...p }) => p)).toEqual(own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
     }
   });
 });
@@ -942,7 +952,15 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(chk.find((p) => p.date === '2026-01-04')).toEqual({ date: '2026-01-04', balance: 1650, kind: 'estimated' });
     expect(doc.problems).toEqual([{ section: 'account_history', problem: 'unreadable', ids: ['2026-01-04'] }]);
     const own = await getAccountHistory(ctx, 'acc_chk');
-    expect(chk).toEqual(own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
+    expect(chk.map(({ layer: _, ...p }) => p)).toEqual(own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
+  });
+
+  test('a day of flat balances that can’t be read is named, and the rest are in', async () => {
+    await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-31': DAMAGED });
+    const doc = await download();
+    expect(doc.estimate_flat.days).toEqual([{ date: '2025-12-30', balances: { acc_brk: 25000.25 } }]);
+    expect(doc.problems).toEqual([{ section: 'estimate_flat', problem: 'unreadable', ids: ['2025-12-31'] }]);
+    expect(doc.notes.join(' ')).toContain('An estimated day among them can');
   });
 
   test('with days that can’t be read, the file still agrees with what the app reads', async () => {
@@ -955,7 +973,7 @@ describe('what can’t be read is named, and everything else is in the file', ()
     expect(doc.net_worth_history.points).toEqual(app.map((p) => ({ date: p.date, total: p.value, kind: p.estimated ? 'estimated' : 'recorded' })));
     for (const { account_id, points } of doc.account_history) {
       const own = await getAccountHistory(ctx, account_id);
-      expect([account_id, points]).toEqual([account_id, own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' }))]);
+      expect([account_id, points.map(({ layer: _, ...p }) => p)]).toEqual([account_id, own.map((p) => ({ date: p.date, balance: p.value, kind: p.estimated ? 'estimated' : 'recorded' }))]);
     }
   });
 
@@ -1195,6 +1213,9 @@ describe('stores built on the storage seam', () => {
       'manual-transactions',
       'planned-items',
       'report-settings',
+      'restored-accounts',
+      'restored-investment-transactions',
+      'restored-transactions',
       'review-settings',
       'rules',
       'tags',
@@ -1203,6 +1224,7 @@ describe('stores built on the storage seam', () => {
       'transaction-approvals',
       'transaction-groups',
       'transaction-splits',
+      'user-restore',
       'vendor-defaults',
       'weekly-summary',
     ]);

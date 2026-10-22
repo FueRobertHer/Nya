@@ -93,6 +93,7 @@ import { isUnread, type WeeklyFacts } from './content';
 import { checkedSummary, composeWeekly, FigureError } from './compose';
 import { linkExpiry, linkToken, newLinkKey, oneClickUrl, pageUrl } from './unsubscribe';
 import { DAILY_RUN_UTC_HOUR } from './when';
+import { restoreUnfinished } from '../user-restore/restored';
 
 /** How long the summaries of one run may take in all. */
 export const WEEKLY_BUDGET_MS = 120_000;
@@ -251,6 +252,13 @@ export async function sendWeeklySummaries(
       // Its data key opened first, as the snapshot does: a key that can't be
       // used stops it here, before anything that reads leniently runs.
       await checkContainerKey(ctx);
+      // Never from part of the data: while a restore is being written or
+      // undone here (lib/user-restore/restored.ts), the summary waits for a
+      // later run.
+      if (await restoreUnfinished(ctx)) {
+        outcomes.set(c.id, 'deferred');
+        return;
+      }
       const zone = canonicalTimeZone(setting.time_zone);
       const today = zone ? todayIn(judgedAt, zone) : null;
       if (!zone || !today) {

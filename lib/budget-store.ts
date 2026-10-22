@@ -232,3 +232,19 @@ export async function moveMergedBudgets(ctx: Ctx, taxonomy: Taxonomy): Promise<v
   if (Object.keys(moved.categories).length === Object.keys(budgets.categories).length && Object.keys(moved.categories).every((id) => budgets.categories[id])) return;
   await saveBudgets(ctx, moved, taxonomy);
 }
+
+/**
+ * Budgets as a restore brings them back (lib/user-restore/commit.ts): the
+ * set and its copy by name together, as given, never through the save a
+ * person's edit takes (which refuses a budget on a category the set doesn't
+ * know, and moves one saved on a merged category). In the order a save keeps
+ * (see MIRROR): the set first, naming the copy there now as what was there
+ * before, so a stop between the writes is finished by the next read; then
+ * the copy; then the set says the write is done. With no set (categories
+ * never stored), the copy alone, which the first read moves to categories.
+ */
+export async function restoreBudgets(ctx: Ctx, set: BudgetSet | null, copy: Record<string, number>): Promise<void> {
+  if (set) await budgetSetStore.set(ctx, { ...set, mirror: copy, mirror_before: legacyBudgets(await getBudgets(ctx)) });
+  await setBudgets(ctx, copy);
+  if (set) await budgetSetStore.update(ctx, (cur) => (cur && sameLegacy(cur.mirror, copy) ? { ...cur, mirror_before: null } : cur));
+}

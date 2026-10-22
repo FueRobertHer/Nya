@@ -16,6 +16,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Budget rollover and rolling back](#budget-rollover-and-rolling-back)
 - [Sharing more than accounts, and rolling back](#sharing-more-than-accounts-and-rolling-back)
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
+- [Turning on restores](#turning-on-restores)
 - [Email and the weekly summary](#email-and-the-weekly-summary)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -462,6 +463,18 @@ The release that lets a person share their net worth, spending, holdings, budget
 Once `PLAID_BROKERAGE_LINK=1` is set and anyone has connected with **Connect a brokerage or retirement account** ([deployment.md](deployment.md#brokerage-and-retirement-connections)), **never roll back to a release from before the one that added it.** Those releases ask Plaid for every connection's transactions on every load, and on a connection made with the brokerage option that first call starts Plaid's Transactions product, billed monthly until the connection is removed, wherever the institution offers it. It can't be taken off a connection again. Turning the option off doesn't help: it only stops new connections. Rolling back to that release or any later one is safe.
 
 If you have to go back further, first find those connections. In the Upstash console, each container's `<prefix>:c:<id>:plaid:items` hash holds one record per connection, and the ones made with the brokerage option carry `"transactions_billed":false` (`null` means the lookup when it was linked failed, so it could be either). Disconnect each of them on the Accounts tab (**Manage**, then **Disconnect** on its card) before the rollback, and connect them again once you are back on a release with the check, linking each new account to the one it replaces ([features.md](features.md#removing-an-institution-and-adding-it-back)) so its history carries on. Or keep them, and accept the fee on each.
+
+## Turning on restores
+
+Bringing a download back into an account ([data-export.md](data-export.md#bringing-it-back)) is off unless `RESTORE_ENABLED=1` ([deployment.md](deployment.md#3-environment-variables)). The release that has it reads everything a restore writes whether it is on or not: the restore's record, the accounts and bank transactions it brought back (`user-restore`, `restored-accounts`, `restored-transactions`, `restored-investment-transactions`), which it holds and doesn't count until linked, the hold on net worth totals and the backfill while a restored bank waits, and the checks that keep the API, the MCP server, shares and the weekly summary from answering out of a restore that hasn't finished. With it off, the card isn't offered and the routes refuse to start, send to, finish or empty; a restore already recorded is still shown, and can still be undone.
+
+**In this order: deploy, let it run, then turn it on.** Deploy the release with `RESTORE_ENABLED` unset, and leave it running long enough that rolling back past it is no longer a plan. Then set `RESTORE_ENABLED=1` and redeploy.
+
+**Never roll back past the release before the one that turned it on.** A release from before this one doesn't know the restore's stores. In an account a restore was written into, it wouldn't read the bank transactions brought back (they'd be gone from Activity, budgets and reports while it runs, and back after), nor the restore's record, so an unfinished restore would no longer hold anything: net worth totals would be recorded short, without the banks that wait, into the real history, for good, and the API and shares would answer from part of the data. Rolling back to the read-side release (the one with the stores, deployed with `RESTORE_ENABLED` unset) or any later one is safe: it reads and holds as this one does, and only refuses new restores.
+
+**Turning it off again** refuses new restores and leaves the ones written as they are, read and held; undo still works. **Nothing to run**, either way: the counters (`user-restore-starts`, five starts, undos and emptyings a day; `user-restore-batches`, two thousand batches an hour; `user-restore-previews`, thirty looks at whether the account is empty an hour) end on their own. A restore's batches are no bigger than 4 MB each, under Vercel's request limit, and each takes at most 60 seconds (`maxDuration`); an undo takes a pause longer than that between its two sweeps, so a batch already in flight can't land after it. Vercel enforces that limit. A host that doesn't (a Node server of your own) still refuses a batch that hasn't begun writing 30 seconds after it arrived, and holds the finish the same way before each of its writes, but a write that is itself slowed past the pause could land after an undo's second sweep: the account then shows that part again, and **Empty this account** (Manage, Bring back a download) clears it.
+
+**If a restore's record can't be read** (damaged), the account holds its totals as for one unfinished, and the card offers to empty the account; whoever runs the copy can instead delete the container's `user-restore` key once they have checked what is there.
 
 ## Lunch Flow and rolling back
 
