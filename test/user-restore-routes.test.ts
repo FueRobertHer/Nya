@@ -629,3 +629,55 @@ describe('isolation', () => {
     expect(unscopedDataKeys(fake)).toEqual([]);
   });
 });
+
+describe('the home currency and the currencies of manual accounts', () => {
+  test('a manual account in euros, the home currency and its own rates come back to the cent; the ECB’s rates are never the account’s', async () => {
+    const { currencySettingsStore } = await import('@/lib/fx/settings');
+    const { readAccounts } = await import('@/lib/api-read');
+    const { ecbHash } = await import('./fx-fixture');
+    // Environment-wide, for everyone: never in a download, nor in a container.
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    const rates = () => JSON.stringify(Object.fromEntries(fake.hashes.get(testKey('fx:ecb'))!));
+    const ratesBefore = rates();
+    // The copy the download comes from: dollars at home, a savings account
+    // typed in euros, one in pesos priced at the person's own rate.
+    await seedOld(fake, OTHER);
+    const typed = { institution_name: 'Abroad', type: 'depository' as const, subtype: null, updated_at: '2026-09-30T10:00:00.000Z' };
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_eur', name: 'Sparkonto', balance: 12345.67, currency: 'EUR' });
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_ars', name: 'Pesos', balance: 1_000_000, currency: 'ARS' });
+    const settings = {
+      v: 1 as const,
+      home: 'USD',
+      own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }],
+      changes: [{ on: '2026-09-01', from: null, to: 'USD' }],
+    };
+    await currencySettingsStore.set(OTHER, settings);
+    const text = await downloadText(EXPORTED, OTHER);
+    const typedAccounts = async (c: typeof ctx) =>
+      Object.fromEntries((await readAccounts(c, { base: true })).accounts.filter((a) => a.id === 'manual_eur' || a.id === 'manual_ars').map((a) => [a.id, [a.balance, a.currency, a.to_base]]));
+    const before = await typedAccounts(OTHER);
+    expect(before).toEqual({
+      manual_eur: [12345.67, 'EUR', 14260.48], // 12,345.67 × 1.1551
+      manual_ars: [1_000_000, 'ARS', 710], // 1,000,000 × 0.00071
+    });
+
+    // This account holds nothing of its own beside the rates everyone shares.
+    expect((await scanAccount(ctx)).found).toEqual([]);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect(await currencySettingsStore.get(ctx)).toEqual(settings);
+    expect(await typedAccounts(ctx)).toEqual(before);
+    const again = JSON.parse(await downloadText(new Date()));
+    const was = JSON.parse(text);
+    expect(again['currency-settings']).toEqual(was['currency-settings']);
+    const typedIn = (doc: any) => doc.manual_accounts.filter((m: any) => m.account_id === 'manual_eur' || m.account_id === 'manual_ars');
+    expect(typedIn(again)).toEqual(typedIn(was));
+    expect(rates()).toBe(ratesBefore);
+
+    // Undone, the account is empty again, and the rates are as they were.
+    const undone = await call('DELETE', '/api/user-restore', { restore_id: record.id, confirm: true, password: 'hunter2' });
+    expect(undone.status).toBe(200);
+    expect(await currencySettingsStore.get(ctx)).toBeNull();
+    expect(rates()).toBe(ratesBefore);
+  });
+});

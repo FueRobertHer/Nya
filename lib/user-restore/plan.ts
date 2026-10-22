@@ -107,6 +107,7 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   'report-settings': 'your report settings',
   'review-settings': 'your review queue setting',
   'weekly-summary': 'your weekly summary setting',
+  'currency-settings': 'your home currency and your own exchange rates: every figure shows in its own currency until you choose again',
   'vendor-defaults': 'your merchants’ default categories',
   rules: 'your rules: transactions are filed and named as the bank and you have them',
   tags: 'your tags: transactions come back without them',
@@ -568,6 +569,7 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...value('fire-plan'),
     ...value('allocation-settings'),
     ...value('report-settings'),
+    ...value('currency-settings'),
     ...value('weekly-summary'),
   ];
   if (c.bank.pending.size > 0) left_out.pending_transactions = c.bank.pending.size;
