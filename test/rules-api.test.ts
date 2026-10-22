@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll, setSystemTime } from 'bun:test';
 import './clerk-mock';
 import { FakeRedis, storageMock, registerTestContainer, unscopedDataKeys, ctxKey } from './fake-redis';
 
@@ -36,6 +36,12 @@ const { indexTaxonomy } = await import('@/lib/categories');
 const { addRule, changeRules, newRuleId, enableRule, sortedRules, readRuleSet } = await import('@/lib/rules');
 const { ensureTag, readTagSet } = await import('@/lib/tags');
 const mcpRoute = await import('@/app/api/mcp/route');
+
+// The file's own clock, the afternoon of a month's 20th: the fixture's rows
+// (seeded from the clock, test/api-fixture.ts), up to nine days old, are then
+// all this month's, which its budgets count.
+beforeAll(() => setSystemTime(new Date('2026-10-20T15:00:00Z')));
+afterAll(() => setSystemTime());
 
 let token = '';
 beforeEach(async () => {

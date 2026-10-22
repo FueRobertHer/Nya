@@ -590,7 +590,7 @@ export default function ManualTxnSheet({
               Cancel
             </button>
             <button onClick={save} disabled={!ready || saving}>
-              {saving ? 'Saving…' : edit ? 'Save' : amount !== null ? `Add ${formatMoney(amount, isCurrencyCode(currency) ? currency : null)}` : 'Add'}
+              <Masked>{saving ? 'Saving…' : edit ? 'Save' : amount !== null ? `Add ${formatMoney(amount, isCurrencyCode(currency) ? currency : null)}` : 'Add'}</Masked>
             </button>
           </div>
           {edit && (

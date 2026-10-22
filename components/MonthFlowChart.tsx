@@ -3,7 +3,7 @@
 // Two-series line chart for a single month: cumulative income (up hue) and
 // cumulative spend (down hue) running day by day, so you can read where in
 // the month spending overtook (or stayed under) income. Dependency-free
-// inline SVG, same house style as NetWorthChart — but with two series it
+// inline SVG, same house style as NetWorthChart, but with two series it
 // carries a small legend, and the scrub readout shows both values at once.
 //
 // Transfers and loan payments are excluded (same rule as the rest of the

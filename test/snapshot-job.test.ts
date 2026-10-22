@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll, setSystemTime } from 'bun:test';
 import { FakeRedis, storageMock, unscopedDataKeys } from './fake-redis';
 import { startRedis, type RealRedis } from './real-redis';
 
@@ -17,7 +17,12 @@ const runsRoute = await import('@/app/api/snapshot-runs/route');
 const { withRateLimitRetry, isRateLimited, RATE_LIMIT_MAX_ELAPSED_MS } = await import('@/lib/rate-limit-retry');
 
 type Id = Parameters<typeof readRuns>[0]['container'];
+// The file's own clock, the afternoon of DATE: a run prunes the outcomes older
+// than RUNS_KEEP_DAYS by the clock, so against the real one DATE's own record
+// would be pruned as soon as it was written, once DATE was that old.
 const DATE = '2026-09-25';
+beforeAll(() => setSystemTime(new Date(`${DATE}T13:00:00Z`)));
+afterAll(() => setSystemTime());
 const ids = Array.from({ length: 5 }, () => crypto.randomUUID() as Id);
 const [A, B, C] = ids;
 

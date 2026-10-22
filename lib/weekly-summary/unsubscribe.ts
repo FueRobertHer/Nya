@@ -15,6 +15,10 @@
 //     the day, under a key kept in that container (lib/weekly-summary/
 //     store.ts weekly-summary-state): 32 random bytes made when the summary
 //     is turned on, and made anew whenever it is turned on after being off.
+//     In one spelling only: 43 characters hold 258 bits, so the last one's
+//     lowest two are padding, and four spellings decode to the same 32
+//     bytes. Only the one those bytes encode to (padding bits clear, as
+//     Buffer writes it) is a token.
 // SINGLE PURPOSE: it can turn off that container's weekly summary and nothing
 // else, and only the summary, never any other email. The key signs nothing
 // else, and what it signs names the purpose.
@@ -101,7 +105,9 @@ export function parseLinkToken(raw: unknown): { container: ContainerId; expires:
   const expires = dayOf(m[2]);
   if (Number.isNaN(Date.parse(`${expires}T00:00:00Z`)) || new Date(`${expires}T00:00:00Z`).toISOString().slice(0, 10) !== expires) return null;
   const mac = Buffer.from(m[3], 'base64url');
-  return mac.length === 32 ? { container: m[1], expires: m[2], mac } : null;
+  // Its one spelling (see the header): decoding alone would take all four.
+  if (mac.length !== 32 || mac.toString('base64url') !== m[3]) return null;
+  return { container: m[1], expires: m[2], mac };
 }
 
 /** The address in an email's text: the page that asks before it turns the

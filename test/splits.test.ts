@@ -10,6 +10,7 @@ import { spendingByTag } from '@/lib/tag-totals';
 import type { Txn } from '@/lib/transactions';
 import { appliedSplitsOf, splitMemoOf } from '@/lib/export-splits';
 import { appendixSplitWords } from '@/lib/report/words';
+import { hideAmountsIn, setAmountsHidden } from '@/lib/format';
 
 // Splits and groups (#39), the pure part: what a split may hold
 // (lib/splits.ts checkParts and its closed shape), what a group may hold
@@ -108,9 +109,47 @@ describe('what a split may hold (checkParts)', () => {
 
   test('a cent short or over is refused, saying by how much', () => {
     const short = () => checkParts([{ amount: 100, category_id: cat('groceries') }, { amount: 49.99, category_id: cat('household') }], costco, id);
-    expect(short).toThrow('The parts add up to 149.99, not the transaction’s 150.00: 0.01 is left over.');
+    expect(short).toThrow('The parts add up to $149.99, not the transaction’s $150.00: $0.01 is left over.');
     const over = () => checkParts([{ amount: 100, category_id: cat('groceries') }, { amount: 50.01, category_id: cat('household') }], costco, id);
     expect(over).toThrow('0.01 too much');
+  });
+
+  test('a refusal names its amounts with their currency: hidden on the page while amounts are, its counts as they are', () => {
+    const said = (parts: unknown, parent: Parameters<typeof checkParts>[1]) => {
+      try {
+        checkParts(parts, parent, id);
+      } catch (err) {
+        return (err as Error).message;
+      }
+      throw new Error('taken');
+    };
+    const two = (a: number, b: number) => [
+      { amount: a, category_id: cat('groceries') },
+      { amount: b, category_id: cat('household') },
+    ];
+    const refusals = [
+      said(two(100, 49.99), costco),
+      said(two(1000.5, 1999.5), { amount: 3000, currency: 'JPY', pending: false }),
+      said(two(1, 1.000000001), { amount: 2.000000001, currency: 'BTC', pending: false }),
+      said(two(1, 1.000000001), { amount: 2.000000001, currency: 'DOGE', pending: false }),
+      said(Array.from({ length: MAX_PARTS + 1 }, () => ({ amount: 1, category_id: cat('groceries') })), { amount: MAX_PARTS + 1, currency: 'USD', pending: false }),
+    ];
+    // As the split sheet shows them (components/SplitSheet.tsx), in a browser's page with amounts hidden.
+    const g = globalThis as Record<string, unknown>;
+    g.window = {};
+    setAmountsHidden(true);
+    try {
+      expect(refusals.map(hideAmountsIn)).toEqual([
+        'The parts add up to $•••, not the transaction’s $•••: $••• is left over.',
+        'A part’s amount can’t be finer than ¥•••.',
+        'A part’s amount can’t be finer than BTC\u00a0•••.',
+        'A part’s amount can’t be finer than ••• DOGE.',
+        `A transaction can be split into at most ${MAX_PARTS} parts.`,
+      ]);
+    } finally {
+      setAmountsHidden(false);
+      delete g.window;
+    }
   });
 
   test('floating-point noise never refuses parts that add up (0.1 + 0.2)', () => {
@@ -119,10 +158,10 @@ describe('what a split may hold (checkParts)', () => {
 
   test('finer than the currency’s minor unit is refused: cents in dollars, whole yen', () => {
     expect(() => checkParts([{ amount: 100.005, category_id: cat('groceries') }, { amount: 49.995, category_id: cat('household') }], costco, id)).toThrow(
-      'can’t be finer than 0.01'
+      'can’t be finer than $0.01'
     );
     const yen = { amount: 3000, currency: 'JPY', pending: false };
-    expect(() => checkParts([{ amount: 1000.5, category_id: cat('groceries') }, { amount: 1999.5, category_id: cat('household') }], yen, id)).toThrow('finer than 1');
+    expect(() => checkParts([{ amount: 1000.5, category_id: cat('groceries') }, { amount: 1999.5, category_id: cat('household') }], yen, id)).toThrow('finer than ¥1.');
     expect(checkParts([{ amount: 1000, category_id: cat('groceries') }, { amount: 2000, category_id: cat('household') }], yen, id)).toHaveLength(2);
   });
 
@@ -150,7 +189,7 @@ describe('what a split may hold (checkParts)', () => {
     ]);
     expect(() =>
       checkParts([{ amount: 77.833333331, category_id: cat('groceries') }, { amount: 155.666666669, category_id: cat('household') }], btc, id)
-    ).toThrow('can’t be finer than 0.00000001');
+    ).toThrow('can’t be finer than BTC\u00a00.00000001');
   });
 
   test('each part has the transaction’s own sign: money in splits into money in', () => {

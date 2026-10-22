@@ -168,8 +168,20 @@ export function checkPartNote(raw: unknown): string | undefined {
   return note || undefined;
 }
 
-/** "12.34" in the transaction's currency, for a refusal. */
-const shown = (units: number, scale: number) => (units / scale).toFixed(Math.round(Math.log10(scale)));
+/** An amount for a refusal, to the transaction's unit and with its currency
+ *  ("$12.34", "¥1,234", "BTC 0.00000001"), so the page can hide what a
+ *  refusal says of amounts while amounts are hidden and leave its counts
+ *  ("at most 10 parts") as they are (components/SplitSheet.tsx,
+ *  hideAmountsIn). */
+function shown(units: number, scale: number, currency: string | null): string {
+  const places = Math.round(Math.log10(scale));
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: currency ?? 'USD', minimumFractionDigits: places, maximumFractionDigits: places }).format(units / scale);
+  } catch {
+    // A code Intl refuses: the figures, then the code, as lib/format.ts writes one.
+    return `${(units / scale).toFixed(places)} ${currency}`;
+  }
+}
 
 /**
  * The parts a request asks for, checked against the transaction: between
@@ -201,7 +213,7 @@ export function checkParts(raw: unknown, parent: SplitParentRow, newId: () => st
     // a unit (eight places at 1e8 lose a whole one only past millions).
     if (!Number.isSafeInteger(Math.round(units))) throw new SplitError('That amount is too large to split.');
     if (Math.abs(units - Math.round(units)) > Math.max(1e-6, Math.abs(units) * 4 * Number.EPSILON)) {
-      throw new SplitError(`A part’s amount can’t be finer than ${shown(1, scale)}.`);
+      throw new SplitError(`A part’s amount can’t be finer than ${shown(1, scale, parent.currency)}.`);
     }
     if (Math.round(units) === 0) throw new SplitError('A part can’t be nothing: take it out instead.');
     if (Math.sign(input.amount) !== sign) {
@@ -226,7 +238,7 @@ export function checkParts(raw: unknown, parent: SplitParentRow, newId: () => st
   if (total !== whole) {
     const left = whole - total;
     throw new SplitError(
-      `The parts add up to ${shown(Math.abs(total), scale)}, not the transaction’s ${shown(Math.abs(whole), scale)}: ${shown(Math.abs(left), scale)} ${Math.sign(left) === sign ? 'is left over' : 'too much'}.`
+      `The parts add up to ${shown(Math.abs(total), scale, parent.currency)}, not the transaction’s ${shown(Math.abs(whole), scale, parent.currency)}: ${shown(Math.abs(left), scale, parent.currency)} ${Math.sign(left) === sign ? 'is left over' : 'too much'}.`
     );
   }
   return parts;

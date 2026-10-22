@@ -5,7 +5,7 @@
 // merchant once and have it apply to every transaction from that vendor.
 //
 // Keyed by a stable vendor key (see vendorKey in lib/transactions.ts), NOT by
-// transaction_id — that's what makes one rename cover all of a vendor's rows,
+// transaction_id: that's what makes one rename cover all of a vendor's rows,
 // past and future. A Redis hash of vendor_key -> display name, applied on top
 // of the fetched data in /api/transactions. Values are encrypted like every
 // other financial payload.

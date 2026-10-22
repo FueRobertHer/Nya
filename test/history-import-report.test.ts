@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, beforeAll, afterAll, setSystemTime } from 'bun:test';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
@@ -41,7 +41,12 @@ const transactionsRoute = await import('@/app/api/transactions/route');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
-const NOW = Date.now();
+// The file's own clock, the afternoon of a month's 20th: the bank's row three
+// days back is then this month's, never in the month before, whose report
+// counts the imported rows alone.
+const NOW = Date.parse('2026-10-20T15:00:00Z');
+beforeAll(() => setSystemTime(NOW));
+afterAll(() => setSystemTime());
 const daysAgo = (n: number) => new Date(NOW - n * DAY).toISOString().slice(0, 10);
 const day = (d: string) => d;
 

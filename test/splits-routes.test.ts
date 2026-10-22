@@ -231,7 +231,7 @@ describe('what the route refuses, with nothing saved', () => {
     expect(pending.status).toBe(409);
     expect(pending.body.error).toContain('pending');
     const short = await splitPut('t_costco', [{ amount: 100, category_id: catId('food and drink') }, { amount: 49.98, category_id: catId('transportation') }]);
-    expect(short).toEqual({ status: 400, body: { error: 'The parts add up to 149.98, not the transaction’s 150.00: 0.02 is left over.' } });
+    expect(short).toEqual({ status: 400, body: { error: 'The parts add up to $149.98, not the transaction’s $150.00: $0.02 is left over.' } });
     const gone = await splitPut('t_costco', [{ amount: 100, category_id: catId('food and drink') }, { amount: 50, category_id: 'no-such-category' }]);
     expect(gone.status).toBe(404);
     const missing = await splitPut('t_nobody', [{ amount: 100, category_id: catId('food and drink') }, { amount: 50, category_id: catId('transportation') }]);
@@ -489,7 +489,7 @@ describe('a currency without an ISO code', () => {
       { amount: 77.833333331, category_id: catId('food and drink') },
       { amount: 155.666666669, category_id: catId('travel') },
     ]);
-    expect([finer.status, finer.body.error]).toEqual([400, 'A part’s amount can’t be finer than 0.00000001.']);
+    expect([finer.status, finer.body.error]).toEqual([400, 'A part’s amount can’t be finer than BTC\u00a00.00000001.']);
   });
 });
 
