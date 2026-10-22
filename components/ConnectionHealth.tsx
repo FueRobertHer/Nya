@@ -30,6 +30,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import type { ConnectionHealth as Health, HealthState } from '@/lib/connection-state';
 import { formatMoney, dominantCurrency, hideAmountsIn } from '@/lib/format';
 import { signedContribution } from '@/lib/balance';
+import { balancesNow, needsConverting, type PageFx } from '@/lib/fx/view';
 import { instantDay } from '@/lib/local-date';
 import { joinNames } from '@/lib/month-coverage';
 import { connectorBadge, connectorHealthText, connectorSideText, connectorSite } from '@/lib/connectors/health';
@@ -204,12 +205,19 @@ const label = (a: { name: string; mask: string | null }) => (a.mask ? `${a.name}
 
 type Row = HealthInstitution['accounts'][number];
 
-/** ", together $3,800 of net worth", unless several currencies would be added. */
-function together(rows: Row[], money: (n: number, currency: string | null) => string): string {
-  const currencies = new Set(rows.map((a) => a.currency).filter(Boolean));
-  if (currencies.size > 1) return '';
-  const sum = rows.reduce((n, a) => n + signedContribution(a.type, a.balance ?? 0), 0);
-  return `, together ${money(sum, dominantCurrency(rows.map((a) => ({ iso_currency_code: a.currency }))))} of net worth`;
+/** ", together $3,800 of net worth", unless several currencies would be
+ *  added unconverted. With a home currency chosen (`fx`), in it, converted
+ *  at the newest rates as the hero is (lib/fx/view.ts), unless a currency
+ *  among them has no rate. */
+function together(rows: Row[], money: (n: number, currency: string | null) => string, fx: PageFx | null = null): string {
+  const main = dominantCurrency(rows.map((a) => ({ iso_currency_code: a.currency })));
+  const signed = rows.map((a) => ({ amount: signedContribution(a.type, a.balance ?? 0), currency: a.currency }));
+  if (needsConverting(signed, fx, main)) {
+    const b = balancesNow(signed, fx, main);
+    return b.left_out.length > 0 ? '' : `, together ${money(b.total, b.currency)} of net worth`;
+  }
+  if (new Set(rows.map((a) => a.currency).filter(Boolean)).size > 1) return '';
+  return `, together ${money(signed.reduce((n, r) => n + r.amount, 0), main)} of net worth`;
 }
 
 /**
@@ -217,7 +225,7 @@ function together(rows: Row[], money: (n: number, currency: string | null) => st
  * last known balances rather than measured now, labeled as such. Hidden
  * accounts are left out, as they are of every total.
  */
-export function affectedText(inst: HealthInstitution, money: (n: number, currency: string | null) => string = formatMoney): string[] {
+export function affectedText(inst: HealthInstitution, money: (n: number, currency: string | null) => string = formatMoney, fx: PageFx | null = null): string[] {
   const h = inst.health;
   if (!h) return [];
   const lines: string[] = [];
@@ -232,7 +240,7 @@ export function affectedText(inst: HealthInstitution, money: (n: number, currenc
       const days = new Set(counted.map((a) => a.held?.as_of));
       const first = counted[0].held?.as_of;
       const day = days.size === 1 && first ? ` from ${calendarDay(first)}` : '';
-      lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(counted.map(label))}${together(counted, money)}.`);
+      lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(counted.map(label))}${together(counted, money, fx)}.`);
     }
     if (uncounted.length > 0) lines.push(`Not counted in net worth: ${joinNames(uncounted.map(label))}.`);
     if (held.length === 0) {
@@ -245,7 +253,7 @@ export function affectedText(inst: HealthInstitution, money: (n: number, currenc
   const recovered = inst.accounts.filter((a) => a.stale && !a.hidden && a.balance != null);
   if (recovered.length > 0) {
     const day = inst.stale_as_of ? ` from ${snapshotDay(inst.stale_as_of, inst.stale_as_of_at)}` : '';
-    lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(recovered.map(label))}${together(recovered, money)}.`);
+    lines.push(`Shown at last known balances${day}, not measured now: ${joinNames(recovered.map(label))}${together(recovered, money, fx)}.`);
   }
   const unshown = inst.unshown_accounts ?? [];
   if (unshown.length > 0) {
@@ -266,6 +274,7 @@ export function lastSyncedText(h: Health): string {
 
 export default function ConnectionHealth({
   institutions,
+  fx = null,
   unavailable = false,
   connecting,
   focus = false,
@@ -277,6 +286,9 @@ export default function ConnectionHealth({
   onConnector,
 }: {
   institutions: HealthInstitution[];
+  /** What net worth converts with, once a home currency is chosen (the
+   *  share of net worth said here is in it). */
+  fx?: PageFx | null;
   /** The server could not read Plaid's warnings or the sync times. */
   unavailable?: boolean;
   connecting: boolean;
@@ -321,6 +333,7 @@ export default function ConnectionHealth({
     <ConnectionHealthView
       ref={ref}
       rows={rows}
+      fx={fx}
       open={open}
       onToggle={() => setOpen((o) => !o)}
       unavailable={unavailable}
@@ -343,6 +356,7 @@ export const needsAttention = (r: HealthInstitution & { health: Health }) =>
 export function ConnectionHealthView({
   ref,
   rows,
+  fx = null,
   open,
   onToggle,
   unavailable,
@@ -356,6 +370,7 @@ export function ConnectionHealthView({
 }: {
   ref?: React.Ref<HTMLDivElement>;
   rows: (HealthInstitution & { health: Health })[];
+  fx?: PageFx | null;
   open: boolean;
   onToggle: () => void;
   unavailable: boolean;
@@ -427,7 +442,7 @@ export function ConnectionHealthView({
                   {h.unread && (
                     <p className="health-text health-affected">Some of what Nya keeps about this connection couldn&apos;t be read, so a warning from Plaid may be missing here.</p>
                   )}
-                  {affectedText(inst).map((line) => (
+                  {affectedText(inst, formatMoney, fx).map((line) => (
                     <p className="health-text health-affected" key={line}>
                       <Masked>{line}</Masked>
                     </p>

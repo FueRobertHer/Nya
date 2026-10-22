@@ -62,6 +62,8 @@ describe('the archive', () => {
         'c:*:connector-requests*',
         'connector-claims*',
         'c:*:connector-claims*',
+        'fx:*',
+        'c:*:fx:*',
       ],
       // Format 2: the key store goes in key archives (lib/key-archive.ts).
       keys_apart: ['crypto:active', 'crypto:destroyed', 'crypto:key-seq', 'crypto:keys', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock'],

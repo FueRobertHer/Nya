@@ -70,6 +70,13 @@ import TagsCard from './TagsCard';
 import { newDraft, useRules } from './rules-state';
 import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
+import CurrencyCard from './CurrencyCard';
+import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
+import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
+import { CORRECTION_KEEPS, institutionNote, rateEffectText } from './currency-text';
+import { balancesNow, needsConverting } from '@/lib/fx/view';
+import type { NetWorthBase } from '@/lib/fx/net-worth-base';
+import { totalsCurrency } from '@/lib/spending';
 import VendorDefaultsCard from './VendorDefaultsCard';
 import { useReview } from './review-state';
 import { countToReview } from '@/lib/review-layer';
@@ -81,13 +88,14 @@ import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
-import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import { formatMoney, dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import AccruedInterestNote from './AccruedInterestNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
 import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { minorDigits } from '@/lib/manual-txn-input';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
@@ -235,15 +243,21 @@ type ManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
+  /** The currency its balance is in; US dollars when it names none. */
+  currency?: string;
 };
 
 // The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
 // an <input type="number"> reports '' for a partly typed value like "-", and
 // Number('') is 0, so a number would erase the minus sign as you type it. It's
 // parsed once on submit. `account_id` is null while adding; the server mints it.
-type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
+// `currency` is the one chosen; `stored` the one the account is in now, so the
+// form can say what changing it does.
+type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & {
   account_id: string | null;
   balance: string;
+  currency: string;
+  stored: string | null;
 };
 
 // "cash" is a choice, not a type: saved as depository with the subtype
@@ -512,6 +526,12 @@ export default function Dashboard({
   const [institutions, setInstitutions] = useState<Institution[]>([]);
   const [netWorth, setNetWorth] = useState(0);
   const [history, setHistory] = useState<HistoryPoint[]>([]);
+  // Net worth in the home currency the person chose (lib/fx/net-worth-base.ts),
+  // worked out by the server after its cache, or null without one: beside
+  // netWorth and history, which keep what they always meant.
+  const [base, setBase] = useState<NetWorthBase | null>(null);
+  // Why nothing is converted, when the currency settings can't be read.
+  const [currencyProblem, setCurrencyProblem] = useState<string | null>(null);
   // What the estimated history drawn from imported files covers (#52), for
   // the note under the chart. Sent beside the payload, never cached with it.
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
@@ -556,6 +576,17 @@ export default function Dashboard({
   const [healthUnavailable, setHealthUnavailable] = useState(false);
   const [healthFocus, setHealthFocus] = useState(false);
   const clearHealthFocus = useCallback(() => setHealthFocus(false), []);
+  // The Currency card (components/CurrencyCard.tsx), opened from a note on
+  // Home, at the form for a rate for the currency the note named, if any.
+  const [currencyFocus, setCurrencyFocus] = useState<{ rateFor: string | null } | null>(null);
+  const clearCurrencyFocus = useCallback(() => setCurrencyFocus(null), []);
+  // The offer to show totals in one currency (components/CurrencyNotes.tsx):
+  // whether it was put away on this device (read after the first paint, so
+  // the server's render and the browser's agree), and the sheet it opens,
+  // with the currency it suggested.
+  const [offerHidden, setOfferHidden] = useState(true);
+  useEffect(() => setOfferHidden(offerDismissed()), []);
+  const [choosingHome, setChoosingHome] = useState<{ initial: string | null } | null>(null);
   // The Item update mode is open on, so its success can be recorded
   // (app/api/item-reconnected).
   const reconnectingItemRef = useRef<string | null>(null);
@@ -639,6 +670,12 @@ export default function Dashboard({
   // toggled, so they can't be tapped by accident. disconnectTarget drives the
   // type-to-confirm drawer.
   const [manageMode, setManageMode] = useState(false);
+  // The Currency card is under Manage on the Accounts tab.
+  const openCurrency = useCallback((rateFor: string | null = null) => {
+    setTab('accounts');
+    setManageMode(true);
+    setCurrencyFocus({ rateFor });
+  }, []);
   // The Sharing drawer, opened from the Accounts tab or the account menu.
   const [sharingOpen, setSharingOpen] = useState(false);
   const closeSharing = useCallback(() => setSharingOpen(false), []);
@@ -723,6 +760,8 @@ export default function Dashboard({
       setInstitutions(data.institutions);
       setNetWorth(data.netWorth);
       setHistory(data.history ?? []);
+      setBase(data.base && typeof data.base === 'object' ? data.base : null);
+      setCurrencyProblem(typeof data.currency_problem === 'string' ? data.currency_problem : null);
       setHiddenMeta(data.hidden ?? []);
       setImportedHistory(data.imported_history ?? null);
       setEnded(Array.isArray(data.lifecycle) ? data.lifecycle : []);
@@ -757,6 +796,9 @@ export default function Dashboard({
             institutions: data.institutions,
             netWorth: data.netWorth,
             history: data.history ?? [],
+            // Added beside the rest: a release before reads the snapshot
+            // without it, as it always did.
+            base: data.base ?? null,
             hidden: data.hidden ?? [],
             lifecycle: data.lifecycle ?? [],
             as_of: data.as_of,
@@ -854,6 +896,7 @@ export default function Dashboard({
           setInstitutions(snap.institutions);
           setNetWorth(snap.netWorth ?? 0);
           setHistory(Array.isArray(snap.history) ? snap.history : []);
+          setBase(snap.base && typeof snap.base === 'object' && typeof snap.base.currency === 'string' && Array.isArray(snap.base.history) ? snap.base : null);
           setHiddenMeta(Array.isArray(snap.hidden) ? snap.hidden : []);
           setEnded(Array.isArray(snap.lifecycle) ? snap.lifecycle : []);
           setAsOf(snap.as_of ?? null);
@@ -1233,7 +1276,9 @@ export default function Dashboard({
     requestAnimationFrame(() => document.getElementById('bring-back')?.scrollIntoView({ block: 'start', behavior: 'smooth' }));
   }, []);
 
-  const startAddManual = useCallback(() => {
+  // `currency`: what a new account's currency starts as (the home currency,
+  // else the one most accounts are in), for the person to change.
+  const startAddManual = useCallback((currency: string) => {
     setManualError('');
     setEditingManual(false);
     // The id is minted server-side on create, so a draft doesn't carry one.
@@ -1244,13 +1289,16 @@ export default function Dashboard({
       type: 'depository',
       subtype: null,
       balance: '',
+      currency,
+      stored: null,
     });
   }, []);
 
   const startEditManual = useCallback((account: ManualAccount) => {
     setManualError('');
     setEditingManual(true);
-    setManualDraft({ ...account, balance: String(account.balance) });
+    const currency = account.currency ?? 'USD';
+    setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency });
   }, []);
 
   const submitManualDraft = useCallback(() => {
@@ -1260,7 +1308,9 @@ export default function Dashboard({
       institution_name: manualDraft.institution_name,
       type: manualDraft.type,
       subtype: manualDraft.subtype,
+      // As typed: choosing its currency never changes the number.
       balance: Number(manualDraft.balance),
+      currency: manualDraft.currency,
     };
     if (manualDraft.account_id) {
       mutateManual('PATCH', { ...payload, account_id: manualDraft.account_id });
@@ -1543,15 +1593,19 @@ export default function Dashboard({
     () => timeline.notes.filter((n) => !(n.kind === 'auto' && n.account_id && hiddenIds.has(n.account_id))),
     [timeline.notes, hiddenIds]
   );
+  // The change Home shows: in the home currency when one is chosen, each day
+  // at its own rate, so rate moves are in it (base.delta, with how much came
+  // from them), else the stored sums' as always.
+  const shownDelta = base ? base.delta : heroDelta;
   // Accounts that ended within the delta's days: its change includes their
   // leaving, which is said, so it isn't read as a gain or a loss (#50).
   const endedInDelta = useMemo(() => {
-    if (!heroDelta) return 0;
+    if (!shownDelta) return 0;
     return ended.filter((e) => {
       const day = e.lifecycle.state === 'untracked' ? e.lifecycle.from : e.lifecycle.on;
-      return day > heroDelta.from && day <= heroDelta.to && !hiddenIds.has(e.account_id);
+      return day > shownDelta.from && day <= shownDelta.to && !hiddenIds.has(e.account_id);
     }).length;
-  }, [heroDelta, ended, hiddenIds]);
+  }, [shownDelta, ended, hiddenIds]);
 
   // Plaid returns institutions/accounts in no guaranteed order; sort by name so
   // the Accounts tab renders the same every load.
@@ -1726,6 +1780,48 @@ export default function Dashboard({
     for (const a of allAccounts) if (a.currency) seen.add(a.currency);
     return seen.size > 1;
   }, [allAccounts]);
+  // Every account's currency (hidden ones too), most accounts first: offered
+  // first when choosing a home currency.
+  const accountCurrencies = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const i of institutions) for (const a of i.accounts) if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);
+    return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([c]) => c);
+  }, [institutions]);
+  // The manual accounts typed in the app, with their currency, which the
+  // choice of a home currency lists for the person to correct.
+  const manualCurrencies = useMemo(
+    () =>
+      institutions
+        .filter((i) => i.manual && !i.connector)
+        .flatMap((i) => i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, currency: a.currency ?? 'USD' }))),
+    [institutions]
+  );
+  // The offer to show totals in one currency (decision 1): only for someone
+  // whose accounts' balances (hidden ones too) are in more than one,
+  // suggesting the currency their budgets are read in today, from the last
+  // 365 days of rows as the Budgets tab's read takes them. Once the
+  // transactions are in, so what it suggests doesn't change under a finger.
+  const offer = useMemo(() => {
+    if (txns === null) return null;
+    // The same window as lib/budget-month.ts windowStart (LOOKBACK_DAYS, 365 UTC days).
+    const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
+    const budgets = totalsCurrency(txns.filter((t) => t.date >= since));
+    return offerFor({
+      accounts: institutions.flatMap((i) => i.accounts.filter((a) => a.balance !== null).map((a) => a.currency)),
+      budgets,
+      main: accountCurrency,
+    });
+  }, [institutions, txns, accountCurrency]);
+  // What Home shows: net worth in the home currency once one is chosen
+  // (base), else the sum as it always was, labelled with the main currency.
+  const shownWorth = base ? base.net_worth : netWorth;
+  const shownCurrency = base ? base.currency : accountCurrency;
+  // A new manual account's currency, until the person chooses another.
+  const manualDefaultCurrency = base?.currency ?? accountCurrency ?? 'USD';
+  const shownHistory = base ? base.history : history;
+  // How much of the change came from exchange rates, when more than rounding
+  // (decision 4). Written as it is drawn, so hiding amounts covers it.
+  const fromRates = base?.delta ? rateEffectText(base.delta.value, base.delta.from_rates, base.currency) : '';
 
   // The institutions as the Plan reads them, with what went wrong at each, so
   // a figure that may be short says so; hidden accounts too, which the Plan
@@ -1835,7 +1931,7 @@ export default function Dashboard({
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
               <div className="action-row">
-                <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                   <ActionIcon d="M12 5v14M5 12h14" />
                   Add manual
                 </button>
@@ -1872,23 +1968,40 @@ export default function Dashboard({
               <>
                 <div className="card">
                   <div className="total-label">Net Worth</div>
-                  <div className={`total-value${netWorth < 0 ? ' negative' : ''}`}>
-                    <Masked>{fmt(netWorth, accountCurrency)}</Masked>
+                  <div className={`total-value${shownWorth < 0 ? ' negative' : ''}`}>
+                    <Masked>{fmt(shownWorth, shownCurrency)}</Masked>
                   </div>
-                  {heroDelta && (
-                    <div className={`hero-delta${heroDelta.value >= 0 ? ' up' : ' down'}`}>
-                      {heroDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(heroDelta.value), accountCurrency)}</Masked> (
-                      {heroDelta.pct.toFixed(1)}%) · past {heroDelta.days} days
+                  {shownDelta && (
+                    <div className={`hero-delta${shownDelta.value >= 0 ? ' up' : ' down'}`}>
+                      {shownDelta.value >= 0 ? '▲' : '▼'} <Masked>{fmt(Math.abs(shownDelta.value), shownCurrency)}</Masked> (
+                      {shownDelta.pct.toFixed(1)}%) · past {shownDelta.days} days
                       {endedInDelta > 0 && ` · includes ${endedInDelta === 1 ? 'an account' : `${endedInDelta} accounts`} that ended`}
+                      {fromRates && (
+                        <>
+                          {' · '}
+                          <Masked>{fromRates}</Masked>
+                        </>
+                      )}
                     </div>
                   )}
                   {/* What the total leaves out in student loans' accrued
                       interest, or couldn't read of it (lib/accrued-interest.ts). */}
-                  <AccruedInterestNote institutions={institutions} currency={accountCurrency} />
-                  {mixedAccountCurrency && (
-                    <div className="as-of">
-                      Accounts use multiple currencies; totals aren&apos;t converted.
+                  <AccruedInterestNote institutions={institutions} main={accountCurrency} fx={base?.fx ?? null} />
+                  {base ? (
+                    <HeroCurrencyNote base={base} main={accountCurrency} onOpen={openCurrency} />
+                  ) : currencyProblem ? (
+                    <div className="as-of stale">
+                      Your currency settings couldn&apos;t be read, so totals aren&apos;t converted.{' '}
+                      <button className="link-btn" onClick={() => openCurrency()}>
+                        See Currency
+                      </button>
                     </div>
+                  ) : (
+                    mixedAccountCurrency && (
+                      <div className="as-of">
+                        Accounts use multiple currencies; totals aren&apos;t converted.
+                      </div>
+                    )
                   )}
                   {asOf && (
                     <div className="as-of">
@@ -1903,15 +2016,30 @@ export default function Dashboard({
                   ))}
                 </div>
 
+                {offer && !base && !currencyProblem && !offerHidden && (
+                  <CurrencyOffer
+                    offer={offer}
+                    onChoose={(code) => setChoosingHome({ initial: code })}
+                    onDismiss={() => {
+                      dismissOffer();
+                      setOfferHidden(true);
+                    }}
+                  />
+                )}
+
                 <div className="card">
                   <div className="inst-header">
                     <div className="inst-name">Over time</div>
                   </div>
-                  {history.length >= 2 ? (
+                  {shownHistory.length >= 2 ? (
                     <>
-                      <NetWorthChart points={history} notes={chartNotes} />
+                      <NetWorthChart points={shownHistory} currency={base?.currency} notes={chartNotes} />
+                      {base && <ChartCurrencyNote base={base} main={accountCurrency} />}
                       {importedHistory && <ImportedHistoryNote view={importedHistory} institutions={institutions} />}
                     </>
+                  ) : base && history.length >= 2 ? (
+                    // A history there is, that couldn't be converted: why.
+                    <ChartCurrencyNote base={base} main={accountCurrency} />
                   ) : (
                     <p className="empty-note">
                       History builds as you use the app: check back tomorrow for your first
@@ -1993,7 +2121,7 @@ export default function Dashboard({
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
-                    <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                    <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                       <ActionIcon d="M12 5v14M5 12h14" />
                       Add manual
                     </button>
@@ -2026,6 +2154,7 @@ export default function Dashboard({
                     attention, and from a notice email's link. */}
                 <ConnectionHealth
                   institutions={institutions}
+                  fx={base?.fx ?? null}
                   unavailable={healthUnavailable}
                   connecting={connecting}
                   focus={healthFocus}
@@ -2088,6 +2217,10 @@ export default function Dashboard({
                   );
                   const instMixed =
                     new Set(inst.accounts.map((a) => a.currency).filter(Boolean)).size > 1;
+                  // Mixed, with a home currency chosen: converted into it, at
+                  // the newest rates, as the hero is (lib/fx/view.ts).
+                  const instRows = inst.accounts.map((a) => ({ amount: signedBalance(a), currency: a.currency }));
+                  const instConverted = instMixed && base && needsConverting(instRows, base.fx, instCurrency) ? balancesNow(instRows, base.fx, instCurrency) : null;
                   // Every row, hidden ones too, for the questions about them
                   // (#50), and whether each one held was answered Still open.
                   const allRows = institutions.find((i) => i.item_id === inst.item_id)?.accounts ?? inst.accounts;
@@ -2102,7 +2235,7 @@ export default function Dashboard({
                         </div>
                         <div className="inst-header-right">
                           <div className="inst-total">
-                            <Masked>{fmt(instTotal, instCurrency)}</Masked>
+                            <Masked>{fmt(instConverted ? instConverted.total : instTotal, instConverted ? instConverted.currency : instCurrency)}</Masked>
                           </div>
                           {/* Manual groupings aren't Plaid Items, so there's
                               nothing to disconnect; they're removed per account. */}
@@ -2124,7 +2257,7 @@ export default function Dashboard({
 
                       {instMixed && (
                         <div className="chart-note">
-                          Mixed currencies; total isn&apos;t converted.
+                          {instConverted ? institutionNote(instConverted) : <>Mixed currencies; total isn&apos;t converted.</>}
                         </div>
                       )}
 
@@ -2156,6 +2289,9 @@ export default function Dashboard({
                                         ? `${a.official_name} · `
                                         : ''}
                                       {a.subtype || a.type}
+                                      {/* The currency chosen for a typed
+                                          balance, when not the one shown. */}
+                                      {inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : ''}
                                     </div>
                                     {/* A Plaid balance is implicitly "now"; a
                                         typed one has to say when it was set. */}
@@ -2245,6 +2381,7 @@ export default function Dashboard({
                                                 type: a.type,
                                                 subtype: a.subtype,
                                                 balance: a.balance ?? 0,
+                                                currency: a.currency ?? undefined,
                                               })
                                             }
                                           >
@@ -2762,6 +2899,13 @@ export default function Dashboard({
                     this week's would say (components/WeeklySummaryCard.tsx). */}
                 {manageMode && <WeeklySummaryCard clerk={clerk} />}
 
+                {/* The home currency and your own rates (components/CurrencyCard.tsx):
+                    applied after the server's cache, so a change shows on the
+                    next load of net worth, which it asks for. */}
+                {manageMode && (
+                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={() => loadNetWorth()} />
+                )}
+
                 {/* Your categories and their groups (components/CategoriesCard.tsx):
                     a change shows on the next read of the transactions and budgets. */}
                 {manageMode && (
@@ -2921,6 +3065,16 @@ export default function Dashboard({
       {clerk && <SharingDrawer open={sharingOpen} onClose={closeSharing} />}
       {/* Mounted outside the tabs so what was typed into it lasts until a reload. */}
       <DebtPayoff open={payoffOpen} onClose={closePayoff} institutions={institutions} />
+      {/* Opened from the offer on Home: only the person's confirmation in it
+          chooses a home currency. */}
+      <CurrencyChoiceSheet
+        open={!!choosingHome}
+        onClose={() => setChoosingHome(null)}
+        initial={choosingHome?.initial ?? null}
+        first={accountCurrencies}
+        manual={manualCurrencies}
+        onSaved={() => loadNetWorth()}
+      />
 
       {connected && !loading && (
         <nav className="tab-bar" aria-label="Sections">
@@ -3001,6 +3155,17 @@ export default function Dashboard({
                 </select>
               </label>
               <label className="field">
+                Currency
+                <select
+                  value={shownManualDraft.currency}
+                  // The balance stays as typed: only what it is counted in changes.
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, currency: e.target.value })}
+                  disabled={savingManual}
+                >
+                  <CurrencyOptions first={accountCurrencies} value={shownManualDraft.currency} />
+                </select>
+              </label>
+              <label className="field">
                 {isOwedType(shownManualDraft.type) ? 'Amount owed' : 'Current balance'}
                 <input
                   // Held as a string (see ManualDraft) so a leading "-" survives
@@ -3008,15 +3173,21 @@ export default function Dashboard({
                   // subtract from net worth, so a negative would double-negate.
                   type="number"
                   inputMode="decimal"
-                  step="0.01"
+                  step={String(10 ** -minorDigits(shownManualDraft.currency))}
                   min={isOwedType(shownManualDraft.type) ? 0 : undefined}
                   value={shownManualDraft.balance}
                   onChange={(e) => setManualDraft({ ...shownManualDraft, balance: e.target.value })}
-                  placeholder="0.00"
+                  placeholder={zeroExample(minorDigits(shownManualDraft.currency))}
                   disabled={savingManual}
                 />
               </label>
             </div>
+            {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
+              <p className="panel-note">
+                The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.{' '}
+                {CORRECTION_KEEPS}
+              </p>
+            )}
             <p className="panel-note">
               {isOwedType(shownManualDraft.type)
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'

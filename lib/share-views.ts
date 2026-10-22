@@ -424,7 +424,7 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
   const notes: string[] = [];
   if (counted.length === 0) notes.push('No investment accounts to show.');
   if ((alloc.classes.unclassified ?? 0) !== 0) notes.push('Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.');
-  for (const o of alloc.otherCurrencies) notes.push(`What is held in ${o.currency} isn’t counted here: nothing is converted.`);
+  for (const o of alloc.otherCurrencies) notes.push(`What is held in ${o.currency} isn’t counted here: a share doesn’t convert currencies.`);
   if (alloc.unpriced > 0) notes.push(`${alloc.unpriced === 1 ? 'A position' : `${alloc.unpriced} positions`} with no value ${alloc.unpriced === 1 ? 'isn’t' : 'aren’t'} counted.`);
   // As net worth says an account with no balance yet: never counted as nothing.
   if (alloc.noBalance > 0) {

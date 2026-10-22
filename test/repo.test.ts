@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, relative, resolve } from 'node:path';
 import { Redis } from '@upstash/redis';
-import { FakeRedis, storageMock, TEST_CTX, ctxKey, unscopedDataKeys, registerTestContainer, type FakeCommand } from './fake-redis';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, testKey, unscopedDataKeys, registerTestContainer, type FakeCommand } from './fake-redis';
 import { startRedis, upstashOn, type RealRedis } from './real-redis';
 
 // The storage seam (lib/repo.ts). One contract, run twice: against the test
@@ -36,6 +36,7 @@ const {
   defineMapStore,
   defineCounterStore,
   defineCounterMapStore,
+  definePublicMapStore,
   forgetDeclaredStore,
   StoredDataUnreadableError,
   UnreadableEntriesError,
@@ -54,7 +55,7 @@ const {
   openStoredJson,
 } = await import('@/lib/repo');
 const { encodeJsonText } = await import('@/lib/blob');
-const { declaredStores, declaredStore } = await import('@/lib/stores');
+const { declaredStores, declaredStore, declaredPublicStore } = await import('@/lib/stores');
 const connectorStores = await import('@/lib/connectors/store');
 const { classify, reencrypt } = await import('@/lib/reencrypt');
 const { listedKind } = await import('@/lib/key-families');
@@ -107,8 +108,10 @@ const bigNotes = defineMapStore<Note>('seam-contract-big-notes', { what: 'test n
 const WINDOW = 600;
 const counter = defineCounterStore('seam-contract-counter', { what: 'test counts', windowSeconds: WINDOW });
 const counters = defineCounterMapStore('seam-contract-counters', { what: 'test counts', windowSeconds: WINDOW });
+// Public, environment-wide: its id "refused" is one its check refuses.
+const shared = definePublicMapStore<Note>('fx:seam-contract', { what: 'test rates', isValid: (v, id): v is Note => isNote(v) && id !== 'refused' });
 afterAll(() => {
-  for (const s of [list, notes, bigList, bigNotes, counter, counters]) forgetDeclaredStore(s.name);
+  for (const s of [list, notes, bigList, bigNotes, counter, counters, shared]) forgetDeclaredStore(s.name);
   client = recordedFake;
 });
 
@@ -1475,6 +1478,65 @@ function contract(b: Backend) {
     });
   });
 
+  describe('a public map store', () => {
+    const key = testKey('fx:seam-contract');
+
+    test('writes every entry in one step, environment-wide, as plain JSON, and reads back what was asked', async () => {
+      expect(await sentBy(() => shared.setMany([['b', RENT], ['a', NOTE]]))).toEqual(['hset']);
+      expect(JSON.parse((await b.raw.hget(key, 'a'))!)).toEqual(NOTE);
+      expect([...(await shared.getMany(['b', 'missing', 'a']))]).toEqual([
+        ['b', RENT],
+        ['a', NOTE],
+      ]);
+      expect(await shared.ids()).toEqual(['a', 'b']);
+      expect(await b.raw.hgetall(ctxKey('fx:seam-contract'))).toEqual({});
+    });
+
+    test('asks for nothing when given no ids, and reads nothing stored as none', async () => {
+      expect(await sentBy(() => shared.getMany([]))).toEqual([]);
+      expect((await shared.getMany(['a'])).size).toBe(0);
+      expect(await shared.ids()).toEqual([]);
+    });
+
+    test('a value it can’t use is named, never taken for none', async () => {
+      await shared.setMany([['a', NOTE]]);
+      await b.raw.hset(key, 'b', 'not json');
+      await b.raw.hset(key, 'c', '{"not":"the shape"}');
+      await b.raw.hset(key, 'refused', JSON.stringify(NOTE));
+      const report = await shared.getManyReport(['a', 'b', 'c', 'refused']);
+      expect([...report.entries]).toEqual([['a', NOTE]]);
+      expect(report.unrecognised).toEqual(['b', 'c', 'refused']);
+      const err = await shared.getMany(['a', 'b']).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(UnreadableEntriesError);
+      expect((err as InstanceType<typeof UnreadableEntriesError>).unrecognised).toEqual(['b']);
+      expect((err as InstanceType<typeof UnreadableEntriesError>).unreadable).toEqual([]);
+    });
+
+    test('refuses a write whole when one value fails its check', async () => {
+      await shared.setMany([['a', NOTE]]);
+      await expect(shared.setMany([['b', RENT], ['refused', NOTE]])).rejects.toThrow(TypeError);
+      await expect(shared.setMany([['b', { text: 'no amount' } as unknown as Note]])).rejects.toThrow(TypeError);
+      expect(Object.keys(await b.raw.hgetall(key))).toEqual(['a']);
+    });
+
+    test('refuses a write over the ceiling whole, trimming nothing', async () => {
+      process.env.MAX_TXN_BLOB_CHARS = '60';
+      const err = await shared.setMany([['a', NOTE], ['b', RENT]]).catch((e: unknown) => e);
+      expect(err).toBeInstanceOf(StoredValueTooLargeError);
+      expect(err).toBeInstanceOf(StoreRefusedError);
+      expect(await b.raw.hgetall(key)).toEqual({});
+    });
+
+    test('checks its ids, and a storage failure throws as it is', async () => {
+      await expect(shared.getMany(['not an id'])).rejects.toThrow(TypeError);
+      await expect(shared.setMany([['__proto__', NOTE]])).rejects.toThrow(TypeError);
+      b.failNext('hmget');
+      await notBlamed(() => shared.getManyReport(['a']));
+      b.failNext('hset');
+      await notBlamed(() => shared.setMany([['a', NOTE]]));
+    });
+  });
+
   describe("evolving a store's shape", () => {
     type V1 = { name: string };
     type V2 = { name: string; color: string };
@@ -1739,7 +1801,8 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
   afterEach(async () => {
     // Nothing outside a container but the key store, as on the double.
     const keys = (await send('KEYS', ['*'])) as string[];
-    expect(keys.filter((key) => !key.startsWith('test:c:') && !key.startsWith('test:crypto:'))).toEqual([]);
+    // And the public stores (lib/repo.ts definePublicMapStore), environment-wide by design.
+    expect(keys.filter((key) => !key.startsWith('test:c:') && !key.startsWith('test:crypto:') && !key.startsWith('test:fx:'))).toEqual([]);
   });
   afterAll(() => {
     real?.stop();
@@ -1894,6 +1957,26 @@ describe.skipIf(!hasRedis && !process.env.CI)('the seam, on a real Redis', () =>
 
 describe('the key inventory', () => {
   const c = `c:${TEST_CTX.container}:`;
+
+  test('a public store is in it as plain text, outside containers only', () => {
+    expect(classify('fx:seam-contract')).toBe('plain');
+    expect(classify('fx:ecb')).toBe('plain');
+    // Built inside a container, it was built wrongly, and is reported.
+    expect(classify(`${c}fx:ecb`)).toBeNull();
+    expect(classify('fx:undeclared')).toBeNull();
+    expect(declaredPublicStore('fx:ecb')?.kind).toBe('public-map');
+    // Never among the containers' stores, which the download and deletion walk.
+    expect(declaredStores().some((s) => s.name.startsWith('fx:'))).toBe(false);
+  });
+
+  test('a public store’s name must be environment-wide, refetched, and no old key family', () => {
+    const isAny = (v: unknown): v is unknown => true;
+    expect(() => definePublicMapStore('seam-contract-public', { what: 'x', isValid: isAny })).toThrow(/environment-wide/);
+    expect(() => definePublicMapStore('ratelimit:seam-contract', { what: 'x', isValid: isAny })).toThrow(/REFETCHED_PREFIXES/);
+    expect(() => definePublicMapStore('Fx:Upper', { what: 'x', isValid: isAny })).toThrow(/cannot name a store/);
+    // And a container store can't take a name under it.
+    expect(() => defineMapStore('fx:seam-contract-container', { what: 'x', isValid: isNote, exportable: false })).toThrow(/environment-wide/);
+  });
 
   test('a declared store is in it by its declaration, inside a container only', () => {
     expect(classify(`${c}seam-contract-list`)).toBe('string');

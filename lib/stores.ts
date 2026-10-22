@@ -26,6 +26,8 @@ import './category-store';
 import './connection-records';
 import './connectors/store';
 import './fire-plan';
+import './fx/ecb-store';
+import './fx/settings';
 import './goal-plans';
 import './groups';
 import './history-import/store';
@@ -48,7 +50,7 @@ import './user-restore/store';
 import './vendor-default-store';
 import './weekly-summary/store';
 
-import { storesDeclaredSoFar, type Store } from './repo';
+import { publicStoresDeclaredSoFar, storesDeclaredSoFar, type PublicMapStore, type Store } from './repo';
 
 /** Every declared store, in name order. */
 export function declaredStores(): Store[] {
@@ -58,4 +60,15 @@ export function declaredStores(): Store[] {
 /** The store declared under a name (its key family), or null. */
 export function declaredStore(name: string): Store | null {
   return storesDeclaredSoFar().get(name) ?? null;
+}
+
+/** Every public store (lib/repo.ts definePublicMapStore), in name order:
+ *  environment-wide public data, apart from the containers' stores. */
+export function declaredPublicStores(): PublicMapStore<unknown>[] {
+  return [...publicStoresDeclaredSoFar().values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+/** The public store declared under a name, or null. */
+export function declaredPublicStore(name: string): PublicMapStore<unknown> | null {
+  return publicStoresDeclaredSoFar().get(name) ?? null;
 }

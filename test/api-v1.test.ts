@@ -177,6 +177,9 @@ describe('me', () => {
       token: { label: 'Tests', hint: token.slice(0, 12), created_at: expect.any(String), last_used_at: null },
       data_since: '2026-01-01T00:00:00.000Z',
       rate_limit: { requests: REQUESTS_PER_MINUTE, per_seconds: 60 },
+      // No home currency chosen: nothing is converted.
+      base_currency: null,
+      own_rates: [],
     });
     expect(JSON.stringify(body)).not.toContain(TEST_CONTAINER);
     // The next one sees the first.
@@ -231,20 +234,20 @@ describe('balance history', () => {
   test('net worth: recorded points only by default, estimated ones flagged when asked', async () => {
     let { body } = await call('balance-history');
     expect(body.points).toEqual([
-      { date: daysAgo(3), value: 1000 - 250 + 20000 + 300000, estimated: false },
-      { date: daysAgo(2), value: 1200 - 300 + 20500 + 300000, estimated: false },
+      { date: daysAgo(3), value: 1000 - 250 + 20000 + 300000, estimated: false, to_base: null },
+      { date: daysAgo(2), value: 1200 - 300 + 20500 + 300000, estimated: false, to_base: null },
     ]);
     ({ body } = await call('balance-history', 'include_estimated=true&include_hidden=true'));
-    expect(body.points[0]).toEqual({ date: daysAgo(10), value: 320000, estimated: true });
+    expect(body.points[0]).toEqual({ date: daysAgo(10), value: 320000, estimated: true, to_base: null });
   });
 
   test('one account, following the same precedence as its chart; a hidden one is a 404 unless asked for', async () => {
     let { res, body } = await call('balance-history', 'account_id=acc_chk&include_estimated=true');
     expect(body.points).toEqual([
-      { date: daysAgo(10), value: 900, estimated: true },
-      { date: daysAgo(3), value: 1000, estimated: false },
-      { date: daysAgo(2), value: 1200, estimated: false },
-      { date: daysAgo(1), value: 1250, estimated: false },
+      { date: daysAgo(10), value: 900, estimated: true, to_base: null },
+      { date: daysAgo(3), value: 1000, estimated: false, to_base: null },
+      { date: daysAgo(2), value: 1200, estimated: false, to_base: null },
+      { date: daysAgo(1), value: 1250, estimated: false, to_base: null },
     ]);
     expect(body.currency).toBe('USD');
     ({ res, body } = await call('balance-history', 'account_id=acc_save'));
@@ -255,7 +258,7 @@ describe('balance history', () => {
 
   test('a month at a time: the last point of each', async () => {
     const { body } = await call('balance-history', 'account_id=acc_chk&interval=month');
-    expect(body.points.at(-1)).toEqual({ date: daysAgo(1), value: 1250, estimated: false });
+    expect(body.points.at(-1)).toEqual({ date: daysAgo(1), value: 1250, estimated: false, to_base: null });
     expect(new Set(body.points.map((p: any) => p.date.slice(0, 7))).size).toBe(body.points.length);
   });
 });

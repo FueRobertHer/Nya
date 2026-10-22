@@ -176,6 +176,27 @@ describe('the release before, reading what this release writes', () => {
     expect([...plan.keyStore.tombstones.values()].map((t) => t.container)).toContain(C);
   });
 
+  test('backs up the ECB’s rates and the currency settings, which it doesn’t know, and this release still restores what it took', async () => {
+    await seedNewValues();
+    // This release's two new stores: the public rates, plain JSON outside every
+    // container, and a person's settings, ciphertext inside theirs.
+    await fake.hset(testKey('fx:ecb'), { latest: JSON.stringify({ date: '2026-09-14', rates: { USD: '1.1551' } }) });
+    await fake.set(ctxKey('currency-settings', { container: P } as never), await n.encrypt({ container: P } as never, '{"v":1,"home":"EUR","changes":[],"own":[]}'));
+    const text = await oldExportText();
+    // It knows neither, so it classifies neither; it backs up both.
+    expect(oFamilies.listedKind('fx:ecb')).toBeNull();
+    expect(oFamilies.listedKind('currency-settings')).toBeNull();
+    const old = oRestore.verifyArchive(text).records.map((r: { key: string }) => r.key);
+    expect(old).toContain('fx:ecb');
+    expect(old).toContain(`c:${P}:currency-settings`);
+    // The rates are plain text to its plain-text check.
+    for (const v of fake.hashes.get(testKey('fx:ecb'))!.values()) expect(looksEncrypted(v)).toBe(false);
+    // This release reads its archive: the settings come back, the rates are fetched again.
+    const mine = nRestore.verifyArchive(text).records.map((r) => r.key);
+    expect(mine).toContain(`c:${P}:currency-settings`);
+    expect(mine).not.toContain('fx:ecb');
+  });
+
   test('rotates the master over container keys, the counter and the tombstones, keeping `container`, and this release reads its values after', async () => {
     const v = await seedNewValues();
     await deleteC();

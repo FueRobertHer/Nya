@@ -579,7 +579,7 @@ describe('the review', () => {
   });
 
   test('a zip from YNAB is read; Actual’s database export says how to export its CSV', async () => {
-    const { deflateRawSync } = await import('node:zlib');
+    const { crc32, deflateRawSync } = await import('node:zlib');
     const zipOf = (files: Record<string, Uint8Array>) => {
       const parts: Buffer[] = [];
       const central: Buffer[] = [];
@@ -590,12 +590,14 @@ describe('the review', () => {
         const local = Buffer.alloc(30);
         local.writeUInt32LE(0x04034b50, 0);
         local.writeUInt16LE(8, 8);
+        local.writeUInt32LE(crc32(data), 14);
         local.writeUInt32LE(packed.length, 18);
         local.writeUInt32LE(data.length, 22);
         local.writeUInt16LE(n.length, 26);
         const cd = Buffer.alloc(46);
         cd.writeUInt32LE(0x02014b50, 0);
         cd.writeUInt16LE(8, 10);
+        cd.writeUInt32LE(crc32(data), 16);
         cd.writeUInt32LE(packed.length, 20);
         cd.writeUInt32LE(data.length, 24);
         cd.writeUInt16LE(n.length, 28);

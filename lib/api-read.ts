@@ -62,6 +62,14 @@
 // connection's accounts are served the same way with source 'lunchflow', as
 // of when Nya received their balances (Lunch Flow gives no time with them).
 //
+// A HOME CURRENCY (lib/fx/settings.ts), once the person has chosen one, is
+// base_currency on the answers that carry balances, and conversion into it
+// arrives only in fields of its own (lib/fx/api-base.ts): each account's
+// to_base, net worth's base, each history point's to_base. Every field version
+// 1 had keeps its meaning: one total per currency, nothing converted. Read
+// only for the answers that ask (`base`), so the readers built on these
+// (goals, shares) read no rates.
+//
 // HIDDEN ACCOUNTS are left out unless asked for (`includeHidden`), everywhere:
 // accounts, balances, transactions, totals, history (subtracted from net
 // worth, as the chart subtracts them) and holdings.
@@ -85,11 +93,11 @@
 import type { Ctx } from './containers';
 import { getContainer } from './containers';
 import { getItems, type StoredItem } from './storage';
-import { getEffectiveHidden, resolveId, sameAccountIds, type Link } from './links';
+import { getEffectiveHidden, resolveId, sameAccountIds, directoryCurrencies, type Link } from './links';
 import { getEffectiveLifecycle, lifecycleOf, endOf, endedNowIds, lastEndDay, shortDays, type LifecycleView } from './lifecycle';
 import type { HiddenMap } from './hidden';
 import { couldNotRead, rememberedAccountsReport, type RememberedAccount } from './last-known';
-import { latestMeasuredBalances, snapshotTakenAt, getHistory, getAccountHistory, type HistoryPoint } from './history';
+import { latestMeasuredBalances, snapshotTakenAt, getHistory, getHistoryWithSplit, getAccountHistory, type HistoryPoint } from './history';
 import { getManualAccountsReport, isManualId, toInstitutions, MANUAL_CURRENCY } from './manual';
 import { connectorBanksReport, type ConnectorBanksReport } from './connectors/institutions';
 import { connectorHealthText } from './connectors/health';
@@ -127,6 +135,20 @@ import { readDrawState } from './history-import/extend';
 import { importedRowsNote, importedStretch } from './history-import/view';
 import { lastDayOf } from './cash-flow';
 import type { WalkState } from './history-import/store';
+import { readSettingsForDisplay, type CurrencySettings } from './fx/settings';
+import { readFx } from './fx/read';
+import { foreignFor, lifecycleAccounts } from './fx/net-worth-read';
+import type { SplitPoint } from './fx/net-worth';
+import type { FxTable } from './fx/rates';
+import { apiBase, apiOwnRates, baseNotes, historyInBase, historyNotes, pointNotes, toBase, SETTINGS_UNREADABLE_NOTE, type ApiBase, type ApiOwnRate } from './fx/api-base';
+import { unusableText } from './fx/words';
+
+/** What the rates an answer converted with couldn't use, in words: none or
+ *  one note (lib/fx/words.ts unusableText). */
+const ratesNotes = (fx: FxTable | null): string[] => {
+  const said = fx ? unusableText(fx.unusable ?? []) : null;
+  return said ? [said] : [];
+};
 
 const DAY_MS = 86_400_000;
 const utcDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
@@ -146,17 +168,47 @@ export type ApiMe = {
   /** When this person's data in Nya began (their container was made). */
   data_since: string | null;
   rate_limit: { requests: number; per_seconds: number };
+  /** The home currency the person chose, or null: none chosen (nothing is
+   *  converted), or settings that couldn't be read. Added in version 1. */
+  base_currency: string | null;
+  /** The person's own rates (lib/fx/settings.ts). Added in version 1. */
+  own_rates: ApiOwnRate[];
 };
 
 /** Container-level facts only: never a sign-in id or an email address. */
 export async function readMe(auth: Authenticated): Promise<ApiMe> {
-  const record = await getContainer(auth.ctx.container);
+  const [record, { settings }] = await Promise.all([getContainer(auth.ctx.container), readSettingsForDisplay(auth.ctx)]);
   return {
     api_version: API_VERSION,
     token: { label: auth.token.label, hint: `${TOKEN_PREFIX}${auth.id.slice(0, 8)}`, created_at: auth.token.created_at, last_used_at: auth.token.last_used_at },
     data_since: record?.created_at ?? null,
     rate_limit: { requests: REQUESTS_PER_MINUTE, per_seconds: RATE_WINDOW_SECONDS },
+    base_currency: settings.home,
+    own_rates: apiOwnRates(settings.own),
   };
+}
+
+// ---- A home currency ----
+
+/** What an answer asked to convert reads first: the person's settings, if
+ *  they chose a home currency, and a note when they couldn't be read (then
+ *  nothing is converted). LENIENT, for this display only, as every read of
+ *  them for figures is (lib/fx/settings.ts). */
+type HomeRead = { settings: CurrencySettings | null; note: string | null };
+
+async function readHome(ctx: Ctx): Promise<HomeRead> {
+  const { settings, problem } = await readSettingsForDisplay(ctx);
+  return { settings: settings.home ? settings : null, note: problem ? SETTINGS_UNREADABLE_NOTE : null };
+}
+
+/** The rates an answer converts with, read once: for the currencies given,
+ *  from `from` to today. Null without a home currency. */
+async function ratesFor(ctx: Ctx, home: HomeRead, currencies: Iterable<string | null>, from: string, now: number): Promise<FxTable | null> {
+  if (!home.settings) return null;
+  const today = utcDay(now);
+  const need = [...currencies].filter((c): c is string => typeof c === 'string');
+  const { fx } = await readFx(ctx, { currencies: need, from: from < today ? from : today, to: today }, { settings: home.settings, problem: null });
+  return fx;
 }
 
 // ---- Accounts ----
@@ -214,6 +266,11 @@ export type ApiAccount = {
    *  while it is open. From `date` on it counts in no total. Version 1 may
    *  add states. */
   lifecycle: ApiLifecycle | null;
+  /** The balance in base_currency at the newest rates (an account saying no
+   *  currency counts in the main one), or null: no home currency, no
+   *  balance, or no rate. Only on the answers that convert (`base`). Added in
+   *  version 1. */
+  to_base?: number | null;
 };
 
 export type ApiLifecycle = {
@@ -446,7 +503,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         subtype: a.subtype,
         mask: null,
         balance: a.balance,
-        // The only currency a manual balance is kept in (lib/manual.ts).
+        // Its own (lib/manual.ts toInstitutions: US dollars when it names none).
         currency: a.currency,
         credit_limit: null,
         is_debt: isOwedType(a.type),
@@ -576,6 +633,9 @@ function fedConnection(card: InstitutionResult, fed: ConnectorBanksReport, now: 
 
 export type ApiAccounts = {
   accounts: ApiAccount[];
+  /** The home currency the accounts' to_base is in, or null (see ApiMe).
+   *  Only when asked (`base`). */
+  base_currency?: string | null;
   /** False when accounts are missing from the list (missing_accounts). */
   complete: boolean;
   missing_accounts: ApiMissing[];
@@ -595,18 +655,30 @@ export async function accountLabels(ctx: Ctx): Promise<(id: string) => string | 
 }
 
 /** Every account: linked and manual, with its newest measured balance and as
- *  of when. Hidden ones only with `includeHidden`. */
-export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiAccounts> {
-  const { accounts, missing, notes } = await accountsRead(ctx, !!opts.includeHidden);
-  return { accounts, complete: missing.length === 0, missing_accounts: missing, notes };
+ *  of when. Hidden ones only with `includeHidden`. With `base`, each one's
+ *  to_base, in the home currency the person chose. */
+export async function readAccounts(ctx: Ctx, opts: { includeHidden?: boolean; base?: boolean } = {}): Promise<ApiAccounts> {
+  const [{ accounts, missing, notes }, home] = await Promise.all([accountsRead(ctx, !!opts.includeHidden), opts.base ? readHome(ctx) : null]);
+  if (!home) return { accounts, complete: missing.length === 0, missing_accounts: missing, notes };
+  const now = Date.now();
+  const { currency: main } = netWorthCurrency(accounts.filter(countsNow));
+  const fx = await ratesFor(ctx, home, [...accounts.map((a) => a.currency), main], utcDay(now), now);
+  return {
+    accounts: accounts.map((a) => ({ ...a, to_base: fx ? toBase(fx, a.balance, a.currency ?? main, utcDay(now)) : null })),
+    base_currency: home.settings?.home ?? null,
+    complete: missing.length === 0,
+    missing_accounts: missing,
+    notes: [...notes, ...(home.note ? [home.note] : []), ...ratesNotes(fx)],
+  };
 }
 
 // ---- Net worth ----
 
 export type ApiNetWorth = {
-  /** One total per currency, most accounts first: nothing is converted. An
-   *  account whose currency isn't known is counted in the main one, as the
-   *  app shows it. */
+  /** One total per currency, most accounts first, as version 1 always gave
+   *  them: nothing is converted here (`base` converts them, once the person
+   *  chose a home currency). An account whose currency isn't known is
+   *  counted in the main one, as the app shows it. */
   totals: { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }[];
   /** The oldest and newest day among the balances counted: they are each an
    *  account's newest measured balance, and can be from different days. */
@@ -625,20 +697,54 @@ export type ApiNetWorth = {
    *  point is), which adds every account's balance whatever its currency, as
    *  the chart does: see mixed_currencies. */
   recorded: { date: string; value: number; currency: string | null; mixed_currencies: boolean } | null;
+  /** The home currency base is in, or null (see ApiMe). Only when asked
+   *  (`base`). Added in version 1. */
+  base_currency?: string | null;
+  /** Net worth converted into base_currency (lib/fx/api-base.ts), or null
+   *  without one. Only when asked. Added in version 1. */
+  base?: ApiBase | null;
   notes: string[];
 };
 
 /** What net worth, now and over time, is built from, read once: the
  *  accounts, and the recorded history with hidden accounts subtracted (as the
- *  chart subtracts them) unless they are asked for. */
-type NetWorthRead = { read: AccountsRead; history: HistoryPoint[] };
+ *  chart subtracts them) unless they are asked for; and, asked to convert,
+ *  the home currency and, for a history to convert, its split by currency. */
+type NetWorthRead = {
+  read: AccountsRead;
+  history: HistoryPoint[];
+  home: HomeRead | null;
+  split: { points: SplitPoint[]; breaks: string[]; main: string | null } | null;
+};
 
-async function netWorthRead(ctx: Ctx, includeHidden: boolean): Promise<NetWorthRead> {
-  const read = await accountsRead(ctx, includeHidden);
+async function netWorthRead(ctx: Ctx, includeHidden: boolean, opts: { base?: boolean; split?: boolean } = {}): Promise<NetWorthRead> {
+  const [read, home] = await Promise.all([accountsRead(ctx, includeHidden), opts.base ? readHome(ctx) : null]);
   // Accounts that ended are subtracted from their end day either way: they
   // are no longer the person's to count, hidden or not.
-  const history = await getHistory(ctx, includeHidden ? undefined : read.hidden, read.lifecycle.ended, shortDays(read.lifecycle, includeHidden ? new Map() : read.hidden));
-  return { read, history };
+  const hidden = includeHidden ? undefined : read.hidden;
+  const short = shortDays(read.lifecycle, includeHidden ? new Map() : read.hidden);
+  if (!home?.settings || !opts.split) return { read, history: await getHistory(ctx, hidden, read.lifecycle.ended, short), home, split: null };
+  // Split by currency (lib/history.ts getHistoryWithSplit): each account in
+  // another currency than the main one, by every id it has had, known from
+  // the accounts listed, those that ended and the directory.
+  const main = netWorthCurrency(read.accounts.filter(countsNow)).currency;
+  const listed = read.accounts.map((a) => ({ account_id: a.id, currency: a.currency, type: a.type }));
+  const { foreign } = foreignFor([listed, lifecycleAccounts(read.lifecycle), await directoryCurrencies(ctx)], read.links, main);
+  const { points, breaks, raw } = await getHistoryWithSplit(ctx, hidden, read.lifecycle.ended, short, foreign);
+  return { read, history: points, home, split: { points: raw, breaks, main } };
+}
+
+/** The rates a net worth answer converts with: for the accounts counted now
+ *  and, with a split, every currency and day of the history. */
+async function netWorthRates(ctx: Ctx, nw: NetWorthRead, now: number): Promise<FxTable | null> {
+  if (!nw.home) return null;
+  const counted = nw.read.accounts.filter(countsNow);
+  const currencies = new Set<string | null>([...counted.map((a) => a.currency), netWorthCurrency(counted).currency]);
+  if (nw.split) {
+    currencies.add(nw.split.main);
+    for (const p of nw.split.points) for (const c of Object.keys(p.parts ?? {})) currencies.add(c);
+  }
+  return ratesFor(ctx, nw.home, currencies, nw.split?.points[0]?.date ?? utcDay(now), now);
 }
 
 /** Whether an account counts in net worth now: not once it has ended. */
@@ -653,7 +759,7 @@ function netWorthCurrency(accounts: readonly ApiAccount[]): { currency: string |
   };
 }
 
-function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
+function netWorthOf({ read, history, home }: NetWorthRead, fx: FxTable | null, now: number = Date.now()): ApiNetWorth {
   const counted = read.accounts.filter(countsNow);
   const { currency: main, mixed } = netWorthCurrency(counted);
   const totals = new Map<string | null, { currency: string | null; net_worth: number; assets: number; debts: number; accounts: number }>();
@@ -674,6 +780,7 @@ function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
   }
   days.sort();
   const last = [...history].reverse().find((p) => !p.estimated) ?? null;
+  const conv = home ? converted(home, fx, counted, main, now) : null;
   return {
     totals: [...totals.values()]
       .map((t) => ({ ...t, assets: tidy(t.assets), debts: tidy(t.debts), net_worth: tidy(t.assets - t.debts) }))
@@ -684,14 +791,26 @@ function netWorthOf({ read, history }: NetWorthRead): ApiNetWorth {
     complete: read.missing.length === 0 && without === 0,
     missing_accounts: read.missing,
     recorded: last ? { date: last.date, value: tidy(last.value), currency: main, mixed_currencies: mixed } : null,
-    notes: read.notes,
+    ...(conv ?? {}),
+    notes: [...read.notes, ...(home?.note ? [home.note] : []), ...(conv?.base ? [...baseNotes(conv.base, conv.base_currency!), ...ratesNotes(fx)] : [])],
   };
 }
 
+/** Net worth's base_currency and base: the accounts counted now that have a
+ *  balance, converted as the app converts them. */
+function converted(home: HomeRead, fx: FxTable | null, counted: readonly ApiAccount[], main: string | null, now: number): Pick<ApiNetWorth, 'base_currency' | 'base'> {
+  if (!home.settings || !fx) return { base_currency: null, base: null };
+  const balances = counted.flatMap((a) => (a.balance === null ? [] : [{ balance: a.balance, currency: a.currency, is_debt: a.is_debt }]));
+  return { base_currency: home.settings.home, base: apiBase(balances, fx, main, now) };
+}
+
 /** Net worth now, from each account's newest measured balance, per currency,
- *  and the newest recorded point of its history. */
-export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean } = {}): Promise<ApiNetWorth> {
-  return netWorthOf(await netWorthRead(ctx, !!opts.includeHidden));
+ *  and the newest recorded point of its history. With `base`, converted into
+ *  the home currency the person chose. */
+export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean; base?: boolean } = {}): Promise<ApiNetWorth> {
+  const now = Date.now();
+  const nw = await netWorthRead(ctx, !!opts.includeHidden, { base: opts.base });
+  return netWorthOf(nw, await netWorthRates(ctx, nw, now), now);
 }
 
 // ---- Balance history ----
@@ -721,13 +840,16 @@ export type ApiHistory = {
   /** The account asked for, or null for net worth. */
   account_id: string | null;
   currency: string | null;
+  /** The home currency points' to_base is in, or null (see ApiMe). Added in
+   *  version 1. */
+  base_currency: string | null;
   /** Net worth's recorded totals add balances in every currency, as the chart
    *  does: true when the accounts counted are in more than one. */
   mixed_currencies: boolean;
   interval: Interval;
   /** Oldest first. `estimated` is true for a point reconstructed from
    *  transactions rather than recorded (only with include_estimated). */
-  points: { date: string; value: number; estimated: boolean }[];
+  points: { date: string; value: number; estimated: boolean; to_base: number | null }[];
   /** With include_estimated: the estimated points dated `from` up to (not
    *  including) `until` follow, at least for one account, transactions
    *  imported from files rather than the bank's own (#52,
@@ -760,7 +882,8 @@ function seriesOf(
   q: HistoryQuery,
   head: { account_id: string | null; currency: string | null; mixed: boolean },
   notes: string[],
-  imported: ApiHistory['from_imports'] = null
+  imported: ApiHistory['from_imports'] = null,
+  base: { currency: string | null; of: ((p: HistoryPoint) => number | null) | null } = { currency: null, of: null }
 ): ApiHistory {
   const interval = q.interval ?? 'day';
   const kept = points.filter(
@@ -769,23 +892,37 @@ function seriesOf(
   return {
     account_id: head.account_id,
     currency: head.currency,
+    base_currency: base.currency,
     mixed_currencies: head.mixed,
     interval,
-    points: sampleSeries(kept, interval).map((p) => ({ date: p.date, value: tidy(p.value), estimated: !!p.estimated })),
+    points: sampleSeries(kept, interval).map((p) => ({ date: p.date, value: tidy(p.value), estimated: !!p.estimated, to_base: base.of ? base.of(p) : null })),
     from_imports: q.includeEstimated ? imported : null,
     notes,
   };
 }
 
-/** Net worth's history from a read already made. */
-function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState | null): ApiHistory {
+/** Net worth's history from a read already made, each point with its
+ *  to_base when the read was asked to convert, from its split. */
+function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState | null, fx: FxTable | null): ApiHistory {
   const { currency, mixed } = netWorthCurrency(nw.read.accounts.filter(countsNow));
+  const notes: string[] = nw.home?.note ? [nw.home.note] : [];
+  let base: { currency: string | null; of: ((p: HistoryPoint) => number | null) | null } = { currency: null, of: null };
+  if (fx?.home && nw.split) {
+    const { byDay, gaps } = historyInBase(
+      nw.split,
+      fx,
+      (p) => (q.includeEstimated || !p.estimated) && (q.from === undefined || p.date >= q.from) && (q.to === undefined || p.date <= q.to)
+    );
+    base = { currency: fx.home, of: (p) => byDay.get(p.date) ?? null };
+    notes.push(...historyNotes(gaps, fx.home, nw.split.main), ...ratesNotes(fx));
+  }
   return seriesOf(
     nw.history,
     q,
     { account_id: null, currency, mixed },
-    [],
-    fromImports(drawn, null, q.includeHidden ? new Set() : new Set(nw.read.hidden.keys()), nw.read.lifecycle.ended)
+    notes,
+    fromImports(drawn, null, q.includeHidden ? new Set() : new Set(nw.read.hidden.keys()), nw.read.lifecycle.ended),
+    base
   );
 }
 
@@ -796,7 +933,7 @@ function netWorthHistoryOf(nw: NetWorthRead, q: HistoryQuery, drawn: WalkState |
  * asked for; NotFound for an id that names no account Nya has or had.
  */
 async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<ApiHistory | null> {
-  const effective = await getEffectiveHidden(ctx, { readOnly: true });
+  const [effective, home] = await Promise.all([getEffectiveHidden(ctx, { readOnly: true }), readHome(ctx)]);
   if (!q.includeHidden && effective.hidden.has(id)) return null;
   const links = effective.links ?? new Map<string, Link>();
   const older = sameAccountIds(id, links).filter((other) => other !== id);
@@ -805,9 +942,9 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
   let known = links.has(id) || [...links.values()].some((l) => l.to === id);
   let currency: string | null = null;
   if (isManualId(id)) {
-    // Its currency is its own: a manual account's (US dollars unless it says:
-    // one kept from SimpleFIN on a disconnect can be in another), or the one
-    // SimpleFIN gives an account it feeds. LENIENT, for this display only: a
+    // Its currency is its own: a manual account's (chosen for it, or kept
+    // from a connector on a disconnect; US dollars when it names none), or
+    // the one SimpleFIN or Lunch Flow gives an account it feeds. LENIENT, for this display only: a
     // record that can't be read leaves the currency unknown, said in a note,
     // rather than failing a history kept apart from it. Storage out of reach
     // still throws.
@@ -833,7 +970,18 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     }
   }
   if (!known && points.length === 0) throw new NotFound('No account has that id. The ids are in /api/v1/accounts.');
-  return seriesOf(points, q, { account_id: id, currency, mixed: false }, notes, fromImports(await readDrawState(ctx), [id, ...older]));
+  // In base_currency, each point at its own day's rate, from the account's
+  // own currency.
+  if (home.note) notes.push(home.note);
+  const now = Date.now();
+  const fx = home.settings && currency !== null ? await ratesFor(ctx, home, [currency], points[0]?.date ?? utcDay(now), now) : null;
+  if (home.settings && currency === null && !notes.some((n) => n.includes('currency isn’t known'))) notes.push('This account’s currency isn’t known, so its points have no to_base');
+  const series = seriesOf(points, q, { account_id: id, currency, mixed: false }, notes, fromImports(await readDrawState(ctx), [id, ...older]), {
+    currency: home.settings?.home ?? null,
+    of: fx ? (p) => toBase(fx, p.value, currency, p.date) : null,
+  });
+  if (fx && currency !== null) series.notes.push(...pointNotes(fx, series.points, currency), ...ratesNotes(fx));
+  return series;
 }
 
 /**
@@ -844,14 +992,18 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
  */
 export async function readBalanceHistory(ctx: Ctx, q: HistoryQuery): Promise<ApiHistory | null> {
   if (q.accountId !== undefined) return accountHistory(ctx, q.accountId, q);
-  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden), readDrawState(ctx)]);
-  return netWorthHistoryOf(nw, q, drawn);
+  const now = Date.now();
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: true, split: true }), readDrawState(ctx)]);
+  return netWorthHistoryOf(nw, q, drawn, await netWorthRates(ctx, nw, now));
 }
 
-/** Net worth now and its history, from one read of each (get_net_worth). */
-export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
-  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden), readDrawState(ctx)]);
-  return { now: netWorthOf(nw), history: netWorthHistoryOf(nw, q, drawn) };
+/** Net worth now and its history, from one read of each (get_net_worth).
+ *  With `base`, converted into the home currency the person chose. */
+export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>, opts: { base?: boolean } = {}): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
+  const now = Date.now();
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: opts.base, split: opts.base }), readDrawState(ctx)]);
+  const fx = await netWorthRates(ctx, nw, now);
+  return { now: netWorthOf(nw, fx, now), history: netWorthHistoryOf(nw, q, drawn, fx) };
 }
 
 // ---- Transactions ----

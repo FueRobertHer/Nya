@@ -73,8 +73,10 @@ export function splitScoped(key: string): { container: ContainerId | null; key: 
  *  and the demo sign-in's (app/api/demo/sign-in). A limit on something a person
  *  does once signed in (downloading their data) is a counter store on the
  *  storage seam, inside their container, never under this prefix
- *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds). */
-export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:'] as const;
+ *  (test/rate-limit-keys.test.ts checks every rate-limit key the code builds).
+ *  "fx:" is public data the seam keeps once for everyone (lib/repo.ts
+ *  definePublicMapStore): the ECB's exchange rates (lib/fx/ecb-store.ts). */
+export const ENV_WIDE_PREFIXES = ['crypto:', 'containers', 'ratelimit:', 'backups:', 'owners', 'grants', 'connections', 'invites:', 'fx:'] as const;
 
 export function isEnvWide(key: string): boolean {
   return ENV_WIDE_PREFIXES.some((p) => key === p || (p.endsWith(':') && key.startsWith(p)));

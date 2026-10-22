@@ -5,19 +5,24 @@ import {
   getManualAccounts,
   getManualAccount,
   saveManualAccount,
+  setManualCurrency,
+  currencyField,
   normalizeInstitutionName,
   isManualId,
   newManualId,
   MANUAL_TYPES,
   MAX_BALANCE,
   MAX_MANUAL_ACCOUNTS,
+  MANUAL_CURRENCY,
   type ManualAccount,
   type ManualType,
 } from '@/lib/manual';
 import { isOwedType } from '@/lib/balance';
+import { isCurrencyCode, knownCurrency } from '@/lib/manual-txn-input';
 import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { deleteManualAccount } from '@/lib/manual-account-delete';
+import { followAccountCurrency } from '@/lib/import/commit';
 import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
@@ -34,6 +39,18 @@ import { loggable } from '@/lib/log-safe';
 // Per-account operations remove the class: a request can only affect the account
 // it names. It also means a scheduled push to /api/ingest/balance can't be
 // reverted by an unrelated edit made in a stale tab.
+//
+// ITS CURRENCY is chosen when it is made or updated (`currency`, an ISO code;
+// US dollars when a request names none, as every account made before it could
+// be chosen is), and stored with it (lib/manual.ts currencyField). Choosing it
+// never changes the balance's number. An update that names none keeps the
+// account's own, so a page from before keeps it too. PATCH with only
+// `account_id` and `currency` sets the currency alone (the choice of a home
+// currency corrects one there), leaving the balance as stored. A correction
+// changes nothing else: the transactions already on the account keep their
+// own currency (relabelling them is the next step's), and what its last
+// imported files taught follows it (lib/import/commit.ts
+// followAccountCurrency), so the next file is read in the new one.
 
 type DraftInput = {
   name?: unknown;
@@ -41,13 +58,22 @@ type DraftInput = {
   type?: unknown;
   subtype?: unknown;
   balance?: unknown;
+  currency?: unknown;
 };
 
 type Validated = Omit<ManualAccount, 'account_id' | 'updated_at'>;
 
+const CURRENCY_ERROR = 'The currency is a three-letter ISO code, like USD or EUR';
+
+/** A currency a request names: undefined when it names none. */
+function currencyOf(given: unknown): { error: string } | { currency: string | undefined } {
+  if (given === undefined) return { currency: undefined };
+  return isCurrencyCode(given) && knownCurrency(given) ? { currency: given } : { error: CURRENCY_ERROR };
+}
+
 /** Shared field validation for create and update. Returns an error string, or
- *  the cleaned fields. */
-function validate(body: DraftInput): { error: string } | { value: Validated } {
+ *  the cleaned fields, with the currency when the request names one. */
+function validate(body: DraftInput): { error: string } | { value: Validated; currency: string | undefined } {
   const name = String(body?.name ?? '').trim().slice(0, 60);
   const institution_name = normalizeInstitutionName(String(body?.institution_name ?? '')).slice(0, 60);
   const type = String(body?.type ?? '') as ManualType;
@@ -68,7 +94,9 @@ function validate(body: DraftInput): { error: string } | { value: Validated } {
   if (isOwedType(type) && balance < 0) {
     return { error: 'Credit and loan balances are the amount owed, so they cannot be negative' };
   }
-  return { value: { name, institution_name, type, subtype, balance } };
+  const currency = currencyOf(body?.currency);
+  if ('error' in currency) return currency;
+  return { value: { name, institution_name, type, subtype, balance }, currency: currency.currency };
 }
 
 /** Cached payloads still hold the old balances. The backfill flag is cleared only
@@ -117,6 +145,7 @@ export async function POST(req: Request) {
 
     const account: ManualAccount = {
       ...result.value,
+      ...currencyField(result.currency ?? MANUAL_CURRENCY),
       account_id: newManualId(),
       updated_at: new Date().toISOString(),
     };
@@ -140,6 +169,19 @@ export async function PATCH(req: Request) {
     if (!account_id || !isManualId(account_id)) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
+    // The currency alone, as one compare-and-set: nothing else is written.
+    if (body && typeof body === 'object' && 'currency' in body && Object.keys(body).every((k) => k === 'account_id' || k === 'currency')) {
+      const given = currencyOf(body.currency);
+      if ('error' in given || given.currency === undefined) return NextResponse.json({ error: CURRENCY_ERROR }, { status: 400 });
+      const set = await setManualCurrency(ctx, account_id, given.currency);
+      if (set === 'missing') return NextResponse.json({ error: 'That account no longer exists' }, { status: 404 });
+      if (set !== 'same') {
+        await followAccountCurrency(ctx, account_id, set.from, given.currency);
+        // A currency moves no balance: the estimated history stays as it is.
+        await invalidate(ctx, false);
+      }
+      return NextResponse.json({ account: await getManualAccount(ctx, account_id) });
+    }
     const result = validate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
 
@@ -149,17 +191,19 @@ export async function PATCH(req: Request) {
     }
 
     const balanceChanged = existing.balance !== result.value.balance;
+    const was = existing.currency ?? MANUAL_CURRENCY;
+    const currency = result.currency ?? was;
     const account: ManualAccount = {
       ...result.value,
-      // The form doesn't change the currency: an account kept from a
-      // connector in another currency stays in it (lib/manual.ts).
-      ...(existing.currency ? { currency: existing.currency } : {}),
+      // The one chosen, or, from a page that names none, its own.
+      ...currencyField(currency),
       account_id,
       // Only stamp updated_at when the balance actually moved, so the "Updated
       // ..." line reflects the last real balance change rather than a rename.
       updated_at: balanceChanged ? new Date().toISOString() : existing.updated_at,
     };
     await saveManualAccount(ctx, account);
+    await followAccountCurrency(ctx, account_id, was, currency);
     await invalidate(ctx, balanceChanged);
     return NextResponse.json({ account });
   } catch (err) {

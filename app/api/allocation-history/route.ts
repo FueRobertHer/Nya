@@ -246,7 +246,7 @@ export async function POST(req: Request) {
     // as it was while it was listed: as its end recorded it, else as its
     // institution last reported it (lib/sharing.ts bankCurrencies, a display
     // convenience, so one that can't be read is none), a manual account's in
-    // US dollars as it is kept (lib/manual.ts).
+    // the one its end recorded, else US dollars (lib/manual.ts).
     const added: { account: string; end: string; currency: string | null; ids: string[] }[] = [];
     for (const [root, { entry }] of lifecycle.accounts) {
       const end = endOf(entry.lifecycle);

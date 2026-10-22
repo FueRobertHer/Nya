@@ -236,6 +236,21 @@ describe('recordDirectory', () => {
     expect(dir.kept).toBeDefined();
   });
 
+  // What prices a disconnected account in net worth's history
+  // (lib/fx/known-accounts.ts): kept from this release on.
+  test('keeps the account’s currency, and keeps it when a later load says none', async () => {
+    await links.recordDirectory(ctx, [inst([{ account_id: 'ira', type: 'investment', currency: 'EUR' }])], NOW);
+    expect((await read()).ira.currency).toBe('EUR');
+    await links.recordDirectory(ctx, [inst([{ account_id: 'ira', type: 'investment', currency: null }])], NOW + DAY);
+    expect((await read()).ira.currency).toBe('EUR');
+    expect(await links.directoryCurrencies(ctx)).toEqual([{ account_id: 'ira', currency: 'EUR', type: 'investment' }]);
+  });
+
+  test('an entry from before currencies were kept says none, and one that can’t be read is left out', async () => {
+    await fake.hset(ctxKey('accounts:directory'), { old: await encrypt(TEST_CTX, JSON.stringify(entry())), bad: 'not-a-ciphertext' });
+    expect(await links.directoryCurrencies(ctx)).toEqual([{ account_id: 'old', currency: null, type: 'credit' }]);
+  });
+
   test('records the provider', async () => {
     await links.recordDirectory(ctx, [inst([{ account_id: 'ira', type: 'investment' }])], NOW);
     expect((await read()).ira.provider).toBe('plaid');
