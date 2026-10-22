@@ -101,10 +101,12 @@ describe('the scan', () => {
   });
 
   test('emptying keeps only the machinery that is independent of the data: what is derived from it goes with it', () => {
-    for (const key of ['cache:net-worth', 'sessions:abc', 'ratelimit:x', 'snapshot:2026-10-01', 'move:x', 'api-tokens', 'sharing-access-log', 'weekly-summary-state', 'user-restore-starts', 'download-count', 'account-links:lock']) {
+    for (const key of ['cache:net-worth', 'sessions:abc', 'ratelimit:x', 'snapshot:runs', 'snapshot:lock', 'move:x', 'api-tokens', 'sharing-access-log', 'weekly-summary-state', 'user-restore-starts', 'download-count', 'account-links:lock']) {
       expect([key, keptWhenEmptied(key)]).toEqual([key, true]);
     }
-    for (const key of ['holdings:history:index', 'imported-history-walk', 'accounts:vanished', 'plaid:new-accounts', 'history:backfill-done', 'txns-blocked:item1', 'connection-notices', 'plaid:items', 'categories', 'user-restore']) {
+    // When each day's snapshot was taken, and what it saw of each connection:
+    // the data's, read for a day's "as of" time.
+    for (const key of ['snapshot:taken', 'snapshot:item-usage', 'holdings:history:index', 'imported-history-walk', 'accounts:vanished', 'plaid:new-accounts', 'history:backfill-done', 'txns-blocked:item1', 'connection-notices', 'plaid:items', 'categories', 'user-restore']) {
       expect([key, keptWhenEmptied(key)]).toEqual([key, false]);
     }
   });

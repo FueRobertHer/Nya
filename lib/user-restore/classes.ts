@@ -160,13 +160,12 @@ export function classOfKey(key: string): { family: string | null; cls: KeyClass 
 
 /** The machinery that is independent of the person's data (see the header):
  *  counters (by kind), sessions, caches, the rate limits, locks, the
- *  snapshot's and the move's records, the API tokens, the record of
- *  showings and the weekly summary's key. */
+ *  snapshot's own log and lock (SNAPSHOT_KEPT), the move's records, the API
+ *  tokens, the record of showings and the weekly summary's key. */
 const KEPT_WHEN_EMPTIED: ReadonlySet<string> = new Set([
   'ratelimit:',
   'sessions:',
   'cache:',
-  'snapshot:',
   'move:',
   'account-links:lock',
   'invtxns-lock:',
@@ -183,8 +182,16 @@ export function keptWhenEmptied(key: string): boolean {
   if (cls !== 'machinery' || family === null) return false;
   const store = declaredStore(family);
   if (store && (store.kind === 'counter' || store.kind === 'counter-map')) return true;
+  // Of the snapshot's keys, its own log and lock: when each day's snapshot
+  // was taken (`snapshot:taken`, what a day's "as of" time is read from) and
+  // what it saw of each connection (`snapshot:item-usage`) are the data's.
+  if (family === 'snapshot:') return SNAPSHOT_KEPT.has(splitScoped(key).key);
   return KEPT_WHEN_EMPTIED.has(family);
 }
+
+/** The snapshot's keys that are about the cron, not the data (see
+ *  keptWhenEmptied): its runs' outcomes and its lock (lib/snapshot-job.ts). */
+const SNAPSHOT_KEPT: ReadonlySet<string> = new Set(['snapshot:runs', 'snapshot:lock']);
 
 /** Families and stores without a class: what the test checks is empty. */
 export function unclassified(): string[] {

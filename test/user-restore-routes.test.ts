@@ -592,12 +592,16 @@ describe('what emptying takes', () => {
     // a drawing's record.
     await recordHoldings(ctx, [broker('acct_tried', '2026-01-10')], Date.parse('2026-01-10T13:00:00.000Z'));
     await importedRowsChanged(ctx, { dates: ['2026-01-02'] });
+    // When the day's snapshot was taken, beside the cron's own log.
+    await fake.hset(ctxKey('snapshot:taken'), { '2026-01-10': '2026-01-10T13:00:00.000Z' });
+    await fake.hset(ctxKey('snapshot:runs'), { '2026-01-10': 'x' });
     const inContainer = () => [...Object.keys(snapshot(ctxKey('')))].map((k) => k.slice(ctxKey('').length));
-    expect(inContainer()).toEqual(expect.arrayContaining(['holdings:history:index', 'imported-history-walk']));
+    expect(inContainer()).toEqual(expect.arrayContaining(['holdings:history:index', 'imported-history-walk', 'snapshot:taken']));
     expect(await call('POST', '/api/user-restore', { action: 'empty', confirm: 'empty my account', password: 'hunter2' })).toEqual({ status: 200, body: { emptied: true } });
-    expect(inContainer().filter((k) => k.startsWith('holdings:') || k === 'imported-history-walk')).toEqual([]);
-    // Machinery that is independent of the data stays: the counters.
-    expect(inContainer()).toContain('user-restore-starts');
+    expect(inContainer().filter((k) => k.startsWith('holdings:') || k === 'imported-history-walk' || k === 'snapshot:taken')).toEqual([]);
+    // Machinery that is independent of the data stays: the counters, the
+    // snapshot's own log.
+    expect(inContainer()).toEqual(expect.arrayContaining(['user-restore-starts', 'snapshot:runs']));
 
     await restoreAll(text);
     expect((await readHoldingsRange(ctx, '2026-01-01', '2026-01-31')).map((d) => [d.date, d.accounts.map((a) => a.account_id)])).toEqual([['2026-01-15', ['acct_brk']]]);
