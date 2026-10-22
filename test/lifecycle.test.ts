@@ -569,7 +569,9 @@ describe('assumed closures', () => {
     const noteId = entry!.missed![0].note!;
     expect(isMissedNoteId(noteId)).toBe(true);
     expect(noteId).not.toContain('sav');
-    expect(noteId).not.toContain('2026');
+    // The window's day, which a random id's hex can never spell out (its year
+    // alone, four hex digits, now and then it can).
+    expect(noteId).not.toContain('2026-03-12');
     expect(await timelineNotesStore.get(ctx, noteId)).toMatchObject({
       date: '2026-03-12',
       kind: 'auto',

@@ -51,6 +51,13 @@ export function Masked({ children }: { children: string | null | undefined }) {
   );
 }
 
+/** The placeholder of a field holding an amount that has no example to give:
+ *  nothing to see, but while amounts are hidden the CSS hook (app/globals.css,
+ *  "Hide amounts") tells by it that the field is empty, and draws nothing in
+ *  it rather than the mask. Every such field has a placeholder
+ *  (test/amount-sources.test.ts). */
+export const NO_EXAMPLE = ' ';
+
 /** What a screen reader is to be given for text that holds hidden amounts
  *  and can't hold markup (a select's option): its spoken words, as an
  *  aria-label, or nothing for text without one. */

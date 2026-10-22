@@ -18,6 +18,7 @@
 
 import type { GridCell } from '@/lib/fire/simulate';
 import { pct, successText } from './plan-text';
+import { plainNumber } from '@/lib/format';
 
 /** A cell that couldn't be worked out. */
 export type FailedCell = { rate: number | null; years: number };
@@ -64,7 +65,7 @@ export default function PlanGrid({
     } else if (c) {
       const low = c.lowestSpendingShare;
       title =
-        `${rateLabel(rate)} for ${years} years: ${successText(c.successRate, 1)} of ${c.paths.toLocaleString()} ${pathsNoun} lasted` +
+        `${rateLabel(rate)} for ${years} years: ${successText(c.successRate, 1)} of ${plainNumber(c.paths)} ${pathsNoun} lasted` +
         (flexible
           ? low === null
             ? ', and none was left to measure spending in'

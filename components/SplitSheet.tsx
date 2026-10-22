@@ -18,7 +18,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { Sheet } from './Sheet';
 import CategoryPicker from './CategoryPicker';
 import type { Txn } from './MonthBreakdown';
-import { formatMoney, hideFiguresIn } from '@/lib/format';
+import { fieldAmount, formatMoney, hideAmountsIn } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { normalizedAmountText, MAX_NOTE_CHARS } from '@/lib/manual-txn-input';
 import { currencyOf } from '@/lib/spending';
@@ -39,7 +39,14 @@ const newKey = () => `part-${++keys}`;
 
 /** An amount as the form shows it, unsigned, in the currency's places. */
 function typed(amount: number, scale: number): string {
-  return (Math.abs(toUnits(amount, scale)) / scale).toFixed(Math.round(Math.log10(scale)));
+  return fieldAmount(Math.abs(toUnits(amount, scale)) / scale, Math.round(Math.log10(scale)));
+}
+
+/** An empty part's example: zero, to the currency's places. No figure of
+ *  anyone's, so it is written as text, not as a field's figures. */
+function zeroIn(scale: number): string {
+  const places = Math.round(Math.log10(scale));
+  return places > 0 ? `0.${'0'.repeat(places)}` : '0';
 }
 
 /** The parts the form starts from: the split's own (what the bank changed
@@ -216,7 +223,7 @@ export default function SplitSheet({
                   aria-label={`Part ${i + 1} amount`}
                   value={d.amount}
                   onChange={(e) => set(d.key, { amount: e.target.value })}
-                  placeholder={typed(0, scale)}
+                  placeholder={zeroIn(scale)}
                   aria-invalid={d.amount.trim() !== '' && parsed[i] === null}
                   disabled={saving}
                 />
@@ -267,11 +274,12 @@ export default function SplitSheet({
       <p className={`split-left${left === 0 ? ' done' : ''}`} role="status">
         <Masked>{left === 0 ? 'The parts add up to the transaction.' : left > 0 ? `${money(left)} left to split` : `${money(left)} more than the transaction`}</Masked>
       </p>
-      {/* The server's words can give the parts' figures, with no currency to
-          tell them by: all its figures are hidden while amounts are. */}
+      {/* The server's words can give the parts' amounts, each with its
+          currency (lib/splits.ts): those are hidden while amounts are, and
+          its counts stay. */}
       {error && (
         <div className="error">
-          <Masked>{hideFiguresIn(error)}</Masked>
+          <Masked>{hideAmountsIn(error)}</Masked>
         </div>
       )}
       <div className="button-pair">

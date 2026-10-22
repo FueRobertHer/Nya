@@ -23,7 +23,7 @@ const previewRoute = await import('@/app/api/weekly-summary/preview/route');
 const sendRoute = await import('@/app/api/weekly-summary/send/route');
 const unsubscribeRoute = await import('@/app/api/weekly-summary/unsubscribe/route');
 const { weeklySettingStore, weeklyStateStore, SENDS_NOW_PER_DAY, UNSUBSCRIBES_PER_HOUR } = await import('@/lib/weekly-summary/store');
-const { linkToken, linkExpiry, LINK_DAYS, OFF_MESSAGE, REFUSED_MESSAGE } = await import('@/lib/weekly-summary/unsubscribe');
+const { linkToken, linkExpiry, parseLinkToken, LINK_DAYS, OFF_MESSAGE, REFUSED_MESSAGE } = await import('@/lib/weekly-summary/unsubscribe');
 const { sendNow } = await import('@/lib/weekly-summary/send-now');
 const { sendWeeklySummaries } = await import('@/lib/weekly-summary/job');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -359,9 +359,12 @@ describe('the link that turns it off', () => {
     const otherKey = Buffer.alloc(32, 2).toString('base64url');
     await onWithLink(OTHER);
     const flip = (s: string) => (s[0] === 'A' ? 'B' : 'A') + s.slice(1);
+    // The day after, as a real day: one added to "20270331" is no day at all,
+    // which is refused before anything is read, and not counted.
+    const dayAfter = new Date(Date.parse(`${expires.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3')}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10).replaceAll('-', '');
     const cases: [string, string][] = [
       ['a forged mac', `${container}.${expires}.${flip(mac)}`],
-      ['another day than it was signed for', `${container}.${String(Number(expires) + 1)}.${mac}`],
+      ['another day than it was signed for', `${container}.${dayAfter}.${mac}`],
       ['expired', linkToken(ME, Buffer.alloc(32, 1).toString('base64url'), '2026-01-01')],
       ['signed with another container’s key', linkToken(ME, otherKey, expires.replace(/^(\d{4})(\d{2})(\d{2})$/, '$1-$2-$3'))],
       ['another container’s id on this one’s mac', `${OTHER.container}.${expires}.${mac}`],
@@ -386,6 +389,29 @@ describe('the link that turns it off', () => {
     expect(await failuresOf()).toBe(counted);
   });
 
+  test('a link is in one spelling: the others its mac’s last character has, for the same bytes, are not links', async () => {
+    const good = await onWithLink(TEST_CTX);
+    const [container, expires, mac] = good.split('.');
+    const BASE64URL = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
+    const last = BASE64URL.indexOf(mac.at(-1)!);
+    // Its lowest two bits are padding, clear as the link is written.
+    expect(last % 4).toBe(0);
+    expect(parseLinkToken(good)).toMatchObject({ container, expires });
+    for (const k of [1, 2, 3]) {
+      const other = `${container}.${expires}.${mac.slice(0, -1)}${BASE64URL[last + k]}`;
+      // The same 32 bytes, read leniently, but not the link's spelling.
+      expect(Buffer.from(other.split('.')[2], 'base64url')).toEqual(Buffer.from(mac, 'base64url'));
+      expect(parseLinkToken(other)).toBeNull();
+      const res = await post(other);
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: REFUSED_MESSAGE });
+    }
+    // Not in a token's form: nothing counted, and the summary still on.
+    expect(await failuresOf()).toBe(0);
+    expect((await weeklySettingStore.get(TEST_CTX))!.enabled).toBe(true);
+    expect((await post(good)).status).toBe(200);
+  });
+
   test('an address past a flood of links that don’t work is turned away before anything is read', async () => {
     const good = await onWithLink(TEST_CTX);
     await fake.set(testKey(`ratelimit:api:${IP}`), String(API_AUTH_MAX_FAILURES));
@@ -408,8 +434,8 @@ describe('the link that turns it off', () => {
     await registerTestContainer(fake, 'restoring');
     expect((await post(good)).status).toBe(503);
     // Its first character changed: all six of its bits are the mac's. The
-    // last one's lowest two are padding, so changing only those, as some days'
-    // macs would, leaves the same mac.
+    // last one's lowest two are padding, so changing only those would make a
+    // spelling that is no link at all, refused before the mac is checked.
     const [container, expires, mac] = good.split('.');
     expect((await post(`${container}.${expires}.${mac[0] === 'A' ? 'B' : 'A'}${mac.slice(1)}`)).status).toBe(400);
   });

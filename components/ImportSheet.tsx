@@ -35,7 +35,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import type { SheetInstitution } from './ManualTxnSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, signedMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
 import { instantDay, localDate } from '@/lib/local-date';
 import { isOwedType } from '@/lib/balance';
 import { DEFAULT_CURRENCY, isCurrencyCode } from '@/lib/manual-txn-input';
@@ -1171,7 +1171,7 @@ export function PreviewView({
   const kinds = kindsText(p.kinds);
   const importLabel =
     c.new > 0 && c.replaced > 0
-      ? `Import ${plural(c.new, 'transaction')}, update ${c.replaced.toLocaleString()}`
+      ? `Import ${plural(c.new, 'transaction')}, update ${plainNumber(c.replaced)}`
       : c.new > 0
         ? `Import ${plural(c.new, 'transaction')}`
         : c.replaced > 0
@@ -1362,7 +1362,7 @@ export function PreviewView({
 
       {unanswered > 0 && <p className="stale-note">Choose what to do with {unanswered === 1 ? 'the transaction' : `the ${unanswered.toLocaleString()} transactions`} above whose bank id is already here, then import.</p>}
       {/* A refusal can name the balance (one changed since the preview). */}
-      {error && <div className="error">{hideAmountsIn(error)}</div>}
+      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onBack} disabled={busy}>
           {file.format === 'csv' ? 'Columns' : 'Another file'}

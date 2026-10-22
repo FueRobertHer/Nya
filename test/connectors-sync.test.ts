@@ -35,7 +35,7 @@ const { connect, trackAccounts, retypeAccounts, releaseAccounts, disconnect, rec
 const sync = await import('@/lib/connectors/sync');
 const { syncConnection, syncConnectorsDaily, recentStart, advanceHistory, backfillWindow, DAILY_REQUESTS, REFRESH_RESERVE, BACKFILL_WINDOWS_PER_RUN } = sync;
 const { connectionsStore, connectorAccountsStore, secretsStore } = await import('@/lib/connectors/store');
-const { buildConnectorInstitutions, FRESH_HOURS, trackedElsewhere } = await import('@/lib/connectors/institutions');
+const { buildConnectorInstitutions, FRESH_HOURS, OLD_BALANCE_HOURS, trackedElsewhere } = await import('@/lib/connectors/institutions');
 const { computeNetWorth, recordFetch, isRecordable } = await import('@/lib/networth');
 const { manualTxnStore, editManualTxn, findManualTxn, connectorTransfers } = await import('@/lib/manual-txns');
 const { getManualAccounts } = await import('@/lib/manual');
@@ -505,6 +505,56 @@ describe('the snapshot gate and connection health', () => {
     expect(late.map((i) => [i.health?.detail?.issue, i.health?.side, isRecordable(i)])).toEqual([
       ['stale', 'nya', false],
       ['stale', 'nya', false],
+    ]);
+  });
+
+  test('a balance current at the last answer is never blamed on the bank link once no answer comes; one old already when it came is; one too old now is never recorded', async () => {
+    const id = await connectAndTrack();
+    const conn = (await connectionsStore.get(ctx, id))!;
+    const answered = Date.parse(conn.last_answer_at!);
+    const HOUR = 3_600_000;
+    const tracked = [...(await connectorAccountsStore.getAll(ctx)).values()];
+    const at = (balanceAge: number) => tracked.map((a) => ({ ...a, balance_at: new Date(answered - balanceAge * HOUR).toISOString() }));
+    const health = (accounts: ReturnType<typeof at>, hoursAfter: number) =>
+      buildConnectorInstitutions(new Map([[id, conn]]), accounts, answered + hoursAfter * HOUR).map((i) => [i.health?.detail?.issue, i.health?.side, isRecordable(i)]);
+    // The fixture as it stands late in a UTC day (23:30): the bank's balance
+    // from noon the day before, 35.5 hours old at the answer. Judged when no
+    // answer has come for a day and a half, it is three days old by then, but
+    // that is Nya's daily update missing, not SimpleFIN's link: nothing for the
+    // person to do at their bank. The gate stays shut either way.
+    expect(health(at(35.5), FRESH_HOURS + 1)).toEqual([
+      ['stale', 'nya', false],
+      ['stale', 'nya', false],
+    ]);
+    // A balance past OLD_BALANCE_HOURS when SimpleFIN gave it is its link's,
+    // at once and still later.
+    const old = at(OLD_BALANCE_HOURS + 1);
+    for (const after of [1, FRESH_HOURS + 1]) {
+      expect(health(old, after)).toEqual([
+        ['old_balance', 'connector', false],
+        ['old_balance', 'connector', false],
+      ]);
+    }
+    // One that passes it while the answer is still fresh is held out too, and
+    // is the link's: 80 hours old now, from an answer 30 hours old (50 hours
+    // old then), and the like. Never recorded as today's.
+    for (const [ageThen, after] of [
+      [50, 30],
+      [65, 35],
+      [71, 3],
+    ]) {
+      expect([ageThen + after, health(at(ageThen), after)]).toEqual([
+        ageThen + after,
+        [
+          ['old_balance', 'connector', false],
+          ['old_balance', 'connector', false],
+        ],
+      ]);
+    }
+    // A balance current now, from a fresh answer, is recorded.
+    expect(health(at(OLD_BALANCE_HOURS - 10), 5).map(([issue, , recordable]) => [issue, recordable])).toEqual([
+      ['ok', true],
+      ['ok', true],
     ]);
   });
 

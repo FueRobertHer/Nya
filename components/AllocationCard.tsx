@@ -1329,7 +1329,7 @@ export function AllocationHistoryChart({
         <span className="chart-readout-value">{dayMixText(day)}</span>
         <span className="chart-readout-date">
           {dayName(day.date)} · <Masked>{wholeMoney(day.total, currency)}</Masked> counted
-          {isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}
+          <Masked>{isMoney(day.unlisted) ? `, ${wholeMoney(day.unlisted, currency)} of it in no position` : ''}</Masked>
           {day.missing.length ? ` · leaves out ${missingOn(day, answer, nameOf)}` : ''}
         </span>
       </div>

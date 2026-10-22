@@ -96,7 +96,7 @@ export default function AccountSparkline({
   if (points.length < 2) {
     return (
       <p className="empty-note">
-        Not enough history for this account yet — it builds as snapshots accumulate.
+        Not enough history for this account yet: it builds as snapshots accumulate.
       </p>
     );
   }
