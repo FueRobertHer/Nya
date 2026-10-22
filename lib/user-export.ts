@@ -750,9 +750,10 @@ export type ExportManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
-  /** Only on an account SimpleFIN fed in another currency, kept as a manual
-   *  account on a disconnect: its currency code. Every other manual balance
-   *  carries none, and is in US dollars. */
+  /** Only on an account in another currency than US dollars: its currency
+   *  code, the one chosen for it or the one SimpleFIN or Lunch Flow fed it
+   *  in, kept as a manual account on a disconnect (lib/manual.ts). Every
+   *  other manual balance carries none, and is in US dollars. */
   currency?: string;
   updated_at: string | null;
   hidden: boolean;

@@ -151,8 +151,8 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
 async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout | null> {
   if (isManualId(account_id)) {
     const m = await getManualAccount(ctx, account_id);
-    // A manual account's balance is in US dollars (lib/manual.ts), unless
-    // SimpleFIN fed it in another before it was kept as a manual account.
+    // A manual account's balance is in its own currency (lib/manual.ts: the
+    // one chosen for it, or kept from a connector; US dollars when none).
     if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null, currency: m.currency ?? MANUAL_CURRENCY };
   }
   const existing = await lifecycleStore.get(ctx, account_id);

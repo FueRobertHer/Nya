@@ -503,7 +503,7 @@ async function accountsRead(ctx: Ctx, includeHidden: boolean): Promise<AccountsR
         subtype: a.subtype,
         mask: null,
         balance: a.balance,
-        // The only currency a manual balance is kept in (lib/manual.ts).
+        // Its own (lib/manual.ts toInstitutions: US dollars when it names none).
         currency: a.currency,
         credit_limit: null,
         is_debt: isOwedType(a.type),

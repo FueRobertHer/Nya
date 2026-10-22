@@ -953,8 +953,8 @@ export function ofxFile(
       const before = letGo.history_from && history && history.from < letGo.history_from ? { from: history.from, to: addDays(letGo.history_from, -1) } : null;
       notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before, connectorLabel(letGo.connector)));
     }
-    // Kept in US dollars (lib/manual.ts), unless a connector fed it in
-    // another currency before it was kept as a manual account.
+    // Its own currency (lib/manual.ts: chosen for it, or kept from a
+    // connector; US dollars when it names none).
     const currency = m.currency ?? MANUAL_CURRENCY;
     account = {
       account_id,

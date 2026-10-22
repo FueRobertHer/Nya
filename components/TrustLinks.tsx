@@ -11,15 +11,15 @@
  *  deployment offers it (lib/connectors/switch.ts, which the login page, a
  *  client page, can't read, so the words say so), may reach others, which
  *  nobody here has checked bank by bank. The manual account it offers for the
- *  rest takes US dollars only (lib/manual.ts), which matters most to exactly
- *  the people this is for. */
+ *  rest takes a balance in its own currency (lib/manual.ts), which matters
+ *  most to exactly the people this is for. */
 export function CoverageNote() {
   return (
     <p className="panel-note coverage-note">
       Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that
       speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own
       Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in
-      US dollars.
+      its own currency.
     </p>
   );
 }

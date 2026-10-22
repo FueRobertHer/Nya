@@ -439,8 +439,8 @@ export default function SecurityPage() {
         <p>
           Bank connections go through Plaid and work for US institutions only: Nya asks Plaid for US institutions when
           you connect. Anything else, such as a bank in another country, an institution Plaid cannot reach, or a house or
-          a car, can be tracked as a manual account: you enter the balance in US dollars, the only currency manual
-          accounts take for now, and update it when you like.
+          a car, can be tracked as a manual account: you enter the balance in the account’s own currency, which you
+          choose, and update it when you like.
         </p>
         <p>
           Your own SimpleFIN account may reach banks Plaid can’t (Redbark, a separate paid service that speaks the same

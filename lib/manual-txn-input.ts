@@ -20,8 +20,9 @@ export const EARLIEST_DATE = '1900-01-01';
  *  (MAX_BALANCE in lib/manual.ts, which test/manual-txns.test.ts holds this
  *  to): a pasted account number is refused before it can swamp a total. */
 export const MAX_AMOUNT = 1e12;
-/** Manual accounts are kept in US dollars (lib/manual.ts toInstitutions), so a
- *  transaction is too unless the person picks another currency. */
+/** The currency of a manual account that names none (lib/manual.ts
+ *  MANUAL_CURRENCY), and so of a transaction on it unless the person picks
+ *  another. */
 export const DEFAULT_CURRENCY = 'USD';
 
 /** The start of every manual row's id. Not a Plaid id: Plaid's have no colon. */

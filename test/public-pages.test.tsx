@@ -258,10 +258,10 @@ describe('the security page', () => {
     expect(off).not.toContain('Every page also carries');
   });
 
-  test('says where bank connections work, and that manual accounts are in US dollars', () => {
+  test('says where bank connections work, and that a manual account is in a currency of its own', () => {
     const page = security();
     expect(page).toContain('work for US institutions only');
-    expect(page).toContain('you enter the balance in US dollars');
+    expect(page).toContain('you enter the balance in the account’s own currency, which you choose');
     expect(page).toContain('Your own SimpleFIN account may reach banks Plaid can’t');
     expect(page).toContain('Redbark, a separate paid service');
     expect(page).toContain('It brings no pending transactions, no holdings and no categories');
@@ -510,7 +510,7 @@ describe('getting to them', () => {
     expect(links).toContain('href="/privacy"');
     expect(links).not.toContain('aria-current');
     expect(text(renderToStaticMarkup(<CoverageNote />))).toContain(
-      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
+      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in its own currency.'
     );
   });
 

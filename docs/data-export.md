@@ -164,7 +164,7 @@ One SimpleFIN or Lunch Flow keeps up to date is described from its entry in [`co
 
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN or Lunch Flow kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code. A manual account that can't be read is named under [`problems`](#problems) instead.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). A manual balance in US dollars carries no currency (as every one typed before a currency could be chosen); one in another has `currency`, its currency code: the one you chose for it, or, for an account SimpleFIN or Lunch Flow kept up to date and kept as a manual account when you disconnected it, the one the service gave. A manual account that can't be read is named under [`problems`](#problems) instead.
 
 ### `hidden_accounts[]`
 
@@ -309,7 +309,7 @@ When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts
 | `type` | Its kind (`depository`, `credit`, `loan`, `investment`, `other`), kept so it can be taken out of the totals after its end even once its bank is gone; `null` when it wasn't known. |
 | `label` | `name`, `institution` and `mask`, as it was when it ended, so it can be named after its institution is gone. |
 | `item_id` | Its connection, or `null` for a manual account. |
-| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; US dollars for a manual account), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
+| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; a manual account's own, US dollars when it names none), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
 | `set_at` | When this was saved. |
 | `assumed` | `true` when Nya assumed it closed: its bank stopped returning it and nobody answered within three days. Absent otherwise. |
 | `answered` | `{ "kind": "missing" or "zero", "since": day }`: you said it is still open, answering the question about it going missing or sitting at zero from that day. Absent otherwise. |
