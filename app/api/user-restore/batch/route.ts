@@ -41,8 +41,16 @@ import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 
 // Shorter than the undo's pause (lib/user-restore/undo.ts UNDO_PAUSE_MS), so
 // a batch or a finish that passed its last look at the record before an undo
-// began has ended before the undo's second sweep.
+// began has ended before the undo's second sweep. Vercel enforces it; a host
+// that doesn't (a Node server of one's own) is held to WRITE_BY_MS below for
+// everything before the write, and docs/operations.md says what is left.
 export const maxDuration = 60;
+
+/** How long after it arrived a batch may still begin writing: well inside
+ *  maxDuration, whatever the host enforces, so a request slowed on its way
+ *  (a slow read, a slow check) is refused, to be sent again, rather than
+ *  writing late. */
+const WRITE_BY_MS = 30_000;
 
 const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -145,6 +153,7 @@ async function checkOnly(ctx: Ctx, req: Request, params: URLSearchParams): Promi
 }
 
 async function write(ctx: Ctx, req: Request, id: string, indexText: string | null): Promise<NextResponse> {
+  const began = Date.now();
   if (!indexText || !/^(0|[1-9][0-9]{0,4})$/.test(indexText)) return refuse('Name the batch: index.', 400);
   const index = Number(indexText);
   const bytes = await bodyBytes(req, MAX_BATCH_BODY);
@@ -185,6 +194,7 @@ async function write(ctx: Ctx, req: Request, id: string, indexText: string | nul
   const now = await userRestoreStore.get(ctx);
   if (!stillWriting(now, id)) return notWriting(now);
   if (now.done !== index) return NextResponse.json({ done: now.done }, { headers: NO_STORE });
+  if (Date.now() - began > WRITE_BY_MS) return refuse('This batch took too long to reach the write. Send it again.', 503, { done: now.done });
   await writeBatch(ctx, batch.part, batch.records, now);
   const after = await userRestoreStore.update(ctx, (cur) => (stillWriting(cur, id) && cur.done === index ? { ...cur, done: index + 1, last_batch_at: new Date().toISOString() } : cur));
   // Net worth and transactions change as the batches land.
