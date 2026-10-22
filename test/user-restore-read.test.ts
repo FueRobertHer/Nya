@@ -96,6 +96,24 @@ describe('the totals hold', () => {
     expect(await restoreUnfinished(ctx)).toBe(true);
   });
 
+  test('a restored account linked to its new one stays answered when that bank is disconnected later', async () => {
+    await linked();
+    expect((await hold()).waiting).toEqual([]);
+    const { removeItem } = await import('@/lib/storage');
+    await removeItem(ctx, 'item_new');
+    await fake.del(ctxKey('txns:item_new'));
+    expect(await hold()).toMatchObject({ waiting: [], unreadable: false });
+    // Its rows are read only while what it is linked to is live, as an
+    // earlier account's are after a disconnect.
+    expect(rowsOf(await activity()).map((r) => r[0])).toEqual(['manual-txn:00000000-0000-4000-8000-000000000001']);
+  });
+
+  test('a restored account the directory no longer lists waits for nothing, as it is read for nothing', async () => {
+    expect((await hold()).waiting).toEqual([{ institution_name: 'Chase', last: '2026-01-04' }]);
+    await fake.hdel(ctxKey('accounts:directory'), 'acc_chk', 'acc_card');
+    expect((await hold()).waiting).toEqual([]);
+  });
+
   test('the backfill waits while a restored bank waits', async () => {
     await connectAgain(fake);
     const res = await backfill.POST();

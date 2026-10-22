@@ -51,6 +51,7 @@ import type { ImportedTxn } from '../history-import/store';
 import { bankKey, settle, type BankRow } from '../history-import/match';
 import { effectiveLinks, getLinks, resolveId, type Link } from '../link-core';
 import { endOf, lifecycleStore } from '../lifecycle';
+import { directoryIds } from '../links';
 import { restoredAccountsStore, restoredId, userRestoreStore, type RestoredAccount, type RestoredTxn, type UserRestoreRecord } from './store';
 
 /** A row as the read layer holds it: imported from a file, or, with
@@ -246,33 +247,44 @@ export type TotalsHold = {
 
 export const holdsTotals = (h: TotalsHold): boolean => h.unfinished || h.unreadable || h.waiting.length > 0;
 
-/** A restored account still waiting for an answer: neither linked to a new
- *  one nor ended (Stop following). `last` is its last restored day. */
+/** A restored account still waiting for an answer: one that counts (not
+ *  ended: Stop following) and isn't linked to a new one. `last` is its last
+ *  restored day. */
 export type WaitingAccount = { account_id: string; institution_name: string; name: string | null; mask: string | null; last: string | null };
 
 /**
  * The restored accounts still waiting (see WaitingAccount), by bank and
- * name, and whether something it needs couldn't be read (an entry, an end).
- * Reads the links, the live accounts and the ends only when a restore
- * brought accounts back. Storage failing throws.
+ * name, and whether something it needs couldn't be read: an entry
+ * (`entries`), or the end of an account that would otherwise wait (`ends`).
+ * Linked is answered, whatever the account it is linked to became since (a
+ * bank disconnected after the link): reading its rows asks for a live
+ * account (linkedTo), the answer doesn't. Only accounts the directory still
+ * lists wait, as only they are read for their rows (readImported): one
+ * forgotten has nothing left to answer by. Reads the links, the live
+ * accounts, the directory and the ends only when a restore brought accounts
+ * back. Storage failing throws.
  */
-export async function waitingAccounts(ctx: Ctx, liveIds: () => Promise<Set<string>>): Promise<{ accounts: WaitingAccount[]; unreadable: boolean }> {
+export async function waitingAccounts(
+  ctx: Ctx,
+  liveIds: () => Promise<Set<string>>
+): Promise<{ accounts: WaitingAccount[]; unreadable: boolean; unread: { entries: boolean; ends: boolean } }> {
   const report = await restoredAccountsStore.getAllReport(ctx);
-  let unreadable = report.unreadable.length > 0 || report.unrecognised.length > 0;
-  if (report.entries.size === 0) return { accounts: [], unreadable };
-  const [links, live, ends] = await Promise.all([getLinks(ctx), liveIds(), lifecycleStore.getAllReport(ctx)]);
+  const unread = { entries: report.unreadable.length > 0 || report.unrecognised.length > 0, ends: false };
+  if (report.entries.size === 0) return { accounts: [], unreadable: unread.entries, unread };
+  const [links, live, ends, listed] = await Promise.all([getLinks(ctx), liveIds(), lifecycleStore.getAllReport(ctx), directoryIds(ctx)]);
   const applied = effectiveLinks(links, live);
   const unreadEnds = new Set([...ends.unreadable, ...ends.unrecognised]);
   const accounts: WaitingAccount[] = [];
   for (const [id, a] of report.entries) {
-    if (linkedTo(id, applied, live)) continue;
+    if (!listed.has(id)) continue;
+    if (resolveId(id, applied) !== id) continue;
     const end = ends.entries.get(id);
     if (end && endOf(end.lifecycle) !== null) continue;
-    if (unreadEnds.has(id)) unreadable = true;
+    if (unreadEnds.has(id)) unread.ends = true;
     accounts.push({ account_id: id, institution_name: a.institution_name, name: a.name, mask: a.mask, last: a.rows?.last ?? null });
   }
   accounts.sort((x, y) => x.institution_name.localeCompare(y.institution_name) || (x.name ?? '').localeCompare(y.name ?? '') || x.account_id.localeCompare(y.account_id));
-  return { accounts, unreadable };
+  return { accounts, unreadable: unread.entries || unread.ends, unread };
 }
 
 /**
