@@ -281,7 +281,8 @@ export function OwnRateForm({
       </datalist>
       <div className="currency-rate-pair">
         <label className="field">
-          1 {code || 'unit'} is
+          {/* In words: "1 USD" alone would read as an amount. */}
+          One {code || 'unit'} is
           <input value={draft.rate} onChange={(e) => onDraft({ ...draft, rate: e.target.value })} inputMode="decimal" placeholder="0.92" disabled={busy} />
         </label>
         <label className="field">

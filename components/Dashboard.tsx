@@ -86,7 +86,7 @@ import { EMPTY_PLANNED, isPlanned, type Planned } from '@/lib/planned';
 import { createWholeListStore, initialListState, type ListState } from '@/lib/whole-list-store';
 import { type Goal } from './GoalsCard';
 import { withAccountEnds } from '@/lib/goal-view';
-import { formatMoney, dominantCurrency, hiddenFigure } from '@/lib/format';
+import { formatMoney, dominantCurrency, hiddenFigure, zeroExample } from '@/lib/format';
 import AccruedInterestNote from './AccruedInterestNote';
 import { HideAmountsToggle, Masked } from './HideAmounts';
 import { useAmountsHidden } from './hide-amounts';
@@ -3142,7 +3142,7 @@ export default function Dashboard({
                   min={isOwedType(shownManualDraft.type) ? 0 : undefined}
                   value={shownManualDraft.balance}
                   onChange={(e) => setManualDraft({ ...shownManualDraft, balance: e.target.value })}
-                  placeholder={(0).toFixed(minorDigits(shownManualDraft.currency))}
+                  placeholder={zeroExample(minorDigits(shownManualDraft.currency))}
                   disabled={savingManual}
                 />
               </label>

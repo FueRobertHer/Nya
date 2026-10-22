@@ -1210,20 +1210,29 @@ const NOT_VIEWS = new Set(['hide-amounts.test.tsx', 'developers.test.tsx']);
 
 /** What a view draws that only looks like an amount: a file's example
  *  figures (EXAMPLES), a sync service's own price (SimpleFIN's, Lunch
- *  Flow's), and a count written with thousands, followed by what it counts
- *  or after its name; but never a number with a currency's symbol or code
- *  beside it, which is an amount whatever follows. */
+ *  Flow's), an exchange rate (RATE), and a count written with thousands,
+ *  followed by what it counts or after its name; but never a number with a
+ *  currency's symbol or code beside it, which is an amount whatever follows. */
 const PRICES = ['($15 a year', '(about $35 a year for two bank connections'];
+/** An exchange rate as lib/format.ts formatRate writes one, "1 USD = 0.86573
+ *  EUR": public data and never the person's money, so it shows while amounts
+ *  are hidden. Only one whole, and never one with a currency's symbol or
+ *  code, or a figure, right before or after it, so an amount beside it is
+ *  still read as one. */
+const RATE = new RegExp(
+  String.raw`(?<!(?:\p{Sc}|\b[A-Z]{3}|[\d.,])[\s\u00a0]?[-+]?)\b1[\s\u00a0][A-Z]{3}[\s\u00a0]=[\s\u00a0]\d[\d,]*(?:\.\d+)?[\s\u00a0][A-Z]{3}\b(?![\s\u00a0]?[-+]?[\d\p{Sc}])`,
+  'gu'
+);
 const COUNT = new RegExp(
   String.raw`(?<!(?:\p{Sc}|\b${CODES})[\s\u00a0]?[-+]?)\b\d{1,3}(?:,\d{3})+(?![\s\u00a0]?(?:\p{Sc}|${CODES}\b))(?=(?:\s+[A-Z][\w-]*)*\s+[a-z])|(?<=^Transactions: )[\d,]+$`,
   'gu'
 );
 function withoutLookalikes(line: string): string {
-  return [...EXAMPLES, ...PRICES].reduce((t, e) => t.split(e).join(''), line).replace(COUNT, '#');
+  return [...EXAMPLES, ...PRICES].reduce((t, e) => t.split(e).join(''), line).replace(RATE, '#').replace(COUNT, '#');
 }
 
 describe('a backstop over every view the suites draw, amounts hidden', () => {
-  test('lets a count, a file’s example and a service’s price through, never an amount beside its currency', () => {
+  test('lets a count, a file’s example, a service’s price and an exchange rate through, never an amount beside its currency', () => {
     const lookalikes = [
       'of 1,470 historical starts (Jan 1871 to Jun 1993) lasted 30 years',
       'Monte Carlo: 5,000 runs, each built from 5-year blocks',
@@ -1231,6 +1240,11 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       'a point (1,234.56)',
       'You pay SimpleFIN for it ($15 a year), not Nya',
       'your own Lunch Flow account (about $35 a year for two bank connections, paid to Lunch Flow)',
+      'USD $••• is €••• (1 USD = 0.86573 EUR)',
+      'USD hidden is hidden (1 USD = 0.86573 EUR)',
+      '1 BTC = 61,000 USD, every day, past ones included',
+      'The ECB’s of Sep 14, 2026: 1 USD = 0.86573 EUR',
+      '1 ARS = 0.00071 USD, from Sep 1, 2026',
     ];
     for (const line of lookalikes) expect([line, AMOUNT.test(withoutLookalikes(line))]).toEqual([line, false]);
     const amounts = [
@@ -1244,6 +1258,18 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       '12,000 € a year',
       '$1,234.56 spent',
       '$450 a month',
+      // Beside a rate, an amount is still one, before it or after it, and a
+      // rate's shape around one never makes it pass.
+      'USD $1,234 is €1,068.30 (1 USD = 0.86573 EUR)',
+      'USD 1,234 is 1,068.30 EUR (1 USD = 0.86573 EUR)',
+      '1 USD = 0.86573 EUR, €1,068.30 in all',
+      '1 USD = 0.86573 EUR 12',
+      '1 USD = 0.86573 EUR €12',
+      'CHF 1 USD = 0.86573 EUR',
+      '$1 USD = 0.92 EUR',
+      '2 USD = 1.73 EUR',
+      '1,000 USD = 865.73 EUR',
+      '1 USD is',
     ];
     for (const line of amounts) expect([line, AMOUNT.test(withoutLookalikes(line))]).toEqual([line, true]);
   });

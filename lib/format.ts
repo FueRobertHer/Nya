@@ -271,3 +271,13 @@ export function plainNumber(n: number): string {
 export function fieldAmount(amount: number, places = 2): string {
   return amount.toFixed(places);
 }
+
+/**
+ * An empty amount field's example: zero, to the currency's own `places`
+ * ("0.00", "0" for yen, "0.000" for dinars). No figure of anyone's, the same
+ * whatever the switch says, so it is written as text, never as an amount nor
+ * as a field's figures (test/amount-sources.ts), as a placeholder may be.
+ */
+export function zeroExample(places: number): string {
+  return places > 0 ? `0.${'0'.repeat(places)}` : '0';
+}
