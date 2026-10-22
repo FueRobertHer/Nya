@@ -1,4 +1,4 @@
-import { describe, expect, test, afterEach } from 'bun:test';
+import { afterAll, afterEach, beforeAll, describe, expect, setSystemTime, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { SharingPanelView, SharedWithMeView, PreviewView, sharedProblem, readSharedWithMe, rememberShares, rememberedShares, sharedSeenKey, type Choice } from '@/components/Sharing';
@@ -28,6 +28,12 @@ function hidden<T>(fn: () => T): T {
   }
 }
 afterEach(() => setAmountsHidden(false));
+
+// The file's own clock, the day its views are as of: a month or a day of
+// this year is named without its year, so against the real clock their
+// dates, all in 2026, would read differently from 2027 on.
+beforeAll(() => setSystemTime(new Date('2026-10-20T15:00:00Z')));
+afterAll(() => setSystemTime());
 
 const decode = (s: string) => s.replace(/&#x27;|&#39;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>');
 /** The page as text, tags dropped. */
