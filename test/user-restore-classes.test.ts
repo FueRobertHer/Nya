@@ -10,7 +10,7 @@ const fake = new FakeRedis({ deserialize: true });
 afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
-const { classOfKey, unclassified, FAMILY_CLASSES, STORE_CLASSES } = await import('@/lib/user-restore/classes');
+const { classOfKey, unclassified, keptWhenEmptied, FAMILY_CLASSES, STORE_CLASSES } = await import('@/lib/user-restore/classes');
 const { scanAccount, inUseMessage } = await import('@/lib/user-restore/empty');
 const { declaredStores } = await import('@/lib/stores');
 const { EXACT, PREFIXES } = await import('@/lib/key-families');
@@ -98,6 +98,15 @@ describe('the scan', () => {
     await fake.set(ctxKey('user-restore'), 'x');
     const scan = await scanAccount(ctx);
     expect(scan).toMatchObject({ empty: false, record: true, found: [] });
+  });
+
+  test('emptying keeps only the machinery that is independent of the data: what is derived from it goes with it', () => {
+    for (const key of ['cache:net-worth', 'sessions:abc', 'ratelimit:x', 'snapshot:2026-10-01', 'move:x', 'api-tokens', 'sharing-access-log', 'weekly-summary-state', 'user-restore-starts', 'download-count', 'account-links:lock']) {
+      expect([key, keptWhenEmptied(key)]).toEqual([key, true]);
+    }
+    for (const key of ['holdings:history:index', 'imported-history-walk', 'accounts:vanished', 'plaid:new-accounts', 'history:backfill-done', 'txns-blocked:item1', 'connection-notices', 'plaid:items', 'categories', 'user-restore']) {
+      expect([key, keptWhenEmptied(key)]).toEqual([key, false]);
+    }
   });
 
   test('another container’s keys are never seen', async () => {

@@ -2,10 +2,13 @@
 //
 // Undoing a restore, and emptying an account first (docs/data-export.md,
 // "Bringing it back"; decisions 4 and 7): every key of the container but the
-// app's machinery (lib/user-restore/classes.ts: counters, sessions, caches,
-// the person's API tokens and record of showings) deleted, through one sweep
-// beside account deletion's (lib/account-deletion.ts sweepContainerExcept).
-// The container, its key, its registry entry and the sign-in stay.
+// machinery that is independent of the data (lib/user-restore/classes.ts
+// keptWhenEmptied: counters, sessions, caches, locks, the person's API
+// tokens, record of showings and weekly summary key) deleted, through one
+// sweep beside account deletion's (lib/account-deletion.ts
+// sweepContainerExcept). What is derived from the data (the holdings index,
+// the walk's record, a connection's markers) goes with it. The container,
+// its key, its registry entry and the sign-in stay.
 //
 // BOUNDED. Undo is offered while a restore is unfinished and for UNDO_DAYS
 // after it finished, and then it is gone: past that it would erase real
@@ -33,7 +36,7 @@ import { secretsStore } from '../connectors/store';
 import { sweepContainerExcept } from '../account-deletion';
 import { ownersOf } from '../owners';
 import { clearCaches } from '../cache';
-import { classOfKey } from './classes';
+import { keptWhenEmptied } from './classes';
 import { userRestoreStore, UNDO_DAYS, type UserRestoreRecord } from './store';
 import { unfinished } from './restored';
 
@@ -78,9 +81,11 @@ async function mayEmpty(ctx: Ctx, userId: string | null): Promise<void> {
   }
 }
 
-/** Keeps the machinery (see the header), and, until the end of an undo, its
- *  record. */
-const keepMachinery = (key: string) => classOfKey(key).cls === 'machinery';
+/** Keeps the machinery that is independent of the data (classes.ts
+ *  keptWhenEmptied), and, until the end of an undo, its record: what is
+ *  derived from the data (the holdings index, the walk's record) goes with
+ *  it, so a later restore never reads it as its own. */
+const keepMachinery = keptWhenEmptied;
 
 /**
  * Undoes the restore `id` (see the header): refused unless it is this

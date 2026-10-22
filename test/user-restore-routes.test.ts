@@ -552,6 +552,37 @@ describe('undo and emptying', () => {
   });
 });
 
+describe('what emptying takes', () => {
+  test('what is derived from the data goes with it: the holdings index and the walk record, so a later restore reads its own', async () => {
+    const { recordHoldings, observeHoldings, readHoldingsRange, readHoldingsSpan } = await import('@/lib/holdings-history');
+    const { importedRowsChanged } = await import('@/lib/history-import/extend');
+    const broker = (account_id: string, day: string) => {
+      const accounts = [{ account_id, type: 'investment', balance: 1000 }];
+      const holdings = [{ account_id, security_id: 'vti', quantity: 10, institution_price: 100, institution_price_as_of: day, institution_value: 1000, cost_basis: 800, iso_currency_code: 'USD', unofficial_currency_code: null }];
+      const securities = [{ security_id: 'vti', ticker_symbol: 'VTI', name: 'vti fund', type: 'etf', is_cash_equivalent: false }];
+      return { institution_name: 'Broker', item_id: 'item_b', accounts, holdings: [], holdings_observed: observeHoldings({ accounts, holdings, securities }) ?? undefined, error: null, needs_reauth: false, liabilities: 'unavailable' } as never;
+    };
+    // The copy the download comes from: January's holdings under its own month.
+    await seedOld(fake, OTHER);
+    await recordHoldings(OTHER, [broker('acct_brk', '2026-01-15')], Date.parse('2026-01-15T13:00:00.000Z'));
+    const text = await downloadText(EXPORTED, OTHER);
+    // This account, tried first: January's holdings under another month, and
+    // a drawing's record.
+    await recordHoldings(ctx, [broker('acct_tried', '2026-01-10')], Date.parse('2026-01-10T13:00:00.000Z'));
+    await importedRowsChanged(ctx, { dates: ['2026-01-02'] });
+    const inContainer = () => [...Object.keys(snapshot(ctxKey('')))].map((k) => k.slice(ctxKey('').length));
+    expect(inContainer()).toEqual(expect.arrayContaining(['holdings:history:index', 'imported-history-walk']));
+    expect(await call('POST', '/api/user-restore', { action: 'empty', confirm: 'empty my account', password: 'hunter2' })).toEqual({ status: 200, body: { emptied: true } });
+    expect(inContainer().filter((k) => k.startsWith('holdings:') || k === 'imported-history-walk')).toEqual([]);
+    // Machinery that is independent of the data stays: the counters.
+    expect(inContainer()).toContain('user-restore-starts');
+
+    await restoreAll(text);
+    expect((await readHoldingsRange(ctx, '2026-01-01', '2026-01-31')).map((d) => [d.date, d.accounts.map((a) => a.account_id)])).toEqual([['2026-01-15', ['acct_brk']]]);
+    expect((await readHoldingsSpan(ctx, { accountId: 'acct_tried' })).first).toBeNull();
+  });
+});
+
 describe('isolation', () => {
   test('everything is written in the account’s own container: another one is untouched, and nothing lands outside', async () => {
     await seedOld(fake, OTHER);

@@ -11,7 +11,11 @@
 //   machinery  the app's own bookkeeping, counters, locks and caches; the
 //              person's API tokens (they read whatever the account holds) and
 //              their record of showings (about sharing, which is not part of a
-//              restore). Ignored by the scan, and kept by undo and emptying.
+//              restore). Ignored by the scan. Undo and emptying keep only the
+//              part of it that is independent of the data they delete
+//              (keptWhenEmptied): what is derived from that data (the
+//              holdings index, the walk's record, a connection's markers)
+//              goes with it, or a later restore would read it as its own.
 //   setting    one value that nothing else stored refers to while the account
 //              holds no data: allowed, and replaced by the file's, as the
 //              preview says.
@@ -152,6 +156,34 @@ export function classOfKey(key: string): { family: string | null; cls: KeyClass 
     return { family: inner, cls: STORE_CLASSES[inner] ?? 'data' };
   }
   return { family: null, cls: 'data' };
+}
+
+/** The machinery that is independent of the person's data (see the header):
+ *  counters (by kind), sessions, caches, the rate limits, locks, the
+ *  snapshot's and the move's records, the API tokens, the record of
+ *  showings and the weekly summary's key. */
+const KEPT_WHEN_EMPTIED: ReadonlySet<string> = new Set([
+  'ratelimit:',
+  'sessions:',
+  'cache:',
+  'snapshot:',
+  'move:',
+  'account-links:lock',
+  'invtxns-lock:',
+  'api-tokens',
+  'sharing-access-log',
+  'weekly-summary-state',
+]);
+
+/** Whether undo and emptying keep a key (relative to the environment's
+ *  prefix): machinery that is independent of the data they delete (see the
+ *  header). Everything else goes, derived machinery with the data. */
+export function keptWhenEmptied(key: string): boolean {
+  const { family, cls } = classOfKey(key);
+  if (cls !== 'machinery' || family === null) return false;
+  const store = declaredStore(family);
+  if (store && (store.kind === 'counter' || store.kind === 'counter-map')) return true;
+  return KEPT_WHEN_EMPTIED.has(family);
 }
 
 /** Families and stores without a class: what the test checks is empty. */
