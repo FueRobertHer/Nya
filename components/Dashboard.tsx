@@ -406,7 +406,9 @@ function LiabilityDetail({
       {rows.map((r) => (
         <div className="txn-detail-row" key={r.label}>
           <dt>{r.label}</dt>
-          <dd>{r.value}</dd>
+          <dd>
+            <Masked>{r.value}</Masked>
+          </dd>
         </div>
       ))}
     </dl>
@@ -2013,7 +2015,7 @@ export default function Dashboard({
                     <ChartCurrencyNote base={base} main={accountCurrency} />
                   ) : (
                     <p className="empty-note">
-                      History builds as you use the app — check back tomorrow for your first
+                      History builds as you use the app: check back tomorrow for your first
                       trend line.
                     </p>
                   )}
@@ -2300,7 +2302,7 @@ export default function Dashboard({
                                         className={`type-tag${a.liability?.is_overdue ? ' over-tag' : ''}`}
                                       >
                                         {a.liability?.is_overdue ? 'Overdue · ' : ''}
-                                        {liabLine}
+                                        <Masked>{liabLine}</Masked>
                                       </div>
                                     )}
                                     {/* Money sitting in the settlement fund
@@ -2565,7 +2567,7 @@ export default function Dashboard({
                                       </span>
                                     )}
                                   </td>
-                                  <td className="num">{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</td>
+                                  <td className="num"><Masked>{h.quantity != null ? hiddenFigure(h.quantity.toFixed(3)) : '--'}</Masked></td>
                                   <td className="num">
                                     <Masked>{fmt(h.value)}</Masked>
                                     {/* No gain/loss on a cash line: a money
@@ -2789,7 +2791,7 @@ export default function Dashboard({
                                 <td className="num">
                                   {/* An unresolved account has no balance to
                                       show; "--" beats a misleading $0.00. */}
-                                  {resolved ? fmt(signedBalance(account), account.currency) : '--'}
+                                  <Masked>{resolved ? fmt(signedBalance(account), account.currency) : '--'}</Masked>
                                   <div className="manual-row-actions">
                                     <button
                                       className="link-btn"

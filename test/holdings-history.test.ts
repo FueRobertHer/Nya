@@ -405,9 +405,18 @@ describe('recording', () => {
     expect(months).toHaveLength(1);
     const [id, stored] = months[0];
     expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-    for (const text of [stored, ...((fake as any).hashes.get(INDEX)?.values() ?? [])]) {
-      for (const plain of ['acct_secret', 'Secret Fund', '2026-10', 'VTI']) expect(text).not.toContain(plain);
-    }
+    // Ciphertext alone, under its version header where it has one: base64,
+    // which never holds a quote, a brace or a space, as the JSON it hides
+    // would. (A name looked for in it, such as "VTI", turns up in random
+    // base64 now and then.)
+    const index = [...((fake as any).hashes.get(INDEX)?.values() ?? [])] as string[];
+    expect(index).toHaveLength(1);
+    for (const text of [stored, ...index]) expect(text).toMatch(/^(?:v2\.[\w-]+\.[a-z-]+\.)?[A-Za-z0-9+/]+={0,2}$/);
+    // The month compressed before it was encrypted (gzip's first bytes, in
+    // base64), and what was recorded in it.
+    expect((await decrypt(TEST_CTX, stored)).startsWith('H4sI')).toBe(true);
+    const month = await decryptJsonText(TEST_CTX, stored);
+    for (const plain of ['"acct_secret"', '"Secret Fund"', '"2026-10"', '"VTI"']) expect(month).toContain(plain);
     expect([...(fake as any).hashes.get(INDEX).keys()]).toEqual(['index']);
   });
 

@@ -29,7 +29,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, spokenLabel } from './HideAmounts';
 import { shownReason } from './ImportSheet';
-import { formatMoney, hideAmountsIn, hideFiguresIn, signedMoney } from '@/lib/format';
+import { formatMoney, hideAmountsIn, hideFiguresIn, plainNumber, signedMoney } from '@/lib/format';
 import { displayName, sortedGroups, categoriesIn, KIND_WORDS, type CategoryKind, type Taxonomy } from '@/lib/categories';
 import { APP_NAMES, APPS, ROLE_NAMES, type AppId, type AppRole } from '@/lib/import/apps/types';
 import { MANUAL_TYPES } from '@/lib/manual';
@@ -554,7 +554,7 @@ export default function MigrationSheet({
               Day first
             </button>
           </div>
-          {error && <div className="error">{hideAmountsIn(error)}</div>}
+          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
         </div>
       ) : review ? (
         <ReviewStep
@@ -584,7 +584,7 @@ export default function MigrationSheet({
             <input key={inputKey} type="file" accept=".csv,.tsv,.zip,text/csv,application/zip" disabled={busy} onChange={(e) => e.target.files?.[0] && void choose(e.target.files[0])} />
           </label>
           {busy && <div className="spinner" role="status" aria-label="Reading the file" />}
-          {error && <div className="error">{hideAmountsIn(error)}</div>}
+          {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
           {notice && <p className="panel-note" role="status">{notice}</p>}
           <details className="migration-how">
             <summary>How to export from each app</summary>
@@ -663,8 +663,8 @@ export function MappingStep({ q, options, busy, error, onAnswer }: { q: Extract<
             </select>
           </label>
         ))}
-      {q.problem && <div className="error">{hideAmountsIn(q.problem)}</div>}
-      {error && <div className="error">{hideAmountsIn(error)}</div>}
+      {q.problem && <div className="error"><Masked>{hideAmountsIn(q.problem)}</Masked></div>}
+      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
       <p className="section-label">The first rows</p>
       <ul className="import-problems">
         {q.table.sample.map((row) => (
@@ -841,7 +841,7 @@ export function ReviewStep({
       )}
       {r.notes.map((n) => (
         <p key={n} className="panel-note">
-          {hideAmountsIn(n)}
+          <Masked>{hideAmountsIn(n)}</Masked>
         </p>
       ))}
 
@@ -991,7 +991,7 @@ export function ReviewStep({
           </ul>
           {!allProblems && r.problems.length > 5 && (
             <button className="link-btn" onClick={() => setAllProblems(true)}>
-              Show all {(r.problems.length + r.more_problems).toLocaleString()}
+              Show all {plainNumber(r.problems.length + r.more_problems)}
             </button>
           )}
         </>
@@ -999,10 +999,10 @@ export function ReviewStep({
 
       {r.blocks.map((b) => (
         <div key={b} className="error">
-          {hideAmountsIn(b)}
+          <Masked>{hideAmountsIn(b)}</Masked>
         </div>
       ))}
-      {error && <div className="error">{hideAmountsIn(error)}</div>}
+      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
       <div className="action-row">
         <button disabled={!canImport} onClick={onImport}>
           {busy ? 'Reading…' : pending ? 'Update the review first' : waiting > 0 ? `${plural(waiting, 'answer')} still needed` : 'Import'}
@@ -1231,7 +1231,7 @@ function TargetSection({
       <p className="panel-note" style={{ marginTop: 0 }}>
         {[
           `${plural(c.new ?? 0, 'new transaction')}`,
-          c.duplicates ? `${c.duplicates.toLocaleString()} ${bank} has already, kept as its own` : null,
+          c.duplicates ? `${plainNumber(c.duplicates)} ${bank} has already, kept as its own` : null,
           c.already ? `${c.already.toLocaleString()} an earlier file brought` : null,
           c.present ? `${c.present.toLocaleString()} already in Nya` : null,
           c.unanswered ? `${c.unanswered.toLocaleString()} to answer` : null,
@@ -1395,7 +1395,7 @@ function TargetSection({
 
 /** Every import from another app, with Undo. */
 export function PastMigrations({ items, error, onUndo }: { items: Listed[] | null; error: string; onUndo: (item: Listed) => void }) {
-  if (error) return <p className="panel-note">{hideAmountsIn(error)}</p>;
+  if (error) return <p className="panel-note"><Masked>{hideAmountsIn(error)}</Masked></p>;
   if (!items || items.length === 0) return null;
   return (
     <>
@@ -1499,7 +1499,7 @@ export function UndoConfirm({
       ) : (
         !error && <p className="panel-note">Counting what it takes out…</p>
       )}
-      {error && <div className="error">{hideAmountsIn(error)}</div>}
+      {error && <div className="error"><Masked>{hideAmountsIn(error)}</Masked></div>}
       <div className="action-row">
         <button className="secondary" disabled={busy} onClick={onCancel}>
           Keep it

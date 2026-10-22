@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll, setSystemTime } from 'bun:test';
 import { clerk } from './clerk-mock';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys, testKey } from './fake-redis';
 import { startRedis, type RealRedis } from './real-redis';
@@ -1431,32 +1431,39 @@ describe('records of showings', () => {
     const partnerCtx = { container: await ownerContainer('user_partner') } as any;
     // Every quarter hour of the 90 days, each naming ten accounts with Plaid-length ids.
     const read = Object.fromEntries(Array.from({ length: 10 }, (_, i) => [`${'Bx'.repeat(17)}${String(i).padStart(3, '0')}`, 'transactions' as const]));
-    const now = Date.now();
-    const shown = [];
-    for (let t = now - ACCESS_LOG_DAYS * DAY + SLOT; t <= now; t += SLOT) shown.push({ at: slotOf(t), times: 3, read });
-    expect(shown.length).toBe(8640);
-    await accessLogStore.set(TEST_CTX, logId, { shown });
-    await accessLogStore.set(partnerCtx, logId, { shown });
-    const sized = async (res: Promise<Response>) => {
-      const r = await res;
-      const text = await r.text();
-      return { status: r.status, body: JSON.parse(text), bytes: Buffer.byteLength(text) };
-    };
-    // The list and its controls: no record in it, however big they get.
-    const { GET } = await import('@/app/api/connections/route');
-    clerk.signedIn = 'user_owner';
-    const list = await sized(GET());
-    expect(list.status).toBe(200);
-    expect(list.bytes).toBeLessThan(4 * 1024);
-    expect(JSON.stringify(list.body)).not.toMatch(/shown|record/);
-    // The records: days, counted, a few at a time, or all 91 days of them.
-    const first = await recordsOf('user_owner');
-    expect(first.body.shown_to_them.days).toHaveLength(5);
-    expect(first.body.shown_to_them.total_days).toBe(91);
-    expect(first.bytes).toBeLessThan(2 * 1024);
-    const all = await recordsOf('user_owner', { all: true });
-    expect(all.body.shown_to_me.days).toHaveLength(91);
-    expect(all.bytes).toBeLessThan(24 * 1024);
+    // On the test's own clock, a day's afternoon: the 90 days then reach into
+    // 91, as they do but in a day's last quarter hour.
+    setSystemTime(new Date(`${utcDay(Date.now() + DAY)}T14:00:00Z`));
+    try {
+      const now = Date.now();
+      const shown = [];
+      for (let t = now - ACCESS_LOG_DAYS * DAY + SLOT; t <= now; t += SLOT) shown.push({ at: slotOf(t), times: 3, read });
+      expect(shown.length).toBe(8640);
+      await accessLogStore.set(TEST_CTX, logId, { shown });
+      await accessLogStore.set(partnerCtx, logId, { shown });
+      const sized = async (res: Promise<Response>) => {
+        const r = await res;
+        const text = await r.text();
+        return { status: r.status, body: JSON.parse(text), bytes: Buffer.byteLength(text) };
+      };
+      // The list and its controls: no record in it, however big they get.
+      const { GET } = await import('@/app/api/connections/route');
+      clerk.signedIn = 'user_owner';
+      const list = await sized(GET());
+      expect(list.status).toBe(200);
+      expect(list.bytes).toBeLessThan(4 * 1024);
+      expect(JSON.stringify(list.body)).not.toMatch(/shown|record/);
+      // The records: days, counted, a few at a time, or all 91 days of them.
+      const first = await recordsOf('user_owner');
+      expect(first.body.shown_to_them.days).toHaveLength(5);
+      expect(first.body.shown_to_them.total_days).toBe(91);
+      expect(first.bytes).toBeLessThan(2 * 1024);
+      const all = await recordsOf('user_owner', { all: true });
+      expect(all.body.shown_to_me.days).toHaveLength(91);
+      expect(all.bytes).toBeLessThan(24 * 1024);
+    } finally {
+      setSystemTime();
+    }
   });
 
   test('no record, however it fails, can stop the list and its controls loading', async () => {

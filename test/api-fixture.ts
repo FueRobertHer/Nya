@@ -14,8 +14,10 @@
 // setSystemTime included), never when this module was imported: test files
 // share one copy of it, so a value fixed at import would be the clock of
 // whichever file imported it first, and drift from the clock of a test that
-// moved it. seedPerson answers with what it wrote (`syncedAt`, `chaseTxns`)
-// for a test to read back.
+// moved it. The clock is read once, and every day is worked out from that
+// reading: read again for each, a seeding that crossed UTC midnight would
+// date its rows a day apart. seedPerson answers with what it wrote
+// (`syncedAt`, `chaseTxns`) for a test to read back.
 
 import type { FakeRedis } from './fake-redis';
 import { testKey, ctxKey, TEST_CTX } from './fake-redis';
@@ -36,14 +38,16 @@ import { vendorKey } from '@/lib/transactions';
 export const ctx = TEST_CTX;
 export const OTHER = { container: '9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f' } as typeof TEST_CTX;
 export const DAY = 86_400_000;
-/** A UTC day relative to now, so the transactions stay inside the window the
- *  app reads (the last 365 days) whenever the tests run. */
-export const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slice(0, 10);
+/** The UTC day `n` days before `now` (the clock, unless given), so the
+ *  transactions stay inside the window the app reads (the last 365 days)
+ *  whenever the tests run. Days that must agree are worked out from one `now`:
+ *  the clock read again could have crossed midnight since. */
+export const daysAgo = (n: number, now: number = Date.now()) => new Date(now - n * DAY).toISOString().slice(0, 10);
 
 const remembered = (accounts: Record<string, unknown>[], where: { container: any } = TEST_CTX) =>
   encrypt(where, JSON.stringify(accounts.map((a) => ({ official_name: null, subtype: null, mask: null, limit: null, currency: 'USD', ...a }))));
 
-export function txn(id: string, account_id: string, daysBack: number, amount: number, over: Record<string, unknown> = {}) {
+export function txn(id: string, account_id: string, daysBack: number, amount: number, over: Record<string, unknown> = {}, now: number = Date.now()) {
   return {
     transaction_id: id,
     pending_transaction_id: null,
@@ -51,7 +55,7 @@ export function txn(id: string, account_id: string, daysBack: number, amount: nu
     amount,
     iso_currency_code: 'USD',
     unofficial_currency_code: null,
-    date: daysAgo(daysBack),
+    date: daysAgo(daysBack, now),
     authorized_date: null,
     authorized_datetime: null,
     datetime: null,
@@ -78,27 +82,27 @@ export function txn(id: string, account_id: string, daysBack: number, amount: nu
   };
 }
 
-/** Chase's transactions, dated from now: made when asked for (see TIMES
+/** Chase's transactions, dated from `now`: made when asked for (see TIMES
  *  FOLLOW THE CLOCK AT SEEDING). */
-export const chaseTxns = () => [
-  txn('t_coffee', 'acc_chk', 2, 5.5, { name: 'BLUE BOTTLE 123', merchant_name: 'Blue Bottle', merchant_entity_id: 'm_bb', category: 'food and drink' }),
-  txn('t_rent', 'acc_chk', 3, 1200, { category: 'rent and utilities' }),
-  txn('t_pay', 'acc_chk', 4, -3000, { category: 'income' }),
-  txn('t_transfer', 'acc_chk', 5, 500, { category: 'transfer out', transaction_code: 'transfer' }),
-  txn('t_atm', 'acc_chk', 5, 100, { category: 'general merchandise', transaction_code: 'atm' }),
-  txn('t_fee', 'acc_chk', 6, 35, { category: 'bank fees' }),
-  txn('t_loan', 'acc_chk', 6, 400, { category: 'loan payments' }),
-  txn('t_paris', 'acc_card', 7, 50, { iso_currency_code: 'EUR', category: 'travel', account_name: 'Card' }),
-  txn('t_card', 'acc_card', 8, 80, { category: 'general merchandise', account_name: 'Card' }),
-  txn('t_big', 'acc_chk', 9, 2000, { category: 'general merchandise' }),
-  txn('t_hidden', 'acc_save', 3, 999, { name: 'HIDDEN-ACCOUNT-ROW', account_name: 'Savings' }),
+export const chaseTxns = (now: number = Date.now()) => [
+  txn('t_coffee', 'acc_chk', 2, 5.5, { name: 'BLUE BOTTLE 123', merchant_name: 'Blue Bottle', merchant_entity_id: 'm_bb', category: 'food and drink' }, now),
+  txn('t_rent', 'acc_chk', 3, 1200, { category: 'rent and utilities' }, now),
+  txn('t_pay', 'acc_chk', 4, -3000, { category: 'income' }, now),
+  txn('t_transfer', 'acc_chk', 5, 500, { category: 'transfer out', transaction_code: 'transfer' }, now),
+  txn('t_atm', 'acc_chk', 5, 100, { category: 'general merchandise', transaction_code: 'atm' }, now),
+  txn('t_fee', 'acc_chk', 6, 35, { category: 'bank fees' }, now),
+  txn('t_loan', 'acc_chk', 6, 400, { category: 'loan payments' }, now),
+  txn('t_paris', 'acc_card', 7, 50, { iso_currency_code: 'EUR', category: 'travel', account_name: 'Card' }, now),
+  txn('t_card', 'acc_card', 8, 80, { category: 'general merchandise', account_name: 'Card' }, now),
+  txn('t_big', 'acc_chk', 9, 2000, { category: 'general merchandise' }, now),
+  txn('t_hidden', 'acc_save', 3, 999, { name: 'HIDDEN-ACCOUNT-ROW', account_name: 'Savings' }, now),
   // A pending charge its posted row has replaced: shown once.
-  txn('t_pending', 'acc_chk', 1, 12, { pending: true, name: 'PENDING-SUPERSEDED' }),
-  txn('t_posted', 'acc_chk', 1, 12, { pending_transaction_id: 't_pending', name: 'Posted lunch', category: 'food and drink' }),
+  txn('t_pending', 'acc_chk', 1, 12, { pending: true, name: 'PENDING-SUPERSEDED' }, now),
+  txn('t_posted', 'acc_chk', 1, 12, { pending_transaction_id: 't_pending', name: 'Posted lunch', category: 'food and drink' }, now),
   // Older than the window the app shows.
-  txn('t_ancient', 'acc_chk', 400, 9, { name: 'ANCIENT' }),
+  txn('t_ancient', 'acc_chk', 400, 9, { name: 'ANCIENT' }, now),
   // A subscription, about monthly (31 days apart, so always in three months).
-  ...[26, 57, 88].map((d, i) => txn(`t_flix${i}`, 'acc_chk', d, 15.99, { name: 'NETFLIX.COM', merchant_name: 'Netflix', category: 'entertainment' })),
+  ...[26, 57, 88].map((d, i) => txn(`t_flix${i}`, 'acc_chk', d, 15.99, { name: 'NETFLIX.COM', merchant_name: 'Netflix', category: 'entertainment' }, now)),
 ];
 
 /** When Chase last synced, as seeded: two hours before `now`. */
@@ -111,7 +115,7 @@ export type Seeded = { syncedAt: string; chaseTxns: ReturnType<typeof chaseTxns>
  *  CLOCK AT SEEDING). */
 export async function seedPerson(fake: FakeRedis): Promise<Seeded> {
   const now = Date.now();
-  const seeded: Seeded = { syncedAt: syncedAt(now), chaseTxns: chaseTxns() };
+  const seeded: Seeded = { syncedAt: syncedAt(now), chaseTxns: chaseTxns(now) };
   const { syncedAt: SYNCED_AT, chaseTxns: CHASE_TXNS } = seeded;
   await saveItem(ctx, { item_id: 'item_chase', institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret') });
   await saveItem(ctx, { item_id: 'item_broker', institution_name: 'Broker', encrypted_access_token: await encrypt(TEST_CTX, 'access-sandbox-secret-2') });
@@ -128,17 +132,17 @@ export async function seedPerson(fake: FakeRedis): Promise<Seeded> {
   // (the broker failed that day).
   const map = (m: Record<string, number>) => encrypt(TEST_CTX, JSON.stringify(m));
   await fake.hset(ctxKey('history:accounts'), {
-    [daysAgo(3)]: await map({ acc_chk: 1000, acc_card: 250, acc_save: 5000, acc_ira: 20000, manual_house: 300000 }),
-    [daysAgo(2)]: await map({ acc_chk: 1200, acc_card: 300, acc_save: 5000, acc_ira: 20500, manual_house: 300000 }),
+    [daysAgo(3, now)]: await map({ acc_chk: 1000, acc_card: 250, acc_save: 5000, acc_ira: 20000, manual_house: 300000 }),
+    [daysAgo(2, now)]: await map({ acc_chk: 1200, acc_card: 300, acc_save: 5000, acc_ira: 20500, manual_house: 300000 }),
   });
-  await fake.hset(ctxKey('history:accounts:partial'), { [daysAgo(1)]: await map({ acc_chk: 1250, acc_card: 310 }) });
+  await fake.hset(ctxKey('history:accounts:partial'), { [daysAgo(1, now)]: await map({ acc_chk: 1250, acc_card: 310 }) });
   await fake.hset(ctxKey('history:net-worth'), {
-    [daysAgo(3)]: await encrypt(TEST_CTX, String(1000 - 250 + 5000 + 20000 + 300000)),
-    [daysAgo(2)]: await encrypt(TEST_CTX, String(1200 - 300 + 5000 + 20500 + 300000)),
+    [daysAgo(3, now)]: await encrypt(TEST_CTX, String(1000 - 250 + 5000 + 20000 + 300000)),
+    [daysAgo(2, now)]: await encrypt(TEST_CTX, String(1200 - 300 + 5000 + 20500 + 300000)),
   });
-  await fake.hset(ctxKey('history:net-worth:est'), { [daysAgo(10)]: await encrypt(TEST_CTX, '320000') });
-  await fake.hset(ctxKey('history:accounts:est'), { [daysAgo(10)]: await map({ acc_chk: 900 }) });
-  await fake.hset(ctxKey('snapshot:taken'), { [daysAgo(2)]: `${daysAgo(2)}T13:00:41.000Z` });
+  await fake.hset(ctxKey('history:net-worth:est'), { [daysAgo(10, now)]: await encrypt(TEST_CTX, '320000') });
+  await fake.hset(ctxKey('history:accounts:est'), { [daysAgo(10, now)]: await map({ acc_chk: 900 }) });
+  await fake.hset(ctxKey('snapshot:taken'), { [daysAgo(2, now)]: `${daysAgo(2, now)}T13:00:41.000Z` });
 
   const accounts = {
     acc_chk: { name: 'Checking', official_name: null, type: 'depository', subtype: 'checking', mask: '1111', balances: null },
@@ -164,14 +168,14 @@ export async function seedPerson(fake: FakeRedis): Promise<Seeded> {
   await manualTxnStore.set(ctx, 'manual_wallet', {
     version: 1,
     rows: [
-      { id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_wallet', date: daysAgo(1), amount: 25, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: 'apples', source: 'manual', source_id: null, created_at: entered, updated_at: entered },
+      { id: 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', account_id: 'manual_wallet', date: daysAgo(1, now), amount: 25, currency: 'USD', name: 'Farmers market', category: 'food and drink', note: 'apples', source: 'manual', source_id: null, created_at: entered, updated_at: entered },
     ],
   });
 
   await setBudgets(ctx, { 'food and drink': 100, housing: 1500, travel: 200 });
 
   await syncsStore.set(ctx, 'item_chase', { at: SYNCED_AT });
-  await noticesStore.set(ctx, 'item_broker', { episode: 'e1', since: `${daysAgo(1)}T13:00:00.000Z`, state: 'needs_reauth', notified_at: null, reminded_at: null });
+  await noticesStore.set(ctx, 'item_broker', { episode: 'e1', since: `${daysAgo(1, now)}T13:00:00.000Z`, state: 'needs_reauth', notified_at: null, reminded_at: null });
   await warningsStore.set(ctx, 'item_chase', {
     kind: 'pending_expiration',
     received_at: SYNCED_AT,
@@ -187,11 +191,11 @@ export async function seedPerson(fake: FakeRedis): Promise<Seeded> {
       accounts: accountsSeen,
       holdings_observed: observeHoldings({
         accounts: accountsSeen,
-        holdings: [{ account_id: 'acc_ira', security_id: 'sec_vti', quantity: 80, institution_price: 250, institution_price_as_of: daysAgo(1), institution_value: 20000, cost_basis: 15000, iso_currency_code: 'USD', unofficial_currency_code: null }],
+        holdings: [{ account_id: 'acc_ira', security_id: 'sec_vti', quantity: 80, institution_price: 250, institution_price_as_of: daysAgo(1, now), institution_value: 20000, cost_basis: 15000, iso_currency_code: 'USD', unofficial_currency_code: null }],
         securities: [{ security_id: 'sec_vti', ticker_symbol: 'VTI', name: 'Vanguard Total Stock Market ETF', type: 'etf', is_cash_equivalent: false }],
       })!,
     },
-  ]);
+  ], now);
   return seeded;
 }
 

@@ -160,7 +160,7 @@ export function GoalsCardView({
         <div className="inst-name">Goals</div>
       </div>
 
-      {saveError && <p className="stale-note">{hideAmountsIn(saveError)}</p>}
+      {saveError && <p className="stale-note"><Masked>{hideAmountsIn(saveError)}</Masked></p>}
       {flows.status === 'error' && views.some((v) => v.projection) && (
         <p className="stale-note">How much went into your accounts couldn’t be read just now, so goals are projected at their monthly targets only.</p>
       )}

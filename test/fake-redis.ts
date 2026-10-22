@@ -230,7 +230,7 @@ export class FakeRedis {
    * path both need one command to fail while the rest still work.
    *
    * `times` matters when a code path issues the same command more than once and
-   * swallows the earlier failures itself — lib/transactions.ts reads its
+   * swallows the earlier failures itself: lib/transactions.ts reads its
    * blocked marker before it reads the state blob, and deliberately tolerates
    * that first read failing.
    */
@@ -427,7 +427,7 @@ export class FakeRedis {
    *
    * Real SCAN gives no ordering guarantee and may return duplicates; this one
    * is deterministic, which makes tests stable. Do not let a caller come to
-   * depend on either property — anything built on this must tolerate the real
+   * depend on either property: anything built on this must tolerate the real
    * client's looser contract.
    */
   async scan(

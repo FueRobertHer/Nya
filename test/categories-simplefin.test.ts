@@ -1,4 +1,4 @@
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, test } from 'bun:test';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, mock, setSystemTime, test } from 'bun:test';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 import { FakeSimplefin, fakeAccount, type FakeTxn } from './simplefin-fake';
 
@@ -53,7 +53,12 @@ const budgetsRoute = await import('@/app/api/budgets/route');
 
 const ctx = TEST_CTX;
 const DAY = 86_400_000;
-const NOW = Date.now();
+// The file's own clock, the afternoon of a month's 20th: its rows, up to two
+// months old, are where its tests expect them whatever day they run on (the
+// coffee two days back in this month's budget, not last month's).
+const NOW = Date.parse('2026-10-20T15:00:00Z');
+beforeAll(() => setSystemTime(NOW));
+afterAll(() => setSystemTime());
 const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 const TODAY = dayOf(NOW);
 const ago = (n: number) => Math.floor(Date.parse(`${dayOf(NOW - n * DAY)}T12:00:00Z`) / 1000);
