@@ -536,7 +536,10 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     const records = [...m].sort(([a], [b]) => (a < b ? -1 : 1)).map(([date, v]) => ({ date, value: v }));
     if (records.length > 0) history.push({ part: `history:${layer}`, records });
   }
-  const order = ['net-worth', 'net-worth:est', 'accounts', 'accounts:partial', 'accounts:est', 'accounts:est:ext', 'accounts:est:flatd', 'accounts:est:flat'];
+  // Each day's breakdowns before its totals, as recordSnapshot writes them
+  // (lib/history.ts restoreHistoryDays): a total read beside its day's
+  // balances never finds them missing.
+  const order = ['accounts', 'accounts:partial', 'accounts:est', 'accounts:est:ext', 'accounts:est:flatd', 'accounts:est:flat', 'net-worth', 'net-worth:est'];
   history.sort((a, b) => order.indexOf(a.part.slice('history:'.length)) - order.indexOf(b.part.slice('history:'.length)));
 
   const after: PartRecords[] = [
