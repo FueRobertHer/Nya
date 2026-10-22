@@ -7,6 +7,7 @@
 // banks that wait, with the day Stop following starts from; how long undo
 // is offered. No React, no fetch, so the tests read it directly.
 
+import { plainNumber } from '@/lib/format';
 import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
 
@@ -54,7 +55,7 @@ export type ScanView = {
   message: string | null;
 };
 
-const plural = (n: number, one: string, many = `${one}s`) => `${n.toLocaleString()} ${n === 1 ? one : many}`;
+const plural = (n: number, one: string, many = `${one}s`) => `${plainNumber(n)} ${n === 1 ? one : many}`;
 
 /** Each part's words, by how many records it has, in the order said. Parts
  *  not named here are said under "and the rest", counted. */
@@ -130,7 +131,7 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   const pending = left['pending_transactions'] ?? 0;
   if (pending > 0) out.push(`${plural(pending, 'pending transaction')}: the bank sends ${pending === 1 ? 'it' : 'them'} again once posted`);
   const about = Object.entries(left).filter(([k]) => k.endsWith(':pending')).reduce((a, [, n]) => a + n, 0);
-  if (about > 0) out.push(`what you said only about pending transactions (${about.toLocaleString()})`);
+  if (about > 0) out.push(`what you said only about pending transactions (${plainNumber(about)})`);
   out.push('the sign-ins Nya used to reach your banks: connect each bank again');
   if (never.api_tokens > 0) out.push(`${plural(never.api_tokens, 'API token')}: make new ones if you need them`);
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);

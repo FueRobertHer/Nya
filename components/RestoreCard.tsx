@@ -33,7 +33,7 @@ import { makePlan, startBody, sendBatches, finishRestore, RestoreStopped, type F
 import { newUserRestoreId } from '@/lib/user-restore/ids';
 import type { Collected } from '@/lib/user-restore/plan';
 import type { RecordView } from '@/lib/user-restore/store';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, waitingBanks, type RestoreState } from './restore-state';
@@ -332,7 +332,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
 
           {unfinished && record?.status === 'writing' && (
             <p className="stale-note">
-              This restore hasn’t finished: {record.done.toLocaleString()} of {record.plan.batches.toLocaleString()} parts are written, so what you see is only part
+              This restore hasn’t finished: {plainNumber(record.done)} of {plainNumber(record.plan.batches)} parts are written, so what you see is only part
               of your data, and no net worth total is recorded meanwhile. Choose the same file to go on, or undo it.
             </p>
           )}
@@ -393,10 +393,10 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
           <div aria-live="polite">
             {phase.kind === 'opening' && <p className="panel-note">Opening the file with its passphrase… {Math.round(phase.done * 100)}%</p>}
             {phase.kind === 'reading' && <p className="panel-note">Reading the file and checking every part of it…</p>}
-            {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {phase.batches.toLocaleString()} parts so far…</p>}
+            {phase.kind === 'checking' && <p className="panel-note">Checking it with Nya: {plainNumber(phase.batches)} parts so far…</p>}
             {phase.kind === 'sending' && (
               <p className="panel-note">
-                Bringing it back: {phase.done.toLocaleString()} of {phase.total.toLocaleString()} parts written. Keep this page open.
+                Bringing it back: {plainNumber(phase.done)} of {plainNumber(phase.total)} parts written. Keep this page open.
               </p>
             )}
             {phase.kind === 'finishing' && <p className="panel-note">Finishing…</p>}
@@ -605,7 +605,7 @@ export function PreviewView({
                       {f.date} · {f.name} · <Masked>{formatMoney(f.amount, f.currency)}</Masked>
                     </li>
                   ))}
-                  {w.affects.length > 20 && <li>and {(w.affects.length - 20).toLocaleString()} more</li>}
+                  {w.affects.length > 20 && <li>and {plainNumber(w.affects.length - 20)} more</li>}
                 </ul>
               )}
             </div>
