@@ -83,6 +83,9 @@ type Phase =
   | { kind: 'working'; what: string };
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A day (YYYY-MM-DD) as the Earlier accounts list writes it, on the
+ *  viewer's own calendar (components/AccountLinks.tsx). */
+const listedDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
 type CardProps = { onChanged?: () => void; autoScan?: boolean };
 
@@ -293,7 +296,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
   }
   if (!state) return null;
   // Not offered here, unless a restore is recorded (its undo stays).
-  const notes = unreadableNotes(state);
+  const notes = unreadableNotes(state, listedDay);
   if (!state.enabled && !record && notes.length === 0) return null;
 
   const scan = state.scan;

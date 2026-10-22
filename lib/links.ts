@@ -404,6 +404,9 @@ export function lastSeenOf(id: string, directory: Record<string, DirectoryEntry>
 const normal = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const label = (e: DirectoryEntry | undefined, id: string) =>
   e ? `${e.institution_name} ${e.name ?? 'account'}${e.mask ? ` ••${e.mask}` : ''}` : id;
+/** How the Earlier accounts list names an account its directory knows
+ *  ("Chase Checking ••1111"), for a note that must name it the same way. */
+export const earlierAccountLabel = (e: DirectoryEntry): string => label(e, '');
 const sameInstitution = (a: DirectoryEntry, b: DirectoryEntry) =>
   a.institution_id && b.institution_id
     ? a.institution_id === b.institution_id

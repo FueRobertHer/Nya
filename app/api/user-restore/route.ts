@@ -15,7 +15,9 @@ import { planDigest } from '@/lib/user-restore/file';
 import { undoRestore, emptyAccount, UndoRefused, EMPTY_WORDS } from '@/lib/user-restore/undo';
 import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 import { waitingAccounts } from '@/lib/user-restore/restored';
-import { liveAccountIds } from '@/lib/links';
+import { directoryEntries, earlierAccountLabel, forgettableAccounts, liveAccountIds, loadSuggestionInputs } from '@/lib/links';
+import { getHiddenAccounts } from '@/lib/hidden';
+import { getItems } from '@/lib/storage';
 import { myConnections } from '@/lib/sharing';
 
 // Bringing a download back into this account (docs/data-export.md,
@@ -27,9 +29,12 @@ import { myConnections } from '@/lib/sharing';
 //                             accounts_unreadable, undo_days, waiting }:
 //                             `waiting`, the restored accounts neither linked
 //                             nor ended, for the card's next steps;
-//                             `accounts_unreadable`, whether one's entry or
-//                             end can't be read (`entries`, `ends`), apart
-//                             from the record's own; and with ?scan=1 whether this account is
+//                             `accounts_unreadable`, the restored accounts
+//                             whose entry can't be read (`entries`, each
+//                             named as the Earlier accounts list names it)
+//                             and whether a waiting one's end can't be
+//                             (`ends`), apart from the record's own; and with
+//                             ?scan=1 whether this account is
 //                             empty enough (a scan of its keys, counted:
 //                             PREVIEWS_PER_HOUR), and, with Clerk, the people
 //                             this account shares with already (`sharing`),
@@ -74,6 +79,23 @@ async function isDemo(): Promise<boolean> {
 }
 
 const scanView = (scan: AccountScan) => ({ ...scan, message: scan.found.length > 0 ? inUseMessage(scan) : null });
+
+/** Each of these accounts as the Earlier accounts list (Manage) shows it, so
+ *  a note that says to forget one names the one it means (forgetting is for
+ *  good): its label there (null for one listed as "Balance history", its
+ *  directory entry unreadable too), its days, and whether it is listed at all
+ *  (one linked to another isn't, until the link goes). */
+async function asListed(ctx: Ctx, ids: readonly string[]): Promise<{ account_id: string; label: string | null; first: string | null; last: string | null; listed: boolean }[]> {
+  if (ids.length === 0) return [];
+  const live = await liveAccountIds(ctx, { strict: true, readOnly: true });
+  const [inputs, hidden, items, known] = await Promise.all([loadSuggestionInputs(ctx, live), getHiddenAccounts(ctx), getItems(ctx), directoryEntries(ctx, [...ids])]);
+  const earlier = new Map(forgettableAccounts(inputs, new Set(hidden.keys()), new Set(items.map((i) => i.item_id))).map((e) => [e.id, e]));
+  return ids.map((id) => {
+    const e = earlier.get(id);
+    const d = known[id];
+    return { account_id: id, label: e ? e.label : d ? earlierAccountLabel(d) : null, first: e?.first ?? null, last: e?.last ?? null, listed: !!e };
+  });
+}
 
 /** Whom this account shares with now, and what: sharing is between people,
  *  outside the account, so an empty account can share already (a net worth,
@@ -156,7 +178,7 @@ export async function GET(req: Request) {
       // A restored account's entry or end that can't be read holds them too,
       // with its own way out: the end's repair on the Accounts tab, or
       // forgetting the account. Never a reason to empty the account.
-      accounts_unreadable: waiting.unread,
+      accounts_unreadable: { entries: await asListed(ctx, waiting.unread.entries), ends: waiting.unread.ends },
       undo_days: UNDO_DAYS,
       waiting: waiting.accounts,
     };

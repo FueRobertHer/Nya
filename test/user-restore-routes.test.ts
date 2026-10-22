@@ -197,7 +197,7 @@ describe('the routes', () => {
     delete process.env.RESTORE_ENABLED;
     const state = await call('GET', '/api/user-restore');
     expect(state.status).toBe(200);
-    expect(state.body).toMatchObject({ enabled: false, demo: false, record_unreadable: false, accounts_unreadable: { entries: false, ends: false }, record: { id: record.id, status: 'finished' } });
+    expect(state.body).toMatchObject({ enabled: false, demo: false, record_unreadable: false, accounts_unreadable: { entries: [], ends: false }, record: { id: record.id, status: 'finished' } });
     // What the card's next steps name: each restored account still waiting.
     expect(state.body.waiting).toEqual([
       { account_id: 'acc_chk', institution_name: 'Chase', name: 'Checking', mask: '1111', last: '2026-01-04' },
@@ -213,11 +213,22 @@ describe('the routes', () => {
   test('a restored account’s entry or end that can’t be read is said apart from the record: totals hold, and emptying isn’t the answer', async () => {
     await restoreAll(OLD.text);
     await fake.hset(ctxKey('account-lifecycle'), { acc_chk: 'not a value Nya wrote' });
-    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record_unreadable: false, accounts_unreadable: { entries: false, ends: true }, record: { status: 'finished' } });
+    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record_unreadable: false, accounts_unreadable: { entries: [], ends: true }, record: { status: 'finished' } });
     expect((await hold()).unreadable).toBe(true);
     await fake.hdel(ctxKey('account-lifecycle'), 'acc_chk');
-    await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote' });
-    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record_unreadable: false, accounts_unreadable: { entries: true, ends: false } });
+    // Named as the Earlier accounts list names them, so the one to forget is
+    // the one meant: the card's books, listed; the checking account, which
+    // an earlier one is linked to, isn't until that link goes.
+    await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote', acc_chk: 'not a value Nya wrote' });
+    const named = (await call('GET', '/api/user-restore')).body;
+    expect(named).toMatchObject({ record_unreadable: false, accounts_unreadable: { ends: false } });
+    expect(named.accounts_unreadable.entries).toEqual([
+      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', first: expect.any(String), last: expect.any(String), listed: true },
+      { account_id: 'acc_chk', label: 'Chase Checking ••1111', first: null, last: null, listed: false },
+    ]);
+    const { forgettableAccounts, loadSuggestionInputs, liveAccountIds } = await import('@/lib/links');
+    const listed = forgettableAccounts(await loadSuggestionInputs(ctx, await liveAccountIds(ctx, { strict: true, readOnly: true })), new Set(['acc_card']), new Set()).find((e) => e.id === 'acc_card')!;
+    expect([listed.label, listed.first, listed.last]).toEqual(['Chase Sapphire ••2222', named.accounts_unreadable.entries[0].first, named.accounts_unreadable.entries[0].last]);
     await fake.set(ctxKey('user-restore'), 'not a value Nya wrote');
     expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record: null, record_unreadable: true });
   });

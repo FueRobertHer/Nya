@@ -126,16 +126,35 @@ describe('what waits, and for how long undo lasts', () => {
     expect(canUndo(finished, Date.parse('2026-10-14T09:05:00.001Z'))).toBe(false);
   });
 
-  test('what can’t be read says what to do: emptying only for the record itself, the Accounts tab’s repair for an end', () => {
-    const none = { entries: false, ends: false };
-    expect(unreadableNotes({ record_unreadable: false, accounts_unreadable: none })).toEqual([]);
-    expect(unreadableNotes({ record_unreadable: true, accounts_unreadable: none }).map((n) => [n.empty, n.words.slice(0, 43)])).toEqual([[true, 'Nya can’t read the record of a restore here']]);
-    const ends = unreadableNotes({ record_unreadable: false, accounts_unreadable: { entries: false, ends: true } });
+  test('what can’t be read says what to do: emptying only for the record itself while restores are on, the Accounts tab’s repair for an end', () => {
+    const none = { entries: [], ends: false };
+    expect(unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: none })).toEqual([]);
+    const record = unreadableNotes({ enabled: true, record_unreadable: true, accounts_unreadable: none });
+    expect(record.map((n) => n.empty)).toEqual([true]);
+    expect(record[0].words).toContain('Empty this account (below) to start again');
+    // With restores turned off, the emptying section isn't shown and the
+    // server refuses it: the note says so instead.
+    const off = unreadableNotes({ enabled: false, record_unreadable: true, accounts_unreadable: none });
+    expect(off.map((n) => n.empty)).toEqual([false]);
+    expect(off[0].words).not.toContain('Empty this account');
+    expect(off[0].words).toContain('turned off on this copy of Nya: ask whoever runs it.');
+    const ends = unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries: [], ends: true } });
     expect(ends.map((n) => n.empty)).toEqual([false]);
     expect(ends[0].words).toContain('Remove the damaged closure on the Accounts tab');
-    const entries = unreadableNotes({ record_unreadable: false, accounts_unreadable: { entries: true, ends: false } });
-    expect(entries.map((n) => n.empty)).toEqual([false]);
-    expect(entries[0].words).toContain('Forget that account (Manage, Earlier accounts)');
+  });
+
+  test('an account whose details can’t be read is named as the Earlier accounts list names it before it is forgotten', () => {
+    const entries = [
+      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', first: '2025-12-30', last: '2026-10-06', listed: true },
+      { account_id: 'acc_gone', label: null, first: '2024-01-01', last: null, listed: true },
+      { account_id: 'acc_chk', label: 'Chase Checking ••1111', first: null, last: null, listed: false },
+    ];
+    const notes = unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries, ends: false } }, (d) => `[${d}]`);
+    expect(notes.map((n) => [n.empty, n.words])).toEqual([
+      [false, 'What Nya keeps about Chase Sapphire ••2222, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. Forget it under Earlier accounts (Manage), where it is listed as Chase Sapphire ••2222 ([2025-12-30] to [2026-10-06]), or ask whoever runs this copy of Nya.'],
+      [false, 'What Nya keeps about an account, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. Forget it under Earlier accounts (Manage), where it is listed as Balance history ([2024-01-01] to unknown), or ask whoever runs this copy of Nya.'],
+      [false, 'What Nya keeps about Chase Checking ••1111, which a restore brought back, can’t be read, so no net worth total is recorded until it can be. It is linked to another account, so it can be forgotten only once that link is removed (Manage, Reconnected accounts); or ask whoever runs this copy of Nya.'],
+    ]);
   });
 
   test('a protected file is told by its first bytes', () => {

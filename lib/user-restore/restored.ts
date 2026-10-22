@@ -254,8 +254,8 @@ export type WaitingAccount = { account_id: string; institution_name: string; nam
 
 /**
  * The restored accounts still waiting (see WaitingAccount), by bank and
- * name, and whether something it needs couldn't be read: an entry
- * (`entries`), or the end of an account that would otherwise wait (`ends`).
+ * name, and what it needs that couldn't be read: entries (`entries`, their
+ * ids), or the end of an account that would otherwise wait (`ends`).
  * Linked is answered, whatever the account it is linked to became since (a
  * bank disconnected after the link): reading its rows asks for a live
  * account (linkedTo), the answer doesn't. Only accounts the directory still
@@ -267,10 +267,10 @@ export type WaitingAccount = { account_id: string; institution_name: string; nam
 export async function waitingAccounts(
   ctx: Ctx,
   liveIds: () => Promise<Set<string>>
-): Promise<{ accounts: WaitingAccount[]; unreadable: boolean; unread: { entries: boolean; ends: boolean } }> {
+): Promise<{ accounts: WaitingAccount[]; unreadable: boolean; unread: { entries: string[]; ends: boolean } }> {
   const report = await restoredAccountsStore.getAllReport(ctx);
-  const unread = { entries: report.unreadable.length > 0 || report.unrecognised.length > 0, ends: false };
-  if (report.entries.size === 0) return { accounts: [], unreadable: unread.entries, unread };
+  const unread = { entries: [...report.unreadable, ...report.unrecognised].sort(), ends: false };
+  if (report.entries.size === 0) return { accounts: [], unreadable: unread.entries.length > 0, unread };
   const [links, live, ends, listed] = await Promise.all([getLinks(ctx), liveIds(), lifecycleStore.getAllReport(ctx), directoryIds(ctx)]);
   const applied = effectiveLinks(links, live);
   const unreadEnds = new Set([...ends.unreadable, ...ends.unrecognised]);
@@ -284,7 +284,7 @@ export async function waitingAccounts(
     accounts.push({ account_id: id, institution_name: a.institution_name, name: a.name, mask: a.mask, last: a.rows?.last ?? null });
   }
   accounts.sort((x, y) => x.institution_name.localeCompare(y.institution_name) || (x.name ?? '').localeCompare(y.name ?? '') || x.account_id.localeCompare(y.account_id));
-  return { accounts, unreadable: unread.entries || unread.ends, unread };
+  return { accounts, unreadable: unread.entries.length > 0 || unread.ends, unread };
 }
 
 /**

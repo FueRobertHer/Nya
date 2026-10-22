@@ -20,15 +20,22 @@ export type RestoreState = {
   /** The restore's record can't be read: emptying the account is the way
    *  out. */
   record_unreadable: boolean;
-  /** An entry of a restored account, or the end of one that would wait,
-   *  can't be read: totals hold, and each has a repair of its own. */
-  accounts_unreadable: { entries: boolean; ends: boolean };
+  /** The restored accounts whose entry can't be read, each as the Earlier
+   *  accounts list names it, and whether the end of one that would wait
+   *  can't be: totals hold, and each has a repair of its own. */
+  accounts_unreadable: { entries: UnreadableAccount[]; ends: boolean };
   undo_days: number;
   waiting: WaitingAccount[];
   scan?: ScanView;
   /** With the scan: whom this account shares with already, and what. */
   sharing?: SharingNow[];
 };
+
+/** A restored account whose entry can't be read, as the Earlier accounts list
+ *  (Manage) shows it: its label there (null: listed as "Balance history"),
+ *  its days, and whether it is listed (one linked to another isn't, until
+ *  the link goes). */
+export type UnreadableAccount = { account_id: string; label: string | null; first: string | null; last: string | null; listed: boolean };
 
 /** One person this account shares with already (app/api/user-restore). */
 export type SharingNow = { label: string; kinds: string[]; accounts: number };
@@ -145,16 +152,23 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
 }
 
 /** What can't be read of a restore here, in words, each with whether
- *  emptying the account is the way out (only for the record itself: a
- *  restored account's entry or end has a repair of its own). */
-export function unreadableNotes(state: Pick<RestoreState, 'record_unreadable' | 'accounts_unreadable'>): { words: string; empty: boolean }[] {
+ *  emptying the account is the way out (only for the record itself, and only
+ *  while this copy offers restores: a restored account's entry or end has a
+ *  repair of its own). Each account to forget is named as the Earlier
+ *  accounts list names it, its days written by `day`, since forgetting is
+ *  for good. */
+export function unreadableNotes(
+  state: Pick<RestoreState, 'enabled' | 'record_unreadable' | 'accounts_unreadable'>,
+  day: (iso: string) => string = (iso) => iso
+): { words: string; empty: boolean }[] {
   const out: { words: string; empty: boolean }[] = [];
   if (state.record_unreadable) {
-    out.push({
-      words:
-        'Nya can’t read the record of a restore here, so it can’t tell whether one finished. No net worth total is recorded meanwhile. Empty this account (below) to start again, or ask whoever runs this copy of Nya.',
-      empty: true,
-    });
+    const record = 'Nya can’t read the record of a restore here, so it can’t tell whether one finished. No net worth total is recorded meanwhile.';
+    out.push(
+      state.enabled
+        ? { words: `${record} Empty this account (below) to start again, or ask whoever runs this copy of Nya.`, empty: true }
+        : { words: `${record} Bringing back a download, and emptying an account, are turned off on this copy of Nya: ask whoever runs it.`, empty: false }
+    );
   }
   if (state.accounts_unreadable.ends) {
     out.push({
@@ -163,10 +177,14 @@ export function unreadableNotes(state: Pick<RestoreState, 'record_unreadable' | 
       empty: false,
     });
   }
-  if (state.accounts_unreadable.entries) {
+  for (const a of state.accounts_unreadable.entries) {
+    const name = a.label ?? 'Balance history';
+    const days = a.first || a.last ? ` (${a.first ? day(a.first) : 'unknown'} to ${a.last ? day(a.last) : 'unknown'})` : '';
+    const what = `What Nya keeps about ${a.label ?? 'an account'}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
     out.push({
-      words:
-        'What Nya keeps about one of the accounts a restore brought back can’t be read, so no net worth total is recorded until it can be. Forget that account (Manage, Earlier accounts), or ask whoever runs this copy of Nya.',
+      words: a.listed
+        ? `${what} Forget it under Earlier accounts (Manage), where it is listed as ${name}${days}, or ask whoever runs this copy of Nya.`
+        : `${what} It is linked to another account, so it can be forgotten only once that link is removed (Manage, Reconnected accounts); or ask whoever runs this copy of Nya.`,
       empty: false,
     });
   }
