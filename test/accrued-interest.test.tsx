@@ -292,6 +292,10 @@ describe('the rule', () => {
     // No home currency: each in its own, whatever most accounts are in.
     expect(accruedAmountsText(view.amounts, null, 'EUR', money)).toBe('$612.40 and CA$80.00');
     expect(accruedAmountsText([{ currency: null, total: 612.4 }], null, 'USD', money)).toBe('$612.40');
+    // A loan that says no currency is added to the main one's, never named
+    // beside it.
+    expect(accruedAmountsText([{ currency: 'USD', total: 500.01 }, { currency: null, total: 80 }], null, 'USD', money)).toBe('$580.01');
+    expect(accruedAmountsText([{ currency: 'USD', total: 500.01 }, { currency: null, total: 80 }], null, 'CAD', money)).toBe('$500.01 and CA$80.00');
     // A home currency: converted at the newest rates, as the total is, from
     // what; what has no rate stays in its own, marked so.
     const fx = { home: 'EUR', latest: { date: '2026-09-14', rates: { USD: '1.1551' } }, own: [] };

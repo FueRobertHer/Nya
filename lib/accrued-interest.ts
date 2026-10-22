@@ -161,7 +161,11 @@ export function accruedAmountsText(
   main: string | null,
   money: (n: number, currency: string | null) => string
 ): string {
-  const own = amounts.map((a) => ({ total: a.total, currency: a.currency ?? main }));
+  // A loan that says no currency is in the main one: added to it, so no
+  // currency is named twice.
+  const cents = new Map<string | null, number>();
+  for (const a of amounts) cents.set(a.currency ?? main, (cents.get(a.currency ?? main) ?? 0) + Math.round(a.total * 100));
+  const own = [...cents].map(([currency, n]) => ({ currency, total: n / 100 }));
   if (!fx || own.every((a) => a.currency === fx.home)) return joinNames(own.map((a) => money(a.total, a.currency)));
   const b = balancesNow(own.map((a) => ({ amount: a.total, currency: a.currency })), fx, main);
   const said: string[] = [];
