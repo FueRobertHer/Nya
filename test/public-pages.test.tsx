@@ -422,7 +422,11 @@ describe('the privacy page', () => {
       expect(card()).not.toContain('Not turned on here');
       expect(privacy()).toContain('The file is read in your browser and never stored: only what it holds is written, into your account, encrypted as the rest of your data is.');
       expect(security()).toContain('Bring back a download reads the file in your browser, a few megabytes at a time, and checks every part of it there');
-      expect(security()).toContain('Undo, for 7 days after it finishes, empties the account again, as emptying it does');
+      expect(security()).toContain('Undo, while a restore is unfinished and for 7 days after it finishes, empties the account again, as emptying it does');
+      expect(security()).toContain('no SimpleFIN or Lunch Flow access');
+      expect(security()).toContain('never left running at Plaid, SimpleFIN or Lunch Flow.');
+      expect(privacy()).toContain('Undo, offered while a restore is unfinished and for 7 days after it finishes, empties the account again.');
+      expect(privacy()).toContain('until you connect it again and link its accounts (then they count as its own)');
     } finally {
       if (saved === undefined) delete process.env.RESTORE_ENABLED;
       else process.env.RESTORE_ENABLED = saved;

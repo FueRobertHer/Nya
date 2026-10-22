@@ -392,11 +392,13 @@ export default function SecurityPage() {
           </p>
           <p>
             It needs a fresh sign-in, as a download does, and goes only into an account with nothing in it yet. Nothing in
-            the file can bring back a credential: no access to a bank, no SimpleFIN access, no API token, no sharing.
+            the file can bring back a credential: no access to a bank, no SimpleFIN or Lunch Flow access, no API token, no
+            sharing.
             {mail ? ' Starting a restore, undoing one and emptying an account are each emailed to you.' : ''} While a
-            restore hasn’t finished, the read-only API, the MCP server and what you share answer nothing from it. Undo, for{' '}
-            {UNDO_DAYS} days after it finishes, empties the account again, as emptying it does: both need a fresh sign-in and
-            are refused while a bank is connected, so a connection is never left running at Plaid or SimpleFIN.
+            restore hasn’t finished, the read-only API, the MCP server and what you share answer nothing from it. Undo, while a
+            restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again, as emptying it does:
+            both need a fresh sign-in and are refused while a bank is connected, so a connection is never left running at
+            Plaid, SimpleFIN or Lunch Flow.
           </p>
         </InfoSection>
       )}

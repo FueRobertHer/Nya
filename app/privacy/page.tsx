@@ -208,7 +208,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   ],
   [
     'A download you brought back',
-    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you connect it again (then they count as its own), or Forget it. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
+    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you connect it again and link its accounts (then they count as its own), or Forget it. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
   ],
   [
     'A SimpleFIN connection',
@@ -350,8 +350,8 @@ export default function PrivacyPage() {
             Nya or another. The file is read in your browser and never stored: only what it holds is written, into your
             account, encrypted as the rest of your data is. A fresh sign-in comes first, and{' '}
             {mail ? 'starting one, undoing it and emptying an account are each emailed to you.' : 'this copy of Nya sends no email, so starting one isn’t emailed to you.'}{' '}
-            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again. Undo
-            empties the account again, for {UNDO_DAYS} days after a restore finishes.
+            Your banks’ access, your API tokens and sharing never come back: you connect, make and share them again. Undo,
+            offered while a restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again.
           </p>
         )}
       </InfoSection>
