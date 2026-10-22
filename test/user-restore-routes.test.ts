@@ -91,8 +91,9 @@ describe('a round trip', () => {
       ].sort()
     );
     // No connection: its accounts are earlier ones, each as the download had
-    // it but what only the bank's own store held (the currency, the limit);
-    // the card, which the old copy hadn't listed yet, is listed from its days.
+    // it but what only the bank's own store held (the limit), its currency
+    // kept in its directory entry; the card, which the old copy hadn't
+    // listed yet, is listed from its days.
     expect(b.institutions).toEqual([]);
     const accounts = new Map<string, any>(b.accounts.map((x: any) => [x.account_id, x]));
     for (const x of a.accounts) {
@@ -100,7 +101,7 @@ describe('a round trip', () => {
       const restored = x.account_id === 'acc_chk' || x.account_id === 'acc_card';
       expect(y).toEqual(
         restored
-          ? { ...x, connected: false, currency: null, credit_limit: null, ...(x.account_id === 'acc_card' ? { first_seen: '2025-12-30', last_seen: '2026-10-06' } : {}) }
+          ? { ...x, connected: false, credit_limit: null, ...(x.account_id === 'acc_card' ? { first_seen: '2025-12-30', last_seen: '2026-10-06' } : {}) }
           : x
       );
     }
