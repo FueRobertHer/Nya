@@ -17,6 +17,8 @@ const { MASK, setAmountsHidden } = await import('@/lib/format');
 const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords, sharingLines, unreadableNotes } = await import('@/components/restore-state');
 const { PreviewView, RecordSummary, UnreadableNotesView } = await import('@/components/RestoreCard');
 type UnreadableAccount = import('@/components/restore-state').UnreadableAccount;
+type UnrecognisedAccount = import('@/components/restore-state').UnrecognisedAccount;
+type RestoredRows = import('@/lib/user-restore/forget').RestoredRows;
 const { earlierNames } = await import('@/lib/earlier-names');
 const { collect, previewOf } = await import('@/lib/user-restore/file');
 const { downloadText, sourceOf, EXPORTED } = await import('./restore-run');
@@ -129,7 +131,7 @@ describe('what waits, and for how long undo lasts', () => {
   });
 
   test('what can’t be read says what to do: emptying only for the record itself while restores are on, the Accounts tab’s repair for an end', () => {
-    const none = { entries: [], ends: false, unnamed: false, broken_links: false };
+    const none = { entries: [], unrecognised: [], ends: false, unnamed: false, broken_links: false };
     expect(unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: none })).toEqual([]);
     const record = unreadableNotes({ enabled: true, record_unreadable: true, accounts_unreadable: none });
     expect(record.map((n) => n.empty)).toEqual([true]);
@@ -145,14 +147,22 @@ describe('what waits, and for how long undo lasts', () => {
     expect(ends[0].words).toContain('Remove the damaged closure on the Accounts tab');
   });
 
-  const damaged = (entries: UnreadableAccount[], over: { unnamed?: boolean; broken_links?: boolean } = {}) =>
-    unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries, ends: false, unnamed: false, broken_links: false, ...over } }, (d) => `[${d}]`);
+  const damaged = (entries: UnreadableAccount[], over: { unnamed?: boolean; broken_links?: boolean; unrecognised?: UnrecognisedAccount[] } = {}) =>
+    unreadableNotes({ enabled: true, record_unreadable: false, accounts_unreadable: { entries, unrecognised: [], ends: false, unnamed: false, broken_links: false, ...over } }, (d) => `[${d}]`);
+  const ROWS: RestoredRows = { count: 2, first: '2026-01-03', last: '2026-01-04', unreadable: false, unrecognised: false };
   const WHAT = (subject: string) => `What Nya keeps about ${subject}, which a restore brought back, can’t be read, so no net worth total is recorded until it can be.`;
-  const unlisted = (account_id: string, label: string | null, why: NonNullable<UnreadableAccount['unlisted']>['why'], others: (string | null)[] = [], listable = true): UnreadableAccount => ({
+  const unlisted = (
+    account_id: string,
+    label: string | null,
+    why: NonNullable<UnreadableAccount['unlisted']>['why'],
+    others: (string | null)[] = [],
+    listable = true,
+    rows: RestoredRows | null = why === 'unknown' ? ROWS : null
+  ): UnreadableAccount => ({
     account_id,
     label,
     listed: null,
-    unlisted: { why, others, listable },
+    unlisted: { why, others, listable, rows },
   });
 
   test('an account whose details can’t be read is named as the Earlier accounts list names it before it is forgotten', () => {
@@ -211,10 +221,47 @@ describe('what waits, and for how long undo lasts', () => {
     expect(notes.every((n) => !n.words.includes('It is linked to another account'))).toBe(true);
     // Only the one nothing else can show is forgotten from the card.
     expect(notes.map((n) => n.remove?.account_id ?? null)).toEqual(['acc_unk', null, null, null, null, null, null, null]);
-    expect(notes[0].remove!.confirm).toBe('Forget this account for good? The transactions a restore brought back for it, and what you said about them, are deleted, and this can’t be undone.');
-    const html = renderToStaticMarkup(<UnreadableNotesView notes={notes} busy={false} onRemove={() => {}} />);
+    expect(notes[0].remove!.confirm).toBe(
+      'Forget this account for good? The 2 transactions a restore brought back for it ([2026-01-03] to [2026-01-04]), and what you said about them, are deleted, and this can’t be undone. To keep a copy, cancel and choose Download my data first.'
+    );
+    // The download is offered first, once, as undo offers it.
+    const html = renderToStaticMarkup(<UnreadableNotesView notes={notes} busy={false} onRemove={() => {}} download={<button className="secondary">Download my data first</button>} />);
     expect(html.match(/<button[^>]*>Forget it<\/button>/g)?.length).toBe(1);
+    expect(html.match(/Download my data first/g)?.length).toBe(1);
+    expect(html.indexOf('Download my data first')).toBeLessThan(html.indexOf('>Forget it<'));
     expect(html.match(/<p class="stale-note">/g)?.length).toBe(8);
+  });
+
+  test('the confirm says what forgetting takes: how many transactions and over which days, or that some can’t be read, or that there are none', () => {
+    const confirm = (rows: RestoredRows | null) => damaged([unlisted('acc_unk', null, 'unknown', [], false, rows)])[0].remove!.confirm;
+    const rest = ', and this can’t be undone. To keep a copy, cancel and choose Download my data first.';
+    expect(confirm({ ...ROWS, count: 1, last: '2026-01-03' })).toBe(`Forget this account for good? The transaction a restore brought back for it ([2026-01-03]), and what you said about it, are deleted${rest}`);
+    expect(confirm({ ...ROWS, count: 1234 })).toContain('The 1,234 transactions a restore brought back for it ([2026-01-03] to [2026-01-04]), and what you said about them, are deleted');
+    expect(confirm({ ...ROWS, unreadable: true })).toContain('The 2 transactions a restore brought back for it that can be read ([2026-01-03] to [2026-01-04]), those that can’t be, and what you said about them, are deleted');
+    expect(confirm({ count: 0, first: null, last: null, unreadable: true, unrecognised: false })).toContain('The transactions a restore brought back for it, which can’t be read, are deleted');
+    expect(confirm({ count: 0, first: null, last: null, unreadable: false, unrecognised: false })).toBe(`Forget this account for good? A restore brought back no transactions for it, and what Nya keeps about it is deleted${rest}`);
+  });
+
+  test('what this version doesn’t know is said apart, a newer version’s or a fault, and nothing offers to forget it', () => {
+    const NEWER = (subject: string) =>
+      `What Nya keeps about ${subject}, which a restore brought back, is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, and no net worth total is recorded meanwhile: ask whoever runs this copy of Nya.`;
+    const notes = damaged([], { unrecognised: [{ account_id: 'acc_card', label: 'Chase Sapphire ••2222' }, { account_id: 'acc_x1111', label: null }, { account_id: 'acc_y1111', label: null }], broken_links: true });
+    expect(notes.map((n) => [n.key, n.words, n.remove])).toEqual([
+      ['account:acc_card', NEWER('Chase Sapphire ••2222'), undefined],
+      ['account:acc_x1111', NEWER('an account (…x1111)'), undefined],
+      ['account:acc_y1111', NEWER('an account (…y1111)'), undefined],
+    ]);
+    // Said even when the damaged ones can't be named, beside them.
+    const both = damaged([{ account_id: 'a', label: null, listed: null, unlisted: null }], { unnamed: true, unrecognised: [{ account_id: 'acc_card', label: null }] });
+    expect(both.map((n) => [n.key, n.remove])).toEqual([
+      ['unnamed', undefined],
+      ['account:acc_card', undefined],
+    ]);
+    // An account with nothing to list it by whose transactions this version
+    // doesn't know isn't forgotten from here either.
+    const rows = damaged([unlisted('acc_unk', null, 'unknown', [], false, { ...ROWS, unrecognised: true })]);
+    expect(rows[0].remove).toBeUndefined();
+    expect(rows[0].words).toContain('are in a form this version of Nya doesn’t know: a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here: ask whoever runs this copy of Nya.');
   });
 
   test('two that would read the same are told apart by the end of each id; a link that can’t be read is said once', () => {

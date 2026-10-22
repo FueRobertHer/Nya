@@ -18,8 +18,12 @@ import { linksChanged } from '@/lib/history-import/extend';
 //                             forgotten as that list forgets an account
 //                             (forgetEarlierAccount, every other check of it
 //                             standing), under the links lock; only for an
-//                             entry that can't be read right now. Answers as
-//                             app/api/account-links answers a forget.
+//                             entry whose bytes are damaged right now, never
+//                             one this version doesn't know (a newer version
+//                             wrote it, or a fault: lib/repo.ts, ONLY
+//                             UNREADABLE ENTRIES MAY EVER BE OFFERED FOR
+//                             REMOVAL). Answers as app/api/account-links
+//                             answers a forget.
 //
 // Whether or not restores are turned on (RESTORE_ENABLED): the entry holds
 // the totals either way. No fresh sign-in, as for any forget. Logs carry no
@@ -57,7 +61,13 @@ export async function POST(req: Request) {
   try {
     return await withLinksLock(ctx, async () => {
       const report = await restoredAccountsStore.getAllReport(ctx);
-      if (![...report.unreadable, ...report.unrecognised].includes(id)) {
+      if (report.unrecognised.includes(id)) {
+        return NextResponse.json(
+          { error: 'What Nya keeps about that account is in a form this version doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is: ask whoever runs this copy of Nya.' },
+          { status: 409 }
+        );
+      }
+      if (!report.unreadable.includes(id)) {
         return NextResponse.json({ error: 'That isn’t an account a restore brought back whose details can’t be read.' }, { status: 409 });
       }
       try {

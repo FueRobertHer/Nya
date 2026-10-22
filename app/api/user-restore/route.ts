@@ -20,7 +20,8 @@ import { earlierNames } from '@/lib/earlier-names';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { myConnections } from '@/lib/sharing';
-import type { UnreadableAccount } from '@/components/restore-state';
+import { restoredRowsOf } from '@/lib/user-restore/forget';
+import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
 
 // Bringing a download back into this account (docs/data-export.md,
 // "Bringing it back"): the record of the restore, and what is done to the
@@ -35,11 +36,13 @@ import type { UnreadableAccount } from '@/components/restore-state';
 //                             `accounts_unreadable`, the restored accounts
 //                             whose entry can't be read (`entries`, each
 //                             named as the Earlier accounts list names it, or
-//                             said why it isn't listed; `unnamed` when what
-//                             names them couldn't be read; `broken_links`
-//                             when a saved link can't be, which holds back
-//                             every forget) and whether a waiting one's end
-//                             can't be (`ends`), apart from the record's own;
+//                             said why it isn't listed; `unrecognised`, those
+//                             in a form this version doesn't know, never
+//                             offered for removal; `unnamed` when what names
+//                             them couldn't be read; `broken_links` when a
+//                             saved link can't be, which holds back every
+//                             forget) and whether a waiting one's end can't
+//                             be (`ends`), apart from the record's own;
 //                             and with ?scan=1 whether this account is
 //                             empty enough (a scan of its keys, counted:
 //                             PREVIEWS_PER_HOUR), and, with Clerk, the people
@@ -92,13 +95,20 @@ const scanView = (scan: AccountScan) => ({ ...scan, message: scan.found.length >
  * good): what the directory calls it, and the name and days the list shows
  * it by, told apart from any that would read the same (lib/earlier-names.ts);
  * or, for one the list leaves out, why (lib/links.ts whyUnlisted), the
- * accounts a link joins it to, and whether the list would show it once that
- * is undone. `broken_links`: a saved link can't be read, which holds back
- * every forget until it is removed. These reads failing loses only the names
- * (`unnamed`), never the record and its undo.
+ * accounts a link joins it to, whether the list would show it once that is
+ * undone, and, for one the card itself forgets (nothing to list it by), what
+ * that would take of the rows a restore brought back for it. `unknown`, the
+ * entries this version doesn't know, are only named: nothing here offers to
+ * remove them (lib/repo.ts). `broken_links`: a saved link can't be read,
+ * which holds back every forget until it is removed. These reads failing
+ * loses only the names (`unnamed`), never the record and its undo.
  */
-async function named(ctx: Ctx, ids: readonly string[]): Promise<{ entries: UnreadableAccount[]; unnamed: boolean; broken_links: boolean }> {
-  if (ids.length === 0) return { entries: [], unnamed: false, broken_links: false };
+async function named(
+  ctx: Ctx,
+  ids: readonly string[],
+  unknown: readonly string[]
+): Promise<{ entries: UnreadableAccount[]; unrecognised: UnrecognisedAccount[]; unnamed: boolean; broken_links: boolean }> {
+  if (ids.length === 0 && unknown.length === 0) return { entries: [], unrecognised: [], unnamed: false, broken_links: false };
   try {
     const live = await liveAccountIds(ctx, { strict: true, readOnly: true });
     const [inputs, hidden, items] = await Promise.all([loadSuggestionInputs(ctx, live), getHiddenAccounts(ctx), getItems(ctx)]);
@@ -107,23 +117,32 @@ async function named(ctx: Ctx, ids: readonly string[]): Promise<{ entries: Unrea
     const names = earlierNames(earlier);
     const listed = new Map(earlier.map((e) => [e.id, e]));
     const labelOf = (id: string) => (inputs.directory[id] ? earlierAccountLabel(inputs.directory[id]) : null);
-    const entries = ids.map((id): UnreadableAccount => {
-      const e = listed.get(id);
-      const why = e ? null : whyUnlisted(inputs, stored, id);
-      const others =
-        why === 'linked' ? [inputs.links.get(id)!.to] : why === 'linked-to' ? [...inputs.links].filter(([, l]) => l.to === id).map(([old]) => old).sort() : [];
-      return {
-        account_id: id,
-        label: labelOf(id),
-        listed: e ? { name: names.get(id)!, first: e.first, last: e.last } : null,
-        unlisted: why ? { why, others: others.map(labelOf), listable: !!inputs.directory[id] || !!inputs.spans[id] } : null,
-      };
-    });
-    return { entries, unnamed: false, broken_links: inputs.unreadableLinks.size > 0 };
+    const entries = await Promise.all(
+      ids.map(async (id): Promise<UnreadableAccount> => {
+        const e = listed.get(id);
+        const why = e ? null : whyUnlisted(inputs, stored, id);
+        const others =
+          why === 'linked' ? [inputs.links.get(id)!.to] : why === 'linked-to' ? [...inputs.links].filter(([, l]) => l.to === id).map(([old]) => old).sort() : [];
+        return {
+          account_id: id,
+          label: labelOf(id),
+          listed: e ? { name: names.get(id)!, first: e.first, last: e.last } : null,
+          unlisted: why
+            ? { why, others: others.map(labelOf), listable: !!inputs.directory[id] || !!inputs.spans[id], rows: why === 'unknown' ? await restoredRowsOf(ctx, id) : null }
+            : null,
+        };
+      })
+    );
+    return { entries, unrecognised: unknown.map((id) => ({ account_id: id, label: labelOf(id) })), unnamed: false, broken_links: inputs.unreadableLinks.size > 0 };
   } catch (err) {
     // What failed, never its message: one can name an account.
-    console.error(`Restore: couldn’t name the restored accounts whose entries can’t be read (${ids.length}): ${err instanceof Error ? err.name : 'not an error'}`);
-    return { entries: ids.map((id) => ({ account_id: id, label: null, listed: null, unlisted: null })), unnamed: true, broken_links: false };
+    console.error(`Restore: couldn’t name the restored accounts whose entries can’t be read (${ids.length + unknown.length}): ${err instanceof Error ? err.name : 'not an error'}`);
+    return {
+      entries: ids.map((id) => ({ account_id: id, label: null, listed: null, unlisted: null })),
+      unrecognised: unknown.map((id) => ({ account_id: id, label: null })),
+      unnamed: true,
+      broken_links: false,
+    };
   }
 }
 
@@ -208,7 +227,7 @@ export async function GET(req: Request) {
       // A restored account's entry or end that can't be read holds them too,
       // with its own way out: the end's repair on the Accounts tab, or
       // forgetting the account. Never a reason to empty the account.
-      accounts_unreadable: { ...(await named(ctx, waiting.unread.entries)), ends: waiting.unread.ends },
+      accounts_unreadable: { ...(await named(ctx, waiting.unread.entries, waiting.unread.unrecognised)), ends: waiting.unread.ends },
       undo_days: UNDO_DAYS,
       waiting: waiting.accounts,
     };

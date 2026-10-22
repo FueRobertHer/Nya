@@ -121,7 +121,9 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
   const [passphrase, setPassphrase] = useState('');
   const [withoutOk, setWithoutOk] = useState(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
-  const [downloadFirst, setDownloadFirst] = useState(false);
+  /** Where the download is offered first, opened: before an undo, or before
+   *  forgetting an account from the notes. */
+  const [downloadAt, setDownloadAt] = useState<'undo' | 'forget' | null>(null);
   const [emptyWords, setEmptyWords] = useState('');
   const [stopFrom, setStopFrom] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement | null>(null);
@@ -374,7 +376,20 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
             </p>
           )}
 
-          <UnreadableNotesView notes={notes} busy={phase.kind !== 'idle'} onRemove={(r) => void removeDamaged(r)} />
+          <UnreadableNotesView
+            notes={notes}
+            busy={phase.kind !== 'idle'}
+            onRemove={(r) => void removeDamaged(r)}
+            download={
+              downloadAt === 'forget' ? (
+                <DownloadMyData clerk={!needsPassword} />
+              ) : (
+                <button className="secondary" onClick={() => setDownloadAt('forget')}>
+                  Download my data first
+                </button>
+              )
+            }
+          />
 
           {record && <RecordSummary record={record} />}
 
@@ -517,10 +532,10 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
                 {record.status === 'finished' && record.undo_until ? ` Offered until ${day(record.undo_until)}.` : ''}
               </p>
               {/* The download first, here, whichever screen this card is on. */}
-              {downloadFirst ? (
+              {downloadAt === 'undo' ? (
                 <DownloadMyData clerk={!needsPassword} />
               ) : (
-                <button className="secondary" onClick={() => setDownloadFirst(true)}>
+                <button className="secondary" onClick={() => setDownloadAt('undo')}>
                   Download my data first
                 </button>
               )}
@@ -565,13 +580,26 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
 }
 
 /** What can't be read of a restore here (components/restore-state.ts
- *  unreadableNotes), each note with the forget it offers, if any. */
-export function UnreadableNotesView({ notes, busy, onRemove }: { notes: UnreadableNote[]; busy: boolean; onRemove: (remove: NonNullable<UnreadableNote['remove']>) => void }) {
+ *  unreadableNotes), each note with the forget it offers, if any, and the
+ *  download offered first (`download`), once, before the first. */
+export function UnreadableNotesView({
+  notes,
+  busy,
+  onRemove,
+  download,
+}: {
+  notes: UnreadableNote[];
+  busy: boolean;
+  onRemove: (remove: NonNullable<UnreadableNote['remove']>) => void;
+  download?: ReactNode;
+}) {
+  const first = notes.find((n) => n.remove)?.key;
   return (
     <>
       {notes.map((n) => (
         <Fragment key={n.key}>
           <p className="stale-note">{n.words}</p>
+          {n.key === first && download}
           {n.remove && (
             <button className="danger" disabled={busy} onClick={() => onRemove(n.remove!)}>
               Forget it

@@ -45,7 +45,7 @@ import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } f
 import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
 import { forgetImportedHistory } from './history-import/commit';
-import { forgetRestoredAccount } from './user-restore/forget';
+import { forgetRestoredAccount, restoredForgetRefusal } from './user-restore/forget';
 import type { Unlisted } from './earlier-names';
 
 // Keys are functions of the container.
@@ -736,6 +736,9 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
  * (lib/holdings-history.ts forgetAccountHoldings): left as they are. Holdings
  * records this version does not recognise stop the forget before anything is
  * changed, for an account that could be in them (UnreadableEntriesError).
+ * What a restore brought back for it in a form this version doesn't know
+ * stops it the same way, as a refusal (lib/user-restore/forget.ts
+ * restoredForgetRefusal).
  *
  * `unlisted` also takes an account the list can't show for having nothing to
  * list it by (whyUnlisted 'unknown': no directory entry that can be read, and
@@ -775,6 +778,11 @@ export async function forgetEarlierAccount(
   // its balances: refused when forgetting them would put it back.
   const refusal = await (await import('./lifecycle')).endedForgetRefusal(ctx, id, found.hidden);
   if (refusal) throw new ForgetRefused(refusal);
+  // What a restore brought back for it, in a form this version doesn't know,
+  // is never removed (lib/user-restore/forget.ts): refused here, before
+  // anything is changed.
+  const unknown = await restoredForgetRefusal(ctx, id);
+  if (unknown) throw new ForgetRefused(unknown);
 
   // What it held, from every month of holdings history. First, as the one
   // step that stops for what is stored (a record this version does not
