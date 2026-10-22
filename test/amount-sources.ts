@@ -23,7 +23,8 @@
 // { money: fmt }`), or a parameter's default; a variable or a component's
 // prop given an amount (a `let` given one later, a list or a map one is put
 // in, a callback's parameter given their items, what a function returns and
-// what is destructured from it), by the members that hold one; and a number
+// what is destructured from it; a prop by the name it is renamed to, or read
+// through its props), by the members that hold one; and a number
 // written as one past the formatters: Intl's or toLocaleString's currency,
 // fraction digits or compact notation, a "$" written by hand, toFixed,
 // toPrecision, or a toLocaleString given no options, unless the code beside
@@ -475,14 +476,15 @@ const TO_FIXED = /\.to(?:Fixed|Precision)\s*\(/g;
 const AMOUNT_OPTIONS = /currency|FractionDigits|notation|style:\s*['"]currency['"]/;
 const DOLLAR_BY_HAND = /`[^`]*?\$\$\{|['"]-?\$['"]\s*\+|\+\s*['"]-?\$['"]|\?\s*['"]-?\$['"]\s*:/g;
 
-/** Where the statement around `at` starts: past the ";" or the "{" before
- *  it, out of the parentheses and brackets `at` is in. */
+/** Where the statement around `at` starts: past the ";", "{" or "}" before
+ *  it (a block before it is a statement of its own), out of the parentheses
+ *  and brackets `at` is in. */
 function statementStart(lx: Lexed, at: number): number {
   const t = lx.names;
   for (let i = at - 1; i >= 0; i--) {
+    if (t[i] === ';' || t[i] === '{' || t[i] === '}') return i + 1;
     const open = lx.pairs.get(i);
     if (open !== undefined && open < i) i = open;
-    else if (t[i] === ';' || t[i] === '{') return i + 1;
   }
   return 0;
 }
@@ -507,11 +509,18 @@ function guarded(lx: Lexed, ranges: Map<string, [number, number]>, at: number): 
   let fn: [number, number] | null = null;
   for (const r of ranges.values()) if (r[0] <= at && at < r[1] && (!fn || r[1] - r[0] < fn[1] - fn[0])) fn = r;
   if (!fn) return false;
-  // Its own early return, not one of a function written inside it.
-  const inner = innerBodies(lx, fn[0], at);
-  for (const m of t.slice(fn[0], at).matchAll(/\bif\s*\(\s*amountsHidden\(\)\s*\)\s*\{?\s*return\b/g)) {
-    const p = fn[0] + m.index!;
-    if (!inner.some(([a, b]) => p >= a && p < b)) return true;
+  // The body of the function it is in, a callback written inside one too.
+  const outer = bodyIn(lx, fn[0], fn[1]);
+  let own: [number, number] | null = outer?.block ? [outer.from, outer.to] : null;
+  for (const b of innerBodies(lx, fn[0], fn[1])) if (b[0] <= at && at < b[1] && (!own || b[0] > own[0])) own = b;
+  if (!own) return false;
+  // Its own early return, at the top of that body: not one inside another
+  // function, nor one a condition of its own may pass by.
+  for (const m of t.slice(own[0], at).matchAll(/\bif\s*\(\s*amountsHidden\(\)\s*\)\s*\{?\s*return\b/g)) {
+    const p = own[0] + m.index!;
+    let block: [number, number] | null = null;
+    for (const b of lx.jsx.blocks) if (b[0] < p && p < b[1] && (!block || b[0] > block[0])) block = b;
+    if (block?.[0] === own[0] - 1) return true;
   }
   return false;
 }
@@ -1089,9 +1098,12 @@ function componentAt(f: ModuleFacts, at: number): string | null {
 function isWriter(name: string, member: string | undefined, f: ModuleFacts, at: number, pick: Pick, seeds: readonly string[], props: boolean): boolean {
   const component = props ? componentAt(f, at) : null;
   const given = (component && f.propWriters.get(component)) || new Set<string>();
+  // Each prop by the name the component's body reads it by.
+  const { local } = component ? propNamesOf(f, component) : NO_PROP_NAMES;
+  const read = new Set([...given].flatMap((key) => local.get(key) ?? [key]));
   const held = props && f.writerVars.some((v) => v.name === name && at >= v.from && at < v.to);
-  if (!member && (seeds.includes(name) || given.has(name) || held || (f.ranges.has(name) && pick(f.file, name)))) return true;
-  if (member && (given.has(member) || given.has(name) || held)) return true;
+  if (!member && (seeds.includes(name) || read.has(name) || held || (f.ranges.has(name) && pick(f.file, name)))) return true;
+  if (member && (given.has(member) || read.has(name) || held)) return true;
   const b = member ? f.bindings.get(`${name}.*`) : f.bindings.get(name);
   return !!b && pick(b.file, member ?? b.name);
 }
@@ -1125,7 +1137,36 @@ function readsAmount(names: string, f: ModuleFacts, at: number): boolean {
     for (const m of names.matchAll(readOf(v.name))) if (!v.members || !m[1] || v.members.has(m[1])) return true;
   }
   const component = componentAt(f, at);
-  return [...((component && f.propAmounts.get(component)) || [])].some((name) => readOf(name).test(names));
+  const given = component && f.propAmounts.get(component);
+  if (!given) return false;
+  const { local, whole } = propNamesOf(f, component!);
+  for (const key of given) {
+    if ((local.get(key) ?? [key]).some((name) => readOf(name).test(names))) return true;
+    if (whole && new RegExp(`(?<![\\w$.])${escaped(whole)}\\s*\\??\\.\\s*${escaped(key)}(?![\\w$])`).test(names)) return true;
+  }
+  return false;
+}
+
+/** The names a component's body reads its props by: each by its own, or by
+ *  the one it is renamed to where they are destructured (`{ label: text }`);
+ *  and, when they aren't, the name they are read through (`props.label`). */
+type PropNames = { local: Map<string, string[]>; whole: string | null };
+const NO_PROP_NAMES: PropNames = { local: new Map(), whole: null };
+const propNames = new WeakMap<ModuleFacts, Map<string, PropNames>>();
+
+function propNamesOf(f: ModuleFacts, component: string): PropNames {
+  const known = propNames.get(f) ?? new Map<string, PropNames>();
+  propNames.set(f, known);
+  let out = known.get(component);
+  if (out) return out;
+  const params = f.params.get(component);
+  const [first] = params ? partsOf(f.lx, ...params) : [];
+  const text = first ? f.lx.code.slice(...first).trim() : '';
+  out = { local: new Map(), whole: null };
+  if (text.startsWith('{')) for (const b of bindingsIn(text)) b.key && out.local.set(b.key, [...(out.local.get(b.key) ?? []), b.name]);
+  else out.whole = /^[A-Za-z_$][\w$]*/.exec(text)?.[0] ?? null;
+  known.set(component, out);
+  return out;
 }
 
 /** Whether [from, to) of `f`, as `how` reads it, writes an amount (see WHAT

@@ -169,10 +169,13 @@ describe('a number written as an amount past the formatters', () => {
       Early: ['return <p><Masked>{cell(n)}</Masked></p>;', ['function cell(n: number) { if (amountsHidden()) return hiddenMoney(n, null); return n.toFixed(2); }']],
       // A hidden figure earlier in the function guards nothing after it.
       Earlier: 'const q = hiddenFigure(String(n)); return <p><Masked>{q}</Masked><Masked>{(cents / 100).toFixed(2)}</Masked></p>;',
-      // Nor does an early return of another function.
+      // Nor does an early return of another function, or one a condition of its own may pass by.
       Elsewhere: ['return <p><Masked>{cell(n)}</Masked></p>;', ['function cell(n: number) { const hide = () => { if (amountsHidden()) return 1; return 0; }; return `${hide()}${n.toFixed(2)}`; }']],
+      Nested: ['return <p><Masked>{cell(n)}</Masked></p>;', ["function cell(n: number) { if (n > 1) { if (amountsHidden()) return '•••'; } return n.toFixed(2); }"]],
+      // A callback's own early return guards what it writes after it.
+      InCallback: "return <ul>{values.map((v: number) => { if (amountsHidden()) return <li key={v}>•••</li>; return <li key={v}><Masked>{v.toFixed(2)}</Masked></li>; })}</ul>;",
     });
-    expect(found.bypasses).toEqual({ Earlier: [7], Elsewhere: [9] });
+    expect(found.bypasses).toEqual({ Earlier: [7], Elsewhere: [9], Nested: [9] });
   });
 
   test('kept in a memo the switch can’t change', () => {
@@ -235,6 +238,17 @@ describe('an amount drawn as text outside <Masked>', () => {
       },
     });
     expect(found.children).toEqual({ MapFormatter: [7], MapArrow: [7], FormatProp: [9], ArrowProp: [9], AmountProp: [9], Shown: [2, 5] });
+  });
+
+  test('a prop renamed where its props are destructured, or read through them', () => {
+    const found = scan({
+      Renamed: ['return <Stat label={fmt(n)} />;', ['function Stat({ label: text }: any) { return <i>{text}</i>; }']],
+      Through: ['return <Stat label={fmt(n)} />;', ['function Stat(props: any) { return <i>{props.label}</i>; }']],
+      RenamedFormat: ['return <Figure value={n} format={fmt} />;', ['function Figure({ value, format: show }: any) { return <b>{show(value)}</b>; }']],
+      // Another prop, given none, is no amount.
+      Other: ['return <Stat label={fmt(n)} note="plain" />;', ['function Stat({ label: text, note }: any) { return <i>{note}{text ? <Masked>{text}</Masked> : null}</i>; }']],
+    });
+    expect(found.children).toEqual({ Renamed: [9], Through: [9], RenamedFormat: [9] });
   });
 
   test('a field’s own figures, drawn as text, in <Masked> or not', () => {
