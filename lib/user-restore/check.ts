@@ -284,7 +284,9 @@ const manualAccount = (v: unknown, id: string): boolean =>
 
 const directoryEntry = (v: unknown): boolean =>
   isRecord(v) &&
-  onlyKeys(v, ['provider', 'item_id', 'institution_id', 'institution_name', 'name', 'official_name', 'mask', 'type', 'subtype', 'persistent_account_id', 'first_seen', 'last_seen']) &&
+  onlyKeys(v, ['provider', 'item_id', 'institution_id', 'institution_name', 'name', 'official_name', 'mask', 'type', 'subtype', 'persistent_account_id', 'first_seen', 'last_seen', 'currency']) &&
+  // An ISO code, or Plaid's unofficial one (lib/links.ts DirectoryEntry).
+  (v.currency === undefined || (typeof v.currency === 'string' && v.currency.length >= 1 && v.currency.length <= 20)) &&
   (v.provider === undefined || (typeof v.provider === 'string' && v.provider.length <= 40)) &&
   isPlaidId(v.item_id) &&
   (v.institution_id === null || (typeof v.institution_id === 'string' && v.institution_id.length <= 200)) &&

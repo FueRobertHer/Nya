@@ -245,6 +245,10 @@ export function accountsOf(c: Collected): { restored: RestoredAccountFacts[]; di
           persistent_account_id: a.persistent_account_id,
           first_seen: first,
           last_seen: last < first ? first : last,
+          // What prices its past balances in a home currency while it isn't
+          // linked again (lib/fx/known-accounts.ts), as the old copy's entry
+          // or record had it.
+          ...(a.currency ? { currency: a.currency } : {}),
         },
       });
     }

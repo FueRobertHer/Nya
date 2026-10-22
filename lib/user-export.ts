@@ -1331,7 +1331,8 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
         type: m?.a.type ?? d?.type ?? s?.a.type ?? v?.a.type ?? null,
         subtype: m?.a.subtype ?? d?.subtype ?? s?.a.subtype ?? v?.a.subtype ?? null,
         mask: m?.a.mask ?? d?.mask ?? s?.a.mask ?? v?.a.mask ?? null,
-        currency: m?.a.currency ?? s?.a.balances?.iso_currency_code ?? null,
+        // The directory's, for an account its bank no longer lists.
+        currency: m?.a.currency ?? s?.a.balances?.iso_currency_code ?? d?.currency ?? null,
         credit_limit: m?.a.limit ?? s?.a.balances?.limit ?? null,
         persistent_account_id: d?.persistent_account_id ?? null,
         first_seen: d?.first_seen ?? null,
