@@ -22,6 +22,7 @@ import type { Ctx } from '../containers';
 import { containerKeys } from '../account-deletion';
 import { getItems } from '../storage';
 import { secretsStore } from '../connectors/store';
+import { ANY_CONNECTOR } from '../connectors/types';
 import { classOfKey } from './classes';
 import { budgetSetStore } from '../budget-store';
 import { getBudgetsReport } from '../budgets';
@@ -42,18 +43,18 @@ export type AccountScan = {
   settings: string[];
   /** The names of the banks linked through Plaid. */
   banks: string[];
-  /** Connections that hold a credential: Plaid items, and SimpleFIN
-   *  connections with their Access URL. Emptying and undoing are refused
-   *  while there are any: deleting their keys would leave them running at
-   *  the provider. */
-  credentials: { plaid: number; simplefin: number };
+  /** Connections that hold a credential: Plaid items, and connections to
+   *  SimpleFIN or Lunch Flow with their Access URL or API key (`connectors`).
+   *  Emptying and undoing are refused while there are any: deleting their
+   *  keys would leave them running at the provider. */
+  credentials: { plaid: number; connectors: number };
 };
 
 /** The words for each group of what an account can hold, in the order a
  *  refusal names them. */
 const GROUPS: readonly (readonly [words: string, families: readonly string[]])[] = [
   ['linked banks', ['plaid:items']],
-  ['connections to SimpleFIN', ['connector-connections', 'connector-secrets', 'connector-accounts', 'connector-ended']],
+  [`connections to ${ANY_CONNECTOR}`, ['connector-connections', 'connector-secrets', 'connector-accounts', 'connector-ended']],
   ['manual accounts', ['manual:accounts']],
   ['balance history', ['history:net-worth', 'history:net-worth:est', 'history:accounts', 'history:accounts:est', 'history:accounts:est:ext', 'history:accounts:partial', 'history:accounts:est:flatd', 'history:accounts:est:flat']],
   [
@@ -144,7 +145,7 @@ export async function scanAccount(ctx: Ctx): Promise<AccountScan> {
     unseen,
     settings: [...settings].sort(),
     banks: [...new Set(stored.map((i) => i.institution_name))].sort(),
-    credentials: { plaid: stored.length, simplefin: secretCount },
+    credentials: { plaid: stored.length, connectors: secretCount },
   };
 }
 

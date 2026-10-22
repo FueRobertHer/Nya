@@ -17,8 +17,8 @@
 // data no restore brought (one tried first, the shared password's one
 // container), behind a typed confirmation. Both are refused while a
 // connection holds a credential (a Plaid item still billed at Plaid, a
-// SimpleFIN connection with its Access URL: deleting their keys would leave
-// them running at the provider), and when another sign-in owns the container
+// connection to SimpleFIN or Lunch Flow with its Access URL or API key:
+// deleting their keys would leave them running at the provider), and when another sign-in owns the container
 // too, as deleting the account is. The routes ask for a fresh sign-in first
 // and email the owner after.
 //
@@ -33,6 +33,7 @@
 import type { Ctx, ContainerId } from '../containers';
 import { getItems } from '../storage';
 import { secretsStore } from '../connectors/store';
+import { ANY_CONNECTOR, connectorLabel } from '../connectors/types';
 import { sweepContainerExcept } from '../account-deletion';
 import { ownersOf } from '../owners';
 import { clearCaches } from '../cache';
@@ -70,12 +71,18 @@ export function undoable(record: UserRestoreRecord, now: number): boolean {
 /** The refusals both share (see the header): a credential stored, another
  *  sign-in. `userId` is the signed-in account, null with the shared password. */
 async function mayEmpty(ctx: Ctx, userId: string | null): Promise<void> {
-  const [items, secrets] = await Promise.all([getItems(ctx), secretsStore.count(ctx)]);
+  const [items, secrets] = await Promise.all([getItems(ctx), secretsStore.getAllReport(ctx)]);
   if (items.length > 0) {
     const names = [...new Set(items.map((i) => i.institution_name))].join(', ');
     throw new UndoRefused(`Disconnect ${names} first (Manage), then try again: emptying the account would leave ${items.length === 1 ? 'that connection' : 'those connections'} running at Plaid.`);
   }
-  if (secrets > 0) throw new UndoRefused('Disconnect SimpleFIN first (Manage), then try again: emptying the account would leave its connection working at SimpleFIN.');
+  const held = secrets.entries.size + secrets.unreadable.length + secrets.unrecognised.length;
+  if (held > 0) {
+    // Named by the connectors they reach, or all of them where one can't be read.
+    const kinds = new Set([...secrets.entries.values()].map((s) => connectorLabel(s.connector)));
+    const names = held > secrets.entries.size || kinds.size === 0 ? ANY_CONNECTOR : [...kinds].sort().join(' and ');
+    throw new UndoRefused(`Disconnect your connection to ${names} first (Manage), then try again: emptying the account would leave it working at ${names}.`);
+  }
   if (userId !== null && (await ownersOf(ctx.container as ContainerId)).some((other) => other !== userId)) {
     throw new UndoRefused('This account’s data belongs to another sign-in too, so it can’t be emptied from the app. Ask whoever runs this copy of Nya.');
   }

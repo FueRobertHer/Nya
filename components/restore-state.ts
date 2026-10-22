@@ -8,6 +8,7 @@
 // is offered. No React, no fetch, so the tests read it directly.
 
 import { plainNumber } from '@/lib/format';
+import { ANY_CONNECTOR, CONNECTOR_KINDS, CONNECTOR_WORDS } from '@/lib/connectors/types';
 import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
 
@@ -56,7 +57,7 @@ export type ScanView = {
   unseen: boolean;
   settings: string[];
   banks: string[];
-  credentials: { plaid: number; simplefin: number };
+  credentials: { plaid: number; connectors: number };
   message: string | null;
 };
 
@@ -70,7 +71,7 @@ const BROUGHT: readonly (readonly [part: string, words: (n: number) => string])[
   ['store:rules', () => 'your rules'],
   ['manual-accounts', (n) => plural(n, 'manual account')],
   ['restored-accounts', (n) => `${plural(n, 'account')} of banks connected through Plaid, kept as earlier accounts until you connect each bank again`],
-  ['store:connector-connections', (n) => `${plural(n, 'SimpleFIN connection')}, to connect again with a new Setup Token`],
+  ['store:connector-connections', (n) => `${plural(n, 'connection')} to ${ANY_CONNECTOR}, to connect again with ${CONNECTOR_KINDS.map((k) => CONNECTOR_WORDS[k].again).join(' or ')}`],
   ['restored-rows', (n) => `${plural(n, 'bank transaction')}, counted once their accounts are linked again`],
   ['store:manual-transactions', (n) => `the transactions of ${plural(n, 'manual account')}`],
   ['store:imported-transactions', (n) => `transactions imported into ${plural(n, 'account')} from files`],

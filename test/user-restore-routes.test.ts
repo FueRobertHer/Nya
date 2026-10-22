@@ -500,6 +500,13 @@ describe('undo and emptying', () => {
     expect(refused.status).toBe(409);
     expect(refused.body.error).toContain('Disconnect Chase first');
     await fake.hdel(ctxKey('plaid:items'), 'item_new');
+    // A connection to Lunch Flow with its API key, named.
+    const { secretsStore } = await import('@/lib/connectors/store');
+    await secretsStore.set(ctx, 'conn_lf', { connector: 'lunchflow', secret: 'lf-key' });
+    const connector = await call('DELETE', '/api/user-restore', { restore_id: record.id, confirm: true, password: 'hunter2' });
+    expect(connector.status).toBe(409);
+    expect(connector.body.error).toBe('Disconnect your connection to Lunch Flow first (Manage), then try again: emptying the account would leave it working at Lunch Flow.');
+    await secretsStore.remove(ctx, 'conn_lf');
 
     const full = await userRestoreStore.get(ctx);
     await userRestoreStore.set(ctx, { ...full!, undo_until: new Date(Date.now() - 1000).toISOString() });
@@ -513,7 +520,7 @@ describe('undo and emptying', () => {
     expect(scan).toMatchObject({ empty: true, record: false, found: [] });
     // The counters stay (machinery): the start and each undo past the
     // sign-in counted.
-    expect((await startsCount.read(ctx)).count).toBe(4);
+    expect((await startsCount.read(ctx)).count).toBe(5);
     expect(await restoreUnfinished(ctx)).toBe(false);
   });
 

@@ -57,7 +57,7 @@ describe('the classes', () => {
 
 describe('the scan', () => {
   test('a new account is empty', async () => {
-    expect(await scanAccount(ctx)).toEqual({ empty: true, record: false, found: [], unseen: false, settings: [], banks: [], credentials: { plaid: 0, simplefin: 0 } });
+    expect(await scanAccount(ctx)).toEqual({ empty: true, record: false, found: [], unseen: false, settings: [], banks: [], credentials: { plaid: 0, connectors: 0 } });
   });
 
   test('machinery and the person’s tokens are ignored; settings are listed, and the account is still empty', async () => {
@@ -80,7 +80,7 @@ describe('the scan', () => {
     expect(scan.empty).toBe(false);
     expect(scan.found).toEqual(['linked banks', 'manual accounts', 'balance history']);
     expect(scan.banks).toEqual(['Chase']);
-    expect(scan.credentials).toEqual({ plaid: 1, simplefin: 0 });
+    expect(scan.credentials).toEqual({ plaid: 1, connectors: 0 });
     const message = inUseMessage(scan);
     expect(message).toContain('linked banks (Chase), manual accounts and balance history');
     expect(message).not.toContain('item1');
