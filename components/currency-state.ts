@@ -59,14 +59,18 @@ export function useCurrencySettings(active: boolean): { load: CurrencyLoad; relo
   return { load, reload, accept };
 }
 
-/** The currencies Intl knows (ISO 4217), or none on a runtime without the
- *  list. */
+/** The most common currencies, offered on a runtime without Intl's list
+ *  (a browser before 2022), so a choice is still possible. */
+const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'AUD', 'CHF', 'INR', 'CNY'];
+
+/** The currencies Intl knows (ISO 4217), or the most common ones on a
+ *  runtime without the list. */
 export function everyCurrency(): string[] {
   const list = (Intl as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf;
   try {
-    return typeof list === 'function' ? list('currency') : [];
+    return typeof list === 'function' ? list('currency') : [...COMMON_CURRENCIES];
   } catch {
-    return [];
+    return [...COMMON_CURRENCIES];
   }
 }
 

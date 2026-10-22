@@ -7,7 +7,7 @@ import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import type { OwnRate } from '@/lib/fx/rates';
 import { chartGapLines, codedMoney, convertedHeading, convertedText, institutionNote, leftOutLines, noRateText, partText, rateEffectText, staleText, unknownText } from '@/components/currency-text';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, offerFor } from '@/components/CurrencyNotes';
-import { CurrencyChoiceBody, choiceText, manualText } from '@/components/CurrencyChoiceSheet';
+import { CurrencyChoiceBody, CurrencyOptions, choiceText, manualText } from '@/components/CurrencyChoiceSheet';
 import { CurrencyCardBody, OwnRateForm, draftProblem, ecbBeside, ownRateText, type RateDraft } from '@/components/CurrencyCard';
 import { affectedText, type HealthInstitution } from '@/components/ConnectionHealth';
 import type { CurrencySettingsView } from '@/components/currency-state';
@@ -347,6 +347,22 @@ describe('the sheet that chooses a home currency', () => {
     const saving = body({ view: home, manual, fixes: { manual_flat: 'GBP' } });
     expect(saving).toMatch(/<button>Save the currencies<\/button>/);
     expect(text(saving)).not.toContain('It is your home currency now.');
+  });
+
+  test('a runtime without Intl’s list of currencies still offers the common ones', () => {
+    const intl = Intl as { supportedValuesOf?: unknown };
+    const saved = intl.supportedValuesOf;
+    delete intl.supportedValuesOf;
+    try {
+      const html = renderToStaticMarkup(
+        <select value="ARS" onChange={noop}>
+          <CurrencyOptions first={['USD']} value="ARS" />
+        </select>
+      );
+      expect([...html.matchAll(/value="([A-Z]{3})"/g)].map((m) => m[1])).toEqual(['ARS', 'USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'AUD', 'CHF', 'INR', 'CNY']);
+    } finally {
+      intl.supportedValuesOf = saved;
+    }
   });
 
   test('offers the accounts’ currencies first, then the ECB’s, then every other', () => {
