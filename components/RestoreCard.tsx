@@ -36,7 +36,7 @@ import type { RecordView } from '@/lib/user-restore/store';
 import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, waitingBanks, type RestoreState } from './restore-state';
+import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -291,7 +291,8 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
   }
   if (!state) return null;
   // Not offered here, unless a restore is recorded (its undo stays).
-  if (!state.enabled && !record && !state.unreadable) return null;
+  const notes = unreadableNotes(state);
+  if (!state.enabled && !record && notes.length === 0) return null;
 
   const scan = state.scan;
   const banks = waitingBanks(state.waiting);
@@ -312,7 +313,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
         <p className="panel-note">Demo accounts can’t bring a download back: everyone who tries the demo shares its data.</p>
       ) : (
         <>
-          {!record && !state.unreadable && (
+          {!record && !state.record_unreadable && (
             <p className="panel-note">
               Moving to another copy of Nya, or starting again after deleting your account? Choose a JSON download (from Download my data, protected or not) to bring
               everything in it into this account: your accounts and their history, your transactions and what you said about them, your categories, budgets,
@@ -321,12 +322,11 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
             </p>
           )}
 
-          {state.unreadable && (
-            <p className="stale-note">
-              Nya can’t read the record of a restore here, so it can’t tell whether one finished. No net worth total is recorded meanwhile. Empty this account
-              (below) to start again, or ask whoever runs this copy of Nya.
+          {notes.map((n) => (
+            <p key={n.words} className="stale-note">
+              {n.words}
             </p>
-          )}
+          ))}
 
           {record && <RecordSummary record={record} />}
 
@@ -479,7 +479,7 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
 
           {/* For an account that holds data no restore brought, or a record
               that can't be read: everything goes but the sign-in. */}
-          {state.enabled && phase.kind === 'idle' && ((!record && scan && !scan.empty) || state.unreadable || (record?.status === 'finished' && !canUndo(record, Date.now()))) && (
+          {state.enabled && phase.kind === 'idle' && ((!record && scan && !scan.empty) || state.record_unreadable || (record?.status === 'finished' && !canUndo(record, Date.now()))) && (
             <div className="restore-section">
               <div className="section-label">Empty this account first</div>
               <p className="panel-note">

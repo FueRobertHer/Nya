@@ -23,10 +23,13 @@ import { myConnections } from '@/lib/sharing';
 // account as a whole. The batches, and the finish, go to
 // app/api/user-restore/batch.
 //
-//   GET                       { enabled, demo, record, unreadable, undo_days,
-//                             waiting }: `waiting`, the restored accounts
-//                             neither linked nor ended, for the card's next
-//                             steps; and with ?scan=1 whether this account is
+//   GET                       { enabled, demo, record, record_unreadable,
+//                             accounts_unreadable, undo_days, waiting }:
+//                             `waiting`, the restored accounts neither linked
+//                             nor ended, for the card's next steps;
+//                             `accounts_unreadable`, whether one's entry or
+//                             end can't be read (`entries`, `ends`), apart
+//                             from the record's own; and with ?scan=1 whether this account is
 //                             empty enough (a scan of its keys, counted:
 //                             PREVIEWS_PER_HOUR), and, with Clerk, the people
 //                             this account shares with already (`sharing`),
@@ -146,7 +149,11 @@ export async function GET(req: Request) {
       record: viewOf(report.value),
       // A record that can't be read holds the totals as an unfinished one does
       // (lib/user-restore/restored.ts); emptying the account is the way out.
-      unreadable: report.unreadable || report.unrecognised || waiting.unreadable,
+      record_unreadable: report.unreadable || report.unrecognised,
+      // A restored account's entry or end that can't be read holds them too,
+      // with its own way out: the end's repair on the Accounts tab, or
+      // forgetting the account. Never a reason to empty the account.
+      accounts_unreadable: waiting.unread,
       undo_days: UNDO_DAYS,
       waiting: waiting.accounts,
     };

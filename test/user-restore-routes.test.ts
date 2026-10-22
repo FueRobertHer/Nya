@@ -197,7 +197,7 @@ describe('the routes', () => {
     delete process.env.RESTORE_ENABLED;
     const state = await call('GET', '/api/user-restore');
     expect(state.status).toBe(200);
-    expect(state.body).toMatchObject({ enabled: false, demo: false, unreadable: false, record: { id: record.id, status: 'finished' } });
+    expect(state.body).toMatchObject({ enabled: false, demo: false, record_unreadable: false, accounts_unreadable: { entries: false, ends: false }, record: { id: record.id, status: 'finished' } });
     // What the card's next steps name: each restored account still waiting.
     expect(state.body.waiting).toEqual([
       { account_id: 'acc_chk', institution_name: 'Chase', name: 'Checking', mask: '1111', last: '2026-01-04' },
@@ -208,6 +208,18 @@ describe('the routes', () => {
     expect((await call('POST', '/api/user-restore/batch?check=1&exported=2026-10-06', '{"part":"store:tags","records":[]}')).status).toBe(403);
     expect((await call('DELETE', '/api/user-restore', { restore_id: record.id, confirm: true, password: 'hunter2' })).status).toBe(200);
     expect((await call('GET', '/api/user-restore')).body.record).toBeNull();
+  });
+
+  test('a restored account’s entry or end that can’t be read is said apart from the record: totals hold, and emptying isn’t the answer', async () => {
+    await restoreAll(OLD.text);
+    await fake.hset(ctxKey('account-lifecycle'), { acc_chk: 'not a value Nya wrote' });
+    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record_unreadable: false, accounts_unreadable: { entries: false, ends: true }, record: { status: 'finished' } });
+    expect((await hold()).unreadable).toBe(true);
+    await fake.hdel(ctxKey('account-lifecycle'), 'acc_chk');
+    await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote' });
+    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record_unreadable: false, accounts_unreadable: { entries: true, ends: false } });
+    await fake.set(ctxKey('user-restore'), 'not a value Nya wrote');
+    expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record: null, record_unreadable: true });
   });
 
   test('refused into an account in use, saying what was found, and nothing kept; settings alone are replaced', async () => {

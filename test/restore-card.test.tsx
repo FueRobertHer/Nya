@@ -14,7 +14,7 @@ const fake = new FakeRedis({ deserialize: true });
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { MASK, setAmountsHidden } = await import('@/lib/format');
-const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords, sharingLines } = await import('@/components/restore-state');
+const { broughtLines, leftOutLines, waitingBanks, dayAfter, canUndo, looksProtected, accountWords, sharingLines, unreadableNotes } = await import('@/components/restore-state');
 const { PreviewView, RecordSummary } = await import('@/components/RestoreCard');
 const { collect, previewOf } = await import('@/lib/user-restore/file');
 const { downloadText, sourceOf, EXPORTED } = await import('./restore-run');
@@ -123,6 +123,18 @@ describe('what waits, and for how long undo lasts', () => {
     const finished = view({ status: 'finished', done: 1, finished_at: '2026-10-07T09:05:00.000Z', undo_until: '2026-10-14T09:05:00.000Z' });
     expect(canUndo(finished, Date.parse('2026-10-14T09:05:00.000Z'))).toBe(true);
     expect(canUndo(finished, Date.parse('2026-10-14T09:05:00.001Z'))).toBe(false);
+  });
+
+  test('what can’t be read says what to do: emptying only for the record itself, the Accounts tab’s repair for an end', () => {
+    const none = { entries: false, ends: false };
+    expect(unreadableNotes({ record_unreadable: false, accounts_unreadable: none })).toEqual([]);
+    expect(unreadableNotes({ record_unreadable: true, accounts_unreadable: none }).map((n) => [n.empty, n.words.slice(0, 43)])).toEqual([[true, 'Nya can’t read the record of a restore here']]);
+    const ends = unreadableNotes({ record_unreadable: false, accounts_unreadable: { entries: false, ends: true } });
+    expect(ends.map((n) => n.empty)).toEqual([false]);
+    expect(ends[0].words).toContain('Remove the damaged closure on the Accounts tab');
+    const entries = unreadableNotes({ record_unreadable: false, accounts_unreadable: { entries: true, ends: false } });
+    expect(entries.map((n) => n.empty)).toEqual([false]);
+    expect(entries[0].words).toContain('Forget that account (Manage, Earlier accounts)');
   });
 
   test('a protected file is told by its first bytes', () => {

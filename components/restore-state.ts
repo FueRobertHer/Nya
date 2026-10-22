@@ -16,7 +16,12 @@ export type RestoreState = {
   enabled: boolean;
   demo: boolean;
   record: RecordView | null;
-  unreadable: boolean;
+  /** The restore's record can't be read: emptying the account is the way
+   *  out. */
+  record_unreadable: boolean;
+  /** An entry of a restored account, or the end of one that would wait,
+   *  can't be read: totals hold, and each has a repair of its own. */
+  accounts_unreadable: { entries: boolean; ends: boolean };
   undo_days: number;
   waiting: WaitingAccount[];
   scan?: ScanView;
@@ -135,6 +140,35 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   out.push('the sign-ins Nya used to reach your banks: connect each bank again');
   if (never.api_tokens > 0) out.push(`${plural(never.api_tokens, 'API token')}: make new ones if you need them`);
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);
+  return out;
+}
+
+/** What can't be read of a restore here, in words, each with whether
+ *  emptying the account is the way out (only for the record itself: a
+ *  restored account's entry or end has a repair of its own). */
+export function unreadableNotes(state: Pick<RestoreState, 'record_unreadable' | 'accounts_unreadable'>): { words: string; empty: boolean }[] {
+  const out: { words: string; empty: boolean }[] = [];
+  if (state.record_unreadable) {
+    out.push({
+      words:
+        'Nya can’t read the record of a restore here, so it can’t tell whether one finished. No net worth total is recorded meanwhile. Empty this account (below) to start again, or ask whoever runs this copy of Nya.',
+      empty: true,
+    });
+  }
+  if (state.accounts_unreadable.ends) {
+    out.push({
+      words:
+        'How one of the accounts a restore brought back ended can’t be read, so no net worth total is recorded until it can be. Remove the damaged closure on the Accounts tab, then mark that account again if it ended.',
+      empty: false,
+    });
+  }
+  if (state.accounts_unreadable.entries) {
+    out.push({
+      words:
+        'What Nya keeps about one of the accounts a restore brought back can’t be read, so no net worth total is recorded until it can be. Forget that account (Manage, Earlier accounts), or ask whoever runs this copy of Nya.',
+      empty: false,
+    });
+  }
   return out;
 }
 
