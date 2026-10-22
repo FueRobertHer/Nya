@@ -942,9 +942,9 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
   let known = links.has(id) || [...links.values()].some((l) => l.to === id);
   let currency: string | null = null;
   if (isManualId(id)) {
-    // Its currency is its own: a manual account's (US dollars unless it says:
-    // one kept from SimpleFIN on a disconnect can be in another), or the one
-    // SimpleFIN gives an account it feeds. LENIENT, for this display only: a
+    // Its currency is its own: a manual account's (chosen for it, or kept
+    // from a connector on a disconnect; US dollars when it names none), or
+    // the one SimpleFIN or Lunch Flow gives an account it feeds. LENIENT, for this display only: a
     // record that can't be read leaves the currency unknown, said in a note,
     // rather than failing a history kept apart from it. Storage out of reach
     // still throws.

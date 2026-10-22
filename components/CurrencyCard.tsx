@@ -12,7 +12,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
-import CurrencyChoiceSheet from './CurrencyChoiceSheet';
+import CurrencyChoiceSheet, { type ManualCurrency } from './CurrencyChoiceSheet';
 import { ecbCross, errorOf, useCurrencySettings, type CurrencyLoad, type CurrencySettingsView } from './currency-state';
 import { rateDay } from './currency-text';
 import { formatRate } from '@/lib/format';
@@ -22,7 +22,8 @@ import type { OwnRate } from '@/lib/fx/rates';
 type Props = {
   /** The person's accounts' currencies, most first. */
   currencies: readonly string[];
-  manual: readonly { name: string; currency: string }[];
+  /** The manual accounts typed in the app, for the choice sheet to list. */
+  manual: readonly ManualCurrency[];
   /** Opened from a note on Home: show it, scroll to it, and open the form
    *  for a rate for the currency the note named, if any. */
   focus?: { rateFor: string | null } | null;

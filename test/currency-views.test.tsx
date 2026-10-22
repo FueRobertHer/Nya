@@ -322,6 +322,33 @@ describe('the sheet that chooses a home currency', () => {
     expect(manualText([{ name: 'House', currency: 'EUR' }], 'EUR')).toBeNull();
   });
 
+  test('lists each manual account with its currency, to correct before confirming, never its balance', () => {
+    const manual = [
+      { account_id: 'manual_house', name: 'House', currency: 'USD' },
+      { account_id: 'manual_flat', name: 'Flat', currency: 'USD' },
+    ];
+    /** The currency chosen in the select labelled `name`. */
+    const chosenFor = (html: string, name: string) => new RegExp(`<label class="field">${name}<select[^>]*>[\\s\\S]*?<option value="([A-Z]{3})" selected=""`).exec(html)?.[1];
+    const html = body({ manual });
+    expect(text(html)).toContain(
+      'Your manual accounts are counted in the currencies below. If one is in another, correct it before you confirm: only the currency changes, never the balance you typed.'
+    );
+    expect([chosenFor(html, 'House'), chosenFor(html, 'Flat')]).toEqual(['USD', 'USD']);
+    // A correction shows at once, in what the sheet says of them too.
+    const fixed = body({ manual, fixes: { manual_flat: 'GBP' } });
+    expect([chosenFor(fixed, 'House'), chosenFor(fixed, 'Flat')]).toEqual(['USD', 'GBP']);
+    expect(text(fixed)).toContain('Your manual accounts House and Flat stay in their own currencies; their balances are converted for the total.');
+    // One account: said of it alone.
+    expect(text(body({ manual: manual.slice(0, 1) }))).toContain('Your manual account is counted in the currency below.');
+    // With the home currency already chosen, corrections alone can be saved.
+    const home = { ...VIEW, home: 'EUR' };
+    expect(body({ view: home, manual })).toMatch(/<button disabled="">Show my net worth in EUR<\/button>/);
+    expect(text(body({ view: home, manual }))).toContain('It is your home currency now.');
+    const saving = body({ view: home, manual, fixes: { manual_flat: 'GBP' } });
+    expect(saving).toMatch(/<button>Save the currencies<\/button>/);
+    expect(text(saving)).not.toContain('It is your home currency now.');
+  });
+
   test('offers the accounts’ currencies first, then the ECB’s, then every other', () => {
     const groups = [...body().matchAll(/<optgroup label="([^"]*)">([\s\S]*?)<\/optgroup>/g)].map((m) => [m[1].replace(/&#x27;|’/g, '’'), [...m[2].matchAll(/value="([A-Z]+)"/g)].map((v) => v[1])]);
     expect(groups[0]).toEqual(['Your accounts’ currencies', ['USD', 'EUR']]);

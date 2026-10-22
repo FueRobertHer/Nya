@@ -69,7 +69,7 @@ import { newDraft, useRules } from './rules-state';
 import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
-import CurrencyChoiceSheet from './CurrencyChoiceSheet';
+import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
 import { institutionNote, rateEffectText } from './currency-text';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
@@ -93,6 +93,7 @@ import { useAmountsHidden } from './hide-amounts';
 // Same dependency-free-shared-module trick as lib/format: the sign rule lives
 // outside lib/hidden.ts so the client can import it without pulling in Redis.
 import { CASH_SUBTYPE, isCashOnHand, isInvestmentType, isOwedType, signedContribution } from '@/lib/balance';
+import { minorDigits } from '@/lib/manual-txn-input';
 // Same reason: lib/cash.ts imports nothing, so the cash rule can be shared
 // between the server payload and this component.
 import { institutionCash, isCashHolding, cashSharePct } from '@/lib/cash';
@@ -240,15 +241,21 @@ type ManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
+  /** The currency its balance is in; US dollars when it names none. */
+  currency?: string;
 };
 
 // The form's working copy. `balance` is a STRING, as in BudgetsTab and GoalsCard:
 // an <input type="number"> reports '' for a partly typed value like "-", and
 // Number('') is 0, so a number would erase the minus sign as you type it. It's
 // parsed once on submit. `account_id` is null while adding; the server mints it.
-type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance'> & {
+// `currency` is the one chosen; `stored` the one the account is in now, so the
+// form can say what changing it does.
+type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & {
   account_id: string | null;
   balance: string;
+  currency: string;
+  stored: string | null;
 };
 
 // "cash" is a choice, not a type: saved as depository with the subtype
@@ -1247,7 +1254,9 @@ export default function Dashboard({
   // Offered only where the deployment turned it on (app/page.tsx).
   const connectLunchFlow = lunchFlow ? askLunchFlow : undefined;
 
-  const startAddManual = useCallback(() => {
+  // `currency`: what a new account's currency starts as (the home currency,
+  // else the one most accounts are in), for the person to change.
+  const startAddManual = useCallback((currency: string) => {
     setManualError('');
     setEditingManual(false);
     // The id is minted server-side on create, so a draft doesn't carry one.
@@ -1258,13 +1267,16 @@ export default function Dashboard({
       type: 'depository',
       subtype: null,
       balance: '',
+      currency,
+      stored: null,
     });
   }, []);
 
   const startEditManual = useCallback((account: ManualAccount) => {
     setManualError('');
     setEditingManual(true);
-    setManualDraft({ ...account, balance: String(account.balance) });
+    const currency = account.currency ?? 'USD';
+    setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency });
   }, []);
 
   const submitManualDraft = useCallback(() => {
@@ -1274,7 +1286,9 @@ export default function Dashboard({
       institution_name: manualDraft.institution_name,
       type: manualDraft.type,
       subtype: manualDraft.subtype,
+      // As typed: choosing its currency never changes the number.
       balance: Number(manualDraft.balance),
+      currency: manualDraft.currency,
     };
     if (manualDraft.account_id) {
       mutateManual('PATCH', { ...payload, account_id: manualDraft.account_id });
@@ -1751,10 +1765,13 @@ export default function Dashboard({
     for (const i of institutions) for (const a of i.accounts) if (a.currency) counts.set(a.currency, (counts.get(a.currency) ?? 0) + 1);
     return [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([c]) => c);
   }, [institutions]);
-  // The manual accounts typed in the app, with their currency, for what the
-  // choice of a home currency says of them.
+  // The manual accounts typed in the app, with their currency, which the
+  // choice of a home currency lists for the person to correct.
   const manualCurrencies = useMemo(
-    () => institutions.filter((i) => i.manual && !i.connector).flatMap((i) => i.accounts.map((a) => ({ name: a.name, currency: a.currency ?? 'USD' }))),
+    () =>
+      institutions
+        .filter((i) => i.manual && !i.connector)
+        .flatMap((i) => i.accounts.map((a) => ({ account_id: a.account_id, name: a.name, currency: a.currency ?? 'USD' }))),
     [institutions]
   );
   // The offer to show totals in one currency (decision 1): only for someone
@@ -1777,6 +1794,8 @@ export default function Dashboard({
   // (base), else the sum as it always was, labelled with the main currency.
   const shownWorth = base ? base.net_worth : netWorth;
   const shownCurrency = base ? base.currency : accountCurrency;
+  // A new manual account's currency, until the person chooses another.
+  const manualDefaultCurrency = base?.currency ?? accountCurrency ?? 'USD';
   const shownHistory = base ? base.history : history;
   // How much of the change came from exchange rates, when more than rounding
   // (decision 4). Written as it is drawn, so hiding amounts covers it.
@@ -1890,7 +1909,7 @@ export default function Dashboard({
                   connected the tab bar is hidden, so this is the only reachable
                   entry point for someone whose bank Plaid doesn't support at all. */}
               <div className="action-row">
-                <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                   <ActionIcon d="M12 5v14M5 12h14" />
                   Add manual
                 </button>
@@ -2073,7 +2092,7 @@ export default function Dashboard({
                   {/* Equal widths, icon over label, so Manage and Done take
                       the same space and nothing shifts when it toggles. */}
                   <div className="action-row">
-                    <button className="secondary" onClick={startAddManual} disabled={savingManual}>
+                    <button className="secondary" onClick={() => startAddManual(manualDefaultCurrency)} disabled={savingManual}>
                       <ActionIcon d="M12 5v14M5 12h14" />
                       Add manual
                     </button>
@@ -2241,6 +2260,9 @@ export default function Dashboard({
                                         ? `${a.official_name} · `
                                         : ''}
                                       {a.subtype || a.type}
+                                      {/* The currency chosen for a typed
+                                          balance, when not the one shown. */}
+                                      {inst.manual && !inst.connector && a.currency && a.currency !== shownCurrency ? ` · in ${a.currency}` : ''}
                                     </div>
                                     {/* A Plaid balance is implicitly "now"; a
                                         typed one has to say when it was set. */}
@@ -2330,6 +2352,7 @@ export default function Dashboard({
                                                 type: a.type,
                                                 subtype: a.subtype,
                                                 balance: a.balance ?? 0,
+                                                currency: a.currency ?? undefined,
                                               })
                                             }
                                           >
@@ -3095,6 +3118,17 @@ export default function Dashboard({
                 </select>
               </label>
               <label className="field">
+                Currency
+                <select
+                  value={shownManualDraft.currency}
+                  // The balance stays as typed: only what it is counted in changes.
+                  onChange={(e) => setManualDraft({ ...shownManualDraft, currency: e.target.value })}
+                  disabled={savingManual}
+                >
+                  <CurrencyOptions first={accountCurrencies} value={shownManualDraft.currency} />
+                </select>
+              </label>
+              <label className="field">
                 {isOwedType(shownManualDraft.type) ? 'Amount owed' : 'Current balance'}
                 <input
                   // Held as a string (see ManualDraft) so a leading "-" survives
@@ -3102,15 +3136,20 @@ export default function Dashboard({
                   // subtract from net worth, so a negative would double-negate.
                   type="number"
                   inputMode="decimal"
-                  step="0.01"
+                  step={String(10 ** -minorDigits(shownManualDraft.currency))}
                   min={isOwedType(shownManualDraft.type) ? 0 : undefined}
                   value={shownManualDraft.balance}
                   onChange={(e) => setManualDraft({ ...shownManualDraft, balance: e.target.value })}
-                  placeholder="0.00"
+                  placeholder={(0).toFixed(minorDigits(shownManualDraft.currency))}
                   disabled={savingManual}
                 />
               </label>
             </div>
+            {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
+              <p className="panel-note">
+                The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.
+              </p>
+            )}
             <p className="panel-note">
               {isOwedType(shownManualDraft.type)
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'

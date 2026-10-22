@@ -478,8 +478,8 @@ export async function POST(req: Request) {
     const today = utcToday();
     // The statement's own currency for OFX, whatever was sent; for the others
     // (and an OFX file that doesn't say), the one chosen in the sheet, else
-    // the account's own: US dollars, unless it was kept from SimpleFIN in
-    // another. The preview says which.
+    // the account's own (lib/manual.ts: chosen for it, or kept from a
+    // connector; US dollars when it names none). The preview says which.
     const fromFile = format === 'ofx' ? (read.statement?.currency ?? null) : null;
     const currency = fromFile ?? meta.options.currency ?? account.currency ?? DEFAULT_CURRENCY;
     const currency_from = fromFile ? 'file' : meta.options.currency ? 'chosen' : 'default';

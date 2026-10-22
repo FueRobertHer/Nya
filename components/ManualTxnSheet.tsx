@@ -254,7 +254,8 @@ export default function ManualTxnSheet({
       id: newManualTxnId(),
       direction: 'out',
       amount: '',
-      // The account's own: US dollars, unless it was kept from SimpleFIN in another.
+      // The account's own: the one chosen for it, or kept from a connector
+      // (US dollars when it names none).
       currency: accounts.find((a) => a.account_id === start)?.currency ?? DEFAULT_CURRENCY,
       name: '',
       date: localDate(),
@@ -289,8 +290,7 @@ export default function ManualTxnSheet({
   const account = options.find((a) => a.account_id === draft.account_id) ?? null;
   const owed = account ? isOwedType(account.type) : false;
   // The balance can follow only a new transaction in the balance's own
-  // currency (US dollars, unless the account was kept from SimpleFIN in
-  // another, lib/manual.ts).
+  // currency (the account's, lib/manual.ts: US dollars when it names none).
   const keptIn = account?.currency ?? DEFAULT_CURRENCY;
   const balance = !edit && account && account.balance !== null && currency === keptIn && signed !== null ? account.balance : null;
   const after = balance === null ? null : balanceAfter(balance, signed!, owed);
