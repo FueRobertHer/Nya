@@ -67,8 +67,8 @@ describe('the tags endpoint', () => {
     const { status, body } = await call('tags');
     expect(status).toBe(200);
     expect(body.tags).toEqual([
-      { id: work, name: 'Work', color: expect.any(String), transactions: 2, last_date: expect.any(String) },
-      { id: trip, name: 'Vacation 2026', color: expect.any(String), transactions: 2, last_date: expect.any(String) },
+      { id: work, name: 'Work', color: expect.any(String), transactions: 2, last_date: expect.any(String), version: expect.any(String) },
+      { id: trip, name: 'Vacation 2026', color: expect.any(String), transactions: 2, last_date: expect.any(String), version: expect.any(String) },
     ]);
     expect((await call('tags', 'include_hidden=true')).body.tags[1].transactions).toBe(3);
     expect((await call('tags', 'color=red')).status).toBe(400);

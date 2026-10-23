@@ -405,6 +405,10 @@ export type MapStore<T> = Declared & {
   count(ctx: Ctx): Promise<number>;
   /** Whether there is an entry under the id, readable or not. */
   has(ctx: Ctx, id: string): Promise<boolean>;
+  /** Every id with an entry, readable or not, sorted, without reading any
+   *  value: for a store whose ids say what an entry is (a day, its maker),
+   *  to find the few to read, or the old ones to remove. One request. */
+  ids(ctx: Ctx): Promise<string[]>;
   /** How much it stores (StoreSize), readable or not, without reading any
    *  value. One request (MAP_SIZE). */
   size(ctx: Ctx): Promise<StoreSize>;
@@ -461,6 +465,12 @@ export type CounterMapStore = Declared & {
    *  measured by: the caller's, and a test's own. Throws if it cannot count,
    *  so a limit built on it fails closed. */
   take(ctx: Ctx, id: string, now?: number): Promise<CounterWindow>;
+  /** Strict: these ids' windows as they stand, in their order, counting
+   *  nothing (a check before a count that is taken only once what it counts
+   *  has happened). In one read. Throws, naming the ids, for a count that
+   *  isn't one, and whatever storage throws, so a limit built on it fails
+   *  closed. */
+  peek(ctx: Ctx, ids: readonly string[], now?: number): Promise<CounterWindow[]>;
   /** Forgets these ids' windows, counted or not. */
   remove(ctx: Ctx, ...ids: string[]): Promise<void>;
 };
@@ -727,6 +737,17 @@ count = count + 1
 redis.call('HSET', KEYS[1], ARGV[1], count .. ':' .. ends)
 redis.call('EXPIRE', KEYS[1], 2 * window)
 return {count, ends - now}`;
+
+/** Reads counts of a counter map store as they are stored, each "v" and its
+ *  text, or "" where there is none (as READ_ENTRIES does, so Upstash's client
+ *  can't parse one into something else). Counts nothing. */
+export const COUNTERS_PEEK = `-- nya:repo-counters-peek
+local out = {}
+for i = 1, #ARGV do
+  local raw = redis.call('HGET', KEYS[1], ARGV[i])
+  if raw then out[i] = 'v' .. raw else out[i] = '' end
+end
+return out`;
 
 /** Fields read per READ_ENTRIES call, well inside Lua's limit for unpack. */
 const READ_BATCH = 1000;
@@ -1217,6 +1238,12 @@ export function defineMapStore<T>(name: string, opts: StoreOptions<T>): MapStore
     async has(ctx, id) {
       return Number(await redis().hexists(key(ctx), checkId(what, id))) === 1;
     },
+    async ids(ctx) {
+      // Uncaught: a failure to reach storage is never "no entries".
+      const answer = await redis().hkeys(key(ctx));
+      if (!Array.isArray(answer) || !answer.every((v) => typeof v === 'string')) throw new Error(`repo: unexpected answer listing ${name}`);
+      return [...answer].sort();
+    },
     async size(ctx) {
       const answer = await redis().eval(MAP_SIZE, [key(ctx)], []);
       if (!Array.isArray(answer) || answer.length !== 4 || typeof answer[2] !== 'string') {
@@ -1351,6 +1378,29 @@ export function defineCounterMapStore(name: string, opts: CounterOptions): Count
       // A window's end is set by the clock of whoever started it, which may run
       // a little ahead of this one: never more than a window is left.
       return { count, secondsLeft: Math.min(windowSeconds, Math.max(1, left)) };
+    },
+    async peek(ctx, ids, now = Date.now()) {
+      for (const id of ids) checkId(what, id);
+      if (ids.length === 0) return [];
+      const answer = await redis().eval(COUNTERS_PEEK, [key(ctx)], [...ids]);
+      if (!Array.isArray(answer) || answer.length !== ids.length) throw new Error(`repo: unexpected answer reading ${name}`);
+      const at = Math.floor(now / 1000);
+      const damaged: string[] = [];
+      const windows = answer.map((raw, i): CounterWindow => {
+        if (raw === '' || raw === null) return { count: 0, secondsLeft: 0 };
+        const m = typeof raw === 'string' ? /^v([1-9][0-9]*):([1-9][0-9]*)$/.exec(raw) : null;
+        if (!m) {
+          damaged.push(ids[i]);
+          return { count: 0, secondsLeft: 0 };
+        }
+        const [count, ends] = [Number(m[1]), Number(m[2])];
+        // Ended, or further ahead than any window could be: none running, as
+        // take() would start one.
+        if (ends <= at || ends - at > 2 * windowSeconds) return { count: 0, secondsLeft: 0 };
+        return { count, secondsLeft: Math.min(windowSeconds, Math.max(1, ends - at)) };
+      });
+      if (damaged.length > 0) throw new UnreadableEntriesError(what, damaged, []);
+      return windows;
     },
     async remove(ctx, ...ids) {
       for (const id of ids) checkId(what, id);

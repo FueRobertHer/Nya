@@ -184,7 +184,7 @@ afterEach(() => {
  * restore record every read checks first, and the count of reads of what is
  * shared.
  */
-const BOOKKEEPING = new Set(['api-tokens', 'api-requests', 'containers', 'owners', 'ratelimit:', 'user-restore', 'sharing-reads']);
+const BOOKKEEPING = new Set(['api-tokens', 'api-requests', 'api-write-requests', 'api-write-days', 'api-change-keys', 'containers', 'owners', 'ratelimit:', 'user-restore', 'sharing-reads']);
 
 /**
  * Kinds that need hold nothing for the paths to be taken, each with why:
@@ -261,6 +261,54 @@ describe('who else can see each kind, as the code reads it', () => {
       }))
         reads.add(f);
       expect([tool.name, answer?.result?.isError ?? false]).toEqual([tool.name, false]);
+    }
+    // Each read of one resource, and what a token that can make changes reads
+    // besides: its own changes, and one transaction by id, over REST and MCP.
+    process.env.API_WRITES_ENABLED = '1';
+    const { token: writer } = await createToken(ctx, 'Writer', NOW, 'user_owner', 'write');
+    const { RESOURCE_SPECS } = await import('@/lib/api-spec');
+    const firstOf = async (name: string, list: string) => {
+      const mod: any = await import(`@/app/api/v1/${name}/route`);
+      return (await (await mod.GET(new Request(`https://nya.test/api/v1/${name}?include_hidden=true`, { headers: { authorization: `Bearer ${token}` } }))).json())[list];
+    };
+    const sample: Record<string, string> = {
+      'manual-accounts': (await firstOf('accounts', 'accounts')).find((a: any) => a.source === 'manual').id,
+      transactions: (await firstOf('transactions', 'transactions')).find((t: any) => t.source === 'manual').id,
+      categories: (await firstOf('categories', 'groups'))[0].categories[0].id,
+      'category-groups': (await firstOf('categories', 'groups'))[0].id,
+      tags: (await firstOf('tags', 'tags'))[0].id,
+    };
+    for (const r of RESOURCE_SPECS.filter((r) => r.method === 'GET')) {
+      const base = r.path.split('/')[0];
+      const path = r.path.replace('{id}', encodeURIComponent(sample[base] ?? ''));
+      const dir = r.path.replace('{id}', '[id]');
+      const mod: any = await import(`@/app/api/v1/${dir}/route`);
+      let status = 0;
+      for (const f of await readsOf(async () => {
+        status = (await mod.GET(new Request(`https://nya.test/api/v1/${path}`, { headers: { authorization: `Bearer ${r.allows.includes('read') ? token : writer}` } }), {
+          params: Promise.resolve({ id: sample[base] }),
+        })).status;
+      }))
+        reads.add(f);
+      expect([r.name, status]).toEqual([r.name, 200]);
+    }
+    for (const [tool, args] of [
+      ['list_changes', {}],
+      ['get_transaction', { transaction_id: sample.transactions }],
+    ] as const) {
+      let answer: any = null;
+      for (const f of await readsOf(async () => {
+        const res = await mcp.POST(
+          new Request('https://nya.test/api/mcp', {
+            method: 'POST',
+            headers: { authorization: `Bearer ${writer}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+            body: JSON.stringify({ jsonrpc: '2.0', id: id++, method: 'tools/call', params: { name: tool, arguments: args } }),
+          })
+        );
+        answer = await res.json();
+      }))
+        reads.add(f);
+      expect([tool, answer?.result?.isError ?? false]).toEqual([tool, false]);
     }
     expect(claiming('api')).toEqual(expected(reads));
   });

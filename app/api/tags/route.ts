@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { storeFailure } from '@/lib/store-failure';
-import { addTag, changeTagSet, emptyTagSet, newTagId, readTagSet, recolorTag, renameTag, TagError, type TagSet } from '@/lib/tags';
-import { deleteTag, finishDeleting } from '@/lib/tag-delete';
+import { emptyTagSet, readTagSet, TagError, type TagSet } from '@/lib/tags';
 import { txnAnnotationStore } from '@/lib/txn-annotations';
+import { changeTags } from '@/lib/tag-actions';
 
 // Your tags (lib/tags.ts), for the Tags screen under Manage
 // (components/TagsCard.tsx) and the tag pickers on a transaction.
@@ -24,7 +24,8 @@ import { txnAnnotationStore } from '@/lib/txn-annotations';
 //   delete  { id }   (off every transaction and out of every rule: lib/tag-delete.ts)
 //
 // A deletion cut off part way is finished before any change here
-// (lib/tag-delete.ts finishDeleting).
+// (lib/tag-delete.ts finishDeleting). Each action is lib/tag-actions.ts, which
+// the API's writes call too.
 
 const MAX_BODY_CHARS = 4 * 1024;
 
@@ -68,31 +69,11 @@ export async function POST(req: Request) {
       return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
     }
 
-    // Whatever an earlier deletion left to sweep, first.
-    await finishDeleting(ctx);
-    let set: TagSet;
-    let made: string | undefined;
-    switch (body.action) {
-      case 'add':
-        set = await changeTagSet(ctx, (s) => {
-          const { set: next, tag } = addTag(s, { name: body.name, color: body.color }, newTagId);
-          made = tag.id;
-          return next;
-        });
-        break;
-      case 'rename':
-        set = await changeTagSet(ctx, (s) => renameTag(s, body.id, body.name));
-        break;
-      case 'recolor':
-        set = await changeTagSet(ctx, (s) => recolorTag(s, body.id, body.color));
-        break;
-      case 'delete':
-        set = (await deleteTag(ctx, body.id)).set;
-        break;
-      default:
-        return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
-    }
-    return NextResponse.json({ tags: set, counts: await handCounts(ctx, set), ...(made ? { created: made } : {}) });
+    // Whatever an earlier deletion left to sweep goes first (lib/tag-actions.ts).
+    const done = await changeTags(ctx, body);
+    if (!done) return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    const set: TagSet = done.set;
+    return NextResponse.json({ tags: set, counts: await handCounts(ctx, set), ...(done.made ? { created: done.made } : {}) });
   } catch (err) {
     return failure(err, 'Failed to change your tags');
   }

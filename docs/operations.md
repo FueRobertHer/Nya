@@ -157,7 +157,7 @@ It never shows values, only container ids, key and field names, counts and reaso
 - `changed_meanwhile`: saved by the app while being moved; picked up next call.
 - `deleted_meanwhile`: deleted by the app while being moved; nothing to do.
 
-**Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It costs nothing, values outside the containers and archives taken before the pass still need it, and if it is marked Sensitive in Vercel (so it cannot be read back out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write) could never be read again. The environment's data keys stay too, for the same reasons.
+**Keep `PLAID_ENCRYPTION_KEY` in Vercel even after the pass completes.** It also keys the versions the API serves (`lib/api-versions.ts`): were it ever replaced, every version would move once, and each program that writes would get one 412 and read again (nothing stored depends on a version). It costs nothing, values outside the containers and archives taken before the pass still need it, and if it is marked Sensitive in Vercel (so it cannot be read back out) and you have no other copy, removing it is permanent: any value still under `k0` then (an old backup, a fallback write) could never be read again. The environment's data keys stay too, for the same reasons.
 
 ### Rotating the master key
 
@@ -532,6 +532,25 @@ Why: a release from before Lunch Flow knows only SimpleFIN, and reads the connec
 Nothing is lost: like anything it can't read, the older release never takes these entries for none and never deletes them, the rows Lunch Flow brought stay in `manual-transactions` as they are, and a rule with Lunch Flow as its source still reads, matching nothing. Rolling forward again, everything reads as before, and each connection's next daily update asks from before the last day it fetched (45 days before for Lunch Flow, five for SimpleFIN), so the days of the rollback are fetched again then (after a long one, SimpleFIN's over the following nights). The net-worth totals those people missed during it are not recorded after the fact.
 
 If you must go back further all the same, first have each person with a Lunch Flow connection disconnect it on the Accounts tab (keeping its accounts as manual accounts, or removing them): with no Lunch Flow entry left in their stores, the older release reads their SimpleFIN connections as before. The entries of accounts let go (`connector-ended`) count too: those are forgotten with **Forget**, under **Accounts you stopped tracking** on the Reports page.
+
+## Letting API tokens write, and rolling back
+
+Writing through the API and the MCP server ([features.md](features.md#writing-through-a-token)) is off unless `API_WRITES_ENABLED=1` ([deployment.md](deployment.md#3-environment-variables)). The variable is read when each request is served, but it lives in the deployment's environment, so **turning it on or off takes a redeploy** (minutes, not seconds). The release that has it reads everything writing writes whether it is on or not: a token's `access` (`balances` or `write`, absent on a read token, which is stored exactly as before), the record of changes (`api-changes`), the keys creates were sent with (`api-change-keys`), and the write counters (`api-write-requests`, a token's writes this minute; `api-write-days`, its changes and creates in 24 hours, all of the person's tokens' changes, and each manual account whose balance a token set that day, so its estimated history is rebuilt at most once a day, with a mark for a push that skipped it, which the nightly snapshot catches up). The record is encrypted, in the person's download and in backups; the keys and the counters are bookkeeping, never exported or backed up. With it off, no token can be made that does more than read, a write path answers as it did before writing existed (405 with `Allow: GET` where reading is served, 404 elsewhere), the MCP server neither lists nor runs a write tool, and the pages say nothing of writing; tokens already made keep their access and read as it allows, and the record, Undo and Forget stay in the app.
+
+**In this order: deploy, let it run, then turn it on.** Deploy the release with `API_WRITES_ENABLED` unset, and leave it running long enough that rolling back past it is no longer a plan. Then set `API_WRITES_ENABLED=1` and redeploy.
+
+**Turning it off again** stops every write at once (after the redeploy) and leaves what was written as it is. **Nothing to run**, either way: the counters end on their own, and the nightly snapshot prunes the record past 30 days and the keys past 24 hours (`pruneChanges` in `lib/api-changes.ts`, beside the records of showings; the app's list prunes too, whenever it is read).
+
+**The fast lever is revoking the token.** For one person, a token that is writing what it shouldn't is stopped at its next request when it is revoked under API tokens; the person sees and undoes its changes under Changes made with your tokens. The switch is for the whole copy, and takes a redeploy.
+
+**Rolling back past the release that turned it on** is safe for reads, and fails closed for writing, but costs a little:
+
+- **A token made to update balances or make changes doesn't work there.** The release before reads a token's record closed, and doesn't know `access`, so it takes the record for one saved by another version: such a token is refused (401, as any token that doesn't work), and the API tokens card names it as saved by another version of Nya without offering to revoke it. Revoke it after rolling forward again, or have the person make a new token; read tokens work throughout.
+- **A restore into an account with a record of changes, or recent writes, is refused there.** Its check that an account is empty before a restore counts every key it doesn't know as data: the record (kept 30 days), the keys (24 hours), and the write counters, which outlive their last count by two windows (`api-write-requests` two minutes, `api-write-days` 48 hours). Each makes the account read as in use while it is there. Nothing is lost; the restore can be made after rolling forward, or once those have gone.
+- **The record isn't in its download**, which doesn't know the store, though its nightly backup carries it (and the counters, which end on their own).
+- **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the new stores, so values written by writing would stay under the keys they were written with; run them after rolling forward.
+
+Rolling forward again, everything reads as before: the tokens made to write work again, and their changes are in the record, undoable for what is left of their 30 days.
 
 ## Email and the weekly summary
 

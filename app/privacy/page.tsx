@@ -7,7 +7,8 @@ import { backupDaysAtMost, keyDeletionText, PLAID_PORTAL, type BackupRetention }
 import { DOWNLOADS_PER_WINDOW } from '@/lib/download-limit';
 import { ACCESS_LOG_DAYS, SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 import { sendsEmail } from '@/lib/notice-recipients';
-import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS } from '@/lib/api-limits';
+import { RATE_WINDOW_SECONDS, API_AUTH_WINDOW_SECONDS, CHANGES_KEEP_DAYS, IDEMPOTENCY_HOURS } from '@/lib/api-limits';
+import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 import { restoreEnabled } from '@/lib/user-restore/enabled';
 import { UNDO_DAYS } from '@/lib/user-restore/ids';
@@ -59,7 +60,7 @@ const downloadEmail = (mail: boolean) =>
 /** What the pages say of a data key per account, as this copy is set up. */
 type Keys = ReturnType<typeof keyDeletionText>;
 
-const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean): Commitment[] => [
+const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restore: boolean, writes: boolean): Commitment[] => [
   {
     promise: 'We never sell or share your financial data.',
     today:
@@ -116,8 +117,11 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
   },
   {
     promise: 'AI features are opt-in and act only on what you point them at.',
-    today:
-      'Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.',
+    today: `Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.${
+      writes
+        ? ` With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads, so each change is listed for you under API tokens for ${CHANGES_KEEP_DAYS} days, where most can be undone.`
+        : ''
+    }`,
     next: { label: 'Planned', text: 'Reading receipts: off unless you turn it on, and only for the receipt you choose.' },
   },
   {
@@ -125,13 +129,15 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
     today: (
       <>
         You can download everything stored about you, and delete your account and everything stored for you, at any time.
-        A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the{' '}
+        {writes
+          ? ' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags (see the '
+          : ' A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the '}
         <a href="/developers">Developers page</a>).
       </>
     ),
     next: {
       label: 'Not built yet',
-      text: 'Writing through the API, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.',
+      text: `${writes ? 'Writing your bank’s transactions through the API' : 'Writing through the API'}, and a license that lets anyone run their own copy of Nya. The code is public but has no license yet.`,
     },
   },
 ];
@@ -143,7 +149,7 @@ function databaseBackups(days: number | null): string {
   return '';
 }
 
-const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null): [string, string][] => [
+const processors = (backups: BackupRetention, mail: boolean, dbDays: number | null, writes: boolean): [string, string][] => [
   [
     'Vercel',
     `${backups?.kept === false ? 'Hosts the app.' : 'Hosts the app and stores the nightly backups.'} Handles every request and response, and keeps the app’s logs.`,
@@ -172,7 +178,7 @@ const processors = (backups: BackupRetention, mail: boolean, dbDays: number | nu
     ? ([
         [
           'Resend',
-          'Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.',
+          `Sends the emails about your bank connections: one when a connection needs you, another only if what it needs from you changes, and one reminder a week later. And one each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made${writes ? ' (saying what it can do)' : ''}, and the weekly summary, if you turn it on. Sees your email address and each email, which names the bank and what to do, or when and in which format your data was downloaded. The weekly summary tells it whether you spent more or less than in a usual week; the names of your budgets and categories that are over or close to their limit, and of your goals that are behind their target date or have reached their target; the bills and planned expenses due in the next seven days, by name, with their days and whether one is late; the banks that need you and what they need, and those whose transactions aren’t all in, with the day each last came in; the months that may be missing transactions, and why; how many of the week’s transactions from SimpleFIN or Lunch Flow have no category; and the currencies of transactions it didn’t count. Never a balance, an amount or an account number: a name of yours with a digit, a currency or percent sign, a number or a currency written as an English word (such as fifty, thousand or dollars), a number written as a Spanish, Portuguese, French, Italian or German word (such as diez mil or zehntausend; not their words for one, nor due, once, sept, seize, elf or null, which are English words too), or a letter outside the Latin alphabet in it is counted instead of named, as is one that looks like a link or an address (with ://, www., an @, or a word, a dot and two or more letters, as in example.com), and so is a bank’s name, as Plaid, SimpleFIN or Lunch Flow gives it, with a digit or a currency or percent sign. Resend keeps them under its own privacy policy.`,
         ],
       ] as [string, string][])
     : []),
@@ -208,7 +214,7 @@ function backupsRow(backups: BackupRetention): string {
   return `${backups.keep_days} days. The newest ${backups.min_kept} are always kept, so if backups stop, the last ones remain.`;
 }
 
-const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string, string][] => [
+const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: boolean): [string, string][] => [
   ['Your data', 'Until you delete it, or delete your account.'],
   [
     'How each bank connection is doing',
@@ -254,12 +260,24 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
   ['Counts that limit how often you can do something', countsRow(backups)],
   [
     'API tokens',
-    'Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.',
+    `Until you revoke them, or delete your account. Each is kept as its name, ${writes ? 'what it can do, ' : ''}the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.`,
   ],
   [
     'Requests counted for each API token',
-    `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.`,
+    `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.${
+      writes
+        ? ` For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, whether a token set each manual account’s balance in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
+        : ''
+    }`,
   ],
+  ...(writes
+    ? ([
+        [
+          'Changes made with API tokens',
+          `${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
+        ],
+      ] as [string, string][])
+    : []),
   [
     'The weekly summary',
     `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
@@ -286,6 +304,9 @@ export default function PrivacyPage() {
   const dbDays = databaseBackupDays();
   const keys = keyDeletionText({ envelope: masterKeyConfigured(), backups, databaseDays: dbDays });
   const restore = restoreEnabled();
+  // What tokens can do here: the wording about changes shows only where
+  // they can make them (lib/api-writes-enabled.ts).
+  const writes = apiWritesEnabled();
   return (
     <InfoPage page="privacy" title="Privacy" intro="How Nya handles your data, in plain language.">
       <section className="card info-section info-notice">
@@ -293,7 +314,7 @@ export default function PrivacyPage() {
       </section>
 
       <h2>Our commitments</h2>
-      {commitments(backups, mail, keys, restore).map((c) => (
+      {commitments(backups, mail, keys, restore, writes).map((c) => (
         <section className="card info-section" key={c.promise}>
           <h3>{c.promise}</h3>
           <dl className="info-status">
@@ -312,7 +333,7 @@ export default function PrivacyPage() {
       <InfoSection title="Who processes your data">
         <table className="info-table">
           <tbody>
-            {processors(backups, mail, dbDays).map(([name, what]) => (
+            {processors(backups, mail, dbDays, writes).map(([name, what]) => (
               <tr key={name}>
                 <th scope="row">{name}</th>
                 <td>{what}</td>
@@ -340,7 +361,7 @@ export default function PrivacyPage() {
             </tr>
           </thead>
           <tbody>
-            {retention(backups, mail, keys).map(([what, howLong]) => (
+            {retention(backups, mail, keys, writes).map(([what, howLong]) => (
               <tr key={what}>
                 <th scope="row">{what}</th>
                 <td>{howLong}</td>

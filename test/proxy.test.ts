@@ -57,6 +57,37 @@ describe('the matcher, as Next compiles it', () => {
     expect(runs('/api/mcp')).toBe(false);
   });
 
+  // The paths of one resource, and of writes (lib/api-spec.ts RESOURCE_SPECS),
+  // with an id of each form the app makes: they authenticate themselves too.
+  test('exempts each resource path, with any id the app makes, and no other spelling of one', async () => {
+    const { RESOURCE_SPECS } = await import('@/lib/api-spec');
+    const ids = ['manual_4efc3d8d-060e-4051-b18e-e75d9c94efde', 'manual-txn:5a0c1d2e-3f40-4a5b-8c6d-7e8f9a0b1c2d', 'manual-txn%3A5a0c1d2e', 't_coffee', 'cat_0a1b2c', '20261020.0123456789abcdef.0123456789ab'];
+    for (const spec of RESOURCE_SPECS) {
+      for (const id of spec.path.includes('{id}') ? ids : ['']) {
+        const path = `/api/v1/${spec.path.replace('{id}', id)}`;
+        expect([path, runs(path)]).toEqual([path, false]);
+      }
+    }
+    for (const path of [
+      '/api/v1/transactions/',
+      '/api/v1/transactions/..',
+      '/api/v1/transactions/.x',
+      '/api/v1/transactions/a%2Fb',
+      '/api/v1/transactions/a/b',
+      '/api/v1/manual-accounts/',
+      '/api/v1/manual-accounts/x/',
+      '/api/v1/manual-accounts/x/balance/',
+      '/api/v1/manual-accounts/x/other',
+      '/api/v1/changes/x',
+      '/api/v1/changes/x/undo/',
+      '/api/v1/tags/x/y',
+      '/api/v1/category-groups/x.rsc/y',
+      '/API/V1/TAGS/x',
+    ]) {
+      expect([path, runs(path)]).toEqual([path, true]);
+    }
+  });
+
   // The weekly summary's link (lib/weekly-summary/unsubscribe.ts): its token is
   // its authentication, and it can only ever turn that summary off.
   test('exempts the link that turns a weekly summary off at exactly its path', () => {

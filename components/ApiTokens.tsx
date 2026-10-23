@@ -2,8 +2,15 @@
 
 // API tokens (lib/api-tokens.ts, app/api/api-tokens), under Manage accounts:
 // tokens for the programs a person chooses to let read their data, through
-// the read-only API (/api/v1) and the MCP server (/api/mcp) that an AI
-// assistant can use. The developer page (/developers) says what each reads.
+// the API (/api/v1) and the MCP server (/api/mcp) that an AI assistant can
+// use. The developer page (/developers) says what each reads.
+//
+// WHAT IT CAN DO is chosen when a token is made, while this copy lets tokens
+// write (`writes`, lib/api-writes-enabled.ts): read (the default), update
+// balances, or read and make changes; never changed after. While it doesn't,
+// the card reads as it did before tokens could write, and makes read tokens
+// alone. The changes tokens made are listed under it (components/
+// ApiChanges.tsx).
 //
 // MAKING ONE needs a fresh sign-in, as downloading everything does
 // (lib/fresh-sign-in.ts): with Clerk, its useReverification asks the person to
@@ -18,18 +25,40 @@
 // once the person confirms, and one saved by another version of Nya is only
 // named (lib/repo.ts: never offered for removal).
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 import { Sheet } from './Sheet';
-import { LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE } from '@/lib/api-limits';
+import ApiChanges from './ApiChanges';
+import { CHANGES_KEEP_DAYS, LABEL_MAX, MAX_TOKENS, REQUESTS_PER_MINUTE, type Access } from '@/lib/api-limits';
 
-export type TokenInfo = { id: string; label: string; hint: string; created_at: string; last_used_at: string | null };
+export type TokenInfo = { id: string; label: string; hint: string; created_at: string; last_used_at: string | null; access?: Access };
 
 export type TokenList =
   | { kind: 'loading' }
-  | { kind: 'ready'; tokens: TokenInfo[]; unreadable: string[]; unrecognised: string[]; limit: number }
+  | { kind: 'ready'; tokens: TokenInfo[]; unreadable: string[]; unrecognised: string[]; limit: number; writes?: boolean }
   | { kind: 'error'; message: string };
+
+/** What a token can do, in words, as the list says it. */
+export const ACCESS_WORDS: Record<Access, string> = { read: 'Reads', balances: 'Updates balances', write: 'Reads and makes changes' };
+
+/** The choices when making a token, while this copy lets tokens write. */
+export const ACCESS_CHOICES: readonly { value: Access; name: string; note: string }[] = [
+  { value: 'read', name: 'Read your data', note: 'Your accounts, balances, transactions, budgets and the rest the developer page lists.' },
+  {
+    value: 'balances',
+    name: 'Update balances',
+    note: 'For a script that sends a manual account’s balance. It sees your accounts and their balances, and nothing else, and can change nothing but a manual account’s balance.',
+  },
+  {
+    value: 'write',
+    name: 'Read, and make changes',
+    note: 'Add, change and delete the transactions entered on your manual accounts, add and change manual accounts, categories and tags, and undo its own changes: an undo deletes what the change made, and an account it made goes with its transactions and its past balances. It can never delete any other account, category or tag, or change your bank’s transactions, sharing, tokens or settings.',
+  },
+];
+
+/** Said under either choice beyond reading. */
+export const CHANGES_NOTE = `Every change it makes is listed below under Changes made with your tokens, for ${CHANGES_KEEP_DAYS} days, and most can be undone there. An AI assistant with this token can make changes when you ask it, or when something it reads tricks it: use one that asks you before each change. A token’s access can’t be changed later, and a token never gains kinds of changes added to Nya after it was made: make a new token, and revoke the old one.`;
 
 /** A token just made: the one time it is ever on screen. */
 export type Made = { token: string; info: TokenInfo };
@@ -67,13 +96,14 @@ async function copy(text: string, field: HTMLInputElement | HTMLTextAreaElement 
   return false;
 }
 
-async function requestToken(label: string, password: string | null): Promise<Outcome> {
+async function requestToken(label: string, password: string | null, access: Access = 'read'): Promise<Outcome> {
   let res: Response;
   try {
     res = await fetch('/api/api-tokens', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(password === null ? { label } : { label, password }),
+      // A read token is asked for exactly as before tokens could write.
+      body: JSON.stringify({ label, ...(password === null ? {} : { password }), ...(access === 'read' ? {} : { access }) }),
     });
   } catch {
     return { ok: false, error: 'Nya could not be reached. Check your connection and try again.' };
@@ -91,6 +121,7 @@ async function requestToken(label: string, password: string | null): Promise<Out
 function useTokens() {
   const [list, setList] = useState<TokenList>({ kind: 'loading' });
   const [label, setLabel] = useState('');
+  const [access, setAccess] = useState<Access>('read');
   const [password, setPassword] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -104,7 +135,7 @@ function useTokens() {
         setList({ kind: 'error', message: typeof data?.error === 'string' ? data.error : 'Your API tokens couldn’t be loaded.' });
         return;
       }
-      setList({ kind: 'ready', tokens: data.tokens, unreadable: data.unreadable ?? [], unrecognised: data.unrecognised ?? [], limit: data.limit ?? MAX_TOKENS });
+      setList({ kind: 'ready', tokens: data.tokens, unreadable: data.unreadable ?? [], unrecognised: data.unrecognised ?? [], limit: data.limit ?? MAX_TOKENS, writes: data.writes === true });
     } catch {
       setList({ kind: 'error', message: 'Your API tokens couldn’t be loaded.' });
     }
@@ -123,6 +154,7 @@ function useTokens() {
       else {
         setMade(outcome.made);
         setLabel('');
+        setAccess('read');
         setPassword('');
         await load();
       }
@@ -152,18 +184,28 @@ function useTokens() {
     }
   };
 
-  return { list, label, setLabel, password, setPassword, busy, error, made, setMade, create, revoke };
+  return { list, label, setLabel, access, setAccess, password, setPassword, busy, error, made, setMade, create, revoke };
+}
+
+/** The tokens, and the changes they made below them. */
+function WithChanges({ t, view }: { t: ReturnType<typeof useTokens>; view: ReactNode }) {
+  return (
+    <>
+      {view}
+      {t.list.kind === 'ready' && <ApiChanges writes={t.list.writes === true} />}
+    </>
+  );
 }
 
 function WithClerk() {
   const t = useTokens();
-  const verified = useReverification((label: string) => requestToken(label, null));
-  return <ApiTokensView {...t} needsPassword={false} onCreate={() => t.create(() => verified(t.label))} />;
+  const verified = useReverification((label: string, access: Access) => requestToken(label, null, access));
+  return <WithChanges t={t} view={<ApiTokensView {...t} needsPassword={false} onCreate={() => t.create(() => verified(t.label, t.access))} />} />;
 }
 
 function WithPassword() {
   const t = useTokens();
-  return <ApiTokensView {...t} needsPassword onCreate={() => t.create(() => requestToken(t.label, t.password))} />;
+  return <WithChanges t={t} view={<ApiTokensView {...t} needsPassword onCreate={() => t.create(() => requestToken(t.label, t.password, t.access))} />} />;
 }
 
 /** `clerk`: whether sign-in is Clerk's (lib/auth-mode.ts). Clerk's hook only
@@ -179,6 +221,8 @@ export function ApiTokensView({
   list,
   label,
   setLabel,
+  access = 'read',
+  setAccess = () => {},
   password,
   setPassword,
   needsPassword,
@@ -193,6 +237,8 @@ export function ApiTokensView({
   list: TokenList;
   label: string;
   setLabel: (s: string) => void;
+  access?: Access;
+  setAccess?: (a: Access) => void;
   password: string;
   setPassword: (s: string) => void;
   needsPassword: boolean;
@@ -211,6 +257,7 @@ export function ApiTokensView({
   const [copied, setCopied] = useState<'token' | 'config' | null>(null);
   const site = origin ?? (typeof window === 'undefined' ? '' : window.location.origin);
   const atLimit = list.kind === 'ready' && list.tokens.length + list.unreadable.length + list.unrecognised.length >= list.limit;
+  const writes = list.kind === 'ready' && list.writes === true;
   const canCreate = list.kind === 'ready' && !atLimit && !busy && label.trim().length > 0 && (!needsPassword || password.length > 0);
 
   const copied2s = (which: 'token' | 'config') => {
@@ -233,6 +280,17 @@ export function ApiTokensView({
       <div className="inst-header">
         <div className="inst-name">API tokens</div>
       </div>
+      {writes ? (
+        <p className="panel-note">
+          A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
+          server. It reads only what the <a href="/developers">developer page</a> lists, and changes nothing unless you
+          choose, when you make it, that it may update balances or make changes. Anyone holding it can do all it can, so
+          keep it secret, and revoke any you no longer use.{' '}
+          {needsPassword
+            ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
+            : 'Signing out everywhere doesn’t revoke tokens.'}
+        </p>
+      ) : (
       <p className="panel-note">
         A token lets a program you choose read your data: a script, a dashboard, or an AI assistant through Nya’s MCP
         server. It can’t change anything, and reads only what the <a href="/developers">developer page</a> lists. Anyone
@@ -241,6 +299,7 @@ export function ApiTokensView({
           ? 'Signing out everywhere, or changing the app password, doesn’t revoke tokens. Turning on sign-in accounts does: make new ones once you sign in.'
           : 'Signing out everywhere doesn’t revoke tokens.'}
       </p>
+      )}
 
       {list.kind === 'loading' && <p className="panel-note">Loading your tokens…</p>}
       {list.kind === 'error' && <div className="error">{list.message}</div>}
@@ -256,7 +315,8 @@ export function ApiTokensView({
                   <div className="api-token-text">
                     <div className="api-token-label">{t.label}</div>
                     <div className="as-of">
-                      <code>{t.hint}…</code> · made {shortDay(t.created_at)} · {t.last_used_at ? `last used ${shortDay(t.last_used_at)}` : 'never used'}
+                      <code>{t.hint}…</code> · {writes ? `${ACCESS_WORDS[t.access ?? 'read']} · ` : ''}made {shortDay(t.created_at)} ·{' '}
+                      {t.last_used_at ? `last used ${shortDay(t.last_used_at)}` : 'never used'}
                     </div>
                   </div>
                   <button className="secondary" onClick={() => setRevoking({ id: t.id, label: t.label, unreadable: false })}>
@@ -285,7 +345,10 @@ export function ApiTokensView({
 
       {made ? (
         <div className="api-token-made" aria-live="polite">
-          <p className="status-note">Made “{made.info.label}”. Copy it now: Nya keeps only a hash of it, so it can’t show it again.</p>
+          <p className="status-note">
+            Made “{made.info.label}”{writes && made.info.access && made.info.access !== 'read' ? `, which ${made.info.access === 'write' ? 'reads and makes changes' : 'updates balances'}` : ''}. Copy it now: Nya
+            keeps only a hash of it, so it can’t show it again.
+          </p>
           <div className="invite-link">
             <input readOnly value={made.token} aria-label="API token" onFocus={(e) => e.target.select()} />
             <button
@@ -326,6 +389,37 @@ export function ApiTokensView({
                   A name for it, such as the program that will use it
                   <input value={label} maxLength={LABEL_MAX} onChange={(e) => setLabel(e.target.value)} placeholder="Claude, Raycast, my dashboard" disabled={busy} />
                 </label>
+                {writes && (
+                  <fieldset className="lifecycle-choices api-access-choices" disabled={busy}>
+                    <legend className="section-label">What it can do</legend>
+                    {ACCESS_CHOICES.map((c) => (
+                      <label key={c.value} className="lifecycle-choice api-access-choice">
+                        <input
+                          type="radio"
+                          name="api-token-access"
+                          value={c.value}
+                          checked={access === c.value}
+                          onChange={() => setAccess(c.value)}
+                          aria-describedby={c.value === 'read' ? `api-access-${c.value}` : `api-access-${c.value} api-access-warning`}
+                        />
+                        <span>
+                          <span className="lifecycle-choice-name">{c.name}</span>
+                          <span className="lifecycle-choice-note" id={`api-access-${c.value}`}>
+                            {c.note}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                    {/* Said as soon as a choice beyond reading is made. */}
+                    <div aria-live="polite">
+                      {access !== 'read' && (
+                        <p className="panel-note api-access-warning" id="api-access-warning">
+                          {CHANGES_NOTE}
+                        </p>
+                      )}
+                    </div>
+                  </fieldset>
+                )}
                 {needsPassword ? (
                   <label className="field">
                     Your app password, to confirm it’s you

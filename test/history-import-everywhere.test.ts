@@ -216,7 +216,7 @@ describe('the API and MCP', () => {
     expect(page.transactions.find((t) => t.id === 'b_grocer')!.source).toBe('plaid');
 
     // MCP's search reads the same.
-    const mcp = (await callTool({ ctx } as any, 'search_transactions', { from: window.from, to: window.to, limit: 100 })) as any;
+    const mcp = (await callTool({ ctx, access: 'read' } as any, 'search_transactions', { from: window.from, to: window.to, limit: 100 })) as any;
     expect(mcp.isError).toBeUndefined();
     expect(mcp.structuredContent.transactions.filter((t: any) => t.source === 'import:ofx').map((t: any) => t.name).sort()).toEqual(IMPORTED_NOW);
   });

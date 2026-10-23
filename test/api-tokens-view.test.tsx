@@ -8,8 +8,9 @@ await mockForFile('@clerk/nextjs', () => ({
   useReverification: (fetcher: unknown) => fetcher,
 }));
 const { renderToStaticMarkup } = await import('react-dom/server');
-const { ApiTokensView, RevokeSheet, mcpConfig, shortDay } = await import('@/components/ApiTokens');
+const { ApiTokensView, RevokeSheet, mcpConfig, shortDay, ACCESS_CHOICES, CHANGES_NOTE } = await import('@/components/ApiTokens');
 const { MAX_TOKENS, REQUESTS_PER_MINUTE } = await import('@/lib/api-limits');
+const { writingIn } = await import('./writing-words');
 
 type Props = Parameters<typeof ApiTokensView>[0];
 
@@ -186,5 +187,56 @@ describe('revoking, asked first', () => {
     expect(busy).toContain('Revoking…');
     expect(busy.match(/<button class="(secondary|danger)" disabled/g)).toHaveLength(2);
     expect(sheet({ error: 'It wasn’t revoked. Try again.' })).toContain('It wasn’t revoked. Try again.');
+  });
+});
+
+describe('what a token can do, while this copy lets tokens write', () => {
+  const writing = (tokens: TokenInfo[] = []): Props['list'] => ({ ...(ready(tokens) as Extract<Props['list'], { kind: 'ready' }>), writes: true });
+
+  test('off, the card reads as it always did: no choice, and no access named', () => {
+    const t = text(view({ list: ready([info({ access: 'write' })]), label: 'Claude' }));
+    expect(t).toContain('It can’t change anything');
+    expect(t).not.toContain('What it can do');
+    expect(t).not.toContain('Reads and makes changes');
+    expect(view()).not.toContain('type="radio"');
+    // Nothing of writing at all, a token made to write listed or not.
+    expect(writingIn(t)).toEqual([]);
+    expect(writingIn(text(view({ list: ready([info()]) })))).toEqual([]);
+  });
+
+  test('on, the choice is a fieldset of three, read chosen, each explained, and the warning under either of the others', () => {
+    const html = view({ list: writing(), label: 'Claude' });
+    const t = text(html);
+    expect(html).toContain('<fieldset');
+    expect(t).toContain('What it can do');
+    expect(html.match(/type="radio"/g)).toHaveLength(3);
+    for (const c of ACCESS_CHOICES) {
+      expect(t).toContain(c.name);
+      expect(t).toContain(c.note);
+      // Each choice beyond reading is described by the warning about changes too.
+      expect(html).toContain(c.value === 'read' ? 'aria-describedby="api-access-read"' : `aria-describedby="api-access-${c.value} api-access-warning"`);
+      expect(html).toContain(`id="api-access-${c.value}"`);
+    }
+    expect(html).toMatch(/value="read" checked=""|checked="" value="read"|value="read"[^>]*checked/);
+    expect(t).not.toContain(CHANGES_NOTE);
+    expect(t).toContain('changes nothing unless you choose, when you make it, that it may update balances or make changes');
+    // Said as soon as it appears.
+    expect(html).toMatch(/<div aria-live="polite"><\/div>/);
+    for (const access of ['balances', 'write'] as const) {
+      expect(view({ list: writing(), label: 'Claude', access })).toContain('<div aria-live="polite"><p class="panel-note api-access-warning" id="api-access-warning">');
+      const chosen = text(view({ list: writing(), label: 'Claude', access }));
+      expect(chosen).toContain(CHANGES_NOTE);
+      expect(chosen).toContain('a token never gains kinds of changes added to Nya after it was made');
+    }
+    expect(CHANGES_NOTE).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  test('on, each token says what it can do, and one just made says so', () => {
+    const t = text(view({ list: writing([info(), info({ id: 'fedcba9876543210', label: 'Importer', access: 'write' }), info({ id: '00000000000000cc', label: 'Home Assistant', access: 'balances' })]) }));
+    expect(t).toContain('nya_0123… · Reads · made');
+    expect(t).toContain('Reads and makes changes · made');
+    expect(t).toContain('Updates balances · made');
+    const made = text(view({ list: writing(), made: { token: TOKEN, info: info({ access: 'write' }) } }));
+    expect(made).toContain('Made “Claude”, which reads and makes changes. Copy it now');
   });
 });

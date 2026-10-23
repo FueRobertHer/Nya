@@ -245,6 +245,27 @@ export async function seedEveryKind(
   const { markEnded } = await import('@/lib/lifecycle');
   await markEnded(ctx, savings.account_id, { state: 'untracked', from: ago(1) }, { type: 'depository', label: { name: 'Credit Union Savings', institution: 'Credit Union', mask: null }, item_id: null }, now);
 
+  // ---- A tag a program made through the API with a token that can make
+  // changes, sent with a key: the record of changes, and the keys of creates.
+  const { createToken } = await import('@/lib/api-tokens');
+  const writer = await createToken(ctx, 'Importer', new Date(now), 'user_owner', 'write');
+  const writes = process.env.API_WRITES_ENABLED;
+  process.env.API_WRITES_ENABLED = '1';
+  try {
+    const tagsRoute: any = await import('@/app/api/v1/tags/route');
+    const res: Response = await tagsRoute.POST(
+      new Request('https://nya.test/api/v1/tags', {
+        method: 'POST',
+        headers: { authorization: `Bearer ${writer.token}`, 'content-type': 'application/json', 'idempotency-key': 'seed-1' },
+        body: JSON.stringify({ name: 'From a program' }),
+      })
+    );
+    if (res.status !== 201) throw new Error(`Seeding a change through the API: ${res.status} ${await res.text()}`);
+  } finally {
+    if (writes === undefined) delete process.env.API_WRITES_ENABLED;
+    else process.env.API_WRITES_ENABLED = writes;
+  }
+
   // Last, since the steps above clear them: the estimate's own records, and
   // a copy of what the dashboard shows.
   await fake.set(k('history:backfill-done'), '7');

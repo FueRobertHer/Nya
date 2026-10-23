@@ -45,6 +45,47 @@ export const MAX_PAGE_SIZE = 500;
 export const MCP_DEFAULT_PAGE_SIZE = 25;
 export const MCP_MAX_PAGE_SIZE = 100;
 
+// ---- Writing (lib/api-run.ts, lib/api-writes.ts) ----
+
+/** What a token may do, chosen once when it is made (lib/api-tokens.ts):
+ *  read; read only the accounts and set a manual account's balance; or read
+ *  and make the changes this release offers (WRITE_V1 in lib/api-spec.ts).
+ *  A value means the same for good: a kind of change added later comes with
+ *  a value of its own, so no token ever gains it. */
+export const ACCESS = ['read', 'balances', 'write'] as const;
+export type Access = (typeof ACCESS)[number];
+
+/** Writes each token may send in WRITE_WINDOW_SECONDS, valid or not. */
+export const WRITES_PER_MINUTE = 30;
+export const WRITE_WINDOW_SECONDS = 60;
+/** Changes in a window of DAY_WINDOW_SECONDS (from its first count): each
+ *  token's, all of a person's tokens' together, and each token's creates. A
+ *  balance sent that changes nothing is none. */
+export const CHANGES_PER_DAY = 500;
+export const PERSON_CHANGES_PER_DAY = 2000;
+export const CREATES_PER_DAY = 100;
+export const DAY_WINDOW_SECONDS = 24 * 60 * 60;
+
+/** The share of each of the app's own limits (categories, groups, tags,
+ *  manual accounts) a create through the API may fill: the rest is kept for
+ *  what the app makes itself, such as a category a bank starts using. */
+export const API_ROOM = 0.9;
+
+/** How long the record of changes keeps each change (lib/api-changes.ts). */
+export const CHANGES_KEEP_DAYS = 30;
+/** How long an Idempotency-Key names its create. */
+export const IDEMPOTENCY_HOURS = 24;
+/**
+ * How long a create's first attempt, or an undo, may still be running: past
+ * every route that can run one (the REST writes' maxDuration of 30 seconds,
+ * the MCP server's and the undo routes' 120), with room, so a takeover never
+ * runs beside a first attempt that is still running (test/api-writes.test.ts
+ * holds the routes to it).
+ */
+export const PENDING_MS = 150_000;
+/** The largest body a write takes, in characters. */
+export const WRITE_BODY_MAX = 8 * 1024;
+
 /** The most a tool's result may come to, as JSON, in bytes (lib/mcp.ts): it
  *  is sent twice, so an answer stays well inside what a function may send
  *  back (Vercel's 4.5 MB). A larger one is refused with how to ask for less. */
