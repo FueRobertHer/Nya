@@ -129,9 +129,9 @@ One object, UTF-8, laid out to be read: each top-level field starts a line, its 
 | `budgets` | Your monthly budgets on categories. |
 | `group_budgets` | Your monthly budgets on category groups. |
 | `goals` | Your savings goals, each with its plan: its allocation, monthly target, target date and whether it is archived. |
-| `api_tokens` | The API tokens you made, by name, with when each was made and last used. |
+| `api_tokens` | The API tokens you made, by name, with what each can do and when it was made and last used. |
 | `sharing` | Your side of sharing, with both records of when shared accounts were shown on each connection; `null` with the shared password, unless records from before are still stored. |
-| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
+| *each store on the storage seam* | Then one field per store built on the storage seam and declared exportable, named after the store, in name order ([below](#stores-built-on-the-storage-seam)). Today: `account-lifecycle`, `allocation-settings`, `api-changes`, `app-imports`, `budget-months`, `carried-annotations`, `carried-imported-twins`, `categories`, `connection-notices`, `connection-syncs`, `connection-warnings`, `connector-accounts`, `connector-connections`, `connector-ended`, `fire-plan`, `goal-plans`, `history-imports`, `holdings:history`, `import-settings`, `imported-transactions`, `imported-twins`, `imports`, `income-carryover`, `manual-transactions`, `planned-items`, `report-settings`, `restored-accounts`, `restored-investment-transactions`, `restored-transactions`, `review-settings`, `rules`, `runway-scenarios`, `tags`, `timeline-notes`, `transaction-annotations`, `transaction-approvals`, `transaction-groups`, `transaction-splits`, `user-restore`, `vendor-defaults` and `weekly-summary`. (`sharing-access-log` is in `sharing`, and `budget-set` in `budgets` and `group_budgets`.) |
 
 ### `problems`
 
@@ -312,7 +312,7 @@ Budgets, on a category each: `category` (its name now), `monthly_amount`, `categ
 
 ### `api_tokens[]`
 
-The tokens you made for the read-only API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. A token whose record can't be read is left out and counted under [`problems`](#problems), never named by its id (`{ "section": "api_tokens", "problem": "unreadable", "count": 1 }`), and the rest of the file is still in it. The API tokens card lists it too, and can remove a damaged one.
+The tokens you made for the API and the MCP server (see `/developers` in the app), oldest first: `label` (the name you gave it), `access` (what it can do, chosen when it was made: `read`, `balances` to update manual accounts' balances, or `write` to make changes; `read` for every token made before tokens could write), `created_at`, and `last_used_at` (when it last read your data, to within a minute, or `null` if never). Never the token, the hash Nya keeps of its secret, or its id; revoked tokens are gone, and so are their entries. A token whose record can't be read is left out and counted under [`problems`](#problems), never named by its id (`{ "section": "api_tokens", "problem": "unreadable", "count": 1 }`), and the rest of the file is still in it. The API tokens card lists it too, and can remove a damaged one.
 
 ### `sharing`
 
@@ -366,6 +366,26 @@ What you set under Allocation on the Plan tab ([features.md](features.md#allocat
 | `target` | Your target allocation, a `split`, or `null`. |
 
 A `split` is percents by asset class, each above 0 with at most one decimal, adding up to 100: `us-stocks`, `intl-stocks`, `stocks` (stocks of any region), `bonds`, `cash`, `real-estate`, `crypto` and `other`. A class it doesn't name holds none: `{ "us-stocks": 60, "bonds": 40 }`.
+
+#### `api-changes`
+
+The changes made with your API tokens in the last 30 days (`lib/api-changes.ts`, [features.md](features.md#writing-through-a-token)), each with what it changed: one entry per change, under its id, `<YYYYMMDD>.<the token's ref, or app>.<12 hex>` (the UTC day it was made, which token made it, `app` for an undo you made in the app, and a random part). A token is named by a ref, 16 hex of a SHA-256 of its id, never by its id or its first characters, which are part of the token. Each `value`:
+
+| Field | Meaning |
+| --- | --- |
+| `v` | `1`, the form of the entry. |
+| `at` | When it was made. |
+| `via` | `api`, `mcp` (through an AI assistant), or `app` (an undo you made under API tokens). |
+| `token` | `{ "ref", "label" }`: the token that made it, by its ref, and its name as it was then; `null` for the app. |
+| `op` | What it did: `manual-account.create`, `manual-account.update`, `manual-account.balance`, `transaction.create`, `transaction.update`, `transaction.delete`, `category.create`, `category.update`, `group.create`, `group.update`, `tag.create`, `tag.update` or `undo`. |
+| `target` | `{ "kind", "id" }`, and for a transaction its `account_id`: what it changed (for an undo, `{ "kind": "change", "id": <the change undone> }`). |
+| `state` | `done`; `pending` while it was being made, or when it stopped part way; `failed` when it may not have been made. |
+| `before`, `after` | What it changed, before and after, as its own store keeps it: a manual account's record, a transaction's row with what is said about it (`{ "row", "said" }`), a balance (`{ "balance", "updated_at" }`), `{ "category" }`, `{ "group" }` or `{ "tag" }`. `null` for what there wasn't (before a create, after a delete); absent while pending, and once forgotten. |
+| `undoes`, `undone_by` | For an undo, the change it undid; for a change undone, the undo. |
+| `error` | Why it failed, as an error code. |
+| `forgotten_at` | When you forgot what it changed: `before` and `after` are gone, and it can no longer be undone. |
+
+Changes older than 30 days are left out, and deleted every night. Never brought back with a download: the tokens that made them aren't in it.
 
 #### `app-imports`
 

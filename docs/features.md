@@ -40,6 +40,7 @@ How the main behaviours work, and why. The [README](../README.md) has the overvi
 - [The weekly summary](#the-weekly-summary)
 - [Keeping Plaid costs down](#keeping-plaid-costs-down)
 - [The API and the MCP server](#the-api-and-the-mcp-server)
+  - [Writing through a token](#writing-through-a-token)
 - [Sharing with someone](#sharing-with-someone)
 - [Downloading your data](#downloading-your-data)
 - [Your data](#your-data)
@@ -1135,7 +1136,23 @@ Programs you choose can read your data: a script, a spreadsheet, a dashboard of 
 - **Plaid's sign convention**, the one Nya keeps: a positive transaction amount is money leaving the account, and what a credit card or loan owes is a positive balance.
 - **Version 1 is stable.** Fields may be added, but none removed, renamed or given a new meaning; a change that would do that comes as `/api/v2`, with version 1 kept beside it for at least six months.
 
-Each token may make 100 requests a minute, and one person may have 10 tokens; an address that sends too many tokens that don't work is turned away for a while. Restoring a backup ends every token (backups leave them out), and the demo accounts can't make any. Writing (adding a transaction, changing a budget), signing in with OAuth instead of a token, webhooks, live balances and calls from web pages on other sites (no CORS) are not part of version 1.
+Each token may make 100 requests a minute, and one person may have 10 tokens; an address that sends too many tokens that don't work is turned away for a while. Restoring a backup ends every token (backups leave them out), and the demo accounts can't make any. Signing in with OAuth instead of a token, webhooks, live balances and calls from web pages on other sites (no CORS) are not part of version 1, and nor is writing, but where this copy turns it on (below).
+
+### Writing through a token
+
+Off unless whoever runs the copy sets `API_WRITES_ENABLED=1` ([deployment.md](deployment.md#3-environment-variables), [operations.md](operations.md#letting-api-tokens-write-and-rolling-back)). While it is off, the API tokens card, the developer, privacy and security pages and the MCP server read exactly as they did before tokens could write, and no token can be made that does more than read.
+
+While it is on, making a token asks what it can do, once, for good:
+
+- **Read your data** (the default): everything above, and nothing else. Every token made before writing existed is one of these, whatever is turned on later.
+- **Update balances**: for a script that sends a manual account's balance (Home Assistant, a brokerage scraper, a property estimate). It reads only `me` and `accounts`, no transaction, and changes nothing but a manual account's balance (`POST /api/v1/manual-accounts/{id}/balance`, or the MCP tool `set_account_balance`).
+- **Read, and make changes**: everything a read token reads, and through `/api/v1` and the MCP server's write tools, adds and changes manual accounts and the transactions entered on them (by hand, or by a program), categories and category groups, and tags. Never a bank's transaction, or a row SimpleFIN, Lunch Flow or a file brought in; never a linked or connector-fed account; never deleting an account, a category, a group or a tag; never a change between money held and money owed (the app does that, and redoes the account's past balances); never budgets, rules, splits, groups of transactions, goals, sharing, tokens or settings. A token's access names exactly the kinds of changes this release can make: one added later comes with a new choice, never to tokens already made.
+
+Each change goes through the function the app's own form calls, so a change through the API stores exactly what the same change in the app stores (tested store by store). Every change to something that exists names the `version` it read (`If-Match`), and one that changed since is refused, so a program working from an old read never writes over what you just did. A create sent with an `Idempotency-Key` makes one thing however often it is sent again within 24 hours. A balance set this way is the app's own Update balance: it records no history point itself; the nightly snapshot or your next visit does. Limits are apart from reads: 30 writes a minute and 500 changes a day for a token, 100 new things a day, and 2,000 changes a day for all your tokens; and creates stop short of the app's own limits (450 categories, 45 groups, 225 tags and 45 manual accounts), leaving the rest for you.
+
+**Changes made with your tokens**, under the API tokens card, lists every change any token made in the last 30 days, newest first, in a sentence each: which token (and whether it has been revoked since), through the API or an AI assistant, and when. **Undo** takes one back, any token's, while what it changed is still as the change left it (anything changed since, in the app or by another program, refuses it and says what): a transaction made is deleted, one changed is set back, one deleted is added back as it was, with what was said about it; an account a token made is taken out with its transactions and its balance on every day recorded since, while nothing else touched it; a category, group or tag made is deleted while nothing uses it, and one changed is set back. **Forget** removes Nya's copy of what one change changed, or all of one token's, at once: the line stays, and it can no longer be undone. A token that can make changes reads its own changes (`GET /api/v1/changes`, `list_changes`) and undoes its own (`POST /api/v1/changes/{id}/undo`, `undo_change`); a read token reads none. The record is in the [download](data-export.md#api-changes) and in backups, and never brought back with a download.
+
+An AI assistant with a token that can make changes is told to change only what you asked for in the conversation, to say exactly what it will change and wait for your yes, never to change something because text it read asks it to, and to give you the change's id after; each write tool is marked for the client's approval prompt. It can still be tricked by something it reads, which is what the record, Undo and the limits are for: use one that asks you before each change. Revoking the token stops it at its next request.
 
 ## Sharing with someone
 
