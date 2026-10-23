@@ -25,7 +25,10 @@
 //                             or not read and why), the format, the account,
 //                             when, the period the file covers, the bank's
 //                             earliest row when it was reviewed, how it was
-//                             read, and the counts. Compressed. Read whole only
+//                             read, the counts, and the accounts a restore
+//                             brought back whose rows its review was matched
+//                             against (`matched_restored`, which its summary
+//                             repeats). Compressed. Read whole only
 //                             to undo an import and for the data download. A
 //                             row's raw record is its import's record naming
 //                             the row (row_id), one lookup away and kept for as
@@ -270,7 +273,25 @@ export type HistoryImportEntry = {
   statement: StoredStatement | null;
   columns: string[] | null;
   records: HistoryImportRecord[];
+  /** The accounts a restore brought back whose rows its review was matched
+   *  against (lib/user-restore/restored.ts, PAIRED ON READ): its rows are
+   *  never paired with theirs again, however the accounts are linked later.
+   *  Absent when it read none, and on an import made before this was kept. */
+  matched_restored?: string[];
 };
+
+/** How many restored accounts an import names as matched against: more than
+ *  one account ever has linked to it. */
+export const MAX_MATCHED_RESTORED = 100;
+
+/** The accounts an import's review read the restored rows of: absent, or
+ *  ids, each once. */
+export function isMatchedRestored(v: unknown): v is string[] | undefined {
+  return (
+    v === undefined ||
+    (Array.isArray(v) && v.length >= 1 && v.length <= MAX_MATCHED_RESTORED && v.every((id) => typeof id === 'string' && id.length >= 1 && id.length <= 200) && new Set(v).size === v.length)
+  );
+}
 
 const OUTCOMES: ReadonlySet<string> = new Set(['imported', 'duplicate', 'present', 'repeated', 'skipped', 'unreadable']);
 const CONFIDENCES: ReadonlySet<unknown> = new Set(['high', 'medium', 'low']);
@@ -345,7 +366,8 @@ export function isHistoryImportEntry(v: unknown): v is HistoryImportEntry {
     (v.statement === null || isRecord(v.statement)) &&
     (v.columns === null || (Array.isArray(v.columns) && v.columns.every((x) => typeof x === 'string'))) &&
     Array.isArray(v.records) &&
-    v.records.every(isRecordOf)
+    v.records.every(isRecordOf) &&
+    isMatchedRestored(v.matched_restored)
   );
 }
 
@@ -374,6 +396,9 @@ export type HistoryImportSummary = {
   /** Rows an earlier import had added that this one found already there,
    *  kept for this one when that import was undone. */
   taken_over?: number;
+  /** As its entry has it (HistoryImportEntry `matched_restored`), for the
+   *  readers, which read summaries. */
+  matched_restored?: string[];
 };
 
 export function isHistoryImportSummary(v: unknown): v is HistoryImportSummary {
@@ -391,7 +416,8 @@ export function isHistoryImportSummary(v: unknown): v is HistoryImportSummary {
     isDayOrNull(v.bank_from) &&
     isCounts(v.counts) &&
     isTextOrNull(v.statement) &&
-    (v.taken_over === undefined || isCount(v.taken_over))
+    (v.taken_over === undefined || isCount(v.taken_over)) &&
+    isMatchedRestored(v.matched_restored)
   );
 }
 
@@ -410,6 +436,7 @@ export function summaryOfEntry(e: HistoryImportEntry, taken_over = 0): HistoryIm
     counts: e.counts,
     statement: e.statement?.label ?? null,
     ...(taken_over > 0 ? { taken_over } : {}),
+    ...(e.matched_restored ? { matched_restored: e.matched_restored } : {}),
   };
 }
 

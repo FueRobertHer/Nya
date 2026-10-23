@@ -56,6 +56,7 @@ import {
   historyImportStore,
   historyImportSummaryStore,
   importedTxnStore,
+  MAX_MATCHED_RESTORED,
   newHistoryImportId,
   newImportedTxnId,
   summaryOfEntry,
@@ -227,7 +228,17 @@ function entryOf(input: HistoryCommitInput, plan: HistoryPlan, rowIds: string[],
     statement: storedStatement(input.statement),
     columns: input.columns,
     records: records.map((r) => r.record),
+    ...matchedRestored(input.restored),
   };
+}
+
+/** The accounts a restore brought back whose rows the review was matched
+ *  against (HistoryImportEntry `matched_restored`), so a later read never
+ *  pairs this import's rows with theirs again (lib/user-restore/restored.ts
+ *  pairable): nothing when it read none. */
+function matchedRestored(restored: RestoredContext | null | undefined): { matched_restored?: string[] } {
+  const ids = [...new Set((restored?.account.rows ?? []).map((r) => r.account_id))].sort();
+  return ids.length > 0 ? { matched_restored: ids.slice(0, MAX_MATCHED_RESTORED) } : {};
 }
 
 /** The rows an import keeps: its counted rows and its duplicates, each with

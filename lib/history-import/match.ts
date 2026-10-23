@@ -452,6 +452,11 @@ export function settle<T extends HeldRow>(
     covers?: ReadonlyMap<string, { from: string; to: string }>;
     /** Pairs kept once made: each imported row's id to the bank row's id. */
     twins?: ReadonlyMap<string, string>;
+    /** Which pairs a reader may make at all, by any rule: absent, every one.
+     *  The first stage of a restored account's rows pairs a file row only
+     *  with the rows of a restored account its review never read
+     *  (lib/user-restore/restored.ts pairable). */
+    allowed?: (row: T, bank: BankRow) => boolean;
   }
 ): Settled<T> {
   const rank = new Map(order.map((id, i) => [id, i]));
@@ -460,6 +465,7 @@ export function settle<T extends HeldRow>(
   // Earlier imports first; within an import, in the order kept.
   const sorted = [...held].sort((a, b) => before(a.import_id, b.import_id));
   const posted = banks.filter((b) => !b.pending);
+  const allowed = opts.allowed ?? (() => true);
 
   // 0. Pairs kept once made, while their bank row is there, whatever it says.
   const consumed = new Set<BankRow>();
@@ -470,7 +476,7 @@ export function settle<T extends HeldRow>(
     for (const r of sorted) {
       const id = opts.twins.get(r.id);
       const b = id === undefined ? undefined : byId.get(id);
-      if (!b || consumed.has(b)) continue;
+      if (!b || consumed.has(b) || !allowed(r, b)) continue;
       consumed.add(b);
       if (r.same_as) standing.set(r.id, { bank: b });
       else superseded.set(r.id, b);
@@ -488,7 +494,7 @@ export function settle<T extends HeldRow>(
   }
   for (const r of sorted) {
     if (!r.same_as || decided(r)) continue;
-    const b = byKey.get(r.same_as)?.find((x) => !consumed.has(x));
+    const b = byKey.get(r.same_as)?.find((x) => !consumed.has(x) && allowed(r, x));
     if (!b) continue;
     consumed.add(b);
     standing.set(r.id, { bank: b });
@@ -507,7 +513,7 @@ export function settle<T extends HeldRow>(
   //    edge, nor as a pair the person said is not one.
   const candidates = sorted.filter((r) => !decided(r));
   const forbidden = (r: T, b: BankRow) =>
-    (r.distinct_from ?? []).includes(bankKey(b)) || crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null);
+    !allowed(r, b) || (r.distinct_from ?? []).includes(bankKey(b)) || crossesEdge(r.date, b.date, opts.bankFrom, opts.covers?.get(r.import_id) ?? null);
   const match = (rows: T[], twins: BankRow[], into: Map<string, BankRow>): Set<BankRow> => {
     const asRows = rows.map((r, index) => ({ index, date: r.date, amount: r.amount, currency: r.currency, name: r.name }));
     const pairs = pairUp(asRows, twins, (row, b) => forbidden(rows[row.index], b));
