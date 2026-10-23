@@ -743,6 +743,32 @@ function gapTouches(g: Gap, start: string, end: string): boolean {
   }
 }
 
+/**
+ * The rows of `input` on the days from `start` through `through`, as the
+ * Activity tab has them: an ended account's from its end day on left out
+ * (see ENDED ACCOUNTS), and how many transactions each ended account (in
+ * `input.ended`'s order) had left out. What buildReport counts, and what a
+ * report built on the same read counts (lib/report/runway-read.ts,
+ * lib/report/year-over-year-read.ts).
+ */
+export function periodRows(input: Pick<ReportInput, 'rows' | 'ended'>, span: { start: string; through: string }): { rows: Txn[]; notCounted: number[] } {
+  const endedFacts = input.ended ?? [];
+  const endedOf = new Map<string, number>();
+  endedFacts.forEach((e, i) => {
+    for (const id of e.ids) endedOf.set(id, i);
+  });
+  // Transactions, never rows: a split one is one (lib/spending.ts transactionCounter).
+  const notCountedOf = endedFacts.map(() => transactionCounter());
+  const rows = input.rows.filter((t) => {
+    if (t.date < span.start || t.date > span.through) return false;
+    const i = t.account_id === undefined ? undefined : endedOf.get(t.account_id);
+    if (i === undefined || t.date < endedFacts[i].end) return true;
+    notCountedOf[i].add(t);
+    return false;
+  });
+  return { rows, notCounted: notCountedOf.map((c) => c.n) };
+}
+
 export function buildReport(input: ReportInput): Report {
   const { period } = input;
   const inPeriod = (d: string) => d >= period.start && d <= period.through;
@@ -753,16 +779,7 @@ export function buildReport(input: ReportInput): Report {
   endedFacts.forEach((e, i) => {
     for (const id of e.ids) endedOf.set(id, i);
   });
-  // Transactions, never rows: a split one is one (lib/spending.ts transactionCounter).
-  const notCountedOf = endedFacts.map(() => transactionCounter());
-  const rows = input.rows.filter((t) => {
-    if (!inPeriod(t.date)) return false;
-    const i = t.account_id === undefined ? undefined : endedOf.get(t.account_id);
-    if (i === undefined || t.date < endedFacts[i].end) return true;
-    notCountedOf[i].add(t);
-    return false;
-  });
-  const notCounted = notCountedOf.map((c) => c.n);
+  const { rows, notCounted } = periodRows(input, period);
   // The ended accounts the period has something to say of: their end is in
   // it, or before it and they are only assumed closed, still the person's,
   // or hold rows in it.

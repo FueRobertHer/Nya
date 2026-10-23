@@ -440,6 +440,14 @@ function groupKey(t: RecurringRow): string | null {
   return kind ? groupOf(t, kind) : null;
 }
 
+/** The group a posted row belongs to (RecurringSeries.group), or null when it
+ *  can belong to none: for a reader that asks how a total counts a series'
+ *  own rows (the runway, lib/report/runway.ts, which adds a loan's payment
+ *  the spending rule leaves out). */
+export function seriesGroupOf(t: RecurringRow): string | null {
+  return groupKey(t);
+}
+
 // --- fitting a schedule ------------------------------------------------------
 
 type Row = { day: number; month: number; amount: number; t: RecurringRow };
