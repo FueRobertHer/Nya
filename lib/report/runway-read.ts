@@ -46,6 +46,7 @@ import { plannedStore } from '../planned-store';
 import { cashPosition, forecastConverter, MANUAL_STALE_DAYS, withWhy, type ForecastInstitution } from '../forecast';
 import type { FxTable } from '../fx/rates';
 import { isConnectorKind } from '../connectors/types';
+import { resolveId } from '../link-core';
 import { isInvestmentType } from '../balance';
 import { leftOutText } from '../spending';
 import { tidy } from '../totals';
@@ -153,20 +154,11 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
   ]);
   // Each row on its account by the id the accounts are listed under: an older
   // id (an account reconnected, rows imported into a linked one) is followed
-  // through the links to it, so rows and accounts are told apart by id, never
-  // by a name two accounts may share.
-  const rootOf = (id: string) => {
-    let current = id;
-    const seen = new Set([id]);
-    for (let i = 0; i < 50; i++) {
-      const next = input.links.get(current);
-      if (!next || seen.has(next)) break;
-      seen.add(next);
-      current = next;
-    }
-    return current;
-  };
-  const rows = periodRows(input, period).rows.map((t) => (t.account_id ? { ...t, account_id: rootOf(t.account_id) } : t));
+  // through the links to it, as everywhere (lib/link-core.ts resolveId), so
+  // rows and accounts are told apart by id, never by a name two accounts may
+  // share.
+  const links = new Map([...input.links].map(([old, to]) => [old, { to }] as const));
+  const rows = periodRows(input, period).rows.map((t) => (t.account_id ? { ...t, account_id: resolveId(t.account_id, links) } : t));
   // Each window's gaps and the months they leave short, as a report on its
   // days says them (a month is marked alike in each window that holds it).
   const reports = RUNWAY_WINDOWS.map((months) => {

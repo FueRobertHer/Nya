@@ -561,6 +561,29 @@ describe('year over year from stored data', () => {
   });
 });
 
+describe('rows on an earlier id', () => {
+  test('are on the account a link chain leads to, so a move between two cash accounts nets out; a cycle ends', async () => {
+    const { linkAccounts } = await import('@/lib/links');
+    const chk = (date: string, id: string, amount: number, over: Record<string, unknown> = {}) => on(date, id, 'acc_chk', amount, over);
+    // A second move to savings in September, its savings side on an id two
+    // reconnects back, under the name the bank gave it then: only its id says
+    // whose it is.
+    await seed([
+      chk('2026-09-10', 'to-savings-2', 500, { name: 'To savings', category: 'transfer out', transaction_code: 'transfer' }),
+      on('2026-09-10', 'from-checking-2', 'acc_older', -500, { name: 'From checking', category: 'transfer in', transaction_code: 'transfer', account_name: 'Way2Save' }),
+    ]);
+    await linkAccounts(ctx, 'acc_older', 'acc_old', {});
+    await linkAccounts(ctx, 'acc_old', 'acc_sav', {});
+    // And a cycle elsewhere, which must end.
+    await linkAccounts(ctx, 'acc_loop1', 'acc_loop2', {});
+    await linkAccounts(ctx, 'acc_loop2', 'acc_loop1', {});
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    const three = r.windows.find((w: any) => w.months === 3);
+    // As the hand-worked case: the second move takes nothing out of cash.
+    expect(three).toMatchObject({ money_out: 9200, transfers_out: 0, spending: 9200 });
+  });
+});
+
 describe('with a home currency', () => {
   /** Dollars as home, and the ECB's rates of test/fx-fixture.ts: the newest,
    *  Sep 14, 2026, 1 EUR = 1.1551 USD. */
