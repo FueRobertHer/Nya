@@ -1491,7 +1491,7 @@ export async function syncItemTransactions(ctx: Ctx,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
   opts: { withAccountIds?: boolean; since?: string; endedFrom?: ReadonlyMap<string, string>; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn']; withStored?: boolean } = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn> }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn>; loading?: string[] }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
@@ -1511,7 +1511,15 @@ export async function syncItemTransactions(ctx: Ctx,
   // `stored` (asked for with `withStored`): every row as the sync left it,
   // for a reader of the same rows that would otherwise read them again
   // (lib/history-import/read.ts).
-  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...(opts.withStored ? { stored: state.txns } : {}) };
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...loadingOf(state, importing), ...(opts.withStored ? { stored: state.txns } : {}) };
+}
+
+/** The Item's accounts while its history is still coming in: more pages to
+ *  bring (`importing`), or Plaid's history beyond its first days not sent yet
+ *  (`history_pending`). A shared transaction from before a re-link whose row
+ *  hasn't come waits for it there (lib/shared-expenses/rows.ts). */
+function loadingOf(state: ItemState, importing?: boolean): { loading?: string[] } {
+  return importing || state.importing || state.history_pending ? { loading: Object.keys(state.accounts) } : {};
 }
 
 /**
@@ -1570,6 +1578,7 @@ export async function storedItemTransactions(
   noTransactions?: NoTransactionsReason;
   never_synced?: true;
   stored?: Record<string, StoredTxn> | null;
+  loading?: string[];
 }> {
   // `stored` (asked for with `withStored`): every row as read, null when the
   // store can't be read, as syncItemTransactions gives it.
@@ -1605,10 +1614,11 @@ export async function storedItemTransactions(
       coverage: 'importing',
       synced_at: state.synced_at,
       first_date,
+      ...loadingOf(state),
       ...stored(state.txns),
     };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...stored(state.txns) };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...loadingOf(state), ...stored(state.txns) };
 }
 
 /** The oldest day among an Item's stored rows that would be shown in some

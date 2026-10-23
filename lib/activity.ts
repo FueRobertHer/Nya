@@ -132,13 +132,16 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  cached before rows carried what rules and what was carried across a
  *  re-link are applied by (lib/txn-layers.ts), and `content_keys` from one
  *  cached before posted rows carried the key a share carries across a
- *  re-link by (lib/shared-expenses/rows.ts): any is a miss. */
+ *  re-link by (lib/shared-expenses/rows.ts), with `loading`, the accounts
+ *  whose connection is still bringing its history, where such a share's row
+ *  may not have come yet: any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
   category_facts: true;
   layer_facts: true;
   content_keys: true;
+  loading: string[];
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -169,6 +172,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.category_facts === true &&
     p.layer_facts === true &&
     p.content_keys === true &&
+    Array.isArray(p.loading) &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -414,6 +418,7 @@ export async function assembleBankRows(
       category_facts: true,
       layer_facts: true,
       content_keys: true,
+      loading: [...new Set(results.flatMap((r) => r.loading ?? []))],
       transactions,
       notes,
       incomplete,
@@ -535,7 +540,10 @@ export async function finishActivity(
   defaults_unread: boolean;
   /** Shared expenses (lib/shared-expenses/rows.ts): what this read can tell
    *  is gone, what waits on a re-link, and what is shared twice. */
-  shared_expenses: Pick<ShareResult, 'gone' | 'away' | 'twice' | 'moves'>;
+  shared_expenses: Pick<ShareResult, 'gone' | 'away' | 'coming' | 'twice' | 'moves'>;
+  /** By row id, what applies to it kept under another id (ShareResult.onto):
+   *  for the edits' checks, never sent. */
+  shared_onto: ShareResult['onto'];
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -640,6 +648,7 @@ export async function finishActivity(
     hidden,
     rowFacts,
     manualUnread: manual.unread,
+    loading: new Set(plaid.loading),
     ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
     ...(stands.size > 0 ? { stands } : {}),
   });
@@ -659,7 +668,8 @@ export async function finishActivity(
     transactions: withShares.rows,
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes, ...withShares.notes],
     unread_notes: [...plaid.notes, ...manual.notes, ...withShares.unread_notes],
-    shared_expenses: { gone: withShares.gone, away: withShares.away, twice: withShares.twice, ...(withShares.moves ? { moves: withShares.moves } : {}) },
+    shared_expenses: { gone: withShares.gone, away: withShares.away, coming: withShares.coming, twice: withShares.twice, ...(withShares.moves ? { moves: withShares.moves } : {}) },
+    shared_onto: withShares.onto,
     tags_note: tagRead.note,
     review: {
       on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,

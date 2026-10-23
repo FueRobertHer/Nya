@@ -64,10 +64,17 @@
 // dies with the connection. Once the person links the old account to the
 // re-added one (lib/links.ts), the share or payment applies to the row there
 // with the same key under the new account's id, one to one: a key two old
-// ones share, or two rows share, carries nothing, and those are gone, as is
-// one with no key (decided by the link, never by what rows the old account
-// still has). The row says where it is kept (`shared_carried_from`, the
-// payment's `kept_under`), so an edit there moves it onto the row.
+// ones share, or two rows share, carries nothing, and those are gone
+// (decided by the link, never by what rows the old account still has). One
+// whose key no row has yet, or that has no key, waits (`coming`) while the
+// new account's connection is still bringing its history (`loading`) or its
+// rows don't reach that day (none yet, or all from before it), since the
+// bank sends its last month or so first; it is gone once they do (its words
+// changed) or once all of the history is there and begins after it. The row
+// says where it is kept (`shared_carried_from`, the payment's `kept_under`),
+// so an edit there moves it onto the row. When the links can't be read,
+// nothing carries and nothing is said to be gone or waiting, and a note
+// says so (`accountsUnread`).
 //
 // ROWS IMPORTED FROM FILES (#52). A bank row standing for rows imported into
 // its account takes their share and payment, as it takes their split, unless
@@ -124,6 +131,10 @@ export type SharedIou = { person: string; item: string; cash: number };
 /** A row a gone share or payment could be moved to. */
 export type MoveTo = { transaction_id: string; account_id: string };
 
+/** A share or payment kept under another id that applies to a row, applied
+ *  or not: which, and the id it is kept under. */
+export type Carried = { kind: 'share' | 'payment'; from: string };
+
 export type SharedUnapplied = 'group' | 'split' | 'part' | 'currency' | 'amount';
 export type SettlesUnapplied = 'shared' | 'split' | 'group' | 'currency' | 'amount';
 
@@ -171,6 +182,13 @@ export type ShareInputs = {
    *  resolve it (lib/link-core.ts), when they could be read: what a share
    *  carries across a re-link by, and what says it is gone or waits. */
   accounts?: { live: ReadonlySet<string>; resolve: (account_id: string) => string };
+  /** The links or the live accounts couldn't be read: nothing carries, with
+   *  a note. */
+  accountsUnread?: boolean;
+  /** The accounts whose connection is still bringing its history
+   *  (lib/transactions.ts loadingOf): a share whose row may be in what is
+   *  still to come waits for it. */
+  loading?: ReadonlySet<string>;
 };
 
 export type ShareResult = {
@@ -183,6 +201,9 @@ export type ShareResult = {
   /** Shares and payments on an account disconnected and not linked to a
    *  re-added one yet: they carry once it is (ACROSS A RE-LINK). */
   away: { shares: string[]; payments: string[] };
+  /** Shares and payments from before a re-link whose row hasn't come in yet
+   *  on the account linked on (ACROSS A RE-LINK): never gone while they wait. */
+  coming: { shares: string[]; payments: string[] };
   /** For each gone one, the rows here it could be moved to, with the
    *  account each is on (what a move sends, and the server checks): posted,
    *  whole, free, at the same amount and currency, within a week, those on
@@ -191,6 +212,11 @@ export type ShareResult = {
   /** Transactions shared twice through an imported twin: the bank row's id,
    *  with the imported rows' (lib/shared-expenses/edits.ts removes one). */
   twice: { bank: string; imported: string[] }[];
+  /** By row id, the share or payment kept under another id that applies to
+   *  it, applied or not: carried across a re-link, or a file's row's it
+   *  stands for. What every write onto a transaction checks
+   *  (lib/shared-expenses/edits.ts carriedOnto); never sent. */
+  onto: Map<string, Carried>;
 };
 
 /** Review marks a row this layer adds never carries: a shared transaction
@@ -226,7 +252,7 @@ function partOf(t: Txn): { key: string; part: string } | null {
 export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareResult {
   const empty = inputs.shares.size === 0 && inputs.payments.size === 0 && inputs.ious.size === 0 && inputs.sharesUnknown.size === 0 && inputs.paymentsUnknown.size === 0 && inputs.iousUnread === 0;
   const settingNote = inputs.settingsUnread ? ['Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.'] : [];
-  if (empty) return { rows: [...rows], notes: settingNote, unread_notes: [], gone: { shares: [], payments: [] }, away: { shares: [], payments: [] }, twice: [] };
+  if (empty) return { rows: [...rows], notes: settingNote, unread_notes: [], gone: { shares: [], payments: [] }, away: { shares: [], payments: [] }, coming: { shares: [], payments: [] }, twice: [], onto: new Map() };
   const part = inputs.counting === 'part' && !inputs.settingsUnread;
   const items = itemsOf(inputs.shares, inputs.ious);
   const paid = paidOf(inputs.payments, items);
@@ -282,7 +308,12 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   // not a group's), with no share or payment of their own.
   const relinkedShare = new Map<string, string>();
   const relinkedPayment = new Map<string, string>();
-  const unmatched = { shares: new Set<string>(), payments: new Set<string>() };
+  // Why one didn't carry: two wanting one key, or two rows having it (gone
+  // at once), or no row with it here yet (where it waits, on that account).
+  const missed = {
+    shares: { twins: new Set<string>(), unarrived: new Map<string, string>() },
+    payments: { twins: new Set<string>(), unarrived: new Map<string, string>() },
+  };
   const resolve = inputs.accounts?.resolve;
   if (resolve) {
     const byKey = new Map<string, string[]>();
@@ -294,29 +325,32 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       if ((inputs.stands?.get(t.transaction_id) ?? []).some((id) => inputs.shares.has(id) || inputs.payments.has(id))) continue;
       byKey.set(key, [...(byKey.get(key) ?? []), t.transaction_id]);
     }
-    const carry = (kept: ReadonlyMap<string, Share | Payment>, to: Map<string, string>, misses: Set<string>, taken: ReadonlySet<string>) => {
-      const wanted = new Map<string, string[]>();
+    const carry = (kept: ReadonlyMap<string, Share | Payment>, to: Map<string, string>, misses: (typeof missed)['shares'], taken: ReadonlySet<string>) => {
+      const wanted = new Map<string, { id: string; now: string }[]>();
       for (const [id, v] of kept) {
         if (present.has(id)) continue;
         const now = resolve(v.account_id);
         // Not linked to another account: nothing to carry to.
         if (now === v.account_id) continue;
         const key = v.carry_key && v.carry_key.startsWith(`${v.account_id}|`) && !(v as Share).part ? now + v.carry_key.slice(v.account_id.length) : null;
+        // Nothing to carry it by: it waits for the rows, to be moved by hand.
         if (!key) {
-          misses.add(id);
+          misses.unarrived.set(id, now);
           continue;
         }
-        wanted.set(key, [...(wanted.get(key) ?? []), id]);
+        wanted.set(key, [...(wanted.get(key) ?? []), { id, now }]);
       }
       for (const [key, ids] of wanted) {
-        const targets = (byKey.get(key) ?? []).filter((t) => !taken.has(t));
-        if (ids.length === 1 && targets.length === 1) to.set(targets[0], ids[0]);
-        else for (const id of ids) misses.add(id);
+        const all = byKey.get(key) ?? [];
+        const targets = all.filter((t) => !taken.has(t));
+        if (ids.length === 1 && targets.length === 1) to.set(targets[0], ids[0].id);
+        else if (ids.length === 1 && all.length === 0) misses.unarrived.set(ids[0].id, ids[0].now);
+        else for (const { id } of ids) misses.twins.add(id);
       }
     };
-    carry(inputs.shares, relinkedShare, unmatched.shares, new Set());
+    carry(inputs.shares, relinkedShare, missed.shares, new Set());
     // A row a share carried to takes no payment besides: the share wins.
-    carry(inputs.payments, relinkedPayment, unmatched.payments, new Set(relinkedShare.keys()));
+    carry(inputs.payments, relinkedPayment, missed.payments, new Set(relinkedShare.keys()));
     for (const id of [...relinkedShare.values(), ...relinkedPayment.values()]) present.add(id);
   }
 
@@ -340,10 +374,21 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   // on none of its parts: noted once per transaction.
   const splitUnnamed = new Set<string>();
 
+  const onto = new Map<string, Carried>();
   for (const t of rows) {
     if (t.group_members || t.group_outside || t.pending || endedRow(t)) {
       out.push(t);
       continue;
+    }
+    // What applies to it from elsewhere, though it may not apply as it is.
+    if (t.split_of === undefined) {
+      const id = t.transaction_id;
+      const elsewhere = (kept: ReadonlyMap<string, unknown>, relinked: ReadonlyMap<string, string>) =>
+        kept.has(id) ? undefined : ((standsFor.get(id) ?? []).find((x) => kept.has(x)) ?? relinked.get(id));
+      const shareFrom = elsewhere(inputs.shares, relinkedShare);
+      const paymentFrom = elsewhere(inputs.payments, relinkedPayment);
+      if (shareFrom !== undefined) onto.set(id, { kind: 'share', from: shareFrom });
+      else if (paymentFrom !== undefined) onto.set(id, { kind: 'payment', from: paymentFrom });
     }
     const scale = unitScale(currencyOf(t));
     const rowUnits = toUnits(t.amount, scale);
@@ -402,7 +447,8 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       const mark: SharedMark | undefined = share
         ? { ...(share.part ? { part: share.part } : {}), your_part: t.amount, people: lent.map((l) => ({ person: l.entry.person, item: l.entry.id, amount: l.units / scale })), counted: false }
         : undefined;
-      out.push({ ...t, shared_unapplied: shareWhy, ...(mark ? { shared: mark } : {}) });
+      // Where it is kept, as when it applies, so it is changed from there.
+      out.push({ ...t, shared_unapplied: shareWhy, ...(mark ? { shared: mark } : {}), ...(share && shareFrom ? { shared_carried_from: shareFrom } : {}) });
       continue;
     }
 
@@ -532,10 +578,24 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   };
   const gone = { shares: [] as string[], payments: [] as string[] };
   const away = { shares: [] as string[], payments: [] as string[] };
+  const coming = { shares: [] as string[], payments: [] as string[] };
   const manualUnread = (account: string) => inputs.manualUnread === 'all' || !!inputs.manualUnread?.includes(account);
-  // Gone, waiting on a link, or neither (see WHAT DOESN'T APPLY).
-  const where = (id: string, account: string, day: string, misses: ReadonlySet<string>): 'gone' | 'away' | null => {
-    if (misses.has(id)) return 'gone';
+  // One whose row isn't on the account linked on (`now`): gone once that
+  // account's rows reach its day (its words changed) or all of its history
+  // is there and begins after it; until then it waits (ACROSS A RE-LINK).
+  const arrival = (now: string, day: string): 'gone' | 'coming' | null => {
+    if (inputs.hidden?.has(now)) return null;
+    const end = inputs.ended?.get(now);
+    if (end !== undefined && day >= end) return null;
+    if (inputs.loading?.has(now)) return 'coming';
+    const d = accountDays.get(now);
+    return !d || day > d.last ? 'coming' : 'gone';
+  };
+  // Gone, waiting on a link or on its row, or neither (see WHAT DOESN'T APPLY).
+  const where = (id: string, account: string, day: string, misses: (typeof missed)['shares']): 'gone' | 'away' | 'coming' | null => {
+    if (misses.twins.has(id)) return 'gone';
+    const now = misses.unarrived.get(id);
+    if (now !== undefined) return arrival(now, day);
     if (covers(account, day)) return 'gone';
     if (accountDays.has(account) || inputs.hidden?.has(account) || inputs.ended?.has(account)) return null;
     if (account.startsWith(MANUAL_ACCOUNT_PREFIX)) return manualUnread(account) ? null : 'gone';
@@ -546,13 +606,13 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   };
   for (const [id, s] of inputs.shares) {
     if (present.has(id) || s.kept_gone || (inputs.from !== undefined && s.date < inputs.from)) continue;
-    const w = where(id, s.account_id, s.date, unmatched.shares);
-    if (w) (w === 'gone' ? gone : away).shares.push(id);
+    const w = where(id, s.account_id, s.date, missed.shares);
+    if (w) ({ gone, away, coming })[w].shares.push(id);
   }
   for (const [id, p] of inputs.payments) {
     if (present.has(id) || p.kept_gone || (inputs.from !== undefined && p.row.date < inputs.from)) continue;
-    const w = where(id, p.account_id, p.row.date, unmatched.payments);
-    if (w) (w === 'gone' ? gone : away).payments.push(id);
+    const w = where(id, p.account_id, p.row.date, missed.payments);
+    if (w) ({ gone, away, coming })[w].payments.push(id);
   }
 
   // ---- Where a gone one could go ----
@@ -618,6 +678,11 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     }
   }
 
+  const count = (x: { shares: string[]; payments: string[] }) => x.shares.length + x.payments.length;
+  const kinds = (x: { shares: string[]; payments: string[] }) =>
+    [x.shares.length > 0 ? plural(x.shares.length, 'shared transaction', 'shared transactions') : null, x.payments.length > 0 ? plural(x.payments.length, 'payment you confirmed', 'payments you confirmed') : null]
+      .filter(Boolean)
+      .join(' and ');
   const notes = [
     ...settingNote,
     ...(unknownShares > 0 ? [`How you shared ${plural(unknownShares, 'transaction', 'transactions')} couldn’t be read, so ${unknownShares === 1 ? 'it counts' : 'they count'} whole until ${unknownShares === 1 ? 'it' : 'they'} can be.`] : []),
@@ -642,8 +707,16 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       : []),
     ...(away.shares.length + away.payments.length > 0
       ? [
-          `${[away.shares.length > 0 ? plural(away.shares.length, 'shared transaction', 'shared transactions') : null, away.payments.length > 0 ? plural(away.payments.length, 'payment you confirmed', 'payments you confirmed') : null].filter(Boolean).join(' and ')} ${away.shares.length + away.payments.length === 1 ? 'is' : 'are'} on an account you disconnected: once you add the bank back and link the account, ${away.shares.length + away.payments.length === 1 ? 'it carries' : 'they carry'} to ${away.shares.length + away.payments.length === 1 ? 'its transaction' : 'their transactions'} there. What is owed stays as it is meanwhile.`,
+          `${kinds(away)} ${count(away) === 1 ? 'is' : 'are'} on an account you disconnected: once you add the bank back and link the account, ${count(away) === 1 ? 'it carries' : 'they carry'} to ${count(away) === 1 ? 'its transaction' : 'their transactions'} there. What is owed stays as it is meanwhile; if you won’t add it back, keep ${count(away) === 1 ? 'it' : 'them'} under Shared expenses.`,
         ]
+      : []),
+    ...(count(coming) > 0
+      ? [
+          `${kinds(coming)} from before you re-linked ${count(coming) === 1 ? 'waits for its transaction' : 'wait for their transactions'} to come in from your bank: ${count(coming) === 1 ? 'it carries' : 'they carry'} across once ${count(coming) === 1 ? 'it does' : 'they do'}. What is owed stays as it is meanwhile.`,
+        ]
+      : []),
+    ...(inputs.accountsUnread && [...inputs.shares.keys(), ...inputs.payments.keys()].some((id) => !present.has(id))
+      ? ['Your account links couldn’t be read, so shared transactions and payments from before a re-link aren’t carried to their transactions, nor said to be gone, until they can be.']
       : []),
     ...(twice.length > 0 ? [`${plural(twice.length, 'transaction is', 'transactions are')} shared twice, once as imported from a file and once as your bank’s: remove one under Shared expenses.`] : []),
     ...(moneyIn > 0
@@ -654,7 +727,7 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       : []),
   ];
   const unread_notes = inputs.iousUnread > 0 && part ? ['Some of your IOUs couldn’t be read, so your part of what others paid may be missing from these totals.'] : [];
-  return { rows: mergeNewestFirst(out, iouRows), notes: [...notes, ...unread_notes], unread_notes, gone, away, twice, ...(moves ? { moves } : {}) };
+  return { rows: mergeNewestFirst(out, iouRows), notes: [...notes, ...unread_notes], unread_notes, gone, away, coming, twice, onto, ...(moves ? { moves } : {}) };
 }
 
 /** An IOU's row: on its day, filed under its category, on no account. */

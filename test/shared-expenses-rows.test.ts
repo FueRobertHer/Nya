@@ -338,9 +338,67 @@ describe('across a re-link, and what is gone or waits', () => {
     const r2 = applyShares([dinner, twin], inputs({ shares, rowFacts: both, accounts: linked }));
     expect(r2.rows.filter((t) => t.shared)).toEqual([]);
     expect(r2.gone.shares).toEqual(['t-d']);
-    // No key recorded (a disconnect that couldn't record it): gone too.
+    // No key recorded (a disconnect that couldn't record it): nothing to
+    // carry it by, so gone once the rows reach its day, to be moved by hand.
     const noKey = new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }], { account_id: 'acc-old' })]]);
     expect(applyShares([dinner], inputs({ shares: noKey, rowFacts, accounts: linked })).gone.shares).toEqual(['t-d']);
+    expect(applyShares([dinner], inputs({ shares: noKey, rowFacts, accounts: linked, loading: new Set(['acc-new']) })).coming.shares).toEqual(['t-d']);
+  });
+
+  test('linked, its row not come yet: it waits while the bank brings its history or its rows don’t reach that day, and is gone once they do', () => {
+    const changed = new Map([...rowFacts, ['n-d', { account: 'acc-new', key: 'acc-new|other' }]]);
+    // Still bringing its history: it waits, said, never gone, whatever it reaches.
+    const loading = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts: changed, accounts: linked, loading: new Set(['acc-new']) }));
+    expect([loading.gone.shares, loading.coming.shares]).toEqual([[], ['t-d']]);
+    expect(loading.notes.join(' ')).toContain('1 shared transaction from before you re-linked waits for its transaction to come in from your bank: it carries across once it does. What is owed stays as it is meanwhile.');
+    expect(loading.moves).toBeUndefined();
+    // All of the history in, and it reaches the day: its words changed, so gone.
+    expect(applyShares([dinner, cashout], inputs({ shares, payments, rowFacts: changed, accounts: linked })).gone.shares).toEqual(['t-d']);
+    // All in, and it begins after the day (the bank's history doesn't reach back so far): gone.
+    expect(applyShares([cashout], inputs({ shares, payments, rowFacts, accounts: linked })).gone.shares).toEqual(['t-d']);
+    // No row on the account yet, or only from before the day: it waits.
+    const none = applyShares([], inputs({ shares, payments, rowFacts, accounts: linked }));
+    expect([none.gone, none.coming]).toEqual([{ shares: [], payments: [] }, { shares: ['t-d'], payments: ['t-v'] }]);
+    expect(none.notes.join(' ')).toContain('1 shared transaction and 1 payment you confirmed from before you re-linked wait for their transactions to come in from your bank: they carry across once they do.');
+    const older = row('n-old', { account_id: undefined, date: '2026-09-20' });
+    const before = applyShares([older], inputs({ shares, rowFacts: new Map([...rowFacts, ['n-old', { account: 'acc-new', key: 'acc-new|older' }]]), accounts: linked }));
+    expect([before.gone.shares, before.coming.shares]).toEqual([[], ['t-d']]);
+    // A hidden account's rows aren't read: neither.
+    const hidden = applyShares([], inputs({ shares, rowFacts, accounts: linked, hidden: new Set(['acc-new']) }));
+    expect([hidden.gone.shares, hidden.coming.shares]).toEqual([[], []]);
+    // Two rows with its key: gone at once, even while the history comes.
+    const twin = row('n-d2', { account_id: undefined, name: 'Joe’s' });
+    const twins = applyShares([dinner, twin], inputs({ shares, rowFacts: new Map([...rowFacts, ['n-d2', rowFacts.get('n-d')!]]), accounts: linked, loading: new Set(['acc-new']) }));
+    expect([twins.gone.shares, twins.coming.shares]).toEqual([['t-d'], []]);
+  });
+
+  test('what applies to a row from elsewhere is answered, applied or not, for the edits to check', () => {
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accounts: linked }));
+    expect([...r.onto]).toEqual([
+      ['n-d', { kind: 'share', from: 't-d' }],
+      ['n-v', { kind: 'payment', from: 't-v' }],
+    ]);
+    // In another currency now: left whole, but still where it is kept, and answered.
+    const euros = row('n-d', { account_id: undefined, name: 'Joe’s', iso_currency_code: 'EUR' });
+    const u = applyShares([euros], inputs({ shares, rowFacts, accounts: linked }));
+    const d = u.rows.find((t) => t.transaction_id === 'n-d')!;
+    expect([d.amount, d.shared_unapplied, d.shared_carried_from]).toEqual([120, 'currency', 't-d']);
+    expect(u.onto.get('n-d')).toEqual({ kind: 'share', from: 't-d' });
+    // Its own share answers nothing: it is stored under its id.
+    expect(applyShares([dinner], inputs({ shares: new Map([['n-d', share([{ id: 'e2', person: 'alex', amount: 60 }])]]), rowFacts, accounts: linked })).onto.size).toBe(0);
+  });
+
+  test('links that can’t be read: nothing carries, nothing is said to be gone or waiting, and a note says why', () => {
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accountsUnread: true }));
+    expect(r.rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(120);
+    expect([r.gone, r.away, r.coming]).toEqual([
+      { shares: [], payments: [] },
+      { shares: [], payments: [] },
+      { shares: [], payments: [] },
+    ]);
+    expect(r.notes).toContain('Your account links couldn’t be read, so shared transactions and payments from before a re-link aren’t carried to their transactions, nor said to be gone, until they can be.');
+    // Said only when something isn't on its own row.
+    expect(applyShares([row('t-d')], inputs({ shares, accountsUnread: true })).notes.join(' ')).not.toContain('account links');
   });
 
   test('not linked yet: it waits, said, and nothing counts differently', () => {

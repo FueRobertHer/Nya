@@ -25,7 +25,7 @@ import { expenseDismissedStore, expenseIousStore, expensePaymentsStore, expenseP
  *  ShareInputs, but for what the reader adds: the categories, the day it
  *  reads from, hidden accounts, the rows imported from files). A display
  *  read (see the header). */
-export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting' | 'settingsUnread' | 'shares' | 'sharesUnknown' | 'payments' | 'paymentsUnknown' | 'ious' | 'iousUnread' | 'dismissed' | 'accounts'>> {
+export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting' | 'settingsUnread' | 'shares' | 'sharesUnknown' | 'payments' | 'paymentsUnknown' | 'ious' | 'iousUnread' | 'dismissed' | 'accounts' | 'accountsUnread'>> {
   const [settings, shares, payments, ious, dismissed] = await Promise.all([
     expenseSettingsStore.getReport(ctx),
     expenseSharesStore.getAllReport(ctx),
@@ -37,8 +37,8 @@ export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting
   ]);
   // Which accounts are live, and the links between earlier ones and them,
   // only when something is shared or paid: what a share is carried across a
-  // re-link by, and what says one is gone or waits on a link. Best effort:
-  // unread, nothing is carried, and the rows alone say what is gone.
+  // re-link by, and what says one is gone or waits on a link. Unread,
+  // nothing is carried, the rows alone say what is gone, and a note says so.
   const accounts = shares.entries.size > 0 || payments.entries.size > 0 ? await accountsFor(ctx) : null;
   const settingsUnread = settings.unreadable || settings.unrecognised;
   return {
@@ -51,20 +51,28 @@ export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting
     ious: ious.entries,
     iousUnread: ious.unreadable.length + ious.unrecognised.length,
     dismissed: new Set(dismissed.keys()),
-    ...(accounts ? { accounts } : {}),
+    ...(accounts === 'unread' ? { accountsUnread: true } : accounts ? { accounts } : {}),
   };
 }
 
 /** The live bank accounts and how each id resolves through the active links
- *  (lib/link-core.ts), or null when they couldn't be read. */
-async function accountsFor(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts']> | null> {
+ *  (lib/link-core.ts), or 'unread' when they couldn't be read (logged). */
+async function accountsFor(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts']> | 'unread'> {
   try {
-    const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
-    const applied = effectiveLinks(links, live);
-    return { live, resolve: (id: string) => resolveId(id, applied) };
-  } catch {
-    return null;
+    return await sharedAccounts(ctx);
+  } catch (err) {
+    console.error('shared expenses: account links could not be read', err instanceof Error ? err.name : 'error');
+    return 'unread';
   }
+}
+
+/** The same, read strictly: what an edit checks a carry by
+ *  (lib/shared-expenses/edits.ts), which fails rather than take the links
+ *  for none. */
+export async function sharedAccounts(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts']>> {
+  const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+  const applied = effectiveLinks(links, live);
+  return { live, resolve: (id: string) => resolveId(id, applied) };
 }
 
 /** What can't be read in one store: ids that may be removed once the person
