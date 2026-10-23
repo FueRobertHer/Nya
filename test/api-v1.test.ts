@@ -174,7 +174,7 @@ describe('me', () => {
     expect(body).toEqual({
       api_version: '1',
       // As it stood before this request: never used.
-      token: { label: 'Tests', hint: token.slice(0, 12), created_at: expect.any(String), last_used_at: null },
+      token: { label: 'Tests', hint: token.slice(0, 12), created_at: expect.any(String), last_used_at: null, access: 'read' },
       data_since: '2026-01-01T00:00:00.000Z',
       rate_limit: { requests: REQUESTS_PER_MINUTE, per_seconds: 60 },
       // No home currency chosen: nothing is converted.

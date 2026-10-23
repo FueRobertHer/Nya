@@ -62,9 +62,17 @@
 // window: it is the service's own bookkeeping, and nothing of the person's is
 // lost.
 //
-// READ ONLY. No route a token reaches changes the person's data. The only
-// writes a token's request makes are its own bookkeeping: its count, and when
-// it was last used, at most once every LAST_USED_EVERY_MS.
+// ACCESS, chosen once, when the token is made (lib/api-limits.ts ACCESS):
+// read, the default and every token made before there was a choice; balances,
+// which reads only the accounts and sets a manual account's balance; or write,
+// which reads everything and makes the changes WRITE_V1 lists (lib/api-spec.ts).
+// Stored on the record only for balances and write (lib/api-token-store.ts),
+// written by createToken alone and never changed: more access is a new token.
+// What each operation allows is checked by the one runner every request goes
+// through, REST or MCP (lib/api-run.ts), and only while this copy lets tokens
+// write (lib/api-writes-enabled.ts) for anything beyond reading. A read
+// token's requests write nothing of the person's: only its own bookkeeping,
+// its count, and when it was last used, at most once every LAST_USED_EVERY_MS.
 //
 // At most MAX_TOKENS per person. Making one needs a fresh sign-in
 // (lib/fresh-sign-in.ts, app/api/api-tokens), since a token goes on working
@@ -73,13 +81,13 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { UnreadableEntriesError, type CounterWindow } from './repo';
-import { apiTokenStore, apiRequestCount, type ApiToken } from './api-token-store';
+import { apiTokenStore, apiRequestCount, apiWriteCount, apiWriteDays, type ApiToken } from './api-token-store';
 import { getContainer, isContainerId, type ContainerId, type Ctx } from './containers';
 import { clerkEnabled, clerkUserAccess } from './auth-mode';
 import { ownedContainer } from './owners';
 import { deploymentContainer } from './sessions';
 import { isDemoUser } from './demo';
-import { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX, type Access } from './api-limits';
 import { checkContainerKey, ContainerKeyError } from './crypto';
 
 export { LABEL_MAX, MAX_TOKENS, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX };
@@ -102,11 +110,17 @@ export type TokenInfo = {
   hint: string;
   created_at: string;
   last_used_at: string | null;
+  /** What it may do (see the header). */
+  access: Access;
 };
 
 const digest = (secret: string): Buffer => createHash('sha256').update(secret, 'utf8').digest();
-const hintOf = (id: string) => `${TOKEN_PREFIX}${id.slice(0, 8)}`;
-const infoOf = (id: string, t: ApiToken): TokenInfo => ({ id, label: t.label, hint: hintOf(id), created_at: t.created_at, last_used_at: t.last_used_at });
+/** A token's first characters, to recognise it by: what the card shows,
+ *  and all the record of changes serves of which token made a change. */
+export const hintOf = (id: string) => `${TOKEN_PREFIX}${id.slice(0, 8)}`;
+/** What a stored token may do. */
+export const accessOf = (t: ApiToken): Access => t.access ?? 'read';
+const infoOf = (id: string, t: ApiToken): TokenInfo => ({ id, label: t.label, hint: hintOf(id), created_at: t.created_at, last_used_at: t.last_used_at, access: accessOf(t) });
 
 /** A token in its one written form. */
 export function formatToken(id: string, secret: string, container: ContainerId): string {
@@ -155,17 +169,33 @@ export class TokenLimitError extends Error {
 
 /**
  * Makes a token named `label` (cleaned by cleanLabel) for `userId`, the Clerk
- * account making it (null with the shared password), and returns it, the one
- * time it is ever available whole, with what the list shows of it. Refused
- * (TokenLimitError) past MAX_TOKENS, counted again once it is saved so that
- * two made at once can't both pass the limit: past it, the new one is taken
- * back.
+ * account making it (null with the shared password), with `access` (read
+ * unless said: the caller checks that this copy lets tokens write), and
+ * returns it, the one time it is ever available whole, with what the list
+ * shows of it. A read token's record has no `access` at all, so the release
+ * before reads it. Refused (TokenLimitError) past MAX_TOKENS, counted again
+ * once it is saved so that two made at once can't both pass the limit: past
+ * it, the new one is taken back.
  */
-export async function createToken(ctx: Ctx, label: string, now: Date = new Date(), userId: string | null = null): Promise<{ token: string; info: TokenInfo }> {
+export async function createToken(
+  ctx: Ctx,
+  label: string,
+  now: Date = new Date(),
+  userId: string | null = null,
+  access: Access = 'read'
+): Promise<{ token: string; info: TokenInfo }> {
   if ((await apiTokenStore.count(ctx)) >= MAX_TOKENS) throw new TokenLimitError();
   const id = randomBytes(8).toString('hex');
   const secret = randomBytes(32).toString('base64url');
-  const record: ApiToken = { v: 1, label, hash: digest(secret).toString('hex'), user_id: userId, created_at: now.toISOString(), last_used_at: null };
+  const record: ApiToken = {
+    v: 1,
+    label,
+    hash: digest(secret).toString('hex'),
+    user_id: userId,
+    created_at: now.toISOString(),
+    last_used_at: null,
+    ...(access === 'read' ? {} : { access }),
+  };
   // Written only where nothing is: an id already taken (one in 2^64) is never
   // written over.
   await apiTokenStore.update(ctx, id, (current) => {
@@ -208,13 +238,16 @@ export async function revokeToken(ctx: Ctx, id: string, opts: { unreadable?: boo
     if (!(err instanceof UnreadableEntriesError) || !opts.unreadable || !err.unreadable.includes(id)) throw err;
   }
   await apiTokenStore.remove(ctx, id);
-  // Bookkeeping: the hash expires on its own anyway.
+  // Bookkeeping: each hash expires on its own anyway.
   await apiRequestCount.remove(ctx, id).catch(() => {});
+  await apiWriteCount.remove(ctx, id).catch(() => {});
+  await apiWriteDays.remove(ctx, id, `${id}.creates`).catch(() => {});
   return true;
 }
 
-/** A token that checked out: whose data it reads, and its record as read. */
-export type Authenticated = { ctx: Ctx; id: string; token: ApiToken };
+/** A token that checked out: whose data it reads, its record as read, and
+ *  what it may do. */
+export type Authenticated = { ctx: Ctx; id: string; token: ApiToken; access: Access };
 
 const NO_HASH = Buffer.alloc(32);
 
@@ -297,7 +330,7 @@ export async function checkToken(header: string | null, now: number = Date.now()
     console.error(`API token: its data is unavailable, since ${err.message}`);
     return { kind: 'unavailable', why: 'Your data can’t be read on this server just now.' };
   }
-  return { kind: 'ok', auth: { ctx: { container }, id, token: record } };
+  return { kind: 'ok', auth: { ctx: { container }, id, token: record, access: accessOf(record) } };
 }
 
 /** The token a header carries, if it checks out; null for every way it

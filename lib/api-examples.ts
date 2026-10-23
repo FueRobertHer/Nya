@@ -379,7 +379,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
     query: '',
     example: {
       api_version: '1',
-      token: { label: 'Raycast', hint: 'nya_3f9a0c1e', created_at: '2026-10-01T15:04:05.000Z', last_used_at: '2026-10-09T08:12:00.000Z' },
+      token: { label: 'Raycast', hint: 'nya_3f9a0c1e', created_at: '2026-10-01T15:04:05.000Z', last_used_at: '2026-10-09T08:12:00.000Z', access: 'read' },
       data_since: '2026-01-14T19:20:31.000Z',
       rate_limit: { requests: 100, per_seconds: 60 },
       base_currency: 'USD',
@@ -392,6 +392,10 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['token.hint', 'Its first characters, as the API tokens card shows them.'],
       ['token.created_at', 'When it was made.'],
       ['token.last_used_at', 'When it was last used before this request, to within a minute, or null if never.'],
+      [
+        'token.access',
+        'What it may do, chosen when it was made and never changed: read. Where this copy of Nya lets tokens make changes, a token made for that says balances or write instead. A value you don’t know means no more than its own name says: treat it as read only.',
+      ],
       ['data_since', 'When your data in Nya began.'],
       ['rate_limit', 'How many requests the token may make.'],
       ['rate_limit.requests', 'Requests in each window.'],

@@ -460,6 +460,22 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Requests counted for each API token',
     plain: 'Each token’s id and its count, as plain text.',
   },
+  'api-write-requests': {
+    group: 'access',
+    name: 'Changes counted for each API token, by the minute',
+    about: 'How many changes a token that can make them has sent in the current minute, for its limit.',
+    unit: ['token', 'tokens'],
+    kept: 'Requests counted for each API token',
+    plain: 'Each token’s id and its count, as plain text.',
+  },
+  'api-write-days': {
+    group: 'access',
+    name: 'Changes counted for each API token, by the day',
+    about: 'How many changes each token that can make them has made in the current day, and how many all of them have, for their limits.',
+    unit: COUNT,
+    kept: 'Requests counted for each API token',
+    plain: 'Each token’s id and its counts, as plain text.',
+  },
   'api-tokens': {
     group: 'access',
     name: 'Your API tokens',

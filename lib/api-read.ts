@@ -125,7 +125,7 @@ import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
 import { dominantCurrency } from './format';
 import { LOOKBACK_DAYS, type OlderTxn, type Txn } from './transactions';
-import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX } from './api-limits';
+import { API_VERSION, RATE_WINDOW_SECONDS, REQUESTS_PER_MINUTE, TOKEN_PREFIX, type Access } from './api-limits';
 import { readTagSet, tagNameKey, type TagSet } from './tags';
 import { spendingByTag } from './tag-totals';
 import type { Authenticated } from './api-tokens';
@@ -182,8 +182,10 @@ const realTime = (iso: string | null | undefined): string | null => (iso && Date
 
 export type ApiMe = {
   api_version: string;
-  /** The token this request was made with, as the API tokens card lists it. */
-  token: { label: string; hint: string; created_at: string; last_used_at: string | null };
+  /** The token this request was made with, as the API tokens card lists it,
+   *  and what it may do (`access`: read, balances or write; added in version
+   *  1). */
+  token: { label: string; hint: string; created_at: string; last_used_at: string | null; access: Access };
   /** When this person's data in Nya began (their container was made). */
   data_since: string | null;
   rate_limit: { requests: number; per_seconds: number };
@@ -199,7 +201,7 @@ export async function readMe(auth: Authenticated): Promise<ApiMe> {
   const [record, { settings }] = await Promise.all([getContainer(auth.ctx.container), readSettingsForDisplay(auth.ctx)]);
   return {
     api_version: API_VERSION,
-    token: { label: auth.token.label, hint: `${TOKEN_PREFIX}${auth.id.slice(0, 8)}`, created_at: auth.token.created_at, last_used_at: auth.token.last_used_at },
+    token: { label: auth.token.label, hint: `${TOKEN_PREFIX}${auth.id.slice(0, 8)}`, created_at: auth.token.created_at, last_used_at: auth.token.last_used_at, access: auth.access },
     data_since: record?.created_at ?? null,
     rate_limit: { requests: REQUESTS_PER_MINUTE, per_seconds: RATE_WINDOW_SECONDS },
     base_currency: settings.home,

@@ -2164,12 +2164,14 @@ describe('the key inventory', () => {
       expect([store.name, listedKind(store.name), isExcluded(store.name)]).toEqual([store.name, null, !store.backedUp]);
       expect(classify(`${c}${store.name}`)).toBe(stored[store.kind]);
     }
-    // Only the API's tokens and their counts, and a connector's credential and
-    // its counts, are left out: a restore must never revive a revoked token or
-    // a disconnected bank.
+    // Only the API's tokens, their counts and the keys of their creates, and a
+    // connector's credential and its counts, are left out: a restore must
+    // never revive a revoked token or a disconnected bank.
     expect(declaredStores().filter((s) => !s.backedUp).map((s) => s.name).sort()).toEqual([
       'api-requests',
       'api-tokens',
+      'api-write-days',
+      'api-write-requests',
       'connector-claims',
       'connector-requests',
       'connector-secrets',
