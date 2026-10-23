@@ -124,6 +124,7 @@ describe('the view', () => {
         blocked: true,
         unsaved: false,
         usage: { flagged: 'refused', refused_since: '2026-08-02T00:00:00.000Z', hidden_since: null, checked_at: '2026-10-21T08:00:00.000Z' },
+        usage_unreadable: false,
       },
       {
         item_id: 'item2',
@@ -134,6 +135,7 @@ describe('the view', () => {
         blocked: false,
         unsaved: false,
         usage: null,
+        usage_unreadable: false,
       },
     ]);
     expect(mine.orphaned).toEqual([{ item_id: 'gone', txns_chars: fake.strings.get(ctxKey('txns:gone'))!.length, invtxns_chars: 0 }]);
@@ -159,7 +161,7 @@ describe('the view', () => {
     expect((await readAdminStorage(admin, { after: OTHER.container })).containers).toEqual([]);
   });
 
-  test('nothing of anyone’s data is read: no value but the plain-text records, nothing decrypted, nothing written', async () => {
+  test('nothing is decrypted, and no value read but the plain-text records it shows; nothing is written', async () => {
     await seed();
     sent.length = 0;
     // Under another key, anything decrypted would fail.
@@ -172,7 +174,7 @@ describe('the view', () => {
       if (command === 'eval') {
         const script = String(args[0]).split('\n', 1)[0];
         expect(script).toBe('-- nya:repo-measure-keys');
-        expect(args[2]).toEqual(['0']); // no heads either
+        expect((args[2] as string[])[0]).toBe('0'); // no heads either
         continue;
       }
       const key = typeof args[0] === 'string' ? args[0] : '';
@@ -187,19 +189,41 @@ describe('the view', () => {
     expect(JSON.stringify(view)).not.toMatch(/12345|bridge\.example|access-/);
   });
 
-  test('one account that can’t be measured costs the others nothing, and is said, never zero', async () => {
+  test('a walk that fails: every account’s sizes and markers unknown, said as such, never zero, and its records still read', async () => {
     await seed();
     fake.failNext('scan');
     const view = await readAdminStorage(admin, { now: NOW });
-    const [mine, theirs] = view.containers;
-    expect(mine.storage).toBeNull();
-    expect(mine.connectors).toBeNull();
-    expect(mine.orphaned).toBeNull();
-    expect(mine.items!.map((i) => [i.item_id, i.txns_chars])).toEqual([
-      ['item1', 0],
-      ['item2', 0],
+    for (const c of view.containers) {
+      expect([c.storage, c.connectors, c.orphaned]).toEqual([null, null, null]);
+      for (const i of c.items!) expect([i.txns_chars, i.invtxns_chars, i.blocked, i.unsaved]).toEqual([null, null, null, null]);
+    }
+    // The Items, their checks and the snapshot are read apart from the walk.
+    expect(view.containers[0].items!.map((i) => [i.item_id, i.usage?.flagged ?? null])).toEqual([
+      ['item1', 'refused'],
+      ['item2', null],
     ]);
-    expect(theirs.storage).not.toBeNull();
+    expect(view.containers[0].snapshot?.date).toBe('2026-10-21');
+  });
+
+  test('records that can’t be read are said so: an Item’s check, and the newest snapshot run, never an older one in its place', async () => {
+    await seed();
+    await fake.hset(ctxKey('snapshot:item-usage'), { item2: 'not a record' });
+    await fake.hset(ctxKey('snapshot:runs'), { '2026-10-22': 'not a run' });
+    const [mine] = (await readAdminStorage(admin, { now: NOW })).containers;
+    expect(mine.items!.find((i) => i.item_id === 'item2')).toMatchObject({ usage: null, usage_unreadable: true });
+    expect(mine.items!.find((i) => i.item_id === 'item1')).toMatchObject({ usage_unreadable: false });
+    expect([mine.snapshot, mine.snapshot_unreadable]).toEqual([null, true]);
+  });
+
+  test('one walk for the whole page, however many accounts are on it', async () => {
+    await seed();
+    sent.length = 0;
+    await readAdminStorage(admin, { limit: 1, now: NOW });
+    const one = sent.filter(([command]) => command === 'scan').length;
+    sent.length = 0;
+    await readAdminStorage(admin, { now: NOW });
+    expect(sent.filter(([command]) => command === 'scan').length).toBe(one);
+    expect(route.maxDuration).toBe(300);
   });
 });
 

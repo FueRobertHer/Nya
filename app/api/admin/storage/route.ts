@@ -14,6 +14,11 @@ import { readAdminStorage, MAX_PAGE } from '@/lib/admin-storage';
 //
 //   GET ?after=<container id>&limit=<1..MAX_PAGE>   a page, in id order.
 
+// One walk of the database's keyspace for the page, then a Lua step per
+// hundred of each account's keys: on a large database that is many requests
+// one after another, so the host is given as long as the admin's other route.
+export const maxDuration = 300;
+
 /** The page asked for, or why the query can't be one. Every parameter is
  *  checked: known names only, each at most once. */
 function pageOf(url: URL): { after: string | null; limit: number | undefined } | string {

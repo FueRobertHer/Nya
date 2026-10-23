@@ -125,12 +125,26 @@ export type FlaggedItem = {
 
 /** Every Item's record as the last check left it, by item id, linked or
  *  not, for the admin's view of storage (lib/admin-storage.ts): plain text,
- *  read only, and nothing here calls Plaid. A record that doesn't parse reads
- *  as no observation, as it does for the check. */
-export async function readUsage(ctx: Ctx): Promise<Map<string, Usage>> {
+ *  read only, and nothing here calls Plaid. A record that isn't a JSON object
+ *  is "unreadable", said as such for display, where the check itself reads
+ *  it as no observation and starts its clocks again. */
+export async function readUsage(ctx: Ctx): Promise<Map<string, Usage | 'unreadable'>> {
   const stored = ((await redis().hgetall(usageKey(ctx))) ?? {}) as Record<string, unknown>;
   const now = new Date().toISOString();
-  return new Map(Object.entries(stored).map(([item_id, value]) => [item_id, parseUsage(value, now)]));
+  const record = (value: unknown): unknown => {
+    if (typeof value !== 'string') return value;
+    try {
+      return JSON.parse(value);
+    } catch {
+      return null;
+    }
+  };
+  return new Map(
+    Object.entries(stored).map(([item_id, value]) => {
+      const r = record(value);
+      return [item_id, r !== null && typeof r === 'object' && !Array.isArray(r) ? parseUsage(r, now) : 'unreadable'] as const;
+    })
+  );
 }
 
 /** The linked Items the last check flagged, for the user to review. Reads

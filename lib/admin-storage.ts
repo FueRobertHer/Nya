@@ -7,58 +7,65 @@
 // stored transaction blobs against the size ceiling (MAX_TXN_BLOB_CHARS,
 // lib/blob.ts), what it stores in all, and its last daily snapshot.
 //
-// WHO: the admin alone, decided as lib/admin-items.ts decides (adminCtx);
-// the route answers anyone else with the same 404 as a route that does not
-// exist (app/api/admin/storage).
+// WHO: the admin alone, decided as lib/admin-items.ts decides (adminCtx).
+// Anyone else is refused before anything is read: the page by proxy.ts,
+// which answers them as a path that does not exist, and the route with the
+// 404 the admin's other route gives (app/api/admin/storage).
 //
-// NOTHING OF ANYONE'S DATA IS READ. Each container is measured through the
-// storage seam (lib/repo.ts measureContainer) without even the heads of its
-// values: sizes and counts only. Beside that, three plain-text records are
-// read: the Items' records (each bank's name, Plaid's ids, whether Plaid
-// included transactions; the access token in each is never decrypted), the
-// last check of each Item (lib/item-usage.ts) and the snapshot's runs
-// (lib/snapshot-job.ts). Nothing is decrypted, nothing is written, and no
-// person's name or email address is shown: an account is its random id, and
-// "You" for the admin's own.
+// WHAT IT READS, AND SHOWS. Nothing is decrypted. The containers are measured
+// through the storage seam (lib/repo.ts measureContainers), without even the
+// heads of their values: sizes and counts. Beside them, three plain-text
+// records, which the view shows: the Items' records (each bank's name,
+// Plaid's id for the connection, whether Plaid billed Transactions when it
+// was linked; the access token in each is never opened), the daily check's
+// record of each Item (lib/item-usage.ts: since when Plaid refused it, or
+// every account was hidden) and the snapshot's newest run (lib/snapshot-job.ts:
+// its outcome, and the reason it failed, which can name a Plaid error code).
+// No person's name or email address.
 //
 // CHEAP, a page at a time: containers in id order after a cursor (`after`),
-// at most MAX_PAGE a request, measured a few at once. Each measure walks the
-// keyspace (SCAN with MATCH), which is what the page costs.
+// at most MAX_PAGE a request, with one walk of the keyspace for the whole
+// page (SCAN with MATCH, then a Lua step per hundred of each container's
+// keys), so the walk costs the same for one container or fifty.
 //
 // LENIENT, for display only: nothing writes, deletes or records anything on
-// it. A part of a container that can't be read is null, said as such, never
-// zero; one container failing costs the others nothing.
+// it. A part that can't be read is null, or flagged unreadable, said as such,
+// never zero or "nothing"; one container's records failing costs the others
+// nothing.
 
 import { listContainers, type Ctx, type ContainerId, type ContainerStatus } from './containers';
-import { measureContainer, type ContainerMeasure } from './repo';
+import { measureContainers, type ContainerMeasure } from './repo';
 import { getItems, type StoredItem } from './storage';
 import { readUsage, type Usage } from './item-usage';
-import { readRuns, type RunRecord } from './snapshot-job';
+import { readNewestRun, type RunRecord } from './snapshot-job';
 import { maxBlobChars } from './blob';
 
 /** Containers per request, at most, and by default. */
 export const MAX_PAGE = 50;
 export const DEFAULT_PAGE = 20;
-/** Containers measured at once. */
+/** Containers whose records are read at once. */
 const AT_ONCE = 4;
 
-/** One Plaid Item of a container, as stored. */
+/** One Plaid Item of a container, as stored. Its sizes and markers are null
+ *  when its container couldn't be measured: not known, never 0 or none. */
 export type AdminItem = {
   item_id: string;
   institution_name: string;
   /** Whether Plaid billed Transactions on it when it was linked; null when
-   *  the lookup failed, and absent from Items linked before it was kept. */
+   *  the lookup failed, and for Items linked before it was kept. */
   transactions_billed: boolean | null;
   /** Its stored blobs' sizes (0 for none). */
-  txns_chars: number;
-  invtxns_chars: number;
+  txns_chars: number | null;
+  invtxns_chars: number | null;
   /** A transaction save was refused for its size (its marker is there; it
    *  clears on the Item's next sync that fits). */
-  blocked: boolean;
+  blocked: boolean | null;
   /** Its last transaction save failed. */
-  unsaved: boolean;
-  /** The last check of it (lib/item-usage.ts), or null when there is none. */
+  unsaved: boolean | null;
+  /** The last check of it (lib/item-usage.ts), or null when there is none,
+   *  or when it couldn't be read (`usage_unreadable`). */
   usage: { flagged: 'refused' | 'hidden' | null; refused_since: string | null; hidden_since: string | null; checked_at: string | null } | null;
+  usage_unreadable: boolean;
 };
 
 export type AdminContainer = {
@@ -79,14 +86,16 @@ export type AdminContainer = {
   } | null;
   /** Null where the Items' records couldn't be read. */
   items: AdminItem[] | null;
-  /** Blobs whose Item is no longer linked: they cost the same. */
+  /** Blobs whose Item is no longer linked: they cost the same. Null where
+   *  the container couldn't be measured or its Items read. */
   orphaned: { item_id: string; txns_chars: number; invtxns_chars: number }[] | null;
   /** Counted from the measure: connections, those still holding the access
    *  they were given (one without needs connecting again), and the accounts
-   *  they keep up to date. */
+   *  they keep up to date. Null where the container couldn't be measured. */
   connectors: { connections: number; with_credential: number; accounts: number } | null;
-  /** The newest recorded run of the daily snapshot; null for none, and
-   *  `unreadable` true when the runs couldn't be read. */
+  /** The newest recorded run of the daily snapshot; null for none, or when
+   *  it couldn't be read (`snapshot_unreadable`: the runs couldn't be read,
+   *  or the newest one is damaged, so no older one is shown as the last). */
   snapshot: ({ date: string } & RunRecord) | null;
   snapshot_unreadable: boolean;
 };
@@ -103,7 +112,7 @@ export type AdminStorage = {
 const failed = Symbol('failed');
 const lenient = <T>(what: string, run: () => Promise<T>): Promise<T | typeof failed> =>
   run().catch((err) => {
-    console.error(`Admin storage: one account's ${what} could not be read.`, err instanceof Error ? err.name : typeof err);
+    console.error(`Admin storage: ${what} could not be read.`, err instanceof Error ? err.name : typeof err);
     return failed;
   });
 
@@ -125,19 +134,21 @@ function blobsOf(measure: ContainerMeasure) {
   return by;
 }
 
-const usageOf = (u: Usage | undefined): AdminItem['usage'] =>
-  u ? { flagged: u.flagged, refused_since: u.error_since, hidden_since: u.hidden_since, checked_at: u.checked_at } : null;
+const usageOf = (u: Usage): NonNullable<AdminItem['usage']> => ({ flagged: u.flagged, refused_since: u.error_since, hidden_since: u.hidden_since, checked_at: u.checked_at });
 
-/** One container, measured and read (see the header). */
-async function containerRow(c: { id: ContainerId; status: ContainerStatus; created_at: string }, admin: Ctx): Promise<AdminContainer> {
+/** One container, from its measure (or `failed`) and its records (see the header). */
+async function containerRow(
+  c: { id: ContainerId; status: ContainerStatus; created_at: string },
+  measure: ContainerMeasure | typeof failed,
+  admin: Ctx
+): Promise<AdminContainer> {
   const ctx: Ctx = { container: c.id };
-  const [measure, items, usage, runs] = await Promise.all([
-    lenient('storage', () => measureContainer(ctx)),
-    lenient('Items', () => getItems(ctx)),
-    lenient('Item checks', () => readUsage(ctx)),
-    lenient('snapshot runs', () => readRuns(ctx, 1)),
+  const [items, usage, newest] = await Promise.all([
+    lenient("one account's Items", () => getItems(ctx)),
+    lenient("one account's Item checks", () => readUsage(ctx)),
+    lenient("one account's snapshot runs", () => readNewestRun(ctx)),
   ]);
-  const count = (store: string) => (measure === failed ? 0 : measure.keys.find((k) => k.key === store)?.entries ?? 0);
+  const count = (store: string) => (measure === failed ? 0 : (measure.keys.find((k) => k.key === store)?.entries ?? 0));
   const blobs = measure === failed ? null : blobsOf(measure);
   const linked = items === failed ? null : new Set(items.map((i) => i.item_id));
   return {
@@ -159,19 +170,21 @@ async function containerRow(c: { id: ContainerId; status: ContainerStatus; creat
         ? null
         : items
             .map((i: StoredItem): AdminItem => {
-              const b = blobs?.get(i.item_id);
+              const b = blobs === null ? null : (blobs.get(i.item_id) ?? { txns: 0, invtxns: 0, blocked: false, unsaved: false });
+              const u = usage === failed ? 'unreadable' : usage.get(i.item_id);
               return {
                 item_id: i.item_id,
                 institution_name: i.institution_name,
                 transactions_billed: i.transactions_billed ?? null,
-                txns_chars: b?.txns ?? 0,
-                invtxns_chars: b?.invtxns ?? 0,
-                blocked: b?.blocked ?? false,
-                unsaved: b?.unsaved ?? false,
-                usage: usage === failed ? null : usageOf(usage.get(i.item_id)),
+                txns_chars: b?.txns ?? null,
+                invtxns_chars: b?.invtxns ?? null,
+                blocked: b?.blocked ?? null,
+                unsaved: b?.unsaved ?? null,
+                usage: u === undefined || u === 'unreadable' ? null : usageOf(u),
+                usage_unreadable: u === 'unreadable',
               };
             })
-            .sort((a, b) => b.txns_chars + b.invtxns_chars - (a.txns_chars + a.invtxns_chars) || (a.item_id < b.item_id ? -1 : 1)),
+            .sort((a, b) => (b.txns_chars ?? 0) + (b.invtxns_chars ?? 0) - ((a.txns_chars ?? 0) + (a.invtxns_chars ?? 0)) || (a.item_id < b.item_id ? -1 : 1)),
     orphaned:
       blobs === null || linked === null
         ? null
@@ -183,24 +196,29 @@ async function containerRow(c: { id: ContainerId; status: ContainerStatus; creat
       measure === failed
         ? null
         : { connections: count('connector-connections'), with_credential: count('connector-secrets'), accounts: count('connector-accounts') },
-    snapshot: runs === failed ? null : (runs[0] ?? null),
-    snapshot_unreadable: runs === failed,
+    snapshot: newest === failed || newest === null || newest.run === null ? null : { date: newest.date, ...newest.run },
+    snapshot_unreadable: newest === failed || (newest !== null && newest.run === null),
   };
 }
 
 /**
  * A page of the admin's view: the containers after `after` (by id), at most
- * `limit`, each measured now (see the header). The registry itself failing
- * throws: there is nothing to show without it.
+ * `limit`, measured now with one walk (see the header). The registry itself
+ * failing throws: there is nothing to show without it. The walk failing
+ * makes every container's measure null, said as such, and its records are
+ * still read.
  */
 export async function readAdminStorage(admin: Ctx, opts: { after?: string | null; limit?: number; now?: number } = {}): Promise<AdminStorage> {
   const limit = Math.min(Math.max(1, opts.limit ?? DEFAULT_PAGE), MAX_PAGE);
   const registry = (await listContainers()).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
   const rest = opts.after ? registry.filter((c) => c.id > opts.after!) : registry;
   const page = rest.slice(0, limit);
+  const measures = await lenient('the walk of the accounts on this page', () => measureContainers(page.map((c) => ({ container: c.id }))));
   const containers: AdminContainer[] = [];
   for (let i = 0; i < page.length; i += AT_ONCE) {
-    containers.push(...(await Promise.all(page.slice(i, i + AT_ONCE).map((c) => containerRow(c, admin)))));
+    containers.push(
+      ...(await Promise.all(page.slice(i, i + AT_ONCE).map((c) => containerRow(c, measures === failed ? failed : (measures.get(c.id) ?? failed), admin))))
+    );
   }
   return {
     as_of: new Date(opts.now ?? Date.now()).toISOString(),

@@ -5,8 +5,9 @@
 // and how they are doing, its connections to SimpleFIN or Lunch Flow, its
 // stored transactions against the limit of one save, what it stores in all
 // and its last daily snapshot, as /api/admin/storage measures them
-// (lib/admin-storage.ts). Sizes and counts only. The server decides who the
-// admin is and answers anyone else with a 404, page and route alike.
+// (lib/admin-storage.ts). Nothing is decrypted: sizes and counts, and the
+// plain text it says it shows. The server decides who the admin is: proxy.ts
+// answers anyone else as a path that does not exist, and the route with a 404.
 //
 // Read-only. A page of accounts at a time, sorted here among those loaded;
 // "Load more" asks for the next page after the last one.
@@ -19,11 +20,12 @@ type AdminItem = {
   item_id: string;
   institution_name: string;
   transactions_billed: boolean | null;
-  txns_chars: number;
-  invtxns_chars: number;
-  blocked: boolean;
-  unsaved: boolean;
+  txns_chars: number | null;
+  invtxns_chars: number | null;
+  blocked: boolean | null;
+  unsaved: boolean | null;
   usage: { flagged: 'refused' | 'hidden' | null; refused_since: string | null; hidden_since: string | null; checked_at: string | null } | null;
+  usage_unreadable: boolean;
 };
 
 export type AdminContainer = {
@@ -52,10 +54,16 @@ export const SORTS = [
 export type Sort = (typeof SORTS)[number][0];
 
 const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+/** A YYYY-MM-DD day as it is, the same in every time zone. */
+export const utcDay = (date: string) => new Date(`${date}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 
-/** The largest stored transaction blob of an account, the one nearest the ceiling. */
-const largestBlob = (c: AdminContainer): number => Math.max(0, ...(c.items ?? []).map((i) => Math.max(i.txns_chars, i.invtxns_chars)), ...(c.orphaned ?? []).map((o) => Math.max(o.txns_chars, o.invtxns_chars)));
+/** The largest stored transaction blob of an account, the one nearest the
+ *  ceiling, or null when its blobs couldn't be measured. */
+const largestBlob = (c: AdminContainer): number | null =>
+  c.storage === null || c.items === null
+    ? null
+    : Math.max(0, ...c.items.map((i) => Math.max(i.txns_chars ?? 0, i.invtxns_chars ?? 0)), ...(c.orphaned ?? []).map((o) => Math.max(o.txns_chars, o.invtxns_chars)));
 
 /** Share of the ceiling, rounded down, so a blob just under it never reads as 100%. */
 export const ofCeiling = (chars: number, ceiling: number): number => (ceiling > 0 ? Math.floor((chars / ceiling) * 100) : 0);
@@ -67,7 +75,7 @@ export function sortContainers(list: AdminContainer[], sort: Sort): AdminContain
       case 'stored':
         return c.storage?.total_chars ?? null;
       case 'ceiling':
-        return c.items === null && c.orphaned === null ? null : largestBlob(c);
+        return largestBlob(c);
       case 'items':
         return c.items?.length ?? null;
       case 'connectors':
@@ -88,9 +96,11 @@ export function sortContainers(list: AdminContainer[], sort: Sort): AdminContain
   });
 }
 
-/** What an Item's last check and its markers say of it, in words. */
+/** What an Item's last check and its markers say of it, in words; what
+ *  couldn't be read is said so, never left as nothing. */
 export function itemState(i: AdminItem): string[] {
   const out: string[] = [];
+  if (i.usage_unreadable) out.push('its last check couldn’t be read');
   if (i.usage?.flagged === 'refused') out.push('flagged as unused: Plaid has refused it for long enough');
   else if (i.usage?.flagged === 'hidden') out.push('flagged as unused: every account hidden for long enough');
   if (i.usage?.refused_since && i.usage.flagged !== 'refused') out.push(`refused by Plaid since ${day(i.usage.refused_since)}`);
@@ -98,7 +108,7 @@ export function itemState(i: AdminItem): string[] {
   if (i.blocked) out.push('a save of its transactions was refused for its size');
   if (i.unsaved) out.push('its last save of transactions failed');
   if (i.transactions_billed === false) out.push('Plaid wasn’t billing Transactions when it was linked');
-  if (i.usage === null) out.push('not checked yet');
+  if (i.usage === null && !i.usage_unreadable) out.push('not checked yet');
   return out;
 }
 
@@ -136,8 +146,11 @@ function Container({ c, ceiling }: { c: AdminContainer; ceiling: number }) {
                 const state = itemState(i);
                 return (
                   <li key={i.item_id}>
-                    <strong>{i.institution_name}</strong>: transactions {sizeText(i.txns_chars)} ({ofCeiling(i.txns_chars, ceiling)}% of the limit)
-                    {i.invtxns_chars > 0 ? `, investment transactions ${sizeText(i.invtxns_chars)} (${ofCeiling(i.invtxns_chars, ceiling)}%)` : ''}
+                    <strong>{i.institution_name}</strong>:{' '}
+                    {i.txns_chars === null
+                      ? 'its stored transactions couldn’t be measured'
+                      : `transactions ${sizeText(i.txns_chars)} (${ofCeiling(i.txns_chars, ceiling)}% of the limit)`}
+                    {i.invtxns_chars ? `, investment transactions ${sizeText(i.invtxns_chars)} (${ofCeiling(i.invtxns_chars, ceiling)}%)` : ''}
                     {state.length > 0 ? `; ${state.join('; ')}` : ''}.
                     <span className="type-tag">{i.item_id}</span>
                   </li>
@@ -166,10 +179,10 @@ function Container({ c, ceiling }: { c: AdminContainer; ceiling: number }) {
         <dt>Last daily snapshot</dt>
         <dd>
           {c.snapshot_unreadable
-            ? 'Its record couldn’t be read just now.'
+            ? 'Its newest record couldn’t be read just now.'
             : c.snapshot === null
               ? 'None recorded.'
-              : `${day(`${c.snapshot.date}T12:00:00Z`)}: ${c.snapshot.status}${c.snapshot.reason ? ` (${c.snapshot.reason})` : ''}, at ${when(c.snapshot.at)}${c.snapshot.attempts > 1 ? `, after ${plainNumber(c.snapshot.attempts)} tries` : ''}${c.snapshot.holdings_failed ? `; holdings not recorded for ${plainNumber(c.snapshot.holdings_failed)} ${c.snapshot.holdings_failed === 1 ? 'account' : 'accounts'}` : ''}.`}
+              : `${utcDay(c.snapshot.date)}: ${c.snapshot.status}${c.snapshot.reason ? ` (${c.snapshot.reason})` : ''}, at ${when(c.snapshot.at)}${c.snapshot.attempts > 1 ? `, after ${plainNumber(c.snapshot.attempts)} tries` : ''}${c.snapshot.holdings_failed ? `; holdings not recorded for ${plainNumber(c.snapshot.holdings_failed)} ${c.snapshot.holdings_failed === 1 ? 'account' : 'accounts'}` : ''}.`}
         </dd>
       </dl>
     </section>
@@ -239,8 +252,9 @@ export default function AdminStorage() {
       <h1>Storage across accounts</h1>
       <p className="sub">
         Each account on this copy of Nya, by its id: its bank connections and how they are doing, its connections to SimpleFIN or Lunch Flow, how large its stored
-        transactions are against the limit of one save, what it stores in all, and its last daily snapshot. Sizes and counts only: nothing of anyone’s data is
-        read to make it.
+        transactions are against the limit of one save, what it stores in all, and its last daily snapshot. Nothing is decrypted to make it. Beside sizes and
+        counts, it shows what is kept as plain text: each account’s banks by name, Plaid’s id for each connection and whether Plaid billed transactions on it, the
+        daily check’s dates, and the snapshot’s outcome and the reason it gave.
       </p>
       {error && <div className="error">{error}</div>}
       {!pages && !error && <p className="empty-note">Measuring…</p>}

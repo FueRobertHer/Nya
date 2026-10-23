@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
 import { InventoryView, figures, encryptionText, keyText, sizeText, backupText, type Inventory, type InventoryRow } from '@/components/DataInventory';
-import { AdminStorageView, sortContainers, itemState, ofCeiling, SORTS, type AdminContainer, type AdminPage } from '@/components/AdminStorage';
+import { AdminStorageView, sortContainers, itemState, ofCeiling, utcDay, SORTS, type AdminContainer, type AdminPage } from '@/components/AdminStorage';
 import InventoryEntry from '@/components/InventoryEntry';
 
 // The pages of Your data and of storage across accounts, drawn: figures in
@@ -173,6 +173,7 @@ const item = (over: Partial<NonNullable<AdminContainer['items']>[number]>) => ({
   blocked: false,
   unsaved: false,
   usage: { flagged: null, refused_since: null, hidden_since: null, checked_at: '2026-10-21T08:00:00.000Z' },
+  usage_unreadable: false,
   ...over,
 });
 
@@ -205,6 +206,10 @@ describe('storage across accounts, in words', () => {
       'flagged as unused: Plaid has refused it for long enough',
     ]);
     expect(itemState(item({ usage: null }))).toEqual(['not checked yet']);
+    expect(itemState(item({ usage: null, usage_unreadable: true }))).toEqual(['its last check couldn’t be read']);
+    // A day as recorded, whatever the viewer's time zone.
+    expect(utcDay('2026-10-21')).toBe(new Date(Date.UTC(2026, 9, 21)).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }));
+    expect(utcDay('2026-10-21')).toContain('21');
     expect([ofCeiling(999, 1000), ofCeiling(1000, 1000), ofCeiling(0, 1000), ofCeiling(5, 0)]).toEqual([99, 100, 0, 0]);
   });
 
@@ -218,9 +223,15 @@ describe('storage across accounts, in words', () => {
     expect(t).not.toMatch(/@/);
     expect(t).toContain('Its keys couldn’t be walked just now.');
     expect(t).toContain('Couldn’t be counted just now.');
-    expect(t).toContain('Its record couldn’t be read just now.');
+    expect(t).toContain('Its newest record couldn’t be read just now.');
     expect(t).toContain('2 connections, 1 still holding the access it was given, keeping 4 accounts up to date.');
     expect(t).toContain('1 store of transactions whose connection is gone, costing the same: 5 KB.');
+    // An account that couldn't be measured: its blobs unknown, never 0 bytes.
+    const unknown = account({ container: 'e0000000-0000-4000-8000-000000000005', storage: null, orphaned: null, connectors: null, items: [item({ txns_chars: null, invtxns_chars: null, blocked: null, unsaved: null })] });
+    const u = text(renderToStaticMarkup(<AdminStorageView pages={{ ...page, containers: [unknown] }} sort="ceiling" onSort={() => {}} />));
+    expect(u).toContain('Chase : its stored transactions couldn’t be measured');
+    expect(u).not.toMatch(/0 bytes|0% of the limit/);
+    expect(ids(sortContainers([unknown, a, b], 'ceiling'))).toEqual(['a', 'b', 'e']);
     const hidden = inBrowser(() => {
       setAmountsHidden(true);
       return renderToStaticMarkup(<AdminStorageView pages={page} sort="stored" onSort={() => {}} />);
