@@ -5,17 +5,17 @@ import { filesUnder, withoutComments } from './amount-sources';
 
 // Every reader that picks one currency for a total (lib/format.ts
 // dominantCurrency, over balances; lib/spending.ts totalsCurrency, over
-// rows) is listed here, by file, function and value, with its reason. A home
-// currency converts net worth only, in this step (lib/fx/): the readers of
-// balances that a home currency reaches convert, and every other is listed
-// "until step 2", when flows, budgets, the Plan, reports and shares convert.
-// A reader added later that totals in one currency fails this until it is
-// listed with its reason, or converts. Outside lib/spending.ts, lib/format.ts
-// and lib/fx/, where the rules are kept.
+// rows) is listed here, by file, function and value, with its reason. With a
+// home currency, totals of flows convert through one seam (lib/fx/totals.ts
+// totalsIn) and balances through lib/fx/net-worth.ts: a reader that still
+// picks a currency itself is listed with why (a label, a version 1 field
+// that keeps its meaning, a currency what the person typed is in). A reader
+// added later that totals in one currency fails this until it is listed
+// with its reason, or converts. Outside lib/spending.ts, lib/format.ts and
+// lib/fx/, where the rules are kept.
 
 const ROOT = join(import.meta.dir, '..');
 
-const STEP_2 = 'Until step 2: totals of flows in the one currency most rows are in, what is in another named, never added.';
 
 const ALLOWED: Record<string, string> = {
   // Balances.
