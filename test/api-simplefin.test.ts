@@ -313,4 +313,46 @@ describe('an entry that can’t be read', () => {
     );
     expect(exportFile(doc, 'balances-csv').incomplete).toEqual([]);
   });
+
+  // What a value under k0 looks like once PLAID_ENCRYPTION_KEY is replaced:
+  // the deployment's problem, never damage (lib/crypto.ts sealedAway), named
+  // as a manual account sealed the same way is, and the rest answered.
+  const underAnotherK0 = async (plain: string) => {
+    const key = await crypto.subtle.importKey('raw', new Uint8Array(32).fill(1), 'AES-GCM', false, ['encrypt']);
+    const iv = crypto.getRandomValues(new Uint8Array(12));
+    const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(plain)));
+    return Buffer.concat([iv, sealed]).toString('base64');
+  };
+
+  test('sealed under another PLAID_ENCRYPTION_KEY: an account named as unavailable, never as damaged, and the rest answered', async () => {
+    await trackSimplefin();
+    const visa = await idOf('Visa');
+    await fake.hset(ctxKey('connector-accounts'), { [visa]: await underAnotherK0('{}') });
+
+    const { status, body: accounts } = await rest('accounts');
+    expect(status).toBe(200);
+    expect(accounts.accounts.map((a: any) => a.name)).toEqual(['Checking']);
+    expect(accounts).toMatchObject({ complete: false, missing_accounts: [{ institution: null, account_id: visa, reason: 'unavailable', source: 'simplefin' }] });
+    expect(accounts.notes).toContain('An account SimpleFIN keeps up to date couldn’t be read, so it isn’t listed');
+    expect((await rest('net-worth')).body).toMatchObject({ complete: false, totals: [{ currency: 'USD', net_worth: 1500.25, accounts: 1 }] });
+    expect((await rest('transactions')).status).toBe(200);
+    expect((await rest('balance-history', `account_id=${visa}`)).status).toBe(200);
+    expect((await tool('list_accounts')).text).toContain('1 SimpleFIN account couldn’t be read');
+    // Never offered for removal, nor changed: still the bytes it was.
+    expect(await fake.hget(ctxKey('connector-accounts'), visa)).not.toBeNull();
+  });
+
+  test('sealed under another PLAID_ENCRYPTION_KEY: a connection, whose banks say what Nya keeps about it couldn’t be read, and the rest answered', async () => {
+    const id = await trackSimplefin();
+    await fake.hset(ctxKey('connector-connections'), { [id]: await underAnotherK0('{}') });
+
+    const { status, body: accounts } = await rest('accounts');
+    expect(status).toBe(200);
+    expect(accounts.accounts.map((a: any) => a.name)).toEqual(['Checking', 'Visa']);
+    expect(accounts.accounts[0].connection).toMatchObject({ records_unreadable: true });
+    expect(accounts.notes).toContain(
+      "My Bank, through SimpleFIN: What Nya keeps about your SimpleFIN accounts couldn't be read, so they aren't counted. Nothing for you to do: whoever runs Nya needs to look at it."
+    );
+    expect((await rest('transactions')).body.notes).toContain('My Bank: what Nya keeps about its SimpleFIN connection couldn’t be read, so whether its transactions are all here isn’t known');
+  });
 });

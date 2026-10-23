@@ -337,9 +337,11 @@ export type ApiMissing = {
    *  account stored intact in a form this version doesn't know (a later
    *  version's), kept as it is. 'unavailable': sealed under an encryption
    *  key this deployment doesn't have (lib/crypto.ts sealedAway): a manual
-   *  account (lib/manual.ts ManualAccountsReport), a connection's record of
-   *  its accounts (lib/last-known.ts), or the day's balances that may hold a
-   *  linked account's newest (lib/history.ts latestMeasuredBalances): the
+   *  account (lib/manual.ts ManualAccountsReport), an account SimpleFIN or
+   *  Lunch Flow keeps up to date (lib/connectors/institutions.ts
+   *  connectorBanksReport), a connection's record of its accounts
+   *  (lib/last-known.ts), or the day's balances that may hold a linked
+   *  account's newest (lib/history.ts latestMeasuredBalances): the
    *  deployment's problem, not damage.
    *  'not_loaded': a connection whose accounts the app hasn't loaded yet.
    *  Version 1 may add reasons. */
@@ -971,14 +973,15 @@ async function accountHistory(ctx: Ctx, id: string, q: HistoryQuery): Promise<Ap
     // from a connector on a disconnect; US dollars when it names none), or
     // the one SimpleFIN or Lunch Flow gives an account it feeds. LENIENT, for this display only: a
     // record that can't be read leaves the currency unknown, said in a note,
-    // rather than failing a history kept apart from it. Storage out of reach
-    // still throws.
-    const [manual, fed] = await Promise.all([getManualAccountsReport(ctx), connectorAccountsStore.getAllReport(ctx)]);
+    // rather than failing a history kept apart from it, and so does one sealed
+    // under a key this deployment can't use. Storage out of reach still
+    // throws.
+    const [manual, fed] = await Promise.all([getManualAccountsReport(ctx), connectorAccountsStore.getAllReportNamingSealed(ctx)]);
     const own = manual.accounts.find((a) => a.account_id === id);
     const feeds = fed.entries.get(id);
     if (own) currency = own.currency ?? MANUAL_CURRENCY;
     else if (feeds) currency = feeds.currency;
-    const damaged = [...manual.unreadable, ...manual.unrecognised, ...manual.unavailable, ...fed.unreadable, ...fed.unrecognised].includes(id);
+    const damaged = [...manual.unreadable, ...manual.unrecognised, ...manual.unavailable, ...fed.unreadable, ...fed.unrecognised, ...fed.unavailable].includes(id);
     if (!own && !feeds && damaged) notes.push('This account’s record couldn’t be read, so its currency isn’t known');
     known ||= !!own || !!feeds || damaged;
   } else {

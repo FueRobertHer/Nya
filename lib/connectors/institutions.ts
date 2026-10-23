@@ -405,11 +405,16 @@ export type ConnectorBanksReport = {
   /** The readable connection entries, by id: their history, host and label. */
   connections: ReadonlyMap<string, ConnectorConnection>;
   /** Each card's connection entry that couldn't be read, by connection id:
-   *  how its banks are doing isn't known (their cards say `unreadable`). */
+   *  how its banks are doing isn't known (their cards say `unreadable`). One
+   *  sealed under a key this deployment can't use is among them: the card's
+   *  words ask whoever runs Nya to look, which is what it needs. */
   unreadableConnections: ReadonlySet<string>;
   /** Account entries that couldn't be read, by id and why: never listed as
-   *  accounts, and never taken for none. */
-  unreadable: { account_id: string; reason: 'unreadable' | 'unrecognised' }[];
+   *  accounts, and never taken for none. 'unavailable': sealed under a key
+   *  this deployment can't use (lib/crypto.ts sealedAway), the deployment's
+   *  problem and never damage, as a manual account's is named
+   *  (lib/manual.ts ManualAccountsReport). */
+  unreadable: { account_id: string; reason: 'unreadable' | 'unrecognised' | 'unavailable' }[];
   /** When each card's latest request was made, by card id (`item_id`): when
    *  what is wrong was last found, or null before any. */
   askedAt: ReadonlyMap<string, string | null>;
@@ -421,8 +426,11 @@ export type ConnectorBanksReport = {
  * which nothing writes, deletes or records on: an account entry that can't be
  * read is named (`unreadable`) and left out; a connection entry that can't be
  * read leaves its banks' cards saying so (issue 'unreadable'), never gone.
+ * An entry sealed under a key this deployment can't use is one of these too,
+ * named as such (`unavailable`), so one never takes the whole answer down.
  * Recording a snapshot reads both stores strictly (connectorInstitutions).
- * Storage out of reach still throws.
+ * Storage out of reach, or a master key that can't open the data keys, still
+ * throws.
  */
 export async function connectorBanksReport(
   ctx: Ctx,
@@ -430,14 +438,15 @@ export async function connectorBanksReport(
   /** As for buildConnectorInstitutions, or a read of them still under way. */
   endedRead: ReadonlySet<string> | Promise<ReadonlySet<string>> = new Set()
 ): Promise<ConnectorBanksReport> {
-  const accounts = await connectorAccountsStore.getAllReport(ctx);
+  const accounts = await connectorAccountsStore.getAllReportNamingSealed(ctx);
   const unreadable = [
     ...accounts.unreadable.map((account_id) => ({ account_id, reason: 'unreadable' as const })),
     ...accounts.unrecognised.map((account_id) => ({ account_id, reason: 'unrecognised' as const })),
+    ...accounts.unavailable.map((account_id) => ({ account_id, reason: 'unavailable' as const })),
   ];
   if (accounts.entries.size === 0) return { cards: [], accounts: accounts.entries, connections: new Map(), unreadableConnections: new Set(), unreadable, askedAt: new Map() };
-  const [connections, ended] = await Promise.all([connectionsStore.getAllReport(ctx), endedRead]);
-  const damaged = new Set([...connections.unreadable, ...connections.unrecognised]);
+  const [connections, ended] = await Promise.all([connectionsStore.getAllReportNamingSealed(ctx), endedRead]);
+  const damaged = new Set([...connections.unreadable, ...connections.unrecognised, ...connections.unavailable]);
   const cards = buildConnectorInstitutions(connections.entries, accounts.entries.values(), now, ended).map((card) => {
     const id = card.connection_id ?? null;
     if (!id || !damaged.has(id) || !card.health?.detail) return card;

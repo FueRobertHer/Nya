@@ -47,7 +47,7 @@ const MISSING_ACCOUNTS = (consequence: string): FieldDoc[] => [
   ['missing_accounts[].source', 'Where it comes from, as accounts[].source: "plaid" for a connection’s accounts, "manual", "simplefin" or "lunchflow". Version 1 may add values.'],
   [
     'missing_accounts[].reason',
-    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (saved under an encryption key this Nya doesn’t have: a manual account, a connection’s record of its accounts, or the day’s balances that may hold a linked account’s newest; a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
+    '"unreadable" (stored, but couldn’t be read), "unrecognised" (a manual account saved by a version of Nya this one doesn’t know, kept as it is), "unavailable" (saved under an encryption key this Nya doesn’t have: a manual account, one SimpleFIN or Lunch Flow feeds, a connection’s record of its accounts, or the day’s balances that may hold a linked account’s newest; a setup problem for whoever runs it, not damage) or "not_loaded" (the app hasn’t loaded the connection’s accounts yet). Version 1 may add reasons.',
   ],
 ];
 const LEFT_OUT: readonly FieldDoc[] = [
