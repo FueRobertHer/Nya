@@ -490,7 +490,7 @@ const STORES: Readonly<Record<string, Entry>> = {
   'api-write-days': {
     group: 'access',
     name: 'Changes counted for each API token, by the day',
-    about: 'How many changes each token that can make them has made in the current day, and how many all of them have, for their limits; and for each manual account whose balance a token set, that it did today, so the estimated history is rebuilt at most once a day for it.',
+    about: 'How many changes each token that can make them has made in the current day, and how many all of them have, for their limits; and for each manual account whose balance a token set, that it did today, so the estimated history is rebuilt at most once a day for it, and that a later push skipped the rebuild, so the nightly update has it rebuilt.',
     unit: COUNT,
     kept: 'Requests counted for each API token',
     plain: 'Each token’s id, and each such manual account’s, with its counts, as plain text.',

@@ -16,8 +16,11 @@
 //   api-write-requests  the same for a token's writes, in a minute.
 //   api-write-days      a counter map store of changes in a day's window:
 //                 each token's (by its id), its creates (`<id>.creates`), and
-//                 every token's together (`person`). Bookkeeping, never
-//                 exported.
+//                 every token's together (`person`); and for a manual
+//                 account's balance set through the API, the pushes that day
+//                 (`balance.<account id>`) and a mark for one that skipped
+//                 its rebuild of the estimate (`rebuild.<account id>`,
+//                 lib/api-rebuilds.ts). Bookkeeping, never exported.
 //
 // NEITHER IS BACKED UP (backup: false; lib/export.ts leaves both out). A token
 // revoked after a backup was taken must never work again because that backup

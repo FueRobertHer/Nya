@@ -217,7 +217,7 @@ export type BalanceOutcome =
  * that step, that may refuse by throwing (an undo's: it still holds what was
  * set). Then, as the Update form's balance change does, the caches go, and
  * the backfill flag, unless `rebuild` says not this time (the API's pushes:
- * lib/api-writes.ts firstPushToday). Nothing here records a history point:
+ * lib/api-rebuilds.ts rebuildForPush). Nothing here records a history point:
  * the daily snapshot, or the person's next visit, records it with the day's
  * other balances.
  */
