@@ -743,7 +743,6 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your report settings',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['api'],
   },
   'restored-accounts': {
     group: 'imports',

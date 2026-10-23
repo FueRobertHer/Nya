@@ -132,6 +132,8 @@ export type PendingRow = {
   name: string;
   amount: number;
   pending: boolean;
+  /** Its account's id, where the reader gives one (a report's read does). */
+  account_id?: string;
   account_name: string;
   account_type?: string | null;
   institution_name: string;
@@ -199,13 +201,19 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
   }
   const leftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
 
-  // Pending on an included account (a row names its account by name and
-  // institution, and its type when known).
+  // Pending on an included account: by its id where the row has one that is
+  // one of these accounts' (so two accounts of one name at one bank are two),
+  // else as a row names its account, by name and institution; and its type
+  // when known.
+  const known = new Set(institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
+  const ids = new Set(included.map((a) => a.account_id));
   const accounts = new Set(included.map((a) => `${a.institution}|${a.name}`));
+  const byId = (t: PendingRow) => t.account_id !== undefined && known.has(t.account_id);
+  const accountOf = (t: PendingRow) => (byId(t) ? `id:${t.account_id}` : `${t.institution_name}|${t.account_name}`);
   const onCash = txns.filter(
     (t) =>
       t.pending &&
-      accounts.has(`${t.institution_name}|${t.account_name}`) &&
+      (byId(t) ? ids.has(t.account_id!) : accounts.has(`${t.institution_name}|${t.account_name}`)) &&
       (t.account_type === undefined || t.account_type === null || t.account_type === 'depository') &&
       inCurrency(t, currency)
   );
@@ -220,7 +228,7 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
       const other = deposits.find(
         (d) =>
           !paired.has(d) &&
-          `${d.institution_name}|${d.account_name}` !== `${t.institution_name}|${t.account_name}` &&
+          accountOf(d) !== accountOf(t) &&
           toMinor(-d.amount, scale) === toMinor(t.amount, scale) &&
           Math.abs(dayNumber(d.date) - dayNumber(t.date)) <= 3
       );

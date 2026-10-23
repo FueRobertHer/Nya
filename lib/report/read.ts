@@ -183,13 +183,18 @@ export async function readReport(
  *  assembly's `history`, lib/activity.ts), for a report built on more than
  *  one period of the same read (the runway and year over year,
  *  lib/report/runway-read.ts and lib/report/year-over-year-read.ts, which
- *  build each of their periods from it with buildReport and periodRows). */
+ *  build each of their periods from it with buildReport and periodRows).
+ *  `marked: false` skips the categories marked for taxes (lib/report/store.ts)
+ *  for a reader that never shows them: they are read only for the
+ *  accountant's report's group, so neither answer depends on that setting
+ *  being readable, and nothing read from it reaches them (`marked` null,
+ *  `markedUnreadable` false). */
 export type ReportRead = { input: ReportInput; history: OlderTxn[] };
 
 export async function readReportInput(
   ctx: Ctx,
   period: Period,
-  opts: { currency?: string | null; now?: number; appendixLimit?: number } = {}
+  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean } = {}
 ): Promise<ReportRead> {
   const now = opts.now ?? Date.now();
   // Each row with its account, and an ended account's later rows kept: left
@@ -205,14 +210,17 @@ export async function readReportInput(
     getManualAccountsReport(ctx),
     getItems(ctx),
     // Strict underneath: marked categories that can't be read leave the group
-    // out, and the report says so; never "none marked".
-    reportSettingsStore.get(ctx).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => {
-        if (err instanceof StoredDataUnreadableError) return { ok: false as const };
-        throw err;
-      }
-    ),
+    // out, and the report says so; never "none marked". Not read at all for a
+    // reader that never shows them (`marked: false`).
+    opts.marked === false
+      ? Promise.resolve({ ok: true as const, value: null })
+      : reportSettingsStore.get(ctx).then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => {
+            if (err instanceof StoredDataUnreadableError) return { ok: false as const };
+            throw err;
+          }
+        ),
     // LENIENT, for this display only: a connection whose accounts can't be
     // read has none here, so none of a removed connection's accounts is taken
     // to be back through it, and its kinds don't widen what the report says

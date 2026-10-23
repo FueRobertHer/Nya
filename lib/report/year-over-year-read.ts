@@ -35,7 +35,8 @@ export async function readYearOverYear(ctx: Ctx, opts: { today: string; timeZone
   const { today, timeZone } = opts;
   const spans = yoySpans(today);
   const period: Period = { kind: 'range', start: spans.year.last.start, end: today, through: today, today, time_zone: timeZone };
-  const { input } = await readReportInput(ctx, period, { now });
+  // Without the categories marked for taxes: year over year never shows them.
+  const { input } = await readReportInput(ctx, period, { now, marked: false });
   const { rows } = periodRows(input, period);
   const currency = yoyCurrency(rows, today, opts.currency ?? null);
   const span = (start: string, end: string): Period => ({ kind: 'range', start, end, through: end, today, time_zone: timeZone });

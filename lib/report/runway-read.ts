@@ -13,8 +13,10 @@
 //     forecast's (lib/forecast.ts cashPosition), less what is pending on it;
 //   - the Activity tab's rows from MOVE_DAYS before the longest window's
 //     first day on (so a payment or a move on that day finds its other side
-//     posted before it), from one report read (readReportInput), as a report counts them (periodRows:
-//     an ended account's from its end on left out), with the rows before
+//     posted before it), from one report read (readReportInput, without the
+//     categories marked for taxes, which the runway never shows), as a report
+//     counts them (periodRows: an ended account's from its end on left out),
+//     with the rows before
 //     them that recurring detection needs, so the spending is a report's
 //     totals for the same months and the bills are the ones the dashboard
 //     detects;
@@ -116,7 +118,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
   const longest = runwayWindow(today, 12);
   const period: Period = { kind: 'range', start: addDays(longest.start, -MOVE_DAYS), end: today, through: today, today, time_zone: timeZone };
   const [{ input, history }, accounts, planned] = await Promise.all([
-    readReportInput(ctx, period, { now }),
+    readReportInput(ctx, period, { now, marked: false }),
     readAccounts(ctx),
     // LENIENT, for this display only (see the header).
     plannedStore.get(ctx).then(
@@ -127,7 +129,22 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
       }
     ),
   ]);
-  const { rows } = periodRows(input, period);
+  // Each row on its account by the id the accounts are listed under: an older
+  // id (an account reconnected, rows imported into a linked one) is followed
+  // through the links to it, so rows and accounts are told apart by id, never
+  // by a name two accounts may share.
+  const rootOf = (id: string) => {
+    let current = id;
+    const seen = new Set([id]);
+    for (let i = 0; i < 50; i++) {
+      const next = input.links.get(current);
+      if (!next || seen.has(next)) break;
+      seen.add(next);
+      current = next;
+    }
+    return current;
+  };
+  const rows = periodRows(input, period).rows.map((t) => (t.account_id ? { ...t, account_id: rootOf(t.account_id) } : t));
   // Each window's gaps and the months they leave short, as a report on its
   // days says them (a month is marked alike in each window that holds it).
   const reports = RUNWAY_WINDOWS.map((months) => {
@@ -147,6 +164,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
     planned: planned.ok ? (planned.value?.items ?? []) : null,
     dismissed: planned.ok ? (planned.value?.dismissed ?? []) : null,
     short,
+    accounts: accounts.accounts.map((a) => a.id),
   });
   const currency = built.currency;
   const byId = new Map(live.map((a) => [a.id, a]));

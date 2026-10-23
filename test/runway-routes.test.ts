@@ -450,6 +450,24 @@ describe('the runway from stored data', () => {
     expect(JSON.stringify(failed.body)).not.toContain('HIDDEN-ACCOUNT-ROW');
   });
 
+  test('the categories marked for taxes are never read: report settings that can’t be read fail neither, as they fail no figure here', async () => {
+    await seed();
+    await fake.set(ctxKey('report-settings'), 'damaged-bytes-not-ciphertext-at-all');
+    for (const [route, path] of [
+      [runwayRoute, '/api/reports/runway'],
+      [yoyRoute, '/api/reports/year-over-year'],
+    ] as const) {
+      const { res, body } = await quiet(() => get(route, path, `tz=${NY}`));
+      expect([path, res.status]).toEqual([path, 200]);
+      expect(JSON.stringify(body)).not.toMatch(/marked|report settings/i);
+    }
+    expect((await quiet(() => api(apiRunway, 'runway', 'months=3'))).body.without_income.runs_out).toBe('2027-01-24');
+    expect((await quiet(() => api(apiYoy, 'year-over-year'))).res.status).toBe(200);
+    // The accountant's report still reads them, and says they can't be.
+    const report = await quiet(() => readReport(ctx, period('2026-07-01', '2026-09-30'), { now: NOW, currency: 'USD' }));
+    expect(report.caveats.marked).toBe('unreadable');
+  });
+
   test('other people’s data is never in it, and a container that can’t be reached is a 503', async () => {
     await seed();
     await seedOther(fake);

@@ -152,7 +152,7 @@ export function runwayWindow(today: string, months: RunwayWindow): RunwaySpan {
 }
 
 /** What the runway reads of a transaction: the Activity tab's row. */
-export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null };
+export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null; account_id?: string };
 
 /** A single large outflow or inflow, listed (see ONE-OFFS). */
 export type OneOff = { date: string; name: string; amount: number };
@@ -238,21 +238,39 @@ function filedKind(t: RunwayRow): string | null {
 /** Money in filed under a spending category (a refund, a return). */
 const filedAsSpending = (t: RunwayRow) => filedKind(t) === 'expense';
 
-/** A cash account as the window reads it: its name and institution, as a row
- *  names its account, whether it is typed by hand, and its subtype. */
-export type WindowCash = { name: string; institution: string; manual: boolean; subtype?: string | null };
+/** A cash account as the window reads it: its id, and its name and
+ *  institution, as a row names its account; whether it is typed by hand, and
+ *  its subtype. */
+export type WindowCash = { account_id?: string; name: string; institution: string; manual: boolean; subtype?: string | null };
 
 /** The detected series a window reads beside its rows: the bills less often
  *  than monthly it takes out of the average, and every series whose rows are
  *  never a one-off. And the cash the runway counts (CashPosition.included):
  *  only money that leaves it leaves cash; with none given, every checking,
  *  savings or cash account is cash. */
-export type WindowSeries = { infrequent?: readonly RecurringSeries[]; series?: readonly RecurringSeries[]; cash?: readonly WindowCash[] };
+export type WindowSeries = {
+  infrequent?: readonly RecurringSeries[];
+  series?: readonly RecurringSeries[];
+  cash?: readonly WindowCash[];
+  /** Every account id the read lists: a row with one of them is told by it. */
+  accounts?: ReadonlySet<string>;
+};
 
 /** What became of a payment or a move out of cash (see movesOut). */
 type MoveFate = 'card' | 'unseen_card' | 'cash' | 'own' | 'unsure' | 'out' | 'atm';
 
 const accountKey = (t: { institution_name: string; account_name?: string | null }) => `${t.institution_name}|${t.account_name ?? ''}`;
+/** How rows' accounts are told apart: by id where the row has one the read
+ *  lists (the read gives each row its account's id, resolved through links,
+ *  lib/report/runway-read.ts), so two accounts of one name at one bank are
+ *  two; else as a row names its account, by name and institution. */
+function accountMatch(accounts: ReadonlySet<string> | undefined) {
+  const byId = (t: RunwayRow) => t.account_id !== undefined && (accounts?.has(t.account_id) ?? false);
+  return {
+    accountOf: (t: RunwayRow) => (byId(t) ? `id:${t.account_id}` : accountKey(t)),
+    onAccount: (t: RunwayRow, a: WindowCash) => (byId(t) && a.account_id !== undefined ? t.account_id === a.account_id : accountKey(t) === `${a.institution}|${a.name}`),
+  };
+}
 
 /**
  * What became of each payment and move out of cash that the Activity tab
@@ -276,19 +294,30 @@ const accountKey = (t: { institution_name: string; account_name?: string | null 
  *     cash taken out is 'atm'.
  * Each receipt is the other side of one payment or move at most, pending
  * ones too, the nearest in days first; never one filed under a spending or
- * an income category (a refund, pay), which is no move.
+ * an income category (a refund, pay), which is no move. Accounts are told
+ * apart by id where the rows and the cash have one (onAccount).
+ *
+ * A KNOWN LIMIT. A move out that happens to match money arriving on another
+ * of the person's accounts from someone else, at the same cents within
+ * TRANSFER_DAYS and filed as a transfer or not at all (a 1,500 Zelle to the
+ * landlord, and 1,500 "Venmo from Sam" into savings two days later), is
+ * taken for a move between their own accounts, and so isn't named. Telling
+ * them apart by the arrival's name or payer would need every bank's words
+ * for a transfer from oneself. The coincidence is rare, and its cost is that
+ * one transfer unnamed and, with count_moved_out, uncounted.
  */
 function movesOut(
   rows: readonly RunwayRow[],
   currency: string | null,
   cash: readonly WindowCash[] | undefined,
   series: readonly RecurringSeries[],
-  short: readonly MonthShort[]
+  short: readonly MonthShort[],
+  accounts?: ReadonlySet<string>
 ): Map<RunwayRow, MoveFate> {
+  const { accountOf, onAccount } = accountMatch(accounts);
   const scale = minorScale(currency);
   const units = (n: number) => Math.round(n * scale);
-  const keys = cash ? new Set(cash.map((a) => `${a.institution}|${a.name}`)) : null;
-  const fromCash = (t: RunwayRow) => (keys ? t.account_type !== 'credit' && keys.has(accountKey(t)) : t.account_type === 'depository');
+  const fromCash = (t: RunwayRow) => (cash ? t.account_type !== 'credit' && cash.some((a) => onAccount(t, a)) : t.account_type === 'depository');
   const isCardPayment = (t: RunwayRow) => t.subcategory === CARD_PAYMENT;
 
   const outs: RunwayRow[] = [];
@@ -321,7 +350,7 @@ function movesOut(
     if (fate.has(t)) return;
     for (const r of byAmount.get(units(t.amount)) ?? []) {
       const { t: x, kind } = receipts[r];
-      if (accountKey(x) === accountKey(t)) continue;
+      if (accountOf(x) === accountOf(t)) continue;
       if (isCardPayment(t) && kind !== 'card') continue;
       const days = Math.abs(daysFrom(t.date, x.date));
       if (days <= (kind === 'card' ? CARD_PAYMENT_DAYS : TRANSFER_DAYS)) pairs.push({ o, r, days });
@@ -345,15 +374,14 @@ function movesOut(
   const newest = rows.reduce((d, t) => (t.date > d ? t.date : d), '');
   const notInYet = (t: RunwayRow, days: number) => daysFrom(t.date, newest) < days;
   // Where a move may have arrived unseen.
-  const blind = (cash ?? []).filter((a) => a.manual && (a.subtype ?? '').toLowerCase() !== 'cash' && !rows.some((t) => accountKey(t) === `${a.institution}|${a.name}`));
+  const blind = (cash ?? []).filter((a) => a.manual && (a.subtype ?? '').toLowerCase() !== 'cash' && !rows.some((t) => onAccount(t, a)));
   const shortAt = (a: WindowCash, month: string) => short.some((m) => m.month === month && m.institutions.includes(a.institution));
   const mayHaveArrived = (t: RunwayRow) => {
     const months = new Set([t.date.slice(0, 7), addDays(t.date, TRANSFER_DAYS).slice(0, 7)]);
-    const own = accountKey(t);
     return (
       notInYet(t, TRANSFER_DAYS) ||
-      blind.some((a) => `${a.institution}|${a.name}` !== own) ||
-      (cash ?? []).some((a) => `${a.institution}|${a.name}` !== own && [...months].some((m) => shortAt(a, m)))
+      blind.some((a) => !onAccount(t, a)) ||
+      (cash ?? []).some((a) => !onAccount(t, a) && [...months].some((m) => shortAt(a, m)))
     );
   };
   for (const t of outs) {
@@ -389,7 +417,7 @@ export function windowSpending(
   const pay = series.filter((x) => x.kind === 'income');
   const bills = series.filter((x) => x.kind === 'bill');
 
-  const fates = movesOut(rows, currency, known.cash, series, short);
+  const fates = movesOut(rows, currency, known.cash, series, short, known.accounts);
 
   let refunds = 0;
   let infrequentOut = 0;
@@ -757,6 +785,8 @@ export function buildRunwayInputs(opts: {
   planned: readonly PlannedItem[] | null;
   dismissed: readonly string[] | null;
   short?: readonly MonthShort[];
+  /** Every account id the read lists, by which rows are told apart. */
+  accounts?: readonly string[];
 }): RunwayBuilt {
   const { today, position } = opts;
   const currency = position.currency ?? totalsCurrency(opts.rows);
@@ -765,8 +795,9 @@ export function buildRunwayInputs(opts: {
   const live = series.filter((s) => !dismissed.has(s.id));
   const outside = paymentsOutsideSpending(series, opts.rows, dismissed);
   const infrequent = infrequentBills(series, opts.rows, dismissed);
-  const cash = position.included.map((a) => ({ name: a.name, institution: a.institution, manual: a.manual, subtype: a.subtype ?? null }));
-  const windows = RUNWAY_WINDOWS.map((m) => windowSpending(opts.rows, runwayWindow(today, m), currency, opts.short ?? [], { infrequent, series: live, cash }));
+  const cash = position.included.map((a) => ({ account_id: a.account_id, name: a.name, institution: a.institution, manual: a.manual, subtype: a.subtype ?? null }));
+  const accounts = opts.accounts ? new Set(opts.accounts) : undefined;
+  const windows = RUNWAY_WINDOWS.map((m) => windowSpending(opts.rows, runwayWindow(today, m), currency, opts.short ?? [], { infrequent, series: live, cash, accounts }));
   const until = addDays(today, HORIZON_DAYS);
   const planned = opts.planned ?? [];
   const fromForecast = forecastEvents({ series: outside, planned, currency, today, until });

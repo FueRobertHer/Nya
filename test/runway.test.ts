@@ -497,6 +497,25 @@ describe('what each payment and move out of cash is matched to', () => {
     expect(three([...rent, out('o1', '2026-08-04'), out('o2', '2026-08-05'), arrive('i', '2026-08-06')])).toMatchObject({ transfers_out: 3000, transfers_out_unsure: 0 });
   });
 
+  test('accounts are told apart by id: a move between two accounts of one name at one bank is no move out', () => {
+    const twins = {
+      ...position(10000),
+      included: [
+        { account_id: 'tc1', name: 'Total Checking', institution: 'Chase', balance: 5000, manual: false },
+        { account_id: 'tc2', name: 'Total Checking', institution: 'Chase', balance: 5000, manual: false },
+      ],
+    };
+    const rows = [
+      ...rent.map((t) => ({ ...t, account_id: 'tc1', account_name: 'Total Checking' })),
+      row('o', '2026-08-04', 700, { name: 'ONLINE TRANSFER', account_id: 'tc1', account_name: 'Total Checking', category: 'transfer out', transaction_code: 'transfer' }),
+      row('i', '2026-08-04', -700, { name: 'ONLINE TRANSFER', account_id: 'tc2', account_name: 'Total Checking', category: 'transfer in', transaction_code: 'transfer' }),
+    ];
+    const w = (accounts?: string[]) => buildRunwayInputs({ today: TODAY, position: twins, rows, planned: [], dismissed: [], accounts }).windows.find((x) => x.months === 3)!;
+    expect(w(['tc1', 'tc2']).transfers_out).toBe(0);
+    // Told by name alone, the two sides look like one account's.
+    expect(w().transfers_out).toBe(700);
+  });
+
   test('a move to your health savings account leaves the cash, to an account of yours; one where Nya can’t see may have arrived', () => {
     const out = (id: string, date: string, amount: number, name: string) => row(id, date, amount, { name, category: 'transfer out', transaction_code: 'transfer' });
     const hsa = [out('h', '2026-08-03', 500, 'TO HSA'), row('h-in', '2026-08-05', -500, { name: 'Contribution', account_name: 'Health', institution_name: 'HSA Bank', category: 'transfer in', transaction_code: 'transfer' })];
