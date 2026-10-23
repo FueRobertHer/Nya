@@ -528,6 +528,42 @@ describe('everything stored, decrypted, and nothing else', () => {
     expect(doc['income-carryover']).toEqual({ version: 1, enabled: false, start: from });
   });
 
+  test('with a home currency, a carry counts spending in another currency converted, as the Budgets tab does, and the file says so', async () => {
+    const { loadBudgets } = await import('@/lib/budget-store');
+    const { budgetMonthsStore, incomeCarryoverStore } = await import('@/lib/budget-months-store');
+    const { startMonths, setRollover, addMonths } = await import('@/lib/rollover');
+    const { saveManualAccount } = await import('@/lib/manual');
+    const { addManualTxn, newManualTxn } = await import('@/lib/manual-txns');
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    const { ecbHash } = await import('./fx-fixture');
+    const { readBudgets } = await import('@/lib/api-read');
+    const { budgets, taxonomy } = await loadBudgets(ctx);
+    const food = taxonomy.categories.find((c) => c.name === 'Food')!.id;
+    const month = new Date().toISOString().slice(0, 7);
+    const from = addMonths(month, -2);
+    await budgetMonthsStore.set(ctx, setRollover(startMonths(budgets, from), 'categories', food, { on: true, from }, month));
+    await incomeCarryoverStore.set(ctx, { version: 1, enabled: false, start: from });
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    await saveManualAccount(ctx, { account_id: 'manual_eur', name: 'Euros', institution_name: 'Abroad', type: 'depository', subtype: null, balance: 0, currency: 'EUR', updated_at: NOW.toISOString() });
+    // After the ECB's newest rates in the fixture (14 Sep 2026): at them, 1 EUR = 1.1551 USD.
+    await addManualTxn(ctx, newManualTxn('manual_eur', { amount: 20, currency: 'EUR', date: `${addMonths(month, -1)}-15`, name: 'Market', category: 'Food', note: null }));
+    const plain = (await download()).budgets as { category_id: string; rollover: { carry: number } | null }[];
+    // Without a home currency the euros are left out: two months of 400 in full.
+    expect(plain.find((b) => b.category_id === food)!.rollover!.carry).toBe(800);
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    const doc = await download();
+    const entry = (doc.budgets as { category_id: string; rollover: { carry: number } | null }[]).find((b) => b.category_id === food)!;
+    // 20 EUR is 23.10 USD, the budgets' currency.
+    expect(entry.rollover!.carry).toBe(776.9);
+    expect(doc.notes).toContain(
+      'Each budget’s rollover carry is in USD, the currency your budgets are in, and counts spending in EUR converted into it at the European Central Bank’s rates of 2026-09-14, as the Budgets tab counts it. Every amount stored is as it was stored, in its own currency.'
+    );
+    // The same as the read-only API answers, and the stored amount as stored.
+    const api = await readBudgets(ctx, { month });
+    expect(api.budgets.find((b) => b.category_id === food)!.rollover!.carry).toBe(776.9);
+    expect(JSON.stringify(doc['manual-transactions'])).toMatch(/"amount":20,"currency":"EUR"/);
+  });
+
   test('a record of budgets by month that can’t be read: its part null and named, every budget still listed, with no rollover', async () => {
     const { loadBudgets } = await import('@/lib/budget-store');
     await loadBudgets(ctx);

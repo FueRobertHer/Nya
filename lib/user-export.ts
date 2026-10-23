@@ -121,6 +121,7 @@ import { budgetSetStore, budgetsReport } from './budget-store';
 import { placeBudgets } from './budget-set';
 import { budgetMonthsStore } from './budget-months-store';
 import { readBudgetMonth } from './budget-month';
+import type { Conversion } from './fx/totals';
 import type { Carries, Carry, CarryFrom } from './rollover';
 import { StoredDataUnreadableError } from './repo';
 import {
@@ -273,7 +274,9 @@ function countedProblems(section: string, named: { unreadable: string[]; unrecog
 
 /** A part of the file as read: what goes under its key, and what it is
  *  missing (ExportProblem), for `problems`. */
-export type SectionRead = { value: unknown; problems: ExportProblem[] };
+/** `notes`: what the file says of the part in words (a figure worked out
+ *  for it, converted: exportedCarries), never a problem. */
+export type SectionRead = { value: unknown; problems: ExportProblem[]; notes?: string[] };
 
 /**
  * A store that stands alone: one small function from the person to what goes
@@ -342,6 +345,8 @@ type ExportedBudgets =
   | { problem: 'unreadable' | 'unrecognised' }
   | {
       problem: null;
+      /** What the carries are in and count converted (carriesNote). */
+      note: string | null;
       categories: { category: string | null; monthly_amount: number; category_id: string | null; group: string | null; rollover: ExportedRollover }[];
       groups: { group: string | null; monthly_amount: number; group_id: string | null; rollover: ExportedRollover }[];
     };
@@ -354,18 +359,31 @@ type ExportedBudgets =
  * can't be used: the `budget-months` part of the file names that, and every
  * budget's rollover is then null. What says nothing about the data throws.
  */
-async function exportedCarries(ctx: Ctx): Promise<Carries | null> {
+async function exportedCarries(ctx: Ctx): Promise<{ carries: Carries | null; note: string | null }> {
   const record = await budgetMonthsStore.getReport(ctx);
-  if (record.unreadable || record.unrecognised) return null;
+  if (record.unreadable || record.unrecognised) return { carries: null, note: null };
   const targets = record.value ? [...Object.values(record.value.categories), ...Object.values(record.value.groups)] : [];
-  if (!targets.some((t) => t.rollover && t.rollover.length > 0)) return { categories: {}, groups: {} };
+  if (!targets.some((t) => t.rollover && t.rollover.length > 0)) return { carries: { categories: {}, groups: {} }, note: null };
   const month = new Date().toISOString().slice(0, 7);
   try {
-    return (await readBudgetMonth(ctx, { month, today: month, pool: false })).view.carries;
+    const read = await readBudgetMonth(ctx, { month, today: month, pool: false });
+    return { carries: read.view.carries, note: carriesNote(read.currency, read.conversion) };
   } catch (err) {
-    if (err instanceof StoredDataUnreadableError) return null;
+    if (err instanceof StoredDataUnreadableError) return { carries: null, note: null };
     throw err;
   }
+}
+
+/** With a home currency, what the rollover carries in the file are in and
+ *  what they count converted (lib/budget-month.ts), in words: every stored
+ *  amount stays as stored, and only these figures, worked out for the file,
+ *  count spending in another currency, at each day's rate. Null when nothing
+ *  was converted. */
+function carriesNote(currency: string | null, c: Conversion | null): string | null {
+  if (!c || !currency || c.from.length === 0) return null;
+  const days = c.days ? (c.days.first === c.days.last ? ` of ${c.days.first}` : ` of ${c.days.first} to ${c.days.last}`) : '';
+  const own = c.own.length > 0 ? ', and your own rates' : '';
+  return `Each budget’s rollover carry is in ${currency}, the currency your budgets are in, and counts spending in ${c.from.map((f) => f.currency).join(', ')} converted into it at the European Central Bank’s rates${days}${own}, as the Budgets tab counts it. Every amount stored is as it was stored, in its own currency.`;
 }
 
 const exportedRollover = (c: Carry | undefined): ExportedRollover =>
@@ -377,11 +395,12 @@ async function exportBudgets(ctx: Ctx): Promise<ExportedBudgets> {
   const { budgets, taxonomy } = read;
   const ix = indexTaxonomy(taxonomy);
   const placed = placeBudgets(budgets, ix);
-  const carries = await exportedCarries(ctx);
+  const { carries, note } = await exportedCarries(ctx);
   const shown = (id: string) => (isProvisionalId(id) ? null : id);
   const gone = (kind: 'category' | 'group') => placed.orphans.filter((o) => o.kind === kind);
   return {
     problem: null,
+    note,
     categories: [
       ...[...placed.categories].map(([id, monthly_amount]) => {
         const c = ix.byId.get(id)!;
@@ -418,7 +437,9 @@ export const SECTIONS: readonly ExportSection[] = [
     // Monthly, per category, by its name now (exportBudgets).
     read: async (src) => {
       const read = await budgetsOnce(src);
-      return read.problem !== null ? { value: null, problems: valueProblems('budgets', read.problem) } : { value: read.categories, problems: [] };
+      return read.problem !== null
+        ? { value: null, problems: valueProblems('budgets', read.problem) }
+        : { value: read.categories, problems: [], ...(read.note ? { notes: [read.note] } : {}) };
     },
     covers: [budgetSetStore.name],
   },
@@ -571,6 +592,8 @@ export type UserData = {
    *  file's order: the manual accounts, the balance histories, then the
    *  sections'. */
   problems: ExportProblem[];
+  /** What the sections say in words of what they hold (SectionRead.notes). */
+  notes?: string[];
 };
 
 /** The ids of what a part of the file is missing, whatever the reason. */
@@ -700,6 +723,7 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       ...idProblems('estimate_flat', history.problems.flat),
       ...sections.flatMap(([, r]) => r.problems),
     ],
+    notes: [...new Set(sections.flatMap(([, r]) => r.notes ?? []))],
   };
 }
 
@@ -1503,7 +1527,7 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
     not_included: notIncluded(data.people),
     // Each part that is missing something says so in words too, after the
     // caveats (problemNotes).
-    notes: [...notes, ...problemNotes(data.problems)],
+    notes: [...notes, ...(data.notes ?? []), ...problemNotes(data.problems)],
     problems: data.problems,
     institutions: [
       ...data.items.map((i): ExportInstitution => ({ item_id: i.item_id, institution_name: i.institution_name, institution_id: i.institution_id, provider: 'plaid' })),
