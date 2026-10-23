@@ -15,7 +15,7 @@
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
 import { currencyName, errorOf, everyCurrency, useCurrencySettings, type CurrencySettingsView } from './currency-state';
-import { CORRECTION_KEEPS } from './currency-text';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, relabelText } from './currency-text';
 
 type Props = {
   open: boolean;
@@ -30,6 +30,9 @@ type Props = {
   manual: readonly ManualCurrency[];
   /** Saved: what is chosen now. */
   onSaved: (home: string | null) => void;
+  /** How many transactions typed on a manual account would move with a
+   *  correction of its currency (components/currency-text.ts typedToMove). */
+  typedCount?: (account_id: string, from: string, to: string) => number;
 };
 
 /** A manual account typed in the app, and the currency it is in. */
@@ -78,16 +81,19 @@ export function choiceText(home: string): string {
 export const corrected = (manual: readonly ManualCurrency[], fixes: Readonly<Record<string, string>>): ManualCurrency[] =>
   manual.map((m) => (Object.hasOwn(fixes, m.account_id) ? { ...m, currency: fixes[m.account_id] } : m));
 
-export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your totals in one currency', initial, first, manual, onSaved }: Props) {
+export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your totals in one currency', initial, first, manual, onSaved, typedCount }: Props) {
   const { load } = useCurrencySettings(open);
   const [chosen, setChosen] = useState<string>(initial ?? first[0] ?? 'EUR');
   const [fixes, setFixes] = useState<Record<string, string>>({});
+  // The corrected accounts whose typed transactions move too: only ticked.
+  const [moves, setMoves] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
     if (open) {
       setChosen(initial ?? first[0] ?? 'EUR');
       setFixes({});
+      setMoves({});
       setError(null);
     }
   }, [open, initial, first]);
@@ -106,7 +112,7 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
         const res = await fetch('/api/manual-accounts', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ account_id: m.account_id, currency: to }),
+          body: JSON.stringify({ account_id: m.account_id, currency: to, ...(moves[m.account_id] ? { relabel_from: m.currency } : {}) }),
         });
         if (!res.ok) {
           setError(await errorOf(res, `${m.name}’s currency wasn’t saved. Try again.`));
@@ -143,6 +149,9 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
         manual={manual}
         fixes={fixes}
         onFix={(id, currency) => setFixes((f) => ({ ...f, [id]: currency }))}
+        moves={moves}
+        onMove={(id, on) => setMoves((m) => ({ ...m, [id]: on }))}
+        typedCount={typedCount}
         saving={saving}
         error={error}
         onSave={() => void save()}
@@ -161,6 +170,9 @@ export function CurrencyChoiceBody({
   manual,
   fixes = {},
   onFix = () => {},
+  moves = {},
+  onMove = () => {},
+  typedCount = () => 0,
   saving,
   error,
   onSave,
@@ -174,6 +186,10 @@ export function CurrencyChoiceBody({
   /** Corrections to the manual accounts' currencies, by account id. */
   fixes?: Readonly<Record<string, string>>;
   onFix?: (account_id: string, currency: string) => void;
+  /** The corrected accounts whose typed transactions move too. */
+  moves?: Readonly<Record<string, boolean>>;
+  onMove?: (account_id: string, on: boolean) => void;
+  typedCount?: (account_id: string, from: string, to: string) => number;
   saving: boolean;
   error: string | null;
   onSave: () => void;
@@ -217,15 +233,32 @@ export function CurrencyChoiceBody({
             {accounts.length === 1 ? 'Your manual account is counted in the currency below.' : 'Your manual accounts are counted in the currencies below.'} If one is in
             another, correct it before you confirm: only the currency changes, never the balance you typed.
           </p>
-          {accounts.map((m) => (
-            <label className="field" key={m.account_id}>
-              {m.name}
-              <select value={m.currency} onChange={(e) => onFix(m.account_id, e.target.value)} disabled={saving}>
-                <CurrencyOptions first={[...first, chosen]} value={m.currency} />
-              </select>
-            </label>
-          ))}
-          {fixing && <p className="panel-note">Correcting an account changes only its currency. {CORRECTION_KEEPS}</p>}
+          {accounts.map((m, i) => {
+            const was = manual[i].currency;
+            const n = m.currency !== was ? typedCount(m.account_id, was, m.currency) : 0;
+            return (
+              <div key={m.account_id}>
+                <label className="field">
+                  {m.name}
+                  <select value={m.currency} onChange={(e) => onFix(m.account_id, e.target.value)} disabled={saving}>
+                    <CurrencyOptions first={[...first, chosen]} value={m.currency} />
+                  </select>
+                </label>
+                {n > 0 && (
+                  <label className="quick-add-check">
+                    <input type="checkbox" checked={!!moves[m.account_id]} onChange={(e) => onMove(m.account_id, e.target.checked)} disabled={saving} />
+                    <span>{relabelText(n, m.currency)}</span>
+                  </label>
+                )}
+              </div>
+            );
+          })}
+          {fixing && (
+            <p className="panel-note">
+              Correcting an account changes only its currency.{' '}
+              {accounts.some((m, i) => m.currency !== manual[i].currency && moves[m.account_id]) ? RELABEL_KEEPS : CORRECTION_KEEPS}
+            </p>
+          )}
         </div>
       )}
       {unpriceable && (

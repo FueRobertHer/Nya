@@ -73,7 +73,7 @@ import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
 import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
-import { CORRECTION_KEEPS, institutionNote, rateEffectText } from './currency-text';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, institutionNote, rateEffectText, relabelText, typedToMove } from './currency-text';
 import { asFxTable } from '@/lib/fx/fields';
 import type { FxTable } from '@/lib/fx/rates';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
@@ -260,6 +260,9 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & 
   balance: string;
   currency: string;
   stored: string | null;
+  /** With its currency corrected: also move the transactions typed on it
+   *  into the new one (lib/manual-relabel.ts), only when the person ticks it. */
+  relabel?: boolean;
 };
 
 // "cash" is a choice, not a type: saved as depository with the subtype
@@ -1300,6 +1303,14 @@ export default function Dashboard({
     });
   }, []);
 
+  // A home currency, a rate or an account's currency changed: net worth
+  // converts again, and so do the transactions' totals, whose rates come with
+  // them (/api/transactions `fx`), with any rows a correction moved.
+  const currencyChanged = useCallback(() => {
+    void loadNetWorth();
+    loadTransactions();
+  }, [loadNetWorth, loadTransactions]);
+
   const startEditManual = useCallback((account: ManualAccount) => {
     setManualError('');
     setEditingManual(true);
@@ -1319,7 +1330,9 @@ export default function Dashboard({
       currency: manualDraft.currency,
     };
     if (manualDraft.account_id) {
-      mutateManual('PATCH', { ...payload, account_id: manualDraft.account_id });
+      // The rows typed on it move too only when the person ticked it.
+      const relabel = manualDraft.relabel && manualDraft.stored !== null && manualDraft.stored !== manualDraft.currency ? { relabel_from: manualDraft.stored } : {};
+      mutateManual('PATCH', { ...payload, ...relabel, account_id: manualDraft.account_id });
     } else {
       mutateManual('POST', payload);
     }
@@ -2916,7 +2929,7 @@ export default function Dashboard({
                     applied after the server's cache, so a change shows on the
                     next load of net worth, which it asks for. */}
                 {manageMode && (
-                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={() => loadNetWorth()} />
+                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={currencyChanged} />
                 )}
 
                 {/* Your categories and their groups (components/CategoriesCard.tsx):
@@ -3090,7 +3103,8 @@ export default function Dashboard({
         initial={choosingHome?.initial ?? null}
         first={accountCurrencies}
         manual={manualCurrencies}
-        onSaved={() => loadNetWorth()}
+        onSaved={currencyChanged}
+        typedCount={(id, from, to) => typedToMove(txns, id, from, to)}
       />
 
       {connected && !loading && (
@@ -3202,9 +3216,22 @@ export default function Dashboard({
             {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
               <p className="panel-note">
                 The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.{' '}
-                {CORRECTION_KEEPS}
+                {shownManualDraft.relabel ? RELABEL_KEEPS : CORRECTION_KEEPS}
               </p>
             )}
+            {shownManualDraft.stored !== null &&
+              shownManualDraft.account_id &&
+              typedToMove(txns, shownManualDraft.account_id, shownManualDraft.stored, shownManualDraft.currency) > 0 && (
+                <label className="quick-add-check">
+                  <input
+                    type="checkbox"
+                    checked={!!shownManualDraft.relabel}
+                    onChange={(e) => setManualDraft({ ...shownManualDraft, relabel: e.target.checked })}
+                    disabled={savingManual}
+                  />
+                  <span>{relabelText(typedToMove(txns, shownManualDraft.account_id, shownManualDraft.stored, shownManualDraft.currency), shownManualDraft.currency)}</span>
+                </label>
+              )}
             <p className="panel-note">
               {isOwedType(shownManualDraft.type)
                 ? 'Enter what you owe as a positive number. It subtracts from net worth.'

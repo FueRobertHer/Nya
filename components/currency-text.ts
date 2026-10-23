@@ -16,6 +16,7 @@ import { formatMoney, formatRate } from '@/lib/format';
 import type { BalancePart, BalancesIn, HistoryGaps } from '@/lib/fx/net-worth';
 import type { NoRate, OwnRate } from '@/lib/fx/rates';
 import { homeUnrated, reasonText } from '@/lib/fx/words';
+import { inMinorUnits } from '@/lib/manual-txn-input';
 
 /** A day as the notes write it: "Sep 14, 2026" in this locale. */
 export function rateDay(iso: string): string {
@@ -163,7 +164,34 @@ export function institutionNote(b: Pick<BalancesIn, 'currency' | 'left_out'>): s
 }
 
 /** What correcting a manual account's currency doesn't change, said on its
- *  form and in the choice of a home currency: relabelling the transactions
- *  already on it is the next step's. */
+ *  form and in the choice of a home currency, unless the person also moves
+ *  the transactions they typed on it (relabelText). */
 export const CORRECTION_KEEPS =
   'The transactions already on it keep the currency they were entered in, so budgets and Activity, which add up one currency, may name them rather than count them.';
+
+/** A row as the page has it, for what a correction would move. */
+type TypedRow = {
+  account_id?: string | null;
+  source?: string | null;
+  iso_currency_code: string | null;
+  amount: number;
+  split_of?: string;
+  group_id?: string;
+};
+
+/** How many of the transactions typed on a manual account would move with
+ *  it from `from` into `to` (lib/manual-relabel.ts): entered by hand on it,
+ *  in `from`, not split, not in a group, and no more precise than `to`
+ *  allows. */
+export function typedToMove(rows: readonly TypedRow[] | null, account_id: string, from: string, to: string): number {
+  if (!rows || from === to) return 0;
+  return rows.filter(
+    (t) => t.account_id === account_id && t.source === 'manual' && t.iso_currency_code === from && t.split_of === undefined && t.group_id === undefined && inMinorUnits(t.amount, to)
+  ).length;
+}
+
+/** The offer to move them, on the person's confirmation. */
+export const relabelText = (n: number, to: string) => `Also move the ${n === 1 ? 'transaction' : `${n} transactions`} you entered on it to ${to}`;
+
+/** What moving them does, and what it leaves. */
+export const RELABEL_KEEPS = 'Their numbers stay as you typed them: only the currency they are in changes. Transactions imported from a file, split or in a group keep theirs.';
