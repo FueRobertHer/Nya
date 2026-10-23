@@ -678,6 +678,34 @@ describe("a merchant's series never take each other's charges", () => {
     ]);
   });
 
+  test('a dismissed paycheck of two deposits a date stays dismissed as its average moves, and never moves to the other', () => {
+    // The two nurses again: one paycheck dismissed (the lower), then a
+    // payday on, and another.
+    let seed = 5;
+    const rand = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed / 0x7fffffff);
+    const dates = Array.from({ length: 24 }, (_, i) => addDays('2026-01-09', i * 14));
+    const pay = dates.map((d) => [d, -Math.round((2400 + rand() * 300) * 100) / 100, -Math.round((1900 + rand() * 250) * 100) / 100] as const);
+    const upTo = (n: number, both = n) =>
+      pay.slice(0, n).flatMap(([d, a, b], i) => [row(d, a, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' })), ...(i < both ? [row(d, b, on({ name: 'MERCY HOSPITAL PAYROLL', category: 'income' }))] : [])]);
+    const before = detectRecurring(upTo(20));
+    const lower = before.find((s) => s.amount < 2150)!;
+    for (const n of [21, 22, 23]) {
+      const now = detectRecurring(upTo(n));
+      const gone = dismissedSeries(now, [lower.id]);
+      expect(now.find((s) => s.amount < 2150)!.amount).not.toBe(lower.amount);
+      expect([n, [...gone.keys()].map((id) => now.find((s) => s.id === id)!.amount < 2150)]).toEqual([n, [true]]);
+    }
+    // She leaves: her deposits stop, and once they are out of the year read
+    // the other paycheck stands alone. Her dismissal never becomes his.
+    const later = detectRecurring(upTo(24, 18).filter((t) => t.date >= addDays(pay[18][0], 1)));
+    expect(later.map((s) => s.amount > 2400)).toEqual([true]);
+    expect(dismissedSeries(later, [lower.id]).size).toBe(0);
+    // While both still show, the higher one's dismissal is the higher one's.
+    const higher = before.find((s) => s.amount > 2400)!;
+    const now = detectRecurring(upTo(22));
+    expect([...dismissedSeries(now, [higher.id]).keys()].map((id) => now.find((s) => s.id === id)!.amount > 2400)).toEqual([true]);
+  });
+
   test('paychecks at two amounts on alternate weeks come to what was paid', () => {
     const rows = Array.from({ length: 28 }, (_, i) => row(addDays('2026-03-06', i * 7), i % 2 ? -1876.54 : -2345.67, on({ name: 'ACME PAYROLL', category: 'income' }))).filter((t) => t.date < '2026-10-09');
     const s = only(rows);
