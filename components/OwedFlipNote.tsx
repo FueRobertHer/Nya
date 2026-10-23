@@ -58,8 +58,9 @@ export default function OwedFlipNote({
               </button>
             </li>
             <li style={{ marginTop: 6 }}>
-              if it was entered as the wrong type from the start, hide this one: hiding takes it out of every day, earlier
-              ones too, so no day counts it the wrong way, and Unhide brings it back.{' '}
+              if it was entered as the wrong type from the start, hide this one: hiding takes it, and the transactions on it, out
+              of every day, earlier ones too (balances, Activity, budgets and spending), so no day counts it the wrong way, and
+              Unhide brings it all back.{' '}
               <button className="link-btn" onClick={onHide} disabled={disabled}>
                 Hide this account
               </button>

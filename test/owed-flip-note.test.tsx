@@ -23,7 +23,7 @@ describe('the Update form, asked to change an account between money held and mon
     const none = () => {};
     const toOwed = text(renderToStaticMarkup(<OwedFlipNote crossing toOwed onClose={none} onHide={none} />));
     expect(toOwed).toBe(
-      'This account counts as money held, and a card or a loan as money owed. Its type can’t change between them, so this can’t be saved: every past balance of it would count the other way. Instead, add a new one of the type you chose (it is recorded from the day you add it), and: if the account itself changed, close this one: every day before it closed keeps it as it was. Close this account… if it was entered as the wrong type from the start, hide this one: hiding takes it out of every day, earlier ones too, so no day counts it the wrong way, and Unhide brings it back. Hide this account'
+      'This account counts as money held, and a card or a loan as money owed. Its type can’t change between them, so this can’t be saved: every past balance of it would count the other way. Instead, add a new one of the type you chose (it is recorded from the day you add it), and: if the account itself changed, close this one: every day before it closed keeps it as it was. Close this account… if it was entered as the wrong type from the start, hide this one: hiding takes it, and the transactions on it, out of every day, earlier ones too (balances, Activity, budgets and spending), so no day counts it the wrong way, and Unhide brings it all back. Hide this account'
     );
     const toHeld = text(renderToStaticMarkup(<OwedFlipNote crossing toOwed={false} onClose={none} onHide={none} />));
     expect(toHeld.startsWith('This account counts as money owed, and the type you chose as money held.')).toBe(true);
