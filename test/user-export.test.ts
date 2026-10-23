@@ -1258,6 +1258,7 @@ describe('stores built on the storage seam', () => {
       'planned-items',
       'report-settings',
       'restored-accounts',
+      'restored-answers',
       'restored-investment-transactions',
       'restored-transactions',
       'review-settings',

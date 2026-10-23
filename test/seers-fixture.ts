@@ -206,6 +206,17 @@ export async function seedEveryKind(
     acc_restored: await enc({ item_id: 'item_restored', institution_id: 'ins_3', institution_name: 'Chase', name: 'Restored Checking', official_name: null, mask: '7777', type: 'depository', subtype: 'checking', persistent_account_id: null, first_seen: ago(500), last_seen: ago(6) }),
   });
   await linkAccounts(ctx, 'acc_restored', 'acc_chk', {});
+  // What the person answered about it before they linked it: counted as an
+  // ended account's (lib/user-restore/answers.ts). Linked now, so the link
+  // decides, but every reader of the rows reads the answers.
+  const { restoredAnswersStore } = await import('@/lib/user-restore/store');
+  await restoredAnswersStore.set(ctx, 'acc_restored', {
+    version: 1,
+    counted: { at: ago(4) + 'T10:00:00.000Z', by: 'person', ended: { state: 'closed', on: ago(6) } },
+    apart: { items: [], accounts: [] },
+    handed_to: null,
+    set_at: ago(4) + 'T10:00:00.000Z',
+  });
 
   // ---- A file imported into a manual account, and one into the linked
   // checking account (its own store of imported rows, with the bank row that

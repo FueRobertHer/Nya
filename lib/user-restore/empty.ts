@@ -76,7 +76,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
       'app-imports',
     ],
   ],
-  ['accounts kept from a bank you disconnected', ['accounts:directory', 'accounts:meta', 'account-links', 'account-links:dismissed', 'txn-category-carry', 'carried-annotations', 'hidden:accounts', 'account-lifecycle', 'restored-accounts']],
+  ['accounts kept from a bank you disconnected', ['accounts:directory', 'accounts:meta', 'account-links', 'account-links:dismissed', 'txn-category-carry', 'carried-annotations', 'hidden:accounts', 'account-lifecycle', 'restored-accounts', 'restored-answers']],
   ['budgets', ['budgets', 'budget-set', 'budget-months']],
   ['goals', ['goals', 'goal-plans']],
   ['rules and tags', ['rules', 'tags']],

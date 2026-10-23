@@ -37,6 +37,17 @@
 //                     for, as the download had them, in parts of at most
 //                     BOOK_ROWS. Kept so they aren't lost on the next move; no
 //                     reader reads them yet. Compressed.
+//   restored-answers  one entry per restored account, under its id: what the
+//                     person (or, for an account the file says ended, the
+//                     restore) answered about it: count its transactions as an
+//                     ended account's (`counted`, with the end that answer
+//                     wrote, if it wrote one), the connections made since the
+//                     restore it isn't at (Plaid Items and connector accounts,
+//                     by id), and the connector account that carries it on
+//                     (`handed_to`). The person's own answers: in the download,
+//                     and a store the release before doesn't know, so a
+//                     rollback holds the rows again (lib/user-restore/
+//                     restored.ts, COUNTED BEFORE A LINK).
 //   user-restore-starts, user-restore-batches, user-restore-previews
 //                     the counters that bound starts (and undos and empties),
 //                     batches and previews (each a scan of the container).
@@ -46,7 +57,7 @@
 // reader first.
 
 import { defineCounterStore, defineMapStore, defineValueStore } from '../repo';
-import { BANK_FIELDS, isBankRecord, isCalendarDay, isCount, isInstant, isInstantOrNull, isInvestmentRecord, isPlaidId, isRecord, isText, isTextOrNull, onlyKeys } from './records';
+import { BANK_FIELDS, isBankRecord, isCalendarDay, isCount, isId, isInstant, isInstantOrNull, isInvestmentRecord, isPlaidId, isRecord, isText, isTextOrNull, onlyKeys } from './records';
 import type { StoredTxn } from '../transactions';
 import { BOOK_ROWS, DIGEST, MAX_BATCHES, MAX_BOOKS, PART, bankIdOf, isRestoredId, isUserRestoreId } from './ids';
 
@@ -314,6 +325,72 @@ export const restoredInvestmentsStore = defineMapStore<RestoredInvestments>('res
   compress: true,
 });
 
+
+// ---- What was answered about a restored account ----
+
+/** An end, as the lifecycle store keeps one (lib/lifecycle.ts
+ *  EndedLifecycle): checked here rather than imported, so the store
+ *  catalogue loads nothing more. */
+export type AnsweredEnd = { state: 'closed' | 'left'; on: string; note?: string } | { state: 'untracked'; from: string };
+
+/** The ids an answer may name of each kind, at most: more connections than
+ *  anyone makes while a restored bank waits. Each write drops the ids of
+ *  connections that are gone (lib/user-restore/answers.ts). */
+export const MAX_APART = 50;
+
+export type RestoredAnswer = {
+  version: 1;
+  /** Its transactions count as an ended account's (decision 1): when, on
+   *  whose word (`file`: the restore's, for an account the download says
+   *  ended, as the old copy counted it), and the end that answer wrote, if
+   *  it wrote one: taken away when the account is linked, and written back
+   *  when it is unlinked. Null: not counted. */
+  counted: { at: string; by: 'person' | 'file'; ended: AnsweredEnd | null } | null;
+  /** The connections made since the restore it isn't at, by the person's
+   *  word: Plaid Items and connector accounts (manual ones kept from them
+   *  too), by id. */
+  apart: { items: string[]; accounts: string[] };
+  /** The connector account that carries it on: its rows count before that
+   *  account's coverage begins (lib/user-restore/restored.ts handoverCut). */
+  handed_to: { account_id: string; at: string } | null;
+  set_at: string;
+};
+
+function isAnsweredEnd(v: unknown): v is AnsweredEnd {
+  if (!isRecord(v)) return false;
+  if (v.state === 'untracked') return onlyKeys(v, ['state', 'from']) && isCalendarDay(v.from);
+  return (
+    (v.state === 'closed' || v.state === 'left') &&
+    onlyKeys(v, ['state', 'on', 'note']) &&
+    isCalendarDay(v.on) &&
+    (v.note === undefined || (isText(v.note, 200) && v.note.length > 0))
+  );
+}
+
+const isIds = (v: unknown): v is string[] => Array.isArray(v) && v.length <= MAX_APART && v.every(isId) && new Set(v).size === v.length;
+
+export function isRestoredAnswer(v: unknown): v is RestoredAnswer {
+  if (!isRecord(v) || v.version !== 1 || !onlyKeys(v, ['version', 'counted', 'apart', 'handed_to', 'set_at'])) return false;
+  const c = v.counted;
+  const a = v.apart;
+  const h = v.handed_to;
+  return (
+    (c === null ||
+      (isRecord(c) && onlyKeys(c, ['at', 'by', 'ended']) && isInstant(c.at) && (c.by === 'person' || c.by === 'file') && (c.ended === null || isAnsweredEnd(c.ended)))) &&
+    isRecord(a) &&
+    onlyKeys(a, ['items', 'accounts']) &&
+    isIds(a.items) &&
+    isIds(a.accounts) &&
+    (h === null || (isRecord(h) && onlyKeys(h, ['account_id', 'at']) && isId(h.account_id) && isInstant(h.at))) &&
+    isInstant(v.set_at)
+  );
+}
+
+export const restoredAnswersStore = defineMapStore<RestoredAnswer>('restored-answers', {
+  what: 'answers about accounts brought back from a download',
+  isValid: isRestoredAnswer,
+  exportable: true, // the person's own answers about their accounts
+});
 
 // ---- Counters ----
 

@@ -70,10 +70,20 @@ import {
 } from '../user-restore/restored';
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
 import { endDays, endOf, lifecycleStore, type LifecycleView } from '../lifecycle';
-import { UnreadableEntriesError, type MapStore } from '../repo';
+import { StoredDataUnreadableError, UnreadableEntriesError, type MapStore } from '../repo';
+import { countedState, handedOverRows, readHandover, NO_COUNTED, type Handover } from '../user-restore/answers';
+import { joinNames } from '../month-coverage';
 import { settle, type BankRow, type Settled } from './match';
 import type { CoveredAccount, DayRange } from './coverage';
 import { historyImportSummaryStore, importedTwinsStore, importedTxnStore, type HistoryImportSummary, type ImportedTwins, type ImportedTxn } from './store';
+
+/** A restored account that counts before a link, as reading names it: its
+ *  bank, name, mask, kind and currency as the restore brought them, and the
+ *  connection it was on in the old copy (no such Item is stored here, so it
+ *  has no bank rows). */
+export function countedAccountOf(account_id: string, a: RestoredAccount): LinkedAccount {
+  return { account_id, item_id: a.item_id, institution_name: a.institution_name, name: a.name ?? 'Account', mask: a.mask, type: a.type ?? 'other', currency: a.currency };
+}
 
 /** A linked account, as importing and reading name it. */
 export type LinkedAccount = {
@@ -320,9 +330,18 @@ export async function readImported(
   const unreadEnds = new Set([...endsUnread.unreadable, ...endsUnread.unrecognised]);
   const leftOut = opts.leftOut ?? new Set<string>();
   const summariesUnreadable = [...summaries.unreadable, ...summaries.unrecognised];
+  // The restored accounts that count before a link (lib/user-restore/
+  // answers.ts): live for their rows, under their own ids, as an ended
+  // account's, never for a balance; and those held by a connection made
+  // since.
+  const counted =
+    restoredReport.entries.size > 0 ? await countedState(ctx, { restored: restoredReport.entries, listed, items, linked: (id) => linkedTo(id, links, live) !== null }) : NO_COUNTED;
+  const countedLive = new Map([...counted.counted].map(([id, a]) => [id, countedAccountOf(id, a)]));
+  const accountOf = (id: string): LinkedAccount | undefined => live.get(id) ?? countedLive.get(id);
+  const either = { has: (id: string) => live.has(id) || countedLive.has(id) };
   const wanted = (bookId: string): LinkedAccount | null => {
     const current = resolveId(bookId, links);
-    const account = live.get(current);
+    const account = accountOf(current);
     if (!account || leftOut.has(current) || leftOut.has(bookId)) return null;
     if (opts.only && !opts.only.has(current)) return null;
     return account;
@@ -343,7 +362,7 @@ export async function readImported(
   // read here), so they count for every book.
   const unclaimed = (bookId: string) => {
     const current = resolveId(bookId, links);
-    if (live.has(current)) return;
+    if (either.has(current)) return;
     if (!opts.links) unlinked = true;
     const readHere = !leftOut.has(current) && !leftOut.has(bookId) && (!opts.only || opts.only.has(current));
     if (readHere && unknownItems.length > 0) unowned = true;
@@ -377,17 +396,23 @@ export async function readImported(
   }
 
   // The accounts a restore brought back that are linked to a live account,
-  // while their directory entry exists (lib/user-restore/restored.ts), and
-  // their books. One whose record can't be read may be one of them.
+  // or count before a link (an account linked to one of those, the old
+  // copy's earlier one, with it), while their directory entry exists
+  // (lib/user-restore/restored.ts), and their books. One whose record can't
+  // be read may be one of them.
   const restoredHere = new Map<string, { current: string; a: RestoredAccount }>();
   const waiting = new Map<string, { from: string; to: string }>();
+  const heldBy = new Map<string, Set<string>>();
   for (const [id, a] of restoredReport.entries) {
     if (!listed.has(id)) continue;
-    if (!linkedTo(id, links, live)) {
-      // Held: said for the months its rows span, unless it is hidden.
+    if (!countedLive.has(id) && !linkedTo(id, links, either)) {
+      // Held: said for the months its rows span, unless it is hidden; with
+      // what holds it, when its answer counts it.
       if (a.rows && !leftOut.has(id) && (!opts.only || opts.only.has(id))) {
         const was = waiting.get(a.institution_name);
         waiting.set(a.institution_name, { from: was && was.from < a.rows.first ? was.from : a.rows.first, to: was && was.to > a.rows.last ? was.to : a.rows.last });
+        const by = counted.held.get(id);
+        if (by && by !== 'unread') heldBy.set(a.institution_name, new Set([...(heldBy.get(a.institution_name) ?? []), ...by.map((h) => (h.kind === 'item' ? h.institution : `${h.institution} ${h.name}`))]));
       }
       continue;
     }
@@ -397,7 +422,15 @@ export async function readImported(
   const held = [...waiting].sort(([a], [b]) => a.localeCompare(b)).map(([institution_name, span]) => ({ institution_name, ...span }));
   // Said as a bank's transactions that aren't all in are, so every figure
   // that weighs those (the Plan) weighs these too.
-  for (const h of held) notes.push(`${h.institution_name}: transactions from your download aren't counted until its accounts are linked to the bank connected again`);
+  for (const h of held) {
+    const by = heldBy.get(h.institution_name);
+    notes.push(
+      by
+        ? `${h.institution_name}: transactions from your download aren't counted until you say whether ${joinNames([...by].sort())} ${by.size === 1 ? 'holds' : 'hold'} them (Manage, Bring back a download)`
+        : `${h.institution_name}: transactions from your download aren't counted until you answer for that bank (Manage, Bring back a download)`
+    );
+  }
+  if (counted.unreadable) notes.push("Some transactions brought back from your download aren't counted while what was answered about them can't be read");
   const unrestored = restoredUnread.length > 0;
   if (unrestored) notes.push("Transactions brought back from your download aren't shown while what was brought back can't be read");
   const byRestored = new Map<string, HeldTxn[]>();
@@ -407,7 +440,7 @@ export async function readImported(
       const here = restoredHere.get(bookId.slice(0, bookId.lastIndexOf('.')));
       if (!here || flawed.has(here.current)) continue;
       flawed.add(here.current);
-      const account = live.get(here.current)!;
+      const account = accountOf(here.current)!;
       notes.push(`${account.institution_name}: transactions brought back from your download for ${account.name} couldn't be read`);
     }
     for (const book of restoredBooks.entries.values()) {
@@ -434,7 +467,7 @@ export async function readImported(
   // read keeps its accounts' imported rows out, said, as when its own rows
   // can't be, never counted as if none were kept. And the pairs the old copy
   // kept at the connections the restored accounts were on.
-  const itemIds = new Set([...heldAccounts].map((id) => live.get(id)!.item_id));
+  const itemIds = new Set([...heldAccounts].map((id) => accountOf(id)!.item_id));
   const oldItems = new Set([...restoredHere.values()].filter(({ current }) => heldAccounts.has(current)).map(({ a }) => a.item_id));
   const bankByItem = new Map<string, { rows: BankRow[]; from: string | null }>();
   const unreadableItems = new Set<string>();
@@ -473,7 +506,7 @@ export async function readImported(
 
   const accounts: ImportedAccountRead[] = [];
   for (const id of heldAccounts) {
-    const account = live.get(id)!;
+    const account = accountOf(id)!;
     if (unreadableItems.has(account.item_id)) {
       flawed.add(id);
       notes.push(`${account.institution_name}: transactions imported for ${account.name} aren't shown while the bank's own can't be read`);
@@ -488,7 +521,23 @@ export async function readImported(
     }
     const bank = bankByItem.get(account.item_id) ?? { rows: [], from: null };
     const ids = sameAccountIds(id, links);
-    const restoredRows = byRestored.get(id) ?? [];
+    let restoredRows = byRestored.get(id) ?? [];
+    // Handed over to a connector account: its rows count only before that
+    // account's coverage begins (lib/user-restore/answers.ts HANDED OVER).
+    const handedTo = counted.handed.get(id);
+    if (handedTo && restoredRows.length > 0) {
+      let handover: Handover;
+      try {
+        handover = await readHandover(ctx, handedTo);
+      } catch (err) {
+        if (!(err instanceof StoredDataUnreadableError)) throw err;
+        flawed.add(id);
+        notes.push(`${account.institution_name}: transactions brought back from your download for ${account.name} aren't shown while the account that carries it on can't be read`);
+        continue;
+      }
+      const left = handedOverRows(restoredRows, handover);
+      restoredRows = restoredRows.filter((r) => !left.has(r.id));
+    }
     let restored: RestoredForAccount | null = null;
     if (restoredRows.length > 0) {
       const here = new Set(restoredRows.map((r) => r.id));

@@ -55,7 +55,7 @@ const SCENARIO = {
   expenses: { leaveOut: [], add: [] },
   events: [],
 };
-const RUNWAY = { v: 1 as const, name: 'Leaner months', months: 6, lower_by: 250, currency: 'EUR', income_until: null, planned: true, leave_out_one_offs: false, saved_at: AT };
+const RUNWAY = { v: 1 as const, name: 'Leaner months', months: 6 as const, lower_by: 250, currency: 'EUR', income_until: null, planned: true, leave_out_one_offs: false, saved_at: AT };
 /** A change a token made there (lib/api-changes.ts): a tag it made. */
 const CHANGE = {
   v: 1 as const,

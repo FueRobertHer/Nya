@@ -803,6 +803,15 @@ const STORES: Readonly<Record<string, Entry>> = {
     seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
+  'restored-answers': {
+    group: 'imports',
+    name: 'Your answers about accounts brought back from a download',
+    about: 'Whether to count a bank’s transactions as an ended account’s, which connections it isn’t at, and which account carries it on.',
+    unit: ENTRY,
+    kept: 'A download you brought back',
+    seen: ['shared', 'api', 'email'],
+    plain: ACCOUNT_IDS,
+  },
   'restored-investment-transactions': {
     group: 'imports',
     name: 'Investment transactions brought back from a download',

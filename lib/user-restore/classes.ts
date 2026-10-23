@@ -141,6 +141,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'planned-items': 'data',
   'report-settings': 'setting',
   'restored-accounts': 'data',
+  // The person's answers about those accounts.
+  'restored-answers': 'data',
   'restored-investment-transactions': 'data',
   'restored-transactions': 'data',
   'review-settings': 'setting',
