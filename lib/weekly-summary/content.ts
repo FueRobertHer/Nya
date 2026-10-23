@@ -8,7 +8,9 @@
 //
 //   SPENDING, compared with a usual week. Money out, as every total counts it
 //     (lib/spending.ts countsInTotals: one currency, the one most of the
-//     year's transactions are in, without transfers, cash or loan payments or
+//     year's transactions are in, or with a home currency that one, what is
+//     in another converted at its own day's rate as the app counts it
+//     (lib/fx/totals.ts), without transfers, cash or loan payments or
 //     what was excluded), over the week's seven days, set against the middle
 //     (the median) of the USUAL_WEEKS weeks before it, each the same seven
 //     weekdays: a week with one big purchase doesn't make every other week look
@@ -82,8 +84,9 @@ export const LEVELS = { muchHigher: 1.5, higher: 1.15, sameAbove: 0.85, lowerAbo
 
 export type SpendingFact =
   /** Compared: the level, and the currencies whose transactions this week
-   *  aren't in it (nothing is converted). */
-  | { kind: 'compared'; level: Level; left_out: string[] }
+   *  aren't in it: in another currency (nothing is converted), or, with a
+   *  home currency (`no_rate`), with no rate to convert them at. */
+  | { kind: 'compared'; level: Level; left_out: string[]; no_rate?: true }
   /** Not one transaction is dated in the week. */
   | { kind: 'no_transactions' }
   /** Too early to say: too few weeks with transactions to go by, or older
@@ -179,8 +182,11 @@ export type SpendingInput = {
   /** The Activity tab's rows (lib/activity.ts), hidden accounts' and those of
    *  accounts that ended left out as the app leaves them out. */
   rows: readonly (Countable & { date: string; amount: number })[];
-  /** The currency totals over them are in (lib/spending.ts totalsCurrency). */
+  /** The currency totals over them are in (lib/spending.ts totalsCurrency),
+   *  or the home currency they were converted into (lib/fx/totals.ts). */
   currency: string | null;
+  /** They were converted into a home currency: what is left out has no rate. */
+  converted?: boolean;
   send_day: string;
   first: string;
   last: string;
@@ -258,10 +264,12 @@ export function spendingFact(input: SpendingInput): SpendingFact {
     weeks.push(moneyOut(input.rows, start, addDays(last, -7 * k), input.currency));
   }
   if (weeks.length < MIN_USUAL_WEEKS) return { kind: 'too_early', why: 'history' };
+  const left_out = leftOutByCurrency(inWeek, input.currency).map((l) => l.currency);
   return {
     kind: 'compared',
     level: levelOf(moneyOut(input.rows, first, last, input.currency), median(weeks)),
-    left_out: leftOutByCurrency(inWeek, input.currency).map((l) => l.currency),
+    left_out,
+    ...(input.converted && left_out.length > 0 ? { no_rate: true as const } : {}),
   };
 }
 

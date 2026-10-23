@@ -41,7 +41,6 @@ const ALLOWED: Record<string, string> = {
   'lib/report/build.ts#buildReport:currency':
     'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
-  'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
 };
 
