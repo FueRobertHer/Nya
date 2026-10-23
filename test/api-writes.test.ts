@@ -604,6 +604,24 @@ describe('idempotency keys', () => {
     expect((await changeStore.get(ctx, failed.body.change_id))!).toMatchObject({ state: 'failed', error: 'internal' });
   });
 
+  test('a takeover that can’t read where the first’s row would be, or the first’s change, makes nothing: 409 unreadable', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-unread' } });
+    await stopped(first.body.change_id, { unmade: true });
+    setSystemTime(new Date(LATER));
+    // The book that would hold it can't be read.
+    const book = fake.hashes.get(ctxKey('manual-transactions'))!;
+    const kept = book.get(WALLET)!;
+    book.set(WALLET, 'damaged');
+    const r1 = await quietly(() => send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-unread' } }));
+    book.set(WALLET, kept);
+    expect([r1.status, r1.body.error.code]).toEqual([409, 'unreadable']);
+    // The change itself can't be read.
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'damaged');
+    const r2 = await quietly(() => send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-unread' } }));
+    expect([r2.status, r2.body.error.code]).toEqual([409, 'unreadable']);
+    expect(await rows()).toHaveLength(1);
+  });
+
   /** A key claimed alone, as a first attempt that stopped before it wrote
    *  its change leaves it: the change id the claim names. */
   const claimedAlone = async (key: string): Promise<string> => {
