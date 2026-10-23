@@ -8,9 +8,10 @@ import { readAdminStorage, MAX_PAGE } from '@/lib/admin-storage';
 // The admin's view of storage across every account (lib/admin-storage.ts):
 // each container's Plaid Items and their state, its connections, its blobs
 // against the ceiling, what it stores in all and its last snapshot. Sizes and
-// counts only: nothing of anyone's data is decrypted. Behind the normal
-// session gate, and then admin-only: anyone else gets the same 404 as a route
-// that does not exist, before anything they sent is looked at.
+// counts, and the plain text it names: nothing of anyone's data is decrypted.
+// Behind the normal session gate, and then admin-only: anyone else gets the
+// JSON 404 the admin's other route answers, before anything they sent is
+// looked at.
 //
 //   GET ?after=<container id>&limit=<1..MAX_PAGE>   a page, in id order.
 

@@ -8,9 +8,11 @@
 // lib/blob.ts), what it stores in all, and its last daily snapshot.
 //
 // WHO: the admin alone, decided as lib/admin-items.ts decides (adminCtx).
-// Anyone else is refused before anything is read: the page by proxy.ts,
-// which answers them as a path that does not exist, and the route with the
-// 404 the admin's other route gives (app/api/admin/storage).
+// Anyone else is refused before anything is read. The page is linked at
+// /admin/storage and lives at /admin-view/storage: proxy.ts sends the admin
+// there, and anyone else's request reaches no route, so they get the 404 any
+// missing path gets, header for header (lib/admin-gate.ts). The route answers
+// them with the JSON 404 the admin's other route gives (app/api/admin/storage).
 //
 // WHAT IT READS, AND SHOWS. Nothing is decrypted. The containers are measured
 // through the storage seam (lib/repo.ts measureContainers), without even the

@@ -1,6 +1,6 @@
 // Where Your data (app/your-data) is found from: Manage on the Accounts tab,
 // beside Download my data. For the admin, also the way to Storage across
-// accounts (app/admin/storage); the server decides who the admin is
+// accounts (/admin/storage); the server decides who the admin is
 // (app/page.tsx), and the page and its route refuse anyone else. Links, not
 // state: each page reads its own.
 

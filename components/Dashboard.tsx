@@ -2882,7 +2882,7 @@ export default function Dashboard({
 
                 {/* What Nya keeps about you, kind by kind (app/your-data),
                     beside the download; for the admin, also storage
-                    across accounts (app/admin/storage). */}
+                    across accounts (/admin/storage). */}
                 {manageMode && <InventoryEntry admin={admin} />}
 
                 {/* Bringing a download back, and its undo, beside the

@@ -4,6 +4,7 @@ import { clerkEnabled, clerkUserAllowed } from '@/lib/auth-mode';
 import { verifySessionToken, SESSION_COOKIE_NAME } from '@/lib/auth';
 import { sessionCurrent } from '@/lib/sessions';
 import { buildCsp, cspHeaderName, cspMode, newNonce } from '@/lib/security-headers';
+import { isAdminSignIn } from '@/lib/admin-gate';
 
 // Everything is protected EXCEPT: the login API; the public pages (PUBLIC_PAGES
 // below); static PWA assets (they must be publicly fetchable for install/offline
@@ -84,13 +85,17 @@ const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req
 // is answered with JSON, not a document, so it gets none; but a browser that
 // navigates to an /api/ path that does not exist is shown the HTML 404 page,
 // so a request that asks for HTML gets the policy wherever it goes.
-function pass(req: NextRequest): NextResponse {
+// `to`, when given, is a path to render in the request's place (a rewrite):
+// an admin page sent where it lives, or to MISSING (ADMIN_PAGES), gets the
+// policy as every page does.
+function pass(req: NextRequest, to?: string): NextResponse {
+  const go = (init?: { request: { headers: Headers } }) => (to ? NextResponse.rewrite(new URL(to, req.url), init) : NextResponse.next(init));
   const document = !req.nextUrl.pathname.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html');
-  if (!document) return NextResponse.next();
+  if (!document) return go();
   const headers = new Headers(req.headers);
   for (const name of NONCE_CARRIERS) headers.delete(name);
   const mode = cspMode();
-  if (mode === 'off') return NextResponse.next({ request: { headers } });
+  if (mode === 'off') return go({ request: { headers } });
   const nonce = newNonce();
   const policy = buildCsp({
     nonce,
@@ -102,9 +107,31 @@ function pass(req: NextRequest): NextResponse {
   const header = cspHeaderName(mode);
   headers.set('x-nonce', nonce);
   headers.set(header, policy);
-  const res = NextResponse.next({ request: { headers } });
+  const res = go({ request: { headers } });
   res.headers.set(header, policy);
   return res;
+}
+
+// The admin's pages are linked at /admin/... but live at /admin-view/...
+// (app/admin-view), and no route answers /admin/... itself. The admin
+// (lib/admin-gate.ts) is shown them by a rewrite to where they live; anyone
+// else's request goes on untouched, to no route, so the 404 they get is the
+// one any missing path gets, header for header: not a rewrite, and none of the
+// page's title, description or segments. Asked for where they live, by
+// anyone but the admin, they are rewritten to a path no route matches
+// (MISSING). The pages and their routes check again for themselves.
+const ADMIN_PAGES = /^\/admin(\/.*)?$/;
+const ADMIN_VIEW = /^\/admin-view(\/|$)/;
+const MISSING = '/__nya-no-such-page__';
+
+/** Where an admin page request goes: the page where it lives for the admin,
+ *  nowhere for anyone else (see above). */
+async function adminPage(req: NextRequest, userId: string | null): Promise<NextResponse | null> {
+  const path = req.nextUrl.pathname;
+  const asked = ADMIN_PAGES.exec(path);
+  if (asked) return (await isAdminSignIn(userId)) ? pass(req, `/admin-view${asked[1] ?? ''}${req.nextUrl.search}`) : pass(req);
+  if (ADMIN_VIEW.test(path) && !(await isAdminSignIn(userId))) return pass(req, MISSING);
+  return null;
 }
 
 // With Clerk keys set (lib/auth-mode.ts), sign-in is Clerk's: the request needs
@@ -130,7 +157,7 @@ const makeClerkProxy = (): NextMiddleware => clerkMiddleware(async (auth, req) =
     if (path.startsWith('/api/')) return NextResponse.json({ error: 'This account is not allowed here yet.' }, { status: 403 });
     return NextResponse.redirect(new URL('/not-allowed', req.url));
   }
-  return pass(req);
+  return (await adminPage(req, userId)) ?? pass(req);
 });
 
 // The read-only API's endpoints skip this proxy (the matcher above), so a path
@@ -175,5 +202,5 @@ async function passwordProxy(req: NextRequest) {
     return NextResponse.redirect(login);
   }
 
-  return pass(req);
+  return (await adminPage(req, null)) ?? pass(req);
 }

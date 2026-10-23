@@ -33,7 +33,11 @@ const { readAdminStorage, MAX_PAGE } = await import('@/lib/admin-storage');
 const { maxBlobChars } = await import('@/lib/blob');
 const { forgetEpochs } = await import('@/lib/sessions');
 const route = await import('@/app/api/admin/storage/route');
-const { default: AdminStoragePage } = await import('@/app/admin/storage/page');
+const { default: AdminStoragePage, generateMetadata } = await import('@/app/admin-view/storage/page');
+const { proxy } = await import('@/proxy');
+const { isAdminSignIn } = await import('@/lib/admin-gate');
+const { isAdmin } = await import('@/lib/admin-items');
+const { NextRequest } = await import('next/server');
 
 const admin = TEST_CTX;
 const OTHER = { container: '7c1d9e4a-52b3-4f6e-9a08-3d2e1f0a9b8c' } as typeof admin;
@@ -269,6 +273,51 @@ describe('the route', () => {
     expect((await get()).status).toBe(200);
   });
 
+  test('the page: anyone else’s request goes on to no route, as any missing path does; the admin’s to where it lives', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    process.env.CLERK_ALLOWED_USER_IDS = 'user_a,user_b';
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
+    const open = (path: string) => proxy(new NextRequest(`https://nya.test${path}`, { headers: { accept: 'text/html' } }), {} as any);
+    /** Whether it was rewritten, and where to, and the page's policy beside it. */
+    const where = async (path: string) => {
+      const res = await open(path);
+      expect(res.headers.get('content-security-policy-report-only') ?? res.headers.get('content-security-policy')).toContain('nonce-');
+      return res.headers.get('x-middleware-rewrite');
+    };
+    clerk.signedIn = 'user_b';
+    // Untouched, exactly as a path that does not exist: no route answers it.
+    for (const path of ['/admin/storage', '/admin/storage/x', '/admin', '/no-such-page']) expect([path, await where(path)]).toEqual([path, null]);
+    // Where the page lives, asked for directly: a path no route matches.
+    for (const path of ['/admin-view/storage', '/admin-view']) expect([path, await where(path)]).toEqual([path, 'https://nya.test/__nya-no-such-page__']);
+    // Other pages are untouched.
+    expect(await where('/your-data')).toBeNull();
+    expect(await where('/administer')).toBeNull();
+    clerk.signedIn = 'user_a';
+    expect(await where('/admin/storage')).toBe('https://nya.test/admin-view/storage');
+    expect(await where('/admin/storage?x=1')).toBe('https://nya.test/admin-view/storage?x=1');
+    expect(await where('/admin-view/storage')).toBeNull();
+  });
+
+  test('the proxy’s gate decides as the admin’s routes do, reading only', async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
+    process.env.CLERK_SECRET_KEY = 'sk_test_x';
+    await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
+    expect([await isAdminSignIn('user_a'), await isAdmin(admin)]).toEqual([true, true]);
+    expect([await isAdminSignIn('user_b'), await isAdmin(OTHER)]).toEqual([false, false]);
+    const before = JSON.stringify([...fake.hashes.get(testKey('owners'))!]);
+    expect(await isAdminSignIn('user_new')).toBe(false); // no container made for them
+    expect(JSON.stringify([...fake.hashes.get(testKey('owners'))!])).toBe(before);
+    expect(await isAdminSignIn(null)).toBe(false); // with Clerk on, someone must be signed in
+    // With the shared password, the one person is the admin, while there is a container.
+    delete process.env.CLERK_SECRET_KEY;
+    forgetEpochs();
+    expect(await isAdminSignIn(null)).toBe(true);
+    fake.reset();
+    forgetEpochs();
+    expect(await isAdminSignIn(null)).toBe(false);
+  });
+
   test('the page too: anyone else gets the 404 page, the admin the view', async () => {
     process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = 'pk_test_x';
     process.env.CLERK_SECRET_KEY = 'sk_test_x';
@@ -276,9 +325,13 @@ describe('the route', () => {
     await fake.hset(testKey('owners'), { user_a: admin.container, user_b: OTHER.container });
     clerk.signedIn = 'user_b';
     await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    // Its title and description are never made for them either.
+    await expect(generateMetadata()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
     clerk.signedIn = null;
     await expect(AdminStoragePage()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
+    await expect(generateMetadata()).rejects.toMatchObject({ digest: 'NEXT_HTTP_ERROR_FALLBACK;404' });
     clerk.signedIn = 'user_a';
     expect(await AdminStoragePage()).toBeTruthy();
+    expect((await generateMetadata()).title).toBe('Storage across accounts · Nya');
   });
 });

@@ -1,6 +1,6 @@
 'use client';
 
-// Storage across accounts (app/admin/storage), for the admin only: each
+// Storage across accounts (/admin/storage, app/admin-view/storage), for the admin only: each
 // account on this copy of Nya by its random id, with its Plaid connections
 // and how they are doing, its connections to SimpleFIN or Lunch Flow, its
 // stored transactions against the limit of one save, what it stores in all
