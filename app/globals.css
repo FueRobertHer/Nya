@@ -485,11 +485,15 @@ button:disabled {
   padding: 8px 10px;
 }
 
-/* The header's icon buttons (hide amounts, refresh, the Settings gear) as
-   44px targets. */
-.top-actions .icon-btn {
+/* The header's icon buttons (hide amounts, refresh, the Settings gear) and
+   Settings' back button as 44px targets, the icon centered in each. */
+.top-actions .icon-btn,
+.settings-bar .icon-btn {
   min-width: 44px;
   min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .icon-btn svg {
@@ -509,11 +513,6 @@ button:disabled {
   align-items: center;
   gap: 12px;
   margin-bottom: 16px;
-}
-
-.settings-bar .icon-btn {
-  min-width: 44px;
-  min-height: 44px;
 }
 
 .settings-bar h2 {
