@@ -52,7 +52,9 @@ const history = await import('@/lib/history');
 const { getHiddenAccounts } = await import('@/lib/hidden');
 const { projectViews } = await import('@/lib/share-views');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
-const { signJobStore, finishSignJobs } = await import('@/lib/sign-repair');
+const { signJobStore, finishSignJobs, runSignJob } = await import('@/lib/sign-repair');
+const { forgetEarlierAccount } = await import('@/lib/links');
+const { SIGN_JOB_PENDING } = await import('@/lib/sign-repair-store');
 
 const ctx = TEST_CTX;
 const NOW = Date.parse('2026-09-14T17:00:00Z');
@@ -74,6 +76,31 @@ const ops = async (body: unknown) => {
 };
 const home = async () => (await (await netWorthRoute.GET(new Request('http://x/api/net-worth?refresh=1'))).json()) as any;
 const pts = (list: any[]) => list.map((p: any) => [p.date, p.value, !!p.estimated]);
+/** Every day's stored balances and totals (a job's own progress aside). */
+const historyNow = () => new Map([...fake.hashes].filter(([k]) => k.includes('history:') && !k.includes('history:forgetting:')).map(([k, h]) => [k, new Map(h)]));
+const quiet = async <T>(fn: () => Promise<T>): Promise<T> => {
+  const [error] = [console.error];
+  console.error = () => {};
+  try {
+    return await fn();
+  } finally {
+    console.error = error;
+  }
+};
+/** Runs `fn` with the `n`th turning over (and, with `every`, each after it) failing. */
+const cutAt = async <T>(n: number, fn: () => Promise<T>, every = false): Promise<T> => {
+  const real = history.negateAccountOn;
+  let calls = 0;
+  const cut = spyOn(history, 'negateAccountOn').mockImplementation(async (...args) => {
+    if (++calls === n || (every && calls > n)) throw new Error('the function was stopped');
+    return real(...args);
+  });
+  try {
+    return await quiet(fn);
+  } finally {
+    cut.mockRestore();
+  }
+};
 
 /** Every reader of net worth, to the cent (as test/owed-flip.test.ts reads
  *  them), with `hide` hidden through the app's route and shown again. */
@@ -282,5 +309,108 @@ describe('an account flipped between money held and owed under the release befor
     expect([plaid.status, plaid.body.error]).toEqual([409, 'chk is neither a manual account nor one SimpleFIN or Lunch Flow keeps up to date: only those are repaired here.']);
     delete process.env.OPS_ENABLED;
     expect((await ops({ container: ctx.container })).status).toBe(404);
+  });
+});
+
+describe('the legacy estimate record, held flat for every estimated day', () => {
+  beforeEach(async () => {
+    // Built by an older release: one record for every estimated day.
+    fake.hashes.delete(ctxKey('history:accounts:est:flatd'));
+    await fake.set(ctxKey('history:accounts:est:flat'), await encrypt(ctx, JSON.stringify({ manual_eur: 5000 })));
+  });
+
+  test('read for the dry run, which writes nothing, and turned over day by day by the repair', async () => {
+    const raw = historyNow();
+    expect((await ops({ container: ctx.container })).body.accounts).toEqual([{ account_id: 'manual_eur', source: 'manual', type: 'credit', days: { r: 1, f: 3 }, first: EST[0], last: FRI }]);
+    expect(historyNow()).toEqual(raw);
+    expect(await fake.get(ctxKey('history:accounts:est:flatd'))).toBeNull();
+    expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).body.negated).toBe(4);
+    for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: -5000 }]);
+    expect((await readers()).converted_chart.filter(([d, , e]) => e && d < FRI)).toEqual([
+      ['2026-09-08', 6807, true],
+      ['2026-09-09', 6826, true],
+      ['2026-09-10', 6808, true],
+    ]);
+  });
+
+  test('a repair refused writes nothing, not even the record split by day', async () => {
+    await put('history:accounts:partial', { '2026-09-12': { manual_eur: 5000 } });
+    const raw = historyNow();
+    expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).status).toBe(409);
+    expect(historyNow()).toEqual(raw);
+    expect(fake.hashes.has(ctxKey('history:accounts:est:flatd'))).toBe(false);
+  });
+});
+
+describe('a repair under way', () => {
+  test('stopped at its time, it says so, and the next run finishes it', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    expect(await runSignJob(ctx, 'manual_eur', Date.now() - 1)).toEqual({ negated: 0, left: [], pending: true });
+    expect(await signJobStore.has(ctx, 'manual_eur')).toBe(true);
+    expect(await runSignJob(ctx, 'manual_eur')).toEqual({ negated: 3, left: [] });
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+    for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: -5000 }]);
+  });
+
+  test('failing night after night, it is left to the operator after three, and the dry run says so', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    let tried = 0;
+    const real = history.negateAccountOn;
+    const failing = spyOn(history, 'negateAccountOn').mockImplementation(async () => {
+      tried++;
+      throw new TypeError('the function was stopped');
+    });
+    try {
+      for (let night = 1; night <= 4; night++) await quiet(() => finishSignJobs(ctx));
+    } finally {
+      failing.mockRestore();
+    }
+    // Three nights tried, the fourth not.
+    expect(tried).toBe(3);
+    expect(await signJobStore.get(ctx, 'manual_eur')).toMatchObject({ failures: 3, error: 'TypeError' });
+    expect((await ops({ container: ctx.container })).body.accounts).toEqual([
+      expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'TypeError', stopped: true } }),
+    ]);
+    // The operator finishes it.
+    expect(real).toBe(history.negateAccountOn);
+    expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).body.negated).toBe(3);
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect((await readers()).converted_chart.find(([d]) => d === FRI)).toEqual([FRI, 6796, false]);
+  });
+
+  test('planned for a kind the account no longer has, it is dropped with words, and nothing more is turned over', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    // Changed back to savings under the release before.
+    await saveManualAccount(ctx, { account_id: 'manual_eur', name: 'Euro savings', institution_name: 'Sparkasse', type: 'depository', subtype: null, balance: 5000, currency: 'EUR', updated_at: new Date(NOW).toISOString() });
+    const raw = historyNow();
+    const r = await quiet(() => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    expect([r.status, r.body.negated, r.body.abandoned]).toEqual([
+      200,
+      0,
+      'The repair under way for manual_eur was planned for it as money owed, and it is money held now, so it was dropped and nothing more was turned over.',
+    ]);
+    expect(historyNow()).toEqual(raw);
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+  });
+
+  test('its account isn’t forgotten, and an account being forgotten isn’t repaired', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    const raw = historyNow();
+    await expect(forgetEarlierAccount(ctx, 'manual_eur')).rejects.toThrow(SIGN_JOB_PENDING);
+    await expect(history.forgetAccountBalances(ctx, 'manual_eur')).rejects.toThrow('being turned over');
+    await expect(history.foldHiddenAccount(ctx, 'manual_eur', 'credit', 'tag-1')).rejects.toThrow('being turned over');
+    expect(historyNow()).toEqual(raw);
+    // A forget under way already (begun before the job): the job waits for it.
+    expect((await call(hiddenRoute, 'POST', { account_id: 'manual_eur', hidden: true })).status).toBe(200);
+    const { markForgetting } = await import('@/lib/hidden');
+    await markForgetting(ctx, 'manual_eur', (await getHiddenAccounts(ctx)).get('manual_eur')!, 'tag-1');
+    const r = await ops({ container: ctx.container, account_id: 'manual_eur', repair: true });
+    expect([r.status, r.body.error]).toEqual([409, 'manual_eur is being forgotten: finish that first.']);
+    expect(historyNow()).toEqual(raw);
+    // Without a job before it, none is written.
+    await signJobStore.remove(ctx, 'manual_eur');
+    expect((await ops({ container: ctx.container, account_id: 'manual_eur', repair: true })).status).toBe(409);
+    expect(await signJobStore.ids(ctx)).toEqual([]);
+    expect(historyNow()).toEqual(raw);
   });
 });

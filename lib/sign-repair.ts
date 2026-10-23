@@ -437,12 +437,18 @@ async function abandon(ctx: Ctx, id: string, job: SignJob, now: string | null): 
 
 /** Runs one job, under the links lock held by the caller, until `until`: its
  *  retype first, then its plan, its entries, and its record gone. */
-async function runLocked(ctx: Ctx, id: string, until: number): Promise<JobOutcome | null> {
-  let job = await signJobStore.get(ctx, id);
-  if (!job) return null;
+/** Refuses a job on an account a forget is under way on, whose fold reads
+ *  its balances by the type it had when it was hidden. */
+async function refuseForgetting(ctx: Ctx, id: string): Promise<void> {
   if ((await getHiddenAccounts(ctx)).get(id)?.forget_tag) {
     throw new SignRepairRefused(`${id} is being forgotten: finish that first.`, []);
   }
+}
+
+async function runLocked(ctx: Ctx, id: string, until: number): Promise<JobOutcome | null> {
+  let job = await signJobStore.get(ctx, id);
+  if (!job) return null;
+  await refuseForgetting(ctx, id);
   if (!job.plan) {
     // A retype's own step: the kind changed, only while it is still the one
     // the job began from (or already the new one, from an earlier attempt).
@@ -504,6 +510,7 @@ export async function retypeWithHistory(ctx: Ctx, id: string, to: string, opts: 
       await connectorAccountsStore.update(ctx, id, (a) => (a && isOwedType(a.type) === isOwedType(to) ? { ...a, type: to as ConnectorAccount['type'], subtype: null } : a));
       return { changed: (await connectorAccountsStore.get(ctx, id))?.type === to, job: null };
     }
+    await refuseForgetting(ctx, id);
     const job: SignJob = { v: 1, kind: 'retype', from: account.type, to, at: new Date(now).toISOString(), tag: `sign-${randomUUID()}` };
     await signJobStore.set(ctx, id, job);
     let outcome: JobOutcome | null;
@@ -631,6 +638,7 @@ export async function repairSignFlip(ctx: Ctx, id: string, now: number = Date.no
     if (refused.length > 0) throw refusal(id, refused);
     if (countOf(plan) === 0) return { negated: 0, left };
     const type = book.types.get(id)!;
+    await refuseForgetting(ctx, id);
     await signJobStore.set(ctx, id, { v: 1, kind: 'repair', from: type, to: type, at: new Date(now).toISOString(), tag: `sign-${randomUUID()}`, plan, ...(left.length > 0 ? { left } : {}) });
     return (await runLocked(ctx, id, until)) ?? { negated: 0, left };
   });
