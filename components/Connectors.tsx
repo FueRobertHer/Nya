@@ -34,6 +34,7 @@ import { instantDay } from '@/lib/local-date';
 import type { ConnectionView, FetchView, OfferView, AccountView } from '@/lib/connectors/view';
 import type { OwedSign } from '@/lib/connectors/store';
 import { CONNECTOR_WORDS, type ConnectorKind } from '@/lib/connectors/types';
+import type { CarryView } from '@/lib/connectors/continue';
 
 /** What the dashboard asks of the sheet: `connector` is which service a new
  *  connection (or a new token or key for one) is for. */
@@ -43,7 +44,8 @@ export type ConnectorAsk =
   | { kind: 'accounts'; connection_id: string }
   | { kind: 'refresh'; connection_id: string }
   | { kind: 'sign'; connection_id: string }
-  | { kind: 'disconnect'; connection_id: string };
+  | { kind: 'disconnect'; connection_id: string }
+  | { kind: 'uncarry'; connection_id: string; account_id: string };
 
 type Kind = 'depository' | 'credit' | 'loan' | 'investment' | 'other';
 
@@ -77,6 +79,9 @@ type ListBody = {
   max_connections: number;
   /** Banks from a download counted before a link (app/api/connectors). */
   restored_counted?: string[];
+  /** Carrying on an account a download brought back (lib/connectors/
+   *  continue.ts CarryView). */
+  carry_on?: CarryView;
 };
 
 /** A request to a connector route: its body, or the error it answered with. */
@@ -198,6 +203,19 @@ export function ConnectorCardView({
         </p>
       )}
       {n === 0 && conn.available.length > 0 && <p className="panel-note">Choose which of the accounts {conn.label} offers to track.</p>}
+      {conn.accounts.flatMap((a) => {
+        const line = carriedLine(a, conn.label);
+        return line
+          ? [
+              <div key={`carried-${a.account_id}`}>
+                <p className={line.warn ? 'stale-note' : 'panel-note'}>{line.text}</p>
+                <button className="secondary" onClick={() => onAsk({ kind: 'uncarry', connection_id: conn.connection_id, account_id: a.account_id })} disabled={busy}>
+                  Undo carrying {a.name} on
+                </button>
+              </div>,
+            ]
+          : [];
+      })}
       {note && <p className="status-note">{note}</p>}
       <div className="card-actions">
         {refused ? (
@@ -310,6 +328,9 @@ export function ChooseView({
   onChoose,
   onKeep,
   counted = [],
+  carry = null,
+  continues = {},
+  onContinue = () => {},
 }: {
   label: string;
   tracked: AccountView[];
@@ -324,6 +345,13 @@ export function ChooseView({
   /** Banks from a download counted before a link: an account tracked here
    *  holds them until it is answered for (lib/user-restore/answers.ts). */
   counted?: readonly string[];
+  /** The accounts from a download that wait to be carried on, and which of
+   *  them each offer may be (lib/connectors/continue.ts), or null. */
+  carry?: { enabled: boolean; waiting: CarryView['waiting']; offers: Record<string, { account_id: string; evidence: 'same' | 'likely' | 'possible' }[]> } | null;
+  /** The answer for each offer chosen: '' none yet, 'new', or the id of the
+   *  account from the download it carries on. */
+  continues?: Record<string, string>;
+  onContinue?: (remote_id: string, value: string) => void;
 }) {
   const groups = useMemo(() => {
     const by = new Map<string, OfferView[]>();
@@ -384,6 +412,7 @@ export function ChooseView({
             </p>
           )}
           {counted.length > 0 && <p className="panel-note">{countedNote(counted)}</p>}
+          {carry && carry.waiting.length > 0 && <p className="panel-note">{carryNote(carry)}</p>}
           {groups.map(([institution, list]) => (
             <div className="institution-group" key={institution}>
               <p className="institution-name">{institution}</p>
@@ -404,6 +433,20 @@ export function ChooseView({
                         Looks like the account your other connection ({o.elsewhere.host}) tracks: the same bank, name and balance. Tracked twice it would be counted twice, so
                         choose a kind only if it is another account.
                       </div>
+                    )}
+                    {carry?.enabled && carry.waiting.length > 0 && choices[o.remote_id] && choices[o.remote_id] !== 'stop' && (
+                      <select value={continues[o.remote_id] ?? ''} disabled={busy} onChange={(e) => onContinue(o.remote_id, e.target.value)} aria-label={`Is ${o.name} one of the accounts from your download?`}>
+                        <option value="">Is it one from your download?</option>
+                        <option value="new">No: a new account</option>
+                        {(carry.offers[o.remote_id] ?? []).map((f) => {
+                          const w = carry.waiting.find((x) => x.account_id === f.account_id)!;
+                          return (
+                            <option key={f.account_id} value={f.account_id}>
+                              {carryChoiceWords(w, f.evidence)}
+                            </option>
+                          );
+                        })}
+                      </select>
                     )}
                   </div>
                   <select
@@ -428,6 +471,50 @@ export function ChooseView({
       {tracked.length === 0 && offers.length === 0 && <p className="empty-note">{label} listed no accounts. Add some in {label}, then refresh.</p>}
     </>
   );
+}
+
+/** An account from a download, as the question offers it: its bank, name and
+ *  currency, its last day there, and how likely it is this one. Pure. */
+export function carryChoiceWords(w: CarryView['waiting'][number], evidence: 'same' | 'likely' | 'possible'): string {
+  const last = w.last ? `, last transaction ${calendarDay(w.last)}` : '';
+  const how = evidence === 'same' ? ' (the same account)' : evidence === 'likely' ? ' (likely)' : '';
+  return `Yes: ${w.institution_name} ${w.name}, ${w.currency}${last}${how}`;
+}
+
+/** What Choose accounts says while accounts from a download wait to be
+ *  carried on: with carrying on turned on, that each account tracked is
+ *  asked about; off, that tracking makes a new account whose transactions
+ *  count beside theirs. Pure. */
+export function carryNote(carry: { enabled: boolean; waiting: CarryView['waiting'] }): string {
+  const names = carry.waiting.map((w) => `${w.institution_name} ${w.name}`);
+  const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return carry.enabled
+    ? `Your download brought back ${list}, waiting for ${names.length === 1 ? 'its' : 'their'} connection. Say for each account you track whether it is one of them: carried on, it keeps that account’s history, and the transactions from your download aren’t counted twice.`
+    : `Your download brought back ${list}, waiting for ${names.length === 1 ? 'its' : 'their'} connection. An account you track here is a new one: if it is one of them, its transactions count beside the ones from your download where both have them.`;
+}
+
+/** A carried-on account on its connection's card: what it carries on, and
+ *  what the first answers found, plainly when none matched. Pure. */
+export function carriedLine(a: AccountView, label: string): { text: string; warn: boolean } | null {
+  const c = a.continued;
+  if (!c) return null;
+  const what = `${a.name} carries on ${c.from.institution_name} ${c.from.name} from your download`;
+  const sent = c.matched + c.added;
+  if (c.until && sent > 0 && c.matched === 0) {
+    return { text: `None of the ${sent} transactions ${label} sent from before ${calendarDay(c.until)} are in your download: if ${a.name} isn’t the same account, undo carrying it on.`, warn: true };
+  }
+  if (c.until && sent > 0) {
+    return { text: `${what}: ${c.matched} of the ${sent} transactions ${label} sent from before ${calendarDay(c.until)} were in it${c.added > 0 ? `, and ${c.added} more were added` : ''}.`, warn: false };
+  }
+  return { text: `${what}: its transactions are matched to those from your download as ${label} sends them.`, warn: false };
+}
+
+/** What undoing carrying an account on does, said before it is confirmed
+ *  (lib/connectors/continue.ts UNDO). Pure. */
+export function uncarryWords(a: AccountView, label: string): string {
+  const c = a.continued!;
+  const added = ` The transactions ${label} added since go, with what you said about them: download your data first to keep a copy.`;
+  return `${c.from.institution_name} ${c.from.name} goes back as your download brought it, waiting for its connection, and its transactions get back what they were. ${a.name} is offered to track again.${added} Balances recorded meanwhile stay as they were: the account’s own line holds ${a.name}’s on those days.`;
 }
 
 /** What tracking an account costs while banks from a download count before
@@ -525,8 +612,16 @@ type Step =
   | { kind: 'choose'; connection_id: string; connector: ConnectorKind; offers: OfferView[]; tracked: AccountView[]; label: string; note: string | null; guessed: boolean }
   | { kind: 'disconnect'; connection_id: string; connector: ConnectorKind | null; label: string; accounts: AccountView[] }
   | { kind: 'sign'; connection_id: string; label: string; accounts: AccountView[]; lead: string | null }
+  | { kind: 'uncarry'; connection_id: string; account: AccountView; label: string }
   | { kind: 'working'; text: string }
   | { kind: 'done'; text: string };
+
+/** Whether an offer chosen still waits for the answer to whether it is an
+ *  account from a download (lib/connectors/continue.ts). */
+function unanswered(s: Extract<Step, { kind: 'choose' }>, choices: Record<string, Choice>, carry: CarryView | null, continues: Record<string, string>): boolean {
+  if (!carry?.enabled || carry.waiting.length === 0) return false;
+  return s.offers.some((o) => choices[o.remote_id] && choices[o.remote_id] !== 'stop' && !continues[o.remote_id]);
+}
 
 /** The tracked accounts being stopped whose sign waits for an answer: kept,
  *  they need it first (lib/connectors/manage.ts releaseAccounts). */
@@ -616,6 +711,10 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   /** Banks from a download counted before a link (ListBody), for the words
    *  in Choose accounts. */
   const [counted, setCounted] = useState<string[]>([]);
+  /** Carrying on an account from a download (ListBody `carry_on`), and the
+   *  answer for each offer chosen. */
+  const [carry, setCarry] = useState<CarryView | null>(null);
+  const [continues, setContinues] = useState<Record<string, string>>({});
   const [signs, setSigns] = useState<Record<string, OwedSign>>({});
   const [keep, setKeep] = useState(true);
   const [confirm, setConfirm] = useState('');
@@ -636,6 +735,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (!res.ok) return res.error;
     const body = res.data as ListBody;
     setCounted(body.restored_counted ?? []);
+    setCarry(body.carry_on ?? null);
     const conn = body.connections.find((c) => c.connection_id === connection_id) ?? null;
     const left = body.orphaned.find((o) => o.connection_id === connection_id);
     return { conn, orphan: left?.accounts ?? null, orphanOf: left?.connector ?? null };
@@ -650,6 +750,7 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     setKeep(true);
     setChoices({});
     setSigns({});
+    setContinues({});
     if (ask.kind === 'connect') return setStep({ kind: 'token', connection_id: null, connector: ask.connector ?? 'simplefin' });
     if (ask.kind === 'token') return setStep({ kind: 'token', connection_id: ask.connection_id, connector: ask.connector ?? 'simplefin' });
     let cancelled = false;
@@ -676,6 +777,10 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
       }
       if (!conn) return setStep({ kind: 'done', text: 'That connection no longer exists.' });
       if (ask.kind === 'sign') return setStep(signStep(conn, null) ?? { kind: 'done', text: 'Nothing to answer: every balance is counted.' });
+      if (ask.kind === 'uncarry') {
+        const account = conn.accounts.find((a) => a.account_id === ask.account_id && a.continued);
+        return setStep(account ? { kind: 'uncarry', connection_id: conn.connection_id, account, label: conn.label } : { kind: 'done', text: 'That account isn’t carried on from your download.' });
+      }
       setStep({ kind: 'choose', connection_id: conn.connection_id, connector: conn.connector, offers: conn.available, tracked: conn.accounts, label: conn.label, note: null, guessed: false });
     })();
     return () => {
@@ -727,7 +832,12 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
   };
 
   const submitChoices = async (s: Extract<Step, { kind: 'choose' }>) => {
-    const track = s.offers.flatMap((o) => (choices[o.remote_id] && choices[o.remote_id] !== 'stop' ? [{ remote_id: o.remote_id, type: choices[o.remote_id] }] : []));
+    const asking = !!carry?.enabled && carry.waiting.length > 0;
+    const track = s.offers.flatMap((o) =>
+      choices[o.remote_id] && choices[o.remote_id] !== 'stop'
+        ? [{ remote_id: o.remote_id, type: choices[o.remote_id], ...(asking ? { continues: continues[o.remote_id] === 'new' ? null : continues[o.remote_id] } : {}) }]
+        : []
+    );
     const retype = s.tracked.flatMap((a) => {
       const c = choices[a.account_id];
       return c && c !== 'stop' && c !== a.type ? [{ account_id: a.account_id, type: c }] : [];
@@ -799,6 +909,20 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     });
   };
 
+  const submitUncarry = async (s: Extract<Step, { kind: 'uncarry' }>) => {
+    setBusy(true);
+    setError('');
+    const res = await send('/api/connectors/carried', 'POST', { account_id: s.account.account_id, confirm: true });
+    setBusy(false);
+    if (!res.ok) return setError(res.error);
+    onChanged(true);
+    const from = s.account.continued!.from;
+    setStep({
+      kind: 'done',
+      text: `Undone: ${from.institution_name} ${from.name} is as your download brought it back, waiting for its connection, and ${s.account.name} is offered again.${res.data.removed ? ` ${res.data.removed} transaction${res.data.removed === 1 ? '' : 's'} ${s.label} added went.` : ''}`,
+    });
+  };
+
   const view = step ?? last.current;
   const title =
     view?.kind === 'token'
@@ -811,7 +935,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
           ? `Disconnect ${view.label}?`
           : view?.kind === 'sign'
             ? 'Owed or held?'
-            : 'Your own sync';
+            : view?.kind === 'uncarry'
+              ? `Undo carrying ${view.account.name} on?`
+              : 'Your own sync';
 
   return (
     <Sheet open={!!ask && !!step} title={title} onClose={close}>
@@ -843,6 +969,9 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             onChoose={(id, c) => setChoices((all) => ({ ...all, [id]: c }))}
             onKeep={setKeep}
             counted={counted}
+            carry={carry ? { enabled: carry.enabled, waiting: carry.waiting, offers: carry.offers[view.connection_id] ?? {} } : null}
+            continues={continues}
+            onContinue={(id, v) => setContinues((all) => ({ ...all, [id]: v }))}
           />
           {keep && stoppingUnsure(view, choices).length > 0 && (
             <SignView label={view.label} accounts={stoppingUnsure(view, choices)} signs={signs} busy={busy} onSign={(id, sign) => setSigns((all) => ({ ...all, [id]: sign }))} />
@@ -852,8 +981,22 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
             <button className="secondary" onClick={close} disabled={busy}>
               Cancel
             </button>
-            <button onClick={() => submitChoices(view)} disabled={busy || (keep && stoppingUnsure(view, choices).some((a) => !signs[a.account_id]))}>
+            <button onClick={() => submitChoices(view)} disabled={busy || (keep && stoppingUnsure(view, choices).some((a) => !signs[a.account_id])) || unanswered(view, choices, carry, continues)}>
               {busy ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        </>
+      )}
+      {view?.kind === 'uncarry' && (
+        <>
+          <p className="panel-note" style={{ marginTop: 0 }}>{uncarryWords(view.account, view.label)}</p>
+          {error && <div className="error">{error}</div>}
+          <div className="button-pair">
+            <button className="secondary" onClick={close} disabled={busy}>
+              Cancel
+            </button>
+            <button className="danger" onClick={() => submitUncarry(view)} disabled={busy}>
+              {busy ? 'Undoing…' : 'Undo carrying it on'}
             </button>
           </div>
         </>

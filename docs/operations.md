@@ -519,6 +519,18 @@ Bringing a download back into an account ([data-export.md](data-export.md#bringi
 
 **If a restore's record can't be read** (damaged), the account holds its totals as for one unfinished, and the card offers to empty the account; whoever runs the copy can instead delete the container's `user-restore` key once they have checked what is there.
 
+**The answers about restored banks need no switch.** Whether `RESTORE_ENABLED` is on or not, the card asks about each bank a restore brought back through Plaid that isn't linked: count its transactions as an ended account's, a connection made since isn't it, or which account tracked through SimpleFIN or Lunch Flow carries it on (`restored-answers`, [data-export.md](data-export.md#bringing-it-back)). Rolling back to the release before is safe: it doesn't know `restored-answers`, so the counted banks' transactions are held again there, said under each month, and nothing counts twice (it counts no restored row that isn't linked); the ends the answers wrote are in `account-lifecycle`, which it reads, so those accounts stay ended and hold no total. Back on this release, everything reads as before.
+
+## Carrying a restored account on
+
+An account a restore brought back from a SimpleFIN or Lunch Flow connection, whose new access gives it other ids (a new SimpleFIN Bridge account, another server, Lunch Flow in place of SimpleFIN), can be carried on by the account tracked in its place ([data-export.md](data-export.md#bringing-it-back)): Choose accounts asks which it is, the account keeps its id and history, and the new provider's transactions are matched to the ones from the download as they arrive. It is off unless `RESTORE_CARRY_ON_ENABLED=1` ([deployment.md](deployment.md#3-environment-variables)). With it off, Choose accounts asks nothing and says that a tracked account is a new one, whose transactions count beside the download's where both have them; an account carried on already is still read and matched, and can still be undone.
+
+**In this order: deploy, let it run, then turn it on.** A carried-on account's entry is `version: 2`, which the release before doesn't recognise. Deploy this release with `RESTORE_CARRY_ON_ENABLED` unset, leave it running long enough that rolling back past it is no longer a plan, then set `RESTORE_CARRY_ON_ENABLED=1` and redeploy.
+
+**Never roll back past the release before the one that turned it on.** Rolled back further, for each person who carried an account on, the release before reads their connector accounts as unreadable, as a rollback past Lunch Flow does (below): none is fetched, no total is recorded for them, their transactions are left out, said, and their cards answer 409. Nothing is lost or written; rolling forward, each connection's next fetch asks from before the last day it fetched. It never fetches the new provider's rows without the matching, which would count them twice. Rows taken over keep what they were (`continues`), which the release before reads and keeps through its own writes.
+
+**Nothing to run**, either way. Turning it off again leaves the accounts carried on as they are.
+
 ## Lunch Flow and rolling back
 
 Lunch Flow ([features.md](features.md#lunch-flow-and-what-it-costs)) is off unless `LUNCHFLOW_ENABLED=1` ([deployment.md](deployment.md#turning-on-lunch-flow)). **Turn it on only once Lunch Flow has confirmed in writing that people may use their own Personal API key in this app, and once anyone has connected it, never roll back to a release from before it.** Rolling back to this release or any later one is safe. Turning the switch off doesn't make an older release safe: it only stops new connections, and the connections already made stay.

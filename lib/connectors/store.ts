@@ -152,8 +152,36 @@ export type ConnectorConnection = {
 export type OwedSign = 'as_reported' | 'owed_positive';
 export const OWED_SIGNS: readonly OwedSign[] = ['as_reported', 'owed_positive'];
 
+/** Where an account a restore brought back was before it was carried on by
+ *  an account tracked through a connection made since (lib/connectors/
+ *  continue.ts), and when: what undoing it puts back, and what the matching
+ *  of its rows reads (lib/connectors/sync.ts mergeRecords). `until`: the day
+ *  of its last transaction from the old provider, or null with none;
+ *  `by_id`: the same provider and server, whose ids are the same, so rows
+ *  match by id alone, as connecting again finds them. */
+export type Continued = {
+  from: {
+    connector: ConnectorKind;
+    host: string | null;
+    connection_id: string;
+    remote_id: string;
+    name: string;
+    institution_name: string;
+    institution_key: string;
+    institution_ref: string;
+    sign: OwedSign | null;
+  };
+  at: string;
+  until: string | null;
+  by_id: boolean;
+};
+
+/** A tracked account. Version 2 is one carried on (`continued`): the release
+ *  before reads it as unrecognised, so it fetches nothing for it and records
+ *  no total, rather than fetching its rows without the matching and counting
+ *  them twice (docs/operations.md). */
 export type ConnectorAccount = {
-  version: 1;
+  version: 1 | 2;
   account_id: string;
   connection_id: string;
   connector: ConnectorKind;
@@ -194,6 +222,8 @@ export type ConnectorAccount = {
    *  days it covers off. Absent or empty when there are none. */
   left_out?: LeftOut[];
   created_at: string;
+  /** Version 2 only: where it was carried on from (Continued). */
+  continued?: Continued;
 };
 
 /** Days an account's own transactions may be missing from, `from` to `to`
@@ -285,10 +315,29 @@ export function isConnection(v: unknown): v is ConnectorConnection {
   );
 }
 
+function isContinued(v: unknown): v is Continued {
+  if (!isRecord(v) || !isRecord(v.from)) return false;
+  const f = v.from;
+  return (
+    isConnectorKind(f.connector) &&
+    (f.host === null || isText(f.host, 300)) &&
+    isText(f.connection_id, 200) &&
+    isText(f.remote_id, 200) &&
+    isText(f.name, 200) &&
+    isText(f.institution_name, 200) &&
+    isText(f.institution_key, 600) &&
+    isText(f.institution_ref, 100) &&
+    (f.sign === null || (OWED_SIGNS as readonly unknown[]).includes(f.sign)) &&
+    isTime(v.at) &&
+    (v.until === null || isCalendarDay(v.until)) &&
+    typeof v.by_id === 'boolean'
+  );
+}
+
 export function isConnectorAccount(v: unknown): v is ConnectorAccount {
   return (
     isRecord(v) &&
-    v.version === 1 &&
+    (v.version === 1 ? v.continued === undefined : v.version === 2 && isContinued(v.continued)) &&
     isText(v.account_id, 200) &&
     isText(v.connection_id, 200) &&
     isConnectorKind(v.connector) &&

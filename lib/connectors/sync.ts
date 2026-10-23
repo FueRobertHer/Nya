@@ -89,6 +89,7 @@ import {
   type StoredProblem,
 } from './store';
 import { answeredWhole } from './institutions';
+import { matchCarried, takeOver } from './continue';
 import { connectorOf } from './registry';
 import { CONNECTOR_WORDS, ConnectorFailure, type ConnectorDef, type ConnectorKind, type FetchRequest, type RemoteAccount, type RemoteAnswer } from './types';
 import { manualTxnStore, newManualTxnId, type ManualTxn, type ManualTxnBook } from '../manual-txns';
@@ -245,17 +246,20 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
             const book = books.get(account.account_id) ?? null;
             const next = [...(book?.rows ?? [])];
             const index = new Map<string, number>();
+            // Carried on from an account a restore brought back (lib/
+            // connectors/continue.ts): across servers, only rows from the
+            // new connection are found by id.
+            const c = account.continued;
+            const fromNew = (r: ManualTxn) => !c || c.by_id || r.created_at >= c.at || r.continues !== undefined;
             next.forEach((r, n) => {
-              if (r.source === account.connector && r.source_id) index.set(r.source_id, n);
+              if (r.source === account.connector && r.source_id && fromNew(r)) index.set(r.source_id, n);
             });
             let changed = false;
+            const unknown: ImportRow[] = [];
             for (const row of rows) {
               const n = index.get(row.source_id!);
               if (n === undefined) {
-                index.set(row.source_id!, next.length);
-                next.push(newRow(account.account_id, row, at));
-                counts.added++;
-                changed = true;
+                unknown.push(row);
                 continue;
               }
               const stored = next[n];
@@ -266,6 +270,23 @@ export async function mergeRecords(ctx: Ctx, items: { account: ConnectorAccount;
                 counts.updated++;
                 changed = true;
               }
+            }
+            // The rows it doesn't have by id: for a carried-on account, those
+            // that may be ones from the download take them over, by the
+            // import's rule; the rest are added.
+            const { taken, added } = c ? matchCarried(c, next, unknown) : { taken: [], added: unknown };
+            for (const { row, at: n } of taken) {
+              next[n] = takeOver(next[n], row);
+              index.set(row.source_id!, n);
+              counts.updated++;
+              changed = true;
+            }
+            for (const row of added) {
+              if (index.has(row.source_id!)) continue;
+              index.set(row.source_id!, next.length);
+              next.push(newRow(account.account_id, row, at));
+              counts.added++;
+              changed = true;
             }
             if (changed) writes.set(account.account_id, { version: 1, rows: next });
           }

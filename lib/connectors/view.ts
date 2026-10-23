@@ -27,6 +27,11 @@ export type AccountView = {
   /** A card or a loan reported as money held, not yet read either way. */
   needs_sign: boolean;
   balance_at: string | null;
+  /** Carried on from an account a restore brought back (lib/connectors/
+   *  continue.ts): what it was, and what the first answers found (of the
+   *  provider's rows dated up to `until`, how many took over one from the
+   *  download, and how many were added). Absent for every other account. */
+  continued?: { from: { connector: ConnectorKind; name: string; institution_name: string }; until: string | null; matched: number; added: number };
 };
 
 /** An account SimpleFIN offers that isn't tracked. Its balance only in the
@@ -84,8 +89,10 @@ export type ConnectionView = {
   available: OfferView[];
 };
 
-export function accountView(a: ConnectorAccount): AccountView {
+export function accountView(a: ConnectorAccount, evidence?: { until: string | null; matched: number; added: number } | null): AccountView {
+  const c = a.continued;
   return {
+    ...(c ? { continued: { from: { connector: c.from.connector, name: c.from.name, institution_name: c.from.institution_name }, until: c.until, matched: evidence?.matched ?? 0, added: evidence?.added ?? 0 } } : {}),
     account_id: a.account_id,
     name: a.name,
     institution_name: a.institution_name,
@@ -115,7 +122,13 @@ function elsewhereOf(offer: { remote_id: string; name: string; institution: stri
 
 /** One connection as the screens show it. `others`: the accounts other
  *  connections track, so an offer one of them tracks says so. */
-export function connectionView(connection_id: string, conn: ConnectorConnection, accounts: ConnectorAccount[], others: Others = []): ConnectionView {
+export function connectionView(
+  connection_id: string,
+  conn: ConnectorConnection,
+  accounts: ConnectorAccount[],
+  others: Others = [],
+  evidence: ReadonlyMap<string, { until: string | null; matched: number; added: number }> = new Map()
+): ConnectionView {
   const label = connectorOf(conn.connector).label;
   const nameOf = new Map(accounts.map((a) => [a.account_id, a.name]));
   const f = conn.last_fetch;
@@ -148,7 +161,7 @@ export function connectionView(connection_id: string, conn: ConnectorConnection,
     accounts: accounts
       .filter((a) => a.connection_id === connection_id)
       .sort((x, y) => x.institution_name.localeCompare(y.institution_name) || x.name.localeCompare(y.name))
-      .map(accountView),
+      .map((a) => accountView(a, evidence.get(a.account_id))),
     available: conn.available.map((a) => ({
       remote_id: a.remote_id,
       name: a.name,

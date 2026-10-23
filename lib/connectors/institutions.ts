@@ -142,7 +142,7 @@ const asOfOf = (a: ConnectorAccount) => a.balance_at ?? a.fetched_at;
 
 /** An account as two connections could both name it: its bank's name and its
  *  own, case and spacing aside. */
-const fingerprint = (institution: string, name: string) => `${institution.trim().replace(/\s+/g, ' ').toLowerCase()}\n${name.trim().replace(/\s+/g, ' ').toLowerCase()}`;
+export const fingerprint = (institution: string, name: string) => `${institution.trim().replace(/\s+/g, ' ').toLowerCase()}\n${name.trim().replace(/\s+/g, ' ').toLowerCase()}`;
 
 /** Another connection's account that an offered one is, or may be. */
 export type Elsewhere = { account: ConnectorAccount; host: string | null; certain: boolean };

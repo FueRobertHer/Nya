@@ -140,6 +140,12 @@ export type ManualTxn = TxnFields & {
    *  on one SimpleFIN brought, whose payee stays the bank's (an edit of it is
    *  refused): only a rule renames that. */
   named?: string;
+  /** On a row a connector account carried on from an account a restore
+   *  brought back took over (lib/connectors/sync.ts mergeRecords): the row
+   *  as it was, its source and id there, its day and its name (its amount
+   *  and currency are the same, by the rule that matched them), which
+   *  undoing the carrying on puts back. Absent on every other row. */
+  continues?: { source: string; source_id: string | null; date: string; name: string };
   created_at: string;
   /** When it was last changed in the app. An import that replaces it with
    *  its file's version, and the undo of that, leave it as it was: neither is
@@ -165,6 +171,11 @@ const isBalanceUpdate = (v: unknown) =>
   v === undefined || v === null || (isRecord(v) && isAmount(v.from) && isAmount(v.to) && (v.account_id === undefined || isText(v.account_id)));
 /** A source: lower-case words joined by ":", like "import:csv". */
 const isSource = (v: unknown) => typeof v === 'string' && v.length <= 40 && /^[a-z][a-z0-9]*(?::[a-z0-9]+)*$/.test(v);
+
+/** What a row taken over by a carried-on account was (ManualTxn
+ *  `continues`). */
+const isContinues = (v: unknown) =>
+  isRecord(v) && isSource(v.source) && isTextOrNull(v.source_id) && isCalendarDay(v.date) && typeof v.name === 'string' && (v.name as string).length <= 1000;
 
 /**
  * One stored row. The shape and types only, not today's limits (a payee's
@@ -192,6 +203,7 @@ export function isManualTxn(v: unknown): v is ManualTxn {
     (v.transaction_code === undefined || v.transaction_code === null || (typeof v.transaction_code === 'string' && v.transaction_code.length <= 40)) &&
     isBalanceUpdate(v.balance_update) &&
     (v.named === undefined || (typeof v.named === 'string' && v.named.length <= 1000)) &&
+    (v.continues === undefined || isContinues(v.continues)) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
   );

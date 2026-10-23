@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { ConnectButtonsView, SIMPLEFIN_OPTION } from '@/components/ConnectButtons';
-import { backIn, ChooseView, ConnectIntro, ConnectorCardView, EndedPointer, guessKind, KINDS, nothingToKeep, reportedWords, SignView } from '@/components/Connectors';
+import { backIn, carriedLine, carryChoiceWords, carryNote, ChooseView, ConnectIntro, ConnectorCardView, EndedPointer, guessKind, KINDS, nothingToKeep, reportedWords, SignView, uncarryWords } from '@/components/Connectors';
 import MonthBreakdown from '@/components/MonthBreakdown';
 import type { Txn } from '@/lib/transactions';
 import { ConnectionHealthView } from '@/components/ConnectionHealth';
@@ -129,6 +129,46 @@ describe('choosing accounts', () => {
     expect(html).toContain(
       'An account you track here could be one of the banks from your download (Chase and Ally): until you say whether it is, under Manage, Bring back a download, their transactions from your download aren’t counted.'
     );
+  });
+
+  test('while an account from a download waits, each account chosen asks whether it is that one, offering only those in its currency', () => {
+    const offers = [
+      { remote_id: 'A', name: 'Checking', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1, balance_at: null, elsewhere: null },
+      { remote_id: 'B', name: 'Savings', institution: 'My Bank', currency: 'USD', currency_text: 'USD', balance: 1, balance_at: null, elsewhere: null },
+    ];
+    const waiting = [{ account_id: 'manual_old', name: 'Checking', institution_name: 'My Bank', type: 'depository', currency: 'USD', connector: 'simplefin' as const, last: '2026-10-03' }];
+    const carry = { enabled: true, waiting, offers: { A: [{ account_id: 'manual_old', evidence: 'likely' as const }], B: [] } };
+    const props = { label: 'SimpleFIN', tracked: [], offers, keep: true, busy: false, guessed: false, onChoose: noop, onKeep: noop, carry };
+    const html = renderToStaticMarkup(<ChooseView {...props} choices={{ A: 'depository' }} />).replace(/&#x27;/g, "'");
+    expect(html).toContain('aria-label="Is Checking one of the accounts from your download?"');
+    expect(html).toContain('<option value="new">No: a new account</option>');
+    expect(html).toContain('<option value="manual_old">Yes: My Bank Checking, USD, last transaction Oct 3, 2026 (likely)</option>');
+    // Only an account chosen is asked about.
+    expect(html).not.toContain('aria-label="Is Savings one of the accounts from your download?"');
+    expect(html).toContain(carryNote(carry));
+    expect(carryNote(carry)).toBe(
+      'Your download brought back My Bank Checking, waiting for its connection. Say for each account you track whether it is one of them: carried on, it keeps that account’s history, and the transactions from your download aren’t counted twice.'
+    );
+    // Turned off: nothing is asked, and what tracking does is said.
+    const off = renderToStaticMarkup(<ChooseView {...props} carry={{ ...carry, enabled: false }} choices={{ A: 'depository' }} />);
+    expect(off).not.toContain('one of the accounts from your download?');
+    expect(carryNote({ ...carry, enabled: false })).toContain('An account you track here is a new one: if it is one of them, its transactions count beside the ones from your download where both have them.');
+    expect(carryChoiceWords(waiting[0], 'same')).toBe('Yes: My Bank Checking, USD, last transaction Oct 3, 2026 (the same account)');
+    expect(carryChoiceWords({ ...waiting[0], last: null }, 'possible')).toBe('Yes: My Bank Checking, USD');
+  });
+
+  test('an account carried on says what it carries on and what the first answers found, plainly when none matched, with its undo', () => {
+    const carried = { ...conn().accounts[0], continued: { from: { connector: 'simplefin' as const, name: 'Old Checking', institution_name: 'My Bank' }, until: '2026-10-03', matched: 40, added: 2 } };
+    expect(carriedLine(carried, 'SimpleFIN')).toEqual({ text: 'Checking carries on My Bank Old Checking from your download: 40 of the 42 transactions SimpleFIN sent from before Oct 3, 2026 were in it, and 2 more were added.', warn: false });
+    expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 140 } }, 'SimpleFIN')).toEqual({
+      text: 'None of the 140 transactions SimpleFIN sent from before Oct 3, 2026 are in your download: if Checking isn’t the same account, undo carrying it on.',
+      warn: true,
+    });
+    expect(carriedLine({ ...carried, continued: { ...carried.continued, matched: 0, added: 0 } }, 'SimpleFIN')!.text).toBe('Checking carries on My Bank Old Checking from your download: its transactions are matched to those from your download as SimpleFIN sends them.');
+    expect(carriedLine(conn().accounts[0], 'SimpleFIN')).toBeNull();
+    const html = renderToStaticMarkup(<ConnectorCardView conn={conn({ accounts: [carried] })} requests={null} busy={false} note={null} onAsk={noop} onRefresh={noop} />);
+    expect(html).toContain('Undo carrying Checking on');
+    expect(uncarryWords(carried, 'SimpleFIN')).toContain('My Bank Old Checking goes back as your download brought it, waiting for its connection');
   });
 
   test('stopping a tracked account asks whether to keep it as a manual account, keeping by default', () => {
