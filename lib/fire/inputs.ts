@@ -241,6 +241,12 @@ export type TrailingFlows = {
    *  spending or income (lib/spending.ts uncategorizedFromConnector); absent
    *  is none. */
   uncategorized?: number;
+  /** IOUs you owe dated before the bank's history begins (`from`), left out
+   *  of every figure: the year is measured from the bank's rows and scaled
+   *  up from them, so one typed for a day before would be scaled as if it
+   *  were inside (lib/shared-expenses/rows.ts). How many, and what they come
+   *  to, unscaled, in `currency`; absent is none. */
+  iousBefore?: { count: number; amount: number };
 };
 
 /** Money out (what the spending figure is made of) or money in (income). */
@@ -319,14 +325,21 @@ export function trailingFlows(
   const excludedCount = transactionCounter();
   const hiddenCount = transactionCounter();
   let uncategorized = 0;
+  // Where the history begins, first: never an IOU's row, dated whatever day
+  // the person typed (lib/spending.ts isHistoryRow). The figures are the
+  // span from there to today scaled up to a year, so a row the rule rejects
+  // dated before it (an IOU typed for an earlier day) is outside what is
+  // measured: left out, and said (iousBefore), never scaled up.
   let earliest = end;
+  for (const t of counting.rows) {
+    const d = dayNumber(t.date);
+    if (isHistoryRow(t) && d < earliest) earliest = d;
+  }
+  const before = { count: 0, amount: 0 };
   // Each refund whole: a split one's refunded parts added up (#39).
   const refunds = new Map<string, { amount: number; date: string; name: string }>();
   for (const t of counting.rows) {
     const d = dayNumber(t.date);
-    // Where the history begins: never an IOU's row, dated whatever day the
-    // person typed (lib/spending.ts isHistoryRow).
-    if (isHistoryRow(t) && d < earliest) earliest = d;
     if (isExcluded(t)) {
       // Another person's part, or money paid back between people, isn't an
       // exclusion of the person's (lib/shared-expenses/rows.ts).
@@ -352,6 +365,13 @@ export function trailingFlows(
           w.n.add(t);
           away.set(c, w);
         }
+      }
+      continue;
+    }
+    if (!isHistoryRow(t) && d < earliest) {
+      if (counts(flow)) {
+        before.count++;
+        before.amount += t.amount;
       }
       continue;
     }
@@ -424,6 +444,7 @@ export function trailingFlows(
     volume: { spending: sideVolume(sides.spending), income: sideVolume(sides.income) },
     conversion: counting.conversion,
     uncategorized,
+    ...(before.count > 0 ? { iousBefore: before } : {}),
   };
 }
 
