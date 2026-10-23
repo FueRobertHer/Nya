@@ -45,7 +45,8 @@ Generate every secret or key with `openssl rand -base64 32`. [`.env.example`](..
 | `MASTER_KEY` | recommended | Envelope encryption master key. Save it in a password manager first. |
 | `INGEST_SECRET` | optional | Authenticates scripted balance pushes to manual accounts. Unset keeps `/api/ingest/balance` closed. |
 | `OPS_SECRET`, `OPS_ENABLED` | optional | Backups and other operations, only while you run one. |
-| `BLOB_READ_WRITE_TOKEN` | optional | Set for you when a private Blob store is connected; turns on nightly backups. |
+| `BLOB_READ_WRITE_TOKEN` | optional | Set for you when a private Blob store is connected; turns on nightly backups, and is the file store for receipts and documents. Connect the store to Production only ([operations.md](operations.md#turning-them-on)). |
+| `ATTACHMENTS_QUOTA_MB` | optional | The most each account may keep of receipts and documents, in megabytes (a whole number from 1; 1024 is a good start). Unset, nothing new can be attached; files already attached stay reachable. Needs `BLOB_READ_WRITE_TOKEN` and `MASTER_KEY` ([operations.md](operations.md#receipts-and-documents)). |
 | `BACKUP_KEEP_DAYS` | optional | Days of backups to keep (default 30). The deletion receipt and the public Security and Privacy pages read it (and whether a Blob store is connected), so what they say follows it. |
 | `DATABASE_BACKUP_DAYS` | optional | The days the database host's own backups keep a copy (Upstash's Daily Backup keeps each for 1 or 3 days); `0`, the default, means they are off. Each holds the whole database, keys included, so the deletion receipt and the public pages add it to how long a deleted account's copies stay readable. See [operations.md](operations.md#per-container-data-keys). |
 | `PLAID_WEBHOOK_URL` | optional | Public URL of `/api/plaid/webhook`. See [features.md](features.md#keeping-plaid-costs-down). |

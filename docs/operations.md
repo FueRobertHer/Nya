@@ -19,6 +19,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [Exchange rates, and rolling back](#exchange-rates-and-rolling-back)
 - [Turning on restores](#turning-on-restores)
+- [Receipts and documents](#receipts-and-documents)
 - [Email and the weekly summary](#email-and-the-weekly-summary)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -551,6 +552,64 @@ Writing through the API and the MCP server ([features.md](features.md#writing-th
 - **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the new stores, so values written by writing would stay under the keys they were written with; run them after rolling forward.
 
 Rolling forward again, everything reads as before: the tokens made to write work again, and their changes are in the record, undoable for what is left of their 30 days.
+
+## Receipts and documents
+
+Photos of receipts and PDFs attached to transactions ([features.md](features.md#receipts-and-documents), [architecture.md](architecture.md#receipts-and-documents)) are the first data that doesn't live in the database: their encrypted parts are kept in the same private Vercel Blob store as the backups, under `attachments/<environment>/<account id>/<file id>/<part>`, and only their records (with each file's key, locked with the account's own data key) are in the database.
+
+### Turning them on
+
+They are on in two steps, so whoever pays for the storage chooses to:
+
+1. **A file store, and a master key.** The Blob store the backups use ([Nightly backups](#nightly-backups)) is the file store: with `BLOB_READ_WRITE_TOKEN` set, files already attached can be opened, moved, renamed, deleted and downloaded, the nightly clean-up runs, and deleting an account deletes its files. A file is locked with its account's own data key, so `MASTER_KEY` must be set too ([Turning on the master key](#turning-on-the-master-key)); an account without a key of its own yet can't attach anything until the [migration pass](#moving-existing-data-to-keys-of-its-own-the-migration-pass) gives it one, and the sheet says so.
+2. **A quota.** Adding a file also needs `ATTACHMENTS_QUOTA_MB`: the most each account may keep, in megabytes (a whole number from 1; 1024 is a good start). Unset, nothing new can be added and the pages say "Adding new ones is off on this copy of Nya"; what is there stays reachable. Each account may also keep at most 4,000 files, 10 on one transaction, each at most 10 MiB.
+
+Then redeploy. Nothing to run.
+
+**Give the token to Production only**, or make one Blob store per environment. In Vercel, when the store is connected to the project, untick Preview and Development (Storage, the store, Projects, the project's environments), or connect a second store to them. Whoever holds the token can read, list and delete every object in the store, every environment's files and backups among them: a Preview deployment running a branch's code with Production's token could reach Production's files. They are encrypted, and their keys are in Production's database, not the store, but a delete needs no key. Every call the app makes passes the token itself, so the store it writes to is the store it reads from.
+
+The store must be **private**, as for the backups. Each upload checks the address Blob answers with, and a store made public by mistake fails every upload: the object is deleted at once, the sheet says the file store can't be reached, and the log says `Receipts and documents: the file store failed StoreNotPrivateError`. Nothing is ever left readable by its address.
+
+### What it costs
+
+Vercel bills Blob for what is stored, for the operations made and for data moved; the prices change, so see Vercel's [Blob pricing](https://vercel.com/docs/vercel-blob/usage-and-pricing). What each flow does:
+
+- **Attaching a file**: one upload per part (a photo is one part, about 300 KB; a PDF one per 2 MiB, at most 5), and one for its thumbnail.
+- **Opening one**: one read per part, through the app's function (data moved from Blob to the function, and from it to the browser), and one for a thumbnail. Nothing is cached, so each look reads again.
+- **Deleting one**: one delete call for all its parts.
+- **The ZIP download**: one listing of the account's folder when the card gets the download ready and one per ZIP file, and one read per part.
+- **The nightly clean-up**: a delete call per abandoned upload or unfinished delete; once a week, a listing of the environment's folder and of each account's folder.
+- **Deleting an account**: a listing of its folder and a delete call per hundred objects.
+
+What is stored, and what the quota counts, is each file's encrypted parts and its thumbnail: their own size plus 29 bytes each.
+
+### The nightly clean-up
+
+Object storage has no foreign keys, so a cron (`/api/attachments/sweep`, at 17:30 UTC, after the backup and checking `CRON_SECRET`) keeps the store and the records saying the same: it throws away uploads left unfinished a day past their hour, finishes deletes the store couldn't take at the time, works out each account's usage and index again from the records, and checks where files are placed against the stored transactions (for an account a failed step marked, and every account once a week). Once a week it lists the store: an object no record names is deleted only once it has been seen unnamed for `BACKUP_KEEP_DAYS` + 1 days (2 with no backups), counted from when it was first seen, so a record a kept backup could bring back always finds its file; and a deleted account's folder is emptied. Never while an account is being restored, while the backups are failing, or while `BACKUP_KEEP_DAYS` is invalid; a folder of an account that is neither in the registry nor deleted is logged and left alone.
+
+**The breaker.** In an account whose folder has objects and no record at all, or where more than 20 percent of its files, or more than 50, would go in one pass, the clean-up deletes nothing there, logs `Receipts sweep: the breaker held account <id> (…)`, and the dashboard says it held back for a week. That is what records wiped by mistake look like (a bad restore, a migration that went wrong): check the account's `attachments` records before anything else. If they are truly gone and the objects are to go, delete the account's folder (`attachments/<environment>/<account id>/`) in the store's browser; the objects can't be opened without the records anyway.
+
+The dashboard also says when the last run failed, with the reason, or when none has finished for nine days. A run does what it can in four minutes and the next one carries on from the account after the last it finished.
+
+### Backups, restores and the files
+
+**The files are in no backup.** The nightly backups copy the database, so they hold each file's record and its locked key, never the file. This copy keeps one copy of each file, and the card under Manage asks people to download theirs; the store's own durability is Vercel's. A file someone deletes is gone once its objects are: no backup restores it.
+
+**Restoring a backup** of the database brings back the records as they were that night. A file deleted since has no objects any more, so it says it can't be opened (the person deletes it); a file added since has objects and no record, which the clean-up deletes once no kept backup could name it (`BACKUP_KEEP_DAYS` + 1 days after it first sees it), never before. Files are kept under the environment's name (`REDIS_PREFIX`, or `VERCEL_ENV`): a backup restored under another prefix finds every file "not in storage" until its folder is copied across, from `attachments/<old environment>/` to `attachments/<new environment>/` (a short script with `@vercel/blob`'s `list` and `copy`, passing `access: 'private'`), and its records stay as they were meanwhile.
+
+**Rotating the master key** and the migration pass leave the files alone: each file's key is locked with its account's own data key, which a rotation locks again under the new master and never replaces. **An account's own data key must never be replaced or retired while the account lives**: every file key would have to be locked again under the new one first, and nothing does that yet.
+
+### Before turning attachments on
+
+What the tests here can't check, on real devices, once on a Preview deployment with its own store:
+
+- **A PDF**: tap Save in the viewer, and open the file, in Chrome, Firefox and Safari on a computer, in Safari on an iPhone, and in the app added to an iPhone's home screen. A PDF is only ever saved in this release, never shown in the page, because which policy each browser's own viewer accepts needs those devices.
+- **A HEIC photo from a real iPhone**: Take a photo in Safari, and choose a HEIC one from the library in Safari, and in Chrome on the iPhone; it should arrive as a JPEG with no location. Chrome or Firefox on a computer or an Android phone should refuse a HEIC with what to do.
+- **A long till receipt** photographed whole: readable once zoomed.
+
+### Rolling back
+
+A release from before this one doesn't know the stores: the records and the files stay as they are, unread, and nothing deletes them. While it runs, an account's deletion deletes its records and destroys its key, so its files can never be opened again, but leaves its objects in the store; rolling forward, the clean-up empties that folder. Its restore's check that an account is empty counts the records as data. Turning the quota off is the lever that stops new files, and needs no rollback.
 
 ## Email and the weekly summary
 
