@@ -28,6 +28,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
+import { ScenarioTag } from './ScenarioTag';
 import { Choice } from './PlanForms';
 import { dayName, wholeMoney } from './plan-text';
 import {
@@ -185,12 +186,17 @@ export type AllocationCardProps = {
   onSavePlan: (next: FirePlan) => Promise<boolean>;
   /** False while the plan is loading, saving or waiting on a repair. */
   planEditable: boolean;
+  /** The allocation settings (target, splits, buckets) can't be saved here:
+   *  a scenario is open, and they are the same for every plan. */
+  settingsLocked?: boolean;
+  /** The open scenario's name: "Use my allocation" then saves to it. */
+  scenarioName?: string | null;
   /** Every institution, for naming accounts missing from a recorded day. */
   institutions: AllocInstitution[];
   balancesAsOf: string | null;
 };
 
-export default function AllocationCard({ allocation, plan, onSavePlan, planEditable, institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onSavePlan, planEditable, settingsLocked = false, scenarioName = null, institutions, balancesAsOf }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
@@ -203,7 +209,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
   const close = () => setSheet(null);
   const currency = alloc.currency;
   const money = (n: number) => wholeMoney(n, currency);
-  const editable = withSettings && !settings.saving;
+  const editable = withSettings && !settings.saving && !settingsLocked;
   const current = settings.value ?? EMPTY_SETTINGS;
   // Counts the person's saves, so the mix over time, which the server
   // classifies with the saved splits, is read again after each one.
@@ -234,6 +240,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
 
   return (
     <div className="card alloc-card">
+      <ScenarioTag name={scenarioName} />
       <div className="inst-header">
         <div className="inst-name">Allocation</div>
         {hasAccounts && (
@@ -254,6 +261,7 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
         </>
       )}
       {settings.saveError && <div className="error">{settings.saveError}</div>}
+      {settingsLocked && <p className="panel-note">Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.</p>}
 
       {!hasAccounts ? (
         <p className="empty-note">No investment accounts to show. Connect a brokerage or retirement account, or add one by hand on the Accounts tab.</p>
@@ -299,7 +307,9 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             ? shown.kind === 'target'
               ? 'Target allocation'
               : shown.kind === 'mix'
-                ? 'Use your allocation in the plan'
+                ? scenarioName
+                  ? 'Use your allocation in this scenario'
+                  : 'Use your allocation in the plan'
                 : shown.kind === 'bucket'
                   ? 'Tax bucket'
                   : `Classify ${shown.label}`

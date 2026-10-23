@@ -591,6 +591,16 @@ describe('the card', () => {
     expect(t).toContain('Over time');
   });
 
+  test('with a scenario open: says so, and its own settings, the same for every plan, can’t be changed there', () => {
+    const html = renderToStaticMarkup(
+      <AllocationCard allocation={state()} plan={plan()} onSavePlan={async () => true} planEditable settingsLocked scenarioName="Retire at 50" institutions={institutions} balancesAsOf={null} />
+    );
+    const t = text(html);
+    expect(t).toContain('Scenario: Retire at 50');
+    expect(t).toContain('Your target, fund splits and tax buckets are the same for every plan: change them with your plan open.');
+    expect(html).toMatch(/<button class="plan-edit" disabled="">Set a target<\/button>/);
+  });
+
   test('while the settings can’t be read, says the figures leave them out, and pauses editing', () => {
     const settings = { ...initialListState<AllocationSettings | null>(null), status: 'error' as const, error: 'Your saved allocation settings could not be read, so they have been left untouched and editing is paused.' };
     const html = renderToStaticMarkup(

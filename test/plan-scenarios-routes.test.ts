@@ -218,7 +218,7 @@ describe('saved plan scenarios, on the storage seam', () => {
     await fake.hset(ctxKey('plan-scenarios'), { broken: 'damaged-bytes-not-ciphertext-at-all' });
     const damaged = await quiet(() => call('PUT', { id: 'broken', based_on: 'r', scenario: draft() }));
     expect([damaged.res.status, damaged.body.unreadable]).toEqual([409, true]);
-    expect(await fake.hget(ctxKey('plan-scenarios'), 'broken')).toBe('damaged-bytes-not-ciphertext-at-all');
+    expect((await fake.hget(ctxKey('plan-scenarios'), 'broken')) as unknown).toBe('damaged-bytes-not-ciphertext-at-all');
   });
 
   test('each person’s own: another’s are never listed, edited or deleted from here', async () => {
