@@ -663,17 +663,28 @@ describe('idempotency keys', () => {
   test('two takeovers at once make it once: the claim moves to one of them alone', async () => {
     const first = await claimedAlone('k-7');
     setSystemTime(new Date(LATER));
-    // Each takeover's read of the first's change slowed, as a network round
-    // trip would, so both read before either moves the claim.
+    // Each takeover's read of the first's change held until both have read
+    // the claim and reached it, as a network round trip could, so both read
+    // before either moves the claim, however slow the machine (a fixed delay
+    // let one finish first on a loaded one).
     const changes = await import('@/lib/api-changes');
     const real = changes.getChange;
     let looked = 0;
+    let bothThere: () => void = () => {};
+    const both = new Promise<void>((resolve) => (bothThere = resolve));
     const slow = spyOn(changes, 'getChange').mockImplementation(async (c, id, now) => {
       if (id === first) {
-        looked++;
-        await new Promise((r) => setTimeout(r, 30));
+        if (++looked === 2) bothThere();
+        await Promise.race([both, new Promise((r) => setTimeout(r, 5000))]);
       }
       return real(c, id, now);
+    });
+    // The second request slower to claim its key, as on a loaded machine.
+    const claim = changes.claimKey;
+    let claims = 0;
+    const late = spyOn(changes, 'claimKey').mockImplementation(async (...args) => {
+      if (++claims === 2) await new Promise((r) => setTimeout(r, 60));
+      return claim(...args);
     });
     try {
       const [x, y] = await Promise.all([
@@ -685,6 +696,7 @@ describe('idempotency keys', () => {
       expect([x, y].find((r) => r.status === 409)!.body.error.code).toBe('in_progress');
     } finally {
       slow.mockRestore();
+      late.mockRestore();
     }
     expect(await rows()).toHaveLength(1);
   });
