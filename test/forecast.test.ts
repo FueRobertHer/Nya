@@ -540,7 +540,33 @@ describe('what it says it may be missing', () => {
     // minimum) is no payment of it.
     expect(notesFor(withCard, [{ ...payment, name: 'Gym', amount: 45, date: '2026-10-20' }])).toEqual([named]);
     expect(notesFor(withCard, [{ ...payment, name: 'Phone', amount: 35, date: '2026-10-20' }])).toEqual([named]);
-    expect(notesFor(withCard, [{ ...payment, name: 'Chase minimum', amount: 35, date: '2026-10-20' }])).toEqual([]);
+    expect(notesFor(withCard, [{ ...payment, name: 'Sapphire minimum', amount: 35, date: '2026-10-20' }])).toEqual([]);
+    expect(notesFor(withCard, [{ ...payment, name: 'Chase card minimum', amount: 35, date: '2026-10-20' }])).toEqual([]);
+    // The bank's name alone names its other accounts too (review): a car
+    // loan and a personal loan there, or a weekly move to savings there, are
+    // no part of the card's payment, whatever they come to.
+    const thousand = withLiability({ last_statement_balance: 1000 });
+    const full = (owed: string) =>
+      `Sapphire's payment, statement balance ${owed}, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`;
+    expect(
+      notesFor(thousand, [
+        { ...payment, id: 'auto', name: 'Chase auto loan', amount: 450, date: '2026-10-20' },
+        { ...payment, id: 'personal', name: 'Chase personal loan', amount: 400, date: '2026-10-25' },
+      ])
+    ).toEqual([full('$1,000.00')]);
+    expect(notesFor(withLiability({ last_statement_balance: 400, minimum_payment: 25 }), [{ ...payment, name: 'Transfer to Chase savings', amount: 200, date: '2026-10-18', cadence: 'weekly' }])).toEqual([
+      full('$400.00'),
+    ]);
+    expect(notesFor(thousand, [{ ...payment, name: 'Chase auto loan', amount: 450 }])).toEqual([full('$1,000.00')]);
+    // The card itself: a word of a longer name of its own, or its mask.
+    const preferred = (planned: PlannedItem[]) =>
+      notesFor([inst({ accounts: [acct(), { ...sapphire, name: 'Chase Sapphire Preferred', mask: '4821', liability: { ...sapphire.liability, last_statement_balance: 1000 } }] })], planned);
+    expect(preferred([{ ...payment, name: 'Sapphire', amount: 500 }, { ...payment, id: 'p2', name: 'Card 4821', amount: 450, date: '2026-10-24' }])).toEqual([]);
+    expect(preferred([{ ...payment, name: 'Preferred card', amount: 500 }, { ...payment, id: 'p2', name: 'Chase loan', amount: 450, date: '2026-10-24' }])).toHaveLength(1);
+    // Within a quarter of what is owed, exactly, to the cent.
+    expect(notesFor(withCard, [{ ...payment, amount: 304.65 }, { ...payment, id: 'p2', amount: 304.65, date: '2026-10-24' }])).toEqual([]);
+    expect(notesFor(withCard, [{ ...payment, amount: 304.64 }, { ...payment, id: 'p2', amount: 304.65, date: '2026-10-24' }])).toEqual([partly(609.29)]);
+    expect(notesFor(withCard, [{ ...payment, amount: 507.75 }, { ...payment, id: 'p2', amount: 507.75, date: '2026-10-24' }])).toEqual([]);
     // Planned items that name neither the card nor its bank are no part of it
     // (review): a gym, rent, or the month's other bills near the due date.
     expect(notesFor(withCard, [{ ...payment, name: 'Gym', amount: 55 }])).toEqual([named]);
