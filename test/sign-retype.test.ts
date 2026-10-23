@@ -247,6 +247,18 @@ describe('a kind changed between money held and owed, with history', () => {
     expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: -300 });
   });
 
+  test('two changes to the same kind at once turn its history over once', async () => {
+    const { retypeWithHistory } = await import('@/lib/sign-repair');
+    // Both read checking before either held the lock; the second finds a card.
+    const [a, b] = await Promise.all([retypeWithHistory(ctx, card, 'credit'), retypeWithHistory(ctx, card, 'credit')].map((p) => p.catch((e: Error) => e.message)));
+    expect([a, b].sort()).toEqual(['Another change to your accounts is in progress. Try again in a moment.', true].sort() as any);
+    expect(await retypeWithHistory(ctx, card, 'credit')).toBe(false);
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
+    // Within its side, after: a loan, nothing turned over again.
+    expect(await retypeWithHistory(ctx, card, 'loan')).toBe(true);
+    expect(await stored('history:accounts', FRI)).toEqual({ chk: 1000, [card]: 300 });
+  });
+
   test('within one side nothing is re-signed', async () => {
     const raw = new Map(fake.hashes.get(ctxKey('history:accounts')));
     await retype('investment');

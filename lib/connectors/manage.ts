@@ -312,7 +312,7 @@ export async function retypeAccounts(ctx: Ctx, changes: { account_id: string; ty
   });
   for (const c of crossing) {
     try {
-      if (await retypeWithHistory(ctx, c.account_id, current.get(c.account_id)!.type, c.type)) changed++;
+      if (await retypeWithHistory(ctx, c.account_id, c.type)) changed++;
     } catch (err) {
       // Another change to accounts holds the lock: nothing changed.
       if (err instanceof ForgetRefused) throw new ConnectorRefused(err.message, 409);

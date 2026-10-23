@@ -362,10 +362,19 @@ export async function runSignJob(ctx: Ctx, id: string): Promise<{ negated: numbe
  * this one is written before anything changes and run. Answers whether the
  * kind changed.
  */
-export async function retypeWithHistory(ctx: Ctx, id: string, from: string, to: string, now: number = Date.now()): Promise<boolean> {
+export async function retypeWithHistory(ctx: Ctx, id: string, to: string, now: number = Date.now()): Promise<boolean> {
   return withLinksLock(ctx, async () => {
     await runLocked(ctx, id);
-    const job: SignJob = { v: 1, kind: 'retype', from, to, at: new Date(now).toISOString(), tag: `sign-${randomUUID()}` };
+    // Its kind as it is now, under the lock: another change may have landed
+    // since the caller read it, and a job is only for a change across.
+    const account = await connectorAccountsStore.get(ctx, id);
+    if (!account) return false;
+    if (isOwedType(account.type) === isOwedType(to)) {
+      if (account.type === to) return false;
+      await connectorAccountsStore.update(ctx, id, (a) => (a && isOwedType(a.type) === isOwedType(to) ? { ...a, type: to as ConnectorAccount['type'], subtype: null } : a));
+      return true;
+    }
+    const job: SignJob = { v: 1, kind: 'retype', from: account.type, to, at: new Date(now).toISOString(), tag: `sign-${randomUUID()}` };
     await signJobStore.set(ctx, id, job);
     await runLocked(ctx, id);
     return (await connectorAccountsStore.get(ctx, id))?.type === to;
