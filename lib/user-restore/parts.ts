@@ -32,14 +32,16 @@ export const CORE_PARTS = [
   'group_budgets',
   'goals',
   'api_tokens',
+  'attachments',
   'sharing',
 ] as const;
 export type CorePart = (typeof CORE_PARTS)[number];
 
 /** Never brought back (docs/data-export.md, "Bringing it back"): a token is
- *  made again by the person, sharing is between two people. Read only to
- *  count them. */
-export const NEVER_CORE: ReadonlySet<string> = new Set(['api_tokens', 'sharing']);
+ *  made again by the person, sharing is between two people, and receipts and
+ *  documents are files the JSON only lists (their ZIP download has them; a
+ *  later restore step brings them back). Read only to count them. */
+export const NEVER_CORE: ReadonlySet<string> = new Set(['api_tokens', 'attachments', 'sharing']);
 
 /** What a restore does with a store on the seam:
  *    write   written as the file has it (ids of the bank's rows re-keyed)

@@ -143,7 +143,10 @@ const joinAnd = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? 
 /** Why a figure isn't measured, and what to do: never an amount. `as`:
  *  the year's figures said for savings and the savings rate (`year`), or the
  *  savings rate alone (`rate`, savings typed), rather than for spending, so
- *  the words never point at a spending figure that was typed. */
+ *  the words never point at a spending figure that was typed. The default
+ *  (`figure`) for the year is the spending figure's, asked only while the
+ *  spending side is left out (spendingOff): a gap of the income alone is
+ *  said for savings, with `year` or `rate`. */
 export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure'): string {
   const left = g.leftOut.reduce((n, l) => n + l.count, 0);
   const noun = g.what === 'spending' ? 'transaction' : 'account';
@@ -160,7 +163,6 @@ export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure
           : ', by count';
   // Which side of the year is left out, where it was weighed on each.
   const sides = g.what === 'spending' ? (g.sides ?? []) : [];
-  const onlyIncome = sides.length === 1 && sides[0] === 'income';
   const whole = sides.length === 0 ? 'what would count' : sides.length === 2 ? 'both the year’s spending and its income' : `the year’s ${sides[0]}`;
   const share = `more than a tenth of ${whole}${judged}, is in another currency than ${g.into ? `the Plan’s, ${g.into}` : 'the rest'} (${these}${when})`;
   const convert = `Choose a home currency on the Currency card under Manage on the Accounts tab to convert ${them}`;
@@ -170,12 +172,9 @@ export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure
   if (g.what === 'spending' && as === 'year') {
     return `The year’s income and savings aren’t measured: ${share}. Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. ${convert}, or type your savings.`;
   }
-  const of = g.what === 'assets' ? 'your investments' : sides.length === 2 ? 'your spending and income' : onlyIncome ? 'your income' : 'your spending';
-  // Only the income left out: the spending figure is the year's, measured
-  // with it, so the year's figures are what would leave it out.
-  const from = onlyIncome ? 'the year’s figures from the rest' : 'a figure from the rest';
+  const of = g.what === 'assets' ? 'your investments' : sides.length === 2 ? 'your spending and income' : 'your spending';
   const type = g.what === 'spending' ? 'your spending' : 'your invested assets';
-  return `Not measured: ${share}. Without a home currency nothing is converted, so ${from} would leave that much of ${of} out. ${convert}, or type ${type}.`;
+  return `Not measured: ${share}. Without a home currency nothing is converted, so a figure from the rest would leave that much of ${of} out. ${convert}, or type ${type}.`;
 }
 
 /** What isn't worked out because an input isn't measured, and why: the

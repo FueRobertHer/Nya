@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test';
-import { TEST_CTX } from './fake-redis';
+import { describe, expect, test, mock } from 'bun:test';
+import { FakeRedis, storageMock, TEST_CTX, registerTestContainer } from './fake-redis';
 import { accountMismatch, planImport, statementBalance } from '@/lib/import/commit';
 import { isImportEntry, isImportId, isImportSettings, isImportSummary, newImportId, summaryOf, type ImportEntry } from '@/lib/import/store';
 import { normalizeRecords } from '@/lib/import/normalize';
@@ -13,6 +13,12 @@ import type { RawRecord } from '@/lib/import/record';
 // do against a book, when a statement's balance may be set, a statement for
 // another account, and the shapes the import stores keep
 // (lib/import/store.ts). The writes themselves are test/import-routes.test.ts.
+//
+// The largest records are encrypted as stored, which reads the container's
+// key from storage: faked here, so the file runs alone as in a whole run
+// (where it used to borrow whatever storage mock an earlier file left).
+const fake = new FakeRedis({ deserialize: true });
+mock.module('@/lib/storage', () => storageMock(fake));
 
 const statement = (over: Partial<StatementInfo> = {}): StatementInfo => ({
   index: 0,
@@ -289,6 +295,8 @@ describe('what the import stores keep', () => {
 describe('the largest records a file can make', () => {
   test('a 3 MB file of control characters, which JSON writes six times over, still keeps its records within the ceiling', async () => {
     process.env.PLAID_ENCRYPTION_KEY ??= Buffer.alloc(32, 7).toString('base64');
+    fake.reset();
+    await registerTestContainer(fake);
     const { encodeJsonText, maxBlobChars } = await import('@/lib/blob');
     const day = (i: number) => new Date(Date.UTC(2023, 0, 1) + Math.floor(i / 7) * 86_400_000).toISOString().slice(0, 10);
     let seed = 7;

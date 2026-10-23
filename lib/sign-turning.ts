@@ -13,10 +13,15 @@
  *  (lib/manual.ts MANUAL_ID_PREFIX): only those are ever turned over. */
 const ACCOUNT = /^manual_[A-Za-z0-9_-]{1,100}$/;
 
-/** The note, for the accounts whose jobs are pending. */
-export function turningOverWords(ids: readonly string[]): string {
+/** The note, for the accounts whose jobs are pending: those Nya's daily
+ *  update still tries, or, `stopped`, those it has stopped trying
+ *  (lib/sign-repair.ts MAX_FAILED_NIGHTS) or can't read. */
+export function turningOverWords(ids: readonly string[], stopped = false): string {
   const one = ids.length === 1;
-  return `The history of ${one ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${one ? 'it is' : 'they are'}: until that finishes, some of ${one ? 'its' : 'their'} earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.`;
+  const then = stopped
+    ? 'Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it'
+    : 'Nya’s daily update tries again, and whoever runs your Nya can finish it';
+  return `The history of ${one ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${one ? 'it is' : 'they are'}: until that finishes, some of ${one ? 'its' : 'their'} earlier days in account_history are in the other sign. ${then}: download again once it is done.`;
 }
 
 const NOTE = /^The history of (?:one account|\d+ accounts) \(([^()]*)\) is being turned over to match what (?:it is|they are): /;

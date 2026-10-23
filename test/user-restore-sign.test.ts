@@ -179,6 +179,7 @@ describe('a download made while a job was pending', () => {
     const doc = JSON.parse(await downloadText(new Date()));
     expect(doc.notes).toContain(turningOverWords(['manual_eur']));
     expect(turningOverIds(turningOverWords(['manual_eur', 'manual_b']))).toEqual(['manual_eur', 'manual_b']);
+    expect(turningOverIds(turningOverWords(['manual_eur'], true))).toEqual(['manual_eur']);
     expect(turningOverIds('Some other note (manual_eur).')).toBeNull();
     // Never a Plaid account's id, which nothing turns over.
     expect(turningOverIds(turningOverWords(['acc_chk']))).toEqual([]);

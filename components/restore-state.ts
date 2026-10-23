@@ -182,8 +182,8 @@ export function broughtLines(brought: Readonly<Record<string, number>>, history:
 
 /** What doesn't come back, in words: pending transactions and what was said
  *  only about them, and what never comes back. `never` counts the file's
- *  API tokens and sharing connections. */
-export function leftOutLines(left: Readonly<Record<string, number>>, never: { api_tokens: number; sharing: number }): string[] {
+ *  API tokens, sharing connections, and receipts and documents. */
+export function leftOutLines(left: Readonly<Record<string, number>>, never: { api_tokens: number; sharing: number; attachments?: number }): string[] {
   const out: string[] = [];
   const pending = left['pending_transactions'] ?? 0;
   if (pending > 0) out.push(`${plural(pending, 'pending transaction')}: the bank sends ${pending === 1 ? 'it' : 'them'} again once posted`);
@@ -194,6 +194,10 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);
   const changes = left['api_changes'] ?? 0;
   if (changes > 0) out.push(`${plural(changes, 'change')} made with API tokens in your other copy: about that copy, whose tokens don’t come back`);
+  const files = never.attachments ?? 0;
+  if (files > 0) {
+    out.push(`${files === 1 ? 'a receipt or document' : `${plainNumber(files)} receipts and documents`}: a restore doesn’t bring the files back yet, so keep your ZIP download of them`);
+  }
   return out;
 }
 

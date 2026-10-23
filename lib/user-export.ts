@@ -101,6 +101,8 @@ import { exportedGoals } from './goal-export';
 import { mySharing } from './sharing';
 import { accessLogStore, type Showing } from './access-log';
 import { apiTokenStore } from './api-token-store';
+import { attachmentStore } from './attachment-stores';
+import { exportedAttachments } from './attachment-zip';
 import { declaredStores, declaredStore } from './stores';
 import type { MapStore, ValueStore } from './repo';
 import { csvRow, UTF8_BOM, type CsvValue } from './csv';
@@ -125,7 +127,7 @@ import { readBudgetMonth } from './budget-month';
 import type { Conversion } from './fx/totals';
 import type { Carries, Carry, CarryFrom } from './rollover';
 import { StoredDataUnreadableError } from './repo';
-import { signJobStore } from './sign-repair-store';
+import { MAX_FAILED_NIGHTS, signJobStore, type SignJob } from './sign-repair-store';
 import {
   groupOf,
   growTaxonomy,
@@ -488,6 +490,23 @@ export const SECTIONS: readonly ExportSection[] = [
       };
     },
   },
+  {
+    key: 'attachments',
+    what: 'receipts and documents',
+    // The list of them (lib/attachment-zip.ts exportedAttachments): what each
+    // file is, which transaction it is on (or the disconnected account it
+    // waits on), what that transaction said when it was attached, and its
+    // name in the ZIP download, which has the files themselves. Never a
+    // file's key, nor where it is stored: the store itself is not exportable,
+    // since each record holds its file's key. A record that can't be used is
+    // named among the problems, never a reason to stop (rule 1).
+    read: async ({ ctx }) => {
+      const report = await attachmentStore.getAllReport(ctx);
+      return { value: exportedAttachments(report.entries), problems: idProblems('attachments', report) };
+    },
+    mentions: (files) =>
+      ((files as { on: { earlier_account_id?: string } | null }[] | null) ?? []).flatMap((f) => (f.on?.earlier_account_id ? [f.on.earlier_account_id] : [])),
+  },
   section({
     key: 'sharing',
     what: 'sharing settings',
@@ -737,16 +756,31 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
  * route finishes pending jobs first, so it is said only of one that failed.
  */
 async function turningOverNote(ctx: Ctx): Promise<string[]> {
-  const ids: string[] = [];
+  // Those Nya's daily update still tries, and those it has stopped trying
+  // (MAX_FAILED_NIGHTS) or can't read, which only whoever runs the copy finishes.
+  const tried: string[] = [];
+  const stopped: string[] = [];
   for (const id of await signJobStore.ids(ctx)) {
-    // A settle record holds nothing half turned over; one that can't be read is said.
-    const job = await signJobStore.get(ctx, id).catch(() => null);
-    if (job?.kind !== 'settle') ids.push(id);
+    let job: SignJob | null;
+    try {
+      job = await signJobStore.get(ctx, id);
+    } catch (err) {
+      // One that can't be read is never finished by the daily update either.
+      if (!(err instanceof StoredDataUnreadableError)) throw err;
+      stopped.push(id);
+      continue;
+    }
+    // Gone since it was listed (finished meanwhile), or a settle record,
+    // which holds nothing half turned over: nothing to say.
+    if (!job || job.kind === 'settle') continue;
+    ((job.failures ?? 0) < MAX_FAILED_NIGHTS ? tried : stopped).push(id);
   }
-  if (ids.length === 0) return [];
   // In words a restore of this file reads back (lib/sign-turning.ts), to
   // finish turning them over there.
-  return [turningOverWords(ids)];
+  return [
+    ...(tried.length > 0 ? [turningOverWords(tried)] : []),
+    ...(stopped.length > 0 ? [turningOverWords(stopped, true)] : []),
+  ];
 }
 
 // ---- The document ----

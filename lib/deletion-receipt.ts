@@ -35,6 +35,11 @@ export type DeletionCounts = {
   /** Connections with people that sharing ended on. */
   connections_ended: number;
   sign_in_deleted: boolean;
+  /** Receipts and documents deleted from the file store, and those left in
+   *  it (lib/attachments.ts deleteContainerFiles); null when the store
+   *  couldn't be listed; absent where none can be kept (no file store), and
+   *  on receipts from before. */
+  attachments?: { deleted: number; left: number } | null;
 };
 
 export type BackupRetention = { kept: false } | { kept: true; keep_days: number; min_kept: number; max_days: number } | null;
@@ -210,7 +215,32 @@ export function mergeCounts(earlier: DeletionCounts, later: DeletionCounts): Del
     history_days: stored(earlier.history_days, later.history_days),
     connections_ended: earlier.connections_ended + later.connections_ended,
     sign_in_deleted: later.sign_in_deleted,
+    ...mergedFiles(earlier.attachments, later.attachments),
   };
+}
+
+/** Receipts and documents over two attempts: what each deleted, and what
+ *  the later one left (it saw what the first left). */
+function mergedFiles(earlier: DeletionCounts['attachments'], later: DeletionCounts['attachments']): Pick<DeletionCounts, 'attachments'> {
+  if (earlier === undefined && later === undefined) return {};
+  if (later === undefined) return { attachments: earlier };
+  if (earlier === undefined || earlier === null) return { attachments: later };
+  if (later === null) return { attachments: null };
+  return { attachments: { deleted: earlier.deleted + later.deleted, left: later.left } };
+}
+
+/** The receipt's line about receipts and documents, or none. */
+function filesLine(files: DeletionCounts['attachments'], format: (n: number) => string): string[] {
+  if (files === undefined) return [];
+  if (files === null) {
+    return ['Receipts and documents: the file store couldn’t be reached. Any files of yours left in it can’t be opened without your data key, and are deleted by a later nightly run.'];
+  }
+  const deleted = `${format(files.deleted)} ${files.deleted === 1 ? 'file' : 'files'} deleted from the file store`;
+  return [
+    files.left > 0
+      ? `Receipts and documents: ${deleted}; ${format(files.left)} left in it, which can’t be opened without your data key, and are deleted by a later nightly run.`
+      : `Receipts and documents: ${deleted}.`,
+  ];
 }
 
 /** A receipt from somewhere that can't be trusted to be one (the page's own
@@ -244,6 +274,7 @@ export function receiptSections(r: DeletionReceipt, opts: ReceiptFormat = {}): R
     `Transactions: ${count(d.transactions)}`,
     `Investment transactions: ${count(d.investment_transactions)}`,
     `Days of balance history: ${count(d.history_days)}`,
+    ...filesLine(d.attachments, (n) => number.format(n)),
     `Sharing ended: ${plural(d.connections_ended, 'connection', 'connections')}`,
     `Your sign-in: ${d.sign_in_deleted ? 'deleted' : 'not deleted'}`,
   ];

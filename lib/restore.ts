@@ -595,10 +595,17 @@ export async function restoreArchive(
   checkRegistry(archiveRegistry(plan.records), await targetRegistry(client), opts.replaceRegistry ?? false);
 
   // Delete first: replace, don't merge. Includes caches, which would otherwise
-  // show numbers computed from the data being replaced.
+  // show numbers computed from the data being replaced. The backups' record
+  // goes before anything else (no archive holds it, so nothing writes it
+  // back until the next nightly backup): while backups are kept and it isn't
+  // there, the receipts' clean-up writes nothing (lib/attachment-sweep.ts),
+  // so none of it lands in the middle of this restore.
+  // Imported here: lib/backup.ts imports this module.
+  const status = (await import('./backup')).backupStatusKey();
+  const ordered = [...existing.filter((key) => key === status), ...existing.filter((key) => key !== status)];
   const BATCH = 100;
-  for (let i = 0; i < existing.length; i += BATCH) {
-    await client.del(...existing.slice(i, i + BATCH));
+  for (let i = 0; i < ordered.length; i += BATCH) {
+    await client.del(...ordered.slice(i, i + BATCH));
   }
 
   for (const record of plan.records) {

@@ -290,6 +290,7 @@ describe('everything stored, decrypted, and nothing else', () => {
       'group_budgets',
       'goals',
       'api_tokens',
+      'attachments',
       'sharing',
       // Then a section for each store on the storage seam declared exportable.
       ...declaredSections().map((s) => s.key),
