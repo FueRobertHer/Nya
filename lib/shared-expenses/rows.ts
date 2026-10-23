@@ -39,16 +39,35 @@
 //
 // WHAT DOESN'T APPLY, AND SAYS SO. A share or a payment whose row isn't here
 // isn't applied (a hidden account, a row outside what was read, a row not
-// read this time); one whose row this read can tell is gone (its account is
-// here, not hidden, with rows on both sides of its day) is named in `gone`
-// and noted, never pruned: what someone owes doesn't change on its own. A
-// share on a transaction now grouped, split without naming a part, of
-// another currency, or smaller than its entries now, counts the transaction
-// whole (`shared_unapplied`); a payment on a row now split, grouped, shared
-// (the share wins: it is the person's word about spending), of another
+// read this time). One whose row this read can tell is gone is named in
+// `gone` and noted, never pruned: what someone owes doesn't change on its
+// own. It is gone when its account is here, not hidden, with rows on both
+// sides of its day; when its account was linked to a re-added one and it
+// didn't carry (ACROSS A RE-LINK); and when it was on a manual account that
+// no longer has it (deleted with its row or its account), unless that
+// account's book couldn't be read. One on an account disconnected and not
+// linked to anything yet waits (`away`), and is noted too. A share on a
+// transaction now grouped, split without naming a part, of another
+// currency, or smaller than its entries now, counts the transaction whole
+// (`shared_unapplied`); a payment on a row now split, grouped, shared (the
+// share wins: it is the person's word about spending), of another
 // currency, or that can't hold what it pays back now, counts the row as the
 // bank shows it (`settles_unapplied`). An allocation to an item that no
-// longer exists is left out: that much of the row counts as it says.
+// longer exists is left out: that much of the row counts as it says. A row
+// whose amount changed since it was shared or confirmed, and still holds
+// what it was given, applies, its mark saying what it was (`was`), noted.
+//
+// ACROSS A RE-LINK, as what was said about a transaction carries
+// (lib/txn-annotations.ts). A disconnect records each shared or paying
+// transaction's content key on its share or payment (`carry_key`,
+// lib/shared-expenses/edits.ts retireShares), before the transaction's id
+// dies with the connection. Once the person links the old account to the
+// re-added one (lib/links.ts), the share or payment applies to the row there
+// with the same key under the new account's id, one to one: a key two old
+// ones share, or two rows share, carries nothing, and those are gone, as is
+// one with no key (decided by the link, never by what rows the old account
+// still has). The row says where it is kept (`shared_carried_from`, the
+// payment's `kept_under`), so an edit there moves it onto the row.
 //
 // ROWS IMPORTED FROM FILES (#52). A bank row standing for rows imported into
 // its account takes their share and payment, as it takes their split, unless
@@ -64,21 +83,46 @@ import { itemState, itemsOf, paidOf, closedUnits, type Item } from './balances';
 import type { Counting, Iou, Payment, Share } from './model';
 import { appOf } from './match';
 
+/** A manual account's id begins so (lib/manual.ts MANUAL_ID_PREFIX, which
+ *  reaches storage, so it is said again here: a test holds them equal). */
+export const MANUAL_ACCOUNT_PREFIX = 'manual_';
+
 // ---- The marks ----
 
 /** On a shared transaction's own row (or the split part's): who owes which
  *  part, by person and item (ids only), your part, and whether this read
  *  counts it so (false under `bank`). */
-export type SharedMark = { part?: string; your_part: number; people: { person: string; item: string; amount: number }[]; counted: boolean };
+export type SharedMark = {
+  part?: string;
+  your_part: number;
+  people: { person: string; item: string; amount: number }[];
+  counted: boolean;
+  /** The amount when it was shared, where the row's differs now (your part
+   *  takes the difference). */
+  was?: number;
+};
 /** On a payment's own row: what it pays back, each item with its direction,
  *  what is left of the row, and whether this read counts it so. */
-export type SettlesMark = { rest: number; people: { person: string; item: string; amount: number; direction: 'to_you' | 'by_you' }[]; counted: boolean };
+export type SettlesMark = {
+  rest: number;
+  people: { person: string; item: string; amount: number; direction: 'to_you' | 'by_you' }[];
+  counted: boolean;
+  /** The row's amount when it was confirmed, where it differs now. */
+  was?: number;
+  /** The id the payment is kept under, where it isn't the row's: a row
+   *  imported from a file it stands for, or the transaction it was before a
+   *  re-link (see ACROSS A RE-LINK). */
+  kept_under?: string;
+};
 /** On a row this layer added beside a transaction: another person's part of
  *  it, or a part of a payment that paid an item back. */
 export type SharedPart = { kind: 'theirs' | 'repaid'; person: string; item: string };
 /** On an IOU's row: whose, which, and how much of it was settled outside
  *  your accounts. */
 export type SharedIou = { person: string; item: string; cash: number };
+
+/** A row a gone share or payment could be moved to. */
+export type MoveTo = { transaction_id: string; account_id: string };
 
 export type SharedUnapplied = 'group' | 'split' | 'part' | 'currency' | 'amount';
 export type SettlesUnapplied = 'shared' | 'split' | 'group' | 'currency' | 'amount';
@@ -115,6 +159,18 @@ export type ShareInputs = {
   ended?: ReadonlyMap<string, string>;
   /** Rows said to be no repayment, for the note on money in. */
   dismissed?: ReadonlySet<string>;
+  /** Each bank row's account and content key, by id, as the read layer had
+   *  them before taking them off (lib/activity.ts): a row without
+   *  `account_id` is found on its account by them, and a share carried
+   *  across a re-link by the key. */
+  rowFacts?: ReadonlyMap<string, { account?: string; key?: string }>;
+  /** The manual accounts whose book couldn't be read ('all': none could):
+   *  a share on one is never called gone. */
+  manualUnread?: readonly string[] | 'all';
+  /** The live bank accounts, and each account id as the active links
+   *  resolve it (lib/link-core.ts), when they could be read: what a share
+   *  carries across a re-link by, and what says it is gone or waits. */
+  accounts?: { live: ReadonlySet<string>; resolve: (account_id: string) => string };
 };
 
 export type ShareResult = {
@@ -124,11 +180,17 @@ export type ShareResult = {
   unread_notes: string[];
   /** Shares and payments this read can tell their row is gone from, by id. */
   gone: { shares: string[]; payments: string[] };
+  /** Shares and payments on an account disconnected and not linked to a
+   *  re-added one yet: they carry once it is (ACROSS A RE-LINK). */
+  away: { shares: string[]; payments: string[] };
+  /** For each gone one, the rows here it could be moved to, with the
+   *  account each is on (what a move sends, and the server checks): posted,
+   *  whole, free, at the same amount and currency, within a week, those on
+   *  its account (or the one linked to it) first. Absent: none. */
+  moves?: { shares: Record<string, MoveTo[]>; payments: Record<string, MoveTo[]> };
   /** Transactions shared twice through an imported twin: the bank row's id,
    *  with the imported rows' (lib/shared-expenses/edits.ts removes one). */
   twice: { bank: string; imported: string[] }[];
-  /** How many shared transactions and IOUs counted at your part. */
-  counted: { shared: number; ious: number };
 };
 
 /** Review marks a row this layer adds never carries: a shared transaction
@@ -164,7 +226,7 @@ function partOf(t: Txn): { key: string; part: string } | null {
 export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareResult {
   const empty = inputs.shares.size === 0 && inputs.payments.size === 0 && inputs.ious.size === 0 && inputs.sharesUnknown.size === 0 && inputs.paymentsUnknown.size === 0 && inputs.iousUnread === 0;
   const settingNote = inputs.settingsUnread ? ['Your setting for shared expenses couldn’t be read, so every transaction counts as your bank shows it until it can be.'] : [];
-  if (empty) return { rows: [...rows], notes: settingNote, unread_notes: [], gone: { shares: [], payments: [] }, twice: [], counted: { shared: 0, ious: 0 } };
+  if (empty) return { rows: [...rows], notes: settingNote, unread_notes: [], gone: { shares: [], payments: [] }, away: { shares: [], payments: [] }, twice: [] };
   const part = inputs.counting === 'part' && !inputs.settingsUnread;
   const items = itemsOf(inputs.shares, inputs.ious);
   const paid = paidOf(inputs.payments, items);
@@ -174,14 +236,17 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   // stands for (their share and payment are its own: SplitInputs.stands).
   const present = new Set<string>();
   const accountDays = new Map<string, { first: string; last: string }>();
+  // A row's account: its own, or as the read layer had it (rowFacts).
+  const accountOf = (t: Txn): string | undefined => t.account_id ?? inputs.rowFacts?.get(t.split_of ?? t.transaction_id)?.account;
   const seen = (t: Txn) => {
     present.add(t.transaction_id);
     if (t.split_of !== undefined) present.add(t.split_of);
     if (t.split_carried_from !== undefined) present.add(t.split_carried_from);
     if (t.group_carried_from !== undefined) present.add(t.group_carried_from);
-    if (t.account_id !== undefined) {
-      const d = accountDays.get(t.account_id);
-      if (!d) accountDays.set(t.account_id, { first: t.date, last: t.date });
+    const account = t.shared_iou ? undefined : accountOf(t);
+    if (account !== undefined) {
+      const d = accountDays.get(account);
+      if (!d) accountDays.set(account, { first: t.date, last: t.date });
       else {
         if (t.date < d.first) d.first = t.date;
         if (t.date > d.last) d.last = t.date;
@@ -207,16 +272,61 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
   }
 
   const endedRow = (t: Txn): boolean => {
-    const end = t.account_id === undefined ? undefined : inputs.ended?.get(t.account_id);
+    const account = accountOf(t);
+    const end = account === undefined ? undefined : inputs.ended?.get(account);
     return end !== undefined && t.date >= end;
   };
+
+  // ---- Carried across a re-link (see ACROSS A RE-LINK) ----
+  // The rows that can take one, by content key: posted, whole (not a part,
+  // not a group's), with no share or payment of their own.
+  const relinkedShare = new Map<string, string>();
+  const relinkedPayment = new Map<string, string>();
+  const unmatched = { shares: new Set<string>(), payments: new Set<string>() };
+  const resolve = inputs.accounts?.resolve;
+  if (resolve) {
+    const byKey = new Map<string, string[]>();
+    for (const t of rows) {
+      if (t.pending || t.split_of !== undefined || t.group_members || t.group_outside) continue;
+      const key = inputs.rowFacts?.get(t.transaction_id)?.key;
+      if (!key || inputs.shares.has(t.transaction_id) || inputs.payments.has(t.transaction_id)) continue;
+      // One standing for an imported row with a share or payment has it.
+      if ((inputs.stands?.get(t.transaction_id) ?? []).some((id) => inputs.shares.has(id) || inputs.payments.has(id))) continue;
+      byKey.set(key, [...(byKey.get(key) ?? []), t.transaction_id]);
+    }
+    const carry = (kept: ReadonlyMap<string, Share | Payment>, to: Map<string, string>, misses: Set<string>, taken: ReadonlySet<string>) => {
+      const wanted = new Map<string, string[]>();
+      for (const [id, v] of kept) {
+        if (present.has(id)) continue;
+        const now = resolve(v.account_id);
+        // Not linked to another account: nothing to carry to.
+        if (now === v.account_id) continue;
+        const key = v.carry_key && v.carry_key.startsWith(`${v.account_id}|`) && !(v as Share).part ? now + v.carry_key.slice(v.account_id.length) : null;
+        if (!key) {
+          misses.add(id);
+          continue;
+        }
+        wanted.set(key, [...(wanted.get(key) ?? []), id]);
+      }
+      for (const [key, ids] of wanted) {
+        const targets = (byKey.get(key) ?? []).filter((t) => !taken.has(t));
+        if (ids.length === 1 && targets.length === 1) to.set(targets[0], ids[0]);
+        else for (const id of ids) misses.add(id);
+      }
+    };
+    carry(inputs.shares, relinkedShare, unmatched.shares, new Set());
+    // A row a share carried to takes no payment besides: the share wins.
+    carry(inputs.payments, relinkedPayment, unmatched.payments, new Set(relinkedShare.keys()));
+    for (const id of [...relinkedShare.values(), ...relinkedPayment.values()]) present.add(id);
+  }
 
   let unknownShares = 0;
   let unknownPayments = 0;
   let unappliedShares = 0;
   let unappliedPayments = 0;
   let toNothing = 0;
-  let sharedCounted = 0;
+  let changedShares = 0;
+  let changedPayments = 0;
   const twice: ShareResult['twice'] = [];
   const out: Txn[] = [];
 
@@ -266,6 +376,9 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       } else if (carried.length > 0) {
         share = inputs.shares.get(carried[0])!;
         shareFrom = carried[0];
+      } else if (relinkedShare.has(t.transaction_id)) {
+        shareFrom = relinkedShare.get(t.transaction_id)!;
+        share = inputs.shares.get(shareFrom)!;
       } else if (inputs.sharesUnknown.has(t.transaction_id)) unknownShares++;
       if (share?.part !== undefined) {
         shareWhy = 'part';
@@ -299,7 +412,8 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     // share is; both, and the imported row's isn't applied (noted).
     const carriedPayments = paymentKey ? (standsFor.get(paymentKey) ?? []).filter((id) => inputs.payments.has(id)) : [];
     const own = paymentKey ? inputs.payments.get(paymentKey) : undefined;
-    const payment = own ?? (carriedPayments.length > 0 ? inputs.payments.get(carriedPayments[0])! : null);
+    const keptUnder = own ? undefined : carriedPayments.length > 0 ? carriedPayments[0] : paymentKey ? relinkedPayment.get(paymentKey) : undefined;
+    const payment = own ?? (keptUnder !== undefined ? inputs.payments.get(keptUnder)! : null);
     if (own && carriedPayments.length > 0) unappliedPayments += carriedPayments.length;
     if (!payment && paymentKey && [paymentKey, ...(standsFor.get(paymentKey) ?? [])].some((id) => inputs.paymentsUnknown.has(id))) unknownPayments++;
     if (t.split_of !== undefined && inputs.payments.has(t.split_of) && t.split_index === 0) {
@@ -311,11 +425,15 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     if (share) {
       if (payment) unappliedPayments++;
       const yourUnits = rowUnits - lentUnits;
+      // The amount it had when shared, said where the row's changed since.
+      const changed = toUnits(share.amount_was, scale) !== rowUnits;
+      if (changed) changedShares++;
       const mark: SharedMark = {
         ...(share.part ? { part: share.part } : {}),
         your_part: yourUnits / scale,
         people: lent.map((l) => ({ person: l.entry.person, item: l.entry.id, amount: l.units / scale })),
         counted: part,
+        ...(changed ? { was: share.amount_was } : {}),
       };
       const facts: Partial<Txn> = {
         shared: mark,
@@ -327,7 +445,6 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
         out.push({ ...t, ...facts });
         continue;
       }
-      sharedCounted++;
       const of = t.split_of === undefined ? { shared_of: t.transaction_id } : {};
       out.push({ ...t, ...facts, ...of, amount: yourUnits / scale, shared_was: t.amount });
       for (const l of lent) {
@@ -362,10 +479,14 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
         out.push(t);
         continue;
       }
+      const changed = toUnits(payment.row.amount, scale) !== rowUnits;
+      if (changed) changedPayments++;
       const mark: SettlesMark = {
         rest: (rowUnits - sum) / scale,
         people: parts.map((p) => ({ person: p.item.person, item: p.item.id, amount: Math.abs(p.units) / scale, direction: p.item.direction })),
         counted: part,
+        ...(changed ? { was: payment.row.amount } : {}),
+        ...(keptUnder !== undefined ? { kept_under: keptUnder } : {}),
       };
       if (!part) {
         out.push({ ...t, settles: mark });
@@ -390,7 +511,6 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
 
   // ---- IOU rows: your part of what someone else paid ----
   const iouRows: Txn[] = [];
-  let iousCounted = 0;
   if (part && inputs.iousUnread === 0) {
     for (const [id, iou] of inputs.ious) {
       if (iou.direction !== 'by_you' || !iou.category_id) continue;
@@ -401,7 +521,6 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       const { outside, forgiven } = closedUnits(item);
       const units = toUnits(iou.amount, scale) - forgiven;
       if (units <= 0) continue;
-      iousCounted++;
       iouRows.push(iouRow(id, iou, units / scale, Math.min(units, outside) / scale, inputs.ix));
     }
   }
@@ -412,23 +531,90 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     return !!d && d.first <= day && d.last >= day && !inputs.hidden?.has(account);
   };
   const gone = { shares: [] as string[], payments: [] as string[] };
+  const away = { shares: [] as string[], payments: [] as string[] };
+  const manualUnread = (account: string) => inputs.manualUnread === 'all' || !!inputs.manualUnread?.includes(account);
+  // Gone, waiting on a link, or neither (see WHAT DOESN'T APPLY).
+  const where = (id: string, account: string, day: string, misses: ReadonlySet<string>): 'gone' | 'away' | null => {
+    if (misses.has(id)) return 'gone';
+    if (covers(account, day)) return 'gone';
+    if (accountDays.has(account) || inputs.hidden?.has(account) || inputs.ended?.has(account)) return null;
+    if (account.startsWith(MANUAL_ACCOUNT_PREFIX)) return manualUnread(account) ? null : 'gone';
+    const live = inputs.accounts?.live;
+    if (!live || live.has(account)) return null;
+    // A bank account no stored connection has, linked to nothing yet.
+    return inputs.accounts!.resolve(account) === account ? 'away' : null;
+  };
   for (const [id, s] of inputs.shares) {
     if (present.has(id) || s.kept_gone || (inputs.from !== undefined && s.date < inputs.from)) continue;
-    if (covers(s.account_id, s.date)) gone.shares.push(id);
+    const w = where(id, s.account_id, s.date, unmatched.shares);
+    if (w) (w === 'gone' ? gone : away).shares.push(id);
   }
   for (const [id, p] of inputs.payments) {
     if (present.has(id) || p.kept_gone || (inputs.from !== undefined && p.row.date < inputs.from)) continue;
-    if (covers(p.account_id, p.row.date)) gone.payments.push(id);
+    const w = where(id, p.account_id, p.row.date, unmatched.payments);
+    if (w) (w === 'gone' ? gone : away).payments.push(id);
   }
 
-  // ---- Money in from a payment app, counted, while someone owes you ----
-  const owedToYou = [...items.values()].some((i) => i.direction === 'to_you' && itemState(i, paid).open > 0);
+  // ---- Where a gone one could go ----
+  let moves: ShareResult['moves'];
+  if (gone.shares.length + gone.payments.length > 0) {
+    const day = (d: string) => Date.parse(`${d}T00:00:00Z`) / 86_400_000;
+    const free = out.filter(
+      (t) =>
+        !t.pending &&
+        t.split_of === undefined &&
+        !t.group_members &&
+        !t.group_outside &&
+        !isLayerRow(t) &&
+        !t.shared &&
+        !t.settles &&
+        !t.shared_unapplied &&
+        !t.settles_unapplied &&
+        !inputs.shares.has(t.transaction_id) &&
+        !inputs.payments.has(t.transaction_id) &&
+        accountOf(t) !== undefined
+    );
+    const candidates = (account: string, amount: number, currency: string, on: string): MoveTo[] => {
+      const scale = unitScale(currency);
+      const near = free.filter((t) => currencyOf(t) === currency && toUnits(t.amount, scale) === toUnits(amount, scale) && Math.abs(day(t.date) - day(on)) <= 7);
+      const mine = new Set([account, resolve ? resolve(account) : account]);
+      const first = near.filter((t) => mine.has(accountOf(t)!));
+      return [...first, ...near.filter((t) => !mine.has(accountOf(t)!))].slice(0, 3).map((t) => ({ transaction_id: t.transaction_id, account_id: accountOf(t)! }));
+    };
+    moves = { shares: {}, payments: {} };
+    for (const id of gone.shares) {
+      const s = inputs.shares.get(id)!;
+      const c = candidates(s.account_id, s.amount_was, s.currency, s.date);
+      if (c.length > 0) moves.shares[id] = c;
+    }
+    for (const id of gone.payments) {
+      const p = inputs.payments.get(id)!;
+      const c = candidates(p.account_id, p.row.amount, p.row.currency, p.row.date);
+      if (c.length > 0) moves.payments[id] = c;
+    }
+  }
+
+  // ---- Money from or to a payment app, counted, while something is open ----
+  // Under `part` only (under `bank`, confirming changes no total), and only
+  // a row dated on or after the oldest item open its way, as matching reads
+  // them: money in while someone owes you counts as income, money out while
+  // you owe someone as a purchase, beside what is already counted of it.
+  const oldestOpen = (direction: 'to_you' | 'by_you'): string | null => {
+    let oldest: string | null = null;
+    for (const i of items.values()) if (i.direction === direction && itemState(i, paid).open > 0 && (oldest === null || i.date < oldest)) oldest = i.date;
+    return oldest;
+  };
+  const owedFrom = part ? oldestOpen('to_you') : null;
+  const owingFrom = part ? oldestOpen('by_you') : null;
   let moneyIn = 0;
-  if (owedToYou) {
+  let moneyOut = 0;
+  if (owedFrom !== null || owingFrom !== null) {
     for (const t of out) {
-      if (t.amount >= 0 || t.pending || isLayerRow(t) || t.settles || t.settles_unapplied || t.split_of !== undefined || t.group_members) continue;
+      if (t.amount === 0 || t.pending || isLayerRow(t) || t.settles || t.settles_unapplied || t.shared || t.split_of !== undefined || t.group_members) continue;
       if (isExcluded(t) || isTransfer(t) || inputs.dismissed?.has(t.transaction_id) || inputs.payments.has(t.transaction_id)) continue;
-      if (appOf(t) !== null) moneyIn++;
+      if (appOf(t) === null) continue;
+      if (t.amount < 0 && owedFrom !== null && t.date >= owedFrom) moneyIn++;
+      if (t.amount > 0 && owingFrom !== null && t.date >= owingFrom) moneyOut++;
     }
   }
 
@@ -443,18 +629,32 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
       ? [`${plural(unappliedPayments, 'payment you confirmed no longer fits', 'payments you confirmed no longer fit')} what ${unappliedPayments === 1 ? 'it' : 'they'} paid back, so ${unappliedPayments === 1 ? 'it counts' : 'they count'} as your bank shows ${unappliedPayments === 1 ? 'it' : 'them'} until you look at ${unappliedPayments === 1 ? 'it' : 'them'} under Shared expenses.`]
       : []),
     ...(toNothing > 0 ? [`${plural(toNothing, 'payment pays', 'payments pay')} back something you’ve since removed, so that much counts as your bank shows it.`] : []),
+    ...(changedShares > 0
+      ? [`${plural(changedShares, 'shared transaction’s amount has', 'shared transactions’ amounts have')} changed since you shared ${changedShares === 1 ? 'it' : 'them'}: your part takes the difference, and what the others owe stays as you said until you change it under Shared expenses.`]
+      : []),
+    ...(changedPayments > 0
+      ? [`${plural(changedPayments, 'payment you confirmed has', 'payments you confirmed have')} changed amount since: what ${changedPayments === 1 ? 'it' : 'they'} paid back stays as you confirmed, and the rest counts as your bank shows it.`]
+      : []),
     ...(gone.shares.length + gone.payments.length > 0
       ? [
           `${[gone.shares.length > 0 ? plural(gone.shares.length, 'shared transaction', 'shared transactions') : null, gone.payments.length > 0 ? plural(gone.payments.length, 'payment you confirmed', 'payments you confirmed') : null].filter(Boolean).join(' and ')} ${gone.shares.length + gone.payments.length === 1 ? 'isn’t' : 'aren’t'} in your accounts any more: see Shared expenses.`,
+        ]
+      : []),
+    ...(away.shares.length + away.payments.length > 0
+      ? [
+          `${[away.shares.length > 0 ? plural(away.shares.length, 'shared transaction', 'shared transactions') : null, away.payments.length > 0 ? plural(away.payments.length, 'payment you confirmed', 'payments you confirmed') : null].filter(Boolean).join(' and ')} ${away.shares.length + away.payments.length === 1 ? 'is' : 'are'} on an account you disconnected: once you add the bank back and link the account, ${away.shares.length + away.payments.length === 1 ? 'it carries' : 'they carry'} to ${away.shares.length + away.payments.length === 1 ? 'its transaction' : 'their transactions'} there. What is owed stays as it is meanwhile.`,
         ]
       : []),
     ...(twice.length > 0 ? [`${plural(twice.length, 'transaction is', 'transactions are')} shared twice, once as imported from a file and once as your bank’s: remove one under Shared expenses.`] : []),
     ...(moneyIn > 0
       ? [`${plural(moneyIn, 'payment in from a payment app counts', 'payments in from a payment app count')} as money in: if one paid back what someone owed you, confirm it under Shared expenses so it isn’t counted twice.`]
       : []),
+    ...(moneyOut > 0
+      ? [`${plural(moneyOut, 'payment to a payment app counts', 'payments to a payment app count')} as spending: if one paid what you owed someone, confirm it under Shared expenses so it isn’t counted twice.`]
+      : []),
   ];
   const unread_notes = inputs.iousUnread > 0 && part ? ['Some of your IOUs couldn’t be read, so your part of what others paid may be missing from these totals.'] : [];
-  return { rows: mergeNewestFirst(out, iouRows), notes: [...notes, ...unread_notes], unread_notes, gone, twice, counted: { shared: sharedCounted, ious: iousCounted } };
+  return { rows: mergeNewestFirst(out, iouRows), notes: [...notes, ...unread_notes], unread_notes, gone, away, twice, ...(moves ? { moves } : {}) };
 }
 
 /** An IOU's row: on its day, filed under its category, on no account. */

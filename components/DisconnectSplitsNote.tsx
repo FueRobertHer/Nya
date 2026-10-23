@@ -14,12 +14,13 @@ type Counts = { split: number; grouped: number; shared?: number };
 
 /** What the confirmation says of a connection's shared transactions and the
  *  payments that paid something back (lib/shared-expenses/), or null for
- *  none: they are kept, never dropped, and each can be moved to its
- *  transaction once the connection is back. */
+ *  none: they are kept, never dropped, and carry across once the re-added
+ *  accounts are linked (lib/shared-expenses/rows.ts ACROSS A RE-LINK); one
+ *  that doesn't is listed on the card. */
 export function disconnectSharedText(counts: Counts | null): string | null {
   const n = counts?.shared ?? 0;
   if (n === 0) return null;
-  return `${n === 1 ? '1 of its transactions is' : `${n} of its transactions are`} shared, or paid something back, under Shared expenses. What is between you and others stays as it is; once you add the connection back, move ${n === 1 ? 'it' : 'each'} to its transaction there.`;
+  return `${n === 1 ? '1 of its transactions is' : `${n} of its transactions are`} shared, or paid something back, under Shared expenses. What is between you and others stays as it is. Once you add the bank back and link each account to its earlier one, ${n === 1 ? 'it carries' : 'they carry'} across to the same ${n === 1 ? 'transaction' : 'transactions'} there; one that doesn’t is listed under Shared expenses, to move or keep.`;
 }
 
 /** What the confirmation says of a connection's splits and groups, or null

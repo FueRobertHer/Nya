@@ -222,10 +222,29 @@ describe('every route checks what it is told against what is stored', () => {
     expect((await pay('t_venmo', [{ item: entry, amount: 35 }])).status).toBe(409);
     expect((await route('shared-expenses/payments', 'PATCH', { action: 'undismiss', transaction_id: 't_venmo' })).status).toBe(200);
     expect((await pay('t_venmo', [{ item: entry, amount: 35 }])).status).toBe(200);
-    // What a payment names stays: the IOU can't be removed, the share can't stop.
+    // What a payment names stays: the share can't stop, nor go below what it
+    // paid back. The IOU it doesn't name can go.
     expect((await route('shared-expenses/shares', 'DELETE', { transaction_id: 't_dinner' })).status).toBe(409);
     expect((await route('shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', entries: [{ person: (await card()).people[0].id, amount: 20 }] })).status).toBe(409);
     expect((await route('shared-expenses/ious', 'DELETE', { id: iou })).status).toBe(200);
+  });
+
+  test('an IOU a payment names can’t be removed, nor one something settled; once reopened it can', async () => {
+    const { entry, iou } = await seeded();
+    // Alex's $35 pays back the dinner's 60 and takes off the 25 you owe.
+    expect((await route('shared-expenses/payments', 'POST', { transaction_id: 't_venmo', allocations: [{ item: entry, amount: 60 }, { item: iou, amount: 25 }] })).status).toBe(200);
+    const refused = await route('shared-expenses/ious', 'DELETE', { id: iou });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toMatch(/payment/i);
+    expect(await store.expenseIousStore.get(ctx, iou)).not.toBeNull();
+    expect((await route('shared-expenses/payments', 'DELETE', { transaction_id: 't_venmo' })).status).toBe(200);
+    // Settled outside your accounts instead: refused again, until reopened.
+    const closed = await route('shared-expenses/close', 'POST', { kind: 'outside', items: [{ item: iou, amount: 25 }], date: daysAgo(1) });
+    expect(closed.status).toBe(200);
+    expect((await route('shared-expenses/ious', 'DELETE', { id: iou })).status).toBe(409);
+    expect((await route('shared-expenses/close', 'DELETE', { item: iou, event: closed.body.event })).status).toBe(200);
+    expect((await route('shared-expenses/ious', 'DELETE', { id: iou })).status).toBe(200);
+    expect(await store.expenseIousStore.get(ctx, iou)).toBeNull();
   });
 
   test('people: a name once, handles as handles, and only what is known', async () => {
@@ -291,5 +310,111 @@ describe('isolation, and reads that never write', () => {
     const writes = /\bexpense(Settings|People|Shares|Ious|Payments|Dismissed)Store\.(set|setMany|update|updateMany|remove|replaceUnreadable)\(/;
     const writers = files.filter((f) => writes.test(readFileSync(join(root, f), 'utf8')));
     expect(writers).toEqual(['lib/shared-expenses/edits.ts']);
+  });
+});
+
+describe('the write paths, each through its route', () => {
+  test('a person: edited, archived only once settled, given nothing new while archived, brought back, forgotten, their shared expenses removed', async () => {
+    const { person, entry, iou } = await seeded();
+    const patch = (body: Record<string, unknown>) => route('shared-expenses/people', 'PATCH', { id: person, ...body });
+    expect((await patch({ action: 'edit', name: 'Alex S.', venmo: '@alexs', cashtag: '$alexcash' })).body.person).toMatchObject({ name: 'Alex S.', venmo: 'alexs', cashtag: 'alexcash' });
+    expect((await patch({ action: 'edit', venmo: 'not a handle!' })).status).toBe(400);
+    // Something is open: no archive.
+    expect((await patch({ action: 'archive' })).status).toBe(409);
+    // Settled both ways, then archived: nothing new for them until brought back.
+    const settled = await route('shared-expenses/close', 'POST', { kind: 'outside', items: [{ item: entry, amount: 60 }, { item: iou, amount: 25 }], date: daysAgo(1) });
+    expect(settled.status).toBe(200);
+    expect((await patch({ action: 'archive' })).status).toBe(200);
+    const refusedShare = await route('shared-expenses/shares', 'PUT', { transaction_id: 't_refund', entries: [{ person, amount: 5 }] });
+    expect(refusedShare.status).toBe(409);
+    const refusedIou = await route('shared-expenses/ious', 'POST', { person, direction: 'to_you', amount: 40, currency: 'USD', date: daysAgo(5), what: 'Tickets' });
+    expect(refusedIou.status).toBe(409);
+    expect(refusedIou.body.error).toContain('bring them back first');
+    // The dinner's share, left as it is, can still be edited for its title.
+    expect((await route('shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', what: 'Dinner at Joe’s', entries: [{ person, amount: 60 }] })).status).toBe(200);
+    expect((await patch({ action: 'unarchive' })).status).toBe(200);
+    expect((await route('shared-expenses/ious', 'POST', { person, direction: 'to_you', amount: 40, currency: 'USD', date: daysAgo(5), what: 'Tickets' })).status).toBe(200);
+    // Forgotten: the name and handles go, every amount stays.
+    const before = (await card()).balances[person];
+    expect((await patch({ action: 'forget' })).body.person).toEqual(expect.not.objectContaining({ name: expect.anything() }));
+    const after = await card();
+    expect(after.people.find((p: any) => p.id === person)).toMatchObject({ name: null, venmo: null, cashtag: null, removed: true });
+    expect(after.balances[person]).toEqual(before);
+    // A forgotten person's part left as it is goes through an edit of the others.
+    expect((await route('shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', what: 'Dinner', entries: [{ person, amount: 60 }] })).status).toBe(200);
+    expect((await route('shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', entries: [{ person, amount: 50 }] })).status).toBe(409);
+    // Their shared expenses removed: refused while a payment names one of
+    // them, then done (what settled them outside your accounts goes too).
+    const pay = await route('shared-expenses/payments', 'POST', { transaction_id: 't_venmo', allocations: [{ item: iou, amount: 25 }, { item: (await card()).items.find((i: any) => i.what === 'Tickets').id, amount: 40 }] });
+    expect(pay.status).toBe(409); // the groceries were settled outside: nothing open of them
+    const tickets = (await card()).items.find((i: any) => i.what === 'Tickets').id;
+    expect((await route('shared-expenses/payments', 'POST', { transaction_id: 't_venmo', allocations: [{ item: tickets, amount: 35 }] })).status).toBe(200);
+    expect((await patch({ action: 'remove-expenses' })).status).toBe(409);
+    expect((await route('shared-expenses/payments', 'DELETE', { transaction_id: 't_venmo' })).status).toBe(200);
+    const removed = await patch({ action: 'remove-expenses' });
+    expect(removed.status).toBe(200);
+    expect(removed.body).toEqual({ shares: 1, ious: 2 });
+    expect(await store.expenseSharesStore.get(ctx, 't_dinner')).toBeNull();
+  });
+
+  test('a request sent through the handoff is recorded on the person, the latest kept', async () => {
+    const { person, entry } = await seeded();
+    const ask = (over: Record<string, unknown> = {}) => route('shared-expenses/people', 'PATCH', { id: person, action: 'request', direction: 'to_you', amount: 35, currency: 'USD', via: 'venmo', items: [entry], ...over });
+    expect((await ask()).status).toBe(200);
+    expect((await ask({ via: 'carrier-pigeon' })).status).toBe(400);
+    expect((await ask({ items: ['not an id!'] })).status).toBe(400);
+    const p = (await card()).people.find((x: any) => x.id === person);
+    expect(p.requests.map((r: any) => [r.direction, r.amount, r.via, r.items])).toEqual([['to_you', 35, 'venmo', [entry]]]);
+    await route('shared-expenses/people', 'PATCH', { id: person, action: 'forget' });
+    expect((await ask()).status).toBe(409);
+  });
+
+  test('sharing many at once, from a tag: each answered, one refused on its own', async () => {
+    await listed();
+    const person = (await route('shared-expenses/people', 'POST', { name: 'Sam Lee' })).body.id;
+    const many = await route('shared-expenses/shares', 'PATCH', { action: 'many', person, ids: ['t_dinner', 't_refund'], how: { kind: 'half' } });
+    expect(many.status).toBe(200);
+    expect(many.body.results.map((r: any) => [r.id, r.ok])).toEqual([
+      ['t_dinner', true],
+      ['t_refund', false],
+    ]);
+    expect((await store.expenseSharesStore.get(ctx, 't_dinner'))!.entries.map((e) => e.amount)).toEqual([60]);
+    expect((await route('shared-expenses/shares', 'PATCH', { action: 'many', person, ids: ['t_dinner'], how: { kind: 'amount' } })).status).toBe(400);
+  });
+
+  test('an entry id the request names is never taken: an IOU’s id can’t make two items one', async () => {
+    await listed();
+    const person = (await route('shared-expenses/people', 'POST', { name: 'Alex Smith' })).body.id;
+    const iou = (await route('shared-expenses/ious', 'POST', { person, direction: 'to_you', amount: 40, currency: 'USD', date: daysAgo(5), what: 'Tickets' })).body.id;
+    const s = await route('shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', entries: [{ id: iou, person, amount: 60 }] });
+    expect(s.status).toBe(200);
+    expect(s.body.share.entries[0].id).not.toBe(iou);
+    const c = await card();
+    expect(c.items).toHaveLength(2);
+    expect(c.balances[person][0].amount).toBe(100);
+  });
+
+  test('a request too large is 413, one that isn’t JSON 400, and with no container to reach, 503, nothing written', async () => {
+    await listed();
+    const raw = async (path: string, method: string, body: string) => {
+      const mod: any = await import(`@/app/api/${path}/route`);
+      const res = await mod[method](new Request(`http://x/api/${path}`, { method, body }));
+      return res.status as number;
+    };
+    expect(await raw('shared-expenses/people', 'POST', JSON.stringify({ name: 'x'.repeat(40_000) }))).toBe(413);
+    expect(await raw('shared-expenses/shares', 'PUT', '{not json')).toBe(400);
+    fake.reset();
+    (await import('@/lib/sessions')).forgetEpochs();
+    for (const [path, method, body] of [
+      ['shared-expenses', 'GET', undefined],
+      ['shared-expenses/people', 'POST', { name: 'Alex' }],
+      ['shared-expenses/shares', 'PUT', { transaction_id: 't_dinner', entries: [] }],
+      ['shared-expenses/ious', 'POST', { person: 'p' }],
+      ['shared-expenses/payments', 'POST', { transaction_id: 't_venmo', allocations: [] }],
+      ['shared-expenses/close', 'POST', { kind: 'outside' }],
+    ] as const) {
+      expect([path, (await quietly(() => route(path, method, body))).status]).toEqual([path, 503]);
+    }
+    expect([...((fake as any).hashes as Map<string, unknown>).keys()].filter((k) => k.includes('expense-'))).toEqual([]);
   });
 });

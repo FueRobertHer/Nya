@@ -146,6 +146,12 @@ export type Share = {
   entries: ShareEntry[];
   /** The person said to keep it although its transaction is gone. */
   kept_gone?: string;
+  /** Its transaction's content key (lib/transactions.ts contentKey: the
+   *  account, the day, the amount and the bank's own words), recorded when
+   *  its connection was disconnected, so that once the re-added account is
+   *  linked to the old one it carries to the same transaction under its new
+   *  id (lib/shared-expenses/rows.ts). Only inside the encrypted value. */
+  carry_key?: string;
   created_at: string;
   updated_at: string;
 };
@@ -178,6 +184,8 @@ export type Payment = {
   allocations: Allocation[];
   note?: string;
   kept_gone?: string;
+  /** As a share's (Share carry_key). */
+  carry_key?: string;
   confirmed_at: string;
 };
 
@@ -289,7 +297,7 @@ export function isShareEntry(v: unknown): v is ShareEntry {
 }
 
 export function isShare(v: unknown): v is Share {
-  if (!isRecord(v) || !only(v, ['version', 'part', 'account_id', 'amount_was', 'currency', 'date', 'what', 'entries', 'kept_gone', 'created_at', 'updated_at'])) return false;
+  if (!isRecord(v) || !only(v, ['version', 'part', 'account_id', 'amount_was', 'currency', 'date', 'what', 'entries', 'kept_gone', 'carry_key', 'created_at', 'updated_at'])) return false;
   return (
     v.version === EXPENSES_VERSION &&
     optional(v.part, isExpenseId) &&
@@ -304,10 +312,14 @@ export function isShare(v: unknown): v is Share {
     v.entries.every(isShareEntry) &&
     new Set(v.entries.map((e) => (e as ShareEntry).id)).size === v.entries.length &&
     optional(v.kept_gone, isInstant) &&
+    optional(v.carry_key, isCarryKey) &&
     isInstant(v.created_at) &&
     isInstant(v.updated_at)
   );
 }
+
+/** A content key as recorded (Share carry_key): bounded text. */
+const isCarryKey = (v: unknown): v is string => typeof v === 'string' && v.length > 0 && v.length <= 600;
 
 export function isIou(v: unknown): v is Iou {
   if (!isRecord(v) || !only(v, ['version', 'person', 'direction', 'amount', 'currency', 'date', 'what', 'category_id', 'closed', 'created_at', 'updated_at'])) return false;
@@ -332,7 +344,7 @@ export function isAllocation(v: unknown): v is Allocation {
 }
 
 export function isPayment(v: unknown): v is Payment {
-  if (!isRecord(v) || !only(v, ['version', 'account_id', 'row', 'allocations', 'note', 'kept_gone', 'confirmed_at'])) return false;
+  if (!isRecord(v) || !only(v, ['version', 'account_id', 'row', 'allocations', 'note', 'kept_gone', 'carry_key', 'confirmed_at'])) return false;
   const row = v.row;
   return (
     v.version === EXPENSES_VERSION &&
@@ -351,6 +363,7 @@ export function isPayment(v: unknown): v is Payment {
     new Set(v.allocations.map((a) => (a as Allocation).item)).size === v.allocations.length &&
     optional(v.note, (x) => isText(x)) &&
     optional(v.kept_gone, isInstant) &&
+    optional(v.carry_key, isCarryKey) &&
     isInstant(v.confirmed_at)
   );
 }

@@ -114,8 +114,9 @@ export async function GET(req: Request) {
       // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
       tags: tags?.tags ?? [],
       // Shared expenses (lib/shared-expenses/rows.ts): what this read can
-      // tell is gone, and what is shared twice, for the card to say.
-      shared_expenses: { gone: shared_expenses.gone, twice: shared_expenses.twice },
+      // tell is gone (with the rows each could move to), what waits on a
+      // re-link, and what is shared twice, for the card to say.
+      shared_expenses: shared_expenses,
       // The review queue (lib/review-store.ts): on from a day, or off; what
       // needs review is marked on each row (lib/review-layer.ts).
       review,

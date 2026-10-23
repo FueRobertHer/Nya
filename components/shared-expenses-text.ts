@@ -96,7 +96,8 @@ export function rowLine(
   if (t.settles_unapplied) return `Confirmed as a payment, but counted as the bank shows it: ${UNAPPLIED_PAYMENT[t.settles_unapplied]}`;
   if (t.shared) {
     const others = t.shared.people.map((p) => `${nameOf(names, p.person)} ${money(p.amount)}`).join(' · ');
-    return `Shared: your part ${money(t.shared.your_part)} · ${others}${t.shared.counted ? '' : ' (counted whole, as you chose)'}`;
+    const was = t.shared.was !== undefined ? `. It was ${money(t.shared.was)} when you shared it: your part takes the difference` : '';
+    return `Shared: your part ${money(t.shared.your_part)} · ${others}${t.shared.counted ? '' : ' (counted whole, as you chose)'}${was}`;
   }
   if (t.settles) {
     const back = t.settles.people.filter((p) => p.direction === 'to_you');
@@ -104,7 +105,8 @@ export function rowLine(
     const said: string[] = [];
     if (back.length > 0) said.push(`Paid back: ${back.map((p) => `${nameOf(names, p.person)} ${money(p.amount)}`).join(' · ')}`);
     if (paid.length > 0) said.push(`You paid ${paid.map((p) => `${nameOf(names, p.person)} ${money(p.amount)}`).join(' · ')}`);
-    return said.join('; ');
+    const was = t.settles.was !== undefined ? `. It was ${money(Math.abs(t.settles.was))} when you confirmed it` : '';
+    return `${said.join('; ')}${was}`;
   }
   return null;
 }

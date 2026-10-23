@@ -31,6 +31,8 @@ import { addDays, isCalendarDay, isCurrencyCode, knownCurrency, MAX_AMOUNT } fro
 import { isSplitOrGroupId, toUnits, unitScale } from '../split-rows';
 import { splitStore } from '../splits';
 import { findTransactions, type FoundTxn } from '../txn-lookup';
+import { assembleBankRows, finishActivity } from '../activity';
+import { MANY_AT_ONCE } from '../repo';
 import { itemState, itemsOf, paidOf, allClosed, type Item } from './balances';
 import {
   APPS,
@@ -160,11 +162,14 @@ async function itemsNow(ctx: Ctx): Promise<{ shares: Map<string, Share>; ious: M
   return { shares, ious, payments, items: itemsOf(shares, ious) };
 }
 
-/** A person who can be given something new: there, and not forgotten. */
+/** A person who can be given something new: there, not forgotten, and not
+ *  archived (an archived person owes nothing and is owed nothing, and the
+ *  card lists them apart: bring them back first). */
 async function livePerson(ctx: Ctx, id: string): Promise<Person> {
   const p = await expensePeopleStore.get(ctx, id);
   if (!p) return fail('That person is no longer on your list. Reload to see it as it is.', 404);
   if (p.removed_at) fail('You removed that person: add them again to share with them.', 409);
+  if (p.archived_at) fail(`You archived ${p.name ?? 'that person'}: bring them back first to share with them.`, 409);
   return p;
 }
 
@@ -318,8 +323,14 @@ export async function recordRequest(ctx: Ctx, id: string, input: RequestInput, n
 
 // ---- Shares ----
 
+/** An entry as a request gives it. An `id` it names is never taken: an
+ *  entry keeps the id it has while it names the same person, else gets a new
+ *  one, so no request can make two items one. */
 export type EntryInput = { id?: unknown; person?: unknown; amount?: unknown; how?: unknown };
-export type ShareInput = { part?: unknown; what?: unknown; entries?: unknown; updated_at?: unknown };
+/** `carried_from`: the share shows on this transaction carried across a
+ *  re-link (lib/shared-expenses/rows.ts), kept under the transaction it was
+ *  on before; saving it moves it onto this one. */
+export type ShareInput = { part?: unknown; what?: unknown; entries?: unknown; updated_at?: unknown; carried_from?: unknown };
 
 /** What an edit was opened on: a share's updated_at, null for none, absent
  *  for not said. */
@@ -356,6 +367,8 @@ async function shareTarget(ctx: Ctx, found: FoundTxn, part: unknown): Promise<{ 
  */
 export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareInput, now = new Date()): Promise<Share> {
   const seen = seenOf(input.updated_at);
+  const carriedFrom = input.carried_from === undefined || input.carried_from === null ? null : checkTransactionId(input.carried_from);
+  if (carriedFrom === transaction_id) fail('That is the same transaction.');
   if (!Array.isArray(input.entries) || input.entries.length < 1) fail('Say who owes what of it.');
   if ((input.entries as unknown[]).length > MAX_ENTRIES) fail(`At most ${MAX_ENTRIES} people can share one transaction with you.`);
   await refuseGrouped(ctx, transaction_id, 'share it');
@@ -379,19 +392,29 @@ export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareIn
   });
   const total = wanted.reduce((n, e) => n + toUnits(e.amount, scale), 0);
   if (total > toUnits(target.amount, scale)) fail('The parts come to more than the transaction.', 400);
-  for (const p of people) await livePerson(ctx, p);
+  // A person new to it, or whose part changes, must be one who can be given
+  // something; an entry left as it is goes through (a forgotten or archived
+  // person's part kept while the others change).
+  const before = await expenseSharesStore.get(ctx, carriedFrom ?? transaction_id);
+  if (carriedFrom && !before) fail('Nothing is shared under that transaction any more. Reload to see it as it is.', 404);
+  if (carriedFrom && before?.part) fail('A share of a split part doesn’t carry across a re-link: share the transaction again.', 409);
+  for (const w of wanted) {
+    const kept = before?.entries.find((e) => e.person === w.person);
+    if (kept && toUnits(kept.amount, scale) === toUnits(w.amount, scale)) continue;
+    await livePerson(ctx, w.person);
+  }
   const what = checkText(input.what, WHAT_MAX, 'What it was for') ?? checkText(found.name, WHAT_MAX * 10, 'What it was for')?.slice(0, WHAT_MAX) ?? 'Shared expense';
-  const isNew = !(await expenseSharesStore.has(ctx, transaction_id));
+  const isNew = !carriedFrom && !(await expenseSharesStore.has(ctx, transaction_id));
   if (isNew && (await expenseSharesStore.count(ctx)) >= MAX_SHARES) fail(`At most ${MAX_SHARES.toLocaleString('en-US')} transactions can be shared. Remove some settled ones first.`, 409);
   // What has closed each entry by a payment, read strictly: never lowered below.
   const { payments, items } = await itemsNow(ctx);
   const paid = paidOf(payments, items);
-  return (await expenseSharesStore.update(ctx, transaction_id, (cur) => {
+  const build = (cur: Share | null): Share => {
     if (seen !== undefined && (cur?.updated_at ?? null) !== seen) return fail('This was changed on another device since you opened it. Close it and open it again to see the change.', 409);
     const byPerson = new Map((cur?.entries ?? []).map((e) => [e.person, e] as const));
     const entries: ShareEntry[] = wanted.map((w) => {
       const was = byPerson.get(w.person);
-      const id = was?.id ?? (isExpenseId(w.id) && !(cur?.entries ?? []).some((e) => e.id === w.id) ? (w.id as string) : newId());
+      const id = was?.id ?? newId();
       const entry: ShareEntry = { id, person: w.person, amount: w.amount, ...(w.how ? { how: w.how } : {}), ...(was?.closed?.length ? { closed: was.closed } : {}) };
       const item = items.get(id);
       const closedBy = (paid.get(id)?.units ?? 0) + (entry.closed ?? []).reduce((n, c) => n + toUnits(c.amount, scale), 0);
@@ -415,7 +438,20 @@ export async function saveShare(ctx: Ctx, transaction_id: string, input: ShareIn
       created_at: cur?.created_at ?? now.toISOString(),
       updated_at: now.toISOString(),
     };
-  }))!;
+  };
+  if (!carriedFrom) return (await expenseSharesStore.update(ctx, transaction_id, build))!;
+  // Carried across a re-link: written under this transaction and gone from
+  // the one before, in one step.
+  const written = await expenseSharesStore.updateMany(ctx, [carriedFrom, transaction_id], (cur) => {
+    if (cur.get(transaction_id)) return fail('That transaction is shared already.', 409);
+    const was = cur.get(carriedFrom);
+    if (!was) return fail('Nothing is shared under that transaction any more. Reload to see it as it is.', 404);
+    return new Map<string, Share | null>([
+      [carriedFrom, null],
+      [transaction_id, build(was)],
+    ]);
+  });
+  return written.get(transaction_id)!;
 }
 
 /** Stops sharing a transaction: it counts whole again. Refused while a
@@ -442,34 +478,66 @@ export async function keepShare(ctx: Ctx, transaction_id: string, now = new Date
   return (await expenseSharesStore.update(ctx, transaction_id, (cur) => (cur ? { ...cur, kept_gone: now.toISOString() } : fail('Nothing is shared under that transaction.', 404))))!;
 }
 
-/** Whether a transaction can take what a gone one had: on its account, at
- *  its amount and currency, within a week, and free (see moveShare). */
-function sameAs(found: FoundTxn, was: { account_id: string; amount: number; currency: string; date: string }): boolean {
-  const days = Math.abs(Date.parse(`${found.date}T00:00:00Z`) - Date.parse(`${was.date}T00:00:00Z`)) / 86_400_000;
-  return found.account_id === was.account_id && found.currency === was.currency && toUnits(found.amount, unitScale(was.currency)) === toUnits(was.amount, unitScale(was.currency)) && days <= 7;
+/** The transaction a gone share or payment moves to, as stored (looked up in
+ *  this container's own stores): on the account the request says it is on,
+ *  posted, in a currency, and free (no share, no payment, no split, in no
+ *  group). Refused otherwise, saying why. */
+async function moveTarget(ctx: Ctx, to: string, account: unknown, doing: string): Promise<FoundTxn> {
+  if (typeof account !== 'string' || !isTransactionId(account)) return fail('Say which account that transaction is on.');
+  await refuseGrouped(ctx, to, doing);
+  if (await expensePaymentsStore.has(ctx, to)) fail('That transaction pays something back already.', 409);
+  if (await expenseSharesStore.has(ctx, to)) fail('That transaction is shared already.', 409);
+  if (await splitStore.has(ctx, to)) fail('That transaction is split.', 409);
+  const found = await stored(ctx, to);
+  if (found.account_id !== account) fail('That transaction isn’t on the account you chose. Reload to see your transactions as they are.', 409);
+  if (found.pending) fail('That transaction is still pending: move it once it has posted.', 409);
+  if (!found.currency) fail('That transaction doesn’t say its currency.', 409);
+  // Shared or paying, though nothing is stored under its id: what a re-link
+  // carried to it (lib/shared-expenses/rows.ts, ACROSS A RE-LINK).
+  const carried = await carriedOnto(ctx, to);
+  if (carried === 'shared') fail('That transaction is shared already.', 409);
+  if (carried === 'paying') fail('That transaction pays something back already.', 409);
+  return found;
+}
+
+/** What a share or payment from before a re-link makes of a transaction it
+ *  was carried to: shared, paying something back, or null for neither. As
+ *  the Activity tab reads it (hidden and ended accounts' rows among them),
+ *  since what carries is decided by the link and the rows, one to one: a
+ *  key two rows have carries to neither, so either can be moved to. Read
+ *  only while something holds a key a disconnect recorded, or can't be read. */
+async function carriedOnto(ctx: Ctx, id: string): Promise<'shared' | 'paying' | null> {
+  const kept = await Promise.all([expenseSharesStore.getAllReport(ctx), expensePaymentsStore.getAllReport(ctx)]);
+  const carrying = kept.some((r) => r.unreadable.length + r.unrecognised.length > 0 || [...r.entries.values()].some((v) => v.carry_key));
+  if (!carrying) return null;
+  const bank = await assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, withAccountIds: true, keepEnded: true });
+  const row = (await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true })).transactions.find((t) => t.transaction_id === id);
+  return row?.shared ? 'shared' : row?.settles ? 'paying' : null;
 }
 
 /** Moves a share to the transaction a gone one came back as (the bank sent
- *  it again, or a re-link gave it a new id), in one step within the store.
- *  `account` is the account the gone one's is linked to now, if it is. */
-export async function moveShare(ctx: Ctx, from: string, to: string, account: string | null = null, now = new Date()): Promise<Share> {
+ *  it again under a new id, a re-link it didn't carry across, a row entered
+ *  again), in one step within the store. `account` is the account the
+ *  request says the transaction is on, checked against it as stored. It
+ *  must be money out, in the share's currency, at least what the others owe
+ *  of it. */
+export async function moveShare(ctx: Ctx, from: string, to: string, account: unknown, now = new Date()): Promise<Share> {
   if (from === to) fail('That is the same transaction.');
   const share = await expenseSharesStore.get(ctx, from);
   if (!share) return fail('Nothing is shared under that transaction.', 404);
   if (share.part) fail('A share of a split part moves with its split: share the part again.', 409);
-  await refuseGrouped(ctx, to, 'share it');
-  if (await expensePaymentsStore.has(ctx, to)) fail('That transaction pays something back.', 409);
-  if (await splitStore.has(ctx, to)) fail('That transaction is split: share one of its parts.', 409);
-  const found = await stored(ctx, to);
-  if (found.pending || !sameAs(found, { account_id: account ?? share.account_id, amount: share.amount_was, currency: share.currency, date: share.date }) && !sameAs(found, { account_id: share.account_id, amount: share.amount_was, currency: share.currency, date: share.date })) {
-    fail('That transaction isn’t the same one: it is on another account, of another amount or currency, or more than a week away.', 409);
-  }
+  const found = await moveTarget(ctx, to, account, 'share it');
+  if (!(found.amount > 0)) fail('Only money out can take a share: choose a transaction you paid.', 409);
+  if (found.currency !== share.currency) fail('That transaction is in another currency.', 409);
+  const scale = unitScale(share.currency);
+  if (share.entries.reduce((n, e) => n + toUnits(e.amount, scale), 0) > toUnits(found.amount, scale)) fail('What the others owe of it is more than that transaction.', 409);
   const written = await expenseSharesStore.updateMany(ctx, [from, to], (cur) => {
     if (cur.get(to)) return fail('That transaction is shared already.', 409);
     const was = cur.get(from);
     if (!was) return fail('Nothing is shared under that transaction.', 404);
-    const moved: Share = { ...was, account_id: found.account_id, date: found.date, updated_at: now.toISOString() };
+    const moved: Share = { ...was, account_id: found.account_id, date: found.date, amount_was: found.amount, updated_at: now.toISOString() };
     delete moved.kept_gone;
+    delete moved.carry_key;
     return new Map<string, Share | null>([
       [from, null],
       [to, moved],
@@ -667,25 +735,29 @@ export async function keepPayment(ctx: Ctx, row_id: string, now = new Date()): P
   return (await expensePaymentsStore.update(ctx, row_id, (cur) => (cur ? { ...cur, kept_gone: now.toISOString() } : fail('No payment is kept under that transaction.', 404))))!;
 }
 
-/** Moves a payment to the row a gone one came back as, in one step. */
-export async function movePayment(ctx: Ctx, from: string, to: string, account: string | null = null): Promise<Payment> {
+/** Moves a payment to the row a gone one came back as, in one step: money
+ *  the same way (in, for what someone paid you back; out, for what you paid
+ *  someone), in its currency, at least what it paid back (moveShare says the
+ *  rest). */
+export async function movePayment(ctx: Ctx, from: string, to: string, account: unknown): Promise<Payment> {
   if (from === to) fail('That is the same transaction.');
   const payment = await expensePaymentsStore.get(ctx, from);
   if (!payment) return fail('No payment is kept under that transaction.', 404);
-  await refuseGrouped(ctx, to, 'confirm it');
-  if (await splitStore.has(ctx, to)) fail('That transaction is split.', 409);
-  if (await expenseSharesStore.has(ctx, to)) fail('That transaction is shared.', 409);
-  const found = await stored(ctx, to);
-  const was = { amount: payment.row.amount, currency: payment.row.currency, date: payment.row.date };
-  if (found.pending || (!sameAs(found, { ...was, account_id: payment.account_id }) && !(account && sameAs(found, { ...was, account_id: account })))) {
-    fail('That transaction isn’t the same one: it is on another account, of another amount or currency, or more than a week away.', 409);
-  }
+  const found = await moveTarget(ctx, to, account, 'confirm it');
+  if (Math.sign(found.amount) !== Math.sign(payment.row.amount)) fail(payment.row.amount < 0 ? 'A payment back to you moves only to money in.' : 'A payment you made moves only to money out.', 409);
+  if (found.currency !== payment.row.currency) fail('That transaction is in another currency.', 409);
+  const scale = unitScale(payment.row.currency);
+  // What it paid back nets both ways ($60 of dinner less $25 of groceries).
+  const { items } = await itemsNow(ctx);
+  const net = payment.allocations.reduce((n, a) => n + (items.get(a.item)?.direction === 'by_you' ? -1 : 1) * toUnits(a.amount, scale), 0);
+  if (Math.abs(net) > Math.abs(toUnits(found.amount, scale))) fail('What it paid back is more than that transaction.', 409);
   const written = await expensePaymentsStore.updateMany(ctx, [from, to], (cur) => {
     if (cur.get(to)) return fail('That transaction is confirmed already.', 409);
     const p = cur.get(from);
     if (!p) return fail('No payment is kept under that transaction.', 404);
     const moved: Payment = { ...p, account_id: found.account_id, row: { amount: found.amount, currency: p.row.currency, date: found.date } };
     delete moved.kept_gone;
+    delete moved.carry_key;
     return new Map<string, Payment | null>([
       [from, null],
       [to, moved],
@@ -700,7 +772,8 @@ export async function movePayment(ctx: Ctx, from: string, to: string, account: s
 export async function dismissRow(ctx: Ctx, row_id: string, now = new Date()): Promise<void> {
   if (await expensePaymentsStore.has(ctx, row_id)) fail('This payment is confirmed: reopen it first.', 409);
   const found = await stored(ctx, row_id);
-  const all = await expenseDismissedStore.getAllLenient(ctx); // a convenience: only old ones are let go
+  // Only readable old ones are let go; one that can't be read stays.
+  const all = (await expenseDismissedStore.getAllReport(ctx)).entries;
   const floor = addDays(now.toISOString().slice(0, 10), -DISMISSED_DAYS);
   const old = [...all].filter(([, d]) => d.date < floor).map(([id]) => id);
   if (old.length > 0) await expenseDismissedStore.remove(ctx, ...old);
@@ -710,6 +783,41 @@ export async function dismissRow(ctx: Ctx, row_id: string, now = new Date()): Pr
 
 export async function undismissRow(ctx: Ctx, row_id: string): Promise<void> {
   await expenseDismissedStore.remove(ctx, row_id);
+}
+
+// ---- Across a re-link ----
+
+/** A transaction of a connection being disconnected, as lib/txn-annotations.ts
+ *  RetiringTxn has it: its id, its account, its content key, pending. */
+export type RetiringRow = { transaction_id: string; account_id: string; key: string; pending: boolean };
+
+/**
+ * Records, on each share and payment of a disconnecting connection's posted
+ * transactions, the transaction's content key (Share carry_key), before its
+ * id dies with the connection: once the re-added account is linked to the
+ * old one, the share or payment carries to the transaction there with the
+ * same key (lib/shared-expenses/rows.ts ACROSS A RE-LINK). A share of a split
+ * part records none (the split doesn't carry). What can't be read records
+ * nothing. Returns how many it recorded. Throws if storage fails: the caller
+ * (lib/disconnect-item.ts) must not let that stop the disconnect.
+ */
+export async function retireShares(ctx: Ctx, rows: readonly RetiringRow[]): Promise<number> {
+  const posted = new Map(rows.filter((r) => !r.pending).map((r) => [r.transaction_id, r]));
+  if (posted.size === 0) return 0;
+  const [shares, payments] = await Promise.all([expenseSharesStore.getAllReport(ctx), expensePaymentsStore.getAllReport(ctx)]);
+  const due = <T extends { carry_key?: string; part?: string }>(entries: ReadonlyMap<string, T>) =>
+    [...entries].filter(([id, v]) => posted.has(id) && !v.part && v.carry_key !== posted.get(id)!.key).map(([id]) => id);
+  const shareIds = due(shares.entries);
+  const paymentIds = due(payments.entries as ReadonlyMap<string, Payment & { part?: undefined }>);
+  for (let i = 0; i < shareIds.length; i += MANY_AT_ONCE) {
+    const ids = shareIds.slice(i, i + MANY_AT_ONCE);
+    await expenseSharesStore.updateMany(ctx, ids, (cur) => new Map(ids.flatMap((id) => (cur.get(id) ? [[id, { ...cur.get(id)!, carry_key: posted.get(id)!.key }] as [string, Share]] : []))));
+  }
+  for (let i = 0; i < paymentIds.length; i += MANY_AT_ONCE) {
+    const ids = paymentIds.slice(i, i + MANY_AT_ONCE);
+    await expensePaymentsStore.updateMany(ctx, ids, (cur) => new Map(ids.flatMap((id) => (cur.get(id) ? [[id, { ...cur.get(id)!, carry_key: posted.get(id)!.key }] as [string, Payment]] : []))));
+  }
+  return shareIds.length + paymentIds.length;
 }
 
 // ---- Settled outside your accounts, or let go ----
@@ -752,8 +860,8 @@ export async function closeItems(ctx: Ctx, input: CloseInput, now = new Date()):
     if (item.kind === 'share') byShare.set(item.transaction_id!, [...(byShare.get(item.transaction_id!) ?? []), id]);
   }
   const shareIds = [...byShare.keys()];
-  for (let i = 0; i < shareIds.length; i += 16) {
-    const ids = shareIds.slice(i, i + 16);
+  for (let i = 0; i < shareIds.length; i += MANY_AT_ONCE) {
+    const ids = shareIds.slice(i, i + MANY_AT_ONCE);
     await expenseSharesStore.updateMany(ctx, ids, (cur) => {
       const next = new Map<string, Share | null>();
       for (const sid of ids) {
@@ -765,8 +873,8 @@ export async function closeItems(ctx: Ctx, input: CloseInput, now = new Date()):
     });
   }
   const iouIds = [...wanted.keys()].filter((id) => items.get(id)!.kind === 'iou');
-  for (let i = 0; i < iouIds.length; i += 16) {
-    const ids = iouIds.slice(i, i + 16);
+  for (let i = 0; i < iouIds.length; i += MANY_AT_ONCE) {
+    const ids = iouIds.slice(i, i + MANY_AT_ONCE);
     await expenseIousStore.updateMany(ctx, ids, (cur) => {
       const next = new Map<string, Iou | null>();
       for (const id of ids) {

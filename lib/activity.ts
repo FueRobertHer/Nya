@@ -130,12 +130,15 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  forecast reads), `category_facts` from one cached before rows carried
  *  what files them into the person's categories, and `layer_facts` from one
  *  cached before rows carried what rules and what was carried across a
- *  re-link are applied by (lib/txn-layers.ts): any is a miss. */
+ *  re-link are applied by (lib/txn-layers.ts), and `content_keys` from one
+ *  cached before posted rows carried the key a share carries across a
+ *  re-link by (lib/shared-expenses/rows.ts): any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
   category_facts: true;
   layer_facts: true;
+  content_keys: true;
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -165,6 +168,7 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.account_types === true &&
     p.category_facts === true &&
     p.layer_facts === true &&
+    p.content_keys === true &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -409,6 +413,7 @@ export async function assembleBankRows(
       account_types: true,
       category_facts: true,
       layer_facts: true,
+      content_keys: true,
       transactions,
       notes,
       incomplete,
@@ -529,9 +534,8 @@ export async function finishActivity(
    *  otherwise than the person files them (a share, lib/share-views.ts). */
   defaults_unread: boolean;
   /** Shared expenses (lib/shared-expenses/rows.ts): what this read can tell
-   *  is gone, shared twice, and how many shared transactions and IOUs
-   *  counted at your part. */
-  shared_expenses: Pick<ShareResult, 'gone' | 'twice' | 'counted'>;
+   *  is gone, what waits on a re-link, and what is shared twice. */
+  shared_expenses: Pick<ShareResult, 'gone' | 'away' | 'twice' | 'moves'>;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -589,6 +593,11 @@ export async function finishActivity(
   // there yet (lib/split-rows.ts).
   const stands = new Map<string, readonly string[]>();
   for (const t of transactions) if (t.stands_for?.length) stands.set(t.transaction_id, t.stands_for);
+  // Each row's account and content key, which the layers take off the row
+  // (never sent): what a share is found by across a re-link, and what says
+  // its transaction is gone (lib/shared-expenses/rows.ts).
+  const rowFacts = new Map<string, { account?: string; key?: string }>();
+  for (const t of transactions) rowFacts.set(t.transaction_id, { account: t.account_id ?? t.account_ref, key: t.content_key });
   // The categories first, which the rules read; then the rules, what was
   // carried across a re-link and what the person said about each row, over
   // the bank's data (lib/txn-layers.ts); then every row filed.
@@ -629,6 +638,8 @@ export async function finishActivity(
     ix,
     from: cutoff,
     hidden,
+    rowFacts,
+    manualUnread: manual.unread,
     ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
     ...(stands.size > 0 ? { stands } : {}),
   });
@@ -648,7 +659,7 @@ export async function finishActivity(
     transactions: withShares.rows,
     notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes, ...withShares.notes],
     unread_notes: [...plaid.notes, ...manual.notes, ...withShares.unread_notes],
-    shared_expenses: { gone: withShares.gone, twice: withShares.twice, counted: withShares.counted },
+    shared_expenses: { gone: withShares.gone, away: withShares.away, twice: withShares.twice, ...(withShares.moves ? { moves: withShares.moves } : {}) },
     tags_note: tagRead.note,
     review: {
       on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,

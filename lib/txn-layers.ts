@@ -267,6 +267,7 @@ export function applyLayers(rows: Row[], inputs: LayerInputs): void {
     delete t.renamed_from;
     delete t.own_name;
     delete t.stands_for;
+    if ('content_key' in t) delete t.content_key;
     if ('pending_from' in t) delete t.pending_from;
   }
 }

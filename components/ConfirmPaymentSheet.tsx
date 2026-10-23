@@ -129,13 +129,12 @@ function allocationsOf(picked: Picked, items: readonly ItemState[], currency: st
   return out;
 }
 
-/** The items a row could close: those open in its currency, of people not
- *  archived, those in its direction first (money in, what is owed to you;
+/** The items a row could close: those open in its currency (an archived
+ *  person's too, should one have any), those in its direction first (money in, what is owed to you;
  *  money out, what you owe). One the other way is taken off: $60 of dinner
  *  less $25 of groceries is paid back by $35. */
 export function itemsFor(card: CardAnswer, currency: string, direction: Direction): ItemState[] {
-  const archived = new Set(card.people.filter((p) => p.archived).map((p) => p.id));
-  const open = card.items.filter((i) => i.currency === currency && i.open > 0 && !archived.has(i.person));
+  const open = card.items.filter((i) => i.currency === currency && i.open > 0);
   return [...open.filter((i) => i.direction === direction), ...open.filter((i) => i.direction !== direction)];
 }
 
@@ -180,7 +179,10 @@ export function ConfirmPaymentSheet({
   // As the bank shows it: a payment's own row, before what it paid back.
   const rowAmount = t ? (t.shared_was ?? t.amount) : 0;
   const direction: Direction = rowAmount < 0 ? 'to_you' : 'by_you';
-  const confirmed = card && t ? (card.payments.find((p) => p.transaction_id === t.transaction_id) ?? null) : null;
+  // Kept under the row, or the one it was carried from (a row imported from
+  // a file it stands for, the transaction before a re-link).
+  const keptUnder = t ? (t.settles?.kept_under ?? t.transaction_id) : '';
+  const confirmed = card && t ? (card.payments.find((p) => p.transaction_id === keptUnder) ?? null) : null;
   const items = useMemo(() => (card && currency ? itemsFor(card, currency, direction) : []), [card, currency, direction]);
 
   useEffect(() => {
@@ -233,7 +235,7 @@ export function ConfirmPaymentSheet({
           </div>
         )}
         <div className="button-pair">
-          <button className="secondary" onClick={() => void act('DELETE', { transaction_id: t.transaction_id })} disabled={saving}>
+          <button className="secondary" onClick={() => void act('DELETE', { transaction_id: keptUnder })} disabled={saving}>
             Reopen it
           </button>
           <button className="secondary" onClick={onClose} disabled={saving}>
@@ -294,6 +296,20 @@ export function ConfirmPaymentSheet({
   );
 }
 
+/** Whether letting these go makes a part yours: only a part of a shared
+ *  transaction someone owed you does, and only when shared transactions count
+ *  your part. An IOU owed to you let go changes no total, and under `bank`
+ *  nothing moves. */
+export function letGoBecomesYours(counting: CardAnswer['counting'], allocations: readonly { item: string }[], items: readonly Pick<ItemState, 'id' | 'kind' | 'direction'>[]): boolean {
+  return (
+    counting === 'part' &&
+    allocations.some((a) => {
+      const i = items.find((x) => x.id === a.item);
+      return i?.kind === 'share' && i.direction === 'to_you';
+    })
+  );
+}
+
 /** Settled outside your accounts (cash, another app, anything Nya can't
  *  see), or let go: the items, a day and a note. */
 export function SettleSheet({
@@ -335,7 +351,7 @@ export function SettleSheet({
   const name = card.people.find((p) => p.id === person)?.name ?? REMOVED_NAME;
   const allocations = allocationsOf(picked, items, currency);
   const ready = !!allocations && allocations.length > 0 && !!day;
-  const lettingGoYours = kind === 'forgiven' && (allocations ?? []).some((a) => items.find((i) => i.id === a.item)?.direction === 'to_you');
+  const lettingGoYours = kind === 'forgiven' && letGoBecomesYours(card.counting, allocations ?? [], items);
 
   async function save() {
     setSaving(true);

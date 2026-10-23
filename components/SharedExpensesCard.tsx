@@ -20,10 +20,9 @@ import { formatMoney, hideAmountsIn, signedMoney } from '@/lib/format';
 import { localDate } from '@/lib/local-date';
 import type { Taxonomy } from '@/lib/categories';
 import type { Tag } from '@/lib/tags';
-import { currencyOf } from '@/lib/spending';
 import { proposals, type MatchPerson, type Proposal } from '@/lib/shared-expenses/match';
 import { MAX_BATCH, REMOVED_NAME } from '@/lib/shared-expenses/model';
-import type { ShareResult } from '@/lib/shared-expenses/rows';
+import type { MoveTo, ShareResult } from '@/lib/shared-expenses/rows';
 import type { Balance } from '@/lib/shared-expenses/balances';
 import { convert, isStale, ownRateOn, type FxTable } from '@/lib/fx/rates';
 import { balanceText, letGoText, reasonsText, whoseText } from './shared-expenses-text';
@@ -35,7 +34,7 @@ import IouSheet from './IouSheet';
 import HandoffSheet from './HandoffSheet';
 
 /** What the transactions' read says of shared expenses (lib/activity.ts). */
-export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'>;
+export type SharedFacts = Pick<ShareResult, 'gone' | 'twice'> & Partial<Pick<ShareResult, 'away' | 'moves'>>;
 
 /** A person's balances in the home currency, at the newest rates: an
  *  estimate to read, never stored, asked for or matched on; null without a
@@ -157,8 +156,11 @@ export default function SharedExpensesCard({
     );
   }
 
-  const live = card.people.filter((p) => !p.archived && (!p.removed || ((card.balances?.[p.id] ?? []).length > 0)));
-  const archived = card.people.filter((p) => p.archived);
+  // Listed: everyone not archived or forgotten, and anyone with something
+  // open (an archived person given something on another device meanwhile).
+  const openWith = (id: string) => (card.balances?.[id] ?? []).length > 0;
+  const live = card.people.filter((p) => (!p.archived && !p.removed) || openWith(p.id));
+  const archived = card.people.filter((p) => p.archived && !openWith(p.id));
   const sharedIds = new Set(card.shares.map((s) => s.transaction_id));
   const byId = new Map((txns ?? []).map((t) => [t.transaction_id, t]));
   const unread = Object.entries(card.unread);
@@ -173,22 +175,15 @@ export default function SharedExpensesCard({
     return !sent.error;
   }
 
-  // A gone transaction's candidates to move to: the same amount and
-  // currency, within a week, not shared or paying already.
-  const movesFor = (amount: number, cur: string, day: string): Txn[] =>
-    (txns ?? []).filter(
-      (t) =>
-        !t.pending &&
-        !t.shared &&
-        !t.settles &&
-        !t.shared_part &&
-        !t.shared_iou &&
-        t.split_of === undefined &&
-        !t.group_members &&
-        currencyOf(t) === cur &&
-        Math.abs(t.amount - amount) < 1e-9 &&
-        Math.abs(Date.parse(`${t.date}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) <= 7 * 86_400_000
-    );
+  // A gone one's candidates to move to, as the read worked them out
+  // (lib/shared-expenses/rows.ts moves), each with the account it is on,
+  // which the move sends and the server checks.
+  const movesFor = (moves: readonly MoveTo[] | undefined): (MoveTo & { t: Txn })[] =>
+    (moves ?? []).flatMap((m) => {
+      const t = byId.get(m.transaction_id);
+      return t ? [{ ...m, t }] : [];
+    });
+  const away = (facts?.away?.shares.length ?? 0) + (facts?.away?.payments.length ?? 0);
 
   const goneShares = (facts?.gone.shares ?? []).map((id) => card.shares.find((s) => s.transaction_id === id)).filter((s) => !!s);
   const gonePayments = (facts?.gone.payments ?? []).map((id) => card.payments.find((p) => p.transaction_id === id)).filter((p) => !!p);
@@ -256,6 +251,7 @@ export default function SharedExpensesCard({
                 <button className="link-btn shared-person-name" onClick={() => setOpen({ kind: 'person', id: p.id })}>
                   {name}
                 </button>
+                {p.archived && <span className="type-tag">Archived, with something still open</span>}
                 {card.balances === null ? (
                   <span className="type-tag">Balance not shown while some of it can’t be read</span>
                 ) : balances.length === 0 ? (
@@ -269,7 +265,29 @@ export default function SharedExpensesCard({
                         <span className={b.amount > 0 ? 'inflow' : undefined}>
                           <Masked>{balanceText(name, b.amount, (n) => formatMoney(n, b.currency))}</Masked>
                         </span>
-                        {b.over > 0 && <span className="type-tag"> · something was paid back past what it was</span>}
+                        {b.over > 0 &&
+                          card.items
+                            .filter((i) => i.person === p.id && i.currency === b.currency && i.over)
+                            .map((i) => {
+                              // Closed past its amount (two payments confirmed on two devices at
+                              // once, say): which payments, and one to reopen.
+                              const by = card.payments.filter((pay) => pay.allocations.some((a) => a.item === i.id));
+                              return (
+                                <div key={`over:${i.id}`} className="type-tag">
+                                  “{i.what}” was closed past what it was{by.length > 0 ? `, by ${by.length === 1 ? 'a payment' : `${by.length} payments`}` : ''}.{' '}
+                                  {by.map((pay) => (
+                                    <button
+                                      key={pay.transaction_id}
+                                      className="link-btn"
+                                      disabled={busy}
+                                      onClick={() => void act(SHARED_ROUTES.payments, 'DELETE', { transaction_id: pay.transaction_id })}
+                                    >
+                                      Reopen the payment of {shownDay(pay.row.date)}
+                                    </button>
+                                  ))}
+                                </div>
+                              );
+                            })}
                         {letGo && (
                           <div className="type-tag">
                             {letGo}{' '}
@@ -376,14 +394,19 @@ export default function SharedExpensesCard({
           })}
 
       {goneShares.map((s) => {
-        const moves = movesFor(s.amount_was, s.currency, s.date);
+        const moves = movesFor(facts?.moves?.shares[s.transaction_id]);
         return (
           <div key={`gone:${s.transaction_id}`} className="stale-note">
             {s.what}, {shownDay(s.date)}: its transaction isn’t in your accounts any more. What is owed of it stays, in the balance, until you say.
             <div className="card-actions">
-              {moves.slice(0, 2).map((m) => (
-                <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id })}>
-                  Move to {m.name}, {shownDay(m.date)}, {m.account_name}
+              {moves.map((m) => (
+                <button
+                  key={m.transaction_id}
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'move', transaction_id: s.transaction_id, to: m.transaction_id, account: m.account_id })}
+                >
+                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.shares, 'PATCH', { action: 'keep', transaction_id: s.transaction_id }, false)}>
@@ -397,14 +420,19 @@ export default function SharedExpensesCard({
         );
       })}
       {gonePayments.map((p) => {
-        const moves = movesFor(p.row.amount, p.row.currency, p.row.date);
+        const moves = movesFor(facts?.moves?.payments[p.transaction_id]);
         return (
           <div key={`gone-pay:${p.transaction_id}`} className="stale-note">
             A payment you confirmed on {shownDay(p.row.date)} isn’t in your accounts any more. What it paid back stays paid, until you say.
             <div className="card-actions">
-              {moves.slice(0, 2).map((m) => (
-                <button key={m.transaction_id} className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id })}>
-                  Move to {m.name}, {shownDay(m.date)}, {m.account_name}
+              {moves.map((m) => (
+                <button
+                  key={m.transaction_id}
+                  className="secondary"
+                  disabled={busy}
+                  onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'move', transaction_id: p.transaction_id, to: m.transaction_id, account: m.account_id })}
+                >
+                  Move to {m.t.name}, {shownDay(m.t.date)}, {m.t.account_name}
                 </button>
               ))}
               <button className="secondary" disabled={busy} onClick={() => void act(SHARED_ROUTES.payments, 'PATCH', { action: 'keep', transaction_id: p.transaction_id }, false)}>
@@ -417,6 +445,13 @@ export default function SharedExpensesCard({
           </div>
         );
       })}
+      {away > 0 && (
+        <p className="stale-note">
+          {away === 1 ? 'A shared transaction, or a payment you confirmed, is' : `${away} shared transactions or payments you confirmed are`} on an account you disconnected.
+          Once you add the bank back and link the account to its earlier one, {away === 1 ? 'it carries' : 'they carry'} across to the same transactions; one that doesn’t is
+          listed here to move. What is owed stays as it is meanwhile.
+        </p>
+      )}
       {(facts?.twice ?? []).map((tw) => {
         const t = byId.get(tw.bank);
         return (

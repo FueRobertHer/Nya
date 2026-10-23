@@ -16,6 +16,7 @@ import type { Txn } from './MonthBreakdown';
 import { fieldAmount, formatMoney, hideAmountsIn, zeroExample } from '@/lib/format';
 import { currencyOf } from '@/lib/spending';
 import { PART_PREFIX, toUnits, unitScale } from '@/lib/split-rows';
+import { IMPORTED_TXN_PREFIX } from '@/lib/history-import/view';
 import { MAX_ENTRIES, REMOVED_NAME, WHAT_MAX, type SplitHow } from '@/lib/shared-expenses/model';
 import type { CardAnswer } from '@/lib/shared-expenses/read';
 import { partUnits } from './SplitSheet';
@@ -42,9 +43,16 @@ export function shareTargets(t: Txn): { key: string; part: string | null; label:
   return [{ key: t.transaction_id, part: null, label: t.name, amount: whole(t), row: t }];
 }
 
-/** Where a share of `t` is kept: the transaction's id, or that of the row
- *  imported from a file that it stands for, whose share it shows. */
+/** Where a share of `t` is kept: the transaction's id, that of the row
+ *  imported from a file that it stands for, whose share it shows, or the
+ *  transaction it was on before a re-link carried it here. */
 export const shareKeptUnder = (t: Txn): string => t.shared_carried_from ?? t.split_of ?? t.transaction_id;
+
+/** A share carried here across a re-link (lib/shared-expenses/rows.ts), kept
+ *  under the transaction it was on before: saving moves it onto this one.
+ *  Never one carried from a row imported from a file, which stays its own. */
+export const carriedAcrossLink = (t: Txn): string | null =>
+  t.shared_carried_from !== undefined && !t.shared_carried_from.startsWith(IMPORTED_TXN_PREFIX) ? t.shared_carried_from : null;
 
 export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; shared: SharedExpenses; onClose: () => void }) {
   const card = shared.card;
@@ -95,7 +103,9 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
   const places = Math.round(Math.log10(scale));
   const totalUnits = toUnits(target.amount, scale);
   const money = (units: number) => formatMoney(units / scale, currency);
-  const people = card.people.filter((p) => !p.archived && !p.removed);
+  // Those who can be given a part, and anyone it already gives one to (an
+  // archived or forgotten person's part stays while it is left as it is).
+  const people = card.people.filter((p) => (!p.archived && !p.removed) || picks.some((x) => x.person === p.id));
   const nameOf = (id: string) => card.people.find((p) => p.id === id)?.name ?? REMOVED_NAME;
 
   // The amounts the way of splitting gives, or as typed.
@@ -135,7 +145,9 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
     setSaving(true);
     setError('');
     const sent = await shared.send(SHARED_ROUTES.shares, 'PUT', {
-      transaction_id: kept,
+      // Carried across a re-link: saved onto this transaction, from the one it
+      // was on.
+      ...(t && carriedAcrossLink(t) ? { transaction_id: t.transaction_id, carried_from: carriedAcrossLink(t) } : { transaction_id: kept }),
       ...(target!.part ? { part: target!.part } : {}),
       ...(what.trim() ? { what: what.trim() } : {}),
       updated_at: stored?.updated_at ?? null,
@@ -187,16 +199,17 @@ export default function ShareCostSheet({ t, shared, onClose }: { t: Txn | null; 
               <label className="group-member">
                 <input type="checkbox" checked={at >= 0} onChange={() => toggle(p.id)} disabled={saving || (at < 0 && picks.length >= MAX_ENTRIES)} />
                 <span className="group-member-text">
-                  <span>{p.name}</span>
+                  <span>{p.name ?? REMOVED_NAME}</span>
+                  {(p.archived || p.removed) && <span className="type-tag">Their part stays as it is</span>}
                 </span>
               </label>
               {at >= 0 && (
                 <label className="field split-amount">
-                  {p.name}’s part
+                  {p.name ?? REMOVED_NAME}’s part
                   <input
                     inputMode="decimal"
                     autoComplete="off"
-                    aria-label={`${p.name}’s part`}
+                    aria-label={`${p.name ?? REMOVED_NAME}’s part`}
                     value={auto ? (auto[at] !== undefined ? fieldAmount(auto[at] / scale, places) : '') : picks[at].amount}
                     onChange={(e) => type(p.id, e.target.value)}
                     placeholder={zeroExample(places)}

@@ -7,107 +7,24 @@ import SharedExpensesCard, { aboutInHome } from '@/components/SharedExpensesCard
 import { NO_FX, type FxTable } from '@/lib/fx/rates';
 import ShareCostSheet from '@/components/ShareCostSheet';
 import HandoffSheet from '@/components/HandoffSheet';
-import { ConfirmPaymentSheet, itemsFor, netUnits } from '@/components/ConfirmPaymentSheet';
+import { ConfirmPaymentSheet, itemsFor, letGoBecomesYours, netUnits } from '@/components/ConfirmPaymentSheet';
+import IouSheet from '@/components/IouSheet';
+import PersonSheet from '@/components/PersonSheet';
+import { messageMoney } from '@/lib/shared-expenses/links';
 import { canPayBack, canShare, SharedRowLine, type SharedRowHooks } from '@/components/SharedRows';
 import { balanceText, letGoText, reasonsText, rowLine, splitUnits, whoseText } from '@/components/shared-expenses-text';
-import type { SharedExpenses } from '@/components/shared-expenses-state';
-import type { CardAnswer } from '@/lib/shared-expenses/read';
-import type { ItemState } from '@/lib/shared-expenses/balances';
 import type { Proposal } from '@/lib/shared-expenses/match';
 import { localDate } from '@/lib/local-date';
+import { AT, cardOf, daysAgo, item, shared, txn } from './shared-expenses-fixture';
 
 // Shared expenses (#49) on screen: the card's words for a balance, a long
 // open one, a proposal and a row; the card with its people, a proposal and
 // the first-use note; the handoff with Venmo's documented link only and the
 // message; confirming a payment that could be two people's; sharing a cost;
 // and a row's line and actions. Every figure through the formatters, so
-// none shows while amounts are hidden (and test/hide-amounts.test.tsx's
-// backstop renders each of these again hidden).
-
-const daysAgo = (n: number) => localDate(new Date(Date.now() - n * 86_400_000));
-const AT = '2026-10-01T12:00:00.000Z';
-
-function txn(over: Partial<Txn>): Txn {
-  return {
-    transaction_id: 't',
-    date: daysAgo(1),
-    name: 'Shop',
-    amount: 10,
-    pending: false,
-    account_name: 'Checking',
-    account_type: 'depository',
-    institution_name: 'Chase',
-    category: 'food and drink',
-    category_kind: 'expense',
-    iso_currency_code: 'USD',
-    vendor_key: 'nm:chase::shop',
-    logo_url: null,
-    category_icon_url: null,
-    subcategory: null,
-    category_confidence: null,
-    transaction_code: null,
-    payment_channel: null,
-    datetime: null,
-    website: null,
-    check_number: null,
-    account_owner: null,
-    city: null,
-    region: null,
-    counterparty: null,
-    payment_processor: null,
-    payment_reference: null,
-    ...over,
-  } as Txn;
-}
-
-const item = (over: Partial<ItemState>): ItemState => ({
-  id: 'e-dinner',
-  kind: 'share',
-  person: 'alex',
-  direction: 'to_you',
-  amount: 60,
-  currency: 'USD',
-  date: daysAgo(10),
-  what: 'Dinner',
-  transaction_id: 't-dinner',
-  closed: [],
-  paid: 0,
-  outside: 0,
-  forgiven: 0,
-  open: 60,
-  over: false,
-  ...over,
-});
-
-/** Alex owes 60 of a dinner, less 25 of groceries they bought: 35. You owe
- *  Sam 12.50 of a lunch. */
-function cardOf(over: Partial<CardAnswer> = {}): CardAnswer {
-  return {
-    counting: 'part',
-    settings_unread: false,
-    own: { venmo: 'me-venmo', cashtag: null },
-    people: [
-      { id: 'alex', name: 'Alex Smith', venmo: 'alex-s', cashtag: null, app: 'venmo', tag: null, requests: [], archived: false, removed: false },
-      { id: 'sam', name: 'Sam Lee', venmo: null, cashtag: 'samcash', app: 'cashapp', tag: null, requests: [], archived: false, removed: false },
-    ],
-    items: [
-      item({}),
-      item({ id: 'i-groceries', kind: 'iou', direction: 'by_you', amount: 25, open: 25, date: daysAgo(5), what: 'Groceries', transaction_id: undefined, category_id: 'c1' }),
-      item({ id: 'i-lunch', kind: 'iou', person: 'sam', direction: 'by_you', amount: 12.5, open: 12.5, date: daysAgo(2), what: 'Lunch', transaction_id: undefined }),
-    ],
-    shares: [{ transaction_id: 't-dinner', part: null, account_id: 'chk', amount_was: 120, currency: 'USD', date: daysAgo(10), what: 'Dinner', entries: [{ id: 'e-dinner', person: 'alex', amount: 60, how: { kind: 'half' } }], kept_gone: null, updated_at: AT }],
-    payments: [],
-    dismissed: [],
-    balances: {
-      alex: [{ currency: 'USD', amount: 35, open: 2, oldest: daysAgo(10), over: 0 }],
-      sam: [{ currency: 'USD', amount: -12.5, open: 1, oldest: daysAgo(2), over: 0 }],
-    },
-    unread: {},
-    ...over,
-  } as CardAnswer;
-}
-
-const shared = (card: CardAnswer | null): SharedExpenses => ({ card, failed: null, open: null, setOpen: () => {}, send: async () => ({ error: null, body: null }), reload: () => {} });
+// none shows while amounts are hidden: test/hide-amounts.test.tsx draws the
+// card and each sheet with amounts hidden and looks for any figure, and its
+// backstop draws every render here again hidden.
 
 /** As in a browser's page, where alone amounts can be hidden. */
 function hidden<T>(fn: () => T): T {
@@ -236,11 +153,15 @@ describe('the card', () => {
 
   test('a shared transaction gone from the accounts: kept, with a move, keep or remove', () => {
     const moved = txn({ transaction_id: 't-dinner-2', name: 'Bistro', amount: 120, date: daysAgo(9) });
-    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[moved]} facts={{ gone: { shares: ['t-dinner'], payments: [] }, twice: [] }} tags={[]} taxonomy={null} currency="USD" />));
+    const facts = { gone: { shares: ['t-dinner'], payments: [] }, twice: [], moves: { shares: { 't-dinner': [{ transaction_id: 't-dinner-2', account_id: 'chk-2' }] }, payments: {} } };
+    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[moved]} facts={facts} tags={[]} taxonomy={null} currency="USD" />));
     expect(said).toContain('Dinner,');
     expect(said).toContain('its transaction isn’t in your accounts any more');
-    expect(said).toContain('Move to Bistro');
+    // The rows the read found, each named with its account.
+    expect(said).toContain('Move to Bistro, Oct');
     expect(said).toContain('Keep it');
+    // Without any the read found, no move is offered.
+    expect(text(renderToStaticMarkup(<SharedExpensesCard shared={shared(cardOf())} txns={[moved]} facts={{ ...facts, moves: undefined }} tags={[]} taxonomy={null} currency="USD" />))).not.toContain('Move to');
   });
 
   test('a transaction shared twice through an imported twin: the bank’s counts, and the other can be removed', () => {
@@ -343,5 +264,76 @@ describe('sharing a cost, and a row of the list', () => {
     const iou = txn({ transaction_id: 'iou:i1', name: 'Groceries', amount: 25, date: daysAgo(0), account_name: '', shared_iou: { person: 'alex', item: 'i1', cash: 0 } });
     const html = renderToStaticMarkup(<MonthBreakdown txns={[iou]} notes={[]} loading={false} onRecategorize={() => {}} onRename={() => {}} shared={hooks} />);
     expect(text(html)).toContain('Your part of what Alex Smith paid (an IOU)');
+    // On no account, said so: never " · " and "shared" for an account and a source.
+    expect(text(html)).toContain('An IOU, on no account');
+    expect(text(html)).not.toContain('· shared');
+  });
+
+  test('a row whose amount changed since it was shared says so', () => {
+    const names = new Map([['alex', 'Alex']]);
+    expect(rowLine({ shared: { your_part: 40, people: [{ person: 'alex', item: 'e', amount: 60 }], counted: true, was: 120 } }, names, usd)).toBe('Shared: your part $40.00 · Alex $60.00. It was $120.00 when you shared it: your part takes the difference');
+    expect(rowLine({ settles: { rest: -10, people: [{ person: 'alex', item: 'e', amount: 60, direction: 'to_you' }], counted: true, was: -60 } }, names, usd)).toBe('Paid back: Alex $60.00. It was $60.00 when you confirmed it');
+  });
+});
+
+describe('the other sheets, and what the card says of a few cases', () => {
+  test('an IOU, filled in from what is kept', () => {
+    const html = renderToStaticMarkup(<IouSheet id="i-groceries" open currency="USD" taxonomy={null} shared={shared(cardOf())} onClose={() => {}} />);
+    expect(text(html)).toContain('Did you pay for it from an account in Nya? Share that transaction instead.');
+    expect(html).toContain('inputMode="decimal"');
+  });
+
+  test('someone you split costs with, and what is between you', () => {
+    const said = text(renderToStaticMarkup(<PersonSheet id="alex" open tags={[]} shared={shared(cardOf())} onClose={() => {}} />));
+    expect(said).toContain('Between you');
+    expect(said).toContain('Alex Smith owes you $60.00');
+    expect(said).toContain('Forget Alex Smith');
+  });
+
+  test('letting go says a part becomes yours only for a share’s part, and only when your part is what counts', () => {
+    const items = [
+      { id: 'e-share', kind: 'share' as const, direction: 'to_you' as const },
+      { id: 'i-to-you', kind: 'iou' as const, direction: 'to_you' as const },
+      { id: 'i-by-you', kind: 'iou' as const, direction: 'by_you' as const },
+    ];
+    expect(letGoBecomesYours('part', [{ item: 'e-share' }], items)).toBe(true);
+    expect(letGoBecomesYours('part', [{ item: 'i-to-you' }, { item: 'e-share' }], items)).toBe(true);
+    // An IOU owed to you let go changes no total, in either direction.
+    expect(letGoBecomesYours('part', [{ item: 'i-to-you' }], items)).toBe(false);
+    expect(letGoBecomesYours('part', [{ item: 'i-by-you' }], items)).toBe(false);
+    // Under `bank`, nothing moves.
+    expect(letGoBecomesYours('bank', [{ item: 'e-share' }], items)).toBe(false);
+    expect(letGoBecomesYours('part', [], items)).toBe(false);
+  });
+
+  test('an archived person with something open is listed with the others, said to be archived', () => {
+    const card = cardOf();
+    card.people[1] = { ...card.people[1], archived: true };
+    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(card)} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />));
+    expect(said).toContain('You owe Sam Lee $12.50');
+    expect(said).toContain('Archived, with something still open');
+    expect(said).not.toContain('1 archived');
+  });
+
+  test('an item closed past its amount is named, with the payments to reopen one of', () => {
+    const card = cardOf({
+      items: [item({ open: -60, paid: 120, over: true })],
+      payments: [
+        { transaction_id: 't-v1', account_id: 'chk', row: { amount: -60, currency: 'USD', date: daysAgo(3) }, allocations: [{ item: 'e-dinner', amount: 60 }], note: null, kept_gone: null, confirmed_at: AT, version: 1 },
+        { transaction_id: 't-v2', account_id: 'chk', row: { amount: -60, currency: 'USD', date: daysAgo(2) }, allocations: [{ item: 'e-dinner', amount: 60 }], note: null, kept_gone: null, confirmed_at: AT, version: 1 },
+      ] as never,
+      balances: { alex: [{ currency: 'USD', amount: -60, open: 1, oldest: daysAgo(10), over: 1 }], sam: [] },
+    });
+    const said = text(renderToStaticMarkup(<SharedExpensesCard shared={shared(card)} txns={[]} facts={null} tags={[]} taxonomy={null} currency="USD" />));
+    expect(said).toContain('“Dinner” was closed past what it was, by 2 payments.');
+    expect(said).toContain('Reopen the payment of');
+  });
+
+  test('a message names a crypto amount to its own places, never two', () => {
+    // Intl puts a no-break space between a code and its number.
+    expect(messageMoney(0.0004, 'BTC')).toBe('BTC\u00a00.0004');
+    expect(messageMoney(0.12345678, 'BTC')).toBe('BTC\u00a00.12345678');
+    expect(messageMoney(35, 'USD')).toBe('$35.00');
+    expect(messageMoney(1200, 'JPY')).toBe('¥1,200');
   });
 });

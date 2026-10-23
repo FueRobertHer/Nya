@@ -14,6 +14,8 @@
 //     person can remove what is damaged (once they confirm) and nothing else.
 
 import type { Ctx } from '../containers';
+import { effectiveLinks, getLinks, resolveId } from '../link-core';
+import { liveAccountIds } from '../links';
 import { balancesOf, itemState, itemsOf, paidOf, type Balance, type ItemState } from './balances';
 import { DEFAULT_COUNTING, type Counting, type Dismissed, type ExpenseSettings, type Iou, type Payment, type Person, type Share } from './model';
 import type { ShareInputs } from './rows';
@@ -23,7 +25,7 @@ import { expenseDismissedStore, expenseIousStore, expensePaymentsStore, expenseP
  *  ShareInputs, but for what the reader adds: the categories, the day it
  *  reads from, hidden accounts, the rows imported from files). A display
  *  read (see the header). */
-export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting' | 'settingsUnread' | 'shares' | 'sharesUnknown' | 'payments' | 'paymentsUnknown' | 'ious' | 'iousUnread' | 'dismissed'>> {
+export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting' | 'settingsUnread' | 'shares' | 'sharesUnknown' | 'payments' | 'paymentsUnknown' | 'ious' | 'iousUnread' | 'dismissed' | 'accounts'>> {
   const [settings, shares, payments, ious, dismissed] = await Promise.all([
     expenseSettingsStore.getReport(ctx),
     expenseSharesStore.getAllReport(ctx),
@@ -33,6 +35,11 @@ export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting
     // nothing writes, deletes or records on it.
     expenseDismissedStore.getAllLenient(ctx),
   ]);
+  // Which accounts are live, and the links between earlier ones and them,
+  // only when something is shared or paid: what a share is carried across a
+  // re-link by, and what says one is gone or waits on a link. Best effort:
+  // unread, nothing is carried, and the rows alone say what is gone.
+  const accounts = shares.entries.size > 0 || payments.entries.size > 0 ? await accountsFor(ctx) : null;
   const settingsUnread = settings.unreadable || settings.unrecognised;
   return {
     counting: settings.value?.counting ?? DEFAULT_COUNTING,
@@ -44,7 +51,20 @@ export async function layerInputs(ctx: Ctx): Promise<Pick<ShareInputs, 'counting
     ious: ious.entries,
     iousUnread: ious.unreadable.length + ious.unrecognised.length,
     dismissed: new Set(dismissed.keys()),
+    ...(accounts ? { accounts } : {}),
   };
+}
+
+/** The live bank accounts and how each id resolves through the active links
+ *  (lib/link-core.ts), or null when they couldn't be read. */
+async function accountsFor(ctx: Ctx): Promise<NonNullable<ShareInputs['accounts']> | null> {
+  try {
+    const [links, live] = await Promise.all([getLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
+    const applied = effectiveLinks(links, live);
+    return { live, resolve: (id: string) => resolveId(id, applied) };
+  } catch {
+    return null;
+  }
 }
 
 /** What can't be read in one store: ids that may be removed once the person

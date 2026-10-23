@@ -166,6 +166,10 @@ export type Txn = {
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // On a posted bank row, its content key (contentKey), by which a share or
+  // a payment carries across a re-link (lib/shared-expenses/rows.ts); never
+  // sent, gone with the facts above.
+  content_key?: string;
   // On a posted bank row, the pending one it replaced (Plaid's
   // pending_transaction_id), whose approval is its own until the sync that
   // removes the pending one moves it (lib/review-store.ts). Never sent.
@@ -1395,6 +1399,7 @@ export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
     ...carriedFacts(t, c.carriedAnnotations),
     ...(c.withAccountIds ? { account_id: t.account_id } : {}),
     account_ref: t.account_id,
+    ...(t.pending ? {} : { content_key: contentKey(t.account_id, t) }),
     // The pending row a posted one replaced, whose approval is its own
     // (lib/review-layer.ts); never sent.
     ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
