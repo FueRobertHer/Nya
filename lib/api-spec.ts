@@ -290,12 +290,13 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   { name: 'rules', summary: 'Your rules, in the order they run, each with what it matches and does, and how many transactions it matches.', args: { include_hidden: INCLUDE_HIDDEN } },
   {
     name: 'budgets',
-    summary: 'Monthly budgets, per category and per group, with the month’s spending against each, what rolled over into each, and what is left to allocate when income carryover is on.',
+    summary:
+      'Monthly budgets, per category and per group, with the month’s spending against each, what rolled over into each, and what is left to allocate when income carryover is on, in the currency the budgets are typed in. Once you choose a home currency, base gives the same as the Budgets tab counts them, with spending in other currencies converted; every other field keeps its meaning.',
     args: { month: { kind: 'month', description: 'The month, YYYY-MM. Defaults to this month (UTC).' }, include_hidden: INCLUDE_HIDDEN },
   },
   {
     name: 'spending',
-    summary: 'Money in and out, and spending by category and by group, for a month or any range, in one currency.',
+    summary: 'Money in and out, and spending by category and by group, for a month or any range, in one currency; once you choose a home currency, base gives the same converted into it.',
     args: {
       month: { kind: 'month', description: 'A month, YYYY-MM, instead of from and to. Defaults to this month (UTC).' },
       from: TXN_FROM,
@@ -306,7 +307,8 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
   },
   {
     name: 'cash-flow',
-    summary: 'Where money came from and where it went, for a month or any range: money in by who paid it, money out by category group and category, and what was left over or came from savings or debt, in one currency.',
+    summary:
+      'Where money came from and where it went, for a month or any range: money in by who paid it, money out by category group and category, and what was left over or came from savings or debt, in one currency; once you choose a home currency, base gives the same converted into it.',
     args: {
       month: { kind: 'month', description: 'A month, YYYY-MM, instead of from and to. Defaults to this month (UTC).' },
       from: TXN_FROM,
@@ -446,7 +448,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_budgets',
     'budgets',
     'Budgets',
-    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet. Budgets stay in the currency they are typed in; once the person has chosen a home currency, spending in other currencies counts against them converted into it, each transaction at its own day’s rate, as the Budgets tab counts it, and converted says what was converted and what was left out for having no rate.',
+    'Monthly budgets by category and by category group with the month’s spending against each (this month by default), counted as the app’s Budgets tab counts it. A group’s limit is the smaller of its own budget and its categories’ added up, which bind only when every category in it has one; reconcile says which binds. A budget that rolls over has what is left (or overspent) carried into the next month: available is its budget plus that carry, and rollover says since when and which months counted may be incomplete. income is the pool of what is left to allocate when the person turned income carryover on. A month still to come has its budgets and nothing carried or pooled into it yet. Budgets stay in the currency they are typed in, and version 1’s figures count that currency only, the rest left out and named; once the person has chosen a home currency, base gives the same budgets as the Budgets tab counts them, spending in other currencies counted against them converted, each transaction at its own day’s rate, with what was converted and what was left out for having no rate.',
     NARROW_HIDDEN
   ),
   fromOperation(

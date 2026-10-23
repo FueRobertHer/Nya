@@ -234,11 +234,16 @@ const SUMMARIES: Record<string, Tool['summary']> = {
       s.from_savings_or_debt > 0 ? `${money(s.from_savings_or_debt, cur)} from savings or debt` : `${money(s.left_over, cur)} left over`
     }${c ? `, ${convertedFlows(c.b, c.home)}` : ''}.${staleRates(c?.b)}${withoutTransactions(r)}`;
   },
-  get_budgets: (r) =>
-    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available === r.total.budget ? '' : r.total.available > 0 ? `, ${money(r.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${r.total.available < 0 ? `: it began the month ${money(-r.total.available, r.currency)} over` : ''}`}.${
-      // The budgets keep their currency; spending in another counts in it, converted.
-      r.converted && code(r.currency) && r.converted.converted.length > 0 ? ` Spending in other currencies is counted ${convertedFlows(r.converted, code(r.currency)!)}.${staleRates(r.converted)}` : ''
-    }${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`,
+  get_budgets: (r) => {
+    // As the Budgets tab counts them once a home currency is chosen (base):
+    // the budgets keep their currency, and spending in another counts in it,
+    // converted; else version 1's figures.
+    const c = r.base && code(r.base.currency) && (r.base.converted ?? []).length > 0 ? r.base : null;
+    const s = c ?? r;
+    return `${plural(s.budgets.length, 'category budget')}${s.groups.some((g: any) => g.own !== null) ? ` and ${plural(s.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(s.total.spent, r.currency)} spent of ${money(s.total.budget, r.currency)}${s.total.available === s.total.budget ? '' : s.total.available > 0 ? `, ${money(s.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${s.total.available < 0 ? `: it began the month ${money(-s.total.available, r.currency)} over` : ''}`}.${
+      c ? ` Spending in other currencies is counted ${convertedFlows(c, code(c.currency)!)}.${staleRates(c)}` : ''
+    }${s.income ? ` Available to allocate: ${money(s.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`;
+  },
   list_recurring_bills: (r) => {
     const ended = r.bills.filter((b: any) => b.ended).length;
     // In the home currency at today's rates, when one is chosen and a bill is in another.

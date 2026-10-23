@@ -558,9 +558,11 @@ describe('everything stored, decrypted, and nothing else', () => {
     expect(doc.notes).toContain(
       'Each budget’s rollover carry is in USD, the currency your budgets are in, and counts spending in EUR converted into it at the European Central Bank’s rates of 2026-09-14, as the Budgets tab counts it. Every amount stored is as it was stored, in its own currency.'
     );
-    // The same as the read-only API answers, and the stored amount as stored.
+    // The same as the read-only API's base (its version 1 fields convert
+    // nothing), and the stored amount as stored.
     const api = await readBudgets(ctx, { month });
-    expect(api.budgets.find((b) => b.category_id === food)!.rollover!.carry).toBe(776.9);
+    expect(api.base!.budgets.find((b) => b.category_id === food)!.rollover!.carry).toBe(776.9);
+    expect(api.budgets.find((b) => b.category_id === food)!.rollover!.carry).toBe(800);
     expect(JSON.stringify(doc['manual-transactions'])).toMatch(/"amount":20,"currency":"EUR"/);
   });
 

@@ -98,7 +98,7 @@ describe('without a home currency', () => {
     expect(page.base_currency).toBeNull();
     expect(page.transactions.every((t: any) => t.to_base === null)).toBe(true);
     const budgets = await call('budgets', 'month=2026-09');
-    expect([budgets.base_currency, budgets.converted]).toEqual([null, null]);
+    expect([budgets.base_currency, budgets.base]).toEqual([null, null]);
     const bills = await call('recurring');
     expect([bills.base_currency, bills.base]).toEqual([null, null]);
   });
@@ -163,15 +163,32 @@ describe('with one', () => {
     expect(r.base.categories.find((c: any) => c.category === 'food and drink').spent).toBe(8.65);
   });
 
-  test('budgets count spending in other currencies converted into theirs, as the Budgets tab does, and say so', async () => {
+  test('budgets: version 1’s fields as they always were, and base as the Budgets tab counts them, to the cent', async () => {
+    const { setBudgets } = await import('@/lib/budgets');
+    await setBudgets(ctx, { 'food and drink': 500 });
     const r = await call('budgets', 'month=2026-09');
+    // Version 1: in USD, nothing converted, the euros and dirhams named.
     expect(r.currency).toBe('USD');
+    const food = (a: any) => a.budgets.find((b: any) => b.category === 'food and drink');
+    expect(food(r)).toMatchObject({ budget: 500, spent: 116.16 });
+    expect(r.total.spent).toBe(116.16);
+    expect(r.left_out).toEqual([
+      { currency: 'AED', count: 1 },
+      { currency: 'EUR', count: 1 },
+    ]);
+    expect(r.left_out_text).toBe("1 transaction in AED and 1 in EUR aren't in these budgets, which are in USD.");
+    // base: the euros counted against the dollars' budgets, 20 EUR on the 11th
+    // at 1.1592 being 23.18 USD; the dirham left out, and why.
     expect(r.base_currency).toBe('EUR');
-    // 20 EUR on the 11th: 23.18 USD.
-    expect(r.converted.converted).toEqual([{ currency: 'EUR', transactions: 1 }]);
-    expect(r.left_out).toEqual([{ currency: 'AED', count: 1 }]);
-    expect(r.converted.left_out).toEqual([{ currency: 'AED', transactions: 1, why: 'no_rate' }]);
-    expect(r.left_out_text).toBe("1 transaction in AED isn't in these budgets, which are in USD: there is no rate for AED on those days.");
+    expect(r.base.currency).toBe('USD');
+    expect(food(r.base)).toMatchObject({ budget: 500, spent: 139.34 });
+    expect(r.base.total.spent).toBe(139.34);
+    expect(r.base.converted).toEqual([{ currency: 'EUR', transactions: 1 }]);
+    expect(r.base.left_out).toEqual([{ currency: 'AED', transactions: 1, why: 'no_rate' }]);
+    // The MCP sentence says the converted figures, and at what.
+    const said = await tool('get_budgets', { month: '2026-09' });
+    expect(said.content[0].text).toContain('139.34 USD spent of 500.00 USD');
+    expect(said.content[0].text).toContain('Spending in other currencies is counted converted into USD at the ECB’s rates of 2026-09-11 (1 transaction in AED not counted: no rate).');
   });
 
   test('a recurring bill’s to_base, and their month, at today’s rates', async () => {

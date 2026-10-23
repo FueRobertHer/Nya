@@ -1680,18 +1680,9 @@ export type ApiBudgets = {
   /** Every limit added up (each group's, so nothing counts twice), and what
    *  counts against them; `available` the same with what rolled over. */
   total: { budget: number; spent: number; available: number };
-  /** This month's spending left out for being in another currency: with a
-   *  home currency, only for having no rate (see converted). */
+  /** This month's spending left out for being in another currency. */
   left_out: LeftOut;
   left_out_text: string | null;
-  /** The person's home currency, or null when they haven't chosen one. */
-  base_currency: string | null;
-  /** With one, as the Budgets tab counts it: the budgets keep their currency
-   *  (`currency`, the one they are typed in), and spending in another counts
-   *  against them converted into it, each transaction at its own day's ECB
-   *  rate (or the person's own). What was converted this month, and what was
-   *  left out for having no rate, with why. Null without one. */
-  converted: ApiFlowsConverted | null;
   /** This month's transactions the person excluded (left out), and those
    *  whether they did couldn't be read (counted). */
   excluded: number;
@@ -1711,6 +1702,23 @@ export type ApiBudgets = {
   rollover_left_out_text: string | null;
   sources: ApiSource[];
   notes: string[];
+};
+
+/** The budgets with spending in other currencies counted, as the Budgets tab
+ *  counts them once a home currency is chosen (ApiBudgetsAnswer.base). */
+export type ApiBudgetsBase = Pick<ApiBudgets, 'currency' | 'budgets' | 'groups' | 'total' | 'income' | 'rollover_left_out'> & ApiFlowsConverted;
+
+/** /budgets: version 1's fields as they always were, nothing converted, and
+ *  beside them, with a home currency, `base`. */
+export type ApiBudgetsAnswer = ApiBudgets & {
+  /** The person's home currency, or null when they haven't chosen one. */
+  base_currency: string | null;
+  /** With one: the same budgets as the Budgets tab counts them, in
+   *  `currency` (the one they are typed in), spending in another currency
+   *  counted against them converted into it, each transaction at its own
+   *  day's ECB rate (or the person's own), with what was converted and what
+   *  was left out for having no rate. Null without one. */
+  base: ApiBudgetsBase | null;
 };
 
 const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
@@ -1735,9 +1743,26 @@ const monthList = (ms: readonly string[]): string =>
  * carryover is on. Spending is read from the stored history, back to the
  * month asked about, or the first month a carry counts. Writes nothing.
  */
-export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
+export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgetsAnswer> {
   const today = new Date().toISOString().slice(0, 7);
-  return budgetsAnswer(await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden }), opts);
+  const read = await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden, plain: true });
+  // Version 1's fields from the month as before a home currency: nothing
+  // converted, as they always were.
+  const answer = budgetsAnswer(read.plain ?? read, opts);
+  if (!read.plain || !read.home) return { ...answer, base_currency: read.home, base: null };
+  const counted = budgetsAnswer(read, opts);
+  const conversion = conversionIn(read.monthRows, read.conversion);
+  const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), read.currency);
+  const base: ApiBudgetsBase = {
+    currency: counted.currency,
+    budgets: counted.budgets,
+    groups: counted.groups,
+    total: counted.total,
+    income: counted.income,
+    rollover_left_out: counted.rollover_left_out,
+    ...flowsConverted(conversion!, { own: read.ownRates }, leftOut),
+  };
+  return { ...answer, base_currency: read.home, base, notes: [...answer.notes, ...(read.currency ? flowsNotes(base, read.currency) : [])] };
 }
 
 /** readBudgets' answer from a month already read: no reads, no writes. For a
@@ -1835,8 +1860,6 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
     total: { budget: tidy(flat.total.budget), spent: tidy(flat.total.spent), available: tidy(withCarries.total.budget) },
     left_out: leftOut,
     left_out_text: leftOutWhy(leftOutText(leftOut, currency, { where: 'these budgets' }), monthConversion),
-    base_currency: read.home,
-    converted: monthConversion && read.home ? flowsConverted(monthConversion, { own: read.ownRates }, leftOut) : null,
     // Transactions, not rows: a split one is one (transactionCounter).
     excluded: countTransactions(read.monthRows.filter((t) => t.excluded === true)),
     exclusion_unknown: countTransactions(read.monthRows.filter((t) => t.excluded === null)),

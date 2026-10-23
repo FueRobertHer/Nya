@@ -356,6 +356,10 @@ export type BudgetMonthRead = {
   /** The person's home currency, or null without one, and their own rates. */
   home: string | null;
   ownRates: readonly OwnRate[];
+  /** With a home currency, when asked for (`plain`): the same month worked
+   *  out as before one was chosen, nothing converted, from the same read
+   *  (the read-only API's version 1 fields, lib/api-read.ts readBudgets). */
+  plain?: BudgetMonthRead;
   /** What the earlier months the carries and the pool count left out for
    *  being in another currency (spending, and money in too while the pool
    *  counts it): named, never added. Empty when nothing rolls over. */
@@ -394,7 +398,7 @@ export function budgetsWithoutHistory(app: AppBudgets, month: string, today: str
  * setting that can't be read throw (StoredDataUnreadableError), and so does
  * storage out of reach.
  */
-export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: AppBudgets; pool?: false }): Promise<BudgetMonthRead> {
+export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: AppBudgets; pool?: false; plain?: true }): Promise<BudgetMonthRead> {
   const { month, today } = opts;
   let budgetsNow: Budgets;
   let taxonomy: Taxonomy;
@@ -417,7 +421,7 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
     taxonomy = opts.app.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : opts.app.taxonomy;
   } else {
     // Without `app`, read as any number of months are (readBudgetMonths).
-    return (await readBudgetMonths(ctx, { months: [month], today, includeHidden: opts.includeHidden, pool: opts.pool }))[0];
+    return (await readBudgetMonths(ctx, { months: [month], today, includeHidden: opts.includeHidden, pool: opts.pool, plain: opts.plain }))[0];
   }
   const fx = await readFlowFx(ctx, activity.rows);
   return monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx });
@@ -432,7 +436,7 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
  */
 export async function readBudgetMonths(
   ctx: Ctx,
-  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false }
+  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false; plain?: true }
 ): Promise<BudgetMonthRead[]> {
   const { today } = opts;
   const window = windowStart();
@@ -450,7 +454,11 @@ export async function readBudgetMonths(
   const [{ budgets: budgetsNow, taxonomy }, fx] = await Promise.all([budgetsForReading(ctx, activity.taxonomy), readFlowFx(ctx, activity.rows)]);
   // Noted in memory, as the app would note it today: nothing is written.
   const months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
-  return opts.months.map((month) => monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx }));
+  return opts.months.map((month) => {
+    const read = monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx });
+    // As before a home currency, beside it, when asked: nothing more is read.
+    return opts.plain && fx ? { ...read, plain: monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx: null }) } : read;
+  });
 }
 
 /** The month worked out from what was read: no reads, no writes. */

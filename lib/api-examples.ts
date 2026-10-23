@@ -106,6 +106,112 @@ const EXAMPLE_SOURCES = [
   { institution: 'Fidelity', synced_at: null, complete: true, no_transactions: 'investment_accounts' },
 ];
 
+/** /budgets' example lines, which its base holds too (as the Budgets tab
+ *  counts them once a home currency is chosen). */
+const EXAMPLE_BUDGET_LINES = [
+  {
+    category: 'food and drink',
+    budget: 600,
+    spent: 212.4,
+    remaining: 387.6,
+    spent_share: 0.354,
+    category_id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10',
+    group_id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
+    group: 'Food',
+    available: 660,
+    available_remaining: 447.6,
+    rollover: { from: '2026-07', why: 'start', start: '2026-07', carry: 60, uncertain_months: ['2026-08'] },
+    assumed: false,
+  },
+  {
+    category: 'travel',
+    budget: 200,
+    spent: 0,
+    remaining: 200,
+    spent_share: 0,
+    category_id: '4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8',
+    group_id: '9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a',
+    group: 'Travel and entertainment',
+    available: 200,
+    available_remaining: 200,
+    rollover: null,
+    assumed: false,
+  },
+];
+const EXAMPLE_BUDGET_GROUPS = [
+  {
+    id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
+    name: 'Food',
+    kind: 'expense',
+    budget: 600,
+    own: 700,
+    categories_budget: 600,
+    spent: 212.4,
+    remaining: 387.6,
+    spent_share: 0.354,
+    reconcile: { binds: 'categories', group: 700, categories: 600 },
+    available: 660,
+    available_remaining: 447.6,
+    available_reconcile: { binds: 'categories', group: 745, categories: 660 },
+    rollover: { from: '2026-09', why: 'reset', start: '2026-09', carry: 45, uncertain_months: [] },
+    assumed: false,
+  },
+  {
+    id: '9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a',
+    name: 'Travel and entertainment',
+    kind: 'expense',
+    budget: 200,
+    own: null,
+    categories_budget: 200,
+    spent: 0,
+    remaining: 200,
+    spent_share: 0,
+    reconcile: null,
+    available: 200,
+    available_remaining: 200,
+    available_reconcile: null,
+    rollover: null,
+    assumed: false,
+  },
+];
+const EXAMPLE_INCOME_POOL = {
+  start: '2026-07',
+  from: '2026-07',
+  carried_in: 2140.5,
+  income: 3100,
+  spending: 1890.25,
+  available: 3350.25,
+  uncertain_months: ['2026-08'],
+  months: [
+    { month: '2026-07', carried_in: 0, income: 5200, spending: 3150.5, carried_out: 2049.5, uncertain: false },
+    { month: '2026-08', carried_in: 2049.5, income: 1800, spending: 2410.75, carried_out: 1438.75, uncertain: true },
+    { month: '2026-09', carried_in: 1438.75, income: 4100, spending: 3398.25, carried_out: 2140.5, uncertain: false },
+    { month: '2026-10', carried_in: 2140.5, income: 3100, spending: 1890.25, carried_out: 3350.25, uncertain: false },
+  ],
+};
+
+/**
+ * /budgets' fields, version 1's as they always were, and beside them `base`,
+ * described from them: the same figures as the Budgets tab counts them once
+ * a home currency is chosen, spending in another currency converted into the
+ * budgets' own.
+ */
+function withBudgetsBase(fields: FieldDoc[]): FieldDoc[] {
+  const figures = fields.filter(([path]) => /^(budgets|groups|total|income|rollover_left_out)(\.|\[|$)/.test(path));
+  const at = fields.findIndex(([path]) => path === 'sources');
+  const base: FieldDoc[] = [
+    BASE_CURRENCY('nothing here: base stays in the budgets’ own currency'),
+    [
+      'base',
+      'Null without a home currency. With one, the same budgets as the Budgets tab counts them: in currency, the one they are typed in, with this month’s spending in another currency (and what rolled over) counted against them converted into it, each transaction at its own day’s European Central Bank rate (or your own), with what was converted and what was left out for having no rate. Every field above keeps its meaning: nothing in it is converted.',
+    ],
+    ['base.currency', 'As currency: what the budgets are typed in, and what base is in.'],
+    ...figures.map(([path]): FieldDoc => [`base.${path}`, `As ${path}, with spending in other currencies counted converted.`]),
+    ...FLOWS_CONVERTED('base', 'currency'),
+  ];
+  return [...fields.slice(0, at), ...base, ...fields.slice(at)];
+}
+
 export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
   me: {
     query: '',
@@ -830,103 +936,39 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
     example: {
       month: '2026-10',
       currency: 'USD',
-      budgets: [
-        {
-          category: 'food and drink',
-          budget: 600,
-          spent: 212.4,
-          remaining: 387.6,
-          spent_share: 0.354,
-          category_id: '6f1c2a9e-0b7d-4f3a-9c55-2d8e1b7a4c10',
-          group_id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
-          group: 'Food',
-          available: 660,
-          available_remaining: 447.6,
-          rollover: { from: '2026-07', why: 'start', start: '2026-07', carry: 60, uncertain_months: ['2026-08'] },
-          assumed: false,
-        },
-        {
-          category: 'travel',
-          budget: 200,
-          spent: 0,
-          remaining: 200,
-          spent_share: 0,
-          category_id: '4e5f6a7b-8c9d-4e0f-a1b2-c3d4e5f6a7b8',
-          group_id: '9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a',
-          group: 'Travel and entertainment',
-          available: 200,
-          available_remaining: 200,
-          rollover: null,
-          assumed: false,
-        },
-      ],
-      groups: [
-        {
-          id: 'b2e4d6f8-1a3c-4e5f-8a7b-9c0d1e2f3a4b',
-          name: 'Food',
-          kind: 'expense',
-          budget: 600,
-          own: 700,
-          categories_budget: 600,
-          spent: 212.4,
-          remaining: 387.6,
-          spent_share: 0.354,
-          reconcile: { binds: 'categories', group: 700, categories: 600 },
-          available: 660,
-          available_remaining: 447.6,
-          available_reconcile: { binds: 'categories', group: 745, categories: 660 },
-          rollover: { from: '2026-09', why: 'reset', start: '2026-09', carry: 45, uncertain_months: [] },
-          assumed: false,
-        },
-        {
-          id: '9d8c7b6a-5f4e-4d3c-b2a1-0f9e8d7c6b5a',
-          name: 'Travel and entertainment',
-          kind: 'expense',
-          budget: 200,
-          own: null,
-          categories_budget: 200,
-          spent: 0,
-          remaining: 200,
-          spent_share: 0,
-          reconcile: null,
-          available: 200,
-          available_remaining: 200,
-          available_reconcile: null,
-          rollover: null,
-          assumed: false,
-        },
-      ],
+      budgets: EXAMPLE_BUDGET_LINES,
+      groups: EXAMPLE_BUDGET_GROUPS,
       total: { budget: 800, spent: 212.4, available: 860 },
-      left_out: [{ currency: 'AED', count: 1 }],
-      left_out_text: "1 transaction in AED isn't in these budgets, which are in USD: there is no rate for AED on those days.",
-      base_currency: 'EUR',
-      converted: { ...EXAMPLE_FLOWS_CONVERTED, left_out: [{ currency: 'AED', transactions: 1, why: 'no_rate' }] },
+      left_out: [
+        { currency: 'EUR', count: 2 },
+        { currency: 'AED', count: 1 },
+      ],
+      left_out_text: "3 transactions in EUR and AED aren't in these budgets, which are in USD.",
       excluded: 1,
       exclusion_unknown: 0,
       recorded_since: '2026-06',
       earliest_month: '2024-11',
       incomplete_months: [{ month: '2026-08', reasons: ['Chase hasn’t synced since 2026-08-21'] }],
-      income: {
-        start: '2026-07',
-        from: '2026-07',
-        carried_in: 2140.5,
-        income: 3100,
-        spending: 1890.25,
-        available: 3350.25,
-        uncertain_months: ['2026-08'],
-        months: [
-          { month: '2026-07', carried_in: 0, income: 5200, spending: 3150.5, carried_out: 2049.5, uncertain: false },
-          { month: '2026-08', carried_in: 2049.5, income: 1800, spending: 2410.75, carried_out: 1438.75, uncertain: true },
-          { month: '2026-09', carried_in: 1438.75, income: 4100, spending: 3398.25, carried_out: 2140.5, uncertain: false },
-          { month: '2026-10', carried_in: 2140.5, income: 3100, spending: 1890.25, carried_out: 3350.25, uncertain: false },
-        ],
-      },
+      income: EXAMPLE_INCOME_POOL,
       rollover_left_out: [{ currency: 'EUR', count: 3 }],
       rollover_left_out_text: "3 transactions in EUR aren't in what rolled over from earlier months, which is in USD.",
+      base_currency: 'EUR',
+      // The same as the Budgets tab counts them, the euros converted into the
+      // budgets' dollars; the dirham, which the ECB doesn't publish, left out.
+      base: {
+        currency: 'USD',
+        budgets: EXAMPLE_BUDGET_LINES,
+        groups: EXAMPLE_BUDGET_GROUPS,
+        total: { budget: 800, spent: 235.5, available: 860 },
+        income: EXAMPLE_INCOME_POOL,
+        rollover_left_out: [],
+        ...EXAMPLE_FLOWS_CONVERTED,
+        left_out: [{ currency: 'AED', transactions: 1, why: 'no_rate' }],
+      },
       sources: EXAMPLE_SOURCES,
       notes: ['What rolled over and the income pool count months that may be incomplete (2026-08), so they may be off: see incomplete_months'],
     },
-    fields: [
+    fields: withBudgetsBase([
       ['month', 'The month (UTC).'],
       ['currency', 'The currency the budgets count, and are in: the one most of your transactions are in, as the app’s.'],
       ['budgets', 'Each category’s budget that month, with the month’s spending against it, counted as the Budgets tab counts it.'],
@@ -987,13 +1029,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['total.budget', 'Their limits added.'],
       ['total.spent', 'What counts against them.'],
       ['total.available', 'Their limits over what is available added: what rolled over counts once, in its group’s limit.'],
-      ...LEFT_OUT.map(([path, what]): FieldDoc => [path, path === 'left_out' ? 'Transactions left out of these budgets for being in another currency, by currency, most first: once you choose a home currency, only those with no rate (converted says why).' : what]),
-      BASE_CURRENCY('nothing here'),
-      [
-        'converted',
-        'Null without a home currency. With one, as the Budgets tab counts it: the budgets keep the currency they are typed in (currency), and this month’s spending in another counts against them converted into it, each transaction at its own day’s European Central Bank rate (or your own). What was converted, and what was left out for having no rate.',
-      ],
-      ...FLOWS_CONVERTED('converted', 'currency'),
+      ...LEFT_OUT,
       ['excluded', 'This month’s transactions left out of budgets and reports, by you or by a rule of yours that hides them.'],
       ['exclusion_unknown', 'This month’s transactions whose exclusion couldn’t be read: counted, so a total may include one you excluded.'],
       ['recorded_since', 'The month Nya began keeping budgets by month: an amount for a month before it is assumed.'],
@@ -1028,7 +1064,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'notes',
         'Anything a person should know about these figures, in words: an institution whose transactions couldn’t be read, say, or the connections that bring in none and what that leaves out; that the month may be incomplete (and why), or comes before any transaction stored, so nothing is counted as spent in it; that a carry or the income pool counts months that may be incomplete (incomplete_months says which, and why); or that the month hasn’t begun. Empty when there is nothing to say.',
       ],
-    ],
+    ]),
   },
 
   spending: {
