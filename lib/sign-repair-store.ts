@@ -50,14 +50,15 @@ export type SignJob = {
   /** The days it left as they were, each with why nothing says how it was counted. */
   left?: [string, Why][];
   /** Nights in a row it failed (or turned nothing over, out of time:
-   *  'Stalled'; a run that gets through any of it sets them back), and
-   *  the last failure's kind: past MAX_FAILED_NIGHTS
+   *  'Stalled') without getting through any of it: a run that gets through
+   *  some sets the count back, so one that then fails counts as the first
+   *  of a new run. With the last failure's kind: past MAX_FAILED_NIGHTS
    *  the nightly job leaves it to the operator, whose dry run names it. */
   failures?: number;
   error?: string;
 };
 
-/** How many nights a job may fail before the nightly job stops trying it. */
+/** How many nights in a row a job may fail, getting nowhere, before the nightly job stops trying it. */
 export const MAX_FAILED_NIGHTS = 3;
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/;

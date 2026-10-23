@@ -124,7 +124,7 @@ import { readBudgetMonth } from './budget-month';
 import type { Conversion } from './fx/totals';
 import type { Carries, Carry, CarryFrom } from './rollover';
 import { StoredDataUnreadableError } from './repo';
-import { MAX_FAILED_NIGHTS, signJobStore } from './sign-repair-store';
+import { MAX_FAILED_NIGHTS, signJobStore, type SignJob } from './sign-repair-store';
 import {
   groupOf,
   growTaxonomy,
@@ -741,10 +741,19 @@ async function turningOverNote(ctx: Ctx): Promise<string[]> {
   const tried: string[] = [];
   const stopped: string[] = [];
   for (const id of await signJobStore.ids(ctx)) {
-    // A settle record holds nothing half turned over; one that can't be read is said.
-    const job = await signJobStore.get(ctx, id).catch(() => null);
-    if (job?.kind === 'settle') continue;
-    (job && (job.failures ?? 0) < MAX_FAILED_NIGHTS ? tried : stopped).push(id);
+    let job: SignJob | null;
+    try {
+      job = await signJobStore.get(ctx, id);
+    } catch (err) {
+      // One that can't be read is never finished by the daily update either.
+      if (!(err instanceof StoredDataUnreadableError)) throw err;
+      stopped.push(id);
+      continue;
+    }
+    // Gone since it was listed (finished meanwhile), or a settle record,
+    // which holds nothing half turned over: nothing to say.
+    if (!job || job.kind === 'settle') continue;
+    ((job.failures ?? 0) < MAX_FAILED_NIGHTS ? tried : stopped).push(id);
   }
   const note = (ids: string[], then: string) =>
     `The history of ${ids.length === 1 ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${ids.length === 1 ? 'it is' : 'they are'}: until that finishes, some of ${ids.length === 1 ? 'its' : 'their'} earlier days in account_history are in the other sign. ${then}: download again once it is done.`;

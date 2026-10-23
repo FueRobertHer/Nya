@@ -520,7 +520,8 @@ async function execute(ctx: Ctx, id: string, job: SignJob, plan: SignPlan, until
   // What a run has been through is taken out of the plan when it stops (out
   // of time, or cut off), so the next one starts where it left off.
   // A run that went through any of it has moved on: the nights failed before
-  // it count no more, so only nights in a row stop a job.
+  // it count no more (one that then fails is the first of a new run), so
+  // only nights in a row that get nowhere stop a job.
   const keep = async (i: number) => {
     const rest = restFrom(i);
     await signJobStore.update(ctx, id, (cur) => {
@@ -741,7 +742,7 @@ export async function retypeWithHistory(ctx: Ctx, id: string, to: string, opts: 
  * finished another time). For the nightly snapshot (`nightly`), whose small
  * budget comes off its start budget (lib/snapshot-job.ts SIGN_BUDGET_MS), a
  * job that fails counts a night (a run that gets through any of it sets the
- * count back, so these are nights in a row), and past MAX_FAILED_NIGHTS is left to the
+ * count back, so these are nights in a row that got nowhere), and past MAX_FAILED_NIGHTS is left to the
  * operator, whose dry run names it; elsewhere (the download) a failure counts
  * nothing. A settle record that fails is dropped. Never throws.
  */
