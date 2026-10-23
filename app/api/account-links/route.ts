@@ -33,6 +33,7 @@ import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, d
 import { restoredRefusals } from '@/lib/user-restore/forget';
 import { endedAccountsStore } from '@/lib/connectors/store';
 import { afterUnlink, beforeLink } from '@/lib/user-restore/answering';
+import { endsALinkWouldCarry, type CarriedEnd } from '@/lib/link-ends';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -126,6 +127,23 @@ async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offer
   return earlier.map((e) => (refused.has(e.id) ? { ...e, refused: refused.get(e.id)! } : unchecked.has(e.id) ? { ...e, unchecked: unchecked.get(e.id)! } : e));
 }
 
+/** The links on offer (suggested, picked or by hand) that would end the
+ *  live account they link to (lib/link-ends.ts), for the sheet's warning.
+ *  LENIENT, for those words only: what can't be read warns of nothing. */
+async function carriedEnds(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs'], offer: Awaited<ReturnType<typeof offered>>['offer'], manual: Awaited<ReturnType<typeof offered>>['manual']): Promise<CarriedEnd[]> {
+  const pairs = [
+    ...offer.suggestions.map((s) => ({ old: s.old, to: s.to })),
+    ...[...offer.unclaimed, ...manual].flatMap((u) => u.candidates.map((c) => ({ old: u.old, to: c.id }))),
+  ];
+  const unique = [...new Map(pairs.map((p) => [`${p.old}>${p.to}`, p])).values()];
+  try {
+    return await endsALinkWouldCarry(ctx, unique, effectiveLinks(inputs.links, inputs.liveIds));
+  } catch (err) {
+    console.warn('Account links: the ends a link would carry could not be read', err instanceof Error ? err.name : typeof err);
+    return [];
+  }
+}
+
 /** How many accounts a SimpleFIN or Lunch Flow connection fed were let go, as
  *  the Reports page lists them (app/api/connectors/ended: those it can read,
  *  and those whose record is damaged, which it offers to forget), for a
@@ -146,11 +164,12 @@ export async function GET(req?: Request) {
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
     const check = !!req && new URL(req.url).searchParams.get('earlier') === '1';
-    const [labels, counts, forgettable, stopped] = await Promise.all([
+    const [labels, counts, forgettable, stopped, ends] = await Promise.all([
       directoryLabels(ctx, ids),
       categoryCounts(ctx, inputs.links, inputs.liveIds),
       earlierAccounts(ctx, inputs, check),
       stoppedCount(ctx),
+      carriedEnds(ctx, inputs, offer, manual),
     ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
@@ -179,6 +198,10 @@ export async function GET(req?: Request) {
       links,
       broken: [...inputs.unreadableLinks],
       stopped,
+      // The links on offer that would end the live account they link to, an
+      // earlier account's end carried across (lib/link-ends.ts): the sheet
+      // says so before the link is made.
+      ends,
     });
   } catch (err) {
     const unavailable = containerUnavailable(err);

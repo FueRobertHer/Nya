@@ -44,6 +44,34 @@ await registerTestContainer(fake);
 await seedOld(fake, ctx);
 const OLD = await downloadText(EXPORTED);
 
+// The old copy again, with a statement imported into its checking account:
+// a market row its bank never sent (Jan 3, 15.00), and the gas, which its
+// review asked about beside the bank's own and the person said is the same
+// (a duplicate of it).
+const historyImport = await import('@/app/api/history-import/route');
+const STATEMENT = `<?xml version="1.0"?><?OFX OFXHEADER="200" VERSION="220"?><OFX><BANKMSGSRSV1><STMTTRNRS><STATUS><CODE>0</CODE></STATUS><STMTRS><CURDEF>USD</CURDEF><BANKACCTFROM><BANKID>325081403</BANKID><ACCTID>0009991111</ACCTID><ACCTTYPE>CHECKING</ACCTTYPE></BANKACCTFROM><BANKTRANLIST><DTSTART>20251225</DTSTART><DTEND>20260105</DTEND>
+<STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20260103120000[-5:EST]</DTPOSTED><TRNAMT>-15.00</TRNAMT><FITID>F_market</FITID><NAME>MARKET X</NAME></STMTTRN>
+<STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20260104120000[-5:EST]</DTPOSTED><TRNAMT>-20.50</TRNAMT><FITID>F_gas</FITID><NAME>GAS</NAME></STMTTRN>
+</BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`;
+async function importStatement(account_id: string) {
+  const post = async (meta: Record<string, unknown>) => {
+    const form = new FormData();
+    form.set('file', new Blob([new TextEncoder().encode(STATEMENT) as Uint8Array<ArrayBuffer>]), 'statement.ofx');
+    form.set('meta', JSON.stringify({ file_name: 'statement.ofx', account_id, ...meta }));
+    const res = await historyImport.POST(new Request('http://localhost/api/history-import', { method: 'POST', body: form }));
+    return { status: res.status, body: await res.json() };
+  };
+  const choices = { proposals: { all: 'same' } };
+  const preview = await post({ action: 'preview', choices });
+  expect(preview.body.preview.counts).toMatchObject({ new: 1, duplicates: 1 });
+  expect((await post({ action: 'import', review: preview.body.preview.review, choices })).status).toBe(200);
+}
+fake.reset();
+await registerTestContainer(fake);
+await seedOld(fake, ctx);
+await importStatement('acc_chk');
+const OLD_WITH_FILE = await downloadText(EXPORTED);
+
 beforeEach(async () => {
   fake.reset();
   forgetEpochs();
@@ -58,7 +86,8 @@ async function count(on = '2026-10-07', more: Partial<{ apart: { items: string[]
   await markEnded(ctx, 'acc_chk', { state: 'closed', on }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', currency: 'USD' });
   await restoredAnswersStore.set(ctx, 'acc_chk', {
     version: 1,
-    counted: { at: AT(), by: 'person', ended: { state: 'closed', on } },
+    counted: { at: AT(), by: 'person' },
+    ended: { state: 'closed', on },
     apart: more.apart ?? { items: [], accounts: [] },
     handed_to: more.handed_to ?? null,
     set_at: AT(),
@@ -169,7 +198,7 @@ describe('counted by the person', () => {
   test('an end alone counts nothing: the answer does', async () => {
     await markEnded(ctx, 'acc_chk', { state: 'untracked', from: '2026-10-07' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
     expect(await month(NOV)).toEqual(every(0));
-    await restoredAnswersStore.set(ctx, 'acc_chk', { version: 1, counted: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: AT() });
+    await restoredAnswersStore.set(ctx, 'acc_chk', { version: 1, counted: null, ended: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: AT() });
     expect(await month(NOV)).toEqual(every(0));
   });
 });
@@ -253,12 +282,13 @@ describe('held by a connection made since', () => {
   test('which connections hold, as a rule', () => {
     const item = { kind: 'item' as const, id: 'item_new', institution: 'Chase', institution_id: 'ins_3' };
     const sf = { kind: 'connector' as const, id: SF, institution: 'Chase', name: 'Total Checking', card: 'abc', kept: false, via: 'simplefin' as const };
-    const none = { version: 1 as const, counted: { at: AT(), by: 'person' as const, ended: null }, apart: { items: [], accounts: [] }, handed_to: null, set_at: AT() };
+    const none = { version: 1 as const, counted: { at: AT(), by: 'person' as const }, ended: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: AT() };
     expect(unanswered(none, [item, sf])).toEqual([item, sf]);
     expect(unanswered({ ...none, apart: { items: ['item_new'], accounts: [] } }, [item, sf])).toEqual([sf]);
-    // Handed over: every connector account is answered (one carries it on);
-    // an Item still asks.
-    expect(unanswered({ ...none, handed_to: { account_id: 'other', at: AT() } }, [item, sf])).toEqual([item]);
+    // Handed over: the account it names is answered (it carries it on);
+    // any other connector account, and every Item, still holds.
+    expect(unanswered({ ...none, handed_to: { account_id: SF, at: AT() } }, [item, sf])).toEqual([item]);
+    expect(unanswered({ ...none, handed_to: { account_id: 'manual_other', at: AT() } }, [item, sf])).toEqual([item, sf]);
   });
 });
 
@@ -353,5 +383,89 @@ describe('fails closed', () => {
     await fake.hset(ctxKey('manual-transactions'), { [SF]: 'not a value Nya wrote' });
     expect(await shared(NOV)).toBe(0);
     expect(JSON.stringify((await activity()).notes ?? [])).toContain('aren’t shown while the account that carries it on can’t be read'.replace(/’/g, "'"));
+  });
+});
+
+describe('handed over, with rows imported into it from files in the old copy', () => {
+  beforeEach(async () => {
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    await restoreAll(OLD_WITH_FILE);
+  });
+
+  test('every transaction counts once: the connector’s where its coverage reaches, file rows and restored rows alike', async () => {
+    await count();
+    // Counted, before any connection: the coffee and the gas from the bank,
+    // the market from the file, and the file's gas not again.
+    expect(await month(JAN)).toEqual(every(40, JAN));
+    // SimpleFIN at Chase, its history from Dec 1, with the coffee, the market
+    // and the gas.
+    await trackSimpleFin({
+      from: '2025-12-01',
+      rows: [
+        { day: '2026-01-02', amount: 4.5, name: 'COFFEE' },
+        { day: '2026-01-03', amount: 15, name: 'MARKET X' },
+        { day: '2026-01-04', amount: 20.5, name: 'GAS' },
+      ],
+    });
+    // Held until answered.
+    expect(await month(NOV)).toEqual(every(0));
+    await answer({ handed_to: { account_id: SF, at: AT() } });
+    // The connector's 40.00, never the file's market beside its own, nor
+    // the file's gas once the restored gas it stands for is the connector's.
+    expect(await month(JAN)).toEqual(every(40, JAN));
+    expect(rowsOf(await activity()).filter((r) => r[1] >= JAN.from && r[1] <= JAN.to).every((r) => String(r[0]).startsWith('manual-txn:'))).toBe(true);
+    expect(await shared(JAN)).toBe(0);
+    // Before its coverage, the restored grocery counts.
+    expect(await month(NOV)).toEqual(every(61.2));
+    expect(await shared(NOV)).toBe(61.2);
+  });
+});
+
+describe('a handover answers for the account it names only', () => {
+  test('Lunch Flow at the same bank tracked after a handover to SimpleFIN holds it, until it is answered for too', async () => {
+    await trackSimpleFin({
+      from: '2026-01-02',
+      rows: [
+        { day: '2026-01-02', amount: 4.5, name: 'COFFEE' },
+        { day: '2026-01-04', amount: 20.5, name: 'GAS' },
+      ],
+    });
+    await count('2026-10-07', { handed_to: { account_id: SF, at: AT() } });
+    expect(await month(NOV)).toEqual(every(61.2));
+    // Lunch Flow, reaching back to November with the grocery.
+    const at = AT();
+    const LF = 'manual_lf_chk';
+    await connectionsStore.set(ctx, 'conn_lf', { version: 1, connector: 'lunchflow', host: 'lunchflow.app', created_at: at, last_fetch: null, last_answer_at: at, tracked: [{ remote_id: 'LF-1', account_id: LF }], available: [], history: { from: '2025-11-01', to: '2026-10-20', complete: false } });
+    await connectorAccountsStore.set(ctx, LF, {
+      version: 1,
+      account_id: LF,
+      connection_id: 'conn_lf',
+      connector: 'lunchflow',
+      remote_id: 'LF-1',
+      name: 'Total Checking',
+      institution_name: 'Chase',
+      institution_key: 'name:chase',
+      institution_ref: institutionRef('conn_lf', 'name:chase'),
+      type: 'depository',
+      subtype: null,
+      currency: 'USD',
+      reported_balance: 1700,
+      reported_available: null,
+      balance_at: at,
+      fetched_at: at,
+      created_at: at,
+    });
+    await manualTxnStore.set(ctx, LF, {
+      version: 1,
+      rows: [{ id: 'manual-txn:00000009-0000-4000-8000-00000000bbbb', account_id: LF, date: '2025-11-20', amount: 61.2, currency: 'USD', name: 'GROCER 9', category: 'food and drink', note: null, source: 'lunchflow', source_id: 'LF-T1', created_at: at, updated_at: at }],
+    });
+    // The restored grocery is held: Lunch Flow's alone, 61.20, never 122.40.
+    expect(await month(NOV)).toEqual(every(61.2));
+    expect(await shared(NOV)).toBe(0);
+    // Said not to be this bank: both, by the person's word.
+    await answer({ apart: { items: [], accounts: [LF] } });
+    expect(await month(NOV)).toEqual(every(122.4));
   });
 });

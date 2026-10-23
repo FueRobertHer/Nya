@@ -12,9 +12,19 @@ process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 process.env.APP_PASSWORD = 'hunter2';
 process.env.RESTORE_ENABLED = '1';
 
+// The bank connected again answers with its two accounts' balances
+// (test/restore-run.ts connectAgain): checking 1,700, the card owing 500.
+const balances = (current: number, limit: number | null) => ({ available: current, current, limit, iso_currency_code: 'USD', unofficial_currency_code: null });
+const NEW_ACCOUNTS = [
+  { account_id: 'new_chk', name: 'Checking', official_name: 'Total Checking', mask: '1111', type: 'depository', subtype: 'checking', balances: balances(1700, null) },
+  { account_id: 'new_card', name: 'Sapphire', official_name: null, mask: '2222', type: 'credit', subtype: 'credit card', balances: balances(500, 5000) },
+];
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     transactionsSync: async () => ({ data: { added: [], modified: [], removed: [], accounts: [], next_cursor: 'c-next', has_more: false, transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE' } }),
+    accountsGet: async () => ({ data: { item: { institution_id: 'ins_3' }, accounts: NEW_ACCOUNTS } }),
+    investmentsHoldingsGet: async () => ({ data: { accounts: [], holdings: [], securities: [] } }),
+    liabilitiesGet: async () => ({ data: { liabilities: {} } }),
   },
 }));
 const fake = new FakeRedis({ deserialize: true });
@@ -32,6 +42,7 @@ const { EXPORTED, downloadText, restoreAll, connectAgain, call, planned } = awai
 const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 const { countedLines } = await import('@/components/restore-state');
 const linksRoute = await import('@/app/api/account-links/route');
+const { carriedEndNote } = await import('@/components/AccountLinks');
 const { hold } = await import('./restore-run');
 
 const ctx = TEST_CTX;
@@ -81,7 +92,7 @@ describe('count', () => {
     const res = await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
     expect(res).toEqual({ status: 200, body: { answered: 1 } });
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(CLOSED);
-    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'person', ended: CLOSED }, apart: { items: [], accounts: [] }, handed_to: null });
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'person' }, ended: CLOSED, apart: { items: [], accounts: [] }, handed_to: null });
     expect(await month(NOV)).toEqual(every(61.2));
     expect(await shared(NOV)).toBe(61.2);
   });
@@ -102,7 +113,7 @@ describe('count', () => {
     await markEnded(ctx, 'acc_chk', { state: 'untracked', from: '2026-01-03' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
     expect((await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED })).status).toBe(200);
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual({ state: 'untracked', from: '2026-01-03' });
-    expect((await restoredAnswersStore.get(ctx, 'acc_chk'))!.counted!.ended).toBeNull();
+    expect((await restoredAnswersStore.get(ctx, 'acc_chk'))!.ended).toBeNull();
   });
 
   test('uncount holds it again; its end stays', async () => {
@@ -110,8 +121,8 @@ describe('count', () => {
     expect((await answer({ action: 'uncount', account_ids: ['acc_chk'] })).status).toBe(200);
     expect(await month(NOV)).toEqual(every(0));
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(CLOSED);
-    // It said nothing else: no answer is kept.
-    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toBeNull();
+    // What it keeps is the end it wrote, so a later link still takes that away.
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: null, ended: CLOSED });
   });
 
   test('a linked account is answered by its link, and isn’t asked', async () => {
@@ -177,7 +188,7 @@ describe('hand over', () => {
     await trackSimpleFin();
     const res = await answer({ action: 'hand-over', account_id: 'acc_chk', to: 'manual_sf_chk', end: { state: 'untracked', from: '2026-01-05' } });
     expect(res.status).toBe(200);
-    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'person', ended: { state: 'untracked', from: '2026-01-05' } }, handed_to: { account_id: 'manual_sf_chk' } });
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'person' }, ended: { state: 'untracked', from: '2026-01-05' }, handed_to: { account_id: 'manual_sf_chk' } });
     // Its account has no rows yet: the restored ones count whole.
     expect(await month(NOV)).toEqual(every(61.2));
     await answer({ action: 'take-back', account_id: 'acc_chk' });
@@ -260,7 +271,7 @@ describe('a file that says an account ended', () => {
     const { p } = await planned(text);
     expect(countedLines(p.counted)).toEqual(['Chase Checking ••1111 ended in your other copy on Jan 3, 2026: its transactions up to then count here too, as they did there']);
     await restoreAll(text);
-    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'file', ended: null } });
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'file' }, ended: null });
     // The card, which didn't end there, waits for an answer.
     expect(await restoredAnswersStore.get(ctx, 'acc_card')).toBeNull();
     expect(await month(NOV)).toEqual(every(61.2));
@@ -290,6 +301,14 @@ describe('a download of a copy that answered, brought back again', () => {
     expect(await shared(NOV)).toBe(61.2);
   });
 });
+
+/** The day the live account stops counting from, or null while it counts
+ *  (lib/lifecycle.ts effectiveLifecycle, through the links that apply). */
+async function liveEnded(id: string): Promise<string | null> {
+  const { effectiveLifecycle } = await import('@/lib/lifecycle');
+  const { getLinks } = await import('@/lib/link-core');
+  return effectiveLifecycle(await lifecycleStore.getAll(ctx), await getLinks(ctx)).ended.get(id)?.from ?? null;
+}
 
 describe('a later link', () => {
   const link = (old: string, to: string) => linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'link', old, to }) }));
@@ -322,12 +341,56 @@ describe('a later link', () => {
     expect((await hold()).waiting).toEqual([{ institution_name: 'Chase', last: '2026-01-03' }]);
   });
 
-  test('an end from elsewhere stays: the file’s, or one set since', async () => {
+  test('an end from elsewhere stays, and ends the live account too, as the link sheet says before', async () => {
     await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
     // Changed since, by the person: Stop following from another day.
     await markEnded(ctx, 'acc_chk', { state: 'untracked', from: '2026-01-05' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase' });
     await connectedAndSeen();
+    // The sheet is told, and says it.
+    const offered = await (await linksRoute.GET(new Request('http://localhost/api/account-links'))).json();
+    expect(offered.ends).toContainEqual({ old: 'acc_chk', to: 'new_chk', state: 'untracked', day: '2026-01-05' });
+    expect(carriedEndNote(offered.ends, 'acc_chk', 'new_chk', 'Chase Checking ••1111')).toBe(
+      'The earlier account wasn’t followed from Jan 5, 2026, and an end follows an account across a link: linked, Chase Checking ••1111 counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.'
+    );
     expect((await link('acc_chk', 'new_chk')).status).toBe(200);
     expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual({ state: 'untracked', from: '2026-01-05' });
+    expect(await liveEnded('new_chk')).toBe('2026-01-05');
+  });
+
+  test('the end a count wrote isn’t one the sheet warns of: the link takes it away', async () => {
+    await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
+    await connectedAndSeen();
+    const offered = await (await linksRoute.GET(new Request('http://localhost/api/account-links'))).json();
+    expect((offered.ends ?? []).filter((e: any) => e.old === 'acc_chk')).toEqual([]);
+  });
+
+  test('counted, not counted, counted again, then linked: the live account stays open, and every total recorded counts it', async () => {
+    const early = { state: 'closed' as const, on: '2026-01-05' };
+    expect((await answer({ action: 'count', account_ids: ['acc_chk'], end: early })).status).toBe(200);
+    expect((await answer({ action: 'uncount', account_ids: ['acc_chk'] })).status).toBe(200);
+    expect((await answer({ action: 'count', account_ids: ['acc_chk'] })).status).toBe(200);
+    // The end the first count wrote is still the answer's own.
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'person' }, ended: early });
+    await connectedAndSeen();
+    expect((await link('acc_chk', 'new_chk')).status).toBe(200);
+    expect(await lifecycleStore.get(ctx, 'acc_chk')).toBeNull();
+    expect(await liveEnded('new_chk')).toBeNull();
+    // With the card linked too nothing waits, so today's total is recorded:
+    // the house and the checking account's 1,700 (the card is hidden, as it
+    // was in the other copy). Ended, the checking account would be left out.
+    const { linkAccounts } = await import('@/lib/links');
+    await linkAccounts(ctx, 'acc_card', 'new_card', {});
+    const netWorth = await import('@/app/api/net-worth/route');
+    const home = (await (await netWorth.GET(new Request('http://localhost/api/net-worth?refresh=1'))).json()) as any;
+    expect(home.netWorth).toBe(401700);
+    const today = new Date().toISOString().slice(0, 10);
+    const { decrypt } = await import('@/lib/crypto');
+    const recorded = await fake.hget<string>(ctxKey('history:net-worth'), today);
+    // Recorded whole, hidden accounts in it (readers take them out): the
+    // card's 500 owed too.
+    expect(Number(await decrypt(ctx, recorded!))).toBe(401200);
+    // Unlinked, it is as it was: counted, its end written back.
+    expect((await unlink('acc_chk')).status).toBe(200);
+    expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(early);
   });
 });

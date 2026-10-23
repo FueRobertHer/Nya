@@ -22,6 +22,7 @@
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
+import type { CarriedEnd } from '@/lib/link-ends';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatMoney, plainNumber } from '@/lib/format';
@@ -85,8 +86,20 @@ export type AccountLinksPayload = {
    *  their names are kept for reports, and forgotten on the Reports page,
    *  which this points to. */
   stopped?: number;
+  /** The links on offer that would end the live account they link to, an
+   *  earlier account's end carried across (lib/link-ends.ts). */
+  ends?: CarriedEnd[];
 };
 type Payload = AccountLinksPayload;
+
+/** What linking says when it would end the live account (lib/link-ends.ts):
+ *  an end follows an account across a link. Null when it wouldn't. */
+export function carriedEndNote(ends: readonly CarriedEnd[] | undefined, old: string, to: string, toLabel: string): string | null {
+  const e = ends?.find((x) => x.old === old && x.to === to);
+  if (!e) return null;
+  const how = e.state === 'closed' ? `closed on ${fmtDay(e.day)}` : e.state === 'left' ? `was no longer yours from ${fmtDay(e.day)}` : `wasn’t followed from ${fmtDay(e.day)}`;
+  return `The earlier account ${how}, and an end follows an account across a link: linked, ${toLabel} counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.`;
+}
 
 /** What to say when the server refuses a change and gives no reason. */
 export function refusalText(action: string | undefined, body: { error?: unknown }): string {
@@ -310,6 +323,7 @@ export function AccountLinksView({
               Not the same
             </button>
           </div>
+          {carriedEndNote(data.ends, s.old, s.to, s.to_label) && <p className="stale-note">{carriedEndNote(data.ends, s.old, s.to, s.to_label)}</p>}
           {isPreviewing(s.old, s.to) && <AccountSparkline accountId={s.to} previewWith={s.old} />}
         </div>
       ))}
@@ -356,6 +370,9 @@ export function AccountLinksView({
                 None of these
               </button>
             </div>
+            {carriedEndNote(data.ends, u.old, to, u.candidates.find((c) => c.id === to)?.label ?? 'the account') && (
+              <p className="stale-note">{carriedEndNote(data.ends, u.old, to, u.candidates.find((c) => c.id === to)?.label ?? 'the account')}</p>
+            )}
             {isPreviewing(u.old, to) && <AccountSparkline accountId={to} previewWith={u.old} />}
           </div>
         );
@@ -442,6 +459,9 @@ export function AccountLinksView({
                   Link history
                 </button>
               </div>
+              {carriedEndNote(data.ends, handOld.old, handTo, handOld.candidates.find((c) => c.id === handTo)?.label ?? 'the account') && (
+                <p className="stale-note">{carriedEndNote(data.ends, handOld.old, handTo, handOld.candidates.find((c) => c.id === handTo)?.label ?? 'the account')}</p>
+              )}
               {isPreviewing(handOld.old, handTo) && <AccountSparkline accountId={handTo} previewWith={handOld.old} />}
             </>
           )}

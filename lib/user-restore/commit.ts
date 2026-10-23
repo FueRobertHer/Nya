@@ -210,7 +210,7 @@ async function fileAnswers(ctx: Ctx, record: UserRestoreRecord, before: () => Pr
   for (const [id] of mine) {
     const entry = lifecycleOf(view, id);
     if (!entry || endOf(entry.lifecycle) === null || entry.set_at >= record.started_at || answers.has(id)) continue;
-    counted.push([id, { version: 1, counted: { at, by: 'file', ended: null }, apart: { items: [], accounts: [] }, handed_to: null, set_at: at }]);
+    counted.push([id, { version: 1, counted: { at, by: 'file' }, ended: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: at }]);
   }
   if (counted.length === 0) return;
   await before();
@@ -271,7 +271,7 @@ async function planPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Prom
  * the same. `before` runs before each write, and may refuse it by throwing
  * (the finish route: its time, and the record looked at again).
  */
-export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void>; record?: UserRestoreRecord } = {}): Promise<void> {
+export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void>; record?: UserRestoreRecord; writeBy?: number } = {}): Promise<void> {
   const before = opts.before ?? (async () => {});
   if (opts.record) await planPair(ctx, new Set(opts.record.plan.batches.map((b) => b.part)), before);
   await restoredSpans(ctx, before);
@@ -302,13 +302,18 @@ export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void
   await restoreHoldingsIndex(ctx);
   // The accounts the file was turning over to match their kind as it was
   // made (lib/sign-repair.ts, BROUGHT BACK): each one's repair planned from
-  // the history written, and run, within RESTORED_REPAIR_MS; told exactly or
-  // not at all. One it doesn't get to (the lock held, out of time) is planned
-  // by the next run that finishes jobs.
-  try {
-    await planRestoredRepairs(ctx, { until: Date.now() + RESTORED_REPAIR_MS, before });
-  } catch (err) {
-    if (!(err instanceof ForgetRefused)) throw err;
+  // the history written, and run, within RESTORED_REPAIR_MS and what is left
+  // of the finish's own time (`writeBy`, less REPAIR_MARGIN_MS, so its last
+  // look at the record never refuses for time); told exactly or not at all.
+  // One it doesn't get to (the lock held, out of time) is planned by the
+  // next run that finishes jobs.
+  const until = Math.min(Date.now() + RESTORED_REPAIR_MS, (opts.writeBy ?? Infinity) - REPAIR_MARGIN_MS);
+  if (until > Date.now()) {
+    try {
+      await planRestoredRepairs(ctx, { until, before });
+    } catch (err) {
+      if (!(err instanceof ForgetRefused)) throw err;
+    }
   }
   await clearCaches(ctx);
 }
@@ -316,3 +321,5 @@ export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void
 /** How long the finish gives the repairs of what the file was turning over,
  *  well inside the batch route's own time: the rest is finished later. */
 export const RESTORED_REPAIR_MS = 20_000;
+/** What the repairs leave of the finish's own time, for what comes after. */
+export const REPAIR_MARGIN_MS = 3_000;

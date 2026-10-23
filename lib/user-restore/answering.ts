@@ -225,7 +225,7 @@ async function holdersNow(ctx: Ctx, restored: Iterable<RestoredAccount>, items: 
   return holders;
 }
 
-const blank = (now: string): RestoredAnswer => ({ version: 1, counted: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: now });
+const blank = (now: string): RestoredAnswer => ({ version: 1, counted: null, ended: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: now });
 
 /** An answer with the ids of connections that are gone dropped (`present`),
  *  refused past MAX_APART; null when it says nothing any more. */
@@ -233,7 +233,7 @@ function tidy(a: RestoredAnswer, present: { items: Set<string>; accounts: Set<st
   const apart = { items: a.apart.items.filter((id) => present.items.has(id)), accounts: a.apart.accounts.filter((id) => present.accounts.has(id)) };
   if (apart.items.length > MAX_APART || apart.accounts.length > MAX_APART) throw new AnswerRefused(`${name} has been answered for ${MAX_APART} connections already: Nya keeps no more.`);
   const out = { ...a, apart };
-  return out.counted || out.handed_to || apart.items.length > 0 || apart.accounts.length > 0 ? out : null;
+  return out.counted || out.ended || out.handed_to || apart.items.length > 0 || apart.accounts.length > 0 ? out : null;
 }
 
 /** Writes the answers for `ids` as `change` makes each from the stored one
@@ -306,9 +306,9 @@ export async function answer(ctx: Ctx, req: AnswerRequest, now: number = Date.no
         const wrote = await endFirst(ctx, ids, context, req.end, now);
         await writeAnswers(ctx, ids, context, present, (c, id) => {
           const base = c ?? blank(at);
-          // Counted already: as it was (the end its first answer wrote stays
-          // the one a link takes away).
-          return base.counted ? base : { ...base, counted: { at, by: 'person', ended: wrote.get(id) ?? null } };
+          // Counted already: as it was. The end an answer wrote stays the one
+          // a link takes away, through an uncount and a count again too.
+          return base.counted ? base : { ...base, counted: { at, by: 'person' }, ended: wrote.get(id) ?? base.ended };
         }, now);
         break;
       }
@@ -340,7 +340,7 @@ export async function answer(ctx: Ctx, req: AnswerRequest, now: number = Date.no
         const wrote = await endFirst(ctx, ids, context, req.end, now);
         await writeAnswers(ctx, ids, context, present, (c, id) => {
           const base = c ?? blank(at);
-          return { ...base, counted: base.counted ?? { at, by: 'person', ended: wrote.get(id) ?? null }, handed_to: { account_id: to.id, at } };
+          return { ...base, counted: base.counted ?? { at, by: 'person' }, ended: wrote.get(id) ?? base.ended, handed_to: { account_id: to.id, at } };
         }, now);
         break;
       }
@@ -367,7 +367,7 @@ export async function answer(ctx: Ctx, req: AnswerRequest, now: number = Date.no
  * might be the answer's. Run inside withLinksLock.
  */
 export async function beforeLink(ctx: Ctx, old: string, now: number = Date.now()): Promise<void> {
-  const ended = (await restoredAnswersStore.get(ctx, old))?.counted?.ended;
+  const ended = (await restoredAnswersStore.get(ctx, old))?.ended;
   if (ended) await takeEndAway(ctx, old, ended as EndedLifecycle, now);
 }
 
@@ -380,7 +380,7 @@ export async function beforeLink(ctx: Ctx, old: string, now: number = Date.now()
  */
 export async function afterUnlink(ctx: Ctx, old: string, now: number = Date.now()): Promise<void> {
   const [answer, a, entry] = await Promise.all([restoredAnswersStore.get(ctx, old), restoredAccountsStore.get(ctx, old), lifecycleStore.get(ctx, old)]);
-  const ended = answer?.counted?.ended;
+  const ended = answer?.ended;
   if (!ended || !a || (entry && endOf(entry.lifecycle) !== null)) return;
   await markEnded(ctx, old, ended as EndedLifecycle, aboutRestored(a), now);
 }

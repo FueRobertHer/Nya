@@ -33,16 +33,21 @@
 // fails holds every counted account, said, never counted as if nothing did.
 //
 // HANDED OVER. A restored account a connector account carries on counts its
-// rows only before that account's coverage begins (handoverCut): the later
-// of the day its connection's history starts (moved past the days its
-// answers left it out of) and its earliest row from its provider. Before
-// that, a restored row the connector account also holds (by the import's
-// rule: the same amount and currency within 5 days, one to one, its rows
-// on either side of the cut, so one posted across it pairs) doesn't count
-// either: the connector's row stands for it. The connector account's own
-// rows are never touched, so no reader of manual books changes; as its
-// history reaches back night after night, the restored rows it covers stop
-// counting.
+// transactions only before that account's coverage begins (handoverCut):
+// the later of the day its connection's history starts (moved past the days
+// its answers left it out of) and its earliest row from its provider. Its
+// transactions are all its rows as they are read (handedOverHeld): the
+// restored rows and the rows imported into it from files, paired first as
+// the old copy paired them, a file row standing for a restored row going
+// with that row. Before the cut, one the connector account also holds (by
+// the import's rule: the same amount and currency within 5 days, one to
+// one, its rows on either side of the cut, so one posted across it pairs)
+// doesn't count either: the connector's row stands for it. The connector
+// account's own rows are never touched, so no reader of manual books
+// changes; as its history reaches back night after night, the transactions
+// it covers stop counting. A handover answers for the account it names
+// only: any other connector account tracked since holds until it is
+// answered for too (unanswered).
 
 import type { Ctx } from '../containers';
 import type { StoredItem } from '../storage';
@@ -88,13 +93,14 @@ export async function holdersSince(ctx: Ctx, since: string, items: readonly Stor
 
 /** Of `holders`, those a restored account's answer leaves unanswered (see
  *  THE HOLD BY CONNECTION): an Item it isn't said to be apart from, and a
- *  connector account likewise, unless it was handed over (then every
- *  connector account is answered: one carries it on). Pure. */
+ *  connector account likewise, unless it is the one the account was handed
+ *  over to (that one is answered: it carries it on; any other still holds,
+ *  since it could reach the same transactions). Pure. */
 export function unanswered(answer: RestoredAnswer | null | undefined, holders: readonly Holder[]): Holder[] {
   const items = new Set(answer?.apart.items ?? []);
   const accounts = new Set(answer?.apart.accounts ?? []);
-  const handed = !!answer?.handed_to;
-  return holders.filter((h) => (h.kind === 'item' ? !items.has(h.id) : !handed && !accounts.has(h.id)));
+  const handed = answer?.handed_to?.account_id ?? null;
+  return holders.filter((h) => (h.kind === 'item' ? !items.has(h.id) : h.id !== handed && !accounts.has(h.id)));
 }
 
 /** What the answers make of the accounts a restore brought back that aren't
@@ -205,16 +211,17 @@ export async function readHandover(ctx: Ctx, account_id: string): Promise<Handov
   return { cut, theirs: rows.filter((r) => reach === null || r.date <= reach).map((r) => ({ date: r.date, amount: r.amount, currency: r.currency, name: r.name })) };
 }
 
-/** The restored rows a handover leaves out (see HANDED OVER): those dated on
- *  or after its cut-off, and those before it the connector account's rows
- *  pair with by the import's rule, one to one. The rows on or after the cut
- *  that can pair take part, so a connector row stands first for the
- *  restored row it is nearest, never for an earlier one beside it. Pure. */
-export function handedOverRows(rows: readonly HeldTxn[], handover: Handover): Set<string> {
+/** The transactions a handover leaves out (see HANDED OVER), by id: those
+ *  dated on or after its cut-off, and those before it the connector
+ *  account's rows pair with by the import's rule, one to one. The rows on or
+ *  after the cut that can pair take part, so a connector row stands first
+ *  for the transaction it is nearest, never for an earlier one beside it.
+ *  Pure. */
+export function handedOverRows(rows: readonly HandedRow[], handover: Handover): Set<string> {
   const out = new Set<string>();
   if (handover === 'gone') return out;
   const reach = handover.cut === null ? null : addDays(handover.cut, MATCH_DAYS);
-  const pairing: HeldTxn[] = [];
+  const pairing: HandedRow[] = [];
   for (const r of rows) {
     if (handover.cut !== null && r.date >= handover.cut) out.add(r.id);
     if (reach === null || r.date <= reach) pairing.push(r);
@@ -223,6 +230,35 @@ export function handedOverRows(rows: readonly HeldTxn[], handover: Handover): Se
   const asRows = pairing.map((r, index) => ({ index, date: r.date, amount: r.amount, currency: r.currency, name: r.name }));
   for (const [index] of pairUp(asRows, handover.theirs)) out.add(pairing[index].id);
   return out;
+}
+
+/** A transaction as a handover weighs it. */
+export type HandedRow = { id: string; date: string; amount: number; currency: string; name: string };
+
+/**
+ * An account's held rows once a handover has had its say (see HANDED OVER):
+ * every row as the first stage paired them (`held`, from heldWithRestored),
+ * each transaction weighed once, by the row that counts for it (a restored
+ * row, or a file row standing for none: a row naming another, by
+ * `same_as_row`, goes with that one, through any chain), and every row of a
+ * transaction left out taken out with it. Pure.
+ */
+export function handedOverHeld<T extends HeldTxn>(held: readonly T[], handover: Handover): T[] {
+  if (handover === 'gone' || held.length === 0) return [...held];
+  const byId = new Map(held.map((r) => [r.id, r]));
+  const unitOf = (r: T): string => {
+    let at = r;
+    const seen = new Set<string>();
+    while (at.same_as_row && byId.has(at.same_as_row) && !seen.has(at.id)) {
+      seen.add(at.id);
+      at = byId.get(at.same_as_row)!;
+    }
+    return at.id;
+  };
+  const units = held.map((r) => [r, unitOf(r)] as const);
+  const heads = units.filter(([r, u]) => r.id === u).map(([r]) => r);
+  const left = handedOverRows(heads, handover);
+  return units.filter(([, u]) => !left.has(u)).map(([r]) => r);
 }
 
 /** The connector accounts a handover may name: tracked since the restore,

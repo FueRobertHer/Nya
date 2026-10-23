@@ -430,6 +430,8 @@ describe('the privacy page', () => {
       expect(privacy()).toContain('they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give)');
       expect(privacy()).toContain('What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download');
       expect(security()).toContain('A bank brought back from Plaid counts before you link it only on your answer, never inferred');
+      expect(security()).toContain('so a bank connected again doesn’t count them twice before you answer');
+      expect(security()).not.toContain('never counted twice');
       expect(security()).toContain('is asked of you while one waits, never assumed, says what it matched, and can be undone.');
     } finally {
       if (saved === undefined) delete process.env.RESTORE_ENABLED;

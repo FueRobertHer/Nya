@@ -212,7 +212,8 @@ export async function seedEveryKind(
   const { restoredAnswersStore } = await import('@/lib/user-restore/store');
   await restoredAnswersStore.set(ctx, 'acc_restored', {
     version: 1,
-    counted: { at: ago(4) + 'T10:00:00.000Z', by: 'person', ended: { state: 'closed', on: ago(6) } },
+    counted: { at: ago(4) + 'T10:00:00.000Z', by: 'person' },
+    ended: { state: 'closed', on: ago(6) },
     apart: { items: [], accounts: [] },
     handed_to: null,
     set_at: ago(4) + 'T10:00:00.000Z',

@@ -71,7 +71,7 @@ import {
 import { RECURRING_LOOKBACK_DAYS } from '../recurring';
 import { endDays, endOf, lifecycleStore, type LifecycleView } from '../lifecycle';
 import { StoredDataUnreadableError, UnreadableEntriesError, type MapStore } from '../repo';
-import { countedState, handedOverRows, readHandover, NO_COUNTED, type Handover } from '../user-restore/answers';
+import { countedState, handedOverHeld, readHandover, NO_COUNTED, type Handover } from '../user-restore/answers';
 import { joinNames } from '../month-coverage';
 import { settle, type BankRow, type Settled } from './match';
 import type { CoveredAccount, DayRange } from './coverage';
@@ -521,12 +521,15 @@ export async function readImported(
     }
     const bank = bankByItem.get(account.item_id) ?? { rows: [], from: null };
     const ids = sameAccountIds(id, links);
-    let restoredRows = byRestored.get(id) ?? [];
-    // Handed over to a connector account: its rows count only before that
-    // account's coverage begins (lib/user-restore/answers.ts HANDED OVER).
+    const restoredRows = byRestored.get(id) ?? [];
+    const fileRows = byAccount.get(id) ?? [];
+    // Handed over to a connector account: its transactions, restored and
+    // imported from files alike, count only before that account's coverage
+    // begins (lib/user-restore/answers.ts HANDED OVER), weighed once the
+    // first stage has paired them.
     const handedTo = counted.handed.get(id);
-    if (handedTo && restoredRows.length > 0) {
-      let handover: Handover;
+    let handover: Handover | null = null;
+    if (handedTo && (restoredRows.length > 0 || fileRows.length > 0)) {
       try {
         handover = await readHandover(ctx, handedTo);
       } catch (err) {
@@ -535,8 +538,6 @@ export async function readImported(
         notes.push(`${account.institution_name}: transactions brought back from your download for ${account.name} aren't shown while the account that carries it on can't be read`);
         continue;
       }
-      const left = handedOverRows(restoredRows, handover);
-      restoredRows = restoredRows.filter((r) => !left.has(r.id));
     }
     let restored: RestoredForAccount | null = null;
     if (restoredRows.length > 0) {
@@ -551,7 +552,8 @@ export async function readImported(
         joined: new Map(mineIds.map(([rid, { a }]) => [rid, joinedAt(rid, a.restored_at, links)])),
       };
     }
-    const held = heldWithRestored(byAccount.get(id) ?? [], restored, fileOrder, { covers: fileCovers, importedAt, matched });
+    const paired = heldWithRestored(fileRows, restored, fileOrder, { covers: fileCovers, importedAt, matched });
+    const held = handover ? handedOverHeld(paired, handover) : paired;
     accounts.push({ account, ids, held, banks: bank.rows.filter((b) => b.account_id === id), bank_from: bank.from, twins: twinsOf(twins.entries.get(account.item_id)) });
   }
   const restores = [...restoredReport.entries.values()];

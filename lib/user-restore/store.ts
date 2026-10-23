@@ -340,12 +340,16 @@ export const MAX_APART = 50;
 
 export type RestoredAnswer = {
   version: 1;
-  /** Its transactions count as an ended account's (decision 1): when, on
-   *  whose word (`file`: the restore's, for an account the download says
-   *  ended, as the old copy counted it), and the end that answer wrote, if
-   *  it wrote one: taken away when the account is linked, and written back
-   *  when it is unlinked. Null: not counted. */
-  counted: { at: string; by: 'person' | 'file'; ended: AnsweredEnd | null } | null;
+  /** Its transactions count as an ended account's (decision 1): when, and
+   *  on whose word (`file`: the restore's, for an account the download says
+   *  ended, as the old copy counted it). Null: not counted. */
+  counted: { at: string; by: 'person' | 'file' } | null;
+  /** The end an answer wrote, since the account had none: kept whatever is
+   *  answered after (a "Don't count them" too, which leaves the end), so a
+   *  later link takes it away rather than end the account it is linked to,
+   *  and an unlink writes it back. Null: none written, or one that was there
+   *  already (the file's, or one set by hand), which stays. */
+  ended: AnsweredEnd | null;
   /** The connections made since the restore it isn't at, by the person's
    *  word: Plaid Items and connector accounts (manual ones kept from them
    *  too), by id. */
@@ -370,13 +374,14 @@ function isAnsweredEnd(v: unknown): v is AnsweredEnd {
 const isIds = (v: unknown): v is string[] => Array.isArray(v) && v.length <= MAX_APART && v.every(isId) && new Set(v).size === v.length;
 
 export function isRestoredAnswer(v: unknown): v is RestoredAnswer {
-  if (!isRecord(v) || v.version !== 1 || !onlyKeys(v, ['version', 'counted', 'apart', 'handed_to', 'set_at'])) return false;
+  if (!isRecord(v) || v.version !== 1 || !onlyKeys(v, ['version', 'counted', 'ended', 'apart', 'handed_to', 'set_at'])) return false;
   const c = v.counted;
   const a = v.apart;
   const h = v.handed_to;
   return (
     (c === null ||
-      (isRecord(c) && onlyKeys(c, ['at', 'by', 'ended']) && isInstant(c.at) && (c.by === 'person' || c.by === 'file') && (c.ended === null || isAnsweredEnd(c.ended)))) &&
+      (isRecord(c) && onlyKeys(c, ['at', 'by']) && isInstant(c.at) && (c.by === 'person' || c.by === 'file'))) &&
+    (v.ended === null || isAnsweredEnd(v.ended)) &&
     isRecord(a) &&
     onlyKeys(a, ['items', 'accounts']) &&
     isIds(a.items) &&
