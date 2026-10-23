@@ -23,6 +23,7 @@ import { liveAccountIds } from '@/lib/links';
 import { assembleBankRows, finishActivity } from '@/lib/activity';
 import * as restoreRoute from '@/app/api/user-restore/route';
 import * as batchRoute from '@/app/api/user-restore/batch/route';
+import * as forgetRoute from '@/app/api/user-restore/forget/route';
 
 export const EXPORTED = new Date('2026-10-06T12:00:00.000Z');
 
@@ -42,6 +43,7 @@ export const fetcher: Fetcher = async (input, init) => {
     }
     return batchRoute.POST(req);
   }
+  if (url.pathname === '/api/user-restore/forget') return forgetRoute.POST(req);
   throw new Error(`no route ${url.pathname}`);
 };
 

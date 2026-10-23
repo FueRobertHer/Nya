@@ -23,7 +23,7 @@ mock.module('@/lib/storage', () => storageMock(fake));
 const { collect, previewOf } = await import('@/lib/user-restore/file');
 const { startBody, startRestore, sendBatches, finishRestore, RestoreStopped, NOT_THE_FILE } = await import('@/lib/user-restore/send');
 const { newUserRestoreId, restoredId, MAX_BATCH_BODY } = await import('@/lib/user-restore/ids');
-const { userRestoreStore, restoredTxnStore, startsCount, STARTS_PER_DAY } = await import('@/lib/user-restore/store');
+const { userRestoreStore, restoredTxnStore, restoredAccountsStore, startsCount, STARTS_PER_DAY } = await import('@/lib/user-restore/store');
 const { scanAccount } = await import('@/lib/user-restore/empty');
 const { restoreUnfinished } = await import('@/lib/user-restore/restored');
 const { forgetEpochs } = await import('@/lib/sessions');
@@ -33,6 +33,9 @@ const { saveManualAccount } = await import('@/lib/manual');
 const { linkAccounts } = await import('@/lib/links');
 const { reportSettingsStore } = await import('@/lib/report/store');
 const lifecycleRoute = await import('@/app/api/account-lifecycle/route');
+const linksRoute = await import('@/app/api/account-links/route');
+const { earlierNames } = await import('@/lib/earlier-names');
+const { unreadableNotes, canUndo } = await import('@/components/restore-state');
 const { EXPORTED, sent, fetcher, call, downloadText, sourceOf, planned, restoreAll, activity, rowsOf, hold, connectAgain } = await import('./restore-run');
 type Source = import('./restore-run').Source;
 
@@ -60,6 +63,13 @@ beforeEach(async () => {
   process.env.RESTORE_ENABLED = '1';
   sent.batches = 0;
   sent.failAfter = Infinity;
+});
+
+/** A book of restored rows, as another account's. */
+const moved = (book: any, account_id: string) => ({
+  ...book,
+  account_id,
+  rows: book.rows.map((r: any) => ({ ...r, account_id, bank: { ...r.bank, account_id } })),
 });
 
 const differing = (a: Record<string, unknown>, b: Record<string, unknown>) =>
@@ -222,16 +232,184 @@ describe('the routes', () => {
     // an earlier one is linked to, isn't until that link goes.
     await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote', acc_chk: 'not a value Nya wrote' });
     const named = (await call('GET', '/api/user-restore')).body;
-    expect(named).toMatchObject({ record_unreadable: false, accounts_unreadable: { ends: false } });
+    expect(named).toMatchObject({ record_unreadable: false, accounts_unreadable: { ends: false, unnamed: false, broken_links: false } });
     expect(named.accounts_unreadable.entries).toEqual([
-      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', first: expect.any(String), last: expect.any(String), listed: true },
-      { account_id: 'acc_chk', label: 'Chase Checking ••1111', first: null, last: null, listed: false },
+      { account_id: 'acc_card', label: 'Chase Sapphire ••2222', listed: { name: 'Chase Sapphire ••2222', first: expect.any(String), last: expect.any(String) }, unlisted: null },
+      { account_id: 'acc_chk', label: 'Chase Checking ••1111', listed: null, unlisted: { why: 'linked-to', others: ['Chase Old Checking ••0000'], listable: true, rows: null } },
     ]);
     const { forgettableAccounts, loadSuggestionInputs, liveAccountIds } = await import('@/lib/links');
     const listed = forgettableAccounts(await loadSuggestionInputs(ctx, await liveAccountIds(ctx, { strict: true, readOnly: true })), new Set(['acc_card']), new Set()).find((e) => e.id === 'acc_card')!;
-    expect([listed.label, listed.first, listed.last]).toEqual(['Chase Sapphire ••2222', named.accounts_unreadable.entries[0].first, named.accounts_unreadable.entries[0].last]);
+    expect([listed.label, listed.first, listed.last]).toEqual(['Chase Sapphire ••2222', named.accounts_unreadable.entries[0].listed.first, named.accounts_unreadable.entries[0].listed.last]);
     await fake.set(ctxKey('user-restore'), 'not a value Nya wrote');
     expect((await call('GET', '/api/user-restore')).body).toMatchObject({ record: null, record_unreadable: true });
+  });
+
+  test('three damaged accounts at once that the list would show alike are named apart, each as the Earlier accounts list names it, and forgetting one takes that one', async () => {
+    await restoreAll(OLD.text);
+    // Restored accounts whose entries can't be read, nor their directory
+    // entries, with balance history over the same days: each is listed as
+    // "Balance history" over those days.
+    const ids = ['acc_9f2Lq7', 'acc_Xw31Bd', 'acc_kP0z5e'];
+    const damaged = Object.fromEntries(ids.map((id) => [id, 'not a value Nya wrote']));
+    await fake.hset(ctxKey('restored-accounts'), damaged);
+    await fake.hset(ctxKey('accounts:directory'), damaged);
+    await fake.hset(ctxKey('history:accounts'), {
+      '2025-11-01': await encrypt(ctx, JSON.stringify({ acc_9f2Lq7: 10, acc_Xw31Bd: 20, acc_kP0z5e: 30 })),
+      '2025-11-02': await encrypt(ctx, JSON.stringify({ acc_9f2Lq7: 11, acc_Xw31Bd: 21, acc_kP0z5e: 31 })),
+    });
+    const state = (await call('GET', '/api/user-restore')).body;
+    const entries = state.accounts_unreadable.entries;
+    expect(entries.map((e: any) => [e.account_id, e.label, e.listed])).toEqual([
+      ['acc_9f2Lq7', null, { name: 'Balance history · …2Lq7', first: '2025-11-01', last: '2025-11-02' }],
+      ['acc_Xw31Bd', null, { name: 'Balance history · …31Bd', first: '2025-11-01', last: '2025-11-02' }],
+      ['acc_kP0z5e', null, { name: 'Balance history · …0z5e', first: '2025-11-01', last: '2025-11-02' }],
+    ]);
+    // The list names each the same way (components/AccountLinks.tsx), and no
+    // two notes read the same.
+    const earlier = (await (await linksRoute.GET()).json()).earlier;
+    const shown = earlierNames(earlier);
+    for (const e of entries) expect(shown.get(e.account_id)).toBe(e.listed.name);
+    expect([...shown.values()].filter((n) => n.startsWith('Balance history'))).toHaveLength(3);
+    const notes = unreadableNotes(state);
+    expect(new Set(notes.map((n) => n.words)).size).toBe(3);
+    // Forgetting the one named …31Bd takes that one, and only it.
+    const forgot = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_Xw31Bd' }) }));
+    expect(forgot.status).toBe(200);
+    expect(await fake.hget(ctxKey('restored-accounts'), 'acc_Xw31Bd')).toBeNull();
+    const left = (await call('GET', '/api/user-restore')).body.accounts_unreadable.entries;
+    expect(left.map((e: any) => [e.account_id, e.listed.name])).toEqual([
+      ['acc_9f2Lq7', 'Balance history · …2Lq7'],
+      ['acc_kP0z5e', 'Balance history · …0z5e'],
+    ]);
+  });
+
+  test('one the list doesn’t show is said why, truly; unlinked it is listed and forgotten there; nothing to list it by, it is forgotten from the card, restores on or off', async () => {
+    await restoreAll(OLD.text);
+    await fake.hset(ctxKey('restored-accounts'), { acc_lost: 'not a value Nya wrote', acc_old: 'not a value Nya wrote', acc_chk: 'not a value Nya wrote' });
+    // Its directory entry can't be read either, and it has no balance
+    // history: nothing lists it, and nothing links it.
+    await fake.hset(ctxKey('accounts:directory'), { acc_lost: 'not a value Nya wrote' });
+    // A book of its rows that can still be read: the card's own one, as if it were this account's.
+    await restoredTxnStore.set(ctx, 'acc_lost.1', moved(await restoredTxnStore.get(ctx, 'acc_card.1'), 'acc_lost'));
+    const state = (await call('GET', '/api/user-restore')).body;
+    expect(state.accounts_unreadable).toMatchObject({ ends: false, unnamed: false, broken_links: false });
+    expect(state.accounts_unreadable.entries).toEqual([
+      { account_id: 'acc_chk', label: 'Chase Checking ••1111', listed: null, unlisted: { why: 'linked-to', others: ['Chase Old Checking ••0000'], listable: true, rows: null } },
+      // What the card's Forget takes, for its confirm: the rows it can read.
+      { account_id: 'acc_lost', label: null, listed: null, unlisted: { why: 'unknown', others: [], listable: false, rows: { count: 1, first: '2026-01-03', last: '2026-01-03', unreadable: false, unrecognised: false } } },
+      { account_id: 'acc_old', label: 'Chase Old Checking ••0000', listed: null, unlisted: { why: 'linked', others: ['Chase Checking ••1111'], listable: true, rows: null } },
+    ]);
+    const notes = unreadableNotes(state);
+    expect(notes.map((n) => n.remove?.account_id ?? null)).toEqual([null, 'acc_lost', null]);
+    expect(notes[1].words).not.toContain('linked');
+    expect((await hold()).unreadable).toBe(true);
+
+    // The card forgets only a damaged entry nothing else can show.
+    const forget = (account_id: string, more: Record<string, unknown> = { confirm: true }) => call('POST', '/api/user-restore/forget', { account_id, ...more });
+    expect((await forget('acc_lost', {})).status).toBe(400);
+    expect((await forget('acc_lost', { confirm: true, password: 'hunter2' })).status).toBe(400);
+    expect((await forget('acc_card')).status).toBe(409);
+    expect((await forget('acc_old')).status).toBe(409);
+    expect((await fake.hget(ctxKey('restored-accounts'), 'acc_old')) as unknown).toBe('not a value Nya wrote');
+    // With restores turned off too: what it ends holds the totals either way.
+    delete process.env.RESTORE_ENABLED;
+    expect(await forget('acc_lost')).toEqual({ status: 200, body: { forgotten: true, unreadable_days: 0 } });
+    expect(await fake.hget(ctxKey('restored-accounts'), 'acc_lost')).toBeNull();
+    expect(await fake.hget(ctxKey('accounts:directory'), 'acc_lost')).toBeNull();
+    expect(await restoredTxnStore.has(ctx, 'acc_lost.1')).toBe(false);
+    expect((await forget('acc_lost')).status).toBe(409);
+
+    // Unlinked, the other two are listed under Earlier accounts, by name.
+    const unlink = await linksRoute.DELETE(new Request('http://localhost/api/account-links', { method: 'DELETE', body: JSON.stringify({ old: 'acc_old' }) }));
+    expect(unlink.status).toBe(200);
+    const after = (await call('GET', '/api/user-restore')).body.accounts_unreadable.entries;
+    expect(after.map((e: any) => [e.account_id, e.listed?.name ?? null, e.unlisted])).toEqual([
+      ['acc_chk', 'Chase Checking ••1111', null],
+      ['acc_old', 'Chase Old Checking ••0000', null],
+    ]);
+    const forgot = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_old' }) }));
+    expect(forgot.status).toBe(200);
+    expect((await call('GET', '/api/user-restore')).body.accounts_unreadable.entries.map((e: any) => e.account_id)).toEqual(['acc_chk']);
+  });
+
+  test('forgotten from the card, the one entry that held the totals lets them go on', async () => {
+    await restoreAll(OLD.text);
+    for (const id of ['acc_chk', 'acc_card']) {
+      const res = await lifecycleRoute.POST(new Request('http://localhost/api/account-lifecycle', { method: 'POST', body: JSON.stringify({ account_id: id, state: 'untracked', from: '2026-10-07' }) }));
+      expect(res.status).toBe(200);
+    }
+    expect(await hold()).toMatchObject({ waiting: [], unreadable: false });
+    await fake.hset(ctxKey('restored-accounts'), { acc_lost: 'not a value Nya wrote' });
+    expect(await hold()).toMatchObject({ waiting: [], unreadable: true });
+    expect((await call('POST', '/api/user-restore/forget', { account_id: 'acc_lost', confirm: true })).status).toBe(200);
+    expect(await hold()).toMatchObject({ unfinished: false, waiting: [], unreadable: false });
+  });
+
+  test('when what names them can’t be read, the card keeps the record and its undo, and says the names couldn’t be read', async () => {
+    const record = await restoreAll(OLD.text);
+    await fake.hset(ctxKey('restored-accounts'), { acc_card: 'not a value Nya wrote' });
+    // A hidden account's entry that can't be read: of this route's reads,
+    // only the naming reads those.
+    await fake.hset(ctxKey('hidden:accounts'), { acc_zzz: 'not a value Nya wrote' });
+    const state = await call('GET', '/api/user-restore');
+    expect(state.status).toBe(200);
+    expect(state.body).toMatchObject({ record: { id: record.id, status: 'finished' }, record_unreadable: false });
+    expect(state.body.accounts_unreadable).toEqual({ entries: [{ account_id: 'acc_card', label: null, listed: null, unlisted: null }], unrecognised: [], ends: false, unnamed: true, broken_links: false });
+    expect(canUndo(state.body.record, Date.now())).toBe(true);
+    expect(unreadableNotes(state.body).map((n) => n.key)).toEqual(['unnamed']);
+  });
+
+  test('an entry this version doesn’t know (a newer version’s, or a fault) holds the totals, is said apart, and is never forgotten: not from the card, not under Earlier accounts', async () => {
+    await restoreAll(OLD.text);
+    // Intact, in a newer shape: the card's own entry, and one more with
+    // nothing to list it by.
+    const newer = async (from: string) => encrypt(ctx, JSON.stringify({ ...(await restoredAccountsStore.get(ctx, from)), version: 2 }));
+    const card = await newer('acc_card');
+    await fake.hset(ctxKey('restored-accounts'), { acc_card: card, acc_newer: await newer('acc_chk') });
+    const state = (await call('GET', '/api/user-restore')).body;
+    expect(state.accounts_unreadable).toMatchObject({
+      entries: [],
+      unrecognised: [
+        { account_id: 'acc_card', label: 'Chase Sapphire ••2222' },
+        { account_id: 'acc_newer', label: null },
+      ],
+    });
+    const notes = unreadableNotes(state);
+    expect(notes.map((n) => [n.key, n.remove])).toEqual([
+      ['account:acc_card', undefined],
+      ['account:acc_newer', undefined],
+    ]);
+    expect(notes.every((n) => n.words.includes('a newer version wrote it, or it is a fault') && !n.words.includes('Forget') && n.words.includes('ask whoever runs this copy of Nya'))).toBe(true);
+    expect((await hold()).unreadable).toBe(true);
+    // Refused by the card's route, and by the Earlier accounts list, before
+    // anything is changed.
+    const refused = await call('POST', '/api/user-restore/forget', { account_id: 'acc_newer', confirm: true });
+    expect(refused.status).toBe(409);
+    expect(refused.body.error).toContain('a newer version wrote it, or it is a fault');
+    const viaList = await linksRoute.POST(new Request('http://localhost/api/account-links', { method: 'POST', body: JSON.stringify({ action: 'forget', old: 'acc_card' }) }));
+    expect(viaList.status).toBe(409);
+    expect((await viaList.json()).error).toContain('a newer version wrote it, or it is a fault');
+    expect((await fake.hget(ctxKey('restored-accounts'), 'acc_card')) as unknown).toBe(card);
+    expect(await fake.hget(ctxKey('restored-accounts'), 'acc_newer')).not.toBeNull();
+    expect(await fake.hget(ctxKey('accounts:directory'), 'acc_card')).not.toBeNull();
+    expect(await restoredTxnStore.has(ctx, 'acc_card.1')).toBe(true);
+  });
+
+  test('a damaged entry with nothing to list it by whose rows this version doesn’t know isn’t offered for forgetting, and the route refuses it', async () => {
+    await restoreAll(OLD.text);
+    await fake.hset(ctxKey('restored-accounts'), { acc_lost: 'not a value Nya wrote' });
+    const book = moved(await restoredTxnStore.get(ctx, 'acc_card.1'), 'acc_lost');
+    const sealed = await encrypt(ctx, JSON.stringify({ ...book, version: 2 }));
+    await fake.hset(ctxKey('restored-transactions'), { 'acc_lost.1': sealed });
+    const state = (await call('GET', '/api/user-restore')).body;
+    expect(state.accounts_unreadable.entries).toEqual([
+      { account_id: 'acc_lost', label: null, listed: null, unlisted: { why: 'unknown', others: [], listable: false, rows: { count: 0, first: null, last: null, unreadable: false, unrecognised: true } } },
+    ]);
+    expect(unreadableNotes(state).map((n) => n.remove)).toEqual([undefined]);
+    const refused = await call('POST', '/api/user-restore/forget', { account_id: 'acc_lost', confirm: true });
+    expect(refused.status).toBe(409);
+    expect((await fake.hget(ctxKey('restored-transactions'), 'acc_lost.1')) as unknown).toBe(sealed);
+    expect(await fake.hget(ctxKey('restored-accounts'), 'acc_lost')).not.toBeNull();
   });
 
   test('refused into an account in use, saying what was found, and nothing kept; settings alone are replaced', async () => {

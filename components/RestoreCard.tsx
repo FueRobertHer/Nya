@@ -24,8 +24,14 @@
 // THE FRESH SIGN-IN, as for a download: with Clerk, its useReverification
 // asks the person to confirm it is them when the server says so; with the
 // shared password, it is asked for here, and emptied once used.
+//
+// WHAT CAN'T BE READ of a restore is said first (components/restore-state.ts
+// unreadableNotes), each with its way out: most are elsewhere (Earlier
+// accounts, a link to remove, the Accounts tab), so the card reads its state
+// again whenever the page's data does (`refreshKey`); a restored account
+// nothing else can show is forgotten from here.
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from 'react';
 import { useReverification } from '@clerk/nextjs';
 import { isReverificationCancelledError } from '@clerk/nextjs/errors';
 import { collect, previewOf, blobSource, FileRefused, type FileSource, type Preview } from '@/lib/user-restore/file';
@@ -37,7 +43,7 @@ import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState } from './restore-state';
+import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -87,14 +93,16 @@ const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { month
  *  viewer's own calendar (components/AccountLinks.tsx). */
 const listedDay = (d: string) => new Date(`${d}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
 
-type CardProps = { onChanged?: () => void; autoScan?: boolean };
+type CardProps = { onChanged?: () => void; autoScan?: boolean; refreshKey?: string | null };
 
 /** `clerk`: whether sign-in is Clerk's (lib/auth-mode.ts). Clerk's hook only
  *  works inside its provider, which exists only then. `autoScan`: look at
  *  whether the account is empty as the card opens (an account with nothing
  *  in it yet, where a restore is likely); otherwise only when asked, since
  *  the look reads every key of the account and is counted. `onChanged`: run
- *  once a restore, an undo or an emptying changed the account. */
+ *  once a restore, an undo or an emptying changed the account.
+ *  `refreshKey`: changes whenever the page's data is read again (its as-of
+ *  time), and the card's state is read again with it, keeping the look. */
 export default function RestoreCard({ clerk, ...props }: CardProps & { clerk: boolean }) {
   return clerk ? <WithClerk {...props} /> : <RestoreFlow ask={ask} needsPassword {...props} />;
 }
@@ -104,7 +112,7 @@ function WithClerk(props: CardProps) {
   return <RestoreFlow ask={verified} needsPassword={false} {...props} />;
 }
 
-function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: CardProps & { ask: typeof ask; needsPassword: boolean }) {
+function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, refreshKey = null }: CardProps & { ask: typeof ask; needsPassword: boolean }) {
   const [state, setState] = useState<RestoreState | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ kind: 'idle' });
@@ -113,17 +121,22 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
   const [passphrase, setPassphrase] = useState('');
   const [withoutOk, setWithoutOk] = useState(false);
   const [confirmUndo, setConfirmUndo] = useState(false);
-  const [downloadFirst, setDownloadFirst] = useState(false);
+  /** Where the download is offered first, opened: before an undo, or before
+   *  forgetting an account from the notes. */
+  const [downloadAt, setDownloadAt] = useState<'undo' | 'forget' | null>(null);
   const [emptyWords, setEmptyWords] = useState('');
   const [stopFrom, setStopFrom] = useState<Record<string, string>>({});
   const fileInput = useRef<HTMLInputElement | null>(null);
 
-  const load = useCallback(async (scan: boolean) => {
+  /** `keep`: keep the look at whether the account is empty, and whom it
+   *  shares with, from before. */
+  const load = useCallback(async (scan: boolean, keep = false) => {
     try {
       const res = await fetch(`/api/user-restore${scan ? '?scan=1' : ''}`);
       const data = await res.json().catch(() => null);
       if (!res.ok) throw new Error(typeof data?.error === 'string' ? data.error : 'What was brought back couldn’t be read.');
-      setState(data as RestoreState);
+      const next = data as RestoreState;
+      setState((was) => (keep && was && !scan ? { ...next, scan: was.scan, sharing: was.sharing } : next));
       setLoadError(null);
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : 'What was brought back couldn’t be read.');
@@ -132,6 +145,14 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
   useEffect(() => {
     void load(autoScan);
   }, [load, autoScan]);
+  // Read again with the page's data (see the header), not as it first
+  // arrives: the card has just been read for that.
+  const lastKey = useRef(refreshKey);
+  useEffect(() => {
+    const was = lastKey.current;
+    lastKey.current = refreshKey;
+    if (was !== null && was !== refreshKey) void load(false, true);
+  }, [refreshKey, load]);
 
   const busy = phase.kind !== 'idle' && phase.kind !== 'preview' && phase.kind !== 'passphrase';
   const record = state?.record ?? null;
@@ -284,6 +305,19 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
     onChanged?.();
   };
 
+  /** Forgets a restored account nothing else can show (see the header),
+   *  once the person says so. */
+  const removeDamaged = async (remove: NonNullable<UnreadableNote['remove']>) => {
+    if (typeof window !== 'undefined' && !window.confirm(remove.confirm)) return;
+    setError(null);
+    setPhase({ kind: 'working', what: 'Forgetting it…' });
+    const answer = await ask('POST', '/api/user-restore/forget', { account_id: remove.account_id, confirm: true });
+    setPhase({ kind: 'idle' });
+    if (!isHint(answer) && !answer.ok) setError(answer.error);
+    await load(false, true);
+    onChanged?.();
+  };
+
   const stopFollowing = async (accounts: { account_id: string }[], from: string) => {
     setError(null);
     setPhase({ kind: 'working', what: 'Saving…' });
@@ -342,11 +376,20 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
             </p>
           )}
 
-          {notes.map((n) => (
-            <p key={n.words} className="stale-note">
-              {n.words}
-            </p>
-          ))}
+          <UnreadableNotesView
+            notes={notes}
+            busy={phase.kind !== 'idle'}
+            onRemove={(r) => void removeDamaged(r)}
+            download={
+              downloadAt === 'forget' ? (
+                <DownloadMyData clerk={!needsPassword} />
+              ) : (
+                <button className="secondary" onClick={() => setDownloadAt('forget')}>
+                  Download my data first
+                </button>
+              )
+            }
+          />
 
           {record && <RecordSummary record={record} />}
 
@@ -489,10 +532,10 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
                 {record.status === 'finished' && record.undo_until ? ` Offered until ${day(record.undo_until)}.` : ''}
               </p>
               {/* The download first, here, whichever screen this card is on. */}
-              {downloadFirst ? (
+              {downloadAt === 'undo' ? (
                 <DownloadMyData clerk={!needsPassword} />
               ) : (
-                <button className="secondary" onClick={() => setDownloadFirst(true)}>
+                <button className="secondary" onClick={() => setDownloadAt('undo')}>
                   Download my data first
                 </button>
               )}
@@ -533,6 +576,38 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false }: 
         </>
       )}
     </div>
+  );
+}
+
+/** What can't be read of a restore here (components/restore-state.ts
+ *  unreadableNotes), each note with the forget it offers, if any, and the
+ *  download offered first (`download`), once, before the first. */
+export function UnreadableNotesView({
+  notes,
+  busy,
+  onRemove,
+  download,
+}: {
+  notes: UnreadableNote[];
+  busy: boolean;
+  onRemove: (remove: NonNullable<UnreadableNote['remove']>) => void;
+  download?: ReactNode;
+}) {
+  const first = notes.find((n) => n.remove)?.key;
+  return (
+    <>
+      {notes.map((n) => (
+        <Fragment key={n.key}>
+          <p className="stale-note">{n.words}</p>
+          {n.key === first && download}
+          {n.remove && (
+            <button className="danger" disabled={busy} onClick={() => onRemove(n.remove!)}>
+              Forget it
+            </button>
+          )}
+        </Fragment>
+      ))}
+    </>
   );
 }
 

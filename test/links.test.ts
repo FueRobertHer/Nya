@@ -708,7 +708,7 @@ describe('review follow-ups: routes', () => {
 describe('the account-links lock', () => {
   test('outlives any request that holds it', async () => {
     const { LINKS_LOCK_REQUEST_SECONDS } = await import('@/lib/links');
-    for (const path of ['account-links', 'hidden-accounts']) {
+    for (const path of ['account-links', 'hidden-accounts', 'user-restore/forget']) {
       const route: any = await import(`@/app/api/${path}/route`);
       expect(route.maxDuration).toBe(LINKS_LOCK_REQUEST_SECONDS);
     }
