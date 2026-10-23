@@ -62,8 +62,10 @@ export type AccountLinksPayload = {
   unclaimed: Unclaimed[];
   /** Every earlier account that can be linked by hand, and to what. */
   manual?: Unclaimed[];
-  /** Earlier accounts the user can forget for good. */
-  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean }[];
+  /** Earlier accounts the user can forget for good; `refused`: why one
+   *  can't be forgotten here (what a restore brought back for it is in a
+   *  form this version doesn't know), said in place of Forget. */
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean; refused?: string }[];
   links: Linked[];
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
@@ -440,21 +442,24 @@ export function AccountLinksView({
                       {name}
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
                       {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
+                      {e.refused ? `. ${e.refused}` : ''}
                     </span>
-                    <button
-                      className="link-btn danger-link"
-                      disabled={busy}
-                      onClick={() => {
-                        const sure =
-                          typeof window === 'undefined' ||
-                          window.confirm(
-                            `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
-                          );
-                        if (sure) onAct('POST', { action: 'forget', old: e.id });
-                      }}
-                    >
-                      Forget
-                    </button>
+                    {!e.refused && (
+                      <button
+                        className="link-btn danger-link"
+                        disabled={busy}
+                        onClick={() => {
+                          const sure =
+                            typeof window === 'undefined' ||
+                            window.confirm(
+                              `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
+                            );
+                          if (sure) onAct('POST', { action: 'forget', old: e.id });
+                        }}
+                      >
+                        Forget
+                      </button>
+                    )}
                   </div>
                 );
               })}

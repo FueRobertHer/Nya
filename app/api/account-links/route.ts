@@ -30,6 +30,7 @@ import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
+import { restoredForgetRefusal } from '@/lib/user-restore/forget';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -94,12 +95,17 @@ async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<s
 /**
  * The earlier accounts to offer for forgetting. Empty when what decides it
  * can't be read: with the live accounts unreadable every account would look
- * like an earlier one.
+ * like an earlier one. One whose forget would be refused for what a restore
+ * brought back for it (in a form this version doesn't know, a newer
+ * version's or a fault: lib/user-restore/forget.ts restoredForgetRefusal) is
+ * listed with those words (`refused`), and offered no Forget.
  */
 async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs']) {
   try {
     const [live, hidden, items] = await Promise.all([liveAccountIds(ctx, { strict: true }), getHiddenAccounts(ctx), getItems(ctx)]);
-    return forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
+    const earlier = forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
+    const refused = await Promise.all(earlier.map((e) => restoredForgetRefusal(ctx, e.id)));
+    return earlier.map((e, i) => (refused[i] ? { ...e, refused: refused[i] } : e));
   } catch {
     return [];
   }

@@ -129,6 +129,36 @@ describe('AccountLinksView', () => {
     expect(html).toContain('Same account as');
   });
 
+  // A forget the server would refuse (what a restore brought back for it is
+  // in a form this version doesn't know) is never offered: its words instead.
+  test('an earlier account whose forget would be refused is listed with why, and no Forget', () => {
+    const why = 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          earlier: [
+            { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+            { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, refused: why },
+          ],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    expect(html.match(/>Forget</g)?.length).toBe(1);
+    expect(html).toContain('Chase Sapphire ••2222 (');
+    expect(html).toContain('a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here');
+  });
+
   test('three earlier accounts that would read the same are told apart by the end of each id, so Forget takes the one meant', () => {
     const alike = (id: string) => ({ id, label: null, first: '2025-11-01', last: '2025-11-02', hidden: false });
     const html = renderToStaticMarkup(
