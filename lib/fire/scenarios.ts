@@ -389,8 +389,12 @@ function recordList<T extends PlanIncome | PlanExpense>(base: readonly T[], curr
  */
 export function recordSave(base: FirePlan, s: ScenarioChanges, next: FirePlan): { ok: ScenarioChanges } | { error: string } {
   const shown = applyScenario(base, s).plan;
+  // How workplace plans are paid into is a set by account: the savings form
+  // writes it back in the order it lists the plans.
+  const byAccount = (f: FirePlan['planFunding']) => [...f].sort((a, b) => (a.account_id < b.account_id ? -1 : a.account_id > b.account_id ? 1 : 0));
   for (const { field, name } of LOCKED) {
-    if (!sameAsForms(field, shown[field], next[field])) return { error: `${name} is the same in every plan: change it with your plan open.` };
+    const [a, b] = field === 'planFunding' ? [byAccount(shown.planFunding), byAccount(next.planFunding)] : [shown[field], next[field]];
+    if (!sameAsForms(field, a, b)) return { error: `${name} is the same in every plan: change it with your plan open.` };
   }
   const set: ScenarioSet = { ...s.set };
   const assign = (k: SetField, v: unknown) => ((set as Record<string, unknown>)[k] = v);

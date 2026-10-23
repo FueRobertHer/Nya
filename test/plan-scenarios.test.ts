@@ -410,6 +410,13 @@ describe('recording a form’s save', () => {
     expect('ok' in r && r.ok.set).toEqual({ targetAge: 50, start: 'custom', startBalance: 900_000 });
   });
 
+  test('workplace plans written back in another order are the same setting', () => {
+    const funded = { ...thePlan, planFunding: [{ account_id: 'a', paidFrom: 'bank' as const }, { account_id: 'b', paidFrom: 'payroll' as const }] };
+    const next = { ...applyScenario(funded, s0).plan, savings: 40_000, planFunding: [{ account_id: 'b', paidFrom: 'payroll' as const }, { account_id: 'a', paidFrom: 'bank' as const }] };
+    const r = recordSave(funded, s0, next);
+    expect('ok' in r && r.ok.set).toEqual({ targetAge: 50, savings: 40_000 });
+  });
+
   test('a value the form only wrote back, rounded to its grid, is not a change', () => {
     const offGrid = { ...thePlan, fee: 0.00123456 };
     const next = { ...applyScenario(offGrid, s0).plan, fee: 0.001235 }; // what the form's text gives back
