@@ -102,6 +102,12 @@ export async function seedEveryKind(
   const { incomeCarryoverStore } = await import('@/lib/budget-months-store');
   await incomeCarryoverStore.set(ctx, { version: 1, enabled: true, start: today.slice(0, 7) });
   ok('a runway scenario', await route('runway-scenarios', 'POST', { scenario: { name: 'Leaner months', months: 6, lower_by: 0, currency: null, income_until: null, planned: true, leave_out_one_offs: false } }));
+  ok(
+    'a plan scenario',
+    await route('plan-scenarios', 'POST', {
+      scenario: { name: 'Retire at 50', currency: 'USD', set: { targetAge: 50 }, income: { leaveOut: [], add: [] }, expenses: { leaveOut: [], add: [] }, events: [{ id: 'c1', kind: 'child', label: 'A child', fromAge: 42, yearly: 15000, years: 18 }] },
+    })
+  );
 
   // ---- Settings, each as the app keeps it.
   const { allocationSettingsStore } = await import('@/lib/allocation-settings');

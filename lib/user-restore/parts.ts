@@ -90,6 +90,9 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   imports: { kind: 'map', restore: 'write', split: { field: 'records', as: 'list' } },
   'income-carryover': { kind: 'value', restore: 'write' },
   'manual-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
+  // Twice MAX_PLAN_SCENARIOS (lib/fire/scenarios.ts): saves that met at the
+  // limit before it was taken again after each write could leave more.
+  'plan-scenarios': { kind: 'map', restore: 'write', max: 20 },
   'planned-items': { kind: 'value', restore: 'write' },
   'report-settings': { kind: 'value', restore: 'write' },
   'restored-accounts': { kind: 'map', restore: 'write' },

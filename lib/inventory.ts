@@ -732,6 +732,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
+  'plan-scenarios': {
+    group: 'plans',
+    name: 'Your saved plan scenarios',
+    about: 'The name, the changes from your plan and the life events of each scenario you saved on the Plan tab, and the currency its amounts are in, never a figure.',
+    unit: ['scenario', 'scenarios'],
+    kept: 'Your data',
+    plain: RANDOM_IDS,
+  },
   'planned-items': {
     group: 'plans',
     name: 'Your planned bills and income',

@@ -25,7 +25,10 @@
 //   2. Need = that spending + the year's one-off expenses - other income
 //      (Social Security, a pension: entered after tax). A positive need is
 //      withdrawn, grossed up for the tax: need / (1 - tax). A negative one is
-//      income the plan doesn't need, and is invested.
+//      income the plan doesn't need, and is invested. A lower cost (a
+//      scenario's mortgage paid off: lowerSpending) is taken off the spending
+//      and one-offs first, never below zero: it saves money, and never makes
+//      any to invest.
 //   3. If the withdrawal is more than the balance, the portfolio has RUN OUT
 //      in this year: the plan failed, and its balance is 0 from here on.
 //   4. The rest earns the next twelve months of real returns. Rebalancing
@@ -62,6 +65,19 @@ export type OtherIncome = {
    *  for a pension without cost-of-living raises: it keeps its value until it
    *  starts, then loses value to inflation every year after. */
   inflationAdjusted: boolean;
+  /** The first plan year without it (part-time work for some years, a
+   *  scenario's life event); absent, it lasts to the end. */
+  toYear?: number;
+};
+
+/** A cost that is lower from a plan year (a mortgage paid off), in today's
+ *  dollars: it takes that much off the year's spending and one-offs, never
+ *  below zero, so it is never money coming in. */
+export type LowerSpending = {
+  amount: number;
+  fromYear: number;
+  /** The first plan year without it; absent, it lasts to the end. */
+  toYear?: number;
 };
 
 export type OneOffExpense = {
@@ -84,6 +100,9 @@ export type SimPlan = {
   rule: RuleSpec;
   income: OtherIncome[];
   oneOffs: OneOffExpense[];
+  /** Lower costs (life events in a scenario, lib/fire/events.ts); absent for
+   *  the Plan's own plans, which then run exactly as they always have. */
+  lowerSpending?: LowerSpending[];
   /** Real return on cash, a year: see CASH_REAL_RETURN. */
   cashRealReturn: number;
 };
@@ -187,6 +206,11 @@ export function checkPlan(plan: SimPlan): void {
   }
   for (const s of plan.income) {
     if (!finite(s.amount) || s.amount < 0 || !Number.isInteger(s.fromYear)) fail('other income needs an amount and a start year');
+    if (s.toYear !== undefined && (!Number.isInteger(s.toYear) || s.toYear <= s.fromYear)) fail('other income must end after it starts');
+  }
+  for (const l of plan.lowerSpending ?? []) {
+    if (!finite(l.amount) || l.amount < 0 || !Number.isInteger(l.fromYear) || l.fromYear < 0) fail('a lower cost needs an amount and a plan year');
+    if (l.toYear !== undefined && (!Number.isInteger(l.toYear) || l.toYear <= l.fromYear)) fail('a lower cost must end after it starts');
   }
   for (const o of plan.oneOffs) {
     if (!finite(o.amount) || o.amount < 0 || !Number.isInteger(o.year) || o.year < 0) fail('a one-off expense needs an amount and a plan year');
@@ -266,6 +290,12 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
 
   const oneOffs = new Float64Array(years);
   for (const o of plan.oneOffs) if (o.year < years) oneOffs[o.year] += o.amount;
+  // What is lower each year; all zeros for a plan without lower costs, which
+  // then takes exactly the arithmetic it always has.
+  const lower = new Float64Array(years);
+  for (const l of plan.lowerSpending ?? []) {
+    for (let y = l.fromYear; y < Math.min(years, l.toYear ?? years); y++) lower[y] += l.amount;
+  }
 
   const out: RunOutput = {
     balances: keep ? new Float64Array(count * (years + 1)) : null,
@@ -323,11 +353,12 @@ function runPaths(plan: SimPlan, market: Market, source: PathSource, keep: boole
 
       let income = 0;
       for (const s of plan.income) {
-        if (y < s.fromYear) continue;
+        if (y < s.fromYear || (s.toYear !== undefined && y >= s.toYear)) continue;
         income += s.inflationAdjusted ? s.amount : (s.amount * priceAt[Math.max(0, s.fromYear)]) / priceAt[y];
       }
 
-      const need = spend + oneOffs[y] - income;
+      const cost = spend + oneOffs[y];
+      const need = (lower[y] > 0 ? Math.max(0, cost - lower[y]) : cost) - income;
       if (need > 0) {
         const gross = need / (1 - tax);
         if (gross > bal * (1 + EPS) + EPS) {

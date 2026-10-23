@@ -4,10 +4,16 @@
 // form holds what is typed as strings (so "4." or "-" survive typing), checks
 // each field with a message a person can act on, and saves the WHOLE plan
 // through onSave, closing only once the server has it.
+//
+// With a scenario open (lib/fire/scenarios.ts), the plan a form holds is the
+// scenario's, and onSave records what changed in it as the scenario's own
+// (components/plan-savers.ts). What a scenario can't change (your age, how
+// figures are measured, the method, the part-time income) is shown, but
+// can't be edited there, and the form says where its save goes.
 
 import { useState } from 'react';
 import { plainNumber } from '@/lib/format';
-import { allocationOf, LIMITS, parsePlan, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
+import { allocationOf, asText, LIMITS, parsePlan, pctText, type FirePlan, type PlanExpense, type PlanFunding, type PlanIncome } from '@/lib/fire/plan';
 import { vpwExpectedReturn, type RuleKind } from '@/lib/fire/rules';
 import { DATA_BONDS, DATA_STOCKS, METHOD_NAMES, RULE_NAMES, ruleText, pct, wholeMoney } from './plan-text';
 import { mixBasisText, mixLeftOutText, mixText } from './allocation-text';
@@ -16,12 +22,18 @@ import type { PlanMix } from '@/lib/allocation/allocation';
 
 type SaveProps = {
   plan: FirePlan;
-  /** Resolves true once the server has the plan. */
-  onSave: (next: FirePlan) => Promise<boolean>;
+  /** Resolves true once the server has the plan, false when it didn't take
+   *  it, or with why it was refused before it was sent. */
+  onSave: (next: FirePlan) => Promise<boolean | string>;
   onDone: () => void;
   /** False while the saved plan is loading or unreadable: nothing is saved. */
   editable: boolean;
+  /** The open scenario's name, which the save goes to; null for the Plan. */
+  scenario?: string | null;
 };
+
+/** Said beside an input a scenario can't change. */
+const SAME_IN_EVERY_PLAN = 'the same in every scenario: change it with your plan open.';
 
 class FieldError extends Error {}
 
@@ -42,8 +54,6 @@ function readNumber(text: string, what: string, min: number, max: number, opts: 
   return scale === 1 ? n : Number((n * scale).toFixed(6));
 }
 
-const asText = (v: number | null) => (v === null ? '' : String(v));
-const pctText = (v: number) => String(Number((v * 100).toFixed(4)));
 
 /** Saves `build()` when it checks out, keeping the message otherwise. */
 function useSave({ onSave, onDone, editable }: SaveProps) {
@@ -70,16 +80,31 @@ function useSave({ onSave, onDone, editable }: SaveProps) {
     setSaving(true);
     const ok = await onSave(parsed.plan);
     setSaving(false);
-    if (ok) onDone();
-    else setError('It was not saved. Try again in a moment.');
+    if (ok === true) onDone();
+    else setError(typeof ok === 'string' ? ok : 'It was not saved. Try again in a moment.');
   }
   return { error, saving, save, disabled: saving || !editable };
 }
 
-function Buttons({ onDone, disabled, saving, onSave, extra }: { onDone: () => void; disabled: boolean; saving: boolean; onSave: () => void; extra?: React.ReactNode }) {
+function Buttons({
+  onDone,
+  disabled,
+  saving,
+  onSave,
+  extra,
+  scenario = null,
+}: {
+  onDone: () => void;
+  disabled: boolean;
+  saving: boolean;
+  onSave: () => void;
+  extra?: React.ReactNode;
+  scenario?: string | null;
+}) {
   return (
     <>
       {extra}
+      {scenario && <p className="panel-note plan-scenario-saves">Saved to the scenario “{scenario}”, not your plan.</p>}
       <div className="button-pair" style={{ marginTop: 16 }}>
         <button className="secondary" onClick={onDone} disabled={saving}>
           Cancel
@@ -129,8 +154,9 @@ export function AboutForm(props: SaveProps) {
       <div className="sheet-form">
         <label className="field">
           Your age
-          <input type="number" inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Not set" disabled={s.saving} />
+          <input type="number" inputMode="numeric" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Not set" disabled={s.saving || !!props.scenario} />
         </label>
+        {props.scenario && <p className="panel-note">Your age is {SAME_IN_EVERY_PLAN}</p>}
         <label className="field">
           Target age
           <input type="number" inputMode="numeric" value={target} onChange={(e) => setTarget(e.target.value)} placeholder="Not set" disabled={s.saving} />
@@ -138,6 +164,7 @@ export function AboutForm(props: SaveProps) {
       </div>
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
+        scenario={props.scenario}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -249,9 +276,10 @@ export function FigureForm(
       {kind === 'assets' && (
         <>
           <label className="plan-check">
-            <input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} disabled={s.saving} />
+            <input type="checkbox" checked={includeCash} onChange={(e) => setIncludeCash(e.target.checked)} disabled={s.saving || !!props.scenario} />
             Count checking and savings accounts too
           </label>
+          {props.scenario && <p className="panel-note">Counting cash is how your figures are measured: {SAME_IN_EVERY_PLAN}</p>}
           {live && live.accounts.length > 0 && mode === 'measured' && (
             <ul className="plan-accounts">
               {live.accounts.map((a) => (
@@ -282,7 +310,7 @@ export function FigureForm(
               <Choice
                 label={`How ${p.label} is paid into`}
                 value={funding.get(p.account_id) ?? 'unset'}
-                disabled={s.saving}
+                disabled={s.saving || !!props.scenario}
                 onChange={(v) =>
                   setFunding((m) => {
                     const next = new Map(m);
@@ -303,6 +331,7 @@ export function FigureForm(
       )}
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
+        scenario={props.scenario}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -347,11 +376,13 @@ export function AssumptionsForm(props: SaveProps) {
         </label>
         <label className="field">
           Part-time income for Barista FI (a year, after tax)
-          <input type="number" inputMode="decimal" value={partTime} onChange={(e) => setPartTime(e.target.value)} placeholder="None" disabled={s.saving} />
+          <input type="number" inputMode="decimal" value={partTime} onChange={(e) => setPartTime(e.target.value)} placeholder="None" disabled={s.saving || !!props.scenario} />
         </label>
+        {props.scenario && <p className="panel-note">The part-time income for Barista FI is your plan’s: {SAME_IN_EVERY_PLAN} Part-time work in this scenario is a life event.</p>}
       </div>
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
+        scenario={props.scenario}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -446,11 +477,12 @@ export function SimulationForm(
       <div className="sheet-form" style={{ marginTop: 0 }}>
         <label className="field">
           Method
-          <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving}>
+          <select value={method} onChange={(e) => setMethod(e.target.value as FirePlan['method'])} disabled={s.saving || !!props.scenario}>
             <option value="historical">{METHOD_NAMES.historical}</option>
             <option value="monte-carlo">{METHOD_NAMES['monte-carlo']}</option>
           </select>
         </label>
+        {props.scenario && <p className="panel-note">The method is {SAME_IN_EVERY_PLAN}</p>}
         <p className="panel-note" style={{ marginTop: -4, marginBottom: 12 }}>
           {method === 'historical'
             ? 'Starts the plan in every month since 1871 that leaves all of it inside the data, and lives through what followed.'
@@ -562,7 +594,7 @@ export function SimulationForm(
         </label>
       </div>
       {s.error && <div className="error">{s.error}</div>}
-      <Buttons onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
+      <Buttons scenario={props.scenario} onDone={props.onDone} disabled={s.disabled} saving={s.saving} onSave={() => s.save(build)} />
     </>
   );
 }
@@ -617,6 +649,7 @@ export function IncomeForm(props: SaveProps & { item: PlanIncome | null }) {
       )}
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
+        scenario={props.scenario}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}
@@ -671,6 +704,7 @@ export function ExpenseForm(props: SaveProps & { item: PlanExpense | null }) {
       </div>
       {s.error && <div className="error">{s.error}</div>}
       <Buttons
+        scenario={props.scenario}
         onDone={props.onDone}
         disabled={s.disabled}
         saving={s.saving}

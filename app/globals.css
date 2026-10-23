@@ -6112,3 +6112,124 @@ button.review-keys-toggle {
     display: none;
   }
 }
+
+/* Plan scenarios (components/PlanScenarios.tsx, PlanCompare.tsx, PlanEvents.tsx):
+   the tag every card carries while a scenario is open, the card at its top,
+   and compare mode, laid out by metric so it reads top to bottom on a phone. */
+.plan-scenario-tag {
+  display: inline-block;
+  margin-bottom: 8px;
+  padding: 2px 8px;
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.plan-scenario-bar {
+  border-left: 3px solid var(--accent);
+}
+
+.plan-scenario-heading {
+  margin: 0 0 4px;
+  font-size: 17px;
+}
+
+.plan-scenario-heading:focus {
+  outline: none;
+}
+
+.plan-scenario-heading:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.plan-scenario-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 6px;
+}
+
+.plan-scenario-saves {
+  margin-top: 12px;
+}
+
+.plan-event-kinds {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.plan-choice-row {
+  display: flex;
+  gap: 16px;
+}
+
+.plan-compare-pick {
+  flex-wrap: wrap;
+}
+
+.plan-working-line {
+  min-height: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.plan-compare-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+@media (min-width: 720px) {
+  .plan-compare-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.plan-compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+
+.plan-compare-table caption {
+  padding-bottom: 4px;
+  text-align: left;
+  font-weight: 600;
+}
+
+.plan-compare-table th,
+.plan-compare-table td {
+  padding: 6px 4px;
+  border-top: 1px solid var(--border);
+  text-align: left;
+  vertical-align: top;
+}
+
+.plan-compare-table th {
+  width: 30%;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.plan-compare-table td .plan-warning {
+  display: block;
+}
+
+.plan-compare-diff {
+  width: 28%;
+  color: var(--muted);
+}
+
+.plan-compare-detail {
+  margin-top: 8px;
+}
+
+.plan-compare-name {
+  font-weight: 600;
+}
