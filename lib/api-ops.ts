@@ -220,6 +220,7 @@ const RUNS: Record<string, Operation['run']> = {
       incomeUntil: str(a, 'income_until') ?? null,
       planned: a.include_planned === undefined ? true : flag(a, 'include_planned'),
       leaveOutOneOffs: flag(a, 'leave_out_one_offs'),
+      countMovedOut: flag(a, 'count_moved_out'),
     });
   },
 

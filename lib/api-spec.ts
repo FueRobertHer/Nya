@@ -334,7 +334,11 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
       spending_lower_by: { kind: 'amount', description: 'A what-if: spending lower by this much a month, in the runway’s currency. Zero or more.' },
       income_until: { kind: 'day', description: 'A what-if: the last day income comes in the line with income, YYYY-MM-DD (UTC). Without it, income keeps coming.' },
       include_planned: { kind: 'flag', description: 'Whether the expenses and income you planned are in it (true by default).' },
-      leave_out_one_offs: { kind: 'flag', description: 'A what-if: leave the one-off large outflows out of the spending (false by default).' },
+      leave_out_one_offs: { kind: 'flag', description: 'A what-if: leave the one-off large outflows out of the spending, and the one-off large inflows out of the income (false by default).' },
+      count_moved_out: {
+        kind: 'flag',
+        description: 'A what-if: count what left your checking and savings as transfers to accounts outside them, and as cash taken out, as spending (false by default).',
+      },
     },
   },
   {
@@ -505,7 +509,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_runway',
     'runway',
     'Runway',
-    'How long the person’s cash (checking, savings and cash on hand, never investments or cards) would last at their recent spending (money out as the app totals it, over the last 3, 6 or 12 full months, transfers and what they excluded left out), with their income and without it: the day it would run out (runs_out), the days and months it lasts, and the balance at its lowest. A loan’s payment from cash that the spending leaves out, and the planned expenses and income, are added on their days. An estimate, and a what-if when asked: spending lower by an amount a month, income stopping on a day, planned items or one-off large outflows left out. Nothing is stored. notes say what it can’t see.',
+    'How long the person’s cash (checking, savings and cash on hand, never investments, a health savings account or cards) would last at their recent spending, with their income and without it: the day it would run out (runs_out), the days and months it lasts, and the balance at its lowest; or, with no cash to start from or no spending to go by, outcome no_cash or no_spending and no day. The spending is money out as the app totals it over the last 3, 6 or 12 full months (moves between the person’s accounts and what they excluded left out), less refunds, plus payments to cards Nya doesn’t see; a loan’s payment from cash, bills that come less often than monthly, and the planned expenses and income are added on their days instead. What left cash as transfers out or cash taken out is named, and counted only when asked. An estimate, and a what-if when asked: spending lower by an amount a month, income stopping on a day, planned items or one-offs left out. Nothing is stored. notes say what it can’t see.',
     'The runway is as short as it gets: ask list_recurring_bills or spending_by_category for its parts.'
   ),
   fromOperation(

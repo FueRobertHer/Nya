@@ -35,7 +35,7 @@
 // when last year's is zero, said as new rather than as an infinite rise.
 
 import { categoryById, filedId, groupOf, indexTaxonomy, isProvisionalId, type CategoryKind, type Taxonomy } from '../categories';
-import { countsInTotals, currencyOf, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
+import { countsInTotals, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
 import { categoryOf, summarize, tidy, type TotalsRow } from '../totals';
 import { addDays } from './period';
 
@@ -200,11 +200,17 @@ export function buildYearOverYear(opts: {
   const inSpan = (span: YoySpan) => rows.filter((t) => t.date >= span.start && t.date <= span.end);
   const leftThis = leftOutByCurrency(inSpan(yearSpans.this), currency);
   const leftLast = leftOutByCurrency(inSpan(yearSpans.last), currency);
-  const counts = new Map<string, number>();
+  // Transactions each currency holds that would count but for it, as the
+  // totals count transactions (a split one once).
+  const counters = new Map<string, Counter>();
   for (const t of [...inSpan(yearSpans.this), ...inSpan(yearSpans.last)]) {
     const c = currencyOf(t);
-    if (c) counts.set(c, (counts.get(c) ?? 0) + 1);
+    if (!c || isExcluded(t) || isTransfer(t) || t.group_outside) continue;
+    const counter = counters.get(c) ?? transactionCounter();
+    counter.add(t);
+    counters.set(c, counter);
   }
+  const counts = new Map([...counters].map(([c, counter]) => [c, counter.n] as const));
   return {
     currency,
     currencies: [...counts]

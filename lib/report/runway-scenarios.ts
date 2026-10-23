@@ -28,13 +28,17 @@ export type RunwayScenario = {
   income_until: string | null;
   planned: boolean;
   leave_out_one_offs: boolean;
+  /** Whether what left cash as transfers out and cash taken out counts:
+   *  added after the first scenarios were saved, so absent on theirs (as
+   *  false). */
+  count_moved_out?: boolean;
   /** When it was saved (an instant). */
   saved_at: string;
 };
 
 export const MAX_SCENARIOS = 20;
 export const SCENARIO_NAME_MAX = 40;
-const KEYS = ['v', 'name', 'months', 'lower_by', 'currency', 'income_until', 'planned', 'leave_out_one_offs', 'saved_at'];
+const KEYS = ['v', 'name', 'months', 'lower_by', 'currency', 'income_until', 'planned', 'leave_out_one_offs', 'count_moved_out', 'saved_at'];
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 /** Whether a value is a saved scenario's shape and types (the store's read check). */
@@ -52,6 +56,7 @@ export function isRunwayScenario(v: unknown): v is RunwayScenario {
     (s.income_until === null || typeof s.income_until === 'string') &&
     typeof s.planned === 'boolean' &&
     typeof s.leave_out_one_offs === 'boolean' &&
+    (s.count_moved_out === undefined || typeof s.count_moved_out === 'boolean') &&
     typeof s.saved_at === 'string'
   );
 }
@@ -62,12 +67,13 @@ export function isRunwayScenario(v: unknown): v is RunwayScenario {
  * window of 3, 6 or 12 months, spending lower by zero or more in a known
  * currency's minor units (that currency, or null with nothing lower), the
  * day income stops (a real date, or null while it keeps coming), and
- * whether the planned items and the one-offs are in. Nothing else is taken.
+ * whether the planned items and the one-offs are in and money moved out is
+ * counted (false when not sent). Nothing else is taken.
  */
 export function parseRunwayScenario(raw: unknown, now: number): { ok: RunwayScenario } | { error: string } {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { error: 'Send the scenario, as JSON' };
   const r = raw as Record<string, unknown>;
-  const allowed = ['name', 'months', 'lower_by', 'currency', 'income_until', 'planned', 'leave_out_one_offs'];
+  const allowed = ['name', 'months', 'lower_by', 'currency', 'income_until', 'planned', 'leave_out_one_offs', 'count_moved_out'];
   const extra = Object.keys(r).find((k) => !allowed.includes(k));
   if (extra) return { error: `${extra.slice(0, 40)} isn’t part of a scenario` };
   if (typeof r.name !== 'string') return { error: 'A scenario needs a name' };
@@ -79,7 +85,8 @@ export function parseRunwayScenario(raw: unknown, now: number): { ok: RunwayScen
   if (r.lower_by > 0 && r.currency === null) return { error: 'Spending lower by needs the currency it is in' };
   if (typeof r.currency === 'string' && amountUnitsError(r.lower_by, r.currency)) return { error: amountUnitsError(r.lower_by, r.currency)! };
   if (r.income_until !== null && (!isCalendarDay(r.income_until) || r.income_until < '2000-01-01' || r.income_until > '2100-12-31')) return { error: 'Income stops on a date, YYYY-MM-DD, or is null' };
-  if (typeof r.planned !== 'boolean' || typeof r.leave_out_one_offs !== 'boolean') return { error: 'planned and leave_out_one_offs are true or false' };
+  if (typeof r.planned !== 'boolean' || typeof r.leave_out_one_offs !== 'boolean' || (r.count_moved_out !== undefined && typeof r.count_moved_out !== 'boolean'))
+    return { error: 'planned, leave_out_one_offs and count_moved_out are true or false' };
   return {
     ok: {
       v: 1,
@@ -90,6 +97,7 @@ export function parseRunwayScenario(raw: unknown, now: number): { ok: RunwayScen
       income_until: r.income_until as string | null,
       planned: r.planned,
       leave_out_one_offs: r.leave_out_one_offs,
+      count_moved_out: r.count_moved_out === true,
       saved_at: new Date(now).toISOString(),
     },
   };
@@ -100,7 +108,14 @@ export function parseRunwayScenario(raw: unknown, now: number): { ok: RunwayScen
 export function scenarioWhatIf(s: RunwayScenario, currency: string | null): { whatIf: RunwayWhatIf; otherCurrency: string | null } {
   const other = s.lower_by > 0 && s.currency !== null && currency !== null && s.currency !== currency ? s.currency : null;
   return {
-    whatIf: { months: s.months, lower_by: other ? 0 : s.lower_by, income_until: s.income_until, planned: s.planned, leave_out_one_offs: s.leave_out_one_offs },
+    whatIf: {
+      months: s.months,
+      lower_by: other ? 0 : s.lower_by,
+      income_until: s.income_until,
+      planned: s.planned,
+      leave_out_one_offs: s.leave_out_one_offs,
+      count_moved_out: s.count_moved_out === true,
+    },
     otherCurrency: other,
   };
 }

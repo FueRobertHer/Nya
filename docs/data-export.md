@@ -686,6 +686,7 @@ The categories you marked as mattering for your taxes on the report page ([featu
 | --- | --- |
 | `v` | The shape's version: 1. |
 | `marked[]` | The categories you marked, as Nya files categories (lower case, spaces collapsed), in the order you saved them: at most 100, each up to 60 characters. Each is a category's words, one of its `text` keys in [`categories`](#categories), which a rename never changes and a merge moves to the category it went into, so the mark follows the category. A category stays marked when no transaction is in it, and so do words no category has any more. |
+
 #### `runway-scenarios`
 
 The what-ifs you saved by name on the [runway](features.md#runway) (`lib/report/runway-scenarios.ts`), each under a random id: only their settings, never a figure worked out from them, which the runway works out again from your data whenever one is opened. The runway itself is never stored, so it is not here. Each `value`:
@@ -699,7 +700,8 @@ The what-ifs you saved by name on the [runway](features.md#runway) (`lib/report/
 | `currency` | The currency `lower_by` is in, or `null` with nothing lower. On a runway in another currency it isn't applied. |
 | `income_until` | The last day income comes (YYYY-MM-DD), or `null` while it keeps coming. |
 | `planned` | Whether your planned items are in it. |
-| `leave_out_one_offs` | Whether the one-off large outflows are left out of the spending. |
+| `leave_out_one_offs` | Whether the one-offs are left out: large outflows from the spending, large inflows from the income. |
+| `count_moved_out` | Whether what left your checking and savings as transfers to accounts outside them, and as cash taken out, counts as spending. Absent on a scenario saved before it was kept: read as `false`. |
 | `saved_at` | When you saved it. |
 
 #### `timeline-notes`

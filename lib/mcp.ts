@@ -187,7 +187,11 @@ function incompleteMonths(r: { month: string; earliest_month?: string | null; no
 
 /** How long a line of the runway lasts, in words (lib/api-reports.ts). */
 const lasts = (l: any) =>
-  l.outcome === 'runs_out' ? `runs out on ${l.runs_out}, after ${plural(l.days, 'day')} (${l.months} months)` : l.outcome === 'beyond' ? 'lasts more than ten years' : 'doesn’t run out at this rate';
+  l.outcome === 'runs_out'
+    ? `runs out on ${l.runs_out}, after ${plural(l.days, 'day')} (${l.months} months)`
+    : l.outcome === 'beyond'
+      ? 'lasts more than ten years'
+      : 'doesn’t run out at this rate';
 /** A change in words: "against 650.00 USD (+23.1%)". */
 const against = (c: any, currency: string | null) => `${money(c.this, currency)} against ${money(c.last, currency)}${c.pct === null ? '' : ` (${c.pct > 0 ? '+' : ''}${c.pct}%)`}`;
 
@@ -224,9 +228,13 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
   get_runway: (r) =>
-    `An estimate, from ${money(r.cash.start, r.currency)} of cash and the spending of ${r.spending.from} to ${r.spending.to}: without income it ${lasts(r.without_income)}; with income it ${lasts(r.with_income)}.${
-      r.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
-    }`,
+    r.without_income.outcome === 'no_cash'
+      ? 'No runway: no checking, savings or cash on hand is in Nya, so there is no cash to start from. See notes.'
+      : r.without_income.outcome === 'no_spending'
+        ? `No runway: there are no transactions from ${r.spending.from} to ${r.spending.to} to go by. See notes.`
+        : `An estimate, from ${money(r.cash.start, r.currency)} of cash and the spending of ${r.spending.from} to ${r.spending.to}: without income it ${lasts(r.without_income)}; with income it ${lasts(r.with_income)}.${
+            r.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
+          }`,
   get_year_over_year: (r) =>
     `${r.year.this.start} to ${r.year.this.end}: money out ${against(r.year.money_out, r.currency)}, money in ${against(r.year.money_in, r.currency)}, the same days a year before.${
       r.year.this.uncertain || r.year.last.uncertain ? ' Some months may be short of transactions: see notes.' : ''

@@ -17,9 +17,9 @@
 //     them that recurring detection needs, so the spending is a report's
 //     totals for the same months and the bills are the ones the dashboard
 //     detects;
-//   - the window's gaps, by the report's own rule (buildReport over the
-//     longest window), so a month that may be short of transactions is the
-//     month a report on those days would mark;
+//   - each window's gaps, by the report's own rule (buildReport over its
+//     days), so a month that may be short of transactions is the month a
+//     report on those days would mark, and a window says only its own;
 //   - the planned items and the series marked not recurring
 //     (lib/planned-store.ts).
 //
@@ -41,7 +41,7 @@ import { tidy } from '../totals';
 import { StoredDataUnreadableError } from '../repo';
 import { readReportInput } from './read';
 import { buildReport, periodRows, type Gap } from './build';
-import { buildRunwayInputs, runwayWindow, type MonthShort, type RunwayBuilt } from './runway';
+import { buildRunwayInputs, runwayWindow, RUNWAY_WINDOWS, type MonthShort, type RunwayBuilt, type RunwayWindow } from './runway';
 import { dayIn, daysFrom, type Period } from './period';
 
 /** A cash account the runway starts from, as of when its balance is. */
@@ -60,8 +60,8 @@ export type RunwayReport = RunwayBuilt & {
   owed_on_cards: number;
   /** A typed balance not updated for over a week (lib/forecast.ts MANUAL_STALE_DAYS). */
   stale_balances: { name: string; institution: string; updated_at: string }[];
-  /** The longest window's gaps, by the report's rule (lib/report/build.ts). */
-  gaps: Gap[];
+  /** Each window's gaps, by the report's rule (lib/report/build.ts). */
+  gaps: { months: RunwayWindow; gaps: Gap[] }[];
   /** When the window's transactions are from: the oldest last sync of the
    *  connections that bring them (a report's data_as_of). */
   data_as_of: string | null;
@@ -69,12 +69,15 @@ export type RunwayReport = RunwayBuilt & {
   notes: string[];
 };
 
+/** A health savings account: money for health costs, never cash to live on. */
+const isHsa = (a: Pick<ApiAccount, 'type' | 'subtype'>) => a.type === 'depository' && (a.subtype ?? '').toLowerCase() === 'hsa';
+
 /** The cash accounts' institutions, as the forecast reads them, from the
  *  accounts the API lists: none that ended by today. */
 function cashInstitutions(accounts: readonly ApiAccount[], today: string): ForecastInstitution[] {
   const out = new Map<string, ForecastInstitution>();
   for (const a of accounts) {
-    if (a.hidden || (a.lifecycle && a.lifecycle.date <= today)) continue;
+    if (a.hidden || (a.lifecycle && a.lifecycle.date <= today) || isHsa(a)) continue;
     const key = `${a.source}\n${a.institution}`;
     const inst = out.get(key) ?? {
       institution_name: a.institution,
@@ -124,8 +127,13 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
     ),
   ]);
   const { rows } = periodRows(input, period);
-  // The window's months that may be short, as a report on its days marks them.
-  const report = buildReport({ ...input, period: { kind: 'range', start: longest.start, end: longest.end, through: longest.end, today, time_zone: timeZone } });
+  // Each window's gaps and the months they leave short, as a report on its
+  // days says them (a month is marked alike in each window that holds it).
+  const reports = RUNWAY_WINDOWS.map((months) => {
+    const w = runwayWindow(today, months);
+    return { months, report: buildReport({ ...input, period: { kind: 'range', start: w.start, end: w.end, through: w.end, today, time_zone: timeZone } }) };
+  });
+  const report = reports[reports.length - 1].report;
   const short: MonthShort[] = report.months.filter((m) => m.uncertain).map((m) => ({ month: m.month, institutions: m.gaps }));
 
   const live = accounts.accounts.filter((a) => !a.hidden && !(a.lifecycle && a.lifecycle.date <= today));
@@ -170,6 +178,8 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
       notes.push(`${a.name} at ${a.institution} has no transactions in the last 12 months, so what you spend from it isn’t in your spending.`);
     }
   }
+  if (!built.has_cash && position.noBalance.length === 0) notes.push('No checking, savings or cash on hand is in Nya, so there is no cash to start from.');
+  for (const a of live.filter(isHsa)) notes.push(`${a.name} at ${a.institution} is a health savings account, for health costs, so it isn’t counted as cash.`);
   if (live.some((a) => isInvestmentType(a.type))) {
     notes.push('Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.');
   }
@@ -184,7 +194,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
     cash_accounts,
     owed_on_cards: tidy(owed),
     stale_balances: stale,
-    gaps: report.gaps,
+    gaps: reports.map(({ months, report: r }) => ({ months, gaps: r.gaps })),
     data_as_of: report.data_as_of,
     notes,
   };

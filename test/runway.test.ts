@@ -13,6 +13,7 @@ import {
   windowSpending,
   type RunwayInputs,
   type RunwayWhatIf,
+  type WindowSpending,
 } from '@/lib/report/runway';
 import { detectRecurring } from '@/lib/recurring';
 
@@ -26,7 +27,15 @@ import { detectRecurring } from '@/lib/recurring';
 
 import { PLANNED, ROWS, START, TODAY, row } from './runway-fixture';
 
-const position = (start = START) => ({ currency: 'USD', balances: start, pending: { amount: 0, count: 0 }, start, included: [], leftOut: [], noBalance: [] });
+const position = (start = START) => ({
+  currency: 'USD',
+  balances: start,
+  pending: { amount: 0, count: 0 },
+  start,
+  included: [{ account_id: 'chk', name: 'Checking', institution: 'Chase', balance: start, manual: false }],
+  leftOut: [],
+  noBalance: [],
+});
 const built = (over: Partial<Parameters<typeof buildRunwayInputs>[0]> = {}) =>
   buildRunwayInputs({ today: TODAY, position: position(), rows: ROWS, planned: PLANNED, dismissed: [], ...over });
 const whatIf = (over: Partial<RunwayWhatIf> = {}): RunwayWhatIf => ({ ...DEFAULT_WHAT_IF, months: 3, ...over });
@@ -139,9 +148,11 @@ describe('the runway, to the day', () => {
     expect(monthsText(p.without_income.months!)).toBe('3.0');
     expect(p.without_income.spending_per_month).toBeCloseTo(100 * MONTH_DAYS, 6);
     expect(p.without_income.income_per_month).toBe(0);
-    // The day before it is still at zero.
+    // The day before it is still at zero; the lowest is the day it runs out,
+    // never the balance ten years on.
     const chart = new Map(p.chart.map((c) => [c.date, c]));
     expect(chart.get('2027-01-24')!.without).toBe(-100);
+    expect(p.without_income.lowest).toEqual({ date: '2027-01-24', balance: -100 });
   });
 
   // With income, 70.00 a day: a net 30.00 a day, the same payments, and the
@@ -170,8 +181,11 @@ describe('the runway, to the day', () => {
     expect(p.with_income).toMatchObject({ income: { kind: 'until', date: '2026-12-31' }, runs_out: '2027-03-05', days: 133 });
     // Without income is the same either way.
     expect(p.without_income.runs_out).toBe('2027-01-24');
-    // A day already gone stops nothing more than no income does.
-    expect(projectRunway(built(), whatIf({ income_until: '2026-10-01' })).with_income).toEqual(p.without_income);
+    // A day already gone stops nothing more than no income does, and the
+    // line keeps the day it stopped on.
+    const gone = projectRunway(built(), whatIf({ income_until: '2026-10-01' })).with_income;
+    expect(gone.income).toEqual({ kind: 'until', date: '2026-10-01' });
+    expect({ ...gone, income: p.without_income.income }).toEqual(p.without_income);
   });
 
   test('spending lower by 304.38 a month is about 10.00 a day less: Feb 3 without income', () => {
@@ -201,12 +215,41 @@ describe('the runway, to the day', () => {
   });
 });
 
+/** A window's figures, as windowSpending gives them: some spending to go by,
+ *  `spending` and `income` as the runway takes them. */
+const win = (over: Partial<WindowSpending> = {}): WindowSpending => ({
+  months: 6,
+  start: '2026-04-01',
+  end: '2026-09-30',
+  days: 183,
+  money_out: 0,
+  money_in: 0,
+  transactions: 1,
+  refunds: 0,
+  infrequent: 0,
+  card_payments: [],
+  card_payments_total: 0,
+  transfers_out: 0,
+  cash_out: 0,
+  spending: 0,
+  income: 0,
+  one_offs: [],
+  one_offs_total: 0,
+  one_offs_in: [],
+  one_offs_in_total: 0,
+  left_out: [],
+  left_out_text: null,
+  short: [],
+  ...over,
+});
+
 describe('the edges', () => {
   const inputs = (over: Partial<RunwayInputs> = {}): RunwayInputs => ({
     today: TODAY,
     currency: 'USD',
     start: 1000,
-    windows: [{ months: 6, start: '2026-04-01', end: '2026-09-30', days: 183, money_out: 0, money_in: 0, transactions: 0, one_offs: [], one_offs_total: 0, left_out: [], left_out_text: null, short: [] }],
+    has_cash: true,
+    windows: [win()],
     events: [],
     ...over,
   });
@@ -218,8 +261,7 @@ describe('the edges', () => {
 
   test('nothing spent and nothing expected is covered; income above spending grows', () => {
     expect(projectRunway(inputs(), DEFAULT_WHAT_IF).without_income).toMatchObject({ runs_out: null, days: null, months: null, outcome: 'covered' });
-    const w = inputs().windows[0];
-    const p = projectRunway(inputs({ windows: [{ ...w, money_out: 1830, money_in: 3660 }] }), DEFAULT_WHAT_IF);
+    const p = projectRunway(inputs({ windows: [win({ spending: 1830, income: 3660 })] }), DEFAULT_WHAT_IF);
     expect(p.with_income.outcome).toBe('covered');
     expect(p.without_income.outcome).toBe('runs_out');
     // 10.00 a day: 1,000 lasts 100 days.
@@ -227,9 +269,8 @@ describe('the edges', () => {
   });
 
   test('more than ten years: going down, but not below zero within the horizon', () => {
-    const w = inputs().windows[0];
     // 1.83 over 183 days is 0.01 a day: 1,000 lasts 100,000 days.
-    const p = projectRunway(inputs({ windows: [{ ...w, money_out: 1.83 }] }), DEFAULT_WHAT_IF);
+    const p = projectRunway(inputs({ windows: [win({ spending: 1.83 })] }), DEFAULT_WHAT_IF);
     expect(p.without_income).toMatchObject({ runs_out: null, outcome: 'beyond' });
     // The chart then shows a year.
     expect(p.chart.at(-1)!.date).toBe('2027-10-22');
@@ -276,5 +317,112 @@ describe('cash, as the forecast starts from it', () => {
     expect(p.included.map((a) => a.name)).toEqual(['Checking', 'Savings']);
     const b = built({ position: p });
     expect(b.start).toBe(11974.5);
+  });
+});
+
+describe('what leaves cash that the Activity tab leaves out', () => {
+  const ten = () => position(10000);
+  const rent = ['07', '08', '09'].map((m) => row(`rent-${m}`, `2026-${m}-01`, 1000, { name: 'Landlord', vendor_key: 'landlord', category: 'rent and utilities' }));
+  const amex = (amounts = [1500, 1500, 1500, 1500]) =>
+    ['07', '08', '09', '10'].map((m, i) =>
+      row(`amex-${m}`, `2026-${m}-12`, amounts[i], { name: 'AMEX EPAYMENT', vendor_key: 'amex', category: 'loan payments', subcategory: 'credit card payment' })
+    );
+  const onAmex = (amounts = [1500, 1500, 1500, 1500]) =>
+    ['07', '08', '09', '10'].map((m, i) =>
+      row(`amex-in-${m}`, `2026-${m}-14`, -amounts[i], { name: 'PAYMENT RECEIVED', account_name: 'Amex', account_type: 'credit', institution_name: 'Amex', category: 'loan payments' })
+    );
+
+  test('a payment to a card Nya doesn’t see is spending: 1,500 a month to an unlinked Amex, beside 1,000 of rent', () => {
+    const b = buildRunwayInputs({ today: TODAY, position: ten(), rows: [...amex(), ...rent], planned: [], dismissed: [] });
+    const w = b.windows.find((x) => x.months === 3)!;
+    expect(w.card_payments).toEqual([{ name: 'AMEX EPAYMENT', account: 'Checking', amount: 4500, count: 3 }]);
+    expect([w.money_out, w.card_payments_total, w.spending]).toEqual([3000, 4500, 7500]);
+    // 7,500 over 92 days is 81.52 a day: 10,000 is 54.35 on day 122 and below
+    // zero on day 123 (Feb 22, 2027). Without the payments it lasted 306 days.
+    const p = projectRunway(b, whatIf());
+    expect([p.without_income.runs_out, p.without_income.days]).toEqual(['2027-02-22', 122]);
+  });
+
+  test('one that changes every month counts as it was paid; one that lands on a card in Nya stays out, the card’s charges counted there', () => {
+    const varies = buildRunwayInputs({ today: TODAY, position: ten(), rows: [...amex([1500, 1820, 960, 1300]), ...rent], planned: [], dismissed: [] });
+    expect(varies.windows.find((x) => x.months === 3)!.card_payments_total).toBe(4280);
+    const linked = buildRunwayInputs({ today: TODAY, position: ten(), rows: [...amex(), ...onAmex(), ...rent], planned: [], dismissed: [] });
+    const w = linked.windows.find((x) => x.months === 3)!;
+    expect([w.card_payments, w.spending]).toEqual([[], 3000]);
+    // Nor is a payment to a card in Nya a move out of cash.
+    expect([w.transfers_out, w.cash_out]).toEqual([0, 0]);
+  });
+
+  test('transfers out and cash taken out are named, and counted only in the what-if; a move to another cash account is neither', () => {
+    const rows = [
+      ...['07', '08', '09'].map((m) => row(`zelle-${m}`, `2026-${m}-02`, 1200, { name: 'ZELLE TO J SMITH', category: 'transfer out', transaction_code: 'transfer' })),
+      ...['07', '08', '09'].map((m) => row(`atm-${m}`, `2026-${m}-05`, 200, { name: 'ATM', transaction_code: 'atm' })),
+      row('to-savings', '2026-07-10', 500, { name: 'To savings', category: 'transfer out', transaction_code: 'transfer' }),
+      row('into-savings', '2026-07-11', -500, { name: 'From checking', account_name: 'Savings', category: 'transfer in', transaction_code: 'transfer' }),
+      ...['07', '08', '09'].map((m) => row(`grocer-${m}`, `2026-${m}-20`, 920, { name: 'Grocer', vendor_key: 'grocer', category: 'food and drink' })),
+    ];
+    const b = buildRunwayInputs({ today: TODAY, position: ten(), rows, planned: [], dismissed: [] });
+    const w = b.windows.find((x) => x.months === 3)!;
+    expect([w.spending, w.transfers_out, w.cash_out]).toEqual([2760, 3600, 600]);
+    const plain = projectRunway(b, whatIf());
+    const counted = projectRunway(b, whatIf({ count_moved_out: true }));
+    expect(plain.without_income.spending_per_month).toBeCloseTo((2760 / 92) * MONTH_DAYS, 2);
+    expect(counted.without_income.spending_per_month).toBeCloseTo((6960 / 92) * MONTH_DAYS, 2);
+  });
+
+  test('a bill less often than monthly is added on its dates, never averaged, and never a one-off', () => {
+    const weeks = Array.from({ length: 56 }, (_, i) => {
+      const d = new Date(Date.UTC(2025, 8, 1) + i * 7 * 86_400_000).toISOString().slice(0, 10);
+      return row(`g${i}`, d, 100, { name: 'Grocer', vendor_key: 'grocer', category: 'food and drink' });
+    });
+    const insurance = ['2023-11-15', '2024-11-15', '2025-11-15'].map((d) => row(`ins-${d}`, d, 1800, { name: 'Insurer', vendor_key: 'ins', category: 'insurance' }));
+    const b = buildRunwayInputs({ today: TODAY, position: ten(), rows: [...weeks, ...insurance], planned: [], dismissed: [] });
+    expect(b.infrequent).toEqual([{ name: 'Insurer', institution: 'Chase', account: 'Checking', amount: 1800, cadence: 'yearly', next: '2026-11-15' }]);
+    expect(b.events.filter((e) => e.name === 'Insurer').slice(0, 2).map((e) => [e.date, e.amount])).toEqual([
+      ['2026-11-15', -1800],
+      ['2027-11-15', -1800],
+    ]);
+    const twelve = b.windows.find((x) => x.months === 12)!;
+    // In the twelve months: taken out of the average, and not a one-off.
+    expect([twelve.money_out, twelve.infrequent, twelve.spending]).toEqual([twelve.money_out, 1800, twelve.money_out - 1800]);
+    expect(twelve.one_offs).toEqual([]);
+    // In six, not in the spending, and still due next month: the line takes
+    // 1,800 on Nov 15.
+    const six = projectRunway(b, whatIf({ months: 6 }));
+    expect(six.window.infrequent).toBe(0);
+    // 26 weeks of 100 over 183 days is 14.21 a day: without the premium the
+    // 10,000 would last 703 days; 1,800 each November is over 120 days less.
+    const before = projectRunway({ ...b, events: b.events.filter((e) => e.name !== 'Insurer') }, whatIf({ months: 6 }));
+    expect(before.without_income.days! - six.without_income.days!).toBeGreaterThan(120);
+  });
+
+  test('a refund lowers the spending in both lines; a one-off inflow is said, and left out with the one-offs', () => {
+    const rows = [
+      ...ROWS,
+      row('return', '2026-08-03', -300, { name: 'Shop return', vendor_key: 'shop', category: 'general merchandise' }),
+      row('bonus', '2026-09-15', -5000, { name: 'Employer', vendor_key: 'employer', category: 'income' }),
+    ];
+    const b = buildRunwayInputs({ today: TODAY, position: position(), rows, planned: PLANNED, dismissed: [] });
+    const w = b.windows.find((x) => x.months === 3)!;
+    expect([w.refunds, w.spending, w.money_in, w.income]).toEqual([300, 8900, 11740, 11440]);
+    expect(w.one_offs_in).toEqual([{ date: '2026-09-15', name: 'Employer', amount: 5000 }]);
+    const p = projectRunway(b, whatIf());
+    expect(p.without_income.spending_per_month).toBeCloseTo((8900 / 92) * MONTH_DAYS, 2);
+    const out = projectRunway(b, whatIf({ leave_out_one_offs: true }));
+    expect(out.with_income.income_per_month).toBeCloseTo((6440 / 92) * MONTH_DAYS, 2);
+    expect(out.without_income.spending_per_month).toBeCloseTo(((8900 - 2000) / 92) * MONTH_DAYS, 2);
+  });
+});
+
+describe('when there is no runway to give', () => {
+  test('no cash to start from: no day, whatever the spending', () => {
+    const none = { ...position(0), included: [] };
+    const p = projectRunway(buildRunwayInputs({ today: TODAY, position: none, rows: ROWS, planned: [], dismissed: [] }), whatIf());
+    for (const line of [p.without_income, p.with_income]) expect(line).toMatchObject({ outcome: 'no_cash', runs_out: null, days: null, months: null });
+  });
+
+  test('cash, but no spending in the window to go by: no day, never "doesn’t run out"', () => {
+    const p = projectRunway(buildRunwayInputs({ today: TODAY, position: position(5000), rows: [], planned: [], dismissed: [] }), whatIf());
+    for (const line of [p.without_income, p.with_income]) expect(line).toMatchObject({ outcome: 'no_spending', runs_out: null, days: null });
   });
 });

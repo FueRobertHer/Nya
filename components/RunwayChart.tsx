@@ -29,7 +29,8 @@ function niceTicks(min: number, max: number): number[] {
   const norm = rough / mag;
   const step = (norm >= 5 ? 5 : norm >= 2 ? 2 : 1) * mag;
   const out: number[] = [];
-  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(v);
+  // `+ 0` turns -0 into 0, so a tick at zero never reads "-$0".
+  for (let v = Math.ceil(min / step) * step; v <= max + 1e-9; v += step) out.push(v + 0);
   return out;
 }
 
@@ -67,7 +68,7 @@ export default function RunwayChart({ projection, currency }: { projection: Runw
   const { x, y, ticks, showZero } = geo;
   const marks = [
     { date: projection.without_income.runs_out, key: 'without' as const, color: 'var(--down)' },
-    { date: projection.with_income.runs_out, key: 'with' as const, color: 'var(--warn)' },
+    { date: projection.with_income.runs_out, key: 'with' as const, color: 'var(--accent)' },
   ].filter((m): m is { date: string; key: 'without' | 'with'; color: string } => m.date !== null && points.some((p) => p.date === m.date));
 
   function scrub(clientX: number) {

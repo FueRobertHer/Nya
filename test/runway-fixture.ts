@@ -44,7 +44,7 @@ export function row(id: string, date: string, amount: number, over: Partial<Txn>
  * Three months, July to September 2026 (92 days), by hand:
  *   money out that counts: rent 3 x 1,500 + groceries 9 x 300 + a car repair
  *   of 2,000 = 9,200.00, so 100.00 a day exactly;
- *   money in that counts: pay 3 x 2,000 + a refund of 440 = 6,440.00, so
+ *   money in that counts: pay 3 x 2,000 + interest of 440 = 6,440.00, so
  *   70.00 a day exactly;
  *   left out: a TV the person excluded, a move to savings, cash taken out,
  *   the mortgage's 800 a month (a loan payment, a transfer to every total),
@@ -57,7 +57,7 @@ export const ROWS: Txn[] = [
   ...['07-03', '07-10', '07-24', '08-07', '08-14', '08-28', '09-04', '09-11', '09-25'].map((d) => row(`groceries-${d}`, `2026-${d}`, 300, { name: 'Grocer', vendor_key: 'grocer', category: 'food and drink' })),
   row('repair', '2026-08-15', 2000, { name: 'Midas', vendor_key: 'midas' }),
   ...['07', '08', '09'].map((m) => row(`pay-${m}`, `2026-${m}-15`, -2000, { name: 'Employer', vendor_key: 'employer', category: 'income' })),
-  row('refund', '2026-08-20', -440, { name: 'Shop refund', vendor_key: 'shop' }),
+  row('interest', '2026-08-20', -440, { name: 'Interest', vendor_key: 'interest', category: 'income' }),
   row('tv', '2026-07-20', 1200, { name: 'TV store', vendor_key: 'tv', excluded: true }),
   row('to-savings', '2026-08-02', 1000, { name: 'To savings', category: 'transfer out', transaction_code: 'transfer' }),
   row('atm', '2026-09-02', 200, { name: 'ATM', transaction_code: 'atm' }),

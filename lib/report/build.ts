@@ -747,11 +747,15 @@ function gapTouches(g: Gap, start: string, end: string): boolean {
  * The rows of `input` on the days from `start` through `through`, as the
  * Activity tab has them: an ended account's from its end day on left out
  * (see ENDED ACCOUNTS), and how many transactions each ended account (in
- * `input.ended`'s order) had left out. What buildReport counts, and what a
+ * `input.ended`'s order) had left out, with which ended account each id is
+ * (its place in `input.ended`). What buildReport counts, and what a
  * report built on the same read counts (lib/report/runway-read.ts,
  * lib/report/year-over-year-read.ts).
  */
-export function periodRows(input: Pick<ReportInput, 'rows' | 'ended'>, span: { start: string; through: string }): { rows: Txn[]; notCounted: number[] } {
+export function periodRows(
+  input: Pick<ReportInput, 'rows' | 'ended'>,
+  span: { start: string; through: string }
+): { rows: Txn[]; notCounted: number[]; endedOf: Map<string, number> } {
   const endedFacts = input.ended ?? [];
   const endedOf = new Map<string, number>();
   endedFacts.forEach((e, i) => {
@@ -766,7 +770,7 @@ export function periodRows(input: Pick<ReportInput, 'rows' | 'ended'>, span: { s
     notCountedOf[i].add(t);
     return false;
   });
-  return { rows, notCounted: notCountedOf.map((c) => c.n) };
+  return { rows, notCounted: notCountedOf.map((c) => c.n), endedOf };
 }
 
 export function buildReport(input: ReportInput): Report {
@@ -775,11 +779,7 @@ export function buildReport(input: ReportInput): Report {
   // The period's rows, as the Activity tab has them: an ended account's from
   // its end day on left out, and counted (see ENDED ACCOUNTS).
   const endedFacts = input.ended ?? [];
-  const endedOf = new Map<string, number>();
-  endedFacts.forEach((e, i) => {
-    for (const id of e.ids) endedOf.set(id, i);
-  });
-  const { rows, notCounted } = periodRows(input, period);
+  const { rows, notCounted, endedOf } = periodRows(input, period);
   // The ended accounts the period has something to say of: their end is in
   // it, or before it and they are only assumed closed, still the person's,
   // or hold rows in it.

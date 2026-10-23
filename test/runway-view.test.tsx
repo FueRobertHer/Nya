@@ -2,12 +2,14 @@ import { describe, expect, test, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RunwayView, SavedScenarios, lastsWords, scenarioToSave, whatIfWords } from '@/components/RunwayReport';
+import { RunwayView, SavedScenarios, lastsWords, scenarioToSave } from '@/components/RunwayReport';
+import { whatIfWords } from '@/lib/report/runway-words';
+import { reportDay } from '@/components/ReportView';
 import { parseRunwayScenario } from '@/lib/report/runway-scenarios';
 import { YearOverYearView, pctWords } from '@/components/YearOverYearReport';
 import { reportChoice } from '@/components/ReportsPage';
 import { cashPosition } from '@/lib/forecast';
-import { DEFAULT_WHAT_IF, buildRunwayInputs, projectRunway, type RunwayWhatIf } from '@/lib/report/runway';
+import { DEFAULT_WHAT_IF, RUNWAY_WINDOWS, buildRunwayInputs, projectRunway, type RunwayWhatIf } from '@/lib/report/runway';
 import type { RunwayReport } from '@/lib/report/runway-read';
 import { buildYearOverYear } from '@/lib/report/year-over-year';
 import type { YearOverYearReport } from '@/lib/report/year-over-year-read';
@@ -53,7 +55,7 @@ function runway(over: Partial<RunwayReport> = {}): RunwayReport {
     cash_accounts: built.position.included.map((a) => ({ account_id: a.account_id, name: a.name, institution: a.institution, balance: a.balance, manual: a.manual, as_of: '2026-10-21' })),
     owed_on_cards: 600,
     stale_balances: [],
-    gaps: [{ kind: 'stale', item_id: 'item_citi', institution: 'Citi', since: '2026-08-20' }],
+    gaps: RUNWAY_WINDOWS.map((months) => ({ months, gaps: [{ kind: 'stale' as const, item_id: 'item_citi', institution: 'Citi', since: '2026-08-20' }] })),
     data_as_of: '2026-10-22T13:00:00.000Z',
     notes: ['Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.'],
     ...over,
@@ -83,11 +85,12 @@ describe('the runway, drawn', () => {
     expect(t).toContain('The oldest of these balances is from Oct 21, 2026.');
     expect(t).toContain('$9,200.00 over Jul 1, 2026 to Sep 30, 2026 (92 days), about $3,043.75 a month.');
     expect(t).toContain('Midas, Aug 15, 2026: $2,000.00');
-    expect(t).toContain('$6,440.00 over the same days, about $2,130.63 a month: pay, and refunds.');
+    expect(t).toContain('$6,440.00 over the same days, about $2,130.63 a month: pay and other money in, refunds aside.');
     expect(t).toContain('Home Loans from Checking: $800.00, monthly, next around Nov 5, 2026');
     expect(t).toContain('Car registration: an expense of $300.00, once, next on Dec 1, 2026');
     expect(t).toContain('Tax refund: income of $1,000.00, once, next on Mar 15, 2027');
-    expect(t).toContain('Bills already in your spending, rent among them, aren’t added again. Nothing here is saved.');
+    expect(t).toContain('Bills already in your spending that come monthly or more often, rent among them, aren’t added again. Nothing here is saved.');
+    expect(t).toContain('Money out as the Activity tab counts it: $9,200.00');
   });
 
   test('what it can’t see, said first', () => {
@@ -112,13 +115,56 @@ describe('the runway, drawn', () => {
     expect(t).toContain('a month in this what-if');
   });
 
+  test('what leaves cash unseen is said: a card Nya doesn’t see, transfers out and cash taken out, and the what-if that counts them', () => {
+    const amex = ['07', '08', '09'].map((m) => row(`amex-${m}`, `2026-${m}-12`, 1500, { name: 'AMEX EPAYMENT', category: 'loan payments', subcategory: 'credit card payment' }));
+    const built = buildRunwayInputs({ today: TODAY, position, rows: [...ROWS, ...amex], planned: PLANNED, dismissed: [] });
+    const r = runway({ ...built });
+    const t = text(draw(r));
+    expect(t).toContain('AMEX EPAYMENT from Checking looks like a card’s payment, and no card in Nya shows it arriving, so its $4,500.00 over these months counts as spending here');
+    expect(t).toContain('plus payments to cards Nya doesn’t see: $4,500.00');
+    expect(t).toContain('AMEX EPAYMENT from Checking: $4,500.00 over 3 payments');
+    expect(t).toContain('$13,700.00 over Jul 1, 2026 to Sep 30, 2026');
+    expect(t).toContain(
+      'Over these months, $1,000.00 as transfers to accounts outside them (a payment by Zelle or Venmo, a move to an account Nya doesn’t hold) and $200.00 as cash taken out left your checking and savings. It isn’t in the spending'
+    );
+    const counted = text(draw(r, three({ count_moved_out: true })));
+    expect(counted).toContain('This what-if counts it as spending.');
+    expect(counted).toContain('transfers out and cash taken out counted');
+    expect(counted).toContain('a month in this what-if');
+  });
+
+  test('no spending to go by is said, never "doesn’t run out"', () => {
+    const r = runway({ windows: runway().windows.map((w) => ({ ...w, transactions: 0, card_payments: [], spending: 0, money_out: 0, income: 0, money_in: 0 })) });
+    const t = text(draw(r));
+    expect(t).toContain('There are no transactions in these months to go by, so no runway is given');
+    expect(t).toContain('Without income Not known');
+    expect(t).not.toContain('Doesn’t run out');
+    expect(t).not.toContain('Nothing is known to be missing');
+    expect(draw(r)).not.toContain('<svg');
+  });
+
+  test('income that stopped on a day gone is labelled so, never as income', () => {
+    const t = text(draw(runway(), three({ income_until: '2026-09-30' })));
+    expect(t).toContain('Income stopped after Sep 30, 2026 3.0 months');
+    expect(t).toContain('It stopped after Sep 30, 2026 in this what-if.');
+    expect(t).not.toContain('With your income');
+  });
+
+  test('one-offs left out are said only where the window has some', () => {
+    const none = runway({ windows: runway().windows.map((w) => ({ ...w, one_offs: [], one_offs_total: 0, one_offs_in: [], one_offs_in_total: 0 })) });
+    expect(text(draw(none, three({ leave_out_one_offs: true })))).not.toContain('one-offs left out');
+    expect(text(draw(runway(), three({ leave_out_one_offs: true })))).toContain('one-offs left out');
+  });
+
   test('the outcomes in words: below zero now, more than ten years, covered', () => {
     const p = projectRunway(runway({ start: -5 }), three());
     expect(lastsWords(p.without_income, TODAY)).toEqual({ figure: 'None', words: 'below zero now' });
     const line = { ...p.without_income, outcome: 'beyond' as const, runs_out: null, days: null, months: null };
     expect(lastsWords(line, TODAY).figure).toBe('Over 10 years');
     expect(lastsWords({ ...line, outcome: 'covered' }, TODAY)).toEqual({ figure: 'Doesn’t run out', words: 'at this rate, what comes in covers what goes out' });
-    expect(whatIfWords(DEFAULT_WHAT_IF, 'USD')).toBe('Worked out with spending over the last 6 full months and what you planned in.');
+    expect(lastsWords({ ...line, outcome: 'no_cash' }, TODAY).figure).toBe('No cash');
+    expect(lastsWords({ ...line, outcome: 'no_spending' }, TODAY).figure).toBe('Not known');
+    expect(whatIfWords(DEFAULT_WHAT_IF, 'USD', reportDay)).toBe('Worked out with spending over the last 6 full months and what you planned in.');
   });
 
   test('with no cash, it says how to get one rather than a figure', () => {
@@ -163,7 +209,7 @@ describe('the saved scenarios', () => {
 
   test('Save sends the what-if as worked out, its lower spending with the currency it was typed in, and the server takes it', () => {
     const lower = scenarioToSave('If I quit', three({ lower_by: 304.38, income_until: '2026-12-31' }), 'USD');
-    expect(lower).toEqual({ name: 'If I quit', months: 3, lower_by: 304.38, income_until: '2026-12-31', planned: true, leave_out_one_offs: false, currency: 'USD' });
+    expect(lower).toEqual({ name: 'If I quit', months: 3, lower_by: 304.38, income_until: '2026-12-31', planned: true, leave_out_one_offs: false, count_moved_out: false, currency: 'USD' });
     expect(parseRunwayScenario(lower, 0)).toMatchObject({ ok: { lower_by: 304.38, currency: 'USD' } });
     const none = scenarioToSave('As it is', DEFAULT_WHAT_IF, 'USD');
     expect(none.currency).toBeNull();
