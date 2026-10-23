@@ -56,7 +56,7 @@ describe('the list', () => {
     expect(t).toContain('Changes made with your tokens');
     expect(t).toContain('Every change a token made in the last 30 days, newest first.');
     expect(t).toContain('No changes in the last 30 days.');
-    expect(t).not.toMatch(/[–—]/);
+    expect(t).not.toMatch(/[\u2013\u2014]/);
   });
 
   test('each change: a sentence, its token and how it came, and Undo and Forget', () => {

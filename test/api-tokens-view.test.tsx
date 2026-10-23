@@ -219,7 +219,7 @@ describe('what a token can do, while this copy lets tokens write', () => {
       expect(chosen).toContain(CHANGES_NOTE);
       expect(chosen).toContain('a token never gains kinds of changes added to Nya after it was made');
     }
-    expect(CHANGES_NOTE).not.toMatch(/[–—]/);
+    expect(CHANGES_NOTE).not.toMatch(/[\u2013\u2014]/);
   });
 
   test('on, each token says what it can do, and one just made says so', () => {
