@@ -21,7 +21,7 @@
 // Arithmetic only: no engine run, no market history.
 
 import { projectBalance } from './fi';
-import { compileEvents, hasWalk, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
+import { compileEvents, hasWalk, lastChange, savingsIn, walkBalanceAt, walkToFi, type CompiledEvents, type LifeEvent, type Shortfall } from './events';
 import { enginePlan, fiView, formulasTake, planYears, startAge, type EnginePlan, type FirePlan, type FiView, type Measured, type Missing, type StartChoice } from './plan';
 
 export type StartsWith = {
@@ -54,6 +54,9 @@ export type PlanFigures = {
   short: Shortfall | null;
   /** Whether the FI date came from the walk. */
   walked: boolean;
+  /** What the walk saves a year after the last change (lasting changes
+   *  included), for the words when it never gets there; null unwalked. */
+  walkedSavings: number | null;
   startsWith: StartsWith | null;
 };
 
@@ -64,7 +67,7 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
   if (events.length === 0) {
     const view = fiView(plan, measured);
     const engine = enginePlan(plan, view);
-    return { plan, view, engine, events: null, retirement: null, short: null, walked: false, startsWith: startsWith(plan, view, engine, null) };
+    return { plan, view, engine, events: null, retirement: null, short: null, walked: false, walkedSavings: null, startsWith: startsWith(plan, view, engine, null) };
   }
   const display = fiView(plan, measured);
   const compiled = compileEvents(events, { age: plan.age, startAge: startAge(plan), years: planYears(plan) });
@@ -96,11 +99,13 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
   }
   let view: FiView = { ...core, spending: display.spending };
   let short: Shortfall | null = null;
+  let walkedSavings: number | null = null;
   const walked = hasWalk(compiled.walk) && core.fiNumber !== null && (core.assets.value !== null || core.savings.value !== null) && formulasTake(plan);
   if (walked) {
     const a = core.assets.value ?? 0;
     const c = core.savings.value ?? 0;
     const w = walkToFi(a, c, plan.realReturn, core.fiNumber as number, compiled.walk);
+    walkedSavings = savingsIn(compiled.walk, c, lastChange(compiled.walk) + 1);
     let atTargetAge: number | null = null;
     if (plan.age !== null && plan.targetAge !== null) {
       const at = walkBalanceAt(a, c, plan.realReturn, compiled.walk, Math.max(0, plan.targetAge - plan.age));
@@ -113,7 +118,7 @@ export function planFigures(plan: FirePlan, measured: Measured, events: readonly
       view = { ...view, yearsToFi: w.years, fiAge: Number.isFinite(w.years) && plan.age !== null ? plan.age + w.years : null, atTargetAge };
     }
   }
-  return { plan, view, engine, events: compiled, retirement, short, walked, startsWith: startsWith(plan, core, engine, compiled) };
+  return { plan, view, engine, events: compiled, retirement, short, walked, walkedSavings, startsWith: startsWith(plan, core, engine, compiled) };
 }
 
 function startsWith(plan: FirePlan, view: FiView, engine: EnginePlan | { missing: Missing }, compiled: CompiledEvents | null): StartsWith | null {

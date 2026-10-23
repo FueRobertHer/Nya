@@ -128,18 +128,6 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     return { ...empty, value: out.value, diff: c === against ? null : (out.diff ?? null), caveat: out.caveat ?? null };
   };
 
-  const amountRow = (key: RowKey, label: string, pick: (r: SimResult) => number): CompareRow => ({
-    key,
-    label,
-    cells: columns.map((c) =>
-      cell(c, (fig, r) => {
-        const v = pick(r as SimResult);
-        if (!base || !baseFigures) return { value: money(v) };
-        return { value: money(v), diff: apart(fig, baseFigures) ?? amountDiffText(v - pick(base), money) };
-      })
-    ),
-  });
-
   // The age every plan worked out ends at, when they all end at one.
   const ages = columns.flatMap((c) => {
     if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];
@@ -147,6 +135,26 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     return [startAge === null ? null : startAge + sim.years];
   });
   const endsAt = ages.length > 0 && ages.every((a) => a !== null && a === ages[0]) ? ages[0] : null;
+  /** When a plan ends: the age, or after how many years. */
+  const endOf = (fig: PlanFigures) => ('sim' in fig.engine ? (fig.engine.startAge !== null ? `at ${fig.engine.startAge + fig.engine.sim.years}` : `after ${fig.engine.sim.years} years`) : '');
+
+  // An ending balance is at the plan's end: between plans that end at
+  // different ages it is the same kind of plan measured at another time, so
+  // each cell says when, and no amount difference is given.
+  const amountRow = (key: RowKey, label: string, pick: (r: SimResult) => number, ending = false): CompareRow => ({
+    key,
+    label,
+    cells: columns.map((c) =>
+      cell(c, (fig, r) => {
+        const v = pick(r as SimResult);
+        const value = ending && endsAt === null ? `${money(v)} ${endOf(fig)}` : money(v);
+        if (!base || !baseFigures) return { value };
+        if (ending && endsAt === null) return { value, diff: 'ends at a different age, so not compared' };
+        return { value, diff: apart(fig, baseFigures) ?? amountDiffText(v - pick(base), money) };
+      })
+    ),
+  });
+
 
   const rows: CompareRow[] = [
     {
@@ -171,8 +179,8 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
         })
       ),
     },
-    amountRow('median', endsAt !== null ? `Ending balance at ${endsAt}, median` : 'Ending balance, median', (r) => r.ending.p50),
-    amountRow('worst', endsAt !== null ? `Ending balance at ${endsAt}, the 10% worst` : 'Ending balance, the 10% worst', (r) => r.ending.p10),
+    amountRow('median', endsAt !== null ? `Ending balance at ${endsAt}, median` : 'Ending balance, median, at each plan’s end', (r) => r.ending.p50, true),
+    amountRow('worst', endsAt !== null ? `Ending balance at ${endsAt}, the 10% worst` : 'Ending balance, the 10% worst, at each plan’s end', (r) => r.ending.p10, true),
     {
       key: 'fi',
       label: 'FI date',
@@ -192,7 +200,7 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     },
     {
       key: 'spending',
-      label: 'Spending in retirement, the first year',
+      label: 'Spending in retirement, the first year, by the withdrawal rule (before one-offs and life events)',
       cells: columns.map((c) =>
         cell(c, (fig, r) => {
           const res = r as SimResult;

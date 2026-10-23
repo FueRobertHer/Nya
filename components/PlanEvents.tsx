@@ -7,7 +7,7 @@
 // no field holds an example, and nothing suggests what something "usually"
 // costs.
 
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Sheet } from './Sheet';
 import { Masked, NO_EXAMPLE } from './HideAmounts';
 import { EVENT_KINDS, EVENT_LIMITS, parseLifeEvent, type EventNote, type LifeEvent, type LifeEventKind } from '@/lib/fire/events';
@@ -27,11 +27,12 @@ const KIND_NOTES: Record<LifeEventKind, string> = {
   'part-time':
     'Income a year after tax, from an age to the age it stops. It counts from this scenario’s retirement age only: for part-time work in place of full-time work, set the scenario’s retirement age to when full-time work stops. The FI card’s Barista FI uses your plan’s own part-time income, not this.',
   spending:
-    'How much more (or less) you would spend a year, for some years or for good. A change for good that is already in effect when you retire is part of your spending in retirement, and so of your FI number; to change all your spending, set the scenario’s spending instead.',
+    'How much more (or less) you would spend a year, for some years or for good. It changes what you save in its years too. A change for good that is already in effect when you retire is part of your spending in retirement, and so of your FI number. Typing the scenario’s own annual spending instead changes the FI number the same way, but leaves what you save as it is.',
 };
 
 export function LifeEventsCard({
   scenarioName,
+  version,
   events,
   notes,
   money,
@@ -39,6 +40,9 @@ export function LifeEventsCard({
   onSave,
 }: {
   scenarioName: string;
+  /** The scenario's version: a drawer opened on one closes when it changes
+   *  (saved, or changed on another device), and never saves over another. */
+  version: string;
   events: LifeEvent[];
   notes: EventNote[];
   money: (n: number) => string;
@@ -48,12 +52,22 @@ export function LifeEventsCard({
   const [sheet, setSheet] = useState<{ kind: LifeEventKind; event: LifeEvent | null } | null>(null);
   const [opened, setOpened] = useState(0);
   const [shown, setShown] = useState<{ kind: LifeEventKind; event: LifeEvent | null } | null>(null);
+  const versionRef = useRef(version);
+  versionRef.current = version;
+  const openedOn = useRef(version);
   const open = (s: { kind: LifeEventKind; event: LifeEvent | null }) => {
     setOpened((n) => n + 1);
+    openedOn.current = version;
     setSheet(s);
     setShown(s);
   };
   const close = () => setSheet(null);
+  useEffect(() => {
+    setSheet(null);
+  }, [version]);
+  /** Saves only on the version the drawer was opened on. */
+  const guarded: SaveEvents = async (next) =>
+    openedOn.current === versionRef.current ? onSave(next) : 'This scenario changed since this was opened, so nothing was saved: open it again.';
   const full = events.length >= EVENT_LIMITS.events;
   return (
     <div className="card">
@@ -108,14 +122,14 @@ export function LifeEventsCard({
             onCancel={close}
             onSave={async (e) => {
               const next = shown.event ? events.map((x) => (x.id === shown.event!.id ? e : x)) : [...events, e];
-              const ok = await onSave(next);
+              const ok = await guarded(next);
               if (ok === true) close();
               return ok;
             }}
             onRemove={
               shown.event
                 ? async () => {
-                    const ok = await onSave(events.filter((x) => x.id !== shown.event!.id));
+                    const ok = await guarded(events.filter((x) => x.id !== shown.event!.id));
                     if (ok === true) close();
                     return ok;
                   }

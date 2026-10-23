@@ -198,7 +198,7 @@ function parseSet(raw: unknown): { ok: ScenarioSet } | { error: string } {
     const m = raw.mix;
     if (!isObject(m) || !closed(m, ['stocksPct', 'bondsPct'])) return { error: 'set.mix must hold stocksPct and bondsPct' };
   }
-  if (raw.start === 'custom' && !Object.hasOwn(raw, 'startBalance')) return { error: 'set.start custom needs set.startBalance' };
+  if (raw.start === 'custom' && !Object.hasOwn(raw, 'startBalance')) return { error: 'A scenario that starts from a balance you typed needs that balance (set.startBalance)' };
   // The Plan's own ranges and rules, over the defaults.
   const r = parsePlan({ ...DEFAULT_PLAN, ...setFields(raw as ScenarioSet) });
   if ('error' in r) return { error: `set: ${r.error}` };

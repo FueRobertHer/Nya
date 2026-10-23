@@ -490,14 +490,31 @@ export default function PlanTab({
   }, [gridKey]);
   const shownGrid = grid && grid.key === gridKey ? grid : null;
 
+  // The drawer, and the plan it was opened for: the open scenario, at the
+  // version it was opened on, or null for the Plan. A form saves only to the
+  // plan it was opened for, and the drawer closes whenever the plan shown
+  // changes (a scenario opened, closed, deleted elsewhere, or changed on
+  // another device), so a form left open can never send one plan's values
+  // to another, or a version's values over a newer one.
+  const shownFor = entry ? `${entry.id}@${entry.rev}` : null;
+  const shownForRef = useRef(shownFor);
+  shownForRef.current = shownFor;
   const [sheet, setSheet] = useState<SheetState | null>(null);
+  const [sheetFor, setSheetFor] = useState<string | null>(null);
   const [opened, setOpened] = useState(0);
   const shownSheet = useLast(sheet);
   const open = (s: SheetState) => {
     setOpened((n) => n + 1);
+    setSheetFor(shownForRef.current);
     setSheet(s);
   };
   const close = () => setSheet(null);
+  useEffect(() => {
+    setSheet(null);
+  }, [shownFor]);
+  // What a scenario's save said that has no form left to say it in: changed
+  // on another device, so the drawer closed on the version it was made to.
+  const [notice, setNotice] = useState<{ for: string; text: string } | null>(null);
 
   // Saving into the open scenario: what a form's save changes, recorded as
   // the scenario's own changes (lib/fire/scenarios.ts recordSave), with the
@@ -508,7 +525,12 @@ export default function PlanTab({
     const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, kept, planCurrency), ...kept };
     if (hasAmounts(draft) && draft.currency === null) return 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.';
     const r = await scenarios.save(entry.id, draft, entry.rev);
-    return 'ok' in r ? true : r.error;
+    if ('ok' in r) {
+      setNotice(null);
+      return true;
+    }
+    if (r.stale) setNotice({ for: entry.id, text: `${r.error} Nothing of your change was kept: make it again if it still applies.` });
+    return r.error;
   };
   const saveToScenario: Save | null = entry
     ? async (next) => {
@@ -521,8 +543,23 @@ export default function PlanTab({
   // Every save the tab makes, from one place (components/plan-savers.ts).
   const savers = planSavers({ scenario: saveToScenario, savePlan: store.save, plan: basePlan, repaired: repairing ? repair.plan : null });
   const formPlan = entry ? applyScenario(basePlan, entry).plan : basePlan;
-  const formProps = { plan: formPlan, onSave: savers.form, onDone: close, editable: editable && !other, scenario: entry?.name ?? null };
+  const saversRef = useRef(savers);
+  saversRef.current = savers;
+  // Bound when the drawer opened: refused once the plan shown isn't the one
+  // it was opened for (the drawer is closing by then).
+  const saveFor =
+    (target: string | null): Save =>
+    async (next) =>
+      target === shownForRef.current ? saversRef.current.form(next) : 'This form was opened for another plan than the one shown now, so nothing was saved.';
+  const formProps = { plan: formPlan, onSave: saveFor(sheetFor), onDone: close, editable: editable && !other && sheetFor === shownFor, scenario: entry?.name ?? null };
   const scenarioName = entry?.name ?? null;
+  // Back to the Plan puts focus on that scenario's row, where it can be
+  // opened again, rather than losing it with the card that goes.
+  const [backFrom, setBackFrom] = useState<string | null>(null);
+  const back = () => {
+    setBackFrom(entry?.id ?? null);
+    setOpenId(null);
+  };
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   // Opening one moves focus to its card's heading, and the status line says
   // which plan the tab shows, so the switch is never silent.
@@ -535,8 +572,9 @@ export default function PlanTab({
   // "They're in" is offered only once the accounts have all loaded without a
   // problem: the Plan's currency is the one most of them are in, and may
   // read otherwise while they load.
+  const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
   const confirmWhyNot =
-    !balancesAsOf || institutions.length === 0 || txnsLoading || assets.caveats.length > 0
+    !balancesAsOf || institutions.length === 0 || txnsLoading || txnsFailed || unread.length > 0 || assets.caveats.length > 0
       ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
       : null;
   const changes = entry ? scenarioChanges(basePlan, entry) : [];
@@ -568,9 +606,20 @@ export default function PlanTab({
       measured={measured}
       planCurrency={planCurrency}
       canOpen={canOpen}
-      whyNot={!planLoaded ? 'Your plan is still loading: scenarios open once it has.' : repairing ? 'Your saved plan has values to fix first (above): scenarios open once it is saved.' : null}
+      planState={state.status}
+      whyNot={
+        state.status === 'error'
+          ? 'Your saved plan couldn’t be read, so scenarios can’t be worked out against it: try again above.'
+          : !planLoaded
+            ? 'Your plan is still loading: scenarios open, and are compared, once it has.'
+            : repairing
+              ? 'Your saved plan has values to fix first (above): scenarios open once it is saved.'
+              : null
+      }
       openId={entry ? entry.id : null}
       onOpen={setOpenId}
+      focusId={backFrom}
+      onFocused={() => setBackFrom(null)}
       run={(job, signal) => runner().run(job, signal)}
       cache={answers}
       method={basePlan.method}
@@ -595,7 +644,8 @@ export default function PlanTab({
       onSave={(c) => persist(c)}
       onConfirmCurrency={() => persist(changesOf(entry), planCurrency)}
       onFix={fixForm}
-      onBack={() => setOpenId(null)}
+      notice={notice && notice.for === entry.id ? notice.text : null}
+      onBack={back}
     />
   );
 
@@ -627,7 +677,22 @@ export default function PlanTab({
       </div>
       {scenarioBar}
       {entry && !shown ? (
-        scenariosCard
+        <>
+          {/* Lasting changes below zero: the life events are what to change,
+              so they stay here to change. */}
+          {openFigures && 'refused' in openFigures && (
+            <LifeEventsCard
+              scenarioName={entry.name}
+              version={shownFor ?? ''}
+              events={entry.events}
+              notes={[]}
+              money={money}
+              editable={editable && !other}
+              onSave={(events) => persist({ ...changesOf(entry), events })}
+            />
+          )}
+          {scenariosCard}
+        </>
       ) : (
         <>
       <FiCard
@@ -635,6 +700,7 @@ export default function PlanTab({
         scenarioNotes={scenarioNotes}
         retirementSpending={shown?.retirement?.spending ?? null}
         walked={shown?.walked ?? false}
+        walkedSavings={shown?.walkedSavings ?? null}
         fiShort={shown?.short ? shortText(shown.short, plan.age, money) : null}
         plan={plan}
         view={view}
@@ -643,7 +709,7 @@ export default function PlanTab({
         withoutTransactions={txnWithout}
         transactionCount={txns?.length ?? 0}
         txnsLoading={txnsLoading}
-        txnsFailed={txns === null && !txnsLoading && txnNotes.length > 0}
+        txnsFailed={txnsFailed}
         assets={assets}
         balancesAsOf={balancesAsOf}
         workplace={workplace}
@@ -667,6 +733,7 @@ export default function PlanTab({
         planEditable={editable}
         settingsLocked={!savers.allocationSettings}
         scenarioName={scenarioName}
+        planKey={shownFor ?? 'plan'}
         institutions={institutions}
         balancesAsOf={balancesAsOf}
       />
@@ -710,6 +777,7 @@ export default function PlanTab({
       {entry && shown && (
         <LifeEventsCard
           scenarioName={entry.name}
+          version={shownFor ?? ''}
           events={entry.events}
           notes={shown.events?.notes ?? []}
           money={money}
@@ -727,8 +795,8 @@ export default function PlanTab({
         <p className="panel-note">{HYPOTHETICAL}</p>
         <p className="panel-note">
           Stocks are {DATA_STOCKS} and bonds are {DATA_BONDS}, from Robert Shiller&apos;s monthly data (January 1871 to June
-          2023). Everything is in today&apos;s dollars: returns are after inflation, so a constant withdrawal keeps its
-          buying power.
+          2023, so the monthly returns, each from one month to the next, run from January 1871 to May 2023). Everything is in
+          today&apos;s dollars: returns are after inflation, so a constant withdrawal keeps its buying power.
         </p>
         <p className="panel-note">
           What this can&apos;t tell you: other countries&apos; markets, taxes beyond one flat rate (no brackets, account
@@ -890,6 +958,7 @@ export function FiCard({
   scenarioNotes = [],
   retirementSpending = null,
   walked = false,
+  walkedSavings = null,
   fiShort = null,
   plan,
   view,
@@ -921,6 +990,8 @@ export function FiCard({
   retirementSpending?: number | null;
   /** Years to FI came from the walk with a scenario's life events. */
   walked?: boolean;
+  /** What that walk saves a year after the scenario's last change. */
+  walkedSavings?: number | null;
   /** Why there is no FI date: a cost the walk can't pay. */
   fiShort?: string | null;
   plan: FirePlan;
@@ -1143,6 +1214,8 @@ export function FiCard({
     yearsNote = fiShort;
   } else if (walked && view.yearsToFi !== null && view.yearsToFi > 0 && view.yearsToFi !== Infinity) {
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, at` : 'At'} a steady ${pct(plan.realReturn)} real return, with this scenario’s life events changing what is saved in their years.`;
+  } else if (walked && view.yearsToFi === Infinity) {
+    yearsNote = `With this scenario’s life events you’d save ${money(walkedSavings ?? 0)} a year after its last change, and at ${pct(plan.realReturn)} real that never reaches it.`;
   } else if (view.yearsToFi === Infinity) {
     yearsNote = `Saving ${money(savings.value ?? 0)} a year at ${pct(plan.realReturn)} real never reaches it.`;
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
@@ -1676,6 +1749,7 @@ export function EventsCard({
               <button
                 className="plan-edit"
                 disabled={!editable}
+                aria-label={`Use your plan’s ${item.label}`}
                 onClick={async () => {
                   const r = await scenario.onRestore(list, item.id);
                   setRestoreError(r === true ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');

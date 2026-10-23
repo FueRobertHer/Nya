@@ -80,7 +80,9 @@ describe('the Plan tab saves through nothing else', () => {
     expect(code.match(/store\.save\b/g)).toEqual(['store.save']);
     expect(code).toMatch(/planSavers\(\{ scenario: saveToScenario, savePlan: store\.save, plan: basePlan, repaired: repairing \? repair\.plan : null \}\)/);
     // Every save the cards and forms are given comes from the savers.
-    expect(code).toContain('onSave: savers.form');
+    // The drawer's forms save through the savers of the plan they were
+    // opened for (test/plan-tab-scenarios.test.tsx renders that lifecycle).
+    expect(code).toContain('target === shownForRef.current ? saversRef.current.form(next)');
     expect(code).toContain('onSavePlan={savers.allocationMix}');
     expect(code).toContain('onMethod={savers.method}');
     expect(code).toContain('onSave={savers.repair}');

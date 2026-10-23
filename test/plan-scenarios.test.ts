@@ -197,6 +197,23 @@ describe('the FI walk', () => {
     expect(broke.short).toEqual({ year: 0, have: 50_000, need: 70_000, kind: 'savings' });
   });
 
+  test('savings below zero for good, after the last change: where the balance would go below zero, never “never”', () => {
+    // Age 40, 100,000, saving 30,000, and a home from 40 costing 40,000 a year
+    // more for good: 10,000 a year below zero, from a balance earning 5,000.
+    const f = figures(plan({ age: 40, targetAge: 55 }), { spending: 40_000, savings: 30_000, assets: 100_000 }, [
+      { id: 'h', kind: 'house', label: 'Home', atAge: 40, cost: 0, yearly: 40_000, years: null },
+    ]);
+    expect(f.view.yearsToFi).toBeNull();
+    expect(f.walkedSavings).toBe(-10_000);
+    let bal = 100_000;
+    for (let k = 0; k < 14; k++) bal = bal * 1.05 - 10_000;
+    expect(f.short).toEqual({ year: 14, have: bal, need: 10_000, kind: 'savings' });
+    expect(bal * 1.05 - 10_000).toBeLessThan(0);
+    // Saving below zero exactly what it earns: it holds still, and is never there.
+    const still = walkToFi(200_000, -10_000, 0.05, 1_000_000, { costs: [], spans: [] });
+    expect(still).toEqual({ years: Infinity });
+  });
+
   test('its tail uses the savings after the last change, lasting changes included', () => {
     const w = { costs: [], spans: [{ from: 3, to: null, delta: -10_000 }] };
     expect(lastChange(w)).toBe(2);
@@ -226,7 +243,11 @@ describe('lasting changes are retirement spending (review: a change in spending 
     const f = figures(plan({ age: 40, targetAge: 55 }), measured, [{ id: 'x', kind: 'spending', label: 'More', fromAge: 42, yearly: 10_000, years: null }]);
     expect(f.view.fiNumber).toBe(1_250_000);
     expect(f.events?.later).toEqual([]);
-    expect(f.view.yearsToFi).toBeGreaterThan(6.38);
+    // Two years at 50,000, then 40,000 a year towards 1,250,000.
+    let bal = 500_000;
+    for (let k = 0; k < 2; k++) bal = bal * 1.05 + 50_000;
+    expect(f.view.yearsToFi).toBe(2 + yearsToTarget(bal, 40_000, 0.05, 1_250_000));
+    expect(f.view.yearsToFi).toBeCloseTo(9.0443, 4);
   });
 
   test('a start from today’s assets withdraws the higher spending, at the rate it implies', () => {
@@ -251,6 +272,19 @@ describe('lasting changes are retirement spending (review: a change in spending 
 
 describe('retiring before the FI date (review: a plan that starts with money it wouldn’t have)', () => {
   const m: Measured = { spending: 40_000, savings: 30_000, assets: 300_000 };
+  test('with life events, what the walk projects then', () => {
+    // A child from 42 at 15,000: two years at 30,000, three at 15,000, to 45.
+    const sw = figures(plan({ age: 40, targetAge: 45 }), m, [{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]).startsWith;
+    let bal = 300_000;
+    for (let k = 0; k < 5; k++) bal = bal * 1.05 + (k < 2 ? 30_000 : 15_000);
+    expect(sw?.projected).toBe(bal);
+    expect(sw?.projected).toBeCloseTo(501_365.91, 2);
+    expect(sw?.more).toBe(true);
+    // Retiring at 60 instead, it would have more than its FI number then.
+    const late = figures(plan({ age: 40, targetAge: 60 }), m, [{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]).startsWith;
+    expect(late?.more).toBe(false);
+  });
+
   test('says what the walk projects at the retirement age, and that it starts with more', () => {
     const at45 = figures(plan({ age: 40, targetAge: 45 }), m).startsWith;
     expect(at45?.balance).toBe(1_000_000);

@@ -135,6 +135,21 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(row('worst').cells[1].diff).toBe('not compared: one starts with money it wouldn’t have');
     expect(row('spending').cells[1].diff).toBe('not compared: one starts with money it wouldn’t have');
     expect(row('median').label).toBe('Ending balance at 95, median');
+    expect(row('spending').label).toBe('Spending in retirement, the first year, by the withdrawal rule (before one-offs and life events)');
+  });
+
+  test('ending balances at different ages are said with their age, and never set against each other', () => {
+    const thirty = figs(plan({ age: 40, targetAge: 55, horizon: 30 }));
+    const c: CompareColumn[] = [columns[0], { id: 'h', name: '30 years', isPlan: false, outcome: { kind: 'figures', figures: thirty, result: run(thirty) } }];
+    const r = compareRows(c, money, TODAY).rows;
+    const median = r.find((x) => x.key === 'median')!;
+    expect(median.label).toBe('Ending balance, median, at each plan’s end');
+    expect(median.cells[0].value).toMatch(/^\$[\d,]+ at 95$/);
+    expect(median.cells[1].value).toMatch(/^\$[\d,]+ at 85$/);
+    expect(median.cells[1].diff).toBe('ends at a different age, so not compared');
+    expect(r.find((x) => x.key === 'worst')!.cells[1].diff).toBe('ends at a different age, so not compared');
+    // The same start, so spending is still set against it.
+    expect(r.find((x) => x.key === 'spending')!.cells[1].diff).toBe('the same');
   });
 
   test('the FI date is the same for both, said in years, age and year', () => {
@@ -309,6 +324,7 @@ describe('the scenario cards', () => {
         measured={measured}
         planCurrency="USD"
         canOpen
+        planState="ready"
         whyNot={null}
         openId={null}
         onOpen={() => {}}
@@ -358,7 +374,7 @@ describe('the scenario cards', () => {
     expect(st).toContain('Scenario: Retire at 45');
     expect(st).toContain('The method is your plan’s: every scenario uses it, so they compare.');
     expect(sim).toMatch(/<button[^>]*aria-pressed="true"[^>]*disabled=""|<button[^>]*disabled=""[^>]*aria-pressed="true"/);
-    const events = renderToStaticMarkup(<LifeEventsCard scenarioName="Retire at 45" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
+    const events = renderToStaticMarkup(<LifeEventsCard scenarioName="Retire at 45" version="s1@r1" events={[{ id: 'c', kind: 'child', label: 'A child', fromAge: 42, yearly: 15_000, years: 18 }]} notes={[{ id: 'c', part: 'past' }]} money={money} editable onSave={noop} />);
     const et = text(events);
     expect(et).toContain('Scenario: Retire at 45');
     expect(et).toContain('From 42: spending $15,000 a year more, for 18 years.');
@@ -405,7 +421,7 @@ describe('loading and saving the list', () => {
     const client = createScenarioClient((s) => (state = s), fetcher);
     await client.load();
     const r = await client.save('s1', { name: 'On my laptop', currency: 'USD', ...NO_CHANGES }, 'r1');
-    expect(r).toEqual({ error: 'This scenario was changed on another device: here it is as it is now.' });
+    expect(r).toEqual({ error: 'This scenario was changed on another device: here it is as it is now.', stale: true });
     expect(calls[1]).toMatchObject({ method: 'PUT', body: { id: 's1', based_on: 'r1' } });
     expect(state.list).toEqual([now]);
   });

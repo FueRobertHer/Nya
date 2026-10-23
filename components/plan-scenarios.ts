@@ -30,7 +30,9 @@ export type ScenariosState = {
 
 export const INITIAL_SCENARIOS: ScenariosState = { status: 'loading', list: [], unreadable: [], unrecognised: [], error: null, saving: false };
 
-type Done<T> = { ok: T } | { error: string };
+/** Done, or why not; `stale` when another device changed it since, and the
+ *  list now holds it as it is now. */
+type Done<T> = { ok: T } | { error: string; stale?: true };
 
 export type ScenarioClient = {
   load(): Promise<void>;
@@ -130,7 +132,7 @@ export function createScenarioClient(onChange: (s: ScenariosState) => void, fetc
           // this save is kept.
           const now = body.scenario as ScenarioEntry;
           set({ list: state.list.map((s) => (s.id === id ? now : s)) });
-          return { error: message(body, 'This scenario was changed on another device.') };
+          return { error: message(body, 'This scenario was changed on another device.'), stale: true };
         }
         await loadNow();
         return { error: message(body, 'It wasn’t saved. Try again in a moment.') };

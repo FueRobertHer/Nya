@@ -191,22 +191,33 @@ export type AllocationCardProps = {
   settingsLocked?: boolean;
   /** The open scenario's name: "Use my allocation" then saves to it. */
   scenarioName?: string | null;
+  /** Which plan the card is shown for (a scenario's id, or "plan"): its
+   *  drawer closes when that changes, and a drawer opened for one plan
+   *  never saves to another. */
+  planKey?: string;
   /** Every institution, for naming accounts missing from a recorded day. */
   institutions: AllocInstitution[];
   balancesAsOf: string | null;
 };
 
-export default function AllocationCard({ allocation, plan, onSavePlan, planEditable, settingsLocked = false, scenarioName = null, institutions, balancesAsOf }: AllocationCardProps) {
+export default function AllocationCard({ allocation, plan, onSavePlan, planEditable, settingsLocked = false, scenarioName = null, planKey = 'plan', institutions, balancesAsOf }: AllocationCardProps) {
   const { alloc, mix, settings, withSettings } = allocation;
   const [view, setView] = useState<'class' | 'bucket'>('class');
   const [sheet, setSheet] = useState<SheetState | null>(null);
   const [opened, setOpened] = useState(0);
   const shown = useLast(sheet);
+  const keyRef = useRef(planKey);
+  keyRef.current = planKey;
+  const openedFor = useRef(planKey);
   const open = (s: SheetState) => {
     setOpened((n) => n + 1);
+    openedFor.current = planKey;
     setSheet(s);
   };
   const close = () => setSheet(null);
+  useEffect(() => {
+    setSheet(null);
+  }, [planKey]);
   const currency = alloc.currency;
   const money = (n: number) => wholeMoney(n, currency);
   const editable = withSettings && !settings.saving && !settingsLocked;
@@ -215,6 +226,9 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
   // classifies with the saved splits, is read again after each one.
   const [saves, setSaves] = useState(0);
   const saveSettings = async (next: AllocationSettings) => {
+    // The same for every plan: never from inside a scenario, whatever a
+    // control lets through.
+    if (settingsLocked) return false;
     const ok = await allocation.save(next);
     if (ok) {
       setSaves((n) => n + 1);
@@ -366,6 +380,8 @@ export default function AllocationCard({ allocation, plan, onSavePlan, planEdita
             currency={currency}
             editable={planEditable && withSettings}
             onConfirm={async (stocksPct, bondsPct) => {
+              // Opened for another plan than the one shown now: nothing goes.
+              if (openedFor.current !== keyRef.current) return false;
               const ok = await onSavePlan({ ...plan, stocksPct, bondsPct });
               if (ok) close();
               return ok;

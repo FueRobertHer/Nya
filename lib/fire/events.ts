@@ -351,7 +351,22 @@ export function walkToFi(assets: number, savings: number, realReturn: number, ta
     if (reached !== null && bal < target) reached = null;
   }
   if (reached !== null) return { years: reached };
-  return { years: K + 1 + yearsToTarget(bal, savingsIn(w, savings, K + 1), realReturn, target) };
+  const tail = savingsIn(w, savings, K + 1);
+  const rest = yearsToTarget(bal, tail, realReturn, target);
+  // Never there, with savings below zero after the last change: the balance
+  // runs down, and the year it would go below zero is where it stops, as a
+  // year inside the changes would (a balance that only holds still, saving
+  // below zero exactly what it earns, is never there, and never short).
+  if (rest === Infinity && tail < 0) {
+    let b = bal;
+    for (let k = K + 1; k < K + 1 + 1000; k++) {
+      const end = b * (1 + realReturn) + tail;
+      if (end < 0) return { short: { year: k, have: b, need: -tail, kind: 'savings' } };
+      if (end >= b) break;
+      b = end;
+    }
+  }
+  return { years: K + 1 + rest };
 }
 
 /** The walk's balance at the start of `year` (before that year's cost,

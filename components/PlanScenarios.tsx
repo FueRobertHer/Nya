@@ -18,7 +18,7 @@ import { Masked } from './HideAmounts';
 import PlanCompare from './PlanCompare';
 import type { CompareColumn, ColumnOutcome } from './plan-compare';
 import type { ScenarioClient, ScenarioEntry, ScenariosState } from './plan-scenarios';
-import { currencyText, eventCountsText, eventText, EVENT_PART_TEXT, laterText, resolveErrorText, retirementText, shortText, changeText } from './plan-scenario-text';
+import { currencyText, eventCountsText, eventText, EVENT_PART_TEXT, laterText, resolveErrorText, retirementText, shortText, changeText, SETTING_NAMES } from './plan-scenario-text';
 import {
   NO_CHANGES,
   SCENARIO_NAME_MAX,
@@ -205,9 +205,12 @@ export function ScenariosCard({
   measured,
   planCurrency,
   canOpen,
+  planState,
   whyNot,
   openId,
   onOpen,
+  focusId = null,
+  onFocused,
   run,
   cache,
   method,
@@ -223,10 +226,17 @@ export function ScenariosCard({
   planCurrency: string | null;
   /** The Plan has loaded and waits on no repair. */
   canOpen: boolean;
+  /** How the saved Plan's load went: until it has loaded, nothing is
+   *  compared, since a scenario is its changes to the Plan, and figures over
+   *  the defaults would be about a plan nobody made. */
+  planState: 'loading' | 'ready' | 'error';
   /** Why scenarios can't be opened or changed now, when they can't. */
   whyNot: string | null;
   openId: string | null;
   onOpen: (id: string | null) => void;
+  /** A scenario just closed: focus goes to its Open button. */
+  focusId?: string | null;
+  onFocused?: () => void;
   run: Run;
   cache: Map<string, SimResult>;
   method: Method;
@@ -255,6 +265,14 @@ export function ScenariosCard({
   const ids = ['plan', ...list.map((s) => s.id)];
   const picked = (chosen ?? ids.slice(0, 4)).filter((id) => ids.includes(id));
   const selected = picked.length >= 2 ? picked : ids.slice(0, Math.min(4, ids.length));
+  const openButtons = useRef(new Map<string, HTMLButtonElement | null>());
+  useEffect(() => {
+    if (!focusId) return;
+    openButtons.current.get(focusId)?.focus();
+    onFocused?.();
+    // Only when a scenario has just closed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [focusId]);
   const toggle = (id: string) => {
     const now = selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id];
     setChosen(ids.filter((x) => now.includes(x)));
@@ -332,7 +350,15 @@ export function ScenariosCard({
               <div key={s.id} className="plan-row">
                 <div className="plan-row-main">
                   <span className="plan-row-label">{s.name}</span>
-                  <button className="plan-edit" onClick={() => onOpen(openId === s.id ? null : s.id)} disabled={!canOpen || busy}>
+                  <button
+                    className="plan-edit"
+                    ref={(el) => {
+                      openButtons.current.set(s.id, el);
+                    }}
+                    onClick={() => onOpen(openId === s.id ? null : s.id)}
+                    disabled={!canOpen || busy}
+                    aria-label={openId === s.id ? 'Back to your plan' : `Open ${s.name}`}
+                  >
                     {openId === s.id ? 'Back to your plan' : 'Open'}
                   </button>
                 </div>
@@ -374,7 +400,7 @@ export function ScenariosCard({
         </p>
       )}
 
-      {ready && list.length > 0 && (
+      {ready && list.length > 0 && planState === 'ready' && (
         <>
           <div className="plan-subhead">Compare</div>
           <p className="panel-note">Choose two to four plans.</p>
@@ -563,6 +589,7 @@ export function ScenarioBar({
   onSave,
   onConfirmCurrency,
   onFix,
+  notice = null,
   onBack,
 }: {
   entry: ScenarioEntry;
@@ -583,6 +610,8 @@ export function ScenarioBar({
   onSave: (changes: ScenarioChanges) => Promise<boolean | string>;
   onConfirmCurrency: () => Promise<boolean | string>;
   onFix: (form: Exclude<FixForm, null>) => void;
+  /** What a save said that has no form left to say it in. */
+  notice?: string | null;
   onBack: () => void;
 }) {
   const [error, setError] = useState('');
@@ -595,7 +624,8 @@ export function ScenarioBar({
   const undo = (c: ScenarioChange) => {
     switch (c.kind) {
       case 'set':
-        return act({ ok: unsetChange(entry, c.field) });
+        // Back to the plan's start: a balance typed for this one goes too.
+        return act({ ok: c.field === 'start' && entry.set.start === 'custom' ? unsetChange(unsetChange(entry, 'start'), 'startBalance') : unsetChange(entry, c.field) });
       case 'left-out':
       case 'replaced':
         return act(restoreItem(base, entry, c.list, c.item.id));
@@ -636,6 +666,11 @@ export function ScenarioBar({
           )}
         </>
       )}
+      {notice && (
+        <div className="error" role="alert">
+          {notice}
+        </div>
+      )}
       {problem && (
         <>
           <div className="error">
@@ -653,18 +688,28 @@ export function ScenarioBar({
         <p className="empty-note">Nothing yet: it is your plan as it is. Change anything below, or add a life event, and it is saved here.</p>
       ) : (
         <div className="plan-rows">
-          {changes.map((c, i) => (
-            <div key={i} className="plan-row">
-              <div className="plan-row-note">
-                <span>
-                  <Masked>{changeText(c, base, entry, money)}</Masked>
-                </span>
-                <button className="plan-edit" onClick={() => void undo(c)} disabled={!editable}>
-                  {c.kind === 'added' || c.kind === 'orphan' || c.kind === 'moot' ? 'Remove' : 'Use your plan’s'}
-                </button>
+          {changes.map((c, i) => {
+            // A typed balance goes with starting from one: it follows the
+            // plan's only once the start does.
+            const tied = c.kind === 'set' && c.field === 'startBalance' && entry.set.start === 'custom';
+            const remove = c.kind === 'added' || c.kind === 'orphan' || c.kind === 'moot';
+            const what = c.kind === 'set' ? SETTING_NAMES[c.field].toLowerCase() : c.kind === 'moot' ? 'an item your plan no longer has' : `“${c.item.label}”`;
+            return (
+              <div key={i} className="plan-row">
+                <div className="plan-row-note">
+                  <span>
+                    <Masked>{changeText(c, base, entry, money)}</Masked>
+                    {tied && <span className="plan-muted"> Kept while this scenario starts from a balance you typed.</span>}
+                  </span>
+                  {!tied && (
+                    <button className="plan-edit" onClick={() => void undo(c)} disabled={!editable} aria-label={remove ? `Remove ${what}` : `Use your plan’s ${what}`}>
+                      {remove ? 'Remove' : 'Use your plan’s'}
+                    </button>
+                  )}
+                </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
           {eventsCount > 0 && (
             <div className="plan-row">
               <div className="plan-row-note">
