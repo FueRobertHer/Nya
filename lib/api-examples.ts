@@ -12,6 +12,10 @@
 export type FieldDoc = readonly [path: string, meaning: string];
 export type EndpointDoc = { query: string; example: unknown; fields: readonly FieldDoc[] };
 
+/** How a write's version moves besides its own fields (lib/api-versions.ts:
+ *  keyed with a key derived from PLAID_ENCRYPTION_KEY). */
+const VERSION_MOVES = 'and otherwise only if the server’s encryption key is ever replaced, which moves every version once (a change sent with one read before is then refused with 412: read it again)';
+
 const SOURCES: readonly FieldDoc[] = [
   ['sources', 'Where the transactions come from: one entry per linked institution, and one per bank a SimpleFIN or Lunch Flow connection reaches.'],
   ['sources[].institution', 'The institution’s name.'],
@@ -549,7 +553,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
         'The balance in base_currency, at the newest ECB rates (or your own); one whose currency isn’t known counts in your main currency. Null without a home currency, a balance or a rate. Each account converts on its own, so these can add up to a cent per currency away from net-worth’s base.net_worth, which converts each currency’s total once.',
       ],
       BASE_CURRENCY('accounts[].to_base'),
-      ['accounts[].version', 'For a manual account: A short code that changes whenever its name, institution, type, subtype or currency changes, and only then: compare it with the one you read before to tell whether it changed since. Its balance doesn’t change it. Null for any other account. Added in version 1.'],
+      ['accounts[].version', `For a manual account: A short code that changes whenever its name, institution, type, subtype or currency changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Its balance doesn’t change it. Null for any other account. Added in version 1.`],
       ...MISSING_ACCOUNTS('the list is short of them'),
       NOTES,
     ],
@@ -948,7 +952,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ],
       [
         'transactions[].version',
-        'For a transaction entered by hand or through the API on a manual account: A short code that changes whenever it, or whether it is excluded and which tags it carries, changes, and only then: compare it with the one you read before to tell whether it changed since. Null for any other. Added in version 1.',
+        `For a transaction entered by hand or through the API on a manual account: A short code that changes whenever it, or whether it is excluded and which tags it carries, changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null for any other. Added in version 1.`,
       ],
       ['has_more', 'There are more after this page.'],
       ['next_cursor', 'Pass it as cursor, with the same other parameters, for the next page; null on the last.'],
@@ -1024,7 +1028,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['categories[].group', 'Its group’s name.'],
       ['categories[].kind', 'How its transactions count, by its group: "expense" (spending), "income" or "transfer" (neither).'],
       ['categories[].archived', 'You archived it: hidden from the app’s lists to choose from, still on its transactions.'],
-      ['categories[].version', 'A short code that changes whenever its name, group, icon or archived state changes, and only then: compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.'],
+      ['categories[].version', `A short code that changes whenever its name, group, icon or archived state changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.`],
       ['groups', 'Every group, in your order, with every category in it, used or not.'],
       ['groups[].id', 'The group’s id; null for one the app hasn’t stored yet.'],
       ['groups[].name', 'Its name.'],
@@ -1034,7 +1038,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['groups[].categories[].name', 'Its name.'],
       ['groups[].categories[].archived', 'You archived it.'],
       ['groups[].categories[].version', 'As categories[].version.'],
-      ['groups[].version', 'A short code that changes whenever the group’s name, kind or place changes, and only then: compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.'],
+      ['groups[].version', `A short code that changes whenever the group’s name, kind or place changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Null as id is. Added in version 1.`],
       ...SOURCES,
       TXN_NOTES,
     ],
@@ -1059,7 +1063,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['tags[].color', 'gray, red, orange, yellow, green, teal, blue, purple or pink. Version 1 may add colors.'],
       ['tags[].transactions', 'How many transactions carry it, put on by you, added by a rule, or carried from an earlier account.'],
       ['tags[].last_date', 'The newest of them, or null for none.'],
-      ['tags[].version', 'A short code that changes whenever its name or color changes, and only then: compare it with the one you read before to tell whether it changed since. Added in version 1.'],
+      ['tags[].version', `A short code that changes whenever its name or color changes, ${VERSION_MOVES}. Compare it with the one you read before to tell whether it changed since. Added in version 1.`],
       ...SOURCES,
       TXN_NOTES,
     ],

@@ -332,7 +332,8 @@ export default function DevelopersPage() {
               as the <code>ETag</code> header of a read of one) and in each write’s answer. A change to something that
               exists sends the version it read as <code>If-Match: &quot;version&quot;</code>; if it changed since, the
               change is refused (412) and nothing is written, so a program working from an old read can’t write over what
-              you just did. A balance needs none: it says what the balance is now.
+              you just did. A balance needs none: it says what the balance is now. If the server’s encryption key is ever
+              replaced, every version moves once: a program then gets one 412, reads again, and goes on.
             </li>
             <li>
               <strong>Making something, safely.</strong> Send an <code>Idempotency-Key</code> of your own (1 to 255 visible
