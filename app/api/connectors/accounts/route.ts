@@ -10,7 +10,9 @@ import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respo
 
 // Choosing which of a connection's accounts to track (SimpleFIN's or Lunch
 // Flow's), and what kind each is (lib/connectors/manage.ts), in one request:
-// `retype` changes what
+// `track` may say, for each account, which account a restore brought back it
+// carries on (`continues`; lib/connectors/continue.ts), asked while one
+// waits. `retype` changes what
 // kind tracked ones are (a change between money held and owed turns each
 // one's past balances over to match, lib/sign-repair.ts; `retype_note` says
 // in words what didn't change, or is still being turned over), then `sign` records how to read a card's or a loan's
@@ -48,7 +50,18 @@ export async function PUT(req: Request) {
     const body = await readJson(req);
     if (body instanceof NextResponse) return body;
     if (!isConnectionId(body.connection_id)) return NextResponse.json({ error: 'Invalid connection' }, { status: 400 });
-    const track = listOf(body.track, (x): x is TrackChoice => isRecord(x) && isRemoteId(x.remote_id) && isType(x.type));
+    // `continues`: while an account a restore brought back waits to be
+    // carried on, which one this is, or null for a new account
+    // (lib/connectors/continue.ts).
+    const track = listOf(
+      body.track,
+      (x): x is TrackChoice =>
+        isRecord(x) &&
+        Object.keys(x).every((k) => k === 'remote_id' || k === 'type' || k === 'continues') &&
+        isRemoteId(x.remote_id) &&
+        isType(x.type) &&
+        (x.continues === undefined || x.continues === null || isAccountId(x.continues))
+    );
     const retype = listOf(body.retype, (x): x is { account_id: string; type: ManualType } => isRecord(x) && isAccountId(x.account_id) && isType(x.type));
     const sign = listOf(body.sign, (x): x is { account_id: string; sign: OwedSign } => isRecord(x) && isAccountId(x.account_id) && isSign(x.sign));
     if (track === null) return NextResponse.json({ error: 'Invalid accounts to track' }, { status: 400 });

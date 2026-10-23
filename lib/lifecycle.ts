@@ -763,6 +763,28 @@ export async function reopenAccount(ctx: Ctx, account_id: string, links: Readonl
   return gone;
 }
 
+/** Whether two ends say the same: the same state and day (a note aside). */
+export function sameEnd(a: AccountLifecycle, b: EndedLifecycle): boolean {
+  return a.state === b.state && endOf(a) === endOf(b);
+}
+
+/**
+ * Takes away one id's end, with its note, only while it is still `end` (an
+ * end set since is someone's later word, and stays): what a restored account
+ * counted before a link loses when it is linked (lib/user-restore/
+ * answering.ts, the end its answer wrote). Its other ids' entries are left
+ * as they are. Returns whether it took it away.
+ */
+export async function takeEndAway(ctx: Ctx, account_id: string, end: EndedLifecycle, now: number = Date.now()): Promise<boolean> {
+  let taken = false;
+  await lifecycleStore.update(ctx, account_id, (current) => {
+    taken = !!current && sameEnd(current.lifecycle, end);
+    return taken ? withoutEnd(current, now) : current;
+  });
+  if (taken) await noteFor(ctx, account_id, null, now);
+  return taken;
+}
+
 /**
  * Reopens an account its bank no longer returns: no live answer lists it, so
  * deleting its end would leave it nowhere (no row, no question, no hold) while

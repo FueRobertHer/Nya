@@ -100,6 +100,17 @@
 // its link recorded, and the split by currency reads them by the account's
 // type now, as before.
 //
+// BROUGHT BACK. A download made while a job was pending says so in its notes
+// (lib/sign-turning.ts), and its history is partly in each sign. A restore of
+// it names those accounts (`restored-sign-repairs`, `named`), and its finish
+// plans each one's repair from the history it brought back
+// (planRestoredRepairs): a repair, as the operator's, but planned only when
+// every day of it is told exactly, since nobody has looked at a dry run. With
+// a day nothing tells (refused, or undetermined), nothing is turned over:
+// the account waits for the operator's repair, and the restore card names it
+// with the days (`waiting`), never half guessed. One it couldn't get to (out
+// of time, the lock held) is planned by the next run that finishes jobs.
+//
 // THE RELEASE BEFORE reads every value with the type its account has now,
 // as this one does: no reader changes, and no stored shape. It ignores this
 // store, so a job still pending under a rollback leaves its account read as
@@ -116,7 +127,7 @@ import { getManualAccount, getManualAccounts } from './manual';
 import { connectorAccountsStore, type ConnectorAccount } from './connectors/store';
 import { nyaBalance } from './connectors/institutions';
 import { clearCaches } from './cache';
-import { MAX_FAILED_NIGHTS, SIGN_LAYERS, WHYS, signJobStore, type SignJob, type SignPlan, type Why } from './sign-repair-store';
+import { MAX_FAILED_NIGHTS, SIGN_LAYERS, WHYS, restoredSignRepairsStore, signJobStore, type RestoredSignRepair, type SignJob, type SignPlan, type Why } from './sign-repair-store';
 
 export { signJobStore, type SignJob, type SignPlan, type Why };
 
@@ -748,6 +759,12 @@ export async function retypeWithHistory(ctx: Ctx, id: string, to: string, opts: 
  */
 export async function finishSignJobs(ctx: Ctx, opts: { budgetMs?: number; nightly?: boolean } = {}): Promise<void> {
   const until = Date.now() + (opts.budgetMs ?? JOB_BUDGET_MS);
+  // Accounts a restore named that its finish didn't get to (see BROUGHT BACK).
+  try {
+    await planRestoredRepairs(ctx, { until });
+  } catch (err) {
+    if (!(err instanceof ForgetRefused)) console.error('Balance signs: a restored account’s repair could not be planned', err instanceof Error ? err.name : typeof err);
+  }
   let ids: string[];
   try {
     ids = await signJobStore.ids(ctx);
@@ -789,6 +806,103 @@ export async function finishSignJobs(ctx: Ctx, opts: { budgetMs?: number; nightl
       console.error('Balance signs: a pending repair could not be read', err instanceof Error ? err.name : typeof err);
     }
   }
+}
+
+// ---- A download brought back while a job was pending ----
+
+/** What became of one account a restore's file was turning over (see
+ *  BROUGHT BACK). */
+export type RestoredRepair = { account_id: string; state: RestoredSignRepair['state']; days: string[] };
+
+/**
+ * Plans the repair of every account a restore named (see BROUGHT BACK), and
+ * runs each planned job, within `until` (and JOB_BUDGET_MS of the lock),
+ * under the links lock. `before` runs before each write (the restore's
+ * finish stops there once an undo has begun). Answers what it made of each
+ * one it got to; one it didn't get to stays named. Throws what the lock and
+ * storage throw.
+ */
+export async function planRestoredRepairs(ctx: Ctx, opts: { until?: number; before?: () => Promise<void> } = {}): Promise<RestoredRepair[]> {
+  const named = [...(await restoredSignRepairsStore.getAll(ctx))].filter(([, r]) => r.state === 'named').map(([id]) => id);
+  if (named.length === 0) return [];
+  const before = opts.before ?? (async () => {});
+  return withLinksLock(ctx, async () => {
+    const until = Math.min(opts.until ?? Infinity, Date.now() + JOB_BUDGET_MS);
+    let book: Book;
+    try {
+      book = await readBook(ctx, until);
+    } catch (err) {
+      if (err instanceof OutOfTime) return [];
+      throw err;
+    }
+    const out: RestoredRepair[] = [];
+    const planned: string[] = [];
+    const mark = async (account_id: string, state: RestoredSignRepair['state'], days: string[]) => {
+      await before();
+      await restoredSignRepairsStore.update(ctx, account_id, (cur) => (cur ? { v: 1, state, days: days.slice(0, 10), set_at: new Date().toISOString() } : cur));
+      out.push({ account_id, state, days: days.slice(0, 10) });
+    };
+    for (const id of named) {
+      if (Date.now() > until) break;
+      const type = book.types.get(id);
+      const kind = await kindOf(ctx, id);
+      // Gone, or a job of its own under way already: nothing for this one.
+      if (kind === null || !type || (await pendingJobOf(ctx, id))) {
+        await mark(id, 'none', []);
+        continue;
+      }
+      const { plan, left, refused } = await repairReading(book, id);
+      const unsure = [...new Set([...refused, ...left.map(([d]) => d)])].sort();
+      if (unsure.length > 0) {
+        console.error(`Balance signs: a restored account's history can't be turned over exactly (${unsure.length} day${unsure.length === 1 ? '' : 's'} nothing tells); left for the operator's repair`);
+        await mark(id, 'waiting', unsure);
+        continue;
+      }
+      if (countOf(plan) === 0) {
+        await mark(id, 'none', []);
+        continue;
+      }
+      await before();
+      await signJobStore.set(ctx, id, { v: 1, kind: 'repair', from: type, to: type, at: new Date().toISOString(), tag: `sign-${randomUUID()}`, plan });
+      await mark(id, 'planned', []);
+      planned.push(id);
+    }
+    // Then run: what is left past `until` the next run that finishes jobs
+    // finishes (the nightly snapshot, a download).
+    for (const id of planned) {
+      if (Date.now() > until) break;
+      await before();
+      await runLocked(ctx, id, until);
+    }
+    return out;
+  });
+}
+
+/** One account a restore's file was turning over, as the restore card says
+ *  it: by name, what became of it, and the days nothing told (`waiting`);
+ *  `pending` while its job is still under way. */
+export type RestoredRepairView = { account_id: string; name: string; state: RestoredSignRepair['state']; days: string[]; pending: boolean };
+
+/** What the card says of the accounts a restore's file was turning over (see
+ *  BROUGHT BACK): those not looked at yet, those whose repair is under way,
+ *  and those that wait for the operator. One finished, or with nothing to
+ *  turn over, isn't said. Strict: what can't be read throws. */
+export async function restoredRepairsView(ctx: Ctx): Promise<RestoredRepairView[]> {
+  const entries = await restoredSignRepairsStore.getAll(ctx);
+  const out: RestoredRepairView[] = [];
+  for (const [id, r] of entries) {
+    const pending = !!(await pendingJobOf(ctx, id));
+    if (r.state === 'none' || (r.state === 'planned' && !pending)) continue;
+    const name = (await getManualAccount(ctx, id))?.name ?? (await connectorAccountsStore.get(ctx, id))?.name ?? 'An account';
+    out.push({ account_id: id, name, state: r.state, days: r.days, pending });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name) || a.account_id.localeCompare(b.account_id));
+}
+
+/** The job under way on an account, a settle record aside. */
+async function pendingJobOf(ctx: Ctx, id: string): Promise<SignJob | null> {
+  const job = await signJobStore.get(ctx, id);
+  return job && job.kind !== 'settle' ? job : null;
 }
 
 // ---- The operator's repair ----
@@ -884,6 +998,9 @@ export async function repairSignFlip(ctx: Ctx, id: string, now: number = Date.no
     }
     const { plan, left, refused } = await repairReading(book, id);
     if (refused.length > 0) throw refusal(id, refused);
+    // The operator's repair answers what a restore left waiting for it (see
+    // BROUGHT BACK): the card no longer names it.
+    await restoredSignRepairsStore.update(ctx, id, (cur) => (cur && cur.state === 'waiting' ? null : cur));
     if (countOf(plan) === 0) return { negated: 0, left };
     const type = book.types.get(id)!;
     await refuseForgetting(ctx, id);

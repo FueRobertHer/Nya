@@ -30,6 +30,7 @@ import { legacyCopy } from '../budget-set';
 import { bankFieldsOf, isRecord } from './records';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, restoredBookId, restoredId } from './ids';
 import { SEAM } from './parts';
+import { turningOverIds } from '../sign-turning';
 
 // ---- What the page read ----
 
@@ -275,6 +276,60 @@ export function accountsOf(c: Collected): { restored: RestoredAccountFacts[]; di
   return { restored, directory };
 }
 
+/** The accounts a restore brings back from the file's Plaid banks
+ *  (accountsOf `restored`) that the file says ended, each with its day: the
+ *  file's own ends, applied through its links as every reader applies one
+ *  (lib/lifecycle.ts effectiveLifecycle: an account's own entry first, else
+ *  the newest of its ids'). The old copy counted their rows up to that end,
+ *  so the finish answers count for them (lib/user-restore/commit.ts
+ *  fileAnswers), and the preview says so. Pure. */
+export function endedInFile(c: Collected, restored: readonly RestoredAccountFacts[]): { account: RestoredAccountFacts; day: string }[] {
+  const links = new Map<string, string>();
+  for (const e of c.entries.get('account-links') ?? []) if (isRecord(e.value) && typeof e.value.to === 'string') links.set(e.id, e.value.to);
+  const rootOf = (id: string) => {
+    const seen = new Set<string>();
+    let at = id;
+    while (links.has(at) && !seen.has(at)) {
+      seen.add(at);
+      at = links.get(at)!;
+    }
+    return at;
+  };
+  const best = new Map<string, { own: boolean; set_at: string; day: string | null }>();
+  const entries = [...(c.entries.get('account-lifecycle') ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const e of entries) {
+    if (!isRecord(e.value) || !isRecord(e.value.lifecycle)) continue;
+    const l = e.value.lifecycle;
+    const day = l.state === 'closed' || l.state === 'left' ? l.on : l.state === 'untracked' ? l.from : null;
+    const root = rootOf(e.id);
+    const own = root === e.id;
+    const set_at = typeof e.value.set_at === 'string' ? e.value.set_at : '';
+    const held = best.get(root);
+    if (!held || (!held.own && (own || set_at > held.set_at))) best.set(root, { own, set_at, day: typeof day === 'string' ? day : null });
+  }
+  return restored.flatMap((account) => {
+    const day = best.get(account.account_id)?.day;
+    return day ? [{ account, day }] : [];
+  });
+}
+
+/** The accounts the file's notes say were being turned over to match their
+ *  kind as it was made (lib/sign-turning.ts), that the file has as a manual
+ *  account or one tracked through SimpleFIN or Lunch Flow (only those are
+ *  turned over), each with the name it had. In id order. Pure. */
+export function turningIn(c: Collected): { account_id: string; name: string }[] {
+  const ids = new Set(c.notes.flatMap((n) => turningOverIds(n) ?? []));
+  if (ids.size === 0) return [];
+  const names = new Map<string, string>();
+  for (const m of (c.core.manual_accounts as { account_id?: unknown; name?: unknown }[] | undefined) ?? []) {
+    if (typeof m.account_id === 'string') names.set(m.account_id, typeof m.name === 'string' ? m.name : 'An account');
+  }
+  for (const e of c.entries.get('connector-accounts') ?? []) {
+    if (isRecord(e.value)) names.set(e.id, typeof e.value.name === 'string' ? e.value.name : 'An account');
+  }
+  return [...ids].filter((id) => names.has(id)).sort().map((account_id) => ({ account_id, name: names.get(account_id)! }));
+}
+
 /** Each account's first and last day of balance history in the file. */
 function historySpans(c: Collected): Map<string, { first: string; last: string }> {
   const out = new Map<string, { first: string; last: string }>();
@@ -493,6 +548,9 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...entries('connector-ended'),
     ...legacy('hidden', byId(hidden)),
     ...entries('account-lifecycle'),
+    // What was answered about the accounts restored there (lib/user-restore/
+    // answers.ts): beside the accounts, ends and connector accounts it names.
+    ...entries('restored-answers'),
     ...legacy('links', byId(linkRecords)),
     ...legacy('declined', byId(declined)),
   ];
@@ -582,11 +640,20 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...entries('runway-scenarios'),
     ...value('currency-settings'),
     ...value('weekly-summary'),
+    // The accounts the file says were being turned over to match their kind
+    // (lib/sign-turning.ts), last: the finish plans each one's repair from
+    // the history written by then (lib/sign-repair.ts planRestoredRepairs).
+    ...legacy('sign-turning', turningIn(c).map(({ account_id }) => ({ id: account_id }))),
   ];
   if (c.bank.pending.size > 0) left_out.pending_transactions = c.bank.pending.size;
   if (c.never.api_tokens > 0) left_out.api_tokens = c.never.api_tokens;
   if ((c.never.attachments ?? 0) > 0) left_out.attachments = c.never.attachments!;
   if (c.never.sharing > 0) left_out.sharing_connections = c.never.sharing;
+  // The other copy's record of what its API tokens changed: about that copy,
+  // whose tokens don't come back (lib/user-restore/parts.ts), counted so the
+  // preview says it.
+  const changes = c.entries.get('api-changes')?.length ?? 0;
+  if (changes > 0) left_out.api_changes = changes;
   return { before, after, left_out };
 }
 

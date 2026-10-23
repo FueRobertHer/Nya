@@ -11,6 +11,7 @@ import { isCalendarDay } from '@/lib/user-restore/records';
 import { BatchRefused, checkBatch } from '@/lib/user-restore/check';
 import { JsonReadError, parseStrict } from '@/lib/user-restore/stream';
 import { BatchNotWritten, finishWrites, writeBatch } from '@/lib/user-restore/commit';
+import { restoredRepairsView } from '@/lib/sign-repair';
 import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 
 // One batch of a restore (docs/data-export.md, "Bringing it back"; the page
@@ -32,7 +33,11 @@ import { restoreEnabled, RESTORE_OFF } from '@/lib/user-restore/enabled';
 //   POST ?restore_id=…&finish=1
 //        every batch written: what the download leaves out because the
 //        entries hold it worked out (lib/user-restore/commit.ts finishWrites),
-//        and the record finished, undoable for UNDO_DAYS. { record }.
+//        and the record finished, undoable for UNDO_DAYS; the accounts the
+//        file was turning over to match their kind repaired where the
+//        restored totals prove every day (lib/sign-repair.ts BROUGHT BACK).
+//        { record, sign_repairs? } (sign_repairs: those still under way, or
+//        waiting for the operator's repair, by name).
 //
 // Refused past MAX_BATCH_BODY, declared or actual, before anything is read
 // into a value. Batches are counted (BATCHES_PER_HOUR). Off unless
@@ -214,6 +219,9 @@ async function finish(ctx: Ctx, id: string): Promise<NextResponse> {
   // Held as a batch is (WRITE_BY_MS), before each of its writes, and the
   // record looked at again then: an undo begun since refuses what is left.
   await finishWrites(ctx, {
+    record,
+    // The repairs of what the file was turning over stop in time for this.
+    writeBy: began + WRITE_BY_MS,
     before: async () => {
       if (Date.now() - began > WRITE_BY_MS) throw new BatchNotWritten('Finishing this restore took too long. Finish it again.', 503);
       const now = await userRestoreStore.get(ctx);
@@ -228,5 +236,9 @@ async function finish(ctx: Ctx, id: string): Promise<NextResponse> {
   );
   if (!finished || finished.id !== id || finished.status !== 'finished') return notWriting(finished);
   console.log(`Restore: finished, ${finished.plan.batches.length} batches`);
-  return NextResponse.json({ record: recordView(finished) }, { headers: NO_STORE });
+  // What became of the accounts the file was turning over (lib/sign-repair.ts
+  // BROUGHT BACK): said with the result, as on the card. Lenient: the
+  // restore has finished either way.
+  const sign_repairs = await restoredRepairsView(ctx).catch(() => null);
+  return NextResponse.json({ record: recordView(finished), ...(sign_repairs && sign_repairs.length > 0 ? { sign_repairs } : {}) }, { headers: NO_STORE });
 }

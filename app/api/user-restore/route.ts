@@ -5,6 +5,7 @@ import { clerkEnabled } from '@/lib/auth-mode';
 import { isDemoUser } from '@/lib/demo';
 import { freshSignIn, PASSWORD_MAX } from '@/lib/fresh-sign-in';
 import { storeFailure } from '@/lib/store-failure';
+import { StoredDataUnreadableError } from '@/lib/repo';
 import { background } from '@/lib/background';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { scanAccount, inUseMessage, type AccountScan } from '@/lib/user-restore/empty';
@@ -21,7 +22,11 @@ import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { myConnections } from '@/lib/sharing';
 import { restoredRowsOf } from '@/lib/user-restore/forget';
-import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
+import { apiTokenStore } from '@/lib/api-token-store';
+import { answersView, type AnswersView } from '@/lib/user-restore/answering';
+import { rememberedAccountsReport } from '@/lib/last-known';
+import { restoredRepairsView, type RestoredRepairView } from '@/lib/sign-repair';
+import type { TokensNow, UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
 
 // Bringing a download back into this account (docs/data-export.md,
 // "Bringing it back"): the record of the restore, and what is done to the
@@ -30,9 +35,19 @@ import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restor
 // show, to app/api/user-restore/forget.
 //
 //   GET                       { enabled, demo, record, record_unreadable,
-//                             accounts_unreadable, undo_days, waiting }:
+//                             accounts_unreadable, undo_days, waiting,
+//                             answers }:
 //                             `waiting`, the restored accounts neither linked
 //                             nor ended, for the card's next steps;
+//                             `answers`, the banks brought back with accounts
+//                             not linked, what was answered about each, and
+//                             the connections made since that hold them
+//                             (lib/user-restore/answering.ts answersView;
+//                             null when that can't be read, said);
+//                             `sign_repairs`, the accounts the file was
+//                             turning over to match their kind, and what
+//                             became of each here (lib/sign-repair.ts
+//                             restoredRepairsView);
 //                             `accounts_unreadable`, the restored accounts
 //                             whose entry can't be read (`entries`, each
 //                             named as the Earlier accounts list names it, or
@@ -48,7 +63,9 @@ import type { UnreadableAccount, UnrecognisedAccount } from '@/components/restor
 //                             PREVIEWS_PER_HOUR), and, with Clerk, the people
 //                             this account shares with already (`sharing`),
 //                             who would see what a restore brings back as it
-//                             is shared
+//                             is shared, and the API tokens made here, which
+//                             stay and read it (`tokens`: how many, and how
+//                             many can write)
 //   POST { action: "start", restore_id, plan, source, brought, left_out,
 //          without, history, earlier, password? }
 //                             the record claimed, after a fresh sign-in, and
@@ -167,6 +184,19 @@ async function sharingNow(): Promise<{ label: string; kinds: string[]; accounts:
     .filter((c) => c.kinds.length > 0 || c.accounts > 0);
 }
 
+/** The API tokens made here, which a restore keeps (they read whatever the
+ *  account holds), and how many of them can change it: the preview says so.
+ *  LENIENT, for these words only: one that can't be read is counted as kept,
+ *  and a failure says nothing (null). */
+async function tokensNow(ctx: Ctx): Promise<TokensNow | null> {
+  try {
+    const { entries, unreadable, unrecognised } = await apiTokenStore.getAllReport(ctx);
+    return { kept: entries.size + unreadable.length + unrecognised.length, writing: [...entries.values()].filter((t) => t.access === 'write').length };
+  } catch {
+    return null;
+  }
+}
+
 function tooMany(retryAfterSeconds: number): NextResponse {
   return NextResponse.json(
     { error: `A restore can be started, undone or emptied ${STARTS_PER_DAY} times a day. Try again later.`, retry_after_seconds: retryAfterSeconds },
@@ -209,6 +239,37 @@ async function recordOfStart(raw: Record<string, unknown>, now: Date): Promise<U
   return record;
 }
 
+/** What was answered about the banks brought back (answersView), with each
+ *  Item's accounts as its last answer listed them, for linking by hand.
+ *  Null when what it reads can't be, whatever the reason: the card says so,
+ *  and the readers hold those banks' rows (lib/user-restore/answers.ts).
+ *  These reads failing loses only the questions, never the record and its
+ *  undo, as for the names. */
+async function answersNow(ctx: Ctx): Promise<AnswersView | null> {
+  try {
+    const [hidden, remembered] = await Promise.all([getHiddenAccounts(ctx), rememberedAccountsReport(ctx)]);
+    return await answersView(ctx, {
+      hidden: new Set(hidden.keys()),
+      accountsOf: async (item_id) => (remembered.byItem[item_id] ?? []).map((a) => ({ account_id: a.account_id, name: a.name, mask: a.mask })),
+    });
+  } catch (err) {
+    console.warn('Restore: what was answered about the banks brought back could not be read', err instanceof StoredDataUnreadableError ? err.what : err instanceof Error ? err.name : typeof err);
+    return null;
+  }
+}
+
+/** What became of the accounts the file was turning over to match their
+ *  kind (lib/sign-repair.ts restoredRepairsView), for the card; null when
+ *  that can't be read, which the card says. Never fails the rest. */
+async function signRepairsNow(ctx: Ctx): Promise<RestoredRepairView[] | null> {
+  try {
+    return await restoredRepairsView(ctx);
+  } catch (err) {
+    console.warn('Restore: what became of the accounts being turned over could not be read', err instanceof Error ? err.name : typeof err);
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   let ctx: Ctx;
   try {
@@ -235,6 +296,8 @@ export async function GET(req: Request) {
       accounts_unreadable: { ...(await named(ctx, waiting.unread.entries, waiting.unread.unrecognised)), ends: waiting.unread.ends },
       undo_days: UNDO_DAYS,
       waiting: waiting.accounts,
+      answers: await answersNow(ctx),
+      sign_repairs: await signRepairsNow(ctx),
     };
     if (new URL(req.url).searchParams.get('scan') === '1') {
       const counted = await previewsCount.take(ctx);
@@ -246,6 +309,7 @@ export async function GET(req: Request) {
       }
       answer.scan = scanView(await scanAccount(ctx));
       answer.sharing = await sharingNow();
+      answer.tokens = await tokensNow(ctx);
     }
     return NextResponse.json(answer, { headers: NO_STORE });
   } catch (err) {

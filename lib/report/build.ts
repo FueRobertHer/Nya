@@ -238,7 +238,8 @@ export type RemovedFacts = {
   accounts: RemovedAccountFacts[];
   /** Every one of its accounts is one a restore brought back
    *  (lib/user-restore/restored.ts): its transactions are kept, and wait to
-   *  be linked to the bank connected again, rather than gone. */
+   *  be linked to the bank connected again or answered for (lib/user-
+   *  restore/answers.ts), rather than gone. */
   restored?: true;
 };
 

@@ -90,7 +90,7 @@ export function gapSentences(gaps: readonly Gap[], day: DayFormat): string[] {
         const which = joinNames(g.accounts);
         if (g.restored) {
           out.push(
-            `${g.institution}${which ? ` (${which})` : ''} came back from your download, and its transactions there aren’t counted until its accounts are linked to the bank connected again (Accounts tab), so this report may be missing some of them.`
+            `${g.institution}${which ? ` (${which})` : ''} came back from your download, and its transactions there aren’t counted until its accounts are linked to the bank connected again (Accounts tab), or you answer for it (Manage, Bring back a download), so this report may be missing some of them.`
           );
           break;
         }

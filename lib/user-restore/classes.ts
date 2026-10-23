@@ -92,10 +92,13 @@ export const FAMILY_CLASSES: Readonly<Record<string, KeyClass>> = {
 export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'account-lifecycle': 'data',
   'allocation-settings': 'setting',
-  // The record of changes made with API tokens (lib/api-changes.ts): about
-  // the copy it was kept in, whose tokens aren't brought back, and goes when
-  // the data it describes is emptied.
-  'api-changes': 'machinery',
+  // The record of changes made with API tokens (lib/api-changes.ts): each
+  // keeps copies of what it changed, before and after (a deleted transaction
+  // with what was said about it, an account, a category), which its Undo
+  // writes back, so an account holding one holds the person's data: in use.
+  // Never brought back with a download (its tokens aren't), and emptied with
+  // the data it describes.
+  'api-changes': 'data',
   'api-change-keys': 'machinery',
   'api-tokens': 'machinery',
   // The person's record of what they brought over from other apps, and its
@@ -149,6 +152,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'planned-items': 'data',
   'report-settings': 'setting',
   'restored-accounts': 'data',
+  // The person's answers about those accounts.
+  'restored-answers': 'data',
   'restored-investment-transactions': 'data',
   'restored-transactions': 'data',
   'review-settings': 'setting',
@@ -160,6 +165,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // A re-sign of an account's past balances under way (lib/sign-repair.ts):
   // derived from the history it names, and goes with it.
   'sign-repairs': 'machinery',
+  // What a restore found of a re-sign the other copy left under way: about
+  // the history it brought back, and goes with it.
+  'restored-sign-repairs': 'machinery',
   tags: 'data',
   'timeline-notes': 'data',
   'transaction-annotations': 'data',

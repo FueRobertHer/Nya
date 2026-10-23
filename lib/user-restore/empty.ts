@@ -76,7 +76,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
       'app-imports',
     ],
   ],
-  ['accounts kept from a bank you disconnected', ['accounts:directory', 'accounts:meta', 'account-links', 'account-links:dismissed', 'txn-category-carry', 'carried-annotations', 'hidden:accounts', 'account-lifecycle', 'restored-accounts']],
+  ['accounts kept from a bank you disconnected', ['accounts:directory', 'accounts:meta', 'account-links', 'account-links:dismissed', 'txn-category-carry', 'carried-annotations', 'hidden:accounts', 'account-lifecycle', 'restored-accounts', 'restored-answers']],
   ['budgets', ['budgets', 'budget-set', 'budget-months']],
   ['goals', ['goals', 'goal-plans']],
   ['rules and tags', ['rules', 'tags']],
@@ -86,6 +86,7 @@ const GROUPS: readonly (readonly [words: string, families: readonly string[]])[]
   ['planned bills and income', ['planned-items']],
   ['runway scenarios you saved', ['runway-scenarios']],
   ['plan scenarios you saved', ['plan-scenarios']],
+  ['changes made with API tokens', ['api-changes']],
 ];
 
 const GROUP_OF = new Map<string, string>(GROUPS.flatMap(([words, families]) => families.map((f) => [f, words] as const)));

@@ -77,6 +77,8 @@ import { syncConnection, type SyncResult } from './sync';
 import { institutionRef, needsSign, nyaBalance, trackedElsewhere } from './institutions';
 import type { ConnectorKind } from './types';
 import { CLAIM_TIMEOUT_MS } from './simplefin';
+import { carryOn, waitingRestored } from './continue';
+import { carryOnEnabled } from '../user-restore/enabled';
 import { getManualAccounts, newManualId, saveManualAccount, MANUAL_TYPES, type ManualType } from '../manual';
 import { removeAccountTxns } from '../manual-txns';
 import { forgetAnnotations } from '../txn-annotations';
@@ -182,8 +184,11 @@ export async function reconnect(ctx: Ctx, connection_id: string, input: string, 
   return syncConnection(ctx, connection_id, { purpose: 'refresh', now });
 }
 
-/** An account to track, and what the person says it is. */
-export type TrackChoice = { remote_id: string; type: ManualType };
+/** An account to track, and what the person says it is: its kind, and,
+ *  while an account a restore brought back waits to be carried on
+ *  (lib/connectors/continue.ts), which of those it is (`continues`, its id)
+ *  or that it is a new one (null). */
+export type TrackChoice = { remote_id: string; type: ManualType; continues?: string | null };
 
 /**
  * Tracks accounts the connection offers (its `available` list, from its
@@ -195,6 +200,11 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   const conn = await connectionsStore.get(ctx, connection_id);
   if (!conn) throw new ConnectorRefused('That connection no longer exists.', 404);
   const offered = new Map(conn.available.map((a) => [a.remote_id, a]));
+  // Carrying a restored account on (lib/connectors/continue.ts): asked while
+  // one waits, never assumed.
+  const carrying = choices.some((c) => typeof c.continues === 'string');
+  if (carrying && !carryOnEnabled()) throw new ConnectorRefused('Carrying an account from your download on isn’t turned on for this copy of Nya.', 400);
+  const waiting = carryOnEnabled() ? await waitingRestored(ctx) : [];
   for (const c of choices) {
     const a = offered.get(c.remote_id);
     if (!a) throw new ConnectorRefused('An account you chose is no longer offered. Refresh, then choose again.', 409);
@@ -202,6 +212,25 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
     if (!MANUAL_TYPES.includes(c.type)) throw new ConnectorRefused('Choose what kind of account each one is.', 400);
   }
   if (choices.length === 0) return null;
+  // A carrying on that stopped part way left the account on this
+  // connection's list under the restored id, its entry carried on already
+  // or not, and the offer offered until the end: the same choice made again
+  // finishes it.
+  const carried = new Map<string, string>();
+  if (waiting.length > 0 || carrying) {
+    for (const c of choices) {
+      const a = offered.get(c.remote_id)!;
+      if (c.continues === undefined && waiting.length > 0) throw new ConnectorRefused(`Say whether ${a.name} is one of the accounts from your download, or a new one.`, 400);
+      if (typeof c.continues !== 'string') continue;
+      const w = waiting.find((x) => x.account.account_id === c.continues);
+      const there = conn.tracked.find((t) => t.remote_id === c.remote_id);
+      const resumed = there?.account_id === c.continues;
+      if (!w && !resumed) throw new ConnectorRefused('That account from your download no longer waits to be carried on. Refresh, then choose again.', 409);
+      if (w && w.account.currency !== a.currency) throw new ConnectorRefused(`${a.name} is in ${a.currency} and ${w.account.name} in ${w.account.currency}: an account doesn’t change currency, so it is a new one.`, 400);
+      if ([...carried.values()].includes(c.continues)) throw new ConnectorRefused(`${w?.account.name ?? 'That account'} can be carried on by one account only.`, 400);
+      carried.set(c.remote_id, c.continues);
+    }
+  }
   const all = await connectorAccountsStore.getAll(ctx);
   if (all.size + choices.length > MAX_CONNECTOR_ACCOUNTS) {
     throw new ConnectorRefused(`Nya tracks at most ${MAX_CONNECTOR_ACCOUNTS} accounts through connectors.`, 400);
@@ -209,6 +238,7 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   // Never the same account through two connections: it would be counted twice.
   const others = await othersOf(ctx, connection_id, [...all.values()]);
   for (const c of choices) {
+    if (carried.has(c.remote_id)) continue;
     const a = offered.get(c.remote_id)!;
     const there = trackedElsewhere(a, { connector: conn.connector, host: conn.host }, others);
     if (there?.certain) {
@@ -221,7 +251,7 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
 
   // Ids made once, outside the compare-and-set; inside it, an account tracked
   // meanwhile (another device) keeps the id it was given there.
-  const fresh = new Map(choices.map((c) => [c.remote_id, newManualId()]));
+  const fresh = new Map(choices.map((c) => [c.remote_id, carried.get(c.remote_id) ?? newManualId()]));
   let ids = new Map<string, string>();
   await connectionsStore.update(ctx, connection_id, (current) => {
     if (!current) return null;
@@ -230,7 +260,8 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
     return {
       ...current,
       tracked: [...ids].map(([remote_id, account_id]) => ({ remote_id, account_id })),
-      available: current.available.filter((a) => !ids.has(a.remote_id)),
+      // An account carried on stays offered until it is (below).
+      available: current.available.filter((a) => !ids.has(a.remote_id) || carried.has(a.remote_id)),
       // New accounts' history is fetched afresh, from the recent window back;
       // what the others have already is matched, never added twice.
       history: null,
@@ -246,8 +277,16 @@ export async function trackAccounts(ctx: Ctx, connection_id: string, choices: Tr
   });
   if (ids.size === 0) throw new ConnectorRefused('That connection no longer exists.', 404);
 
+  // Carried on: the restored account's entry becomes the new one's, then
+  // its old connection's list loses it, then the offer goes.
+  for (const [remote_id, account_id] of carried) {
+    if (ids.get(remote_id) !== account_id) throw new ConnectorRefused('That account was tracked meanwhile, as a new one. Refresh, then choose again.', 409);
+    await carryOn(ctx, account_id, { connection_id, conn, offer: offered.get(remote_id)! }, now);
+  }
+  if (carried.size > 0) await connectionsStore.update(ctx, connection_id, (c) => (c ? { ...c, available: c.available.filter((a) => !carried.has(a.remote_id)) } : c));
+
   const at = new Date(now).toISOString();
-  const entries = choices.map((c) => {
+  const entries = choices.filter((c) => !carried.has(c.remote_id)).map((c) => {
     const a = offered.get(c.remote_id)!;
     const entry: ConnectorAccount = {
       version: 1,
@@ -542,6 +581,9 @@ export async function releaseAccounts(ctx: Ctx, account_ids: string[], keep: boo
             type: a.type,
             currency: a.currency,
             tracked_at: a.created_at,
+            // Carried on from an account a restore brought back: this
+            // connection's from then (lib/user-restore/answers.ts).
+            ...(a.continued ? { carried_at: a.continued.at } : {}),
             history_from: conn?.history?.from ?? null,
             // The days answers had left it out of (lib/connectors/sync.ts).
             ...(a.left_out?.length ? { left_out: a.left_out } : {}),

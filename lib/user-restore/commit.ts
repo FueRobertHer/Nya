@@ -19,7 +19,8 @@
 import type { Ctx } from '../containers';
 import { StoreRefusedError, type MapStore, type ValueStore } from '../repo';
 import { saveManualAccount, manualAccountIds, type ManualAccount } from '../manual';
-import { restoreDirectoryEntries, restoreLinks, restoreDeclined, type DirectoryEntry } from '../links';
+import { restoreDirectoryEntries, restoreLinks, restoreDeclined, ForgetRefused, type DirectoryEntry } from '../links';
+import { planRestoredRepairs } from '../sign-repair';
 import type { Link } from '../link-core';
 import { restoreHiddenAccounts, type HiddenAccount } from '../hidden';
 import { restoreCarried, restoreOverrides, type CarriedRows } from '../overrides';
@@ -32,10 +33,14 @@ import { restoreHoldingsIndex } from '../holdings-history';
 import { importStore, importSummaryStore, summaryOf, type ImportEntry } from '../import/store';
 import { historyImportStore, historyImportSummaryStore, importedTxnStore, summaryOfEntry, type HistoryImportEntry } from '../history-import/store';
 import { manualTxnStore } from '../manual-txns';
+import { firePlanStore, planCurrencyStore } from '../fire-plan';
 import { clearCaches } from '../cache';
 import { SEAM, MAX_RESTORED_MANUAL_ACCOUNTS } from './parts';
 import { storeOfPart } from './check';
-import { restoredAccountsStore, restoredTxnStore, type RestoredAccount, type RestoredBook, type RestoredTxn, type UserRestoreRecord } from './store';
+import { restoredAccountsStore, restoredAnswersStore, restoredTxnStore, type RestoredAccount, type RestoredAnswer, type RestoredBook, type RestoredTxn, type UserRestoreRecord } from './store';
+import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore } from '../lifecycle';
+import { getLinks } from '../link-core';
+import { restoredSignRepairsStore } from '../sign-repair-store';
 
 /** A batch that can't be written as it is: refused, nothing written. */
 export class BatchNotWritten extends StoreRefusedError {
@@ -150,6 +155,11 @@ export async function writeBatch(ctx: Ctx, part: string, records: readonly Rec[]
       return restoreLinks(ctx, pairs<Link>(records));
     case 'declined':
       return restoreDeclined(ctx, pairs<string>(records));
+    case 'sign-turning': {
+      // Named, for the finish to plan (lib/sign-repair.ts planRestoredRepairs).
+      const at = new Date().toISOString();
+      return restoredSignRepairsStore.setMany(ctx, records.map((r) => [r.id as string, { v: 1, state: 'named', days: [], set_at: at }] as const));
+    }
     case 'budgets': {
       const r = records[0];
       return restoreBudgets(ctx, r.set as BudgetSet | null, r.copy as Record<string, number>);
@@ -180,6 +190,33 @@ function takenOver(rows: Iterable<{ id: string; import_id?: string | null }>, en
  *  many books), worked out from the books written rather than taken from
  *  the page's plan: readers find an account's books by it, and say the
  *  months it holds by it (lib/user-restore/restored.ts bookIdsOf). */
+/** The count answers the file itself gives (lib/user-restore/answers.ts,
+ *  COUNTED BEFORE A LINK): an account this restore brought back from a bank
+ *  the file had (its `restore_id`, never one the file brought back from an
+ *  earlier restore, which comes with its own answer or none) that the file's
+ *  own ends end (an entry set before the restore started, applied through
+ *  the links as every reader applies one) is counted, by the file, as the
+ *  old copy counted its rows up to that end. Its end stays the file's
+ *  (`ended: null`), so a link leaves it as it is. One with an answer already
+ *  keeps it. The preview says which (plan.ts endedInFile). */
+async function fileAnswers(ctx: Ctx, record: UserRestoreRecord, before: () => Promise<void>): Promise<void> {
+  const accounts = await restoredAccountsStore.getAll(ctx);
+  const mine = [...accounts].filter(([, a]) => a.restore_id === record.id);
+  if (mine.length === 0) return;
+  const [entries, links, answers] = await Promise.all([lifecycleStore.getAll(ctx), getLinks(ctx), restoredAnswersStore.getMany(ctx, mine.map(([id]) => id))]);
+  const view = effectiveLifecycle(entries, links);
+  const at = new Date().toISOString();
+  const counted: [string, RestoredAnswer][] = [];
+  for (const [id] of mine) {
+    const entry = lifecycleOf(view, id);
+    if (!entry || endOf(entry.lifecycle) === null || entry.set_at >= record.started_at || answers.has(id)) continue;
+    counted.push([id, { version: 1, counted: { at, by: 'file' }, ended: null, apart: { items: [], accounts: [] }, handed_to: null, set_at: at }]);
+  }
+  if (counted.length === 0) return;
+  await before();
+  await restoredAnswersStore.setMany(ctx, counted);
+}
+
 async function restoredSpans(ctx: Ctx, before: () => Promise<void>): Promise<void> {
   const accounts = await restoredAccountsStore.getAll(ctx);
   if (accounts.size === 0) return;
@@ -207,16 +244,38 @@ async function restoredSpans(ctx: Ctx, before: () => Promise<void>): Promise<voi
   }
 }
 
+/** The Plan and the record of the currency its figures were typed in
+ *  (lib/fire-plan.ts) are one setting: the record holds only while its
+ *  amounts are the Plan's, so one kept beside another Plan is right only by
+ *  coincidence. A file with either replaced both, so the one it lacked goes:
+ *  a Plan from before the record was kept then asks its currency, as the
+ *  Plan tab does for any. A file with neither leaves the account's pair. */
+async function planPair(ctx: Ctx, parts: ReadonlySet<string>, before: () => Promise<void>): Promise<void> {
+  const plan = parts.has(`store:${firePlanStore.name}`);
+  const currency = parts.has(`store:${planCurrencyStore.name}`);
+  if (plan === currency) return;
+  const absent: { getReport: (c: Ctx) => Promise<{ value: unknown; unreadable: boolean }>; remove: (c: Ctx) => Promise<unknown> } = plan ? planCurrencyStore : firePlanStore;
+  // One in a form this version doesn't know is left as it is: its own
+  // release reads it against the Plan, and asks.
+  const now = await absent.getReport(ctx);
+  if (now.value === null && !now.unreadable) return;
+  await before();
+  await absent.remove(ctx);
+}
+
 /**
  * What the finish works out from what was written (see the header): each
- * restored account's rows, the imports' summaries, and the holdings index.
- * Then the caches go, since net worth and transactions changed. Run again,
- * it writes the same. `before` runs before each write, and may refuse it by
- * throwing (the finish route: its time, and the record looked at again).
+ * restored account's rows, the imports' summaries, and the holdings index;
+ * and, given the restore's record, the Plan's pair (planPair). Then the
+ * caches go, since net worth and transactions changed. Run again, it writes
+ * the same. `before` runs before each write, and may refuse it by throwing
+ * (the finish route: its time, and the record looked at again).
  */
-export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void> } = {}): Promise<void> {
+export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void>; record?: UserRestoreRecord; writeBy?: number } = {}): Promise<void> {
   const before = opts.before ?? (async () => {});
+  if (opts.record) await planPair(ctx, new Set(opts.record.plan.batches.map((b) => b.part)), before);
   await restoredSpans(ctx, before);
+  if (opts.record) await fileAnswers(ctx, opts.record, before);
   const [imports, historyImports, manualBooks, importedBooks] = await Promise.all([
     importStore.getAll(ctx),
     historyImportStore.getAll(ctx),
@@ -241,5 +300,26 @@ export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void
   }
   await before();
   await restoreHoldingsIndex(ctx);
+  // The accounts the file was turning over to match their kind as it was
+  // made (lib/sign-repair.ts, BROUGHT BACK): each one's repair planned from
+  // the history written, and run, within RESTORED_REPAIR_MS and what is left
+  // of the finish's own time (`writeBy`, less REPAIR_MARGIN_MS, so its last
+  // look at the record never refuses for time); told exactly or not at all.
+  // One it doesn't get to (the lock held, out of time) is planned by the
+  // next run that finishes jobs.
+  const until = Math.min(Date.now() + RESTORED_REPAIR_MS, (opts.writeBy ?? Infinity) - REPAIR_MARGIN_MS);
+  if (until > Date.now()) {
+    try {
+      await planRestoredRepairs(ctx, { until, before });
+    } catch (err) {
+      if (!(err instanceof ForgetRefused)) throw err;
+    }
+  }
   await clearCaches(ctx);
 }
+
+/** How long the finish gives the repairs of what the file was turning over,
+ *  well inside the batch route's own time: the rest is finished later. */
+export const RESTORED_REPAIR_MS = 20_000;
+/** What the repairs leave of the finish's own time, for what comes after. */
+export const REPAIR_MARGIN_MS = 3_000;

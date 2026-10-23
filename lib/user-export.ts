@@ -64,6 +64,7 @@
 // The version (EXPORT_VERSION) goes up when a field is removed or changes
 // meaning; a field added leaves it alone.
 
+import { turningOverWords } from './sign-turning';
 import type { Ctx } from './containers';
 import { getItems } from './storage';
 import { rememberedAccountsByItem, type RememberedAccount } from './last-known';
@@ -774,11 +775,11 @@ async function turningOverNote(ctx: Ctx): Promise<string[]> {
     if (!job || job.kind === 'settle') continue;
     ((job.failures ?? 0) < MAX_FAILED_NIGHTS ? tried : stopped).push(id);
   }
-  const note = (ids: string[], then: string) =>
-    `The history of ${ids.length === 1 ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${ids.length === 1 ? 'it is' : 'they are'}: until that finishes, some of ${ids.length === 1 ? 'its' : 'their'} earlier days in account_history are in the other sign. ${then}: download again once it is done.`;
+  // In words a restore of this file reads back (lib/sign-turning.ts), to
+  // finish turning them over there.
   return [
-    ...(tried.length > 0 ? [note(tried, 'Nya’s daily update tries again, and whoever runs your Nya can finish it')] : []),
-    ...(stopped.length > 0 ? [note(stopped, 'Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it')] : []),
+    ...(tried.length > 0 ? [turningOverWords(tried)] : []),
+    ...(stopped.length > 0 ? [turningOverWords(stopped, true)] : []),
   ];
 }
 

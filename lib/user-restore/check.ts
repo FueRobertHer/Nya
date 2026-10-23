@@ -61,6 +61,7 @@ export const LEGACY_PARTS = [
   'declined',
   'budgets',
   'goals',
+  'sign-turning',
 ] as const;
 
 /** The history layers a batch can write a day of (lib/history.ts), and
@@ -376,6 +377,13 @@ function legacyRecord(part: string, r: Record<string, unknown>, env: CheckEnv, a
       if (!isRecord(v) || !onlyKeys(v, ['to', 'linked_at', 'evidence']) || !isPlaidId(v.to) || v.to === r.id || !isInstant(v.linked_at) || !isRecord(v.evidence) || JSON.stringify(v.evidence).length > 10_000) {
         fail(`${valueAt}: isn’t a link this version of Nya can read`);
       }
+      return;
+    }
+    case 'sign-turning': {
+      // An account the file said was being turned over (lib/user-restore/
+      // plan.ts turningIn): a manual or tracked account's id, nothing else.
+      if (!onlyKeys(r, ['id'])) fail(`${at}: has a field this part doesn’t take`);
+      if (typeof r.id !== 'string' || !/^manual_[A-Za-z0-9_-]{1,100}$/.test(r.id)) fail(`${at}.id: isn’t an account that can be turned over`);
       return;
     }
     case 'declined': {

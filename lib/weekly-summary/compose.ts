@@ -382,7 +382,7 @@ function gapText(g: MonthGap, zone: string, year: string, n: Namer): string {
     case 'exclusions':
       return `whether you excluded ${plural(g.count, 'transaction')} couldn't be read`;
     case 'held':
-      return `${inst}'s transactions from your download wait for its accounts to be linked`;
+      return `${inst}'s transactions from your download wait for its accounts to be linked, or for your answer about it`;
   }
 }
 

@@ -14,3 +14,18 @@ export function restoreEnabled(): boolean {
 
 /** What the routes answer while it is off. */
 export const RESTORE_OFF = 'Bringing back a download isn’t turned on for this copy of Nya yet. Ask whoever runs it.';
+
+/**
+ * Whether tracking an account through a connector may carry on an account
+ * a restore brought back (lib/connectors/continue.ts; docs/operations.md,
+ * "Carrying a restored account on"). Off unless RESTORE_CARRY_ON_ENABLED=1:
+ * a carried-on account's entry is in a shape the release before can't read,
+ * so the release that reads it runs first, and the switch goes on a release
+ * later. With it off, tracking asks nothing and makes a new account, as
+ * Choose accounts says; an account carried on already is still read,
+ * matched and can still be undone. The answers about restored banks
+ * (lib/user-restore/answering.ts) need no switch.
+ */
+export function carryOnEnabled(): boolean {
+  return process.env.RESTORE_CARRY_ON_ENABLED === '1';
+}

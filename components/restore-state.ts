@@ -11,6 +11,9 @@ import { plainNumber } from '@/lib/format';
 import { ANY_CONNECTOR, CONNECTOR_KINDS, CONNECTOR_WORDS } from '@/lib/connectors/types';
 import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
+import type { AnswersView, AnsweredAccount, AnsweredBank, HolderView } from '@/lib/user-restore/answering';
+import type { AnsweredEnd } from '@/lib/user-restore/store';
+import type { RestoredRepairView } from '@/lib/sign-repair';
 import type { RestoredRows } from '@/lib/user-restore/forget';
 import { idEnds, type Unlisted } from '@/lib/earlier-names';
 
@@ -36,6 +39,16 @@ export type RestoreState = {
   scan?: ScanView;
   /** With the scan: whom this account shares with already, and what. */
   sharing?: SharingNow[];
+  /** With the scan: the API tokens made here, which stay (TokensNow). */
+  tokens?: TokensNow | null;
+  /** The banks brought back with accounts not linked, what was answered
+   *  about each, and the connections made since (lib/user-restore/
+   *  answering.ts answersView); null when that couldn't be read. */
+  answers?: AnswersView | null;
+  /** What became of the accounts the file was turning over to match their
+   *  kind (lib/sign-repair.ts restoredRepairsView); null when that couldn't
+   *  be read. */
+  sign_repairs?: RestoredRepairView[] | null;
 };
 
 /** A restored account whose entry can't be read (app/api/user-restore): what
@@ -146,7 +159,7 @@ const SETTINGS = new Set([
 ]);
 
 /** Kept as the file has them, with nothing to say on their own. */
-const QUIET = new Set(['directory', 'hidden', 'declined', 'carried-categories', 'store:carried-annotations', 'store:carried-imported-twins', 'store:imported-twins', 'store:connector-accounts', 'store:connector-ended', 'store:restored-transactions', 'store:restored-accounts', 'store:restored-investment-transactions', 'investment_transactions']);
+const QUIET = new Set(['directory', 'hidden', 'declined', 'sign-turning', 'carried-categories', 'store:carried-annotations', 'store:carried-imported-twins', 'store:imported-twins', 'store:connector-accounts', 'store:connector-ended', 'store:restored-transactions', 'store:restored-accounts', 'store:restored-investment-transactions', 'investment_transactions']);
 
 /** What comes back, in words (see BROUGHT), the balance history by its days. */
 export function broughtLines(brought: Readonly<Record<string, number>>, history: { first: string; last: string } | null): string[] {
@@ -179,11 +192,36 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   out.push('the sign-ins Nya used to reach your banks: connect each bank again');
   if (never.api_tokens > 0) out.push(`${plural(never.api_tokens, 'API token')}: make new ones if you need them`);
   if (never.sharing > 0) out.push(`${plural(never.sharing, 'sharing connection')}: sharing is between two people, so share again from here`);
+  const changes = left['api_changes'] ?? 0;
+  if (changes > 0) out.push(`${plural(changes, 'change')} made with API tokens in your other copy: about that copy, whose tokens don’t come back`);
   const files = never.attachments ?? 0;
   if (files > 0) {
     out.push(`${files === 1 ? 'a receipt or document' : `${plainNumber(files)} receipts and documents`}: a restore doesn’t bring the files back yet, so keep your ZIP download of them`);
   }
   return out;
+}
+
+/** "Mar 13, 2024": a calendar day, as the card says one (a day is no
+ *  instant: read in UTC, so it is the same day everywhere). */
+export const calendarDay = (d: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
+
+/** The accounts the file says ended, which count here as they did there
+ *  (lib/user-restore/file.ts Preview `counted`), in words. */
+export function countedLines(counted: readonly { institution_name: string; name: string | null; mask: string | null; day: string }[]): string[] {
+  return counted.map((a) => `${a.institution_name} ${accountWords(a)} ended in your other copy on ${calendarDay(a.day)}: its transactions up to then count here too, as they did there`);
+}
+
+/** The API tokens made here (app/api/user-restore, with the scan): they
+ *  stay through a restore, and read what it brings back. */
+export type TokensNow = { kept: number; writing: number };
+
+/** What the API tokens made here do with what comes back, in words; null
+ *  when there are none. */
+export function tokensLine(tokens: TokensNow | null | undefined): string | null {
+  if (!tokens || tokens.kept === 0) return null;
+  const one = tokens.kept === 1;
+  const change = tokens.writing === 0 ? '' : tokens.writing === tokens.kept ? ', and can change it' : `, and ${plainNumber(tokens.writing)} of them can change it`;
+  return `${plural(tokens.kept, 'API token')} made here ${one ? 'stays' : 'stay'}: ${one ? 'it reads' : 'they read'} what comes back${change}.`;
 }
 
 const ASK = 'or ask whoever runs this copy of Nya.';
@@ -354,4 +392,104 @@ export function canUndo(record: RecordView, now: number): boolean {
 export const PROTECTED_INTRO = 'age-encryption.org/';
 export function looksProtected(head: Uint8Array): boolean {
   return new TextDecoder().decode(head.slice(0, PROTECTED_INTRO.length)) === PROTECTED_INTRO;
+}
+
+// ---- The answers about the banks brought back ----
+
+/** "Chase", or "Chase Total Checking through SimpleFIN": a connection made
+ *  since the restore, as the card names it. */
+export function holderWords(h: HolderView): string {
+  if (h.kind === 'item') return h.institution;
+  const via = (CONNECTOR_WORDS as Record<string, { label: string } | undefined>)[h.via]?.label ?? h.via;
+  return `${h.institution} ${h.name} through ${via}${h.kept ? ', kept as a manual account' : ''}`;
+}
+
+/** "closed on Oct 7, 2026": an end, in words. */
+export function endWords(e: AnsweredEnd): string {
+  if (e.state === 'untracked') return `not followed from ${calendarDay(e.from)}`;
+  return e.state === 'closed' ? `closed on ${calendarDay(e.on)}` : `no longer yours from ${calendarDay(e.on)}`;
+}
+
+const joinWords = (names: readonly string[]) => (names.length <= 1 ? names.join('') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`);
+
+/** One account brought back, and where its transactions stand, in words. */
+export function accountLine(a: AnsweredAccount, holders: readonly HolderView[]): string {
+  const name = `${accountWords(a)}${a.hidden ? ' (hidden)' : ''}`;
+  const rows = a.rows ? `, transactions ${calendarDay(a.rows.first)} to ${calendarDay(a.rows.last)}` : '';
+  const named = (id: string) => {
+    const h = holders.find((x) => x.id === id);
+    return h ? holderWords(h) : 'a connection made since';
+  };
+  let state: string;
+  if (a.handed_to) {
+    const by = named(a.handed_to.account_id);
+    state = a.handed_to.cut
+      ? `carried on by ${by}: counted before ${calendarDay(a.handed_to.cut)}, where that account’s own begin`
+      : `carried on by ${by}: counted whole until that account has transactions of its own`;
+  } else if (a.counted && a.held_by === 'unread') state = 'counted, but not while what holds it can’t be read';
+  else if (a.counted && Array.isArray(a.held_by) && a.held_by.length > 0) {
+    const by = a.held_by.map(named);
+    state = `counted once you say whether ${joinWords(by)} ${by.length === 1 ? 'holds' : 'hold'} it`;
+  } else if (a.counted) state = `counted${a.end ? ` up to its end (${endWords(a.end)})` : ''}${a.counted === 'file' ? ', as in your other copy' : ''}`;
+  else if (a.end) state = `${endWords(a.end)}: its transactions aren’t counted`;
+  else state = 'waiting for an answer';
+  return `${name}${rows}: ${state}`;
+}
+
+/** The connections made since the restore that hold a counted account now:
+ *  the questions to ask, in the order they were listed. */
+export function openHolders(view: AnswersView): HolderView[] {
+  const holding = new Set(view.banks.flatMap((b) => b.accounts.flatMap((a) => (Array.isArray(a.held_by) ? a.held_by : []))));
+  return view.holders.filter((h) => holding.has(h.id));
+}
+
+/** The connections a restored account was said not to be at, with the
+ *  accounts it was said of: for "Ask again". */
+export function answeredHolders(view: AnswersView): { holder: HolderView; account_ids: string[] }[] {
+  return view.holders.flatMap((holder) => {
+    const key = holder.kind === 'item' ? 'items' : 'accounts';
+    const account_ids = view.banks.flatMap((b) => b.accounts.filter((a) => a.apart[key].includes(holder.id)).map((a) => a.account_id));
+    return account_ids.length > 0 ? [{ holder, account_ids }] : [];
+  });
+}
+
+/** Every account of every bank brought back that isn't linked. */
+export const allAnswered = (view: AnswersView) => view.banks.flatMap((b) => b.accounts.map((a) => a.account_id));
+
+/** A bank's accounts an answer counts: not counted yet, and those of them
+ *  that need an end (none of their own). */
+export function toCount(bank: AnsweredBank): { ids: string[]; needEnd: AnsweredAccount[] } {
+  const open = bank.accounts.filter((a) => !a.counted);
+  return { ids: open.map((a) => a.account_id), needEnd: open.filter((a) => !a.end) };
+}
+
+// ---- Balance history being turned over ----
+
+/** The accounts a file says were being turned over to match their kind as
+ *  it was made (lib/user-restore/plan.ts turningIn), as the preview says
+ *  them. */
+export function turningLines(turning: readonly { name: string }[]): string[] {
+  return turning.map(
+    (a) => `${a.name}’s balance history was being turned over to match its kind in your other copy: Nya finishes it here where your totals prove every day, and if some day can’t be told, turns nothing over and says so`
+  );
+}
+
+/** What became of each of those accounts here (RestoredRepairView), as the
+ *  card says it: under way, waiting for whoever runs Nya with the first days
+ *  nothing tells, or not looked at yet. A list that couldn't be read is said
+ *  once. */
+export function signRepairLines(list: readonly RestoredRepairView[] | null | undefined): { text: string; warn: boolean }[] {
+  if (list === undefined) return [];
+  if (list === null) return [{ text: 'Whether the accounts your download was turning over to match their kind are done can’t be read right now.', warn: true }];
+  return list.map((a) => {
+    if (a.state === 'waiting') {
+      const days = a.days.map(calendarDay);
+      return {
+        text: `${a.name}’s balance history was being turned over to match its kind in your other copy, and nothing says how it was counted on ${joinWords(days)}${a.days.length >= 10 ? ' and other days' : ''}: so nothing was turned over, and some of its earlier days may count the other way. Whoever runs your Nya can repair it, after looking at what it would change.`,
+        warn: true,
+      };
+    }
+    if (a.state === 'planned') return { text: `${a.name}’s balance history is being turned over to match its kind, as your other copy had begun: Nya’s next daily update finishes it.`, warn: false };
+    return { text: `${a.name}’s balance history was being turned over to match its kind in your other copy: Nya looks at it with its next daily update.`, warn: false };
+  });
 }
