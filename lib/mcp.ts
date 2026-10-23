@@ -333,6 +333,18 @@ const SUMMARIES: Record<string, Tool['summary']> = {
       `${count('no_recent_contributions')} with no recent contributions.${missingAccounts(r.missing_accounts)}`
     );
   },
+  // The one tool whose sentence may name a person (the people the person
+  // splits costs with): every other answer gives their id only.
+  get_shared_expenses: (r) => {
+    if (r.people.length === 0) return 'No one to split costs with yet.';
+    if (r.people.some((p: any) => p.balances === null)) return `${plural(r.people.length, 'person', 'people')}; what is left between you couldn’t be worked out while some of it couldn’t be read: see unreadable.`;
+    const said = r.people.flatMap((p: any) =>
+      p.balances
+        .filter((b: any) => b.amount !== 0)
+        .map((b: any) => (b.amount > 0 ? `${p.name ?? 'someone removed'} owes you ${money(b.amount, b.currency)}` : `you owe ${p.name ?? 'someone removed'} ${money(-b.amount, b.currency)}`))
+    );
+    return `${plural(r.people.length, 'person', 'people')}: ${said.length > 0 ? said.join('; ') : 'nothing is left between you'}. ${plural(r.items.filter((i: any) => i.kind === 'iou').length, 'IOU')}; counting: ${r.counting}.`;
+  },
   list_tags: (r) => `${plural(r.tags.length, 'tag')}.${withoutTransactions(r)}`,
   list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,

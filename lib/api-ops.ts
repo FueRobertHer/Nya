@@ -27,6 +27,7 @@ import {
   type PageKey,
 } from './api-read';
 import { readGoals } from './api-goals';
+import { readApiSharedExpenses } from './shared-expenses/api';
 import { readCashFlow } from './api-cash-flow';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
 import { readTags } from './api-tags';
@@ -215,6 +216,8 @@ const RUNS: Record<string, Operation['run']> = {
   recurring: async (auth, a) => readRecurring(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   goals: async (auth, a) => readGoals(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  'shared-expenses': async (auth) => readApiSharedExpenses(auth.ctx),
 
   runway: async (auth, a) => {
     const lowerBy = num(a, 'spending_lower_by');

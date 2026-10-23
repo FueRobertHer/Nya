@@ -119,7 +119,7 @@ import { availableMeters, gapText, monthName, type Carry, type CarryFrom } from 
 import { categoryById, groupOf, indexTaxonomy, isProvisionalId, sortedGroups, categoriesIn, type CategoryGroup, type CategoryIndex, type CategoryKind } from './categories';
 import { addDays, dismissedSeries, detectRecurring, expectedDates, upcomingBills, type Cadence } from './recurring';
 import { plannedStore } from './planned-store';
-import { countsInTotals, countTransactions, currencyOf, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from './spending';
+import { countsInTotals, countTransactions, currencyOf, historyCount, isTransfer, leftOutByCurrency, leftOutText, totalsCurrency, transactionCounter, type LeftOut } from './spending';
 import { spendingByCategory, summarize, tidy, bucketOf, recurringMonthly, type Described, type Summary } from './totals';
 import { readHoldingsSpan, readHoldingsRange } from './holdings-history';
 import { isInvestmentType, isOwedType } from './balance';
@@ -1109,6 +1109,14 @@ export type ApiTransaction = {
    *  of a group's transactions is listed on its own; the group's net is what
    *  spending, budgets and categories count. */
   transaction_group: ApiTransactionGroup | null;
+  /** Shared expenses (lib/shared-expenses/rows.ts): who else owes a part of
+   *  it, by person id only (names are in /shared-expenses), and your part;
+   *  null when it isn't shared. Added in version 1. */
+  shared: ApiShared | null;
+  /** A payment the person confirmed paid back what someone owed them, or
+   *  paid what they owed: by person id only, and what is left of it; null
+   *  when it pays nothing back. Added in version 1. */
+  settles: ApiSettles | null;
   /** The review queue (lib/review-layer.ts): true when it waits for the
    *  person to approve it (the queue is on, and it came from the bank,
    *  SimpleFIN or a file since the queue's first day, with no approval that
@@ -1141,6 +1149,28 @@ export type ApiSplitPart = {
   /** The part that holds what the bank changed the amount by since the
    *  split, filed as the whole transaction is, until the split is edited. */
   remainder: boolean;
+};
+
+/** Who else owes a part of a transaction (a shared expense). */
+export type ApiShared = {
+  /** The split part (#39) it is shared from, by its id, or null. */
+  part_id: string | null;
+  /** Your part, Plaid's sign, as the transaction's. */
+  your_part: number;
+  people: { person_id: string; amount: number }[];
+  /** Whether totals count your part only: false when the person counts
+   *  shared expenses as the bank shows them, or the share no longer fits
+   *  the transaction (it was grouped, split, or is smaller now). */
+  applied: boolean;
+};
+
+/** What a payment paid back. */
+export type ApiSettles = {
+  people: { person_id: string; amount: number; direction: 'to_you' | 'by_you' }[];
+  /** What is left of the transaction, which counts as it says. */
+  rest: number;
+  /** As ApiShared's. */
+  applied: boolean;
 };
 
 /** A group of transactions that count as one net amount. */
@@ -1189,11 +1219,13 @@ function filedAs(t: Pick<Txn, 'category' | 'category_id' | 'category_name'>, ix:
   return { category: t.category_name !== undefined ? t.category_name : t.category, category_id: shownId(t.category_id), group_id: shownId(group?.id), group: group?.name ?? null };
 }
 
-/** A split transaction's parts as the API shows them. */
+/** A split transaction's parts as the API shows them: each as the person
+ *  split it, at its whole amount, the rows shared expenses made of a part
+ *  left out (they are in the transaction's `shared`). */
 function splitsOf(parts: readonly Txn[], ix: CategoryIndex): ApiSplitPart[] {
-  return parts.map((p) => ({
+  return parts.filter((p) => p.shared_part === undefined).map((p) => ({
     id: p.transaction_id.startsWith(PART_PREFIX) ? p.transaction_id.slice(PART_PREFIX.length) : null,
-    amount: p.amount,
+    amount: p.shared_was ?? p.amount,
     to_base: null,
     ...filedAs(p, ix),
     note: p.note ?? null,
@@ -1285,7 +1317,24 @@ function toApiTransaction(
     transaction_group: t.group_outside ? outsideGroupOf(t, ix) : (t.group_id !== undefined && groups.get(t.group_id)) || null,
     needs_review: t.needs_review === true ? true : t.review_unknown ? null : false,
     reviewed_at: t.reviewed_at ?? null,
+    shared: sharedOf(t),
+    settles: settlesOf(t),
   };
+}
+
+/** A transaction's share as the API shows it: its own, or one of its split
+ *  parts' (lib/split-rows.ts bankRows keeps the parts beside it). */
+function sharedOf(t: WithParts<Txn>): ApiShared | null {
+  const on = t.shared ? t : t.split_parts?.find((p) => p.shared);
+  const s = on?.shared;
+  if (!s) return null;
+  return { part_id: s.part ?? null, your_part: s.your_part, people: s.people.map((p) => ({ person_id: p.person, amount: p.amount })), applied: s.counted && !on.shared_unapplied };
+}
+
+function settlesOf(t: Txn): ApiSettles | null {
+  const s = t.settles;
+  if (!s) return null;
+  return { people: s.people.map((p) => ({ person_id: p.person, amount: p.amount, direction: p.direction })), rest: s.rest, applied: s.counted };
 }
 
 /** Each tag's name, by id: the tags that exist. */
@@ -1520,7 +1569,7 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
     // A bank whose files cover the range in its place has its rows here.
-    notes: [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, q.from, q.to), activity.rows.length, 'list')],
+    notes: [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, q.from, q.to), historyCount(activity.rows), 'list')],
   };
 }
 
@@ -1600,7 +1649,7 @@ export async function readCategories(
   const notes = [
     ...activity.notes,
     ...(budgets.ok ? [] : ['Budgets: couldn’t be read, so which categories have one isn’t said']),
-    ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list'),
+    ...withoutTransactionsNotes(activity.view, historyCount(activity.rows), 'list'),
   ];
   const describe = describer(ix);
   const categories = [...seen].map(([bucket, c]): ApiCategory => {
@@ -1823,7 +1872,7 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
     })
     .sort((a, b) => a.category.localeCompare(b.category));
   const fed = connectorSources(activity.fed, opts.includeHidden ? new Set() : activity.hidden);
-  const windowRows = activity.rows.filter((t) => t.date >= windowStart()).length;
+  const windowRows = historyCount(activity.rows.filter((t) => t.date >= windowStart()));
   // A bank whose files cover the month in its place is counted, as the
   // Budgets tab counts it (lib/no-transactions.ts coveredOutOf).
   const notes = [...activity.notes, ...fed.notes, ...withoutTransactionsNotes(coveredOutOf(activity.view, opts.month), windowRows, 'totals')];
@@ -1884,7 +1933,8 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
     left_out: leftOut,
     left_out_text: leftOutWhy(leftOutText(leftOut, currency, { where: 'these budgets' }), monthConversion),
     // Transactions, not rows: a split one is one (transactionCounter).
-    excluded: countTransactions(read.monthRows.filter((t) => t.excluded === true)),
+    // Another person's part, or a part paid back, isn't the person's exclusion.
+    excluded: countTransactions(read.monthRows.filter((t) => t.excluded === true && t.shared_part === undefined)),
     exclusion_unknown: countTransactions(read.monthRows.filter((t) => t.excluded === null)),
     recorded_since: view.recorded_since,
     earliest_month: read.earliest,
@@ -1965,7 +2015,7 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
   const fx = await readFlowFx(ctx, activity.rows);
   // The tags' note stays: spending by tag is in the answer. A bank whose
   // files cover the range in its place is counted, as in the app.
-  const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
+  const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), historyCount(activity.rows), 'totals')];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   // Last, as under the month's totals: how many of the range's transactions
   // came from files rather than the bank.
@@ -2107,7 +2157,7 @@ export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; t
     return r.ok ? r.amount : null;
   };
   const until = addDays(today, NEXT_WITHIN_DAYS);
-  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
+  const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, historyCount(activity.rows), 'totals')];
   if (dismissed === null) notes.push('Bills marked not recurring: couldn’t be read, so any you marked are listed and counted in monthly_total');
   return {
     bills: bills.map((b) => {
