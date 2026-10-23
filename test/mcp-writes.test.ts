@@ -172,6 +172,7 @@ describe('the write tools', () => {
     const read = await call(writer, 'get_transaction', { transaction_id: id });
     const stale = await call(writer, 'update_transaction', { transaction_id: id, version: 'not-it.not-it', note: null });
     expect(stale.isError).toBe(true);
+    setSystemTime(new Date(NOW + 1000)); // listed after the create
     const cleared = await call(writer, 'update_transaction', { transaction_id: id, version: read.structuredContent.transaction.version, note: null });
     expect(cleared.isError).toBeUndefined();
     expect((await findManualTxn(ctx, id))!.row.note).toBeNull();
@@ -194,7 +195,9 @@ describe('the write tools', () => {
   test('summaries give numbers, dates and codes, never the person’s own words', async () => {
     const group = (await readTaxonomy(ctx))!.groups[0].id;
     const texts: string[] = [];
+    let tick = 0;
     const run = async (name: string, args: Record<string, unknown>) => {
+      setSystemTime(new Date(NOW + ++tick * 1000)); // each listed after the one before
       const r = await call(writer, name, args);
       expect([name, r.isError]).toEqual([name, undefined]);
       texts.push(r.content[0].text);

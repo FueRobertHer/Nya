@@ -175,6 +175,8 @@ describe('the record', () => {
     expect(first.body.changes[0].after.tag.name).toBe('Tag 25');
     expect(new Set(first.body.changes.map((c: any) => c.token.label))).toEqual(new Set(['Importer', 'Sorter']));
     expect(first.body.writes).toBe(true);
+    // The manual accounts there are now, for a balance change's sentence.
+    expect(first.body.accounts[WALLET]).toEqual({ name: 'Wallet', currency: 'USD' });
     const second = await app('api-changes', 'GET', undefined, `?cursor=${first.body.next}`);
     expect(second.body.changes.map((c: any) => c.after.tag.name)).toEqual(['Tag 0']);
     expect(second.body.next).toBeNull();
@@ -208,7 +210,7 @@ describe('the record', () => {
     const c = (await send('POST', 'tags', { token: other, body: { name: 'Home' } })).body.change_id;
 
     expect((await app('api-changes', 'POST', { action: 'forget', id: a })).body).toEqual({ forgotten: 1 });
-    const [, forgotten] = await own();
+    const forgotten = (await own()).find((c) => c.id === a);
     expect(forgotten).toMatchObject({ id: a, op: 'transaction.create', state: 'done', before: null, after: null, forgotten: true });
     const stored = await changeStore.get(ctx, a);
     expect([stored!.before, stored!.after, typeof stored!.forgotten_at]).toEqual([undefined, undefined, 'string']);

@@ -6,6 +6,7 @@ import { undoChange } from '@/lib/api-undo';
 import { ApiFailure } from '@/lib/api-spec';
 import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 import { loggable } from '@/lib/log-safe';
+import { getManualAccountsReport } from '@/lib/manual';
 
 // The record of changes made with API tokens (lib/api-changes.ts), for the
 // list under the API tokens card (components/ApiChanges.tsx): every token's
@@ -13,8 +14,10 @@ import { loggable } from '@/lib/log-safe';
 // route. A token reads only its own, through /api/v1/changes.
 //
 //   GET     ?cursor=  a page of changes, newest first: { changes, next,
-//           unreadable, unrecognised, writes }. The window past 30 days is
-//           pruned first.
+//           unreadable, unrecognised, accounts, writes }, `accounts` the
+//           manual accounts there are now ({ id: { name, currency } }), for
+//           a balance change's sentence. The window past 30 days is pruned
+//           first.
 //   POST    { action: 'undo', id }          undoes one change, any token's
 //           (lib/api-undo.ts), when what it changed is still as it left it.
 //   POST    { action: 'forget', id }        forgets one change's copies of
@@ -63,13 +66,15 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
       }
     }
-    const page = await listChanges(ctx, { limit: PAGE, after, now, report: true });
+    const [page, manual] = await Promise.all([listChanges(ctx, { limit: PAGE, after, now, report: true }), getManualAccountsReport(ctx)]);
+    const accounts = Object.fromEntries(manual.accounts.map((a) => [a.account_id, { name: a.name, currency: a.currency ?? 'USD' }]));
     return NextResponse.json(
       {
         changes: page.changes.map(([id, c]) => ({ id, ...c })),
         next: page.next ? Buffer.from(JSON.stringify([page.next.at, page.next.id])).toString('base64url') : null,
         unreadable: page.unreadable,
         unrecognised: page.unrecognised,
+        accounts,
         writes: apiWritesEnabled(),
       },
       { headers: { 'Cache-Control': 'no-store' } }
