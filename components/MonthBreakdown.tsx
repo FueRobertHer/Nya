@@ -1061,11 +1061,12 @@ export default function MonthBreakdown({
                               <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
-                              {t.institution_name} · {t.account_name}
+                              {/* An IOU's row is on no account (#49). */}
+                              {t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`}
                               {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
                               {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
-                              {t.source ? ` · ${sourceLabel(t.source)}` : ""}
+                              {t.source && !t.shared_iou ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
                             {t.excluded === true && (
                               <div className="excluded-tag">

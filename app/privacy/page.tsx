@@ -284,7 +284,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ],
   [
     'The people you split costs with, and what is owed',
-    'Until you remove it, or delete your account: Forget someone, and their name, usernames and requests are deleted at once, and the amounts stay, so no total changes. Encrypted, and in your download. Of payment apps, Nya keeps only the usernames you give, which app you use, and when you asked someone through one: never what happened there.',
+    'Until you remove it, or delete your account: Forget someone, and their name, usernames and requests are deleted at once, and the amounts stay, so no total changes. Encrypted, and in your download. Of payment apps, Nya keeps only the usernames you give, which app you use, and, for each of the last 20 times you asked someone to pay or paid them through one (or sent the message), when, how much, which way, how you sent it and what it was for: never what happened there.',
   ],
   [
     'Your home currency and your own exchange rates',

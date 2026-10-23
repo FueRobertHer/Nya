@@ -28,6 +28,7 @@
 // part goes through encodeURIComponent, so no link can point anywhere else.
 
 import { isHandle, type Direction, type RequestVia } from './model';
+import { unitScale } from '../split-rows';
 
 /** The switch for the forms nobody documented (see the header). Off. */
 export const UNCONFIRMED_LINKS: boolean = false;
@@ -111,14 +112,23 @@ export function shortDay(day: string): string {
 }
 
 /** An amount as the other person reads it: "$35.00", "€12.00", "¥1,200",
- *  or the figures and the code for a currency Intl doesn't take. */
+ *  "BTC 0.0004", to the currency's own unit (lib/split-rows.ts unitScale:
+ *  eight places for a code without an ISO currency), or the figures and the
+ *  code for a currency Intl doesn't take. */
 export function messageMoney(amount: number, currency: string): string {
+  const places = Math.round(Math.log10(unitScale(currency)));
+  // Intl writes any well-formed code at two places: a code it doesn't know
+  // (a cryptocurrency) takes its own, its trailing zeros left off.
+  const digits = places === UNKNOWN_PLACES ? { minimumFractionDigits: 2, maximumFractionDigits: places } : {};
   try {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency }).format(Math.abs(amount));
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency, ...digits }).format(Math.abs(amount));
   } catch {
-    return `${Math.abs(amount).toFixed(2)} ${currency}`;
+    return `${Math.abs(amount).toFixed(places)} ${currency}`;
   }
 }
+
+/** The places lib/split-rows.ts unitScale gives a code it doesn't know. */
+const UNKNOWN_PLACES = 8;
 
 export type MessageLine = { what: string; date: string; amount: number; direction: Direction };
 
