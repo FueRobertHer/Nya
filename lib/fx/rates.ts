@@ -90,6 +90,14 @@ export type FxTable = {
    *  said as rates Nya doesn't have, never as rates the ECB didn't publish,
    *  until the nightly fetch writes them again (lib/fx/ecb-fetch.ts). */
   unusable?: readonly string[];
+  /** The currency of each account a row that says none is on, where it is
+   *  known (lib/fx/read.ts readFlowFx): what such a row is counted in
+   *  (lib/fx/totals.ts totalsIn). */
+  accounts?: Readonly<Record<string, string>>;
+  /** The rates couldn't be read just now (storage failing on them): no rate
+   *  on any day, said as that, never as rates Nya doesn't have
+   *  (lib/fx/read.ts readFlowFx). */
+  unread?: true;
 };
 
 /** A table with nothing in it: no home currency, so nothing converts. */
@@ -109,7 +117,9 @@ export type NoRate =
   /** Before the ECB's first publication of anything (1999-01-04). */
   | 'before'
   /** An own rate whose quote has no ECB rate that day. */
-  | 'quote';
+  | 'quote'
+  /** The rates couldn't be read just now (FxTable.unread). */
+  | 'unread';
 
 export type RateOn =
   | { ok: true; /** Units of the currency per euro. */ per_eur: Frac; /** The day the rate is from. */ day: string; source: 'ecb' | 'own' | 'euro' }
@@ -147,6 +157,7 @@ function publicationOn(fx: FxTable, day: string): { day: string } | { why: NoRat
  *  none. The euro's is 1. */
 export function ecbRate(fx: FxTable, currency: string, day: string): RateOn {
   if (currency === 'EUR') return { ok: true, per_eur: { n: 1n, d: 1n }, day, source: 'euro' };
+  if (fx.unread) return { ok: false, why: 'unread' };
   if (day < '1999-01-04') return { ok: false, why: 'before' };
   const latest = fx.latest;
   if (latest && day >= latest.date) {

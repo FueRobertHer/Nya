@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach, afterAll, setSystemTime } from 'bun:test';
 import { clerk } from './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, testKey, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
 
 // The runway and year over year through their routes and the real read layer
 // (app/api/reports/runway, app/api/reports/year-over-year, lib/report/
@@ -558,6 +558,84 @@ describe('year over year from stored data', () => {
     await seed();
     expect((await quiet(() => get(yoyRoute, '/api/reports/year-over-year', 'currency=JPY'))).body.report.currency).toBe('USD');
     expect((await quiet(() => get(yoyRoute, '/api/reports/year-over-year', 'currency=EUR'))).body.report.year.this.money_out).toBe(90);
+  });
+});
+
+describe('with a home currency', () => {
+  /** Dollars as home, and the ECB's rates of test/fx-fixture.ts: the newest,
+   *  Sep 14, 2026, 1 EUR = 1.1551 USD. */
+  async function inDollars() {
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    const { ecbHash } = await import('./fx-fixture');
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD' });
+  }
+
+  test('the runway keeps its currency and counts what is in euros converted; the API’s version 1 fields as before, base converted', async () => {
+    await seed();
+    await inDollars();
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    expect(r).toMatchObject({ currency: 'USD', start: 15465.3 });
+    // The 3,000 euros at N26, at the newest rate: 3,465.30, counted.
+    expect(r.position.leftOut).toEqual([]);
+    expect(r.cash_accounts.find((a: any) => a.institution === 'N26')).toMatchObject({ name: 'Konto', balance: 3000, currency: 'EUR', converted: 3465.3 });
+    // The meal's 90 euros, at the newest rate before its day: 103.96.
+    const three = r.windows.find((w: any) => w.months === 3);
+    expect(three).toMatchObject({ money_out: 9303.96, left_out: [] });
+    expect(three.conversion.from).toEqual([{ currency: 'EUR', count: 1 }]);
+    // The trip's 900 euros, at the newest rates: 1,039.59.
+    expect(r.planned.find((p: any) => p.name === 'Paris trip')).toMatchObject({ amount: 1039.59, own: { amount: 900, currency: 'EUR' } });
+    expect(r.events_left_out).toEqual([]);
+    expect(r.notes.join(' ')).not.toContain('isn\'t in this runway');
+    expect(r.plain).toBeUndefined();
+
+    const a = (await quiet(() => api(apiRunway, 'runway', 'months=3'))).body;
+    // Version 1: as before a home currency.
+    expect(a).toMatchObject({ currency: 'USD', cash: { start: 12000 }, spending: { money_out: 9200, left_out: [{ currency: 'EUR', count: 1 }] } });
+    expect(a.cash.accounts.map((x: any) => x.name)).not.toContain('Konto');
+    expect(a.planned.map((x: any) => x.name)).not.toContain('Paris trip');
+    // Base: the page's figures.
+    expect(a.base_currency).toBe('USD');
+    expect(a.base).toMatchObject({ currency: 'USD', cash: { start: 15465.3 }, spending: { money_out: 9303.96, converted: [{ currency: 'EUR', transactions: 1 }], left_out: [] } });
+    expect(a.base.cash.accounts.find((x: any) => x.name === 'Konto')).toEqual({ name: 'Konto', institution: 'N26', balance: 3465.3, as_of: expect.anything(), own: { balance: 3000, currency: 'EUR' } });
+    expect(a.base.planned.find((x: any) => x.name === 'Paris trip')).toMatchObject({ amount: 1039.59, own: { amount: 900, currency: 'EUR' } });
+    expect(a.base.newest_rates).toMatchObject({ cash_accounts: [{ currency: 'EUR', accounts: 1 }], expected: [{ currency: 'EUR', amounts: 1 }], left_out: [] });
+    // Its days, as the page works them out under the same what-if.
+    const p = projectRunway(r, { ...DEFAULT_WHAT_IF, months: 3 });
+    expect([a.base.without_income.runs_out, a.base.with_income.runs_out]).toEqual([p.without_income.runs_out, p.with_income.runs_out]);
+    const said = await tool('get_runway', { months: 3 });
+    expect(said.content[0].text).toContain('15465.30 USD of cash');
+    expect(said.content[0].text).toContain('What is in other currencies is counted');
+  });
+
+  test('year over year in the home currency, what is in euros converted, to the cent; the API’s version 1 fields as before, base converted', async () => {
+    await seed();
+    const before = (await quiet(() => api(apiYoy, 'year-over-year'))).body;
+    await inDollars();
+    const r = (await quiet(() => get(yoyRoute, '/api/reports/year-over-year', `tz=${NY}`))).body.report;
+    expect(r.currency).toBe('USD');
+    // The meal's 90 euros in September, at 1.1551: 103.96.
+    expect(r.year.this.money_out).toBe(Math.round((before.year.this.money_out + 103.96) * 100) / 100);
+    expect(r.months.find((m: any) => m.month === '2026-09').this.money_out).toBe(Math.round((before.months.find((m: any) => m.month === '2026-09').this.money_out + 103.96) * 100) / 100);
+    expect(r.left_out.this).toEqual([]);
+    expect(r.conversion.from).toEqual([{ currency: 'EUR', count: 1 }]);
+    // The month is a report's on its days, converted as the report converts.
+    const sep = r.months.find((m: any) => m.month === '2026-09').this;
+    const report = await quiet(() => readReport(ctx, period(sep.start, sep.end), { now: NOW }));
+    expect(sep.money_out).toBe(report.totals.money_out);
+
+    const a = (await quiet(() => api(apiYoy, 'year-over-year'))).body;
+    // Version 1: as before a home currency.
+    expect(a.year).toEqual(before.year);
+    expect(a.left_out).toEqual(before.left_out);
+    expect(a.base_currency).toBe('USD');
+    expect(a.base).toMatchObject({ currency: 'USD', year: r.year, converted: [{ currency: 'EUR', transactions: 1 }], left_out: [] });
+    expect(a.base.groups).toEqual(r.groups);
+    // Asked in euros: version 1 in them, unconverted; base still in dollars.
+    const eur = (await quiet(() => api(apiYoy, 'year-over-year', 'currency=EUR'))).body;
+    expect([eur.currency, eur.year.this.money_out, eur.base.currency]).toEqual(['EUR', 90, 'USD']);
+    const said = await tool('get_year_over_year', {});
+    expect(said.content[0].text).toContain('converted into USD');
   });
 });
 

@@ -32,6 +32,8 @@ import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/
 import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
+import type { FxTable } from '@/lib/fx/rates';
+import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 
 export type FiProgressProps = {
@@ -45,6 +47,10 @@ export type FiProgressProps = {
   /** As the Plan tab gets them (components/Dashboard.tsx planInstitutions). */
   institutions: AssetInstitution[];
   currency: string | null;
+  /** With a home currency, what the transactions and balances convert with,
+   *  as the Plan tab gets them. */
+  txnFx?: FxTable | null;
+  balanceFx?: PageFx | null;
   /** Opens the Plan tab. */
   onOpenPlan: () => void;
 };
@@ -52,7 +58,7 @@ export type FiProgressProps = {
 /** What /api/fire-plan answered: the saved plan, or null for none. */
 type Loaded = { plan: FirePlan | null } | 'failed' | null;
 
-export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, onOpenPlan }: FiProgressProps) {
+export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan }: FiProgressProps) {
   const [loaded, setLoaded] = useState<Loaded>(null);
   useEffect(() => {
     let live = true;
@@ -74,7 +80,16 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
   const plan = repair.plan;
-  const inputs = usePlanInputs({ txns, txnNotes, without: txnWithout, institutions, includeCash: plan.includeCash, planFunding: plan.planFunding });
+  const inputs = usePlanInputs({
+    txns,
+    txnNotes,
+    without: txnWithout,
+    institutions,
+    includeCash: plan.includeCash,
+    planFunding: plan.planFunding,
+    fx: txnFx,
+    balanceFx,
+  });
   if (
     !ready({
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
@@ -129,7 +144,7 @@ export function FiProgressView({
   inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows'>;
   onOpenPlan: () => void;
 }) {
-  const { view, savingsRate, currency, currencyNote } = figures;
+  const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   if (view.fiNumber === null) return null;
   const money = (n: number) => wholeMoney(n, currency);
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
@@ -213,6 +228,7 @@ export function FiProgressView({
       )}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
+      {convertedNote && <div className="as-of">{convertedNote}</div>}
       {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}
     </div>
   );

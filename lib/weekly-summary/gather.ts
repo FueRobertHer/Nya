@@ -36,7 +36,8 @@ import { noticesStore, syncsStore, warningsStore } from '../connection-records';
 import { StoredDataUnreadableError, describeUnreadable } from '../repo';
 import { detectRecurring } from '../recurring';
 import { monthOf } from '../rollover';
-import { totalsCurrency } from '../spending';
+import { readFlowFx } from '../fx/read';
+import { totalsIn } from '../fx/totals';
 import { noSpending } from '../no-transactions';
 import { canonicalTimeZone } from '../report/period';
 import type { Weekday } from './settings';
@@ -112,13 +113,17 @@ export async function gatherWeekly(ctx: Ctx, opts: GatherOptions): Promise<Weekl
   // rows, the person's own categories or carried exclusions, how a
   // connection is doing): spending would be a guess.
   const unreadFacts = facts !== null && facts.unread.some((u) => !u.until || u.until > first);
+  // With a home currency, the rows as the app counts them: converted into it
+  // (lib/fx/totals.ts); without one, as they are, in the main currency.
+  const counting = isUnread(activity) ? null : totalsIn(activity.rows, await readFlowFx(ctx, activity.rows, opts.now));
 
   const spending =
-    isUnread(activity) || facts === null || unreadFacts
+    isUnread(activity) || counting === null || facts === null || unreadFacts
       ? UNREAD
       : spendingFact({
-          rows: activity.rows,
-          currency: totalsCurrency(activity.rows),
+          rows: counting.rows,
+          currency: counting.currency,
+          converted: counting.conversion !== null,
           send_day: sendDay,
           first,
           last,

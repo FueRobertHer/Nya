@@ -121,8 +121,9 @@ describe('the read-only API', () => {
     const card = page.transactions.find((t: any) => t.id === 't_card');
     expect(card).toMatchObject({ amount: 80, category: 'general merchandise', transaction_group: null });
     expect(card.splits).toEqual([
-      { id: 'p-food', amount: 50, category: 'food and drink', category_id: cat('food and drink'), group_id: expect.any(String), group: 'Food', note: 'SECRET-PART-NOTE', excluded: false, remainder: false },
-      { id: 'p-home', amount: 30, category: 'home improvement', category_id: cat('home improvement'), group_id: expect.any(String), group: 'Housing', note: null, excluded: false, remainder: false },
+      // to_base: in the home currency once one is chosen (none here).
+      { id: 'p-food', amount: 50, to_base: null, category: 'food and drink', category_id: cat('food and drink'), group_id: expect.any(String), group: 'Food', note: 'SECRET-PART-NOTE', excluded: false, remainder: false },
+      { id: 'p-home', amount: 30, to_base: null, category: 'home improvement', category_id: cat('home improvement'), group_id: expect.any(String), group: 'Housing', note: null, excluded: false, remainder: false },
     ]);
     const group = { id: 'g-brunch', name: 'SECRET-GROUP-NAME brunch', date: daysAgo(2), net: 30.5, currency: 'USD', category: 'food and drink', transactions: 2, missing: 0 };
     expect(page.transactions.find((t: any) => t.id === 't_coffee')).toMatchObject({ amount: 5.5, splits: null, transaction_group: group });

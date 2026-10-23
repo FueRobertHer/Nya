@@ -21,6 +21,8 @@ import { fiView, type FirePlan, type FiView, type Measured } from './plan';
 import type { InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
 import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText } from '@/lib/spending';
+import { assumedText, leftOutWhy } from '@/lib/fx/totals';
+import { reasonText } from '@/lib/fx/words';
 
 /** What the Plan measures from, as the hook gathers it. */
 export type FiInputs = {
@@ -52,22 +54,52 @@ export function savingsRate({ flows, workplace }: Pick<FiInputs, 'flows' | 'work
 }
 
 /** The currency plan amounts are shown in: the accounts' own, or the
- *  transactions', or the dashboard's. */
+ *  transactions', or the dashboard's. A home currency doesn't change it:
+ *  what is in other currencies is converted into it (lib/fire/inputs.ts),
+ *  so what the person typed is never relabelled. */
 export function planCurrency({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>, fallback: string | null): string | null {
   return assets.currency ?? flows?.currency ?? fallback;
 }
 
-/** What the figures can't compare, in a sentence, or null. The Plan doesn't
- *  convert between currencies yet (a home currency converts net worth only,
- *  lib/fx/): investments in one and spending in another can't be compared.
- *  Within either, only amounts in one currency are added up
- *  (lib/fire/inputs.ts), and the notes beside them name the rest
- *  (spendingLeftOut, assetsLeftOut). */
+/** What the figures can't compare, in a sentence, or null. Without a home
+ *  currency the Plan converts nothing: investments in one currency and
+ *  spending in another can't be compared. Within either, only amounts in one
+ *  currency are added up (lib/fire/inputs.ts), and the notes beside them
+ *  name the rest (spendingLeftOut, assetsLeftOut). With one, both are in the
+ *  Plan's currency, and convertedNote says what was converted. */
 export function currencyNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>): string | null {
   if (assets.currency && flows?.currency && assets.currency !== flows.currency) {
-    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. The Plan doesn't convert currencies yet, so the FI number and your assets can't be compared.`;
+    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Without a home currency the Plan doesn't convert between them, so the FI number and your assets can't be compared. Choose one on the Currency card under Manage on the Accounts tab to convert them.`;
   }
   return null;
+}
+
+const join = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+const counted = (list: { currency: string; count: number }[], noun: string) =>
+  join(list.map((f, i) => (i === 0 ? `${f.count} ${noun}${f.count === 1 ? '' : 's'} in ${f.currency}` : `${f.count} in ${f.currency}`)));
+
+/** What the Plan converted into its currency, with a home currency, in a
+ *  sentence, or null when nothing was: "The Plan is in USD, so what is in
+ *  other currencies is converted into it: spending and income at each day's
+ *  ECB rate (40 transactions in EUR), and invested assets at the ECB's
+ *  newest rates (2 accounts in EUR)." Never an amount. */
+export function convertedNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>): string | null {
+  const fc = flows?.conversion ?? null;
+  const ac = assets.conversion ?? null;
+  const parts: string[] = [];
+  if (fc && fc.from.length > 0) {
+    const own = fc.own.length > 0 ? `, and your own rate for ${join(fc.own)},` : '';
+    parts.push(`spending and income at each day's ECB rate${own} (${counted(fc.from, 'transaction')})`);
+  }
+  if (ac && ac.from.length > 0) {
+    const own = ac.own.length > 0 ? `, and your own rate for ${join(ac.own)},` : '';
+    parts.push(`invested assets at the ECB's newest rates${own} (${counted(ac.from, 'account')})`);
+  }
+  // Rows that say no currency, counted in the main one: said too.
+  const assumed = assumedText(fc);
+  if (parts.length === 0) return assumed;
+  const into = fc?.into ?? ac?.into;
+  return `The Plan is in ${into}, so what is in other currencies is converted into it: ${join(parts)}.${assumed ? ` ${assumed}` : ''}`;
 }
 
 /** What the year's spending and income leave out, as the Plan's label says
@@ -82,7 +114,7 @@ export function spendingLeftOut(flows: TrailingFlows | null): { excluded: string
   const parts = [...(byYou > 0 ? [`${words(byYou)} you excluded from budgets and reports`] : []), ...(byRule > 0 ? [byYou > 0 ? `${byRule} a rule hides` : `${words(byRule)} a rule hides`] : [])];
   return {
     excluded: parts.length > 0 ? `Leaves out ${parts.join(' and ')}.` : null,
-    otherCurrencies: leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }),
+    otherCurrencies: leftOutWhy(leftOutText(flows.leftOut, flows.currency, { where: 'your spending or savings' }), flows.conversion ?? null),
   };
 }
 
@@ -90,7 +122,11 @@ export function spendingLeftOut(flows: TrailingFlows | null): { excluded: string
  *  sentence, or null: "1 account in CAD isn't in this figure, which is in
  *  USD." `where` names the figure, plural or not. */
 export function assetsLeftOut(assets: InvestedAssets, where = 'this figure', plural = false): string | null {
-  return leftOutText(assets.leftOut, assets.currency, { noun: 'account', where, plural });
+  const text = leftOutText(assets.leftOut, assets.currency, { noun: 'account', where, plural });
+  const c = assets.conversion ?? null;
+  // With a home currency, why each has no rate (lib/fx/words.ts).
+  if (text === null || !c || c.unrated.length === 0) return text;
+  return `${text.replace(/\.$/, '')}: ${c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
 }
 
 /** What the connections that bring in no transactions mean for the figures
@@ -127,6 +163,8 @@ export type FiFigures = {
   savingsRate: number | null;
   currency: string | null;
   currencyNote: string | null;
+  /** What was converted into the Plan's currency (convertedNote). */
+  convertedNote: string | null;
 };
 
 /** Every figure the Plan tab and Home show from a plan and its inputs. */
@@ -136,5 +174,6 @@ export function fiFigures(plan: FirePlan, inputs: FiInputs, fallbackCurrency: st
     savingsRate: savingsRate(inputs),
     currency: planCurrency(inputs, fallbackCurrency),
     currencyNote: currencyNote(inputs),
+    convertedNote: convertedNote(inputs),
   };
 }

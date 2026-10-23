@@ -10,7 +10,9 @@
 
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
-import { countsInTotals, leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
+import { countsInTotals, currencyOf, leftOutByCurrency, leftOutText } from '@/lib/spending';
+import { leftOutWhy, totalsIn } from '@/lib/fx/totals';
+import type { FxTable } from '@/lib/fx/rates';
 import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
 import { instantDay, localDate, localMonth } from '@/lib/local-date';
 import { formatMoney } from '@/lib/format';
@@ -125,6 +127,7 @@ type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'w
 
 export default function Insights({
   txns,
+  fx = null,
   budgets = EMPTY_BUDGETS,
   taxonomy = null,
   accounts,
@@ -138,6 +141,9 @@ export default function Insights({
   budgetCarries = null,
 }: {
   txns: Txn[] | null;
+  /** What the figures convert with, once a home currency is chosen
+   *  (app/api/transactions `fx`); null without one. */
+  fx?: FxTable | null;
   /** By category and group id (lib/budget-set.ts), against your categories
    *  (components/categories-state.ts): no alert until both have loaded. */
   budgets?: Budgets;
@@ -174,10 +180,17 @@ export default function Insights({
     const out: Insight[] = [];
     const now = new Date();
     const thisMonthKey = localMonth(now);
-    // One currency for summed and budget figures (budgets carry none of their
-    // own): only spending in it counts in them. Per-item amounts below use
-    // their own currency where known.
-    const displayCurrency = totalsCurrency(txns ?? []);
+    // Budgets carry no currency of their own: they are in the one most of
+    // the transactions are in, as the Budgets tab reads them, with spending
+    // in others converted into it at each day's rate once a home currency is
+    // chosen (lib/fx/totals.ts). The pace and the biggest purchase are in the
+    // home currency then, every row converted at its day's rate. What has no
+    // rate counts in neither, and is named. Per-item amounts use their own
+    // currency where known.
+    const budgeted = totalsIn(txns ?? [], fx, { into: 'most' });
+    const displayCurrency = budgeted.currency;
+    const counted = totalsIn(txns ?? [], fx);
+    const figures = counted.currency;
 
     // --- alerts first: they're the actionable ones ---
 
@@ -194,7 +207,7 @@ export default function Insights({
     // a budget the person set.
     if (txns && taxonomy) {
       const ix = indexTaxonomy(taxonomy);
-      const spendByCat = spendingByCategory(txns, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
+      const spendByCat = spendingByCategory(budgeted.rows, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
       const meters = budgetMeters(ix, withCarry(placeBudgets(budgets, ix), budgetCarries), new Map(Object.entries(spendByCat)));
       const candidates = [
         ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
@@ -339,18 +352,21 @@ export default function Insights({
       const thisMonth = localMonth(now);
       const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
-      leftOut = leftOutText(
-        leftOutByCurrency(
-          txns.filter((t) => (t.date.slice(0, 7) === thisMonth || t.date.slice(0, 7) === lastMonth) && t.amount > 0),
-          displayCurrency
+      leftOut = leftOutWhy(
+        leftOutText(
+          leftOutByCurrency(
+            counted.rows.filter((t) => (t.date.slice(0, 7) === thisMonth || t.date.slice(0, 7) === lastMonth) && t.amount > 0),
+            figures
+          ),
+          figures,
+          { where: 'these figures' }
         ),
-        displayCurrency,
-        { where: 'these figures' }
+        counted.conversion
       );
 
       const spend = (month: string) =>
-        txns
-          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && countsInTotals(t, displayCurrency))
+        counted.rows
+          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && countsInTotals(t, figures))
           .reduce((sum, t) => sum + t.amount, 0);
 
       // --- spending pace vs last month, prorated to the same day-of-month ---
@@ -383,17 +399,19 @@ export default function Insights({
       // --- biggest purchase this month ---
       // A split transaction is one purchase, whole, as the bank charged it,
       // when any of its parts counts; a group, its net (#39, lib/split-rows.ts).
-      const purchases = bankRows(txns, { groups: 'keep' }).filter(
+      // Ranked by what each came to in the home currency, and said in its own.
+      const purchases = bankRows(counted.rows, { groups: 'keep' }).filter(
         (t) =>
           t.date.slice(0, 7) === thisMonth &&
           t.amount > 0 &&
-          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, displayCurrency)) : countsInTotals(t, displayCurrency))
+          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, figures)) : countsInTotals(t, figures))
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
+        const own = bankRows(txns, { groups: 'keep' }).find((t) => t.transaction_id === biggest.transaction_id) ?? biggest;
         out.push({
           key: 'biggest',
-          text: `Biggest purchase this month: ${biggest.name}, ${formatMoney(biggest.amount, displayCurrency)}`,
+          text: `Biggest purchase this month: ${own.name}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
           tone: 'neutral',
         });
       }
@@ -411,7 +429,7 @@ export default function Insights({
     };
     // `hidden` isn't read inside: it changes what formatMoney writes there.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [txns, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries, hidden]);
+  }, [txns, fx, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries, hidden]);
 
   if (insights.length === 0) return null;
 

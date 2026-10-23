@@ -29,7 +29,9 @@
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
-import { leftOutByCurrency, leftOutText, totalsCurrency } from '@/lib/spending';
+import { leftOutByCurrency, leftOutText } from '@/lib/spending';
+import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
+import type { FxTable } from '@/lib/fx/rates';
 import SplitChangedNote from './SplitChangedNote';
 import type { Budgets } from '@/lib/budget-set';
 import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
@@ -105,6 +107,7 @@ function meterState(ratio: number): '' | ' warn' | ' over' {
 
 export default function BudgetsTab({
   txns,
+  fx = null,
   budgets,
   taxonomy = null,
   categoriesError = null,
@@ -138,6 +141,9 @@ export default function BudgetsTab({
   onCategories,
 }: {
   txns: Txn[] | null;
+  /** What spending in other currencies converts with, once a home currency
+   *  is chosen (app/api/transactions `fx`); null without one. */
+  fx?: FxTable | null;
   budgets: Budgets;
   /** Your categories (components/categories-state.ts): what budgets are set
    *  on, and the groups they roll up to. Null until loaded. */
@@ -218,30 +224,39 @@ export default function BudgetsTab({
     : new Date().toLocaleDateString(undefined, { month: 'long' });
 
   // Budgets are plain numbers with no currency; they count, and are shown in,
-  // the currency most transactions are in (lib/spending.ts), as the Activity
-  // tab's totals are.
-  const displayCurrency = useMemo(() => totalsCurrency(txns ?? []), [txns]);
+  // the currency most transactions are in (lib/spending.ts), as the server
+  // reads them (lib/budget-month.ts). With a home currency chosen, they stay
+  // in it, never relabelled, and spending in other currencies counts against
+  // them converted into it at each day's rate (lib/fx/totals.ts).
+  const budgeted = useMemo(() => totalsIn(txns ?? [], fx, { into: 'most' }), [txns, fx]);
+  const displayCurrency = budgeted.currency;
+  const monthCounted = useMemo(() => budgeted.rows.filter((t) => t.date.slice(0, 7) === thisMonth), [budgeted, thisMonth]);
 
   // Current-month spending per category id (lib/totals.ts, which the API's
   // budgets share).
   const spendByCat = useMemo(() => {
     const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
-    return spendingByCategory(txns ?? [], (date) => date.slice(0, 7) === thisMonth, displayCurrency, ix ? (t) => filedId(ix, t) : undefined);
-  }, [txns, thisMonth, displayCurrency, taxonomy]);
+    return spendingByCategory(monthCounted, () => true, displayCurrency, ix ? (t) => filedId(ix, t) : undefined);
+  }, [monthCounted, displayCurrency, taxonomy]);
 
-  // This month's spending in other currencies, named rather than added.
+  // This month's spending in other currencies with no rate, named rather
+  // than added, and what was converted.
   const leftOut = useMemo(
     () =>
-      leftOutText(
-        leftOutByCurrency(
-          (txns ?? []).filter((t) => t.date.slice(0, 7) === thisMonth && t.amount > 0),
-          displayCurrency
+      leftOutWhy(
+        leftOutText(
+          leftOutByCurrency(
+            monthCounted.filter((t) => t.amount > 0),
+            displayCurrency
+          ),
+          displayCurrency,
+          { where: 'these budgets' }
         ),
-        displayCurrency,
-        { where: 'these budgets' }
+        conversionIn(monthCounted, budgeted.conversion)
       ),
-    [txns, thisMonth, displayCurrency]
+    [monthCounted, displayCurrency, budgeted]
   );
+  const converted = useMemo(() => convertedText(conversionIn(monthCounted, budgeted.conversion), { budgets: true }), [monthCounted, budgeted]);
 
   // What the meters show: this month's budgets and spending as this page
   // holds them, or a past month's as the server read them; with what rolled
@@ -345,6 +360,7 @@ export default function BudgetsTab({
   // server's for a past one (the same rule, over the same year).
   const shownCurrency = past ? (view?.currency ?? displayCurrency) : displayCurrency;
   const shownLeftOut = past ? (view?.left_out_text ?? null) : leftOut;
+  const shownConverted = past ? (view?.converted_text ?? null) : converted;
 
   return (
     <>
@@ -426,6 +442,7 @@ export default function BudgetsTab({
           </>
         )}
 
+        {shownConverted && <div className="chart-note">{shownConverted}</div>}
         {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
         {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
         {/* A split whose amount changed since counts as split until edited (#39). */}
@@ -473,6 +490,7 @@ export default function BudgetsTab({
         incomplete={incomplete}
         stopped={stopped}
         withoutTransactions={withoutTransactions}
+        fx={fx}
       />
 
       <CalendarView
@@ -484,12 +502,14 @@ export default function BudgetsTab({
         institutions={institutions}
         today={today}
         currency={displayCurrency}
+        fx={fx}
       />
 
       <RecurringCard
         series={series}
         today={today}
         currency={displayCurrency}
+        fx={fx}
         dismissed={dismissed}
         status={plannedStatus}
         saveError={plannedSaveError}

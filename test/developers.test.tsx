@@ -160,8 +160,11 @@ describe('the reference, held to the API’s real answers', () => {
       expect([op.name, stray]).toEqual([op.name, []]);
       expect([op.name, Object.keys(doc.example as object).sort()]).toEqual([op.name, Object.keys(real).sort()]);
       // Nothing described that no answer could hold: each is in the example or the real answer.
+      // (Rows that say no currency, `assumed` in a base, only the oldest stored history has.)
       const seen = new Set([...paths(doc.example), ...paths(real)]);
-      const never = [...described].filter((p) => !seen.has(p) && !p.includes('records_unreadable') && !p.startsWith('accounts[].connection.problem.') && !p.includes('left_out[]'));
+      const never = [...described].filter(
+        (p) => !seen.has(p) && !p.includes('records_unreadable') && !p.startsWith('accounts[].connection.problem.') && !p.includes('left_out[]') && !p.includes('.assumed.')
+      );
       expect([op.name, never]).toEqual([op.name, []]);
       // The example request is one the endpoint takes.
       const route = await import(`@/app/api/v1/${op.name}/route`);

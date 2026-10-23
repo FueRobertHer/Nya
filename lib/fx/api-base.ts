@@ -32,11 +32,11 @@ export const apiOwnRates = (own: readonly OwnRate[]): ApiOwnRate[] => own.map((o
  *  a currency with no rate that day; or the home currency itself has none (the
  *  ECB doesn't publish it, with no rate of the person's for it), so nothing
  *  converts into it. Version 1 may add reasons. */
-export type ApiNoRate = 'no_rate' | 'not_fetched' | 'quote_has_no_rate' | 'base_has_no_rate';
+export type ApiNoRate = 'no_rate' | 'not_fetched' | 'rates_unreadable' | 'quote_has_no_rate' | 'base_has_no_rate';
 
 /** `unrated`: whose rate is missing (lib/fx/net-worth.ts). */
 export const apiNoRate = (currency: string, why: NoRate, unrated: string, home: string): ApiNoRate =>
-  why === 'not-fetched' ? 'not_fetched' : homeUnrated(currency, why, unrated, home) ? 'base_has_no_rate' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate';
+  why === 'not-fetched' ? 'not_fetched' : why === 'unread' ? 'rates_unreadable' : homeUnrated(currency, why, unrated, home) ? 'base_has_no_rate' : why === 'quote' ? 'quote_has_no_rate' : 'no_rate';
 
 export type ApiBasePart = {
   currency: string;
@@ -199,7 +199,9 @@ export function baseNotes(base: ApiBase, home: string): string[] {
     const why =
       l.why === 'not_fetched'
         ? 'Nya doesn’t have the ECB’s rates yet'
-        : l.why === 'quote_has_no_rate'
+        : l.why === 'rates_unreadable'
+          ? 'the exchange rates couldn’t be read just now; try again in a moment'
+          : l.why === 'quote_has_no_rate'
           ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
           : `there is no rate for ${l.currency}; you can set your own in the app`;
     notes.push(`${which} in base, which is in ${home}: ${why}`);
@@ -210,3 +212,80 @@ export function baseNotes(base: ApiBase, home: string): string[] {
 
 /** The note when the settings that say the home currency can't be read. */
 export const SETTINGS_UNREADABLE_NOTE = 'Your currency settings couldn’t be read, so nothing is converted into your home currency';
+
+/** What a total of transactions in base_currency converted (the `base`
+ *  beside /spending, /cash-flow and the recurring bills, and how /budgets
+ *  counts spending in other currencies): each currency and how many
+ *  transactions in it, the first and last day of the ECB's rates used, and
+ *  what was left out for having no rate, with why. Never guessed. */
+export type ApiFlowsConverted = {
+  converted: { currency: string; transactions: number }[];
+  /** The first and last day of the ECB's rates used, or null when none was. */
+  rate_days: { from: string; to: string } | null;
+  /** True when a transaction dated after the newest rates Nya has was
+   *  converted at them, and they are older than they should be. */
+  rates_stale: boolean;
+  /** The person's own rates used, as me.own_rates gives them. */
+  own_rates: ApiOwnRate[];
+  /** Transactions left out for having no rate, by currency, with why. */
+  left_out: { currency: string; transactions: number; why: ApiNoRate }[];
+  /** Transactions that say no currency, nor is their account's known (only
+   *  the oldest stored history has them): counted as in `currency`, the one
+   *  most transactions are in. Null when there are none. */
+  assumed: { currency: string; transactions: number } | null;
+};
+
+/** A conversion (lib/fx/totals.ts) in the API's words, with what its total
+ *  left out (lib/spending.ts leftOutByCurrency). */
+export function flowsConverted(
+  c: {
+    into: string;
+    from: { currency: string; count: number }[];
+    days: { first: string; last: string } | null;
+    own: string[];
+    unrated: { currency: string; why: NoRate; unrated: string }[];
+    stale: boolean;
+    assumed?: number;
+    assumedIn?: string;
+  },
+  fx: Pick<FxTable, 'own'>,
+  leftOut: readonly { currency: string; count: number }[]
+): ApiFlowsConverted {
+  const why = new Map(c.unrated.map((u) => [u.currency, apiNoRate(u.currency, u.why, u.unrated, c.into)] as const));
+  return {
+    converted: c.from.map((f) => ({ currency: f.currency, transactions: f.count })),
+    rate_days: c.days ? { from: c.days.first, to: c.days.last } : null,
+    rates_stale: c.stale,
+    own_rates: apiOwnRates(fx.own.filter((o) => c.own.includes(o.currency))),
+    left_out: leftOut.map((l) => ({ currency: l.currency, transactions: l.count, why: why.get(l.currency) ?? 'no_rate' })),
+    assumed: c.assumed && c.assumedIn ? { currency: c.assumedIn, transactions: c.assumed } : null,
+  };
+}
+
+/** The notes a converted total of transactions adds (flowsConverted): each
+ *  currency left out, and why, and rates older than they should be. */
+export function flowsNotes(b: ApiFlowsConverted, home: string): string[] {
+  const notes: string[] = [];
+  for (const l of b.left_out) {
+    const which = l.transactions === 1 ? `1 transaction in ${l.currency} isn’t` : `${l.transactions} transactions in ${l.currency} aren’t`;
+    const why =
+      l.why === 'base_has_no_rate'
+        ? `the ECB doesn’t publish ${home}; you can set a rate of your own for it in the app`
+        : l.why === 'not_fetched'
+          ? 'Nya doesn’t have the ECB’s rates for those days yet'
+          : l.why === 'rates_unreadable'
+            ? 'the exchange rates couldn’t be read just now; try again in a moment'
+            : l.why === 'quote_has_no_rate'
+            ? `your own rate for ${l.currency} is in a currency the ECB has no rate for`
+            : `there is no rate for ${l.currency} on those days; you can set your own in the app`;
+    notes.push(`${which} in base, which is in ${home}: ${why}`);
+  }
+  if (b.rates_stale && b.rate_days) notes.push(`The newest exchange rates Nya has are from ${b.rate_days.to}, so base may be out of date`);
+  if (b.assumed) {
+    const one = b.assumed.transactions === 1;
+    notes.push(
+      `${one ? '1 transaction says' : `${b.assumed.transactions} transactions say`} no currency, nor is ${one ? 'its account’s' : 'their accounts’'} known, so ${one ? 'it is' : 'they are'} counted in base as in ${b.assumed.currency}, the currency most are in`
+    );
+  }
+  return notes;
+}

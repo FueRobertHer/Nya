@@ -72,9 +72,11 @@ import { newDraft, useRules } from './rules-state';
 import RulesCard from './RulesCard';
 import ReviewSettingsCard from './ReviewSettingsCard';
 import CurrencyCard from './CurrencyCard';
-import CurrencyChoiceSheet, { CurrencyOptions } from './CurrencyChoiceSheet';
+import CurrencyChoiceSheet, { CurrencyOptions, MovedBody, RelabelOffer } from './CurrencyChoiceSheet';
 import { ChartCurrencyNote, CurrencyOffer, HeroCurrencyNote, dismissOffer, offerDismissed, offerFor } from './CurrencyNotes';
-import { CORRECTION_KEEPS, institutionNote, rateEffectText } from './currency-text';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, institutionNote, rateEffectText, relabelledText } from './currency-text';
+import { asFxTable } from '@/lib/fx/fields';
+import type { FxTable } from '@/lib/fx/rates';
 import { balancesNow, needsConverting } from '@/lib/fx/view';
 import type { NetWorthBase } from '@/lib/fx/net-worth-base';
 import { totalsCurrency } from '@/lib/spending';
@@ -259,6 +261,9 @@ type ManualDraft = Omit<ManualAccount, 'account_id' | 'balance' | 'currency'> & 
   balance: string;
   currency: string;
   stored: string | null;
+  /** With its currency corrected: also move the transactions typed on it
+   *  into the new one (lib/manual-relabel.ts), only when the person ticks it. */
+  relabel?: boolean;
 };
 
 // "cash" is a choice, not a type: saved as depository with the subtype
@@ -543,6 +548,9 @@ export default function Dashboard({
   const [connecting, setConnecting] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
   const [txns, setTxns] = useState<Txn[] | null>(null);
+  // What the loaded rows' totals convert with, once a home currency is chosen
+  // (app/api/transactions `fx`, lib/fx/totals.ts): null without one.
+  const [txnFx, setTxnFx] = useState<FxTable | null>(null);
   // Your categories (components/categories-state.ts): the lists to choose one
   // from, the group rollups, and what budgets are set on.
   const categories = useCategories();
@@ -699,6 +707,9 @@ export default function Dashboard({
   const [savingManual, setSavingManual] = useState(false);
   const [manualError, setManualError] = useState('');
   const [manualDeleteTarget, setManualDeleteTarget] = useState<ManualAccount | null>(null);
+  // Saved with its typed transactions moved too: what moved, shown in the
+  // same drawer until the person closes it (kept while it slides out).
+  const [manualMoved, setManualMoved] = useState<{ text: string; open: boolean } | null>(null);
   // What each drawer shows: the current value, or the last one while it slides out.
   const shownManualDraft = useLast(manualDraft);
   const editingManualShown = useLast(manualDraft ? editingManual : null) ?? false;
@@ -836,6 +847,7 @@ export default function Dashboard({
       }
       const data = await res.json();
       setTxns(data.transactions);
+      setTxnFx(asFxTable(data.fx));
       // The categories the rows were filed by, the tags they carry, and the queue.
       acceptCategories(data.categories);
       acceptTags(data.tags);
@@ -1225,6 +1237,14 @@ export default function Dashboard({
           setManualError(data?.error ?? 'Could not save. Please try again.');
           return false;
         }
+        // What a move of its typed transactions did, said before the drawer
+        // closes (the answer's `relabelled`).
+        const done = await res.json().catch(() => null);
+        const asked = body as { relabel_from?: string; currency?: string };
+        const r = done?.relabelled;
+        if (method === 'PATCH' && asked.relabel_from && asked.currency && typeof r?.moved === 'number' && typeof r?.kept === 'number') {
+          setManualMoved({ text: relabelledText(r, asked.relabel_from, asked.currency), open: true });
+        }
         setManualDraft(null);
         setManualDeleteTarget(null);
         // A forced fetch writes the new balance into today's history point, as the
@@ -1281,6 +1301,7 @@ export default function Dashboard({
   // else the one most accounts are in), for the person to change.
   const startAddManual = useCallback((currency: string) => {
     setManualError('');
+    setManualMoved(null);
     setEditingManual(false);
     // The id is minted server-side on create, so a draft doesn't carry one.
     setManualDraft({
@@ -1295,8 +1316,17 @@ export default function Dashboard({
     });
   }, []);
 
+  // A home currency, a rate or an account's currency changed: net worth
+  // converts again, and so do the transactions' totals, whose rates come with
+  // them (/api/transactions `fx`), with any rows a correction moved.
+  const currencyChanged = useCallback(() => {
+    void loadNetWorth();
+    loadTransactions();
+  }, [loadNetWorth, loadTransactions]);
+
   const startEditManual = useCallback((account: ManualAccount) => {
     setManualError('');
+    setManualMoved(null);
     setEditingManual(true);
     const currency = account.currency ?? 'USD';
     setManualDraft({ ...account, balance: String(account.balance), currency, stored: currency });
@@ -1314,7 +1344,9 @@ export default function Dashboard({
       currency: manualDraft.currency,
     };
     if (manualDraft.account_id) {
-      mutateManual('PATCH', { ...payload, account_id: manualDraft.account_id });
+      // The rows typed on it move too only when the person ticked it.
+      const relabel = manualDraft.relabel && manualDraft.stored !== null && manualDraft.stored !== manualDraft.currency ? { relabel_from: manualDraft.stored } : {};
+      mutateManual('PATCH', { ...payload, ...relabel, account_id: manualDraft.account_id });
     } else {
       mutateManual('POST', payload);
     }
@@ -1806,11 +1838,15 @@ export default function Dashboard({
     if (txns === null) return null;
     // The same window as lib/budget-month.ts windowStart (LOOKBACK_DAYS, 365 UTC days).
     const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
-    const budgets = totalsCurrency(txns.filter((t) => t.date >= since));
+    const year = txns.filter((t) => t.date >= since);
+    const budgets = totalsCurrency(year);
     return offerFor({
       accounts: institutions.flatMap((i) => i.accounts.filter((a) => a.balance !== null).map((a) => a.currency)),
       budgets,
       main: accountCurrency,
+      // The last year's transactions in more than one currency: they convert
+      // too, so the offer is made for them (decision A, step 2).
+      transactions: year.map((t) => t.iso_currency_code || t.unofficial_currency_code || null),
     });
   }, [institutions, txns, accountCurrency]);
   // What Home shows: net worth in the home currency once one is chosen
@@ -2069,6 +2105,7 @@ export default function Dashboard({
 
                 <Insights
                   txns={txns}
+                  fx={txnFx}
                   budgets={budgets}
                   taxonomy={categories.taxonomy}
                   budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}
@@ -2104,6 +2141,8 @@ export default function Dashboard({
                   txnWithout={txnWithout}
                   institutions={planInstitutions}
                   currency={accountCurrency}
+                  txnFx={txnFx}
+                  balanceFx={base?.fx ?? null}
                   onOpenPlan={() => {
                     window.scrollTo(0, 0);
                     setTab('plan');
@@ -2909,7 +2948,7 @@ export default function Dashboard({
                     applied after the server's cache, so a change shows on the
                     next load of net worth, which it asks for. */}
                 {manageMode && (
-                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={() => loadNetWorth()} />
+                  <CurrencyCard currencies={accountCurrencies} manual={manualCurrencies} focus={currencyFocus} onFocused={clearCurrencyFocus} onChanged={currencyChanged} />
                 )}
 
                 {/* Your categories and their groups (components/CategoriesCard.tsx):
@@ -2950,6 +2989,7 @@ export default function Dashboard({
             {tab === 'activity' && (
               <MonthBreakdown
                 txns={txns}
+                fx={txnFx}
                 notes={txnNotes}
                 asideNotes={txnAside}
                 loading={txnsLoading}
@@ -2995,6 +3035,7 @@ export default function Dashboard({
             {tab === 'budgets' && (
               <BudgetsTab
                 txns={txns}
+                fx={txnFx}
                 budgets={budgets}
                 taxonomy={categories.taxonomy}
                 categoriesError={categories.error}
@@ -3061,6 +3102,8 @@ export default function Dashboard({
                 holdings={planHoldings}
                 balancesAsOf={asOf}
                 currency={accountCurrency}
+                txnFx={txnFx}
+                balanceFx={base?.fx ?? null}
               />
             )}
           </>
@@ -3079,7 +3122,7 @@ export default function Dashboard({
         initial={choosingHome?.initial ?? null}
         first={accountCurrencies}
         manual={manualCurrencies}
-        onSaved={() => loadNetWorth()}
+        onSaved={currencyChanged}
       />
 
       {connected && !loading && (
@@ -3107,11 +3150,17 @@ export default function Dashboard({
           (components/Sheet.tsx). Each keeps its last content while it slides
           out, so it doesn't empty mid-animation. */}
       <Sheet
-        open={!!manualDraft}
-        title={shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
-        onClose={() => !savingManual && setManualDraft(null)}
+        open={!!manualDraft || !!manualMoved?.open}
+        title={manualMoved && !manualDraft ? 'Saved' : shownManualDraft && editingManualShown ? 'Update account' : 'Add a manual account'}
+        onClose={() => {
+          if (savingManual) return;
+          setManualDraft(null);
+          setManualMoved((m) => (m ? { ...m, open: false } : m));
+        }}
       >
-        {shownManualDraft && (
+        {manualMoved && !manualDraft ? (
+          <MovedBody moved={[{ name: '', text: manualMoved.text }]} onClose={() => setManualMoved((m) => (m ? { ...m, open: false } : m))} />
+        ) : shownManualDraft && (
           <>
             <p className="panel-note" style={{ marginTop: 0 }}>
               For institutions Plaid can&apos;t reach. The balance you type counts toward net worth
@@ -3191,8 +3240,20 @@ export default function Dashboard({
             {shownManualDraft.stored !== null && shownManualDraft.currency !== shownManualDraft.stored && (
               <p className="panel-note">
                 The balance you typed stays as it is, now in {shownManualDraft.currency}: this account and its history are counted in {shownManualDraft.currency} from now on.{' '}
-                {CORRECTION_KEEPS}
+                {shownManualDraft.relabel ? RELABEL_KEEPS : CORRECTION_KEEPS}
               </p>
+            )}
+            {shownManualDraft.stored !== null && shownManualDraft.account_id && shownManualDraft.currency !== shownManualDraft.stored && (
+              // The server's count of every row the move would take, older
+              // ones too, and that it has no undo.
+              <RelabelOffer
+                account_id={shownManualDraft.account_id}
+                from={shownManualDraft.stored}
+                to={shownManualDraft.currency}
+                checked={!!shownManualDraft.relabel}
+                onChange={(on) => setManualDraft({ ...shownManualDraft, relabel: on })}
+                disabled={savingManual}
+              />
             )}
             <p className="panel-note">
               {isOwedType(shownManualDraft.type)

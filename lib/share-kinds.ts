@@ -263,14 +263,30 @@ export function dayViewsOf(read: ViewsRead): DayViews {
 export type Unreadable = { unreadable: true };
 export const isUnreadable = (v: unknown): v is Unreadable => isPlain(v) && v.unreadable === true;
 
+/** A figure converted into the owner's home currency (decision 5): at the
+ *  ECB's daily rates alone, never the owner's own (lib/share-views.ts), and
+ *  never a rate's value. */
+export type SharedConversion = { rates: 'ecb' };
+
 /** One account behind a net worth: as its own share labels it, with its
  *  newest measured balance (Plaid's sign: a card's or a loan's is owed). */
-export type NetWorthAccount = { label: string; balance: number; currency: string | null; debt: boolean; as_of: string | null };
+export type NetWorthAccount = {
+  label: string;
+  balance: number;
+  currency: string | null;
+  debt: boolean;
+  as_of: string | null;
+};
 
 export type NetWorthView = {
   detail: NetWorthShare['detail'];
-  /** The currency the total is in: the one most accounts are in. */
+  /** The currency the total is in: the one most accounts are in, or the
+   *  owner's home currency once they chose one (`converted`). */
   currency: string | null;
+  /** The total, and the history, converted into it at the ECB's rates, as
+   *  the owner's own net worth is but never at their own rates;
+   *  `other_currencies` are then the ones with no public rate. */
+  converted?: SharedConversion;
   /** Each account's newest measured balance added up, in `currency`. Null
    *  with no account to count. */
   total: number | null;
@@ -322,7 +338,11 @@ export type SpendingMonth = {
 export type SpendingView = {
   detail: SpendingShare['detail'];
   by: SpendingShare['by'];
+  /** The one most transactions are in, or the owner's home currency. */
   currency: string | null;
+  /** Converted into the owner's home currency, as their Activity tab counts
+   *  it: each month's `left_out` is then what has no rate. */
+  converted?: SharedConversion;
   /** Newest first. */
   months: SpendingMonth[];
   /** Some transactions aren't all in yet (a bank still bringing in its older
@@ -349,7 +369,10 @@ export type HoldingsLine = { slot: string; name: string; pct: number | null; lab
 export type HoldingsPosition = { ticker: string | null; name: string | null; class: string; pct: number | null; label: string | null; amount?: number };
 export type HoldingsView = {
   detail: HoldingsShare['detail'];
+  /** The one most accounts are in, or the owner's home currency. */
   currency: string | null;
+  /** Converted into the owner's home currency at the newest rates. */
+  converted?: SharedConversion;
   /** The newest and the oldest day among the positions last recorded and the
    *  balances counted. */
   as_of: string | null;
@@ -382,7 +405,11 @@ export type BudgetsMonth = {
 export type BudgetsView = {
   detail: BudgetsShare['detail'];
   by: BudgetsShare['by'];
+  /** The currency the budgets are in, as the owner typed them. */
   currency: string | null;
+  /** With the owner's home currency: spending in other currencies counts
+   *  against them converted into `currency`, as their Budgets tab counts it. */
+  converted?: SharedConversion;
   /** This month, then last month. */
   months: BudgetsMonth[];
   /** As spending's (FilingUnread): what is spent may count against another

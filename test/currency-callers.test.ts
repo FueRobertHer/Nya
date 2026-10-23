@@ -5,17 +5,17 @@ import { filesUnder, withoutComments } from './amount-sources';
 
 // Every reader that picks one currency for a total (lib/format.ts
 // dominantCurrency, over balances; lib/spending.ts totalsCurrency, over
-// rows) is listed here, by file, function and value, with its reason. A home
-// currency converts net worth only, in this step (lib/fx/): the readers of
-// balances that a home currency reaches convert, and every other is listed
-// "until step 2", when flows, budgets, the Plan, reports and shares convert.
-// A reader added later that totals in one currency fails this until it is
-// listed with its reason, or converts. Outside lib/spending.ts, lib/format.ts
-// and lib/fx/, where the rules are kept.
+// rows) is listed here, by file, function and value, with its reason. With a
+// home currency, totals of flows convert through one seam (lib/fx/totals.ts
+// totalsIn) and balances through lib/fx/net-worth.ts: a reader that still
+// picks a currency itself is listed with why (a label, a version 1 field
+// that keeps its meaning, a currency what the person typed is in). A reader
+// added later that totals in one currency fails this until it is listed
+// with its reason, or converts. Outside lib/spending.ts, lib/format.ts and
+// lib/fx/, where the rules are kept.
 
 const ROOT = join(import.meta.dir, '..');
 
-const STEP_2 = 'Until step 2: totals of flows in the one currency most rows are in, what is in another named, never added.';
 
 const ALLOWED: Record<string, string> = {
   // Balances.
@@ -27,24 +27,24 @@ const ALLOWED: Record<string, string> = {
     'The share of net worth an institution’s held balances are, in their currency when they share one; converted into the home currency when one is chosen (lib/fx/view.ts).',
   'lib/api-read.ts#netWorthCurrency':
     'The API’s version 1 fields keep their meaning: one total per currency, and the currency the recorded totals are labelled with. base converts (lib/fx/api-base.ts).',
-  'lib/fire/inputs.ts#investedAssets:currency': 'Until step 2: the Plan’s invested assets in their main currency; the Plan doesn’t convert yet, and says so.',
-  'lib/forecast.ts#cashPosition:currency': 'Until step 2: the cash forecast in its cash accounts’ main currency.',
-  'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
+  'lib/fire/inputs.ts#investedAssets:currency':
+    'The Plan’s currency, the one most of its accounts are in, which what the person types in the Plan is in: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
+  'lib/forecast.ts#cashPosition:currency':
+    'The forecast’s currency, its cash accounts’ main one, which the warning the person typed is in: with a home currency the rest converts into it at the newest rates, never relabelled.',
+  'lib/share-views.ts#holdingsView:currency':
+    'Without the owner’s home currency only: a share’s holdings in their main currency, the rest named. With one, in it, converted at the newest rates (lib/allocation/allocation.ts inputsIn, decision 5).',
   // Flows.
-  'components/BudgetsTab.tsx#BudgetsTab:displayCurrency': STEP_2,
-  'components/Insights.tsx#Insights:displayCurrency': STEP_2,
-  'components/MonthBreakdown.tsx#MonthBreakdown:currency': STEP_2,
-  'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,
-  'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
-  'lib/api-read.ts#readRecurring:currency': STEP_2,
-  'lib/api-read.ts#readSpending:currency': STEP_2,
-  'lib/budget-month.ts#monthFromActivity:currency': STEP_2,
-  'lib/fire/inputs.ts#trailingFlows:currency': STEP_2,
-  'lib/report/build.ts#buildReport:currency': STEP_2,
-  'lib/report/runway.ts#buildRunwayInputs:currency': 'Until step 2: the runway in its cash accounts’ main currency, as the cash forecast it starts from; it names the cash, transactions and payments left out.',
-  'lib/report/year-over-year.ts#yoyCurrency:within': `${STEP_2} Both years in one, the rest named.`,
-  'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
-  'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,
+  'components/MonthFlowChart.tsx#MonthFlowChart:currency':
+    'Only when the Activity tab gives it no currency: its rows are the ones the tab totals, already converted into the home currency through lib/fx/totals.ts totalsIn, so this is the label of what they are in.',
+  'lib/api-cash-flow.ts#readCashFlow:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
+  'lib/api-read.ts#readRecurring:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/totals.ts recurringMonthly, at today’s rates).',
+  'lib/api-read.ts#readSpending:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
+  'lib/report/build.ts#buildReport:currency':
+    'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
+  'lib/report/runway.ts#buildRunwayInputs:currency':
+    'The runway’s currency, its cash accounts’ main one as the forecast’s (else the one most rows are in), which a what-if is typed in: with a home currency the rest converts into it (lib/fx/totals.ts totalsIn at each row’s day’s rate; cash and expected amounts at the newest rates), never relabelled. The API’s version 1 fields keep it unconverted; base converts.',
+  'lib/report/year-over-year.ts#yoyCurrency:within':
+    'Without a home currency only, as before: both years in the one asked for, else the one most rows are in, the rest named, as the API’s version 1 fields keep it. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn (lib/report/year-over-year-read.ts).',
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
 };
 

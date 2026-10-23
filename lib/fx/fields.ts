@@ -127,3 +127,35 @@ export function tableFromFields(fields: ReadonlyMap<string, unknown>, years: rea
   const fetch = fields.get(FETCH_FIELD);
   return { home, own, latest: isLatest(latest) ? latest : null, days, series, missing_years: missing, fetch: isFetch(fetch) ? fetch : null, unusable: [...unusable].sort() };
 }
+
+const isObject = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+
+/** An own rate as a reader's table carries it (lib/fx/settings.ts keeps
+ *  them, and checks them there): its fields' forms. */
+const isTableOwnRate = (v: unknown): v is OwnRate =>
+  isObject(v) &&
+  typeof v.currency === 'string' &&
+  /^[A-Z0-9]{2,10}$/.test(v.currency) &&
+  isRateText(v.rate) &&
+  typeof v.quote === 'string' &&
+  ECB_CODE.test(v.quote) &&
+  (v.from === null || isCalendarDay(v.from)) &&
+  typeof v.set_at === 'string';
+
+/**
+ * A reader's table as an answer carries it to the page (app/api/transactions
+ * `fx`), checked field by field, or null: a page converts with nothing it
+ * can't read, and then shows today's totals.
+ */
+export function asFxTable(v: unknown): FxTable | null {
+  if (!isObject(v) || typeof v.home !== 'string' || !ECB_CODE.test(v.home)) return null;
+  if (!Array.isArray(v.own) || !v.own.every(isTableOwnRate)) return null;
+  if (!(v.latest === null || isLatest(v.latest)) || !(v.fetch === null || isFetch(v.fetch))) return null;
+  if (!isObject(v.days) || !Object.entries(v.days).every(([y, d]) => YEAR.test(y) && isDays(d, y))) return null;
+  if (!isObject(v.series) || !Object.entries(v.series).every(([id, s]) => isEcbValue(s, id) && !id.startsWith('days:') && id.includes(':'))) return null;
+  if (!Array.isArray(v.missing_years) || !v.missing_years.every((y) => typeof y === 'string' && YEAR.test(y))) return null;
+  if (v.unusable !== undefined && !(Array.isArray(v.unusable) && v.unusable.every((id) => typeof id === 'string'))) return null;
+  if (v.accounts !== undefined && !(isObject(v.accounts) && Object.values(v.accounts).every((c) => typeof c === 'string' && /^[A-Z0-9]{2,10}$/.test(c)))) return null;
+  if (v.unread !== undefined && v.unread !== true) return null;
+  return v as unknown as FxTable;
+}

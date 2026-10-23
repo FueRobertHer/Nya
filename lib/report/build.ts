@@ -8,9 +8,14 @@
 //
 // THE APP'S RULES, NONE OF ITS OWN. Every total goes through lib/totals.ts
 // (summarize, categoryTotals), so through countsInTotals (lib/spending.ts):
-// one currency per report (the one most of the period's transactions are in,
-// unless the person picks another of theirs), the rest named and left out,
-// never converted; what the person excluded left out and counted; transfers,
+// one currency per report. Without a home currency, the one most of the
+// period's transactions are in, unless the person picks another of theirs,
+// the rest named and left out, never converted. With one (lib/fx/), the home
+// currency unless the person picks another, and what is in another converted
+// into it at its own day's ECB rate (lib/fx/totals.ts totalsIn), the report
+// saying what was converted and the days of the rates; what has no rate is
+// still named and left out. The appendix lists each row in its own currency,
+// with what it counts as. What the person excluded is left out and counted; transfers,
 // cash withdrawals and loan payments (paying a card off among them) never
 // money in or out. Rows entered by hand or imported into a manual account
 // count as a bank's do, and the appendix says where each one came from.
@@ -151,6 +156,8 @@ import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../to
 import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
 import { categoryKey } from './settings';
 import { addDays, dayIn, periodMonths, type Period } from './period';
+import { totalsIn, type Conversion } from '../fx/totals';
+import type { FxTable } from '../fx/rates';
 import { filesCoverAll as everyAccountCovered, runStart, throughFor } from '../history-import/coverage';
 
 /** How long a bank can take to post a transaction: a period's transactions
@@ -314,6 +321,10 @@ export type ReportInput = {
   /** How each connection is doing couldn't be read. */
   healthUnread: boolean;
   appendixLimit?: number;
+  /** With a home currency, what converts the rows (lib/fx/read.ts readFx,
+   *  over the rows' currencies and the one asked for); absent or null
+   *  without one. */
+  fx?: FxTable | null;
   /** Every account that ended and isn't hidden (see ENDED ACCOUNTS), with
    *  `rows` keeping theirs: left out here from each one's end day. Absent,
    *  none did. */
@@ -421,6 +432,9 @@ export type AppendixRow = {
   amount: number;
   /** Its own currency, or the report's for a row that says none. */
   currency: string | null;
+  /** In another currency than the report's, with a home currency: what the
+   *  totals count it as, converted at its day's rate (Plaid's sign). */
+  counted_as?: number;
   account: string;
   institution: string;
   /** 'plaid' for a bank's row, else a manual row's source ('manual',
@@ -511,6 +525,13 @@ export type Report = {
   /** The currencies the period's transactions are in, most first, the
    *  report's own first among equals. */
   currencies: { currency: string; transactions: number }[];
+  /** The person's home currency, the report's unless another is asked for;
+   *  null (or absent) without one. */
+  home?: string | null;
+  /** With a home currency: what was converted into the report's currency,
+   *  at which days' rates, and why what wasn't has no rate (lib/fx/totals.ts);
+   *  null (or absent) without one. */
+  conversion?: Conversion | null;
   /** Every category in the period and every one marked, once each, by name,
    *  for marking. */
   categories: ReportCategory[];
@@ -806,7 +827,13 @@ export function buildReport(input: ReportInput): Report {
     counters.set(c, counter);
   }
   const counts = new Map([...counters].map(([c, counter]) => [c, counter.n] as const));
-  const currency = input.currency !== null && counts.has(input.currency) ? input.currency : totalsCurrency(rows);
+  // With a home currency: it, unless another is asked for, and what is in
+  // another converted into it at its own day's rate (see the header).
+  const home = input.fx?.home ?? null;
+  const currency = home ? (input.currency ?? home) : input.currency !== null && counts.has(input.currency) ? input.currency : totalsCurrency(rows);
+  const counting = home && currency ? totalsIn(rows, input.fx, { into: { currency }, now: Date.parse(input.generatedAt) }) : { rows: [...rows], conversion: null };
+  const counted = counting.rows;
+  const countedById = new Map(counted.map((t) => [t.transaction_id, t] as const));
   const currencies = [...counts]
     .map(([c, transactions]) => ({ currency: c, transactions }))
     .sort((a, b) => b.transactions - a.transactions || (a.currency === currency ? -1 : b.currency === currency ? 1 : a.currency < b.currency ? -1 : 1));
@@ -815,8 +842,8 @@ export function buildReport(input: ReportInput): Report {
   // it is named now (see CATEGORIES).
   const ix = input.taxonomy ? indexTaxonomy(input.taxonomy) : null;
   const named = ix ? (bucket: string) => ({ category: categoryById(ix, bucket)?.name ?? bucket }) : undefined;
-  const summary = summarize(rows, inPeriod, currency);
-  const byCategory = categoryTotals(rows, inPeriod, currency, named);
+  const summary = summarize(counted, inPeriod, currency);
+  const byCategory = categoryTotals(counted, inPeriod, currency, named);
 
   // The read's notes: an institution whose transactions aren't all here
   // (missing, importing) has one of its own ("Chase: ..."), already said by
@@ -908,7 +935,7 @@ export function buildReport(input: ReportInput): Report {
       return { month: m.month, start: m.start, end: m.end, future: true, money_in: 0, money_out: 0, net: 0, transactions: 0, gaps: [], uncertain: false };
     }
     const end = minDay(m.end, period.through);
-    const s = summarize(rows, (d) => d >= m.start && d <= end, currency);
+    const s = summarize(counted, (d) => d >= m.start && d <= end, currency);
     const touching = gaps.filter((g) => gapTouches(g, m.start, end));
     return {
       month: m.month,
@@ -953,16 +980,17 @@ export function buildReport(input: ReportInput): Report {
       .filter((t) => marks.has(markOf(t).id))
       .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.name.localeCompare(b.name) || (a.transaction_id < b.transaction_id ? -1 : 1)));
     // Each marked category's totals, and the group's, summed as every other
-    // total is, over its rows filed by mark.
+    // total is, over its rows filed by mark (converted, with a home currency).
+    const listedCounted = listed.map((t) => countedById.get(t.transaction_id) ?? t);
     const byMark = categoryTotals(
-      listed.map((t) => ({ ...t, category_id: markOf(t).id })),
+      listedCounted.map((t) => ({ ...t, category_id: markOf(t).id })),
       inPeriod,
       currency,
       (bucket) => ({ category: bucket })
     );
     const inOf = new Map(byMark.in.map((c) => [c.category, c]));
     const outOf = new Map(byMark.out.map((c) => [c.category, c]));
-    const group = summarize(listed, inPeriod, currency);
+    const group = summarize(listedCounted, inPeriod, currency);
     marked = {
       categories: [...marks.values()].map((m) => ({
         category: m.name,
@@ -976,24 +1004,29 @@ export function buildReport(input: ReportInput): Report {
     };
     const limit = input.appendixLimit ?? APPENDIX_LIMIT;
     appendix = {
-      rows: listed.slice(0, limit).map((t) => ({
-        date: t.date,
-        name: t.name,
-        category: markOf(t).name,
-        amount: t.amount,
-        currency: currencyOf(t) ?? currency,
-        account: t.account_name,
-        institution: t.institution_name,
-        source: t.source ?? 'plaid',
-        pending: t.pending,
-        not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : t.group_outside ? 'group' : isTransfer(t) ? 'transfer' : !inCurrency(t, currency) ? 'currency' : null,
-        exclusion_unknown: t.excluded === null,
-        note: t.note ?? null,
-        ...(t.split_of !== undefined
-          ? { split: { part: (t.split_index ?? 0) + 1, parts: t.split_count ?? 1, whole: t.split_parent?.amount ?? t.amount, remainder: t.split_remainder !== undefined } }
-          : {}),
-        ...(t.group_members ? { group: { transactions: t.group_members.length, missing: (t.group_missing ?? 0) + (t.group_removed ?? 0) } } : {}),
-      })),
+      rows: listed.slice(0, limit).map((t) => {
+        // As the totals count it: converted, with a home currency.
+        const c = countedById.get(t.transaction_id) ?? t;
+        return {
+          date: t.date,
+          name: t.name,
+          category: markOf(t).name,
+          amount: t.amount,
+          currency: currencyOf(t) ?? currency,
+          ...(c !== t && currencyOf(c) !== currencyOf(t) ? { counted_as: c.amount } : {}),
+          account: t.account_name,
+          institution: t.institution_name,
+          source: t.source ?? 'plaid',
+          pending: t.pending,
+          not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : t.group_outside ? 'group' : isTransfer(t) ? 'transfer' : !inCurrency(c, currency) ? 'currency' : null,
+          exclusion_unknown: t.excluded === null,
+          note: t.note ?? null,
+          ...(t.split_of !== undefined
+            ? { split: { part: (t.split_index ?? 0) + 1, parts: t.split_count ?? 1, whole: t.split_parent?.amount ?? t.amount, remainder: t.split_remainder !== undefined } }
+            : {}),
+          ...(t.group_members ? { group: { transactions: t.group_members.length, missing: (t.group_missing ?? 0) + (t.group_removed ?? 0) } } : {}),
+        };
+      }),
       total: countTransactions(listed),
       shown: countTransactions(listed.slice(0, limit)),
       limit,
@@ -1031,6 +1064,7 @@ export function buildReport(input: ReportInput): Report {
     data_as_of: bringing.length === 0 ? input.generatedAt : known ? oldest : null,
     currency,
     currencies,
+    ...(home ? { home, conversion: counting.conversion } : {}),
     categories: [...new Map([...rows.map(markOf), ...marks.values()].map((m) => [m.id, { key: m.key, name: m.name }])).values()].sort(
       (a, b) => a.name.localeCompare(b.name) || a.key.localeCompare(b.key)
     ),

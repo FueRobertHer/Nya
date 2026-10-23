@@ -83,15 +83,21 @@ export function dismissOffer(): void {
 
 /** What the offer suggests: the currency the budgets are read in today (the
  *  last 365 days of rows, lib/budget-month.ts, so what was typed keeps its
- *  meaning), and the accounts' main one beside it when the two differ. */
-export type Offer = { budgets: string | null; accounts: string | null };
+ *  meaning), and the accounts' main one beside it when the two differ; and
+ *  why it is offered: the accounts are in more than one currency, or only
+ *  the last year's transactions are (decision A, step 2: they convert now). */
+export type Offer = { budgets: string | null; accounts: string | null; why?: 'accounts' | 'transactions' };
 
-/** The offer, or null when the accounts' balances are all in one currency:
- *  nothing is offered. `accounts`: the currency of each account with a
- *  balance, hidden ones too. */
-export function offerFor(input: { accounts: readonly (string | null)[]; budgets: string | null; main: string | null }): Offer | null {
-  if (new Set(input.accounts.filter((c): c is string => !!c)).size < 2) return null;
-  return { budgets: input.budgets, accounts: input.main && input.main !== input.budgets ? input.main : null };
+const several = (codes: readonly (string | null)[]) => new Set(codes.filter((c): c is string => !!c)).size >= 2;
+
+/** The offer, or null when the accounts' balances are all in one currency
+ *  and so are the last year's transactions: nothing is offered. `accounts`:
+ *  the currency of each account with a balance, hidden ones too;
+ *  `transactions`: each of the last year's transactions'. */
+export function offerFor(input: { accounts: readonly (string | null)[]; budgets: string | null; main: string | null; transactions?: readonly (string | null)[] }): Offer | null {
+  const accounts = several(input.accounts);
+  if (!accounts && !several(input.transactions ?? [])) return null;
+  return { budgets: input.budgets, accounts: input.main && input.main !== input.budgets ? input.main : null, ...(accounts ? {} : { why: 'transactions' as const }) };
 }
 
 export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: Offer; onChoose: (code: string | null) => void; onDismiss: () => void }) {
@@ -101,8 +107,10 @@ export function CurrencyOffer({ offer, onChoose, onDismiss }: { offer: Offer; on
         <div className="inst-name">Show your totals in one currency</div>
       </div>
       <p className="panel-note">
-        Your accounts are in more than one currency, and your net worth adds them up unconverted. Choose one, and Nya shows your net worth in it, converted at
-        the European Central Bank’s daily rates. Nothing changes until you do.
+        {offer.why === 'transactions'
+          ? 'Your transactions over the last year are in more than one currency, and your spending totals leave out those in the others. Choose one, and Nya counts them all in it, converted at the European Central Bank’s daily rates.'
+          : 'Your accounts are in more than one currency, and your net worth adds them up unconverted. Choose one, and Nya shows your net worth and spending in it, converted at the European Central Bank’s daily rates.'}{' '}
+        Nothing changes until you do.
       </p>
       <div className="currency-offer-choices">
         {offer.budgets && (

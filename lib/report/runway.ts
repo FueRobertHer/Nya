@@ -43,8 +43,8 @@
 //     nothing in a short window, or four times its weight in a three-month
 //     window it fell in.
 // The rest of what the Activity tab leaves out stays out: money moved between
-// the person's cash accounts, what they excluded, and rows in another
-// currency (named). Money that left cash as a transfer to an account outside
+// the person's cash accounts, what they excluded, and, without a home
+// currency, rows in another currency (named). Money that left cash as a transfer to an account outside
 // it (rent by Zelle, a move to an account Nya doesn't hold, or to one of the
 // person's that isn't cash here, such as a health savings account) and cash
 // taken out are neither spending nor nothing: they are added up and named,
@@ -69,6 +69,17 @@
 // expense always and income only while income comes, and can be left out in
 // the what-if, since one that repeats something already in the spending
 // counts twice.
+//
+// WITH A HOME CURRENCY (lib/fx/), the runway keeps its currency, its cash
+// accounts' main one, as the forecast does (what the person types in the
+// what-if is in it), and what is in another is converted into it: each
+// transaction at its own day's rate (lib/fx/totals.ts totalsIn, so a
+// window's spending is its rows converted, to the cent), and a cash
+// account's balance, what is pending on it and each payment, bill and
+// planned item at the newest rates (lib/forecast.ts), each listed with its
+// own amount too. What has no rate is left out and named, with why. A row is
+// still matched to its bill, and a move out to its other side, by the
+// amount and currency it was in.
 //
 // THE ARITHMETIC. In whole minor units of the runway's currency, as the
 // forecast's. Day 0 is today: the balance now, with what is expected today.
@@ -99,9 +110,11 @@ import {
   type RecurringRow,
   type RecurringSeries,
 } from '../recurring';
-import { forecastEvents, minorScale, type CashPosition, type ForecastEvent } from '../forecast';
+import { forecastConverter, forecastEvents, joinConversions, minorScale, type CashPosition, type ForecastConversion, type ForecastEvent } from '../forecast';
 import { nextPlannedDate, type PlannedCadence, type PlannedItem, type PlannedKind } from '../planned';
-import { countsInTotals, inCurrency, isExcluded, isMoneyMovement, isTransfer, totalsCurrency, type Countable, type LeftOut } from '../spending';
+import { countsInTotals, currencyOf, inCurrency, isExcluded, isMoneyMovement, isTransfer, totalsCurrency, type Countable, type LeftOut } from '../spending';
+import { conversionIn, totalsIn, type Conversion, type WasIn } from '../fx/totals';
+import type { FxTable, OwnRate } from '../fx/rates';
 import { summarize, tidy, type TotalsRow } from '../totals';
 import { legacyKind } from '../categories';
 import { addDays, daysFrom } from './period';
@@ -151,8 +164,14 @@ export function runwayWindow(today: string, months: RunwayWindow): RunwaySpan {
   return { months, start, end, days: daysFrom(start, end) + 1, list };
 }
 
-/** What the runway reads of a transaction: the Activity tab's row. */
-export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null; account_id?: string };
+/** What the runway reads of a transaction: the Activity tab's row; with a
+ *  home currency, converted into the runway's (`converted`: what it was). */
+export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null; account_id?: string; converted?: WasIn };
+
+/** A row as it was written, before any conversion: what its bill and the
+ *  other side of a move are matched by (see WITH A HOME CURRENCY). */
+const asWritten = (t: RunwayRow): RunwayRow =>
+  t.converted ? { ...t, amount: t.converted.amount, iso_currency_code: t.converted.currency, unofficial_currency_code: null } : t;
 
 /** A single large outflow or inflow, listed (see ONE-OFFS). */
 export type OneOff = { date: string; name: string; amount: number };
@@ -211,6 +230,9 @@ export type WindowSpending = {
   left_out_text: string | null;
   /** Its months that may be short, oldest first. */
   short: MonthShort[];
+  /** With a home currency: what of its transactions was converted, and why
+   *  those left out have no rate (lib/fx/totals.ts conversionIn). */
+  conversion?: Conversion | null;
 };
 
 /** The merchant or payer a row is from, for telling a one-off: its vendor
@@ -315,8 +337,12 @@ function movesOut(
   accounts?: ReadonlySet<string>
 ): Map<RunwayRow, MoveFate> {
   const { accountOf, onAccount } = accountMatch(accounts);
-  const scale = minorScale(currency);
-  const units = (n: number) => Math.round(n * scale);
+  // Paired by the amount and currency each was in (see WITH A HOME CURRENCY).
+  const keyOf = (t: RunwayRow, sign: 1 | -1) => {
+    const w = asWritten(t);
+    const c = currencyOf(w) ?? currency;
+    return `${c ?? ''}|${Math.round(sign * w.amount * minorScale(c))}`;
+  };
   const fromCash = (t: RunwayRow) => (cash ? t.account_type !== 'credit' && cash.some((a) => onAccount(t, a)) : t.account_type === 'depository');
   const isCardPayment = (t: RunwayRow) => t.subcategory === CARD_PAYMENT;
 
@@ -338,17 +364,18 @@ function movesOut(
   for (const t of outs) if (!isCardPayment(t) && t.transaction_code === 'atm') fate.set(t, 'atm');
   // Every possible pairing, nearest in days first; then each payment and
   // each receipt is taken once.
-  const byAmount = new Map<number, number[]>();
+  const byAmount = new Map<string, number[]>();
   receipts.forEach((r, i) => {
-    const list = byAmount.get(units(-r.t.amount)) ?? [];
+    const key = keyOf(r.t, -1);
+    const list = byAmount.get(key) ?? [];
     list.push(i);
-    byAmount.set(units(-r.t.amount), list);
+    byAmount.set(key, list);
   });
   const prefer = { card: 0, cash: 1, own: 2 } as const;
   const pairs: { o: number; r: number; days: number }[] = [];
   outs.forEach((t, o) => {
     if (fate.has(t)) return;
-    for (const r of byAmount.get(units(t.amount)) ?? []) {
+    for (const r of byAmount.get(keyOf(t, 1)) ?? []) {
       const { t: x, kind } = receipts[r];
       if (accountOf(x) === accountOf(t)) continue;
       if (isCardPayment(t) && kind !== 'card') continue;
@@ -369,8 +396,8 @@ function movesOut(
   // A series that pays a card in Nya, its payments seen landing there; and
   // the groups whose payments have landed on one.
   const landed = outs.filter((t) => fate.get(t) === 'card' && isCardPayment(t));
-  const landing = series.filter((x) => x.paysCardOf && landed.some((t) => inSeries(t, x)));
-  const landedGroups = new Set(landed.map((t) => seriesGroupOf(t)).filter((g) => g !== null));
+  const landing = series.filter((x) => x.paysCardOf && landed.some((t) => inSeries(asWritten(t), x)));
+  const landedGroups = new Set(landed.map((t) => seriesGroupOf(asWritten(t))).filter((g) => g !== null));
   const newest = rows.reduce((d, t) => (t.date > d ? t.date : d), '');
   const notInYet = (t: RunwayRow, days: number) => daysFrom(t.date, newest) < days;
   // Where a move may have arrived unseen.
@@ -387,8 +414,8 @@ function movesOut(
   for (const t of outs) {
     if (fate.has(t)) continue;
     if (isCardPayment(t)) {
-      const group = seriesGroupOf(t);
-      const arriving = landing.some((x) => inSeries(t, x)) || (group !== null && landedGroups.has(group) && notInYet(t, CARD_PAYMENT_DAYS));
+      const group = seriesGroupOf(asWritten(t));
+      const arriving = landing.some((x) => inSeries(asWritten(t), x)) || (group !== null && landedGroups.has(group) && notInYet(t, CARD_PAYMENT_DAYS));
       fate.set(t, arriving ? 'card' : 'unseen_card');
     } else fate.set(t, mayHaveArrived(t) ? 'unsure' : 'out');
   }
@@ -442,13 +469,16 @@ export function windowSpending(
   for (const t of rows) {
     if (!inSpan(t.date)) continue;
     if (countsInTotals(t, currency)) {
+      // A bill or pay is matched by the row as written; what is added up is
+      // the row as counted (converted, with a home currency).
+      const written = asWritten(t);
       if (t.amount < 0) {
-        const isPay = pay.some((p) => inSeries(t, p));
+        const isPay = pay.some((p) => inSeries(written, p));
         if (filedAsSpending(t) && !isPay) refunds += -t.amount;
         else if (!isPay) add(ins, t, -t.amount);
       } else if (t.amount > 0) {
-        if (infrequent.some((b) => inSeries(t, b))) infrequentOut += t.amount;
-        else if (!bills.some((b) => inSeries(t, b))) add(outs, t, t.amount);
+        if (infrequent.some((b) => inSeries(written, b))) infrequentOut += t.amount;
+        else if (!bills.some((b) => inSeries(written, b))) add(outs, t, t.amount);
       }
       continue;
     }
@@ -738,11 +768,22 @@ export function monthsText(months: number): string {
   return `${Math.floor(tenths / 10)}.${tenths % 10}`;
 }
 
+/** An amount as it was written, beside its conversion into the runway's
+ *  currency at the newest rates (see WITH A HOME CURRENCY). */
+export type OwnAmount = { amount: number; currency: string };
+
 /** A detected bill the runway adds on its dates (paymentsOutsideSpending,
- *  infrequentBills). */
-export type RunwayPayment = { name: string; institution: string; account: string; amount: number; cadence: Cadence; next: string | null };
-/** A planned item the runway adds, in its currency, with its next day. */
-export type RunwayPlanned = { name: string; kind: PlannedKind; amount: number; cadence: PlannedCadence; next: string };
+ *  infrequentBills), in the runway's currency; `own` when converted. */
+export type RunwayPayment = { name: string; institution: string; account: string; amount: number; cadence: Cadence; next: string | null; own?: OwnAmount };
+/** A planned item the runway adds, in the runway's currency, with its next
+ *  day; `own` when converted. */
+export type RunwayPlanned = { name: string; kind: PlannedKind; amount: number; cadence: PlannedCadence; next: string; own?: OwnAmount };
+
+/** With a home currency: what the runway converted into its currency, the
+ *  transactions at their days' rates and the expected amounts (payments,
+ *  bills and planned items) at the newest; the cash accounts' is the
+ *  position's (CashPosition.conversion). */
+export type RunwayConversion = { home: string; own_rates: readonly OwnRate[]; rows: Conversion | null; expected: ForecastConversion | null };
 
 /** What the runway is worked out from, and what it lists of it. */
 export type RunwayBuilt = RunwayInputs & {
@@ -756,16 +797,23 @@ export type RunwayBuilt = RunwayInputs & {
   /** Expected amounts (payments, bills and planned items) left out for their
    *  currency, by currency. */
   events_left_out: LeftOut;
+  /** With a home currency, what was converted; null without one. */
+  conversion: RunwayConversion | null;
 };
 
-/** A detected bill as the runway lists it, with its next expected date. */
-const asPayment = (s: RecurringSeries, today: string, until: string): RunwayPayment => ({
+/** An amount in the runway's currency: as written, or converted (`own`). */
+type InRunway = { amount: number; own?: OwnAmount };
+
+/** A detected bill as the runway lists it, with its next expected date, at
+ *  its amount in the runway's currency (`at`). */
+const asPayment = (s: RecurringSeries, today: string, until: string, at: InRunway): RunwayPayment => ({
   name: s.name,
   institution: s.institution,
   account: s.account,
-  amount: tidy(s.amount),
+  amount: tidy(at.amount),
   cadence: s.cadence,
   next: expectedDates(s, today, until).dates[0]?.date ?? null,
+  ...(at.own ? { own: at.own } : {}),
 });
 
 /**
@@ -775,7 +823,9 @@ const asPayment = (s: RecurringSeries, today: string, until: string): RunwayPaym
  * recurring detection needs (`history`), the planned items and the series
  * marked not recurring (null when they couldn't be read: then none are in
  * it), and the months that may be short. In the cash's currency; with no
- * cash naming one, the one most of the rows are in.
+ * cash naming one, the one most of the rows are in. `fx` (a home currency):
+ * what is in another currency converts into it (see WITH A HOME CURRENCY);
+ * the position is read with the same table (lib/forecast.ts cashPosition).
  */
 export function buildRunwayInputs(opts: {
   today: string;
@@ -787,41 +837,67 @@ export function buildRunwayInputs(opts: {
   short?: readonly MonthShort[];
   /** Every account id the read lists, by which rows are told apart. */
   accounts?: readonly string[];
+  fx?: FxTable | null;
+  now?: number;
 }): RunwayBuilt {
   const { today, position } = opts;
   const currency = position.currency ?? totalsCurrency(opts.rows);
+  // Bills are found in the rows as written, each series in its own currency.
   const series = detectRecurring([...opts.rows, ...(opts.history ?? [])]);
   const dismissed = new Set(dismissedSeries(series, opts.dismissed ?? []).keys());
   const live = series.filter((s) => !dismissed.has(s.id));
   const outside = paymentsOutsideSpending(series, opts.rows, dismissed);
   const infrequent = infrequentBills(series, opts.rows, dismissed);
+  // The rows as the windows count them: converted into the runway's
+  // currency, each at its day's rate, with a home currency.
+  const fx = opts.fx?.home && currency ? opts.fx : null;
+  const counting = fx ? totalsIn(opts.rows, fx, { into: { currency: currency! }, now: opts.now }) : null;
+  const rows = counting?.rows ?? opts.rows;
   const cash = position.included.map((a) => ({ account_id: a.account_id, name: a.name, institution: a.institution, manual: a.manual, subtype: a.subtype ?? null }));
   const accounts = opts.accounts ? new Set(opts.accounts) : undefined;
-  const windows = RUNWAY_WINDOWS.map((m) => windowSpending(opts.rows, runwayWindow(today, m), currency, opts.short ?? [], { infrequent, series: live, cash, accounts }));
+  const windows = RUNWAY_WINDOWS.map((m) => {
+    const span = runwayWindow(today, m);
+    const w = windowSpending(rows, span, currency, opts.short ?? [], { infrequent, series: live, cash, accounts });
+    // What of the window's own rows was converted.
+    return counting ? { ...w, conversion: conversionIn(rows.filter((t) => t.date >= span.start && t.date <= span.end), counting.conversion) } : w;
+  });
   const until = addDays(today, HORIZON_DAYS);
   const planned = opts.planned ?? [];
-  const fromForecast = forecastEvents({ series: outside, planned, currency, today, until });
+  const fromForecast = forecastEvents({ series: outside, planned, currency, today, until, fx });
+  // An amount in the runway's currency: as written, converted at the newest
+  // rates with a home currency, or null (left out and named). `bills` counts
+  // the bills less often than monthly converted, for the notes.
+  const bills = forecastConverter(fx, currency, today);
+  const inRunway = (amount: number, c: string | null, count = false): InRunway | null => {
+    if (inCurrency({ iso_currency_code: c }, currency)) return { amount };
+    const converted = bills.to(amount, c!, count);
+    return converted === null ? null : { amount: converted, own: { amount, currency: c! } };
+  };
   // The bills less often than monthly, on their dates: on a card too, whose
   // charge leaves cash with the card's payment, as the spending counts it.
-  const ownCurrency = (s: RecurringSeries) => inCurrency({ iso_currency_code: s.currency }, currency);
-  const billEvents: ForecastEvent[] = infrequent.filter(ownCurrency).flatMap((s) =>
-    expectedDates(s, today, until).dates.map((d) => ({
+  const others = new Map(fromForecast.leftOut.map((l) => [l.currency, l.count] as const));
+  const billEvents: ForecastEvent[] = infrequent.flatMap((s) => {
+    const at = inRunway(s.amount, s.currency, true);
+    if (at === null) {
+      others.set(s.currency!, (others.get(s.currency!) ?? 0) + 1);
+      return [];
+    }
+    return expectedDates(s, today, until).dates.map((d) => ({
       date: d.date,
-      amount: -s.amount,
+      amount: -at.amount,
       name: s.name,
       source: 'bill' as const,
       ref: s.id,
       cadence: s.cadence,
       ...(d.late ? { late: true, due: d.due } : {}),
-    }))
-  );
-  const others = new Map(fromForecast.leftOut.map((l) => [l.currency, l.count] as const));
-  for (const s of infrequent) if (!ownCurrency(s)) others.set(s.currency!, (others.get(s.currency!) ?? 0) + 1);
+      ...(at.own ? { own: { amount: -at.own.amount, currency: at.own.currency } } : {}),
+    }));
+  });
   const listed = (list: RecurringSeries[]) =>
-    list
-      .filter(ownCurrency)
-      .map((s) => asPayment(s, today, until))
-      .filter((p) => p.next !== null);
+    list.flatMap((s) => {
+      const at = inRunway(s.amount, s.currency);
+      return at === null ? [] : [asPayment(s, today, until, at)];
+    }).filter((p) => p.next !== null);
   return {
     today,
     currency,
@@ -833,12 +909,15 @@ export function buildRunwayInputs(opts: {
     outside: listed(outside),
     infrequent: listed(infrequent),
     planned: planned
-      .filter((p) => inCurrency({ iso_currency_code: p.currency }, currency))
       .flatMap((p) => {
+        const at = inRunway(p.amount, p.currency);
         const next = nextPlannedDate(p, today);
-        return next !== null && next <= until ? [{ name: p.name, kind: p.kind, amount: p.amount, cadence: p.cadence, next }] : [];
+        return at !== null && next !== null && next <= until
+          ? [{ name: p.name, kind: p.kind, amount: tidy(at.amount), cadence: p.cadence, next, ...(at.own ? { own: at.own } : {}) }]
+          : [];
       })
       .sort((a, b) => (a.next < b.next ? -1 : a.next > b.next ? 1 : a.name.localeCompare(b.name))),
     events_left_out: [...others].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    conversion: fx ? { home: fx.home!, own_rates: fx.own, rows: counting?.conversion ?? null, expected: joinConversions(fromForecast.conversion, bills.done()) } : null,
   };
 }

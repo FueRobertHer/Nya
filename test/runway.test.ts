@@ -546,3 +546,87 @@ describe('when there is no runway to give', () => {
     for (const line of [p.without_income, p.with_income]) expect(line).toMatchObject({ outcome: 'no_spending', runs_out: null, days: null });
   });
 });
+
+describe('with a home currency (lib/report/runway.ts WITH A HOME CURRENCY)', () => {
+  const { ecbTable } = require('./fx-fixture') as typeof import('./fx-fixture');
+  const { runwayCaveats, runwayConvertedText } = require('@/lib/report/runway-words') as typeof import('@/lib/report/runway-words');
+  // A rate of the person's own for the dollar, quoted in euros: 1 USD is
+  // 0.80 EUR on every day, so 1 EUR is 1.25 USD exactly, whatever the day.
+  const FIXED = ecbTable({ home: 'EUR', own: [{ currency: 'USD', rate: '0.8', quote: 'EUR', from: null, set_at: '2026-01-01T00:00:00.000Z' }] });
+  const fmt = { day: (d: string) => d, time: (t: string) => t, month: (m: string) => m };
+
+  test('keeps its currency, the cash accounts’; a meal in euros counts converted, to the cent, its rows converted', () => {
+    const b = built({ fx: FIXED });
+    expect(b.currency).toBe('USD');
+    const w = b.windows.find((x) => x.months === 3)!;
+    // 9,200.00 as by hand, and the 90 euros at 1.25: 112.50.
+    expect(w.money_out).toBe(9312.5);
+    expect(w.left_out).toEqual([]);
+    expect(w.conversion?.from).toEqual([{ currency: 'EUR', count: 1 }]);
+    // The window's figure is its rows converted, added up.
+    const { totalsIn } = require('@/lib/fx/totals') as typeof import('@/lib/fx/totals');
+    const rows = totalsIn(ROWS, FIXED, { into: { currency: 'USD' } }).rows;
+    expect(w.money_out).toBe(summarize(rows, (d) => d >= '2026-07-01' && d <= '2026-09-30', 'USD').money_out);
+    // Without one, as before: the meal left out and named.
+    expect(built().windows.find((x) => x.months === 3)!).toMatchObject({ money_out: 9200, left_out: [{ currency: 'EUR', count: 1 }] });
+  });
+
+  test('a planned item in euros is added converted at the newest rates, listed with what it was', () => {
+    const b = built({ fx: FIXED });
+    expect(b.planned.find((p) => p.name === 'Paris trip')).toEqual({ name: 'Paris trip', kind: 'expense', amount: 1125, cadence: 'once', next: '2027-01-10', own: { amount: 900, currency: 'EUR' } });
+    expect(b.events.find((e) => e.ref === 'euro')).toMatchObject({ date: '2027-01-10', amount: -1125, own: { amount: -900, currency: 'EUR' } });
+    expect(b.events_left_out).toEqual([]);
+    expect(b.conversion?.expected?.from).toEqual([{ currency: 'EUR', count: 1 }]);
+    expect(built().events_left_out).toEqual([{ currency: 'EUR', count: 1 }]);
+    // The page says what was converted, never an amount.
+    const words = runwayConvertedText(b, b.windows.find((x) => x.months === 3)!);
+    expect(words).toContain('Converted into USD at each day’s ECB rate, and your own rate for USD: 1 transaction in EUR.');
+    expect(words).toContain('1 expected amount in EUR');
+    expect(words).not.toMatch(/\d+\.\d\d/);
+  });
+
+  test('a bill less often than monthly in euros is matched as written: taken out of the average converted, and added on its dates, never twice', () => {
+    const allianz = ['2025-11-10', '2026-02-10', '2026-05-10', '2026-08-10'].map((d) =>
+      row(`allianz-${d}`, d, 120, { name: 'Allianz', vendor_key: 'allianz', category: 'insurance', iso_currency_code: 'EUR', account_name: 'Karte', account_type: 'credit', institution_name: 'Sparkasse' })
+    );
+    const b = built({ rows: [...ROWS, ...allianz], fx: FIXED });
+    expect(b.infrequent).toEqual([expect.objectContaining({ name: 'Allianz', amount: 150, cadence: 'quarterly', own: { amount: 120, currency: 'EUR' } })]);
+    const w = b.windows.find((x) => x.months === 3)!;
+    // August's 120 euros, at 1.25: in money out, and taken out again.
+    expect(w.money_out).toBe(9312.5 + 150);
+    expect(w.infrequent).toBe(150);
+    expect(w.spending).toBe(9312.5);
+    // Added on its dates, from November 10, converted.
+    expect(b.events.find((e) => e.name === 'Allianz')).toMatchObject({ date: '2026-11-10', amount: -150, own: { amount: -120, currency: 'EUR' } });
+  });
+
+  test('a move between two cash accounts in euros pairs by what it was, though each day’s rate differs', () => {
+    const ECB = ecbTable({ home: 'EUR' });
+    const euroCash = {
+      ...position(),
+      included: [
+        ...position().included,
+        { account_id: 'giro', name: 'Girokonto', institution: 'Sparkasse', balance: 0, manual: false, currency: 'EUR' },
+        { account_id: 'tag', name: 'Tagesgeld', institution: 'Sparkasse', balance: 0, manual: false, currency: 'EUR' },
+      ],
+    };
+    const at = { iso_currency_code: 'EUR', institution_name: 'Sparkasse', transaction_code: 'transfer' as const };
+    const move = [
+      row('to-tagesgeld', '2026-09-10', 500, { ...at, name: 'To Tagesgeld', account_name: 'Girokonto', category: 'transfer out' }),
+      row('from-giro', '2026-09-11', -500, { ...at, name: 'From Girokonto', vendor_key: 'from-giro', account_name: 'Tagesgeld', category: 'transfer in' }),
+    ];
+    const w = buildRunwayInputs({ today: TODAY, position: euroCash, rows: [...ROWS, ...move], planned: [], dismissed: [], fx: ECB }).windows.find((x) => x.months === 3)!;
+    // 580.80 out (at 1.1616) and 579.60 in (at 1.1592): one move all the same.
+    expect(w.transfers_out).toBe(0);
+  });
+
+  test('what has no rate is left out and named, with why', () => {
+    const pesos = row('kiosco', '2026-09-03', 5000, { name: 'Kiosco', iso_currency_code: 'ARS', category: 'food and drink' });
+    const b = built({ rows: [...ROWS, pesos], fx: FIXED });
+    const w = b.windows.find((x) => x.months === 3)!;
+    expect(w.left_out).toEqual([{ currency: 'ARS', count: 1 }]);
+    const p = projectRunway(b, whatIf());
+    expect(runwayCaveats({ ...b, gaps: [], notes: [], stale_balances: [], owed_on_cards: 0 }, p, fmt).join(' ')).toContain('ARS');
+    expect(runwayCaveats({ ...b, gaps: [], notes: [], stale_balances: [], owed_on_cards: 0 }, p, fmt).join(' ')).toContain('there is no rate for ARS');
+  });
+});

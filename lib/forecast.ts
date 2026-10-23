@@ -18,8 +18,17 @@
 // pending stays expected, lib/recurring.ts), and a transfer between two of
 // them, pending on both sides, moves nothing. One currency at a time, as
 // every total: the one most of them are in, and an account that names none is
-// taken to be in it (as lib/spending.ts takes a row). Those in another
-// currency are left out and named, and so is an account without a balance.
+// taken to be in it (as lib/spending.ts takes a row). Without a home currency,
+// those in another currency are left out and named, and so is an account
+// without a balance.
+//
+// WITH A HOME CURRENCY (lib/fx/), the forecast keeps its currency (the
+// warning the person typed is in it, lib/planned.ts thresholdOf) and what is
+// in another is converted into it at the newest rates, a day to come having
+// no rate of its own: a cash account's balance and what is pending on it, and
+// each bill, income or planned item's amount, each rounded once. Each is
+// still listed in its own currency (ForecastEvent.own); what has no rate is
+// left out and named, with why.
 //
 // WHAT MOVES IT. Only money that leaves or reaches those accounts: each
 // detected bill and income ON A CASH ACCOUNT (rent, a mortgage, a card's
@@ -48,6 +57,9 @@ import { plannedDates, type PlannedCadence, type PlannedItem } from './planned';
 import { inCurrency, isMoneyMovement, leftOutText, type LeftOut } from './spending';
 import { dominantCurrency, formatMoney } from './format';
 import { minorDigits } from './manual-txn-input';
+import { currencyOf } from './spending';
+import { convert, type FxTable, type NoRate } from './fx/rates';
+import { reasonText } from './fx/words';
 
 /** The ranges a forecast is shown for, in days from today. */
 export const FORECAST_RANGES = [30, 60, 90] as const;
@@ -123,7 +135,74 @@ export type CashAccount = {
   /** Its subtype, when known ("cash" for cash on hand). */
   subtype?: string;
   updated_at?: string;
+  /** Its own currency, when it is converted into the forecast's (`balance`
+   *  is then in it, as the account shows it). */
+  currency?: string;
 };
+
+/** What a forecast converted into its currency, with a home currency: each
+ *  currency and how many accounts or amounts in it, those a rate of the
+ *  person's own priced, and each left out for having no rate, with why. */
+export type ForecastConversion = {
+  into: string;
+  from: { currency: string; count: number }[];
+  own: string[];
+  unrated: { currency: string; why: NoRate; unrated: string }[];
+};
+
+/** Converts amounts into `into` at the newest rates on `today` (a day to
+ *  come has none of its own), counting what it did for the notes. The
+ *  runway converts its bills less often than monthly with it
+ *  (lib/report/runway.ts). */
+export function forecastConverter(fx: FxTable | null | undefined, into: string | null, today: string) {
+  const from = new Map<string, number>();
+  const own = new Set<string>();
+  const unrated = new Map<string, ForecastConversion['unrated'][number]>();
+  const day = fx?.latest && fx.latest.date > today ? fx.latest.date : today;
+  const on = !!fx?.home && into !== null;
+  return {
+    on,
+    /** The amount in `into`, or null with no rate (named). `count`: one more
+     *  of it for the notes. */
+    to(amount: number, currency: string, count = true): number | null {
+      if (!on) return null;
+      const r = convert(fx!, amount, currency, into!, day);
+      if (!r.ok) {
+        if (!unrated.has(currency)) unrated.set(currency, { currency, why: r.why, unrated: r.currency });
+        return null;
+      }
+      if (count) from.set(currency, (from.get(currency) ?? 0) + 1);
+      if (r.from.source === 'own') own.add(currency);
+      if (r.to.source === 'own') own.add(into!);
+      return r.amount;
+    },
+    done(): ForecastConversion | null {
+      if (!on) return null;
+      return {
+        into: into!,
+        from: [...from].map(([currency, count]) => ({ currency, count })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+        own: [...own].sort(),
+        unrated: [...unrated.values()].sort((a, b) => (a.currency < b.currency ? -1 : 1)),
+      };
+    },
+  };
+}
+
+/** Two conversions into one currency as one (the forecast's expected
+ *  amounts and the runway's bills beside them): counts added, rates and
+ *  what had none joined. Null when neither converted anything. */
+export function joinConversions(a: ForecastConversion | null | undefined, b: ForecastConversion | null | undefined): ForecastConversion | null {
+  if (!a || !b) return a ?? b ?? null;
+  const from = new Map<string, number>();
+  for (const f of [...a.from, ...b.from]) from.set(f.currency, (from.get(f.currency) ?? 0) + f.count);
+  const unrated = new Map([...a.unrated, ...b.unrated].map((u) => [u.currency, u] as const));
+  return {
+    into: a.into,
+    from: [...from].map(([currency, count]) => ({ currency, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1)),
+    own: [...new Set([...a.own, ...b.own])].sort(),
+    unrated: [...unrated.values()].sort((x, y) => (x.currency < y.currency ? -1 : 1)),
+  };
+}
 
 /** What the forecast reads of a transaction, for the charges still pending
  *  (the Activity tab's Txn). */
@@ -157,6 +236,9 @@ export type CashPosition = {
   leftOut: LeftOut;
   /** Cash accounts with no balance to start from. */
   noBalance: { name: string; institution: string }[];
+  /** With a home currency: the accounts converted into `currency`, and why
+   *  those left out have no rate; null (or absent) without one. */
+  conversion?: ForecastConversion | null;
 };
 
 /** Minor units in one unit of a currency: 100 for USD, 1 for JPY, 1000 for
@@ -168,27 +250,40 @@ export function minorScale(currency: string | null): number {
 const toMinor = (n: number, scale: number) => Math.round(n * scale);
 
 /** Where a forecast starts: the cash accounts, their currency and balance,
- *  less the charges pending on them (see the header). */
-export function cashPosition(institutions: readonly ForecastInstitution[], txns: readonly PendingRow[] = []): CashPosition {
+ *  less the charges pending on them (see the header). `fx` and `today`: with
+ *  a home currency, what converts an account in another currency, and the
+ *  viewer's day. */
+export function cashPosition(
+  institutions: readonly ForecastInstitution[],
+  txns: readonly PendingRow[] = [],
+  opts: { fx?: FxTable | null; today?: string } = {}
+): CashPosition {
   const cash = institutions.flatMap((i) =>
     i.accounts.filter((a) => a.type === 'depository' && !a.hidden).map((a) => ({ a, institution: i.institution_name, manual: !!i.manual && !i.connector }))
   );
   const currency = dominantCurrency(cash.map(({ a }) => ({ iso_currency_code: a.currency })));
   const scale = minorScale(currency);
+  const conv = forecastConverter(opts.fx, currency, opts.today ?? new Date().toISOString().slice(0, 10));
   const included: CashAccount[] = [];
   const noBalance: CashPosition['noBalance'] = [];
   const others = new Map<string, number>();
   let balances = 0;
   for (const { a, institution, manual } of cash) {
-    if (a.currency && currency && a.currency !== currency) {
-      others.set(a.currency, (others.get(a.currency) ?? 0) + 1);
+    const foreign = !!a.currency && !!currency && a.currency !== currency;
+    if (foreign && !conv.on) {
+      others.set(a.currency!, (others.get(a.currency!) ?? 0) + 1);
       continue;
     }
     if (a.balance === null || !Number.isFinite(a.balance)) {
       noBalance.push({ name: a.name, institution });
       continue;
     }
-    balances += toMinor(a.balance, scale);
+    const balance = foreign ? conv.to(a.balance, a.currency!) : a.balance;
+    if (balance === null) {
+      others.set(a.currency!, (others.get(a.currency!) ?? 0) + 1);
+      continue;
+    }
+    balances += toMinor(balance, scale);
     included.push({
       account_id: a.account_id,
       name: a.name,
@@ -197,6 +292,7 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
       manual,
       ...(a.subtype ? { subtype: a.subtype } : {}),
       ...(a.updated_at ? { updated_at: a.updated_at } : {}),
+      ...(foreign ? { currency: a.currency! } : {}),
     });
   }
   const leftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
@@ -204,19 +300,26 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
   // Pending on an included account: by its id where the row has one that is
   // one of these accounts' (so two accounts of one name at one bank are two),
   // else as a row names its account, by name and institution; and its type
-  // when known.
+  // when known. In another currency, converted as its account is, with a
+  // home currency.
   const known = new Set(institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
   const ids = new Set(included.map((a) => a.account_id));
   const accounts = new Set(included.map((a) => `${a.institution}|${a.name}`));
   const byId = (t: PendingRow) => t.account_id !== undefined && known.has(t.account_id);
   const accountOf = (t: PendingRow) => (byId(t) ? `id:${t.account_id}` : `${t.institution_name}|${t.account_name}`);
-  const onCash = txns.filter(
-    (t) =>
-      t.pending &&
-      (byId(t) ? ids.has(t.account_id!) : accounts.has(`${t.institution_name}|${t.account_name}`)) &&
-      (t.account_type === undefined || t.account_type === null || t.account_type === 'depository') &&
-      inCurrency(t, currency)
-  );
+  const onCash = txns
+    .filter(
+      (t) =>
+        t.pending &&
+        (byId(t) ? ids.has(t.account_id!) : accounts.has(`${t.institution_name}|${t.account_name}`)) &&
+        (t.account_type === undefined || t.account_type === null || t.account_type === 'depository')
+    )
+    .flatMap((t) => {
+      if (inCurrency(t, currency)) return [t];
+      const c = currencyOf(t);
+      const amount = c && conv.on ? conv.to(t.amount, c, false) : null;
+      return amount === null ? [] : [{ ...t, amount, iso_currency_code: currency, unofficial_currency_code: null }];
+    });
   const deposits = onCash.filter((t) => t.amount < 0 && isMoneyMovement(t));
   const paired = new Set<PendingRow>();
   let pending = 0;
@@ -248,6 +351,7 @@ export function cashPosition(institutions: readonly ForecastInstitution[], txns:
     included,
     leftOut,
     noBalance,
+    ...(conv.on ? { conversion: conv.done() } : {}),
   };
 }
 
@@ -264,6 +368,9 @@ export type ForecastEvent = {
   late?: boolean;
   /** Its scheduled date, when that isn't `date` (a late one). */
   due?: string;
+  /** Its amount in its own currency, when it is converted into the
+   *  forecast's (with a home currency): what the forecast lists. */
+  own?: { amount: number; currency: string };
 };
 
 /** Whether the forecast counts a series at all: one on a cash account whose
@@ -292,7 +399,8 @@ export type LeftOutSeries = {
  * dates on a cash account and each planned item's days, in the forecast's
  * `currency`, soonest first (on a day, money in before money out). Dismissed
  * series (the ids lib/recurring.ts dismissedSeries gives) are left out, and so
- * is anything in another currency, counted by currency in `leftOut`.
+ * is anything in another currency, counted by currency in `leftOut`, unless
+ * `fx` (a home currency) converts it at the newest rates (see the header).
  */
 export function forecastEvents(opts: {
   series: readonly RecurringSeries[];
@@ -301,11 +409,20 @@ export function forecastEvents(opts: {
   currency: string | null;
   today: string;
   until: string;
-}): { events: ForecastEvent[]; leftOut: LeftOut } & LeftOutSeries {
+  fx?: FxTable | null;
+}): { events: ForecastEvent[]; leftOut: LeftOut; conversion: ForecastConversion | null } & LeftOutSeries {
   const { currency, today, until } = opts;
   const events: ForecastEvent[] = [];
   const others = new Map<string, number>();
   const leaveOut = (c: string) => others.set(c, (others.get(c) ?? 0) + 1);
+  const conv = forecastConverter(opts.fx, currency, today);
+  /** An amount in the forecast's currency: itself, or converted (null with
+   *  no rate, or without a home currency, when it is left out). */
+  const inForecast = (amount: number, c: string | null): { amount: number; own?: ForecastEvent['own'] } | null => {
+    if (inCurrency({ iso_currency_code: c }, currency)) return { amount };
+    const converted = conv.to(amount, c!);
+    return converted === null ? null : { amount: converted, own: { amount, currency: c! } };
+  };
   const named: LeftOutSeries = { varied: [], lapsed: [], unplaced: [], cardsPaid: { known: new Set(), unknown: [] } };
 
   for (const s of opts.series) {
@@ -326,36 +443,50 @@ export function forecastEvents(opts: {
       continue;
     }
     if (dates.length === 0) continue;
-    if (!inCurrency({ iso_currency_code: s.currency }, currency)) {
+    const at = inForecast(s.amount, s.currency);
+    if (at === null) {
       leaveOut(s.currency!);
       continue;
     }
     if (s.paysCardOf) named.cardsPaid.known.add(`${s.paysCardOf.institution}|${s.paysCardOf.account}`);
-    else if (s.paysCard) named.cardsPaid.unknown.push(s.amount);
+    // In the forecast's currency, as the card's statement it is set against.
+    else if (s.paysCard) named.cardsPaid.unknown.push(at.amount);
+    const sign = s.kind === 'income' ? 1 : -1;
     for (const d of dates)
       events.push({
         date: d.date,
-        amount: s.kind === 'income' ? s.amount : -s.amount,
+        amount: sign * at.amount,
         name: s.name,
         source: s.kind,
         ref: s.id,
         cadence: s.cadence,
         ...(d.late ? { late: true, due: d.due } : {}),
+        ...(at.own ? { own: { amount: sign * at.own.amount, currency: at.own.currency } } : {}),
       });
   }
   for (const item of opts.planned) {
     const days = plannedDates(item, today, until);
     if (days.length === 0) continue;
-    if (!inCurrency({ iso_currency_code: item.currency }, currency)) {
+    const at = inForecast(item.amount, item.currency);
+    if (at === null) {
       leaveOut(item.currency);
       continue;
     }
+    const sign = item.kind === 'income' ? 1 : -1;
     for (const date of days)
-      events.push({ date, amount: item.kind === 'income' ? item.amount : -item.amount, name: item.name, source: 'planned', ref: item.id, cadence: item.cadence });
+      events.push({
+        date,
+        amount: sign * at.amount,
+        name: item.name,
+        source: 'planned',
+        ref: item.id,
+        cadence: item.cadence,
+        ...(at.own ? { own: { amount: sign * at.own.amount, currency: at.own.currency } } : {}),
+      });
   }
   events.sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount));
   const leftOut = [...others].map(([c, count]) => ({ currency: c, count })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
-  return { events, leftOut, ...named };
+  return { events, leftOut, conversion: conv.done(), ...named };
 }
 
 export type ForecastDay = {
@@ -488,6 +619,8 @@ export function forecastNotes(opts: {
   position: CashPosition;
   /** Expected amounts left out for their currency (forecastEvents). */
   eventsLeftOut: LeftOut;
+  /** With a home currency, why those have no rate (forecastEvents). */
+  eventsConversion?: ForecastConversion | null;
   /** Series left out and named, and the cards whose payment is held
    *  (forecastEvents). */
   series?: Partial<LeftOutSeries>;
@@ -630,9 +763,9 @@ export function forecastNotes(opts: {
   }
 
   for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn't in this forecast.`);
-  const accounts = leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false });
+  const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion);
   if (accounts) notes.push(accounts);
-  const amounts = leftOutText(opts.eventsLeftOut, position.currency, { noun: 'expected amount', where: 'this forecast', plural: false });
+  const amounts = withWhy(leftOutText(opts.eventsLeftOut, position.currency, { noun: 'expected amount', where: 'this forecast', plural: false }), opts.eventsConversion);
   if (amounts) notes.push(amounts);
   const unplaced = opts.series?.unplaced ?? [];
   if (unplaced.length > 0)
@@ -640,4 +773,24 @@ export function forecastNotes(opts: {
       `${join(unique(unplaced.map((s) => s.name)))} ${unplaced.length === 1 ? 'is' : 'are'} on an account whose type isn't known, so ${unplaced.length === 1 ? "it isn't" : "they aren't"} in this forecast.`
     );
   return notes;
+}
+
+/** A sentence of what was left out for its currency, with why each has no
+ *  rate after it when a home currency converts the rest (lib/fx/words.ts). */
+export function withWhy(text: string | null, c: ForecastConversion | null | undefined): string | null {
+  if (text === null || !c || c.unrated.length === 0) return text;
+  return `${text.replace(/\.$/, '')}: ${c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
+}
+
+/** What the forecast converted into its currency, with a home currency, in
+ *  a sentence, or null when nothing was: "Converted into USD at today's ECB
+ *  rates: 1 cash account in EUR and 2 expected amounts in EUR." Never an
+ *  amount. */
+export function forecastConvertedText(accounts: ForecastConversion | null | undefined, amounts: ForecastConversion | null | undefined): string | null {
+  const listed = (from: ForecastConversion['from'], noun: string) => from.map((f, i) => (i === 0 ? `${f.count} ${noun}${f.count === 1 ? '' : 's'} in ${f.currency}` : `${f.count} in ${f.currency}`));
+  const parts = [...listed(accounts?.from ?? [], 'cash account'), ...listed(amounts?.from ?? [], 'expected amount')];
+  const into = accounts?.into ?? amounts?.into;
+  if (!into || parts.length === 0) return null;
+  const own = [...new Set([...(accounts?.own ?? []), ...(amounts?.own ?? [])])].sort();
+  return `Converted into ${into} at today’s ECB rates${own.length > 0 ? `, and your own rate for ${join(own)}` : ''}: ${join(parts)}.`;
 }

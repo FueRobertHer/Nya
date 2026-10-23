@@ -47,6 +47,9 @@ export type BudgetMonthView = {
   earliest: string | null;
   gaps: { month: string; gaps: MonthGap[] }[];
   left_out_text: string | null;
+  /** What of the month's spending was converted into the budgets' currency;
+   *  absent from a server before conversion. */
+  converted_text?: string | null;
   counted_left_out_text: string | null;
   notes: string[];
   /** This month's suggestions from history (lib/budget-suggestions.ts), with

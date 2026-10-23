@@ -29,6 +29,7 @@ import {
   MANUAL_NOTE,
   NO_TRANSACTIONS_WORDS,
   problemLines,
+  reportConvertedText,
   reportTitle,
   STATE_WORDS,
   statusHeadline,
@@ -77,6 +78,10 @@ export function reportCsv(report: Report): string {
   for (const n of caveatLines(report, iso)) line('caveat', n);
 
   const t = report.totals;
+  // With a home currency: what was converted into the file's currency, and
+  // the days of the rates, a row of its own.
+  const converted = reportConvertedText(report, iso);
+  if (converted) line('conversion', `Converted into ${report.currency}`, null, null, null, null, converted);
   line('total', 'Everything counted', t.money_in, t.money_out, t.net, t.counted, totalsNote(report));
   for (const x of report.money_in) line('money_in', x.category, x.amount, null, null, x.transactions);
   for (const x of report.money_out) line('money_out', x.category, null, x.amount, null, x.transactions);

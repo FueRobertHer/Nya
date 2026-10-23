@@ -9,14 +9,18 @@
 // forecast, the calendar and Home's upcoming bills; it is saved with the
 // planned items (lib/planned.ts), and the dismissed are listed to restore.
 // The monthly figures add up what is in the totals' currency, as the read-only
-// API does (lib/totals.ts recurringMonthly).
+// API does (lib/totals.ts recurringMonthly), and with a home currency what is
+// in another converted into it at today's rates; each series is listed in its
+// own currency.
 
 import { useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { addDays, cadenceLabel, expectedDates, type RecurringSeries } from '@/lib/recurring';
 import { formatMoney } from '@/lib/format';
 import { leftOutText } from '@/lib/spending';
-import { countsInMonthly, recurringMonthly } from '@/lib/totals';
+import { countsInMonthly, recurringMonthly, type MonthlyConverted } from '@/lib/totals';
+import { leftOutWhy } from '@/lib/fx/totals';
+import type { FxTable } from '@/lib/fx/rates';
 import type { NoSpending } from '@/lib/no-transactions';
 import { Masked } from './HideAmounts';
 
@@ -40,6 +44,7 @@ export default function RecurringCard({
   noSpending = null,
   loading = false,
   failed = false,
+  fx = null,
 }: {
   series: RecurringSeries[];
   /** The viewer's day (lib/local-date.ts). */
@@ -59,6 +64,9 @@ export default function RecurringCard({
   /** Transactions are still loading, or couldn't be loaded. */
   loading?: boolean;
   failed?: boolean;
+  /** With a home currency, what the monthly figures convert with
+   *  (/api/transactions `fx`). */
+  fx?: FxTable | null;
 }) {
   const [open, setOpen] = useState<string | null>(null);
   const [showDismissed, setShowDismissed] = useState(false);
@@ -86,19 +94,22 @@ export default function RecurringCard({
   const billsMonthly = recurringMonthly(
     bills.map((r) => r.series),
     today,
-    currency
+    currency,
+    fx
   );
   const incomeMonthly = recurringMonthly(
     income.map((r) => r.series),
     today,
-    currency
+    currency,
+    fx
   );
   const leftOut = [
-    leftOutText(billsMonthly.leftOut, currency, { noun: 'bill', where: 'this total', plural: false }),
-    leftOutText(incomeMonthly.leftOut, currency, { noun: 'deposit', where: 'the income total', plural: false }),
+    leftOutWhy(leftOutText(billsMonthly.leftOut, currency, { noun: 'bill', where: 'this total', plural: false }), billsMonthly.converted),
+    leftOutWhy(leftOutText(incomeMonthly.leftOut, currency, { noun: 'deposit', where: 'the income total', plural: false }), incomeMonthly.converted),
   ]
     .filter(Boolean)
     .join(' ');
+  const converted = monthlyConvertedText(billsMonthly.converted, incomeMonthly.converted);
 
   const canEdit = status === 'ready' && !!onDismiss && !busy;
   // Why the buttons are off, said where they are.
@@ -288,8 +299,25 @@ export default function RecurringCard({
       <div className="chart-note">
         Detected from charges and deposits that repeat on a schedule at a consistent amount; dates and amounts are estimates.
         {bills.some((r) => r.series.accountType === 'credit') && ' Bills charged to a card are in this total, and the forecast counts the card\'s payment instead.'}
+        {converted && ` ${converted}`}
         {leftOut && ` ${leftOut}`}
       </div>
     </div>
   );
+}
+
+const join = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+
+/** What the monthly figures converted, in a sentence, or null when nothing
+ *  was: "The monthly figures count 2 bills in EUR and 1 deposit in GBP
+ *  converted into USD at today's ECB rates." Never an amount. */
+export function monthlyConvertedText(bills: MonthlyConverted | null, income: MonthlyConverted | null): string | null {
+  const into = bills?.into ?? income?.into;
+  const parts = [
+    ...(bills?.from ?? []).map((f) => `${f.count} bill${f.count === 1 ? '' : 's'} in ${f.currency}`),
+    ...(income?.from ?? []).map((f) => `${f.count} deposit${f.count === 1 ? '' : 's'} in ${f.currency}`),
+  ];
+  if (!into || parts.length === 0) return null;
+  const own = [...new Set([...(bills?.own ?? []), ...(income?.own ?? [])])].sort();
+  return `The monthly figures count ${join(parts)} converted into ${into} at today’s ECB rates${own.length > 0 ? `, and your own rate for ${join(own)}` : ''}.`;
 }

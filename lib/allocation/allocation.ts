@@ -33,15 +33,20 @@
 // below 0, which is what it holds. Shares are of the whole; when the whole is
 // zero or below there are no shares, only amounts.
 //
-// ONE CURRENCY. Nothing is converted. The allocation is in the currency it is
-// asked for (the Plan's display currency); an account in another one, or a
-// position priced in another one, is left out and named, by currency, as the
-// Plan names what it can't add up. A figure with no currency is taken to be
-// in it, as the rest of the dashboard takes one.
+// ONE CURRENCY. The allocation is in the currency it is asked for (the Plan's
+// display currency); an account in another one, or a position priced in
+// another one, is left out and named, by currency, as the Plan names what it
+// can't add up. A figure with no currency is taken to be in it, as the rest
+// of the dashboard takes one. With a home currency chosen, what is in another
+// currency is first converted into it at the newest rates (inputsIn): each
+// balance and each position on its own, rounded once, so the allocation adds
+// up its rows exactly; only what has no rate is left out then.
 //
 // Pure, and imports nothing that touches storage: the Plan tab runs it.
 
 import { isInvestmentType } from '@/lib/balance';
+import { convert } from '@/lib/fx/rates';
+import { tableOf, type PageFx } from '@/lib/fx/view';
 import { accountBucket, BUCKET_SLOTS, type AccountBucket, type BucketSlot } from './buckets';
 import {
   ASSET_CLASSES,
@@ -195,6 +200,11 @@ export type AllocCaveat =
 
 export type Allocation = {
   currency: string | null;
+  /** With a home currency: what inputsIn converted into `currency`, and
+   *  that what is still in another currency has no rate (absent: nothing is
+   *  converted). Set by the caller that converted. */
+  converted?: AllocationConverted | null;
+  converting?: boolean;
   /** Everything counted: what the classes, and the buckets, add up to. */
   total: number;
   classes: Record<Slot, number>;
@@ -545,6 +555,8 @@ export type PlanMix = {
    *  remainder, so the two never disagree). Null when shares of `whole`
    *  mean nothing. */
   leftOutPct: number | null;
+  /** With a home currency: what is in `otherCurrencies` has no rate. */
+  converting?: boolean;
 } & (
   | { ok: true; stocksPct: number; bondsPct: number; cashPct: number }
   /** "nothing": no stocks, bonds or cash to take a mix from. "negative": one
@@ -577,12 +589,78 @@ export function planMix(alloc: Allocation, bank = 0, bankOtherCurrencies: { curr
   const leftOutPct = rows.some((r) => r.pct === null)
     ? null
     : rows.filter((r) => LEFT_OUT_OF_MIX.includes(r.slot)).reduce((s, r) => s + (r.pct as number), 0);
-  const base = { stocks, bonds, cash, bank, leftOut, otherCurrencies, whole, leftOutPct: rows.length ? leftOutPct : null };
+  const base = { stocks, bonds, cash, bank, leftOut, otherCurrencies, whole, leftOutPct: rows.length ? leftOutPct : null, ...(alloc.converting ? { converting: true } : {}) };
   const below = (['stocks', 'bonds', 'cash'] as const).filter((k) => ({ stocks, bonds, cash })[k] < 0 && isMoney(({ stocks, bonds, cash })[k]));
   if (below.length > 0) return { ...base, ok: false, why: 'negative', below };
   const pcts = wholePercents([stocks, bonds, cash]);
   if (!pcts) return { ...base, ok: false, why: 'nothing' };
   return { ...base, ok: true, stocksPct: pcts[0], bondsPct: pcts[1], cashPct: pcts[2] };
+}
+
+/** What inputsIn converted: the currencies, and those a rate of the
+ *  person's own priced. */
+export type AllocationConverted = { into: string; from: string[]; own: string[] };
+
+/**
+ * The allocation's inputs with what is in another currency than `into`
+ * converted into it at the newest rates (with a home currency: /api/net-worth
+ * base.fx): an account's balance, and each position by its own currency (the
+ * account's when it says none). What has no rate stays as it is, in its own
+ * currency, so allocate leaves it out and names it as before; an account
+ * whose own currency has no rate stays whole, positions and all. Never a day
+ * before the newest publication (this device's clock may be behind).
+ */
+export function inputsIn(
+  institutions: readonly AllocInstitution[],
+  holdings: readonly AllocHolding[],
+  fx: PageFx | null,
+  into: string | null,
+  now: number = Date.now()
+): { institutions: AllocInstitution[]; holdings: AllocHolding[]; converted: AllocationConverted | null } {
+  if (!fx || !into) return { institutions: [...institutions], holdings: [...holdings], converted: null };
+  const table = tableOf(fx);
+  const today = new Date(now).toISOString().slice(0, 10);
+  const day = fx.latest && fx.latest.date > today ? fx.latest.date : today;
+  const from = new Set<string>();
+  const own = new Set<string>();
+  const to = (amount: number, currency: string): number | null => {
+    const r = convert(table, amount, currency, into, day);
+    if (!r.ok) return null;
+    from.add(currency);
+    if (r.from.source === 'own') own.add(currency);
+    if (r.to.source === 'own') own.add(into);
+    return r.amount;
+  };
+  const accountCurrency = new Map<string, string | null>();
+  const outInstitutions = institutions.map((inst) => ({
+    ...inst,
+    accounts: inst.accounts.map((a) => {
+      accountCurrency.set(a.account_id, a.currency);
+      if (!a.currency || a.currency === into) return a;
+      if (typeof a.balance !== 'number' || !Number.isFinite(a.balance)) {
+        // No balance to convert: in the allocation's currency when it has a
+        // rate, so its positions (converted below) count.
+        return convert(table, 1, a.currency, into, day).ok ? { ...a, currency: into } : a;
+      }
+      const balance = to(a.balance, a.currency);
+      return balance === null ? a : { ...a, balance, currency: into };
+    }),
+  }));
+  const converted = new Map(outInstitutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.currency] as const)));
+  const outHoldings = holdings.map((h) => {
+    const was = h.account_id ? accountCurrency.get(h.account_id) : undefined;
+    const currency = h.currency ?? was ?? null;
+    // In an account whose own currency has no rate: left out with it.
+    if (h.account_id && was && converted.get(h.account_id) === was && was !== into) return h.currency ? h : { ...h, currency: was };
+    if (!currency || currency === into || typeof h.value !== 'number' || !Number.isFinite(h.value)) return currency && !h.currency ? { ...h, currency } : h;
+    const value = to(h.value, currency);
+    return value === null ? { ...h, currency } : { ...h, value, currency: into };
+  });
+  return {
+    institutions: outInstitutions,
+    holdings: outHoldings,
+    converted: from.size > 0 ? { into, from: [...from].sort(), own: [...own].sort() } : null,
+  };
 }
 
 /** Checking and savings, not hidden, as the plan counts them with

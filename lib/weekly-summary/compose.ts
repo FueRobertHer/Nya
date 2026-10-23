@@ -300,7 +300,8 @@ function spendingText(s: SpendingFact, year: string, n: Namer): string {
       const named = codes.filter((c): c is string => c !== null);
       for (const c of named) n.codes.add(c);
       const which = named.length === codes.length ? joined(named) : 'other currencies';
-      return `${LEVEL_TEXT[s.level]} Transactions in ${which} aren't counted in that.`;
+      // With a home currency, only what has no rate is left out.
+      return `${LEVEL_TEXT[s.level]} Transactions in ${which} aren't counted in that${s.no_rate ? ': Nya has no exchange rate for them' : ''}.`;
     }
     case 'no_transactions':
       return 'No transactions this week.';

@@ -140,7 +140,26 @@ import { readFx } from './fx/read';
 import { foreignFor, lifecycleAccounts } from './fx/net-worth-read';
 import type { SplitPoint } from './fx/net-worth';
 import type { FxTable } from './fx/rates';
-import { apiBase, apiOwnRates, baseNotes, historyInBase, historyNotes, pointNotes, toBase, SETTINGS_UNREADABLE_NOTE, type ApiBase, type ApiOwnRate } from './fx/api-base';
+import {
+  apiBase,
+  apiOwnRates,
+  baseNotes,
+  flowsConverted,
+  flowsNotes,
+  historyInBase,
+  historyNotes,
+  pointNotes,
+  toBase,
+  SETTINGS_UNREADABLE_NOTE,
+  type ApiBase,
+  apiNoRate,
+  type ApiFlowsConverted,
+  type ApiNoRate,
+  type ApiOwnRate,
+} from './fx/api-base';
+import { readFlowFx } from './fx/read';
+import { conversionIn, leftOutWhy, sumOf, totalsIn } from './fx/totals';
+import { convert, isStale } from './fx/rates';
 import { unusableText } from './fx/words';
 
 /** What the rates an answer converted with couldn't use, in words: none or
@@ -196,10 +215,16 @@ export async function readMe(auth: Authenticated): Promise<ApiMe> {
  *  them for figures is (lib/fx/settings.ts). */
 type HomeRead = { settings: CurrencySettings | null; note: string | null };
 
-async function readHome(ctx: Ctx): Promise<HomeRead> {
+/** `publicRates` (a share's net worth, lib/share-views.ts): the ECB's rates
+ *  alone, never the person's own. */
+async function readHome(ctx: Ctx, publicRates = false): Promise<HomeRead> {
   const { settings, problem } = await readSettingsForDisplay(ctx);
-  return { settings: settings.home ? settings : null, note: problem ? SETTINGS_UNREADABLE_NOTE : null };
+  return { settings: settings.home ? (publicRates ? { ...settings, own: [] } : settings) : null, note: problem ? SETTINGS_UNREADABLE_NOTE : null };
 }
+
+/** Whether, and how, a net worth answer converts: `'public'` at the ECB's
+ *  rates alone (a share). */
+type BaseAsk = boolean | 'public';
 
 /** The rates an answer converts with, read once: for the currencies given,
  *  from `from` to today. Null without a home currency. */
@@ -717,8 +742,8 @@ type NetWorthRead = {
   split: { points: SplitPoint[]; breaks: string[]; main: string | null } | null;
 };
 
-async function netWorthRead(ctx: Ctx, includeHidden: boolean, opts: { base?: boolean; split?: boolean } = {}): Promise<NetWorthRead> {
-  const [read, home] = await Promise.all([accountsRead(ctx, includeHidden), opts.base ? readHome(ctx) : null]);
+async function netWorthRead(ctx: Ctx, includeHidden: boolean, opts: { base?: BaseAsk; split?: boolean } = {}): Promise<NetWorthRead> {
+  const [read, home] = await Promise.all([accountsRead(ctx, includeHidden), opts.base ? readHome(ctx, opts.base === 'public') : null]);
   // Accounts that ended are subtracted from their end day either way: they
   // are no longer the person's to count, hidden or not.
   const hidden = includeHidden ? undefined : read.hidden;
@@ -807,7 +832,7 @@ function converted(home: HomeRead, fx: FxTable | null, counted: readonly ApiAcco
 /** Net worth now, from each account's newest measured balance, per currency,
  *  and the newest recorded point of its history. With `base`, converted into
  *  the home currency the person chose. */
-export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean; base?: boolean } = {}): Promise<ApiNetWorth> {
+export async function readNetWorth(ctx: Ctx, opts: { includeHidden?: boolean; base?: BaseAsk } = {}): Promise<ApiNetWorth> {
   const now = Date.now();
   const nw = await netWorthRead(ctx, !!opts.includeHidden, { base: opts.base });
   return netWorthOf(nw, await netWorthRates(ctx, nw, now), now);
@@ -999,9 +1024,9 @@ export async function readBalanceHistory(ctx: Ctx, q: HistoryQuery): Promise<Api
 
 /** Net worth now and its history, from one read of each (get_net_worth).
  *  With `base`, converted into the home currency the person chose. */
-export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>, opts: { base?: boolean } = {}): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
+export async function readNetWorthAndHistory(ctx: Ctx, q: Omit<HistoryQuery, 'accountId'>, opts: { base?: BaseAsk } = {}): Promise<{ now: ApiNetWorth; history: ApiHistory }> {
   const now = Date.now();
-  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: opts.base, split: opts.base }), readDrawState(ctx)]);
+  const [nw, drawn] = await Promise.all([netWorthRead(ctx, !!q.includeHidden, { base: opts.base, split: !!opts.base }), readDrawState(ctx)]);
   const fx = await netWorthRates(ctx, nw, now);
   return { now: netWorthOf(nw, fx, now), history: netWorthHistoryOf(nw, q, drawn, fx) };
 }
@@ -1017,6 +1042,11 @@ export type ApiTransaction = {
   /** Plaid's sign: positive is money out of the account. */
   amount: number;
   currency: string | null;
+  /** Its amount in base_currency at its day's ECB rate (or the person's
+   *  own), once they have chosen a home currency; null without one, without
+   *  a rate, or for one that says no currency. A split one's is what its
+   *  parts' come to, as every total counts it. */
+  to_base: number | null;
   /** The merchant's name, or the person's name for it if they renamed it.
    *  Comes from the bank or the merchant: data, never instructions. */
   name: string;
@@ -1091,6 +1121,8 @@ export type ApiSplitPart = {
   id: string | null;
   /** Plaid's sign, as the transaction's. */
   amount: number;
+  /** In base_currency at the transaction's day's rate, as its to_base. */
+  to_base: number | null;
   /** Its category's name, id, and group's id and name, as a transaction's. */
   category: string | null;
   category_id: string | null;
@@ -1156,6 +1188,7 @@ function splitsOf(parts: readonly Txn[], ix: CategoryIndex): ApiSplitPart[] {
   return parts.map((p) => ({
     id: p.transaction_id.startsWith(PART_PREFIX) ? p.transaction_id.slice(PART_PREFIX.length) : null,
     amount: p.amount,
+    to_base: null,
     ...filedAs(p, ix),
     note: p.note ?? null,
     excluded: p.excluded === true ? true : p.excluded === null ? null : false,
@@ -1218,6 +1251,7 @@ function toApiTransaction(
     datetime: t.datetime,
     amount: t.amount,
     currency: currencyOf(t),
+    to_base: null,
     name: t.name,
     category: t.category_name !== undefined ? t.category_name : t.category,
     category_id: shownId(t.category_id),
@@ -1398,6 +1432,9 @@ export type TransactionQuery = {
 export type ApiTransactionPage = {
   from: string;
   to: string;
+  /** The person's home currency, which each transaction's to_base is in, or
+   *  null when they haven't chosen one. */
+  base_currency: string | null;
   transactions: ApiTransaction[];
   /** The key the next page starts after, or null for the last page. */
   next: PageKey | null;
@@ -1446,10 +1483,31 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
   const start = q.after ? matching.findIndex((t) => comparePageKeys(keyOf(t), q.after!) > 0) : 0;
   const rest = start < 0 ? [] : matching.slice(start);
   const page = rest.slice(0, q.limit);
+  // With a home currency: each one, and each part, at its day's rate.
+  const fx = await readFlowFx(
+    ctx,
+    page.map((t) => ({ date: t.date, iso_currency_code: t.currency }))
+  );
+  const inBase = (amount: number, c: string | null, day: string): number | null => {
+    if (!fx || !c) return null;
+    const r = convert(fx, amount, c, fx.home!, day);
+    return r.ok ? r.amount : null;
+  };
   return {
     from: q.from,
     to: q.to,
-    transactions: page,
+    base_currency: fx?.home ?? null,
+    transactions: fx
+      ? page.map((t) => {
+          if (!t.splits) return { ...t, to_base: inBase(t.amount, t.currency, t.date) };
+          // Split: each part on its own, and the whole what they come to, as
+          // every total counts it (lib/fx/totals.ts): never the whole
+          // converted alone, which can be a cent away.
+          const splits = t.splits.map((p) => ({ ...p, to_base: inBase(p.amount, t.currency, t.date) }));
+          const whole = splits.every((p) => p.to_base !== null) ? sumOf(splits.map((p) => p.to_base!)) : null;
+          return { ...t, to_base: whole, splits };
+        })
+      : page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,
     // A bank whose files cover the range in its place has its rows here.
@@ -1652,6 +1710,23 @@ export type ApiBudgets = {
   notes: string[];
 };
 
+/** The budgets with spending in other currencies counted, as the Budgets tab
+ *  counts them once a home currency is chosen (ApiBudgetsAnswer.base). */
+export type ApiBudgetsBase = Pick<ApiBudgets, 'currency' | 'budgets' | 'groups' | 'total' | 'income' | 'rollover_left_out'> & ApiFlowsConverted;
+
+/** /budgets: version 1's fields as they always were, nothing converted, and
+ *  beside them, with a home currency, `base`. */
+export type ApiBudgetsAnswer = ApiBudgets & {
+  /** The person's home currency, or null when they haven't chosen one. */
+  base_currency: string | null;
+  /** With one: the same budgets as the Budgets tab counts them, in
+   *  `currency` (the one they are typed in), spending in another currency
+   *  counted against them converted into it, each transaction at its own
+   *  day's ECB rate (or the person's own), with what was converted and what
+   *  was left out for having no rate. Null without one. */
+  base: ApiBudgetsBase | null;
+};
+
 const share = (spent: number, budget: number) => (budget > 0 ? Math.round((spent / budget) * 1000) / 1000 : 0);
 
 /** A carry as the API answers it. */
@@ -1674,9 +1749,26 @@ const monthList = (ms: readonly string[]): string =>
  * carryover is on. Spending is read from the stored history, back to the
  * month asked about, or the first month a carry counts. Writes nothing.
  */
-export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgets> {
+export async function readBudgets(ctx: Ctx, opts: { month: string; includeHidden?: boolean }): Promise<ApiBudgetsAnswer> {
   const today = new Date().toISOString().slice(0, 7);
-  return budgetsAnswer(await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden }), opts);
+  const read = await readBudgetMonth(ctx, { month: opts.month, today, includeHidden: !!opts.includeHidden, plain: true });
+  // Version 1's fields from the month as before a home currency: nothing
+  // converted, as they always were.
+  const answer = budgetsAnswer(read.plain ?? read, opts);
+  if (!read.plain || !read.home) return { ...answer, base_currency: read.home, base: null };
+  const counted = budgetsAnswer(read, opts);
+  const conversion = conversionIn(read.monthRows, read.conversion);
+  const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), read.currency);
+  const base: ApiBudgetsBase = {
+    currency: counted.currency,
+    budgets: counted.budgets,
+    groups: counted.groups,
+    total: counted.total,
+    income: counted.income,
+    rollover_left_out: counted.rollover_left_out,
+    ...flowsConverted(conversion!, { own: read.ownRates }, leftOut),
+  };
+  return { ...answer, base_currency: read.home, base, notes: [...answer.notes, ...(read.currency ? flowsNotes(base, read.currency) : [])] };
 }
 
 /** readBudgets' answer from a month already read: no reads, no writes. For a
@@ -1743,6 +1835,8 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
   }
   const reconcileOf = (r: GroupMeter['reconcile']) => r && { binds: r.binds, group: tidy(r.group), categories: tidy(r.categories) };
   const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), currency);
+  // With a home currency: what of the month's spending was converted.
+  const monthConversion = conversionIn(read.monthRows, read.conversion);
   return {
     month: opts.month,
     currency,
@@ -1771,7 +1865,7 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
       }),
     total: { budget: tidy(flat.total.budget), spent: tidy(flat.total.spent), available: tidy(withCarries.total.budget) },
     left_out: leftOut,
-    left_out_text: leftOutText(leftOut, currency, { where: 'these budgets' }),
+    left_out_text: leftOutWhy(leftOutText(leftOut, currency, { where: 'these budgets' }), monthConversion),
     // Transactions, not rows: a split one is one (transactionCounter).
     excluded: countTransactions(read.monthRows.filter((t) => t.excluded === true)),
     exclusion_unknown: countTransactions(read.monthRows.filter((t) => t.excluded === null)),
@@ -1798,9 +1892,8 @@ export function budgetsAnswer(read: BudgetMonthRead, opts: { month: string; incl
 
 // ---- Spending ----
 
-export type ApiSpending = Summary & {
-  from: string;
-  to: string;
+/** Spending's totals, by category, group and tag, in one currency. */
+type SpendingTotals = Summary & {
   /** Money out by group, most first, with how many rows each sums: the
    *  categories' rolled up (ids null for one the app hasn't stored yet). */
   groups: { id: string | null; name: string; kind: CategoryKind; spent: number; transactions: number }[];
@@ -1808,6 +1901,22 @@ export type ApiSpending = Summary & {
    *  under every tag its row carries, so a tag is exactly what its rows add
    *  to the categories, and a row with two tags is in both. */
   tags: { id: string; name: string; spent: number; transactions: number }[];
+};
+
+/** The same totals in base_currency (see ApiSpending.base). */
+export type ApiSpendingBase = Omit<SpendingTotals, 'currency' | 'left_out' | 'left_out_text'> & ApiFlowsConverted;
+
+export type ApiSpending = SpendingTotals & {
+  from: string;
+  to: string;
+  /** The person's home currency, or null when they haven't chosen one. */
+  base_currency: string | null;
+  /** With one: every total converted into it, each transaction at its own
+   *  day's ECB rate (or the person's own), as the app's Activity tab counts
+   *  it, with what was converted and what was left out for having no rate,
+   *  and why. Null without one. Version 1's own fields keep their meaning:
+   *  one currency, the rest named. */
+  base: ApiSpendingBase | null;
   sources: ApiSource[];
   notes: string[];
 };
@@ -1836,6 +1945,7 @@ export function importedNote(rows: readonly Txn[], range: { from: string; to: st
 export async function readSpending(ctx: Ctx, opts: { from: string; to: string; currency?: string; includeHidden?: boolean }): Promise<ApiSpending> {
   const activity = await readActivity(ctx, !!opts.includeHidden);
   const currency = opts.currency ?? totalsCurrency(activity.rows);
+  const fx = await readFlowFx(ctx, activity.rows);
   // The tags' note stays: spending by tag is in the answer. A bank whose
   // files cover the range in its place is counted, as in the app.
   const notes = [...activity.notes, ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals')];
@@ -1845,9 +1955,36 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
   const imported = importedNote(activity.rows, opts);
   if (imported) notes.push(imported);
   const inRange = (d: string) => d >= opts.from && d <= opts.to;
+  // With a home currency, the same totals over the rows converted into it
+  // (lib/fx/totals.ts), as the Activity tab counts them.
+  let base: ApiSpendingBase | null = null;
+  if (fx) {
+    const counting = totalsIn(activity.rows, fx);
+    const { currency: _home, left_out, left_out_text: _text, ...totals } = spendingTotals(counting.rows, activity, inRange, fx.home);
+    const c = conversionIn(
+      counting.rows.filter((t) => inRange(t.date)),
+      counting.conversion
+    );
+    base = { ...totals, ...flowsConverted(c!, fx, left_out) };
+    notes.push(...flowsNotes(base, fx.home!));
+  }
+  return {
+    from: opts.from,
+    to: opts.to,
+    ...spendingTotals(activity.rows, activity, inRange, currency),
+    base_currency: fx?.home ?? null,
+    base,
+    sources: activity.sources,
+    notes,
+  };
+}
+
+/** Spending's totals over rows in one currency (readSpending): the summary,
+ *  and money out by group and by tag. */
+function spendingTotals(rows: readonly Txn[], activity: Pick<ActivityRead, 'ix' | 'tags'>, inRange: (d: string) => boolean, currency: string | null): SpendingTotals {
   // Groups add up what the categories do: money out that counts.
   const groups = new Map<string, { group: CategoryGroup; spent: number; transactions: ReturnType<typeof transactionCounter> }>();
-  for (const t of activity.rows) {
+  for (const t of rows) {
     if (!inRange(t.date) || t.amount <= 0 || !countsInTotals(t, currency)) continue;
     const c = categoryById(activity.ix, bucketOf(t));
     if (!c) continue;
@@ -1858,18 +1995,14 @@ export async function readSpending(ctx: Ctx, opts: { from: string; to: string; c
     groups.set(g.id, e);
   }
   return {
-    from: opts.from,
-    to: opts.to,
-    ...summarize(activity.rows, inRange, currency, describer(activity.ix)),
+    ...summarize(rows, inRange, currency, describer(activity.ix)),
     groups: [...groups.values()]
       .sort((a, b) => b.spent - a.spent || a.group.name.localeCompare(b.group.name))
       .map((e) => ({ id: shownId(e.group.id), name: e.group.name, kind: e.group.kind, spent: tidy(e.spent), transactions: e.transactions.n })),
-    tags: spendingByTag(activity.rows, inRange, currency).flatMap((s) => {
+    tags: spendingByTag(rows, inRange, currency).flatMap((s) => {
       const name = namesOf(activity.tags).get(s.tag);
       return name === undefined ? [] : [{ id: s.tag, name, spent: s.spent, transactions: s.transactions }];
     }),
-    sources: activity.sources,
-    notes,
   };
 }
 
@@ -1904,10 +2037,19 @@ export type ApiRecurring = {
     /** It pays a card off: the card's own charges are counted where they are
      *  charged, so it isn't in monthly_total. */
     pays_card: boolean;
+    /** Its amount in base_currency at today's rates (a charge to come has no
+     *  rate of its own yet); null without a home currency or a rate. */
+    to_base: number | null;
   }[];
   /** What the bills come to in a month, in the budgets' currency, and the
    *  bills left out of it for being in another. */
   monthly_total: { currency: string | null; amount: number; left_out: LeftOut };
+  /** The person's home currency, or null when they haven't chosen one. */
+  base_currency: string | null;
+  /** With one: what the bills come to in a month in it, each at today's
+   *  rates, and the bills left out for having no rate, and why. Null
+   *  without one. */
+  base: { monthly_total: number; rate_day: string | null; rates_stale: boolean; left_out: { currency: string; bills: number; why: ApiNoRate }[] } | null;
   /** due_soon means the next date is within this many days of today (UTC). */
   due_soon_days: number;
   sources: ApiSource[];
@@ -1937,6 +2079,16 @@ export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; t
   const currency = totalsCurrency(activity.rows);
   const soon = new Set(upcomingBills(bills, DUE_SOON_DAYS, today).map((u) => u.series.id));
   const { total, leftOut } = recurringMonthly(bills, today, currency);
+  // With a home currency: each bill, and their month, at today's rates.
+  const fx = await readFlowFx(ctx, activity.rows);
+  // A bill that says no currency is in the totals' (as monthly_total counts it).
+  const inHome = fx ? recurringMonthly(bills.map((b) => (b.currency || !currency ? b : { ...b, currency })), today, fx.home, fx) : null;
+  const rateDay = fx?.latest ? (fx.latest.date > today ? fx.latest.date : today) : today;
+  const toBaseOf = (amount: number, c: string | null): number | null => {
+    if (!fx || !c) return null;
+    const r = convert(fx, amount, c, fx.home!, rateDay);
+    return r.ok ? r.amount : null;
+  };
   const until = addDays(today, NEXT_WITHIN_DAYS);
   const notes = [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'totals')];
   if (dismissed === null) notes.push('Bills marked not recurring: couldn’t be read, so any you marked are listed and counted in monthly_total');
@@ -1957,9 +2109,23 @@ export async function readRecurring(ctx: Ctx, opts: { includeHidden?: boolean; t
         due_soon: soon.has(b.id),
         ended: expected.status === 'ended',
         pays_card: b.paysCard === true,
+        to_base: toBaseOf(tidy(b.amount), b.currency ?? currency),
       };
     }),
     monthly_total: { currency, amount: tidy(total), left_out: leftOut },
+    base_currency: fx?.home ?? null,
+    base:
+      fx && inHome
+        ? {
+            monthly_total: tidy(inHome.total),
+            rate_day: inHome.converted && inHome.converted.from.length > 0 ? (fx.latest?.date ?? null) : null,
+            rates_stale: !!inHome.converted && inHome.converted.from.length > 0 && isStale(fx, Date.now()),
+            left_out: inHome.leftOut.map((l) => {
+              const u = inHome.converted?.unrated.find((x) => x.currency === l.currency);
+              return { currency: l.currency, bills: l.count, why: u ? apiNoRate(u.currency, u.why, u.unrated, fx.home!) : 'no_rate' };
+            }),
+          }
+        : null,
     due_soon_days: DUE_SOON_DAYS,
     sources: activity.sources,
     notes,

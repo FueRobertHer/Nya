@@ -104,10 +104,20 @@ export default function DevelopersPage() {
             subtracts it.
           </li>
           <li>
-            <strong>Nothing is converted between currencies.</strong> A total of transactions adds up one currency only, by
+            <strong>Version 1’s totals are in one currency.</strong> A total of transactions adds up one currency only, by
             default the one most of your transactions are in, and says what it left out in others. Net worth now is one
             total per currency; only its recorded history adds every balance as it is, as the app’s chart does, and says
             when they mix currencies (<code>mixed_currencies</code>).
+          </li>
+          <li>
+            <strong>Converted figures come in fields of their own.</strong> Once you choose a home currency in Nya, it is{' '}
+            <code>base_currency</code>, and figures converted into it at the European Central Bank’s reference rates (or your
+            own) are added beside version 1’s, which keep their meaning: <code>base</code> on net worth, spending, cash flow,
+            recurring bills and year over year, and <code>to_base</code> on each account, history point, transaction, split
+            part, recurring bill and goal. Budgets’ <code>base</code> stays in the currency the budgets are typed in, with
+            spending in other currencies counted against them converted, as the Budgets tab counts it, and the runway’s in
+            your cash accounts’ currency, with what is in other currencies converted into it, as the report page shows it. Each says what it converted, from which
+            days’ rates, and what it left out for having no rate. Without a home currency, each is <code>null</code>.
           </li>
           <li>
             <strong>Totals count as the app counts.</strong> Transfers between your accounts, cash taken out at an ATM and

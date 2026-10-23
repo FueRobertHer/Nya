@@ -59,6 +59,43 @@ export function useCurrencySettings(active: boolean): { load: CurrencyLoad; relo
   return { load, reload, accept };
 }
 
+/** The server's count of what moving an account's typed transactions with
+ *  its currency would move (GET /api/manual-accounts `relabel`). */
+export type RelabelCount = { kind: 'counting' } | { kind: 'ready'; moved: number; kept: number } | { kind: 'error'; message: string };
+
+/** That count, read again whenever `ask` names another account or currency;
+ *  null when nothing is asked. */
+export function useRelabelCount(ask: { account_id: string; from: string; to: string } | null): RelabelCount | null {
+  const [count, setCount] = useState<RelabelCount>({ kind: 'counting' });
+  const key = ask ? `${ask.account_id}|${ask.from}|${ask.to}` : null;
+  useEffect(() => {
+    if (!ask) return;
+    let gone = false;
+    setCount({ kind: 'counting' });
+    const q = new URLSearchParams({ account_id: ask.account_id, relabel_from: ask.from, currency: ask.to });
+    fetch(`/api/manual-accounts?${q}`)
+      .then(async (res) => {
+        if (gone) return;
+        if (!res.ok) {
+          setCount({ kind: 'error', message: await errorOf(res, 'The transactions on it couldn’t be counted, so none of them can be moved with it now.') });
+          return;
+        }
+        const data = await res.json();
+        const r = data?.relabel;
+        if (!gone) setCount(typeof r?.moved === 'number' && typeof r?.kept === 'number' ? { kind: 'ready', moved: r.moved, kept: r.kept } : { kind: 'ready', moved: 0, kept: 0 });
+      })
+      .catch(() => {
+        if (!gone) setCount({ kind: 'error', message: 'Nya could not be reached, so the transactions on it can’t be counted now.' });
+      });
+    return () => {
+      gone = true;
+    };
+    // `key` names everything `ask` holds.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key]);
+  return ask ? count : null;
+}
+
 /** The most common currencies, offered on a runtime without Intl's list
  *  (a browser before 2022), so a choice is still possible. */
 const COMMON_CURRENCIES = ['USD', 'EUR', 'GBP', 'CAD', 'MXN', 'JPY', 'AUD', 'CHF', 'INR', 'CNY'];

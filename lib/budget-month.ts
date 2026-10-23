@@ -14,9 +14,13 @@
 // loads, never calling Plaid. Each month's spending by category and money in
 // and out go through lib/totals.ts, so through countsInTotals (lib/spending.ts):
 // one currency (the one most of the last year's transactions are in, as the
-// Budgets tab and the API take it), what was excluded left out, transfers,
-// cash and loan payments never spending or income, and what is in other
-// currencies counted apart and named, never added.
+// Budgets tab and the API take it: the currency budgets are typed in), what
+// was excluded left out, transfers, cash and loan payments never spending or
+// income, and what is in other currencies counted apart and named, never
+// added. With a home currency chosen, spending in other currencies counts
+// against the budgets converted into theirs at each day's rate
+// (lib/fx/totals.ts totalsIn, `into: 'most'`), so typed amounts are never
+// relabelled, and only what has no rate is left out and named.
 //
 // HONEST GAPS. A month whose transactions may be incomplete is named, with
 // why (lib/rollover.ts MonthGap): an institution whose rows aren't all here
@@ -75,7 +79,10 @@ import { filedId, indexTaxonomy, type CategoryIndex, type Taxonomy } from './cat
 import type { Budgets } from './budget-set';
 import { LOOKBACK_DAYS, type Txn } from './transactions';
 import { spendingByCategory, summarize } from './totals';
-import { leftOutByCurrency, totalsCurrency, transactionCounter, type LeftOut } from './spending';
+import { leftOutByCurrency, transactionCounter, type LeftOut } from './spending';
+import { totalsIn, type Conversion } from './fx/totals';
+import { readFlowFx } from './fx/read';
+import type { FxTable, OwnRate } from './fx/rates';
 import { stoppedConnections } from './month-coverage';
 import { noTransactionsView, quietItemIds, type NoTransactionsView } from './no-transactions';
 import {
@@ -337,8 +344,22 @@ export type BudgetMonthRead = {
   earliest: string | null;
   /** The months read whose transactions may be incomplete, oldest first. */
   gaps: { month: string; gaps: MonthGap[] }[];
-  /** The month's own rows. */
+  /** The month's rows as its totals count them: those in another currency
+   *  converted into the budgets' (see the header). For what a total left
+   *  out; never listed. */
   monthRows: Txn[];
+  /** Every row read, as the totals count them (budget suggestions). */
+  counted: Txn[];
+  /** What was converted into the budgets' currency; null without a home
+   *  currency. */
+  conversion: Conversion | null;
+  /** The person's home currency, or null without one, and their own rates. */
+  home: string | null;
+  ownRates: readonly OwnRate[];
+  /** With a home currency, when asked for (`plain`): the same month worked
+   *  out as before one was chosen, nothing converted, from the same read
+   *  (the read-only API's version 1 fields, lib/api-read.ts readBudgets). */
+  plain?: BudgetMonthRead;
   /** What the earlier months the carries and the pool count left out for
    *  being in another currency (spending, and money in too while the pool
    *  counts it): named, never added. Empty when nothing rolls over. */
@@ -377,7 +398,7 @@ export function budgetsWithoutHistory(app: AppBudgets, month: string, today: str
  * setting that can't be read throw (StoredDataUnreadableError), and so does
  * storage out of reach.
  */
-export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: AppBudgets; pool?: false }): Promise<BudgetMonthRead> {
+export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: string; includeHidden?: boolean; app?: AppBudgets; pool?: false; plain?: true }): Promise<BudgetMonthRead> {
   const { month, today } = opts;
   let budgetsNow: Budgets;
   let taxonomy: Taxonomy;
@@ -400,9 +421,10 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
     taxonomy = opts.app.taxonomy.categories.every((c) => filed.has(c.id)) ? activity.taxonomy : opts.app.taxonomy;
   } else {
     // Without `app`, read as any number of months are (readBudgetMonths).
-    return (await readBudgetMonths(ctx, { months: [month], today, includeHidden: opts.includeHidden, pool: opts.pool }))[0];
+    return (await readBudgetMonths(ctx, { months: [month], today, includeHidden: opts.includeHidden, pool: opts.pool, plain: opts.plain }))[0];
   }
-  return monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window });
+  const fx = await readFlowFx(ctx, activity.rows);
+  return monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx });
 }
 
 /**
@@ -414,7 +436,7 @@ export async function readBudgetMonth(ctx: Ctx, opts: { month: string; today: st
  */
 export async function readBudgetMonths(
   ctx: Ctx,
-  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false }
+  opts: { months: readonly string[]; today: string; includeHidden?: boolean; pool?: false; plain?: true; publicRates?: true }
 ): Promise<BudgetMonthRead[]> {
   const { today } = opts;
   const window = windowStart();
@@ -429,10 +451,18 @@ export async function readBudgetMonths(
   const from = opts.months.map((m) => (m > today ? m : neededFrom(stored, income, m))).sort()[0];
   const since = from !== undefined && `${from}-01` < window ? `${from}-01` : window;
   const activity = await readMonthActivity(ctx, { since, includeHidden: opts.includeHidden });
-  const { budgets: budgetsNow, taxonomy } = await budgetsForReading(ctx, activity.taxonomy);
+  // A share's (`publicRates`): at the ECB's rates alone, never the person's own.
+  const [{ budgets: budgetsNow, taxonomy }, fx] = await Promise.all([
+    budgetsForReading(ctx, activity.taxonomy),
+    readFlowFx(ctx, activity.rows, Date.now(), { publicRates: opts.publicRates }),
+  ]);
   // Noted in memory, as the app would note it today: nothing is written.
   const months = noteBudgets(stored ?? startMonths(budgetsNow, today), budgetsNow, today, indexTaxonomy(taxonomy));
-  return opts.months.map((month) => monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window }));
+  return opts.months.map((month) => {
+    const read = monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx });
+    // As before a home currency, beside it, when asked: nothing more is read.
+    return opts.plain && fx ? { ...read, plain: monthFromActivity({ month, today, budgetsNow, taxonomy, months, income, activity, window, fx: null }) } : read;
+  });
 }
 
 /** The month worked out from what was read: no reads, no writes. */
@@ -445,11 +475,16 @@ export function monthFromActivity(input: {
   income: IncomeCarryover | null;
   activity: MonthActivity;
   window: string;
+  /** What spending in other currencies converts with (lib/fx/totals.ts);
+   *  absent or null without a home currency. */
+  fx?: FxTable | null;
 }): BudgetMonthRead {
   const { month, today, activity } = input;
   const ix = indexTaxonomy(input.taxonomy);
-  const rows = activity.rows;
-  const currency = totalsCurrency(rows.filter((t) => t.date >= input.window));
+  // In the budgets' currency, the rest converted into it (see the header).
+  const conversion = totalsIn(activity.rows, input.fx ?? null, { into: 'most', over: activity.rows.filter((t) => t.date >= input.window) });
+  const rows = conversion.rows;
+  const currency = conversion.currency;
   // The rows by month, once, so each month's totals read only its own.
   const byMonth = new Map<string, Txn[]>();
   for (const t of rows) {
@@ -498,6 +533,10 @@ export function monthFromActivity(input: {
     earliest: activity.earliest,
     gaps,
     monthRows: byMonth.get(month) ?? [],
+    counted: rows,
+    conversion: conversion.conversion,
+    home: input.fx?.home ?? null,
+    ownRates: input.fx?.own ?? [],
     countedLeftOut: leftOutByCurrency(pool ? counted : counted.filter((t) => t.amount > 0), currency),
     activity,
   };

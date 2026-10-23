@@ -356,7 +356,8 @@ describe('a tap lists the node’s transactions in the Activity list', () => {
   test('the Activity tab mounts the chart with what its months say, and lists a tapped node’s rows through its own search', () => {
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'MonthBreakdown.tsx'), 'utf8');
     const mount = source.slice(source.indexOf('<CashFlowSankey'), source.indexOf('/>', source.indexOf('<CashFlowSankey')));
-    for (const prop of ['txns={txns}', 'taxonomy={taxonomy}', 'currency={currency}', 'incomplete={incomplete}', 'stopped={stopped}', 'withoutTransactions={withoutTransactions}', 'pick={flowPick}']) expect(mount).toContain(prop);
+    // The rows as the totals count them: converted, with a home currency (lib/fx/totals.ts).
+    for (const prop of ['txns={counted.rows}', 'taxonomy={taxonomy}', 'currency={currency}', 'incomplete={incomplete}', 'stopped={stopped}', 'withoutTransactions={withoutTransactions}', 'pick={flowPick}']) expect(mount).toContain(prop);
     expect(source).toContain('searchEntries(listed, { query, tag: filterTag, review: reviewing }, tags)');
     expect(source).toContain('<FlowShown pick={flowPick}');
   });

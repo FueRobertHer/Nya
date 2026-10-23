@@ -5,6 +5,7 @@ import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
 import { storeFailure } from '@/lib/store-failure';
 import { withImportedFiles } from '@/lib/history-import/without-files';
+import { flowFxReader } from '@/lib/fx/read';
 
 // The Activity tab's transactions: every linked institution's, synced with
 // Plaid, and the rows entered on manual accounts, with what the person said
@@ -43,10 +44,22 @@ import { withImportedFiles } from '@/lib/history-import/without-files';
 // TAGS AND NOTES are applied after the cache too (lib/txn-layers.ts), with
 // the tags that exist sent beside the rows (`tags`): a tag put on, a note
 // written or a tag renamed shows on the next load with nothing dropped.
+//
+// EXCHANGE RATES (`fx`), with a home currency chosen: what the page converts
+// the rows' totals with (lib/fx/totals.ts), for the rows' currencies and the
+// person's accounts' (the Plan converts a year of spending into its
+// accounts' currency), read after the cache on every load (lib/fx/read.ts
+// readFlowFx), so no cached payload holds a converted figure and a change of
+// home currency or rate needs no cache dropped. Absent without one: every
+// total is then today's. The settings and the accounts' currencies are read
+// beside the rows; rates that can't be read leave the rows of other
+// currencies without one (named in every total), never fail the load.
 
 export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
+    // Begun now, beside the rows' reads (see EXCHANGE RATES).
+    const readRates = flowFxReader(ctx, { accounts: true });
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
     const cached = refresh ? null : await readCache<unknown>(ctx, CacheKey.Transactions);
 
@@ -74,10 +87,12 @@ export async function GET(req: Request) {
       // load, never cached: the cached part is Plaid's alone.
       withImportedFiles(ctx, plaid.without_transactions ?? []),
     ]);
+    const fx = await readRates(transactions);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).
     return NextResponse.json({
+      ...(fx ? { fx } : {}),
       transactions,
       // What the load couldn't read, or couldn't apply as it says: each bears
       // on what is listed and counted, the cash flow chart's figures among

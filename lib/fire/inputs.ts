@@ -50,11 +50,19 @@
 // figures; it still marks how far back the history goes, and the label says
 // how many were left out.
 //
-// ONE CURRENCY. Spending is summed in the currency most of the year's counted
-// transactions are in (lib/spending.ts totalsCurrency), and so are income and
-// savings; one in another currency counts in none of them (nothing is
-// converted), and the label names how many there were. Invested assets, the
-// same: the accounts in the currency most of them are in, the others named.
+// ONE CURRENCY. Invested assets are in the currency most of the accounts are
+// in, and the year's spending, income and savings are in the currency most of
+// its counted transactions are in (lib/spending.ts totalsCurrency): the
+// Plan's currency is the accounts' (lib/fire/progress.ts planCurrency), and
+// what the person types in the Plan is in it. Without a home currency, one
+// in another currency counts in none of them (nothing is converted), and the
+// label names how many there were. WITH ONE (lib/fx/), the Plan keeps its
+// currency, as budgets keep theirs (its typed figures are never relabelled),
+// and what is in other currencies is converted into it: each transaction at
+// its own day's rate (lib/fx/totals.ts totalsIn), each currency's accounts
+// at the newest rates, its subtotal converted once (lib/fx/net-worth.ts
+// balancesIn), as net worth is. What has no rate is still left out and
+// named, with why.
 //
 // SAVINGS is a year of income minus spending from bank data, plus what was
 // contributed to workplace retirement plans (401(k) and the like), which
@@ -72,11 +80,15 @@
 // what is stale or missing named.
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
 import { isConnectorKind } from '@/lib/connectors/types';
+import { totalsIn, type Conversion } from '@/lib/fx/totals';
+import type { FxTable, NoRate } from '@/lib/fx/rates';
+import { balancesIn } from '@/lib/fx/net-worth';
+import { tableOf, type PageFx } from '@/lib/fx/view';
 
 /** The trailing window, in days (today included). */
 export const TRAILING_DAYS = 365;
@@ -199,11 +211,15 @@ export type TrailingFlows = {
    *  rule hides (absent: none). */
   excludedCount: number;
   hiddenCount?: number;
-  /** The currency the figures are in: the one most of them are in. */
+  /** The currency the figures are in: the one most of them are in, or the
+   *  Plan's, converted into (see the top of this file). */
   currency: string | null;
-  /** Transactions that would count but are in another currency: in none of
-   *  the figures, by currency. */
+  /** Transactions that would count but are in another currency (with a home
+   *  currency, one with no rate): in none of the figures, by currency. */
   leftOut: LeftOut;
+  /** What was converted into `currency`, for the label; null (or absent)
+   *  without a home currency. */
+  conversion?: Conversion | null;
   /** Transactions from SimpleFIN or Lunch Flow with no category, counted as
    *  spending or income (lib/spending.ts uncategorizedFromConnector); absent
    *  is none. */
@@ -226,15 +242,26 @@ const counts = (flow: PlanFlow) => flow !== 'transfer' && flow !== 'card-payment
  * little to go on: no countable transaction, or under MIN_DAYS of history.
  * `cashAccounts` are the manual accounts cash is kept on, whose rows entered
  * by hand are the cash withdrawals' spending (see the top of this file).
+ * `fx` (with a home currency) converts what is in another currency than
+ * `into`, the Plan's (its accounts'), or with none given than the one most
+ * counted rows are in.
  */
-export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?: ReadonlySet<string> } = {}): TrailingFlows | null {
+export function trailingFlows(
+  txns: Txn[],
+  today: string,
+  opts: { cashAccounts?: ReadonlySet<string>; fx?: FxTable | null; into?: string | null } = {}
+): TrailingFlows | null {
   const end = dayNumber(today);
   const start = end - (TRAILING_DAYS - 1);
   const inWindow = txns.filter((t) => {
     const d = dayNumber(t.date);
     return d >= start && d <= end; // also skips a malformed date
   });
-  const currency = totalsCurrency(inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t))));
+  const counting = totalsIn(inWindow, opts.fx, {
+    into: opts.into ? { currency: opts.into } : 'most',
+    over: inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t))),
+  });
+  const currency = counting.currency;
   // Transactions, not rows: a split one's parts are one, a group as many as
   // it holds (lib/spending.ts transactionCounter).
   const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
@@ -258,7 +285,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
   let earliest = end;
   // Each refund whole: a split one's refunded parts added up (#39).
   const refunds = new Map<string, { amount: number; date: string; name: string }>();
-  for (const t of inWindow) {
+  for (const t of counting.rows) {
     const d = dayNumber(t.date);
     if (d < earliest) earliest = d;
     if (isExcluded(t)) {
@@ -329,6 +356,7 @@ export function trailingFlows(txns: Txn[], today: string, opts: { cashAccounts?:
     hiddenCount: hiddenCount.n,
     currency,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    conversion: counting.conversion,
     uncategorized,
   };
 }
@@ -425,9 +453,26 @@ export type InvestedAssets = {
   caveats: AssetCaveat[];
   /** The currency the total is in: the one most of the accounts are in. */
   currency: string | null;
-  /** Accounts that would count but are in another currency: not in the
-   *  total, by currency. */
+  /** Accounts that would count but are in another currency (with a home
+   *  currency, one with no rate): not in the total, by currency. */
   leftOut: LeftOut;
+  /** With a home currency, what was converted into `currency` at the newest
+   *  rates, and why what wasn't has no rate; null (or absent) without one,
+   *  or with nothing in another currency. */
+  conversion?: AssetsConversion | null;
+};
+
+/** What invested assets converted (see the top of this file). */
+export type AssetsConversion = {
+  into: string;
+  /** The day of the rates: the newest publication's, or today. */
+  day: string;
+  /** Each currency converted, and how many accounts in it. */
+  from: { currency: string; count: number }[];
+  /** The currencies a rate of the person's own priced. */
+  own: string[];
+  /** Each currency left out for having no rate, and why. */
+  unrated: { currency: string; why: NoRate; unrated: string }[];
 };
 
 const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || (includeCash && a.type === 'depository');
@@ -441,9 +486,11 @@ const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type
  * An institution that failed with nothing recovered might hold investments,
  * so it is named whatever it holds, unless its accounts are known and none of
  * them would count; one counted at last-known balances is named with their
- * date.
+ * date. `fx` (with a home currency, /api/net-worth's base.fx) converts the
+ * accounts in another currency into the one most of them are in, the Plan's,
+ * at the newest rates (see the top of this file).
  */
-export function investedAssets(institutions: AssetInstitution[], includeCash: boolean): InvestedAssets {
+export function investedAssets(institutions: AssetInstitution[], includeCash: boolean, fx: PageFx | null = null, now: number = Date.now()): InvestedAssets {
   const measured: CountedAccount[] = [];
   const caveats: AssetCaveat[] = [];
   let unknown = 0;
@@ -464,6 +511,37 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
   // Summed in one currency, as every total is (lib/spending.ts): an account
   // that names none is taken to be in it.
   const currency = dominantCurrency(measured.map((a) => ({ iso_currency_code: a.currency })));
+  if (fx && currency && measured.some((a) => a.currency && a.currency !== currency)) {
+    // Each currency's subtotal converted once, as net worth is: never a day
+    // before the newest publication (this device's clock may be behind).
+    const today = new Date(now).toISOString().slice(0, 10);
+    const day = fx.latest && fx.latest.date > today ? fx.latest.date : today;
+    const b = balancesIn(
+      measured.map((a) => ({ amount: a.balance, currency: a.currency })),
+      tableOf(fx),
+      currency,
+      day,
+      currency
+    );
+    const rated = new Set(b.parts.filter((p) => p.converted !== null).map((p) => p.currency));
+    const counted = measured.filter((a) => !a.currency || rated.has(a.currency));
+    const from = b.parts.filter((p) => p.currency !== currency && p.converted !== null);
+    return {
+      total: counted.length > 0 ? b.total : null,
+      accounts: counted,
+      unknown,
+      caveats,
+      currency,
+      leftOut: b.left_out.map((l) => ({ currency: l.currency, count: l.accounts })),
+      conversion: {
+        into: currency,
+        day: from.some((p) => p.rate?.source === 'ecb') && fx.latest ? fx.latest.date : day,
+        from: from.map((p) => ({ currency: p.currency, count: p.accounts })),
+        own: from.filter((p) => p.rate?.source === 'own').map((p) => p.currency).sort(),
+        unrated: b.left_out.map((l) => ({ currency: l.currency, why: l.why, unrated: l.unrated })),
+      },
+    };
+  }
   const counted = measured.filter((a) => !a.currency || !currency || a.currency === currency);
   const others = new Map<string, number>();
   for (const a of measured) if (a.currency && currency && a.currency !== currency) others.set(a.currency, (others.get(a.currency) ?? 0) + 1);
@@ -474,6 +552,7 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
     caveats,
     currency,
     leftOut: [...others].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    conversion: null,
   };
 }
 

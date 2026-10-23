@@ -23,6 +23,7 @@ import { addDays, type RecurringSeries } from '@/lib/recurring';
 import {
   buildForecast,
   cashPosition,
+  forecastConvertedText,
   forecastEvents,
   forecastNotes,
   withPurchase,
@@ -40,6 +41,7 @@ import { isCurrencyCode, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '
 import { refusedNames, unallowedNames, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import { joinNames, type Incomplete, type Stopped } from '@/lib/month-coverage';
 import { instantDay, localDate } from '@/lib/local-date';
+import type { FxTable } from '@/lib/fx/rates';
 
 const NO_GAPS: Incomplete[] = [];
 const NO_STOPPED: Stopped[] = [];
@@ -77,6 +79,7 @@ export default function ForecastCard({
   incomplete = NO_GAPS,
   stopped = NO_STOPPED,
   withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  fx = null,
 }: {
   institutions: ForecastInstitution[];
   /** Detected from the loaded transactions. */
@@ -95,6 +98,9 @@ export default function ForecastCard({
   today: string;
   /** The loaded transactions, for the charges still pending. */
   txns?: PendingRow[];
+  /** With a home currency, what converts what is in another currency into
+   *  the forecast's at the newest rates (/api/transactions `fx`). */
+  fx?: FxTable | null;
   /** Transactions are still loading: no bills or income are known yet. */
   loading?: boolean;
   /** Transactions couldn't be loaded: no bills or income are known. */
@@ -115,11 +121,11 @@ export default function ForecastCard({
   const [savingWarn, setSavingWarn] = useState(false);
 
   const ready = plannedStatus === 'ready';
-  const position = useMemo(() => cashPosition(institutions, txns), [institutions, txns]);
+  const position = useMemo(() => cashPosition(institutions, txns, { fx, today }), [institutions, txns, fx, today]);
   const warn = thresholdOf(ready ? planned : EMPTY_PLANNED, position.currency);
   const threshold = warn.amount;
   const until = addDays(today, range);
-  const { events, leftOut, varied, lapsed, unplaced, cardsPaid } = useMemo(
+  const { events, leftOut, conversion, varied, lapsed, unplaced, cardsPaid } = useMemo(
     () =>
       forecastEvents({
         series,
@@ -128,8 +134,9 @@ export default function ForecastCard({
         currency: position.currency,
         today,
         until,
+        fx,
       }),
-    [series, planned, ready, dismissed, position.currency, today, until]
+    [series, planned, ready, dismissed, position.currency, today, until, fx]
   );
   const forecast = useMemo(
     () => buildForecast(position.start, events, today, range, threshold, position.currency),
@@ -145,6 +152,7 @@ export default function ForecastCard({
         institutions,
         position,
         eventsLeftOut: leftOut,
+        eventsConversion: conversion,
         series: { varied, lapsed, unplaced, cardsPaid },
         until,
         planned: ready ? planned.items : [],
@@ -157,8 +165,10 @@ export default function ForecastCard({
       }),
     // `hidden` isn't read inside: it changes what formatMoney writes there.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [institutions, position, leftOut, varied, lapsed, unplaced, cardsPaid, until, planned, ready, stopped, incomplete, withoutTransactions, today, hidden]
+    [institutions, position, leftOut, conversion, varied, lapsed, unplaced, cardsPaid, until, planned, ready, stopped, incomplete, withoutTransactions, today, hidden]
   );
+  // With a home currency: what was converted into the forecast's currency.
+  const converted = forecastConvertedText(position.conversion, conversion);
 
   // The what-if: one purchase, in the forecast's currency, within its range.
   const code = position.currency ?? DEFAULT_CURRENCY;
@@ -314,6 +324,7 @@ export default function ForecastCard({
           <Masked>{n}</Masked>
         </div>
       ))}
+      {converted && <div className="chart-note">{converted}</div>}
       <div className="chart-note">
         An estimate of what leaves and reaches your checking and savings: the bills and income Nya expects on them, and what you
         planned. A card&apos;s own charges aren&apos;t in it, since the card&apos;s payment is what leaves your checking, and that

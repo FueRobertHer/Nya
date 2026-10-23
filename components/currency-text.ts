@@ -163,7 +163,32 @@ export function institutionNote(b: Pick<BalancesIn, 'currency' | 'left_out'>): s
 }
 
 /** What correcting a manual account's currency doesn't change, said on its
- *  form and in the choice of a home currency: relabelling the transactions
- *  already on it is the next step's. */
+ *  form and in the choice of a home currency, unless the person also moves
+ *  the transactions they typed on it (relabelText). */
 export const CORRECTION_KEEPS =
   'The transactions already on it keep the currency they were entered in, so budgets and Activity, which add up one currency, may name them rather than count them.';
+
+/** The offer to move the transactions typed on a manual account with its
+ *  currency, on the person's confirmation: `n` is the server's count, every
+ *  row the move would take (GET /api/manual-accounts `relabel`). */
+export const relabelText = (n: number, to: string) => `Also move the ${n === 1 ? 'transaction' : `${n} transactions`} you entered on it to ${to}`;
+
+/** Said beside the offer, before it is ticked: a move has no undo, and which
+ *  rows it moved isn't kept (lib/manual-relabel.ts). */
+export const relabelUndoText = (from: string, to: string) =>
+  `There is no undo. Changing it back to ${from} later would offer to move every transaction you entered on it in ${to}, not only these.`;
+
+/** The rows typed in `from` that would stay in it, beside the offer (`more`:
+ *  beside some that would move). */
+export const relabelKeptText = (kept: number, from: string, to: string, more = true) =>
+  `${kept === 1 ? '1' : kept}${more ? ' more' : ''} you entered on it ${kept === 1 ? 'stays' : 'stay'} in ${from}: split, in a group, or more precise than ${to} allows.`;
+
+/** What a move did, once saved (the answer's `relabelled`). */
+export function relabelledText(r: { moved: number; kept: number }, from: string, to: string): string {
+  const moved = r.moved === 0 ? `None of the transactions you entered on it moved to ${to}.` : `${r.moved === 1 ? '1 transaction' : `${r.moved} transactions`} you entered on it moved to ${to}.`;
+  const kept = r.kept === 0 ? '' : ` ${r.kept === 1 ? '1 stays' : `${r.kept} stay`} in ${from}: split, in a group, or more precise than ${to} allows.`;
+  return moved + kept;
+}
+
+/** What moving them does, and what it leaves. */
+export const RELABEL_KEEPS = 'Their numbers stay as you typed them: only the currency they are in changes. Transactions imported from a file, split or in a group keep theirs.';

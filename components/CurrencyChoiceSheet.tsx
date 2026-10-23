@@ -10,12 +10,14 @@
 // manual account typed in the app is listed with its currency, which the
 // person can correct here before confirming (one request per account, the
 // currency alone: app/api/manual-accounts); the balance they typed never
-// changes its number.
+// changes its number. Beside a corrected account, the offer to move the
+// transactions typed on it too, with the server's count and the plain words
+// that it has no undo (RelabelOffer); once saved, the sheet says what moved.
 
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';
-import { currencyName, errorOf, everyCurrency, useCurrencySettings, type CurrencySettingsView } from './currency-state';
-import { CORRECTION_KEEPS } from './currency-text';
+import { currencyName, errorOf, everyCurrency, useCurrencySettings, useRelabelCount, type CurrencySettingsView, type RelabelCount } from './currency-state';
+import { CORRECTION_KEEPS, RELABEL_KEEPS, relabelKeptText, relabelText, relabelUndoText, relabelledText } from './currency-text';
 
 type Props = {
   open: boolean;
@@ -74,6 +76,50 @@ export function choiceText(home: string): string {
   return `Your net worth will be shown in ${home}, with accounts in other currencies converted at the European Central Bank’s daily rates. Your budgets, goals and the Plan stay as they are, in the currencies they’re shown in now.`;
 }
 
+/** The offer to move the transactions typed on a manual account with its
+ *  corrected currency: the server's count of every row it would move
+ *  (`count`, given; else read), those that would stay, and that it has no
+ *  undo. Nothing while counting; why not, when they can't be counted. */
+export function RelabelOffer({
+  account_id,
+  from,
+  to,
+  checked,
+  onChange,
+  disabled,
+  count: given,
+}: {
+  account_id: string;
+  from: string;
+  to: string;
+  checked: boolean;
+  onChange: (on: boolean) => void;
+  disabled: boolean;
+  count?: RelabelCount;
+}) {
+  const read = useRelabelCount(given || from === to ? null : { account_id, from, to });
+  const count = given ?? read;
+  if (!count || from === to) return null;
+  if (count.kind === 'counting') return <p className="panel-note">Counting the transactions you entered on it in {from}…</p>;
+  if (count.kind === 'error') return <p className="stale-note">{count.message}</p>;
+  if (count.moved === 0) return count.kept > 0 ? <p className="panel-note">{relabelKeptText(count.kept, from, to, false)}</p> : null;
+  return (
+    <>
+      <label className="quick-add-check">
+        <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} disabled={disabled} />
+        <span>{relabelText(count.moved, to)}</span>
+      </label>
+      <p className="panel-note">
+        {count.kept > 0 ? `${relabelKeptText(count.kept, from, to)} ` : ''}
+        {relabelUndoText(from, to)}
+      </p>
+    </>
+  );
+}
+
+/** What the moves made in the sheet did, by account, once saved. */
+type Moved = { name: string; text: string };
+
 /** The manual accounts with the corrections made in the sheet. */
 export const corrected = (manual: readonly ManualCurrency[], fixes: Readonly<Record<string, string>>): ManualCurrency[] =>
   manual.map((m) => (Object.hasOwn(fixes, m.account_id) ? { ...m, currency: fixes[m.account_id] } : m));
@@ -82,12 +128,20 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
   const { load } = useCurrencySettings(open);
   const [chosen, setChosen] = useState<string>(initial ?? first[0] ?? 'EUR');
   const [fixes, setFixes] = useState<Record<string, string>>({});
+  // The corrected accounts whose typed transactions move too: only ticked.
+  const [moves, setMoves] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Saved with moves: what they did, shown until the person closes the sheet.
+  const [moved, setMoved] = useState<Moved[] | null>(null);
+  useEffect(() => {
+    if (open) setMoved(null);
+  }, [open]);
   useEffect(() => {
     if (open) {
       setChosen(initial ?? first[0] ?? 'EUR');
       setFixes({});
+      setMoves({});
       setError(null);
     }
   }, [open, initial, first]);
@@ -97,6 +151,7 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
     setSaving(true);
     setError(null);
     let changed = false;
+    const done: Moved[] = [];
     try {
       // Each correction first, the currency alone, so the choice converts
       // each account from the currency it is really in.
@@ -106,13 +161,17 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
         const res = await fetch('/api/manual-accounts', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ account_id: m.account_id, currency: to }),
+          body: JSON.stringify({ account_id: m.account_id, currency: to, ...(moves[m.account_id] ? { relabel_from: m.currency } : {}) }),
         });
         if (!res.ok) {
           setError(await errorOf(res, `${m.name}’s currency wasn’t saved. Try again.`));
           return;
         }
         changed = true;
+        if (moves[m.account_id]) {
+          const r = (await res.json().catch(() => null))?.relabelled;
+          if (typeof r?.moved === 'number' && typeof r?.kept === 'number') done.push({ name: m.name, text: relabelledText(r, m.currency, to) });
+        }
       }
       if (view?.home !== chosen) {
         const res = await fetch('/api/currency', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ home: chosen }) });
@@ -123,7 +182,9 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
       }
       changed = false;
       onSaved(chosen);
-      onClose();
+      // What the moves did, said before the sheet closes.
+      if (done.length > 0) setMoved(done);
+      else onClose();
     } catch {
       setError('Nya could not be reached. Check your connection and try again.');
     } finally {
@@ -135,20 +196,43 @@ export default function CurrencyChoiceSheet({ open, onClose, title = 'Show your 
 
   return (
     <Sheet open={open} title={title} onClose={() => !saving && onClose()}>
-      <CurrencyChoiceBody
-        view={view}
-        chosen={chosen}
-        onChosen={setChosen}
-        first={first}
-        manual={manual}
-        fixes={fixes}
-        onFix={(id, currency) => setFixes((f) => ({ ...f, [id]: currency }))}
-        saving={saving}
-        error={error}
-        onSave={() => void save()}
-        onClose={onClose}
-      />
+      {moved ? (
+        <MovedBody moved={moved} onClose={onClose} />
+      ) : (
+        <CurrencyChoiceBody
+          view={view}
+          chosen={chosen}
+          onChosen={setChosen}
+          first={first}
+          manual={manual}
+          fixes={fixes}
+          onFix={(id, currency) => setFixes((f) => ({ ...f, [id]: currency }))}
+          moves={moves}
+          onMove={(id, on) => setMoves((m) => ({ ...m, [id]: on }))}
+          saving={saving}
+          error={error}
+          onSave={() => void save()}
+          onClose={onClose}
+        />
+      )}
     </Sheet>
+  );
+}
+
+/** Saved: what moving each account's typed transactions did. */
+export function MovedBody({ moved, onClose }: { moved: readonly Moved[]; onClose: () => void }) {
+  return (
+    <div className="sheet-form">
+      <p className="panel-note">Saved.</p>
+      {moved.map((m) => (
+        <p key={m.name} className="panel-note">
+          {moved.length === 1 ? m.text : `${m.name}: ${m.text}`}
+        </p>
+      ))}
+      <div className="button-pair">
+        <button onClick={onClose}>Done</button>
+      </div>
+    </div>
   );
 }
 
@@ -161,6 +245,9 @@ export function CurrencyChoiceBody({
   manual,
   fixes = {},
   onFix = () => {},
+  moves = {},
+  onMove = () => {},
+  counts,
   saving,
   error,
   onSave,
@@ -174,6 +261,12 @@ export function CurrencyChoiceBody({
   /** Corrections to the manual accounts' currencies, by account id. */
   fixes?: Readonly<Record<string, string>>;
   onFix?: (account_id: string, currency: string) => void;
+  /** The corrected accounts whose typed transactions move too. */
+  moves?: Readonly<Record<string, boolean>>;
+  onMove?: (account_id: string, on: boolean) => void;
+  /** The server's counts of what each move would take, by account id, when
+   *  already known (tests); else each offer reads its own. */
+  counts?: Readonly<Record<string, RelabelCount>>;
   saving: boolean;
   error: string | null;
   onSave: () => void;
@@ -217,15 +310,36 @@ export function CurrencyChoiceBody({
             {accounts.length === 1 ? 'Your manual account is counted in the currency below.' : 'Your manual accounts are counted in the currencies below.'} If one is in
             another, correct it before you confirm: only the currency changes, never the balance you typed.
           </p>
-          {accounts.map((m) => (
-            <label className="field" key={m.account_id}>
-              {m.name}
-              <select value={m.currency} onChange={(e) => onFix(m.account_id, e.target.value)} disabled={saving}>
-                <CurrencyOptions first={[...first, chosen]} value={m.currency} />
-              </select>
-            </label>
-          ))}
-          {fixing && <p className="panel-note">Correcting an account changes only its currency. {CORRECTION_KEEPS}</p>}
+          {accounts.map((m, i) => {
+            const was = manual[i].currency;
+            return (
+              <div key={m.account_id}>
+                <label className="field">
+                  {m.name}
+                  <select value={m.currency} onChange={(e) => onFix(m.account_id, e.target.value)} disabled={saving}>
+                    <CurrencyOptions first={[...first, chosen]} value={m.currency} />
+                  </select>
+                </label>
+                {m.currency !== was && (
+                  <RelabelOffer
+                    account_id={m.account_id}
+                    from={was}
+                    to={m.currency}
+                    checked={!!moves[m.account_id]}
+                    onChange={(on) => onMove(m.account_id, on)}
+                    disabled={saving}
+                    count={counts?.[m.account_id]}
+                  />
+                )}
+              </div>
+            );
+          })}
+          {fixing && (
+            <p className="panel-note">
+              Correcting an account changes only its currency.{' '}
+              {accounts.some((m, i) => m.currency !== manual[i].currency && moves[m.account_id]) ? RELABEL_KEEPS : CORRECTION_KEEPS}
+            </p>
+          )}
         </div>
       )}
       {unpriceable && (

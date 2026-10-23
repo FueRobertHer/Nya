@@ -23,6 +23,8 @@ import { clearCaches } from '@/lib/cache';
 import { clearBackfillDone } from '@/lib/history';
 import { deleteManualAccount } from '@/lib/manual-account-delete';
 import { followAccountCurrency } from '@/lib/import/commit';
+import { relabelCount, relabelTypedRows, type RelabelResult } from '@/lib/manual-relabel';
+import { StoredDataUnreadableError } from '@/lib/stored-json';
 import { loggable } from '@/lib/log-safe';
 
 // CRUD for manually-tracked accounts, deliberately ONE ACCOUNT PER REQUEST.
@@ -48,9 +50,16 @@ import { loggable } from '@/lib/log-safe';
 // `account_id` and `currency` sets the currency alone (the choice of a home
 // currency corrects one there), leaving the balance as stored. A correction
 // changes nothing else: the transactions already on the account keep their
-// own currency (relabelling them is the next step's), and what its last
-// imported files taught follows it (lib/import/commit.ts
-// followAccountCurrency), so the next file is read in the new one.
+// own currency, and what its last imported files taught follows it
+// (lib/import/commit.ts followAccountCurrency), so the next file is read in
+// the new one. Only when the person confirms it (`relabel_from`, the currency
+// the account was in), the rows they typed on it move into the new one too
+// (lib/manual-relabel.ts: never one imported, split or in a group), in one
+// write of its book, and the answer says how many (`relabelled`). What the
+// offer to move them shows is counted here too, before anything is written:
+// GET with `account_id`, `relabel_from` and `currency` answers `relabel`
+// ({ moved, kept }), every row the move would take, older ones too. A move
+// has no undo (lib/manual-relabel.ts).
 
 type DraftInput = {
   name?: unknown;
@@ -69,6 +78,34 @@ const CURRENCY_ERROR = 'The currency is a three-letter ISO code, like USD or EUR
 function currencyOf(given: unknown): { error: string } | { currency: string | undefined } {
   if (given === undefined) return { currency: undefined };
   return isCurrencyCode(given) && knownCurrency(given) ? { currency: given } : { error: CURRENCY_ERROR };
+}
+
+/** The currency the rows typed on the account were entered in, to move into
+ *  its corrected one (see the header): undefined when the request asks for
+ *  no move. */
+function relabelFrom(body: unknown): { error: string } | { from: string | undefined } {
+  const given = body && typeof body === 'object' ? (body as { relabel_from?: unknown }).relabel_from : undefined;
+  const c = currencyOf(given);
+  return 'error' in c ? c : { from: c.currency };
+}
+
+/** The rows typed in `from` moved into `to`, when asked. Their book, a split
+ *  or a group that can't be read moves none: said (409), the currency kept. */
+async function relabel(ctx: Ctx, account_id: string, from: string | undefined, to: string): Promise<RelabelResult | null> {
+  if (from === undefined || from === to) return null;
+  return relabelTypedRows(ctx, account_id, from, to);
+}
+
+const RELABEL_UNREAD = "Its currency is saved, but the transactions on it couldn't be read, so none of them was moved. Try again once they can be read.";
+
+/** relabel, or 'unread' when what it reads couldn't be. */
+async function relabelOrSay(ctx: Ctx, account_id: string, from: string | undefined, to: string): Promise<RelabelResult | null | 'unread'> {
+  try {
+    return await relabel(ctx, account_id, from, to);
+  } catch (err) {
+    if (err instanceof StoredDataUnreadableError) return 'unread';
+    throw err;
+  }
 }
 
 /** Shared field validation for create and update. Returns an error string, or
@@ -113,9 +150,29 @@ async function invalidate(ctx: Ctx, balanceChanged: boolean): Promise<void> {
   await clearCaches(ctx);
 }
 
-export async function GET() {
+/** The count the offer to move an account's typed rows shows (see the
+ *  header): what the move would take now, nothing written. */
+async function relabelCountAnswer(ctx: Ctx, q: URLSearchParams): Promise<NextResponse> {
+  const account_id = String(q.get('account_id') ?? '').slice(0, 80);
+  if (!account_id || !isManualId(account_id)) return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
+  const from = currencyOf(q.get('relabel_from') ?? undefined);
+  const to = currencyOf(q.get('currency') ?? undefined);
+  if ('error' in from || 'error' in to || from.currency === undefined || to.currency === undefined) return NextResponse.json({ error: CURRENCY_ERROR }, { status: 400 });
+  try {
+    return NextResponse.json({ relabel: await relabelCount(ctx, account_id, from.currency, to.currency) });
+  } catch (err) {
+    if (err instanceof StoredDataUnreadableError) return NextResponse.json({ error: RELABEL_COUNT_UNREAD }, { status: 409 });
+    throw err;
+  }
+}
+
+const RELABEL_COUNT_UNREAD = "The transactions on it couldn't be read, so none of them can be moved with it now.";
+
+export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
+    const q = new URL(req.url).searchParams;
+    if (q.has('relabel_from')) return await relabelCountAnswer(ctx, q);
     return NextResponse.json({ accounts: await getManualAccounts(ctx) });
   } catch (err) {
     const unavailable = containerUnavailable(err);
@@ -169,8 +226,10 @@ export async function PATCH(req: Request) {
     if (!account_id || !isManualId(account_id)) {
       return NextResponse.json({ error: 'Invalid account id' }, { status: 400 });
     }
+    const moving = relabelFrom(body);
+    if ('error' in moving) return NextResponse.json({ error: moving.error }, { status: 400 });
     // The currency alone, as one compare-and-set: nothing else is written.
-    if (body && typeof body === 'object' && 'currency' in body && Object.keys(body).every((k) => k === 'account_id' || k === 'currency')) {
+    if (body && typeof body === 'object' && 'currency' in body && Object.keys(body).every((k) => k === 'account_id' || k === 'currency' || k === 'relabel_from')) {
       const given = currencyOf(body.currency);
       if ('error' in given || given.currency === undefined) return NextResponse.json({ error: CURRENCY_ERROR }, { status: 400 });
       const set = await setManualCurrency(ctx, account_id, given.currency);
@@ -180,7 +239,11 @@ export async function PATCH(req: Request) {
         // A currency moves no balance: the estimated history stays as it is.
         await invalidate(ctx, false);
       }
-      return NextResponse.json({ account: await getManualAccount(ctx, account_id) });
+      // Asked again after a move that couldn't be made: made now.
+      const relabelled = await relabelOrSay(ctx, account_id, moving.from, given.currency);
+      if (relabelled === 'unread') return NextResponse.json({ error: RELABEL_UNREAD, account: await getManualAccount(ctx, account_id) }, { status: 409 });
+      if (relabelled && relabelled.moved > 0 && set === 'same') await invalidate(ctx, false);
+      return NextResponse.json({ account: await getManualAccount(ctx, account_id), ...(relabelled ? { relabelled } : {}) });
     }
     const result = validate(body);
     if ('error' in result) return NextResponse.json({ error: result.error }, { status: 400 });
@@ -205,7 +268,10 @@ export async function PATCH(req: Request) {
     await saveManualAccount(ctx, account);
     await followAccountCurrency(ctx, account_id, was, currency);
     await invalidate(ctx, balanceChanged);
-    return NextResponse.json({ account });
+    // The rows typed on it, moved into its new currency when the person said so.
+    const relabelled = await relabelOrSay(ctx, account_id, moving.from, currency);
+    if (relabelled === 'unread') return NextResponse.json({ error: RELABEL_UNREAD, account }, { status: 409 });
+    return NextResponse.json({ account, ...(relabelled ? { relabelled } : {}) });
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;

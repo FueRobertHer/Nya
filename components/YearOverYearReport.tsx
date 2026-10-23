@@ -15,7 +15,7 @@ import { Masked } from './HideAmounts';
 import { reportDay, reportTime } from './ReportView';
 import { browserZone } from './RunwayReport';
 import { formatMoney, signedMoney } from '@/lib/format';
-import { gapSentences, scopeLine } from '@/lib/report/words';
+import { gapSentences, reportConvertedText, scopeLine } from '@/lib/report/words';
 import type { Change, YoyCategory, YoyCompare, YoyGroup, YoyPeriod } from '@/lib/report/year-over-year';
 import type { YearOverYearReport as Yoy } from '@/lib/report/year-over-year-read';
 import { joinNames } from '@/lib/month-coverage';
@@ -179,6 +179,8 @@ function GroupTable({ r, measure, label }: { r: Yoy; measure: 'money_in' | 'mone
 /** Year over year as a page to read and print. No hooks and no state. */
 export function YearOverYearView({ report: r }: { report: Yoy }) {
   const caveats = yoyCaveats(r);
+  // With a home currency: what was converted into the comparison's currency.
+  const converted = reportConvertedText({ conversion: r.conversion ?? null }, reportDay);
   return (
     <article className="report yoy-report" aria-label="Year over year">
       <section className="report-page report-first">
@@ -187,7 +189,8 @@ export function YearOverYearView({ report: r }: { report: Yoy }) {
           <h1>Year over year</h1>
           <p className="report-meta">
             {spanWords(r.year.this)}, against the same days of {r.year.last.start.slice(0, 4)}. Amounts in {r.currency ?? 'the currency the transactions are in'}
-            {r.currencies.length > 1 && `; ${r.currencies.length - 1} other ${r.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
+            {!r.conversion && r.currencies.length > 1 && `; ${r.currencies.length - 1} other ${r.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
+            {converted ? ` ${converted}` : ''}
           </p>
           <p className="report-meta">
             {r.data_as_of ? `Data as of ${reportTime(r.data_as_of, r.time_zone)}. ` : ''}Made {reportTime(r.generated_at, r.time_zone)}. Times and today’s date are in {r.time_zone};

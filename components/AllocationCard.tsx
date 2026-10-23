@@ -53,6 +53,7 @@ import {
   allocate,
   bankCash,
   drift,
+  inputsIn,
   isMoney,
   planMix,
   shares,
@@ -80,6 +81,7 @@ import {
 } from '@/lib/allocation/settings';
 import type { SeriesAccount, SeriesAccountSpan, SeriesDay } from '@/lib/allocation/series';
 import type { FirePlan } from '@/lib/fire/plan';
+import type { PageFx } from '@/lib/fx/view';
 import { Masked } from './HideAmounts';
 
 /** The local day recovered balances were observed: the local day of the
@@ -117,11 +119,15 @@ export function useAllocation({
   holdings,
   currency,
   includeCash,
+  fx = null,
 }: {
   institutions: AllocInstitution[];
   holdings: AllocHolding[];
   currency: string | null;
   includeCash: boolean;
+  /** With a home currency (/api/net-worth base.fx): what is in another
+   *  currency converts into `currency` at the newest rates (inputsIn). */
+  fx?: PageFx | null;
 }): AllocationState {
   const [settings, setSettings] = useState<ListState<AllocationSettings | null>>(initialListState<AllocationSettings | null>(null));
   const store = useMemo(
@@ -142,11 +148,18 @@ export function useAllocation({
   }, [store]);
   const withSettings = settings.status === 'ready';
   const value = withSettings ? settings.value : null;
-  const alloc = useMemo(() => allocate({ institutions, holdings, settings: value, currency }), [institutions, holdings, value, currency]);
+  const inputs = useMemo(() => inputsIn(institutions, holdings, fx, currency), [institutions, holdings, fx, currency]);
+  const alloc = useMemo(
+    () => ({
+      ...allocate({ institutions: inputs.institutions, holdings: inputs.holdings, settings: value, currency }),
+      ...(fx && currency ? { converted: inputs.converted, converting: true } : {}),
+    }),
+    [inputs, value, currency, fx]
+  );
   const mix = useMemo(() => {
-    const bank = includeCash ? bankCash(institutions, currency) : { amount: 0, otherCurrencies: [] };
+    const bank = includeCash ? bankCash(inputs.institutions, currency) : { amount: 0, otherCurrencies: [] };
     return planMix(alloc, bank.amount, bank.otherCurrencies);
-  }, [alloc, includeCash, institutions, currency]);
+  }, [alloc, includeCash, inputs, currency]);
   return { settings, load: store.load, save: (next) => store.save(next), withSettings, alloc, mix };
 }
 
@@ -605,9 +618,19 @@ export function BucketView({ alloc, money, editable, open }: { alloc: Allocation
 /** What the allocation leaves out or can't see, one sentence each. */
 export function AllocationNotes({ alloc, money }: { alloc: Allocation; money: (n: number) => string }) {
   const lines: string[] = [];
-  if (alloc.otherCurrencies.length) {
+  // With a home currency: what was converted, never a rate or an amount.
+  const c = alloc.converted;
+  if (c) {
     lines.push(
-      `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${alloc.otherCurrencies.length === 1 ? 'another currency' : 'other currencies'}. The allocation doesn't convert currencies.`
+      `What is in ${names(c.from)} is converted into ${c.into} at the ECB’s newest rates${c.own.length > 0 ? `, and your own rate for ${names(c.own)}` : ''}, each balance and position on its own.`
+    );
+  }
+  if (alloc.otherCurrencies.length) {
+    const one = alloc.otherCurrencies.length === 1;
+    lines.push(
+      `Left out: ${names(alloc.otherCurrencies.map((o) => wholeMoney(o.amount, o.currency)))}, in ${one ? 'another currency' : 'other currencies'}. ${
+        alloc.converting ? `There is no rate to convert ${one ? 'it' : 'them'} at.` : "The allocation doesn't convert currencies."
+      }`
     );
   }
   for (const c of alloc.caveats) lines.push(caveatText(c, 'this'));
@@ -1231,7 +1254,7 @@ export function HistoryBody({
       {noCurrency && (
         <div className="as-of stale">Positions with no currency in an account that isn&apos;t linked now are left out: its currency isn&apos;t known.</div>
       )}
-      {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: the allocation doesn&apos;t convert currencies.</div>}
+      {other.length > 0 && <div className="as-of stale">Money in {names(other)} is left out: the allocation over time doesn&apos;t convert currencies.</div>}
       {unreadableNote && <div className="as-of stale">{unreadableNote}</div>}
       {/* What today's allocation may be short of, so are the latest days. */}
       {caveats.map((c) => (

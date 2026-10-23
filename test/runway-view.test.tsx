@@ -65,6 +65,15 @@ const three = (over: Partial<RunwayWhatIf> = {}): RunwayWhatIf => ({ ...DEFAULT_
 const draw = (r: RunwayReport = runway(), w: RunwayWhatIf = three()) => renderToStaticMarkup(<RunwayView runway={r} projection={projectRunway(r, w)} />);
 
 describe('the runway, drawn', () => {
+  test('with a home currency it says what it converted, and lists a planned item with what it was', () => {
+    const { ecbTable } = require('./fx-fixture') as typeof import('./fx-fixture');
+    const fx = ecbTable({ home: 'USD', own: [{ currency: 'USD', rate: '0.8', quote: 'EUR', from: null, set_at: '2026-01-01T00:00:00.000Z' }] });
+    const built = buildRunwayInputs({ today: TODAY, position, rows: ROWS, planned: PLANNED, dismissed: [], fx });
+    const t = text(draw(runway({ ...built })));
+    expect(t).toContain('Amounts in USD. Converted into USD at each day’s ECB rate, and your own rate for USD: 1 transaction in EUR.');
+    expect(t).toContain('Paris trip: an expense of $1,125.00 (€900.00)');
+  });
+
   test('how long, both ways, and the day, as worked by hand', () => {
     const t = text(draw());
     expect(t).toContain('Cash now $12,000.00');
@@ -286,6 +295,24 @@ describe('year over year, drawn', () => {
     expect(t).toContain('Citi hasn’t synced since Aug 20, 2026');
     expect(t).toContain('Hidden accounts are left out.');
     expect(t).toContain('Activity inside investment accounts, such as trades, dividends and interest, isn’t in it.');
+  });
+
+  test('with a home currency, the amounts are in it, what is in another converted, and it says so, never an amount', () => {
+    const { ecbTable } = require('./fx-fixture') as typeof import('./fx-fixture');
+    // 1 USD = 0.80 EUR every day, a rate of the person's own: 1 EUR is 1.25 USD.
+    const fx = ecbTable({ home: 'USD', own: [{ currency: 'USD', rate: '0.8', quote: 'EUR', from: null, set_at: '2026-01-01T00:00:00.000Z' }] });
+    const euros = [...rows, row('paris-26', '2026-09-20', 80, { category: 'food and drink', iso_currency_code: 'EUR' })];
+    const converted = report({ ...buildYearOverYear({ rows: euros, taxonomy, currency: 'USD', today: TODAY, fx }) });
+    expect(converted.year.this.money_out).toBe(1100 + 100);
+    expect(converted.left_out.this).toEqual([]);
+    const t = text(renderToStaticMarkup(<YearOverYearView report={converted} />));
+    expect(t).toContain('Amounts in USD.');
+    expect(t).toContain('Converted into USD at each day’s ECB rate, and your own rate for USD: 1 transaction in EUR.');
+    expect(t).not.toContain('named below and left out');
+    // Without one, as before.
+    const plain = report({ ...buildYearOverYear({ rows: euros, taxonomy, currency: 'USD', today: TODAY }) });
+    expect(plain.year.this.money_out).toBe(1100);
+    expect(text(renderToStaticMarkup(<YearOverYearView report={plain} />))).toContain('1 other currency is named below and left out');
   });
 
   test('nothing in either year says so, rather than tables of zeros', () => {

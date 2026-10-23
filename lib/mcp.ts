@@ -144,10 +144,48 @@ function netWorthNow(now: any): string {
     const n = left.reduce((s: number, l: any) => s + l.accounts, 0);
     return n > 0 ? `${plural(n, 'account')} in ${left.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: ${why}` : '';
   };
-  const left = [out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'), out((l) => l.why !== 'not_fetched', 'no rate')].filter(Boolean).join('; ');
+  const left = [
+    out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'),
+    out((l) => l.why === 'rates_unreadable', 'the rates couldn’t be read just now'),
+    out((l) => l.why !== 'not_fetched' && l.why !== 'rates_unreadable', 'no rate'),
+  ]
+    .filter(Boolean)
+    .join('; ');
   const stale = b.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '';
   return `Net worth ${money(b.net_worth, home)}, converted into ${home}${rates ? ` at ${rates}` : ''}${left ? ` (${left})` : ''}${datedFrom(now.balances_from, now.balances_to)}.${stale}`;
 }
+
+/** What a total of transactions converted (lib/fx/api-base.ts
+ *  flowsConverted), in the sentence: at whose rates, from which days, and
+ *  what was left out for having no rate, in counts and codes. */
+function convertedFlows(b: any, home: string): string {
+  const days = b.rate_days ? (b.rate_days.from === b.rate_days.to ? `of ${b.rate_days.from}` : `of ${b.rate_days.from} to ${b.rate_days.to}`) : '';
+  const rates = [days ? `the ECB’s rates ${days}` : '', b.own_rates?.length > 0 ? 'the person’s own rates' : ''].filter(Boolean).join(' and ');
+  const out = (pred: (l: any) => boolean, why: string) => {
+    const left = (b.left_out ?? []).filter(pred);
+    const n = left.reduce((s: number, l: any) => s + (l.transactions ?? l.bills ?? 0), 0);
+    return n > 0 ? `${plural(n, 'transaction')} in ${left.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: ${why}` : '';
+  };
+  const left = [
+    out((l) => l.why === 'not_fetched', 'Nya has no rates for them yet'),
+    out((l) => l.why === 'rates_unreadable', 'the rates couldn’t be read just now'),
+    out((l) => l.why !== 'not_fetched' && l.why !== 'rates_unreadable', 'no rate'),
+  ]
+    .filter(Boolean)
+    .join('; ');
+  return `converted into ${home}${rates ? ` at ${rates}` : ''}${left ? ` (${left})` : ''}`;
+}
+
+/** Rates older than they should be, as a sentence after the figures. */
+const staleRates = (b: any): string => (b?.rates_stale ? ' The newest rates Nya has may be out of date: see notes.' : '');
+
+/** A converted answer's base, when the person chose a home currency and
+ *  something in another currency was converted into it; else null, and the
+ *  sentence says version 1's figures. */
+const convertedBase = (r: any): { b: any; home: string } | null => {
+  const home = code(r.base_currency);
+  return r.base && home && (r.base.converted ?? []).length > 0 ? { b: r.base, home } : null;
+};
 
 /** The days the balances counted are from, when known. */
 function datedFrom(from: string | null, to: string | null): string {
@@ -202,16 +240,42 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   get_balance_history: (r) => `${plural(r.points.length, 'point')}${r.points.length ? `, ${r.points[0].date} to ${r.points[r.points.length - 1].date}` : ''}.`,
   search_transactions: (r) =>
     `${plural(r.transactions.length, 'transaction')} from ${r.from} to ${r.to}${r.has_more ? ', and more: pass next_cursor as cursor' : ''}.${withoutTransactions(r)}`,
-  spending_by_category: (r) =>
-    `From ${r.from} to ${r.to}: money out ${money(r.money_out, r.currency)}, money in ${money(r.money_in, r.currency)}, over ${plural(r.counted, 'transaction')}.${withoutTransactions(r)}`,
-  get_cash_flow: (r) =>
-    `From ${r.from} to ${r.to}: money in ${money(r.money_in, r.currency)} from ${plural(r.payers.length, 'payer')}, money out ${money(r.money_out, r.currency)} in ${plural(r.groups.length, 'group')}, ${
-      r.from_savings_or_debt > 0 ? `${money(r.from_savings_or_debt, r.currency)} from savings or debt` : `${money(r.left_over, r.currency)} left over`
-    }.${withoutTransactions(r)}`,
-  get_budgets: (r) =>
-    `${plural(r.budgets.length, 'category budget')}${r.groups.some((g: any) => g.own !== null) ? ` and ${plural(r.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(r.total.spent, r.currency)} spent of ${money(r.total.budget, r.currency)}${r.total.available === r.total.budget ? '' : r.total.available > 0 ? `, ${money(r.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${r.total.available < 0 ? `: it began the month ${money(-r.total.available, r.currency)} over` : ''}`}.${r.income ? ` Available to allocate: ${money(r.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`,
+  spending_by_category: (r) => {
+    // In the home currency, converted, when the person chose one and
+    // something was converted into it (as the app shows it).
+    const c = convertedBase(r);
+    const s = c ? c.b : r;
+    const cur = c ? c.home : r.currency;
+    return `From ${r.from} to ${r.to}: money out ${money(s.money_out, cur)}, money in ${money(s.money_in, cur)}, over ${plural(s.counted, 'transaction')}${c ? `, ${convertedFlows(c.b, c.home)}` : ''}.${staleRates(c?.b)}${withoutTransactions(r)}`;
+  },
+  get_cash_flow: (r) => {
+    const c = convertedBase(r);
+    const s = c ? c.b : r;
+    const cur = c ? c.home : r.currency;
+    return `From ${r.from} to ${r.to}: money in ${money(s.money_in, cur)} from ${plural(s.payers.length, 'payer')}, money out ${money(s.money_out, cur)} in ${plural(s.groups.length, 'group')}, ${
+      s.from_savings_or_debt > 0 ? `${money(s.from_savings_or_debt, cur)} from savings or debt` : `${money(s.left_over, cur)} left over`
+    }${c ? `, ${convertedFlows(c.b, c.home)}` : ''}.${staleRates(c?.b)}${withoutTransactions(r)}`;
+  },
+  get_budgets: (r) => {
+    // As the Budgets tab counts them once a home currency is chosen (base):
+    // the budgets keep their currency, and spending in another counts in it,
+    // converted; else version 1's figures.
+    const c = r.base && code(r.base.currency) && (r.base.converted ?? []).length > 0 ? r.base : null;
+    const s = c ?? r;
+    return `${plural(s.budgets.length, 'category budget')}${s.groups.some((g: any) => g.own !== null) ? ` and ${plural(s.groups.filter((g: any) => g.own !== null).length, 'group budget')}` : ''} for ${r.month}: ${money(s.total.spent, r.currency)} spent of ${money(s.total.budget, r.currency)}${s.total.available === s.total.budget ? '' : s.total.available > 0 ? `, ${money(s.total.available, r.currency)} available with what rolled over` : `, nothing left with what rolled over${s.total.available < 0 ? `: it began the month ${money(-s.total.available, r.currency)} over` : ''}`}.${
+      c ? ` Spending in other currencies is counted ${convertedFlows(c, code(c.currency)!)}.${staleRates(c)}` : ''
+    }${s.income ? ` Available to allocate: ${money(s.income.available, r.currency)}.` : ''}${incompleteMonths(r)}${withoutTransactions(r)}`;
+  },
   list_recurring_bills: (r) => {
     const ended = r.bills.filter((b: any) => b.ended).length;
+    // In the home currency at today's rates, when one is chosen and a bill is in another.
+    const home = code(r.base_currency);
+    const converted = !!r.base && !!home && r.bills.some((b: any) => b.currency && b.currency !== home);
+    if (converted) {
+      const left = r.base.left_out.reduce((n: number, l: any) => n + l.bills, 0);
+      const out = left > 0 ? ` (${plural(left, 'bill')} in ${r.base.left_out.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: no rate)` : '';
+      return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.base.monthly_total, home)} a month, converted into ${home} at today’s rates${out}.${withoutTransactions(r)}`;
+    }
     return `${plural(r.bills.length, 'recurring bill')}${ended ? ` (${ended} may have ended)` : ''}, about ${money(r.monthly_total.amount, r.monthly_total.currency)} a month.${withoutTransactions(r)}`;
   },
   list_categories: (r) => `${plural(r.categories.length, 'category', 'categories')} in use, in ${plural(r.groups.length, 'group')}.${withoutTransactions(r)}`,
@@ -227,18 +291,38 @@ const SUMMARIES: Record<string, Tool['summary']> = {
   list_tags: (r) => `${plural(r.tags.length, 'tag')}.${withoutTransactions(r)}`,
   list_rules: (r) => `${plural(r.rules.length, 'rule')}, ${r.rules.filter((x: any) => x.enabled).length} on.${withoutTransactions(r)}`,
   get_holdings: (r) => `${plural(r.accounts.length, 'investment account')}.${missingAccounts(r.missing_accounts)}`,
-  get_runway: (r) =>
-    r.without_income.outcome === 'no_cash'
+  get_runway: (r) => {
+    // As the report page shows it once a home currency is chosen (base): in
+    // the runway's currency, what is in another converted; else version 1's.
+    const b =
+      r.base && code(r.base.currency) && (r.base.spending.converted.length > 0 || r.base.newest_rates.cash_accounts.length > 0 || r.base.newest_rates.expected.length > 0)
+        ? r.base
+        : null;
+    const s = b ?? r;
+    const converted = b
+      ? ` What is in other currencies is counted: transactions ${convertedFlows(b.spending, code(b.currency)!)}, and cash and expected amounts at today’s rates${
+          b.newest_rates.left_out.length > 0 ? ` (${b.newest_rates.left_out.map((l: any) => code(l.currency) ?? 'another currency').join(', ')} not counted: no rate)` : ''
+        }.${staleRates(b.spending)}`
+      : '';
+    return s.without_income.outcome === 'no_cash'
       ? 'No runway: no checking, savings or cash on hand is in Nya, so there is no cash to start from. See notes.'
-      : r.without_income.outcome === 'no_spending'
-        ? `No runway: there are no transactions from ${r.spending.from} to ${r.spending.to} to go by. See notes.`
-        : `An estimate, from ${money(r.cash.start, r.currency)} of cash and the spending of ${r.spending.from} to ${r.spending.to}: without income it ${lasts(r.without_income)}; with income it ${lasts(r.with_income)}.${
-            r.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
-          }`,
-  get_year_over_year: (r) =>
-    `${r.year.this.start} to ${r.year.this.end}: money out ${against(r.year.money_out, r.currency)}, money in ${against(r.year.money_in, r.currency)}, the same days a year before.${
-      r.year.this.uncertain || r.year.last.uncertain ? ' Some months may be short of transactions: see notes.' : ''
-    }`,
+      : s.without_income.outcome === 'no_spending'
+        ? `No runway: there are no transactions from ${s.spending.from} to ${s.spending.to} to go by. See notes.`
+        : `An estimate, from ${money(s.cash.start, s.currency)} of cash and the spending of ${s.spending.from} to ${s.spending.to}: without income it ${lasts(s.without_income)}; with income it ${lasts(s.with_income)}.${converted}${
+            s.spending.months_short.length > 0 ? ' Some of those months may be short of transactions: see notes.' : ''
+          }`;
+  },
+  get_year_over_year: (r) => {
+    // In the home currency, converted, once one is chosen and something was
+    // converted into it (base); else version 1's.
+    const home = code(r.base_currency);
+    const b = r.base && home && (r.base.converted ?? []).length > 0 ? r.base : null;
+    const s = b ?? r;
+    const cur = b ? home : r.currency;
+    return `${s.year.this.start} to ${s.year.this.end}: money out ${against(s.year.money_out, cur)}, money in ${against(s.year.money_in, cur)}, the same days a year before${
+      b ? `, ${convertedFlows(b, home!)}` : ''
+    }.${staleRates(b ?? undefined)}${s.year.this.uncertain || s.year.last.uncertain ? ' Some months may be short of transactions: see notes.' : ''}`;
+  },
 };
 
 /** Each declared tool (lib/api-spec.ts) with what it runs: its operation, with

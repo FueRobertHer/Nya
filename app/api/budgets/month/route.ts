@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import { budgetsWithoutHistory, readAppBudgets, readBudgetMonth } from '@/lib/budget-month';
+import { conversionIn, convertedText, leftOutWhy } from '@/lib/fx/totals';
 import { leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { indexTaxonomy } from '@/lib/categories';
 import { endedIn, monthGapsOf, rollingIn, rolloverStarts } from '@/lib/rollover';
@@ -47,6 +48,8 @@ import { readMonthParams, rolloverFailure } from '@/lib/rollover-http';
 //   earliest                 the first month with any transactions
 //   gaps                     months that may be incomplete, and why
 //   left_out_text, notes     what the month's totals left out, and the read's notes
+//   converted_text           with a home currency, what of the month's
+//                            spending was converted into the budgets' currency
 //   counted_left_out_text    what the earlier months a carry or the pool counts
 //                            left out for being in another currency
 //   suggestions              this month, from the history: each budget's
@@ -81,6 +84,7 @@ export async function GET(req: Request) {
         earliest: null,
         gaps: [],
         left_out_text: null,
+        converted_text: null,
         counted_left_out_text: null,
         notes: [],
         suggestions: null,
@@ -88,6 +92,7 @@ export async function GET(req: Request) {
     }
     const read = await readBudgetMonth(ctx, { month: params.month, today: params.today, app });
     const leftOut = leftOutByCurrency(read.monthRows.filter((t) => t.amount > 0), read.currency);
+    const monthConversion = conversionIn(read.monthRows, read.conversion);
     return NextResponse.json({
       history: true,
       month: read.month,
@@ -107,13 +112,16 @@ export async function GET(req: Request) {
       pool: read.pool,
       earliest: read.earliest,
       gaps: read.gaps,
-      left_out_text: leftOutText(leftOut, read.currency, { where: 'these budgets' }),
+      left_out_text: leftOutWhy(leftOutText(leftOut, read.currency, { where: 'these budgets' }), monthConversion),
+      // With a home currency: what of the month's spending was converted into
+      // the budgets' currency (lib/fx/totals.ts).
+      converted_text: convertedText(monthConversion, { budgets: true }),
       counted_left_out_text: leftOutText(read.countedLeftOut, read.currency, { where: 'what rolled over from earlier months', plural: false }),
       notes: read.activity.notes,
       // From the history read anyway, for the editor: never for a month gone by.
       suggestions:
         read.month === read.today
-          ? suggestBudgets({ month: read.month, rows: read.activity.rows, currency: read.currency, ix: read.ix, earliest: read.activity.earliest, gaps: (m) => monthGapsOf(m, read.activity.facts) })
+          ? suggestBudgets({ month: read.month, rows: read.counted, currency: read.currency, ix: read.ix, earliest: read.activity.earliest, gaps: (m) => monthGapsOf(m, read.activity.facts) })
           : null,
     });
   } catch (err) {

@@ -96,6 +96,7 @@ import { connectorOf } from '../connectors/registry';
 import type { OlderTxn, TxnCoverage } from '../transactions';
 import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 import { restoredAccountsStore } from '../user-restore/store';
+import { readFlowFx } from '../fx/read';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -194,7 +195,7 @@ export type ReportRead = { input: ReportInput; history: OlderTxn[] };
 export async function readReportInput(
   ctx: Ctx,
   period: Period,
-  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean } = {}
+  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean; fxAccounts?: boolean } = {}
 ): Promise<ReportRead> {
   const now = opts.now ?? Date.now();
   // Each row with its account, and an ended account's later rows kept: left
@@ -384,11 +385,18 @@ export async function readReportInput(
     ...gone.removed,
   ];
 
+  // With a home currency, the rates the rows convert with into the report's
+  // currency (lib/fx/read.ts): read once, after the rows, never written.
+  // `fxAccounts` (the runway): the accounts' currencies too, whose balances
+  // it converts at the newest rates.
+  const fx = await readFlowFx(ctx, activity.transactions, now, { also: opts.currency ? [opts.currency] : [], accounts: opts.fxAccounts });
+
   const input: ReportInput = {
     period,
     generatedAt: new Date(now).toISOString(),
     rows: activity.transactions,
     currency: opts.currency ?? null,
+    fx,
     sources,
     notes: activity.unread_notes,
     caveatNotes: notesBesides(activity.notes, activity.unread_notes),
