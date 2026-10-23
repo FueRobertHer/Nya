@@ -151,6 +151,10 @@ describe('counted by the person', () => {
       ['acc_chk', 20.5],
       ['acc_chk', 4.5],
     ]);
+    // Every row's account is listed by the API, as any account that ended.
+    const { readAccounts } = await import('@/lib/api-read');
+    const listed = (await readAccounts(ctx)).accounts.find((a) => a.id === 'acc_chk');
+    expect(listed).toMatchObject({ name: 'Checking', institution: 'Chase', lifecycle: { state: 'closed', date: '2026-10-07' } });
     // It has an end, so it holds no total: only the card, unanswered, does
     // (its last day the books, Jan 3; the checking account's was Jan 4).
     expect((await hold()).waiting).toEqual([{ institution_name: 'Chase', last: '2026-01-03' }]);

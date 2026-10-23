@@ -851,7 +851,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ['to', 'The last.'],
       BASE_CURRENCY('each transaction’s to_base'),
       ['transactions', 'Newest first: the day, then the moment, then the id. The last 365 days are read, as the app shows them.'],
-      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN or Lunch Flow, imported-txn:… for one imported from a file into a linked account, or imported-txn:restored.… and the bank’s own id for one of a bank’s transactions brought back from a download, served once its account is linked to the bank connected again.'],
+      ['transactions[].id', 'The transaction’s id: Plaid’s, manual-txn:… for one entered by hand, imported into a manual account or brought in through SimpleFIN or Lunch Flow, imported-txn:… for one imported from a file into a linked account, or imported-txn:restored.… and the bank’s own id for one of a bank’s transactions brought back from a download, served once its account is linked to the bank connected again, or counted as an ended account’s by your answer (Bring back a download).'],
       ['transactions[].date', 'The day it is dated: the bank’s posting date (not a UTC day), or the day picked for one entered by hand.'],
       ['transactions[].datetime', 'When it happened, where the bank says, or null.'],
       ['transactions[].amount', 'Plaid’s sign: positive is money out of the account, negative money in.'],
