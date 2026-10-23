@@ -30,7 +30,7 @@ import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
-import { restoredForgetRefusal } from '@/lib/user-restore/forget';
+import { restoredRefusals } from '@/lib/user-restore/forget';
 import { endedAccountsStore } from '@/lib/connectors/store';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
@@ -42,7 +42,10 @@ export const maxDuration = 120;
 // GET lists what to offer (suggestions with evidence, balance-only history the
 // user can assign), every earlier account that can be linked by hand (`manual`),
 // the links already made with how many categories each carried across, and any
-// saved link that can't be read (`broken`) so the user can remove it. POST links
+// saved link that can't be read (`broken`) so the user can remove it. With
+// ?earlier=1 (asked once the Earlier accounts list is opened) it also says of
+// each earlier account whether forgetting it would be refused, which reads what
+// a restore brought back for it (`earlier_checked`). POST links
 // or dismisses, DELETE unlinks. Everything reads stored state only: opening the
 // Accounts tab must not fan out to every institution's Plaid endpoints.
 //
@@ -96,35 +99,53 @@ async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<s
 /**
  * The earlier accounts to offer for forgetting. Empty when what decides it
  * can't be read: with the live accounts unreadable every account would look
- * like an earlier one. One whose forget would be refused for what a restore
- * brought back for it (in a form this version doesn't know, a newer
- * version's or a fault: lib/user-restore/forget.ts restoredForgetRefusal) is
- * listed with those words (`refused`), and offered no Forget.
+ * like an earlier one. Asked to `check`, one whose forget would be refused
+ * for what a restore brought back for it (in a form this version doesn't
+ * know, a newer version's or a fault: lib/user-restore/forget.ts
+ * restoredRefusals) is listed with those words (`refused`), and one that
+ * couldn't be checked says so (`unchecked`); neither is offered Forget, and
+ * the rest are listed as they are. That reads the restored books, so it is
+ * done only once the list is opened.
  */
-async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs']) {
+async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs'], check: boolean) {
+  let earlier: ReturnType<typeof forgettableAccounts>;
   try {
     const [live, hidden, items] = await Promise.all([liveAccountIds(ctx, { strict: true }), getHiddenAccounts(ctx), getItems(ctx)]);
-    const earlier = forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
-    const refused = await Promise.all(earlier.map((e) => restoredForgetRefusal(ctx, e.id)));
-    return earlier.map((e, i) => (refused[i] ? { ...e, refused: refused[i] } : e));
+    earlier = forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
   } catch {
     return [];
   }
+  if (!check || earlier.length === 0) return earlier;
+  const ids = earlier.map((e) => e.id);
+  const { refused, unchecked } = await restoredRefusals(ctx, ids).catch(() => ({ refused: new Map<string, string>(), unchecked: new Set(ids) }));
+  return earlier.map((e) => (refused.has(e.id) ? { ...e, refused: refused.get(e.id)! } : unchecked.has(e.id) ? { ...e, unchecked: true as const } : e));
 }
 
-export async function GET() {
+/** How many accounts a SimpleFIN or Lunch Flow connection fed were let go, as
+ *  the Reports page lists them (app/api/connectors/ended: those it can read,
+ *  and those whose record is damaged, which it offers to forget), for a
+ *  pointer there. LENIENT, for that pointer only: a count that can't be had
+ *  is none. */
+async function stoppedCount(ctx: Ctx): Promise<number> {
+  try {
+    const { entries, unreadable } = await endedAccountsStore.getAllReport(ctx);
+    return entries.size + unreadable.length;
+  } catch {
+    return 0;
+  }
+}
+
+export async function GET(req?: Request) {
   try {
     const ctx = await dataCtx();
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
+    const check = !!req && new URL(req.url).searchParams.get('earlier') === '1';
     const [labels, counts, forgettable, stopped] = await Promise.all([
       directoryLabels(ctx, ids),
       categoryCounts(ctx, inputs.links, inputs.liveIds),
-      earlierAccounts(ctx, inputs),
-      // How many accounts a SimpleFIN or Lunch Flow connection fed were let
-      // go, for a pointer to where they are forgotten (the Reports page).
-      // LENIENT, for that pointer only: a count that can't be had is none.
-      endedAccountsStore.count(ctx).catch(() => 0),
+      earlierAccounts(ctx, inputs, check),
+      stoppedCount(ctx),
     ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
@@ -146,8 +167,10 @@ export async function GET() {
       suggestions: offer.suggestions,
       unclaimed: offer.unclaimed,
       manual,
-      // Earlier accounts the user can forget for good (hidden ones say so).
+      // Earlier accounts the user can forget for good (hidden ones say so),
+      // and whether each was checked for a forget that would be refused.
       earlier: forgettable,
+      earlier_checked: check,
       links,
       broken: [...inputs.unreadableLinks],
       stopped,

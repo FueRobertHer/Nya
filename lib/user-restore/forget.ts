@@ -36,6 +36,12 @@ async function booksOf(ctx: Ctx, account_id: string): Promise<string[]> {
   } catch (err) {
     if (!(err instanceof StoredDataUnreadableError)) throw err;
   }
+  return partsOf(ctx, account_id);
+}
+
+/** The parts of an account's books there are, counted from the first (they
+ *  are made in order), for one whose entry can't be read. */
+async function partsOf(ctx: Ctx, account_id: string): Promise<string[]> {
   const ids: string[] = [];
   for (let part = 1; part <= 10_000 && (await restoredTxnStore.has(ctx, restoredBookId(account_id, part))); part++) ids.push(restoredBookId(account_id, part));
   return ids;
@@ -82,7 +88,49 @@ export async function restoredForgetRefusal(ctx: Ctx, account_id: string): Promi
     else if (!(err instanceof StoredDataUnreadableError)) throw err;
   }
   if (!unknown && !(await restoredRowsOf(ctx, account_id)).unrecognised) return null;
-  return 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
+  return REFUSED;
+}
+
+const REFUSED = 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
+
+/**
+ * restoredForgetRefusal for many accounts at once, as cheaply as it can be
+ * had, for a list that offers Forget (the Earlier accounts list,
+ * app/api/account-links): the restored accounts read once; only those a
+ * restore brought back looked at further; an entry this version doesn't
+ * know refused without its books read; the books of the rest read one at a
+ * time until the first this version doesn't know, counting nothing. Each
+ * account asked that would be refused is in `refused`, with the words; one
+ * whose books couldn't be checked (a book sealed under a key this deployment
+ * can't use, storage failing part way) in `unchecked`, offered nothing. The
+ * forget itself still asks restoredForgetRefusal, so nothing rests on this.
+ * Reading the restored accounts failing throws.
+ */
+export async function restoredRefusals(ctx: Ctx, ids: readonly string[]): Promise<{ refused: Map<string, string>; unchecked: Set<string> }> {
+  const report = await restoredAccountsStore.getAllReport(ctx);
+  const refused = new Map<string, string>();
+  const unchecked = new Set<string>();
+  await Promise.all(
+    ids.map(async (id) => {
+      if (report.unrecognised.includes(id)) return void refused.set(id, REFUSED);
+      const entry = report.entries.get(id);
+      if (!entry && !report.unreadable.includes(id)) return; // nothing restored for it
+      try {
+        const books = entry ? bookIdsOf(id, entry) : await partsOf(ctx, id);
+        for (const book of books) {
+          try {
+            await restoredTxnStore.get(ctx, book);
+          } catch (err) {
+            if (err instanceof UnreadableEntriesError && err.unrecognised.length > 0) return void refused.set(id, REFUSED);
+            if (!(err instanceof StoredDataUnreadableError)) throw err;
+          }
+        }
+      } catch {
+        unchecked.add(id);
+      }
+    })
+  );
+  return { refused, unchecked };
 }
 
 /** Forgets what a restore brought back for one account (see the header),

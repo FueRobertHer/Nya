@@ -159,6 +159,39 @@ describe('AccountLinksView', () => {
     expect(html).toContain('a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here');
   });
 
+  test('until the server has checked which can be forgotten, none offers Forget; one it couldn’t check says so', () => {
+    const list = (over: Partial<AccountLinksPayload>) =>
+      renderToStaticMarkup(
+        <AccountLinksView
+          open={{ earlier: true }}
+          data={{
+            suggestions: [],
+            unclaimed: [],
+            links: [],
+            earlier: [
+              { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+              { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: true },
+            ],
+            ...over,
+          }}
+          busy={false}
+          error=""
+          preview={null}
+          picked={{}}
+          onPreview={noop}
+          onPick={noop}
+          onAct={noop}
+        />
+      );
+    const waiting = list({ earlier_checked: false });
+    expect(waiting).toContain('Checking which of them can be forgotten…');
+    expect(waiting).not.toContain('>Forget<');
+    const done = list({ earlier_checked: true });
+    expect(done).not.toContain('Checking which');
+    expect(done.match(/>Forget</g)?.length).toBe(1);
+    expect(done).toContain('Chase Sapphire ••2222 (Jan 1, 2024 to Jun 30, 2025). Whether it can be forgotten couldn’t be checked just now: try again later.');
+  });
+
   test('points to where the accounts SimpleFIN or Lunch Flow kept up to date that were let go are forgotten, even with nothing else to show', () => {
     const empty = { suggestions: [], unclaimed: [], links: [] };
     expect(view({ ...empty, stopped: 0 })).toBe('');
