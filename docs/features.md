@@ -415,7 +415,7 @@ A month whose transactions may be incomplete because a SimpleFIN bank stopped an
 
 **Choose accounts** lets one account go the same way, kept or removed (with the same question for a card or a loan waiting for its answer), while the rest stay connected. Nya can't tell SimpleFIN: Nya stays listed as an app in your SimpleFIN account until you remove it there, and the sheet says so.
 
-Either way, Nya keeps each account's name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing ([SimpleFIN in a report](#reports)). Both sheets say so, with a link to **Accounts you stopped tracking** on the Reports page, where **Forget** deletes one.
+Either way, Nya keeps each account's name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing ([SimpleFIN in a report](#reports)). Both sheets say so, with a link to **Accounts you stopped tracking** on the Reports page, where **Forget** deletes one, and so does Manage accounts, under Reconnected accounts, for as long as any are kept.
 
 ### What it doesn't do
 

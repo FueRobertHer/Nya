@@ -15,13 +15,16 @@
 //   - collapsed, every earlier account, each with Forget: the user decides
 //     what is kept about accounts they no longer have. Each is named as
 //     lib/earlier-names.ts names it, which the restore card's notes use too:
-//     two that would read the same are told apart by the end of each id.
+//     two that would read the same are told apart by the end of each id. One
+//     whose forget would be refused says why instead (`refused`);
+//   - accounts a SimpleFIN or Lunch Flow connection fed that were let go, by
+//     how many, with where they are forgotten: the Reports page.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, plainNumber } from '@/lib/format';
 import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 
@@ -70,6 +73,10 @@ export type AccountLinksPayload = {
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
   broken?: string[];
+  /** How many accounts a SimpleFIN or Lunch Flow connection fed were let go:
+   *  their names are kept for reports, and forgotten on the Reports page,
+   *  which this points to. */
+  stopped?: number;
 };
 type Payload = AccountLinksPayload;
 
@@ -235,7 +242,8 @@ export function AccountLinksView({
       manual.length === 0 &&
       earlier.length === 0 &&
       data.links.length === 0 &&
-      broken.length === 0)
+      broken.length === 0 &&
+      !data.stopped)
   ) {
     return null;
   }
@@ -465,6 +473,17 @@ export function AccountLinksView({
               })}
             </>
           )}
+        </div>
+      )}
+
+      {!!data.stopped && (
+        <div className="account-link-row">
+          <p className="chart-note">
+            {data.stopped === 1
+              ? 'An account SimpleFIN or Lunch Flow kept up to date was let go: Nya keeps its name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.'
+              : `${plainNumber(data.stopped)} accounts SimpleFIN or Lunch Flow kept up to date were let go: Nya keeps each one’s name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.`}{' '}
+            To forget {data.stopped === 1 ? 'it' : 'one'}, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.
+          </p>
         </div>
       )}
 

@@ -159,6 +159,15 @@ describe('AccountLinksView', () => {
     expect(html).toContain('a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here');
   });
 
+  test('points to where the accounts SimpleFIN or Lunch Flow kept up to date that were let go are forgotten, even with nothing else to show', () => {
+    const empty = { suggestions: [], unclaimed: [], links: [] };
+    expect(view({ ...empty, stopped: 0 })).toBe('');
+    const one = view({ ...empty, stopped: 1 });
+    expect(one).toContain('An account SimpleFIN or Lunch Flow kept up to date was let go');
+    expect(one).toContain('To forget it, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.');
+    expect(view({ ...empty, stopped: 3 })).toContain('3 accounts SimpleFIN or Lunch Flow kept up to date were let go');
+  });
+
   test('three earlier accounts that would read the same are told apart by the end of each id, so Forget takes the one meant', () => {
     const alike = (id: string) => ({ id, label: null, first: '2025-11-01', last: '2025-11-02', hidden: false });
     const html = renderToStaticMarkup(

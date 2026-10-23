@@ -54,6 +54,7 @@ const connectRoute = await import('@/app/api/connectors/connect/route');
 const accountsRoute = await import('@/app/api/connectors/accounts/route');
 const refreshRoute = await import('@/app/api/connectors/refresh/route');
 const endedRoute = await import('@/app/api/connectors/ended/route');
+const linksRoute = await import('@/app/api/account-links/route');
 const transactions = await import('@/app/api/transactions/route');
 const manualTxns = await import('@/app/api/manual-transactions/route');
 const recategorize = await import('@/app/api/recategorize/route');
@@ -227,6 +228,8 @@ describe('connecting through the routes', () => {
       ['Credit Card', 'Lunch Flow', false],
       ['Everyday', 'Lunch Flow', true],
     ]);
+    // And Manage accounts points there (components/AccountLinks.tsx).
+    expect((await (await linksRoute.GET()).json()).stopped).toBe(2);
   });
 
   test('Refresh is refused once the day’s requests are spent, saying when they come back', async () => {

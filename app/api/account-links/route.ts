@@ -31,6 +31,7 @@ import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
 import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
 import { restoredForgetRefusal } from '@/lib/user-restore/forget';
+import { endedAccountsStore } from '@/lib/connectors/store';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -116,10 +117,14 @@ export async function GET() {
     const ctx = await dataCtx();
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
-    const [labels, counts, forgettable] = await Promise.all([
+    const [labels, counts, forgettable, stopped] = await Promise.all([
       directoryLabels(ctx, ids),
       categoryCounts(ctx, inputs.links, inputs.liveIds),
       earlierAccounts(ctx, inputs),
+      // How many accounts a SimpleFIN or Lunch Flow connection fed were let
+      // go, for a pointer to where they are forgotten (the Reports page).
+      // LENIENT, for that pointer only: a count that can't be had is none.
+      endedAccountsStore.count(ctx).catch(() => 0),
     ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
@@ -145,6 +150,7 @@ export async function GET() {
       earlier: forgettable,
       links,
       broken: [...inputs.unreadableLinks],
+      stopped,
     });
   } catch (err) {
     const unavailable = containerUnavailable(err);
