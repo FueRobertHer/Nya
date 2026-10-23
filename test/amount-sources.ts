@@ -578,14 +578,42 @@ const COORDINATE_AFTER = /^\},(?:\$\{|-?\d)/;
 /** A channel of a CSS color. */
 const COLOR_BEFORE = /\b(?:rgba?|hsla?)\([^()`]*\$\{$/;
 
-/** The words the app writes after a count ("3 rows", "3 of them", "3 more
- *  not listed"): what it counts, or how its sentence goes on. A number
- *  followed by any other word is taken for an amount ("40 spent", "40
- *  dollars", "40 a month"), and so is one these begin an amount's words
- *  with (AMOUNT_WORDS). A count said some other way goes through
- *  plainNumber. */
-const COUNT_WORDS = /^\s+(?:accounts?|already|an|categor(?:y|ies)|characters?|days?|end|files?|kept|lines?|listed|months?|more|new|of|opening|parts?|put|rows?|rules?|runs?|skipped|starts?|still|tagged|tags?|to|transactions?|updated|with|years?)\b/;
-const AMOUNT_WORDS = /^\s+(?:of\s+(?:your|the|its|their)\s+(?:budgets?|balances?|income|spending|savings|money|limits?|cash)|more\s+than|to\s+(?:spend|save|pay|cover)|with\s+(?:interest|fees?))\b/;
+/** Where the text after a word ends: a template's or a tag's end, or a
+ *  sentence's punctuation. */
+const ENDS = '(?=[\\s\\u00a0]*(?:[`\'"<.,;:)}]|$))';
+/** What the app writes after a count ("3 rows", "3 of them", "3 more not
+ *  listed"), each phrase whole: what it counts, or how its sentence goes on.
+ *  A number followed by anything else is taken for an amount ("40 spent",
+ *  "40 dollars", "40 a month"), and so is one followed by words that only
+ *  begin as one of these phrases does ("40 still owed", "40 of the goal",
+ *  "40 more to save", "40 to go"). A word that counts nothing ("more",
+ *  "new") is a phrase alone only where it ends the text ("and 3 more"). A
+ *  count said some other way goes through plainNumber. */
+const COUNT_WORDS = new RegExp(
+  String.raw`^\s+(?:` +
+    [
+      // What it counts.
+      String.raw`(?:accounts?|categor(?:y|ies)|characters?|days?|files?|lines?|months?|parts?|rows?|rules?|runs?|starts?|tags?|transactions?|years?)\b`,
+      // How its sentence goes on.
+      String.raw`already (?:imported|there|in (?:Nya\b|\$\{))`,
+      String.raw`an earlier file brought\b`,
+      String.raw`end tags?\b`,
+      String.raw`kept (?:as (?:the bank’s|your banks’|rows an earlier file|they were|\$\{[^}]*\}’s own)|for a later import)`,
+      String.raw`listed twice in the file\b`,
+      String.raw`more(?: not listed\b|${ENDS})`,
+      String.raw`new${ENDS}`,
+      String.raw`of (?:them|the transactions this file adds|your stored transactions?|\$\{\w+\}’s transactions|its lines|this file)\b`,
+      String.raw`opening balances and balance adjustments\b`,
+      String.raw`put back as\b`,
+      String.raw`skipped${ENDS}`,
+      String.raw`still stored\b`,
+      String.raw`tagged${ENDS}`,
+      String.raw`to (?:answer|update)\b`,
+      String.raw`updated(?: from the file\b|${ENDS})`,
+      String.raw`with no category\b`,
+    ].join('|') +
+    ')'
+);
 
 /**
  * Whether the code beside a number written with toFixed or toPrecision, or
@@ -594,7 +622,7 @@ const AMOUNT_WORDS = /^\s+(?:of\s+(?:your|the|its|their)\s+(?:budgets?|balances?
  * after it, a drawn shape's coordinate, a color's channel, or a number
  * rounded as a number (in Number(...), but not drawn as it is: drawnAt); and,
  * for toLocaleString, a count (followed by one of the words the app writes
- * after a count, COUNT_WORDS, but not an amount's, or by its noun chosen by
+ * after a count, COUNT_WORDS, each phrase whole, or by its noun chosen by
  * it, or a length) or a date. Anything else is taken for an amount.
  */
 function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | 'toLocaleString'): boolean {
@@ -612,7 +640,7 @@ function saysWhatItIs(lx: Lexed, dot: number, end: number, method: 'toFixed' | '
   if (COORDINATE_BEFORE.test(before) || COORDINATE_AFTER.test(next) || COLOR_BEFORE.test(before)) return true;
   if (/\bNumber\($/.test(before) && text[end + 1] === ')' && !drawnAt(lx, dot)) return true;
   if (method !== 'toLocaleString') return false;
-  if (COUNT_WORDS.test(after) && !AMOUNT_WORDS.test(after)) return true;
+  if (COUNT_WORDS.test(after)) return true;
   if (/\.length$/.test(receiver)) return true;
   if (/\bnew\s+$/.test(before) && /^Date\b/.test(receiver)) return true;
   // "3 rows", its noun chosen by it: `${n.toLocaleString()} ${n === 1 ? ...`.
