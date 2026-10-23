@@ -227,8 +227,11 @@ export type CashPosition = {
   currency: string | null;
   /** The included accounts' balances added up, to the minor unit. */
   balances: number;
-  /** The charges still pending on them, taken off where it starts. */
-  pending: { amount: number; count: number };
+  /** The charges still pending on them, taken off where it starts, and
+   *  those left out for their currency, by currency, most first, as the
+   *  accounts are (`leftOut`): in another currency with no home currency,
+   *  or with no rate (named in `conversion`). Absent: none. */
+  pending: { amount: number; count: number; leftOut?: LeftOut };
   /** Where it starts: the balances less what is pending. */
   start: number;
   included: CashAccount[];
@@ -301,7 +304,9 @@ export function cashPosition(
   // one of these accounts' (so two accounts of one name at one bank are two),
   // else as a row names its account, by name and institution; and its type
   // when known. In another currency, converted as its account is, with a
-  // home currency.
+  // home currency; a charge that can't be is left out and counted, as an
+  // account is, never dropped without a word.
+  const chargesOut = new Map<string, number>();
   const known = new Set(institutions.flatMap((i) => i.accounts.map((a) => a.account_id)));
   const ids = new Set(included.map((a) => a.account_id));
   const accounts = new Set(included.map((a) => `${a.institution}|${a.name}`));
@@ -318,7 +323,11 @@ export function cashPosition(
       if (inCurrency(t, currency)) return [t];
       const c = currencyOf(t);
       const amount = c && conv.on ? conv.to(t.amount, c, false) : null;
-      return amount === null ? [] : [{ ...t, amount, iso_currency_code: currency, unofficial_currency_code: null }];
+      if (amount === null) {
+        if (c && t.amount > 0) chargesOut.set(c, (chargesOut.get(c) ?? 0) + 1);
+        return [];
+      }
+      return [{ ...t, amount, iso_currency_code: currency, unofficial_currency_code: null }];
     });
   const deposits = onCash.filter((t) => t.amount < 0 && isMoneyMovement(t));
   const paired = new Set<PendingRow>();
@@ -343,10 +352,11 @@ export function cashPosition(
     pending += toMinor(t.amount, scale);
     count++;
   }
+  const chargesLeftOut = [...chargesOut].map(([c, n]) => ({ currency: c, count: n })).sort((x, y) => y.count - x.count || (x.currency < y.currency ? -1 : 1));
   return {
     currency,
     balances: balances / scale,
-    pending: { amount: pending / scale, count },
+    pending: { amount: pending / scale, count, leftOut: chargesLeftOut },
     start: (balances - pending) / scale,
     included,
     leftOut,
@@ -763,8 +773,11 @@ export function forecastNotes(opts: {
   }
 
   for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn't in this forecast.`);
-  const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion);
+  const accounts = withWhy(leftOutText(position.leftOut, position.currency, { noun: 'cash account', where: 'this forecast', plural: false }), position.conversion, position.leftOut);
   if (accounts) notes.push(accounts);
+  const charges = position.pending.leftOut ?? [];
+  const pendingLeft = withWhy(leftOutText(charges, position.currency, { noun: 'pending charge', where: 'this forecast', plural: false }), position.conversion, charges);
+  if (pendingLeft) notes.push(pendingLeft);
   const amounts = withWhy(leftOutText(opts.eventsLeftOut, position.currency, { noun: 'expected amount', where: 'this forecast', plural: false }), opts.eventsConversion);
   if (amounts) notes.push(amounts);
   const unplaced = opts.series?.unplaced ?? [];
@@ -776,10 +789,14 @@ export function forecastNotes(opts: {
 }
 
 /** A sentence of what was left out for its currency, with why each has no
- *  rate after it when a home currency converts the rest (lib/fx/words.ts). */
-export function withWhy(text: string | null, c: ForecastConversion | null | undefined): string | null {
-  if (text === null || !c || c.unrated.length === 0) return text;
-  return `${text.replace(/\.$/, '')}: ${c.unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
+ *  rate after it when a home currency converts the rest (lib/fx/words.ts).
+ *  `of`: the currencies the sentence names, when `c` converted more than
+ *  them (a cash position's accounts and its pending charges): only theirs
+ *  are said. */
+export function withWhy(text: string | null, c: ForecastConversion | null | undefined, of?: LeftOut): string | null {
+  const unrated = (c?.unrated ?? []).filter((u) => !of || of.some((l) => l.currency === u.currency));
+  if (text === null || !c || unrated.length === 0) return text;
+  return `${text.replace(/\.$/, '')}: ${unrated.map((u) => reasonText(u.currency, u.why, u.unrated, c.into)).join('; ')}.`;
 }
 
 /** What the forecast converted into its currency, with a home currency, in

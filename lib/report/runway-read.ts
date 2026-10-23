@@ -241,8 +241,13 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
     const notes: string[] = [...missingNotes(accounts.missing_accounts)];
     for (const n of position.noBalance) notes.push(`${n.name} at ${n.institution} has no balance to start from, so it isn’t in this.`);
     // With a home currency, why each left out has no rate.
-    const cashLeft = withWhy(leftOutText(position.leftOut, currency, { noun: 'cash account', where: 'this runway', plural: false }), position.conversion);
+    const cashLeft = withWhy(leftOutText(position.leftOut, currency, { noun: 'cash account', where: 'this runway', plural: false }), position.conversion, position.leftOut);
     if (cashLeft) notes.push(cashLeft);
+    // A pending charge that can't be taken off for its currency, named as an
+    // account left out is.
+    const charges = position.pending.leftOut ?? [];
+    const chargesLeft = withWhy(leftOutText(charges, currency, { noun: 'pending charge', where: 'this runway', plural: false }), position.conversion, charges);
+    if (chargesLeft) notes.push(chargesLeft);
     const eventsLeft = withWhy(leftOutText(built.events_left_out, currency, { noun: 'expected payment', where: 'this runway', plural: false }), built.conversion?.expected);
     if (eventsLeft) notes.push(eventsLeft);
     // A manual cash account with no transactions in the longest window: what

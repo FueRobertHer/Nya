@@ -608,6 +608,16 @@ describe('with a home currency', () => {
     expect(said.content[0].text).toContain('What is in other currencies is counted');
   });
 
+  test('a pending charge in a currency with no rate isn’t taken off the cash, and is named with why, as an account left out is', async () => {
+    await seed([on('2026-10-22', 'kiosco', 'acc_chk', 5000, { name: 'Kiosco', pending: true, iso_currency_code: 'ARS', category: 'food and drink' })]);
+    await inDollars();
+    const r = (await quiet(() => get(runwayRoute, '/api/reports/runway', `tz=${NY}`))).body.runway;
+    // As without it: the lunch alone is taken off.
+    expect(r).toMatchObject({ currency: 'USD', start: 15465.3 });
+    expect(r.position.pending).toEqual({ amount: 25.5, count: 1, leftOut: [{ currency: 'ARS', count: 1 }] });
+    expect(r.notes).toContain("1 pending charge in ARS isn't in this runway, which is in USD: there is no rate for ARS.");
+  });
+
   test('year over year in the home currency, what is in euros converted, to the cent; the API’s version 1 fields as before, base converted', async () => {
     await seed();
     const before = (await quiet(() => api(apiYoy, 'year-over-year'))).body;

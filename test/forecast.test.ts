@@ -99,7 +99,7 @@ describe('where it starts', () => {
     expect(cashPosition([inst({ accounts: [acct({ type: 'credit' })] })])).toEqual({
       currency: null,
       balances: 0,
-      pending: { amount: 0, count: 0 },
+      pending: { amount: 0, count: 0, leftOut: [] },
       start: 0,
       included: [],
       leftOut: [],
@@ -142,7 +142,9 @@ describe('where it starts', () => {
         pending(12, { institution_name: 'Ally' }),
         pending(9.99, { account_name: 'Savings' }),
       ]);
-      expect(p.pending).toEqual({ amount: 9.99, count: 1 });
+      // The one in another currency isn't taken off, and is named as an
+      // account in another currency is.
+      expect(p.pending).toEqual({ amount: 9.99, count: 1, leftOut: [{ currency: 'EUR', count: 1 }] });
       expect(p.start).toBe(1690.01);
     });
 
@@ -152,7 +154,7 @@ describe('where it starts', () => {
         pending(-250, { name: 'Transfer from checking', category: 'transfer in', account_name: 'Savings', date: '2026-10-09' }),
         pending(100, { name: 'To brokerage', category: 'transfer out' }),
       ]);
-      expect(p.pending).toEqual({ amount: 100, count: 1 });
+      expect(p.pending).toEqual({ amount: 100, count: 1, leftOut: [] });
     });
 
     test('by account id where a row has one: two accounts of one name at one bank are two, and a hidden one of that name is never cash', () => {
@@ -171,9 +173,9 @@ describe('where it starts', () => {
         on('tc2', -250, { name: 'Transfer in', category: 'transfer in' }),
         on('tc3', 77),
       ]);
-      expect(p.pending).toEqual({ amount: 0, count: 0 });
+      expect(p.pending).toEqual({ amount: 0, count: 0, leftOut: [] });
       // A row with no id, or one no account here has, is told by its name.
-      expect(cashPosition(twins, [pending(12, { account_name: 'Total Checking' }), on('elsewhere', 8)]).pending).toEqual({ amount: 20, count: 2 });
+      expect(cashPosition(twins, [pending(12, { account_name: 'Total Checking' }), on('elsewhere', 8)]).pending).toEqual({ amount: 20, count: 2, leftOut: [] });
     });
   });
 });
