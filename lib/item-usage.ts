@@ -123,6 +123,16 @@ export type FlaggedItem = {
   confirmed_run: string | null;
 };
 
+/** Every Item's record as the last check left it, by item id, linked or
+ *  not, for the admin's view of storage (lib/admin-storage.ts): plain text,
+ *  read only, and nothing here calls Plaid. A record that doesn't parse reads
+ *  as no observation, as it does for the check. */
+export async function readUsage(ctx: Ctx): Promise<Map<string, Usage>> {
+  const stored = ((await redis().hgetall(usageKey(ctx))) ?? {}) as Record<string, unknown>;
+  const now = new Date().toISOString();
+  return new Map(Object.entries(stored).map(([item_id, value]) => [item_id, parseUsage(value, now)]));
+}
+
 /** The linked Items the last check flagged, for the user to review. Reads
  *  only: nothing here calls Plaid. */
 export async function readFlagged(ctx: Ctx): Promise<FlaggedItem[]> {
