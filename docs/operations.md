@@ -9,6 +9,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Encryption keys](#encryption-keys)
 - [Plaid secrets in older logs](#plaid-secrets-in-older-logs)
 - [Containers](#containers)
+- [Storage across accounts](#storage-across-accounts)
 - [Moving the data into containers](#moving-the-data-into-containers)
 - [Category ids: the migration and rolling back](#category-ids-the-migration-and-rolling-back)
 - [Rules, tags and notes, and rolling back](#rules-tags-and-notes-and-rolling-back)
@@ -318,6 +319,25 @@ Preview has its own container (a separate prefix, a separate registry): do the s
 Every request works in this deployment's container: the one `CONTAINER_ID` names, or with it unset, the only active one. (With Clerk on, it is the container the signed-in account owns instead; see [authentication.md](authentication.md).) Without a usable container (none, `CONTAINER_ID` wrong, the container being restored, or more than one active) data requests are refused with a 503 saying why; nothing is read or written anywhere else.
 
 Logging in with the shared password needs a container to exist, so create it before deploying to a new environment. For local development, run the app with `OPS_ENABLED=1` and an `OPS_SECRET` once, create the container with the same `curl` against `http://localhost:3000`, and set `CONTAINER_ID` in `.env.local`.
+
+## Storage across accounts
+
+The admin (whoever owns the deployment's own container: the account that signed in first with Clerk, or the password holder; `CONTAINER_ID` if set, as for [unused connections](features.md#keeping-plaid-costs-down)) has a read-only view of every container under **Manage**, then **Storage across accounts** (`/admin/storage`, read by `GET /api/admin/storage`, `lib/admin-storage.ts`). The page lives at `/admin-view/storage` and the proxy sends only the admin there (`lib/admin-gate.ts`), so anyone else's request for `/admin/storage` reaches no route and gets the 404 any path that does not exist gets, header for header; asked for where it lives, it is answered as a path no route matches. The route answers anyone else with the JSON 404 the unused connections route gives, before anything they sent is looked at. What is left to tell it apart, all minor: the link to it, under Manage, is in the app's code for everyone, as the unused connections card is; a request under `/admin/` makes a read or two of the database that another missing path doesn't, so it takes a little longer; and `/admin-view/...` asked for by anyone else is answered through a rewrite, so beside the same 404 its response carries Next's `x-middleware-rewrite` header, which names the path it was answered with. The page's path there is in the code, which is public, so the header says nothing the code doesn't.
+
+For each container, by its random id ("You" for the admin's own), with its status and the day it was made:
+
+- **Stored**: what the container holds in all, its number of keys, and its largest single value with its share of the size ceiling. Keys that couldn't be measured are counted, and the total is then a floor.
+- **Bank connections through Plaid**: each Item by its bank's name and id, with its transaction and investment transaction blobs against the ceiling (`MAX_TXN_BLOB_CHARS`, [deployment.md](deployment.md#3-environment-variables)), whether a save was refused for its size (`txns-blocked:`, which clears on the next sync that fits) or its last save failed (`txns-unsaved:`), whether Plaid billed Transactions on it when it was linked, and what the daily check last found (refused since, every account hidden since, flagged; `lib/item-usage.ts`). Blobs whose Item is no longer linked are listed as left behind: they cost storage all the same.
+- **SimpleFIN or Lunch Flow**: how many connections, how many still hold their access (one without it needs connecting again, as after a restore), and how many accounts they keep up to date.
+- **Last daily snapshot**: the newest run recorded in `snapshot:runs`, with its outcome, reason and tries.
+
+Sort by what is stored, nearness to the ceiling, bank connections, connector connections, the oldest last snapshot or the newest account; sorting is among the accounts loaded so far.
+
+**What it reads.** Nothing of anyone's data is decrypted. The page's containers are measured through the storage seam (`measureContainers` in `lib/repo.ts`, without their values' heads): one SCAN of every container's keys and one Lua step per hundred of a container's keys that answers each key's type, entries, bytes and largest value, never a value. Beside it, three plain-text records, which it shows: the Items' records (each bank's name, Plaid's ids, whether Plaid billed Transactions; the access token inside each is never opened), the daily check's record of each Item, and the snapshot's newest run, with the reason it gave. A record that can't be read is said so, never shown as nothing or replaced by an older one. No person's name or email address is shown.
+
+**What it costs.** Containers come 20 a request (`?limit=` up to 50, `?after=<container id>` for the next page, which **Load more accounts** sends). The page walks the database's keyspace once with `SCAN ... MATCH` (about `keys in the database ÷ 500` calls, however many containers are on the page), then makes one Lua step per hundred of each container's keys, and reads three records per container, four containers at a time. The route has five minutes (`maxDuration`) for a large database: open it to look, not on a timer.
+
+**What to do with it.** An Item near the ceiling is the one whose next sync may be refused: raise `MAX_TXN_BLOB_CHARS` (its write is refused whole, never trimmed, until then). A container far larger than the rest, or an Item flagged as unused, is the costly one; the Unused connections card under Manage can disconnect a flagged Item after its checks. A snapshot that keeps failing names its reason. Each person sees the same kind of numbers for their own account under **Your data**, with which key each kind is under ([features.md](features.md#your-data)).
 
 ## Moving the data into containers
 

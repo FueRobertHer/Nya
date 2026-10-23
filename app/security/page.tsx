@@ -264,6 +264,10 @@ export default function SecurityPage() {
         </p>
         <p>Encrypting these as well is planned.</p>
         <p>
+          Your data, under Manage on the Accounts tab, lists what Nya keeps about you kind by kind: which of it is plain
+          text, and which key the rest is encrypted with, your account’s own or one this copy of Nya shares.
+        </p>
+        <p>
           The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for
           every account, and left out of Nya’s nightly backups. Every currency the ECB publishes is kept, so which ones are there says nothing about anyone.
           Your home currency and your own exchange rates are encrypted.
