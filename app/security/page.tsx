@@ -13,6 +13,8 @@ import { LINK_DAYS } from '@/lib/weekly-summary/unsubscribe';
 import { SHARED_READS_WINDOW_SECONDS } from '@/lib/share-rules';
 import { restoreEnabled } from '@/lib/user-restore/enabled';
 import { UNDO_DAYS } from '@/lib/user-restore/ids';
+import { apiWritesEnabled } from '@/lib/api-writes-enabled';
+import { CHANGES_KEEP_DAYS, CHANGES_PER_DAY, PERSON_CHANGES_PER_DAY, WRITES_PER_MINUTE } from '@/lib/api-limits';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -31,7 +33,9 @@ export const metadata: Metadata = {
 // (sendsEmail in lib/notice-recipients.ts: mail set up, and someone it may
 // write to, which also decides whether a download is emailed) and whether it
 // offers bringing a download back (RESTORE_ENABLED, lib/user-restore/
-// enabled.ts), since each changes what is true of this copy.
+// enabled.ts), and whether it lets API tokens make changes
+// (API_WRITES_ENABLED, lib/api-writes-enabled.ts: off, the page says
+// nothing of writing), since each changes what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -42,7 +46,13 @@ const POLICY: Record<CspMode, string> = {
   off: `Pages can also carry a Content-Security-Policy, under which ${LIMITS}. This copy of Nya has it switched off.`,
 };
 
-const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean): [string, string][] => [
+/** What programs with an API token can reach, as this copy lets them. */
+const PROGRAMS_READ =
+  'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
+const PROGRAMS_WRITE =
+  'What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins. A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add and change your manual accounts and their transactions, categories and tags, but never delete an account or change its past history, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted). An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
+
+const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, writes: boolean): [string, string][] => [
   [
     'The operator, who runs this copy of Nya',
     `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
@@ -72,14 +82,11 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
     ? ([
         [
           'Resend, the email service',
-          'Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.',
+          `Your email address and the emails Nya sends you about your bank connections, each time your data is downloaded, brought back from a download (or that is undone) or emptied, or an API token is made${writes ? ' (saying what it can do)' : ''}, and, if you turn it on, the weekly summary: which bank needs you and what to do, when and in which format your data was downloaded, or, in the summary, whether you spent more or less than in a usual week, and the names of your budgets and categories over or close to their limit, your goals behind or at their target, the bills and planned expenses due in the next seven days with their days, and the banks that need you or whose transactions may be missing. Never a balance, an amount or an account number.`,
         ],
       ] as [string, string][])
     : []),
-  [
-    'Programs you give an API token to',
-    'What the read-only API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins, and they can never change anything. An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.',
-  ],
+  ['Programs you give an API token to', writes ? PROGRAMS_WRITE : PROGRAMS_READ],
   [
     'People you share with',
     'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
@@ -90,7 +97,7 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean):
   ],
 ];
 
-function Encryption({ envelope }: { envelope: boolean }): ReactNode {
+function Encryption({ envelope, writes }: { envelope: boolean; writes: boolean }): ReactNode {
   return (
     <>
       <p>
@@ -98,7 +105,7 @@ function Encryption({ envelope }: { envelope: boolean }): ReactNode {
         your banks through Plaid, the access your own SimpleFIN account gives Nya, the API key of your own Lunch Flow
         account, balances, net-worth history,
         transactions, budgets, goals, the categories you set and the names you give merchants, manual accounts, how
-        each bank connection is doing, the records of when shared accounts were shown, and the short-lived copies of
+        each bank connection is doing, the records of when shared accounts were shown, {writes ? 'the record of changes made with API tokens, ' : ''}and the short-lived copies of
         what the dashboard last showed. Some details around them are not; they are listed below.
       </p>
       {envelope ? (
@@ -205,6 +212,7 @@ export default function SecurityPage() {
   const mail = sendsEmail();
   const keys = keyDeletionText({ envelope, backups, databaseDays: databaseBackupDays() });
   const restore = restoreEnabled();
+  const writes = apiWritesEnabled();
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -230,7 +238,7 @@ export default function SecurityPage() {
       </InfoSection>
 
       <InfoSection title="What is encrypted, and how">
-        <Encryption envelope={envelope} />
+        <Encryption envelope={envelope} writes={writes} />
       </InfoSection>
 
       <InfoSection title="What is stored as plain text">
@@ -251,6 +259,7 @@ export default function SecurityPage() {
             id, which its records of when shared accounts were shown are kept under, and when those records began (what
             they record is encrypted), never the balances, amounts or transactions themselves.
           </li>
+          {writes && <li>for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).</li>}
         </ul>
         <p>
           The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes; of a
@@ -258,7 +267,11 @@ export default function SecurityPage() {
           {API_AUTH_WINDOW_SECONDS / 60} minutes; and on the demo, that of a device that used a demo account, for up to 10
           minutes. These never go into backups. And for each API token, how many requests it made in the current minute,
           deleted when the token is revoked, or {(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with
-          any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many
+          any of your tokens;{' '}
+          {writes
+            ? 'for a token that can make changes, its writes in the current minute and its changes in the current 24 hours, and all your tokens’ changes in the current 24 hours, deleted when the token is revoked or the window ends; '
+            : ''}
+          and for the weekly summary, how many you asked to be sent now, kept for a day, and how many
           times a link to turn it off was used, kept for an hour. And how many times you read what is shared with you, or
           what someone sees of yours, kept for {SHARED_READS_WINDOW_SECONDS / 60} minutes.
         </p>
@@ -283,7 +296,7 @@ export default function SecurityPage() {
             </tr>
           </thead>
           <tbody>
-            {whoCanRead(envelope, backups, mail).map(([who, what]) => (
+            {whoCanRead(envelope, backups, mail, writes).map(([who, what]) => (
               <tr key={who}>
                 <th scope="row">{who}</th>
                 <td>{what}</td>
@@ -351,7 +364,9 @@ export default function SecurityPage() {
 
       <InfoSection title="API tokens">
         <p>
-          A token you make under API tokens lets a program read your data through Nya’s read-only API and its MCP server
+          {writes
+            ? 'A token you make under API tokens lets a program read your data, and, if you choose when you make it, change some of it, through Nya’s API and its MCP server'
+            : 'A token you make under API tokens lets a program read your data through Nya’s read-only API and its MCP server'}{' '}
           (see the <a href="/developers">Developers page</a>). Nya shows it once and never stores it: it keeps a SHA-256
           hash of the token’s secret, inside your own data and encrypted with it, and checks a token by comparing hashes
           in constant time. A token that doesn’t work gets the same answer whatever the reason (unknown, revoked, a wrong
@@ -361,13 +376,30 @@ export default function SecurityPage() {
           tokens that don’t work are counted by the address they come from, which is turned away for a while after too
           many.
         </p>
-        <p>
-          Making one needs a fresh sign-in, as downloading your data does. A token can read but never change anything,
-          and makes at most {REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out
-          everywhere or a change of the shared password; with sign-in accounts it stops when the account that made it is
-          taken off the list of people allowed in. Deleting your account deletes every token with the rest of your data,
-          and restoring a backup ends every token, since backups leave them out.
-        </p>
+        {writes ? (
+          <p>
+            Making one needs a fresh sign-in, as downloading your data does. A token only reads, unless you chose when you
+            made it that it may update manual accounts’ balances or make changes. That choice is kept with it and can never
+            be widened, and a token never gains kinds of changes added to Nya after it was made. A token makes at most{' '}
+            {REQUESTS_PER_MINUTE} requests a minute; one that can update balances or make changes at most{' '}
+            {WRITES_PER_MINUTE} writes a minute and {CHANGES_PER_DAY} changes a day, with{' '}
+            {PERSON_CHANGES_PER_DAY.toLocaleString('en-US')} changes a day for all your tokens. Every change to something
+            that already exists, but a balance, names the version it was made from, so a program working from an old read
+            can’t write over what you just did. Every change is recorded for {CHANGES_KEEP_DAYS} days under API tokens,
+            with what it changed, where most can be undone or forgotten. A token works until you revoke it, even after Sign
+            out everywhere or a change of the shared password; with sign-in accounts it stops when the account that made it
+            is taken off the list of people allowed in. Deleting your account deletes every token with the rest of your
+            data, and restoring a backup ends every token, since backups leave them out.
+          </p>
+        ) : (
+          <p>
+            Making one needs a fresh sign-in, as downloading your data does. A token can read but never change anything,
+            and makes at most {REQUESTS_PER_MINUTE} requests a minute. It works until you revoke it, even after Sign out
+            everywhere or a change of the shared password; with sign-in accounts it stops when the account that made it is
+            taken off the list of people allowed in. Deleting your account deletes every token with the rest of your data,
+            and restoring a backup ends every token, since backups leave them out.
+          </p>
+        )}
       </InfoSection>
 
       <InfoSection title="Downloading your data">
@@ -404,7 +436,10 @@ export default function SecurityPage() {
             the file can bring back a credential: no access to a bank, no SimpleFIN or Lunch Flow access, no API token, no
             sharing.
             {mail ? ' Starting a restore, undoing one and emptying an account are each emailed to you.' : ''} While a
-            restore hasn’t finished, the read-only API, the MCP server and what you share answer nothing from it. Undo, while a
+            restore hasn’t finished,{' '}
+            {writes
+              ? 'the API and the MCP server answer nothing from it and change nothing in it, and what you share answers nothing from it.'
+              : 'the read-only API, the MCP server and what you share answer nothing from it.'} Undo, while a
             restore is unfinished and for {UNDO_DAYS} days after it finishes, empties the account again, as emptying it does:
             both need a fresh sign-in and are refused while a bank is connected, so a connection is never left running at
             Plaid, SimpleFIN or Lunch Flow.

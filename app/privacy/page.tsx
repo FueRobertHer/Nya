@@ -130,7 +130,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
       <>
         You can download everything stored about you, and delete your account and everything stored for you, at any time.
         {writes
-          ? ' An API lets programs you choose read your data whenever you like and, with a token you make for it, add and change your manual accounts and their transactions, categories and tags, with a token you can revoke (see the '
+          ? ' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add and change your manual accounts and their transactions, categories and tags (see the '
           : ' A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the '}
         <a href="/developers">Developers page</a>).
       </>
@@ -260,13 +260,13 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ['Counts that limit how often you can do something', countsRow(backups)],
   [
     'API tokens',
-    'Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.',
+    `Until you revoke them, or delete your account. Each is kept as its name, ${writes ? 'what it can do, ' : ''}the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.`,
   ],
   [
     'Requests counted for each API token',
     `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.${
       writes
-        ? ` For a token that can make changes, also its changes in the current minute and in the current 24 hours (counted from the first), and all your tokens’ changes in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
+        ? ` For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
         : ''
     }`,
   ],

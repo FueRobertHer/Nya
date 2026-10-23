@@ -700,6 +700,68 @@ describe('API tokens, on both pages', () => {
   });
 });
 
+// Writing through a token (API_WRITES_ENABLED, lib/api-writes-enabled.ts):
+// the pages describe it only while this copy lets tokens write, and read
+// exactly as before while it doesn't.
+describe('writing through a token, on both pages, only while this copy lets tokens write', () => {
+  const mailOn = () => {
+    process.env.RESEND_API_KEY = 're_test';
+    process.env.MAIL_FROM = 'Nya <nya@example.com>';
+    process.env.NOTIFY_EMAIL = 'me@example.com';
+    process.env.RESTORE_ENABLED = '1';
+  };
+
+  test('off: nothing of writing on either page', () => {
+    delete process.env.API_WRITES_ENABLED;
+    mailOn();
+    for (const page of [security(), privacy()]) {
+      for (const words of ['make changes', 'Changes made with API tokens', 'saying what it can do', 'update balances', 'undone or forgotten', 'record of changes']) {
+        expect([words, page.includes(words)]).toEqual([words, false]);
+      }
+    }
+    expect(security()).toContain('A token can read but never change anything');
+    expect(security()).toContain('the read-only API, the MCP server and what you share answer nothing from it.');
+    expect(privacy()).toContain('Not built yet Writing through the API');
+  });
+
+  test('on, the security page: what each kind of token reaches, its limits, versions and the record, and what a restore holds back', () => {
+    process.env.API_WRITES_ENABLED = '1';
+    mailOn();
+    const page = security();
+    expect(page).toContain('Programs you give an API token to What the API and the MCP server serve (the Developers page lists it)');
+    expect(page).toContain(
+      'A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add and change your manual accounts and their transactions, categories and tags, but never delete an account or change its past history, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
+    );
+    expect(page).not.toContain('and they can never change anything.');
+    expect(page).toContain('lets a program read your data, and, if you choose when you make it, change some of it, through Nya’s API and its MCP server');
+    expect(page).toContain('That choice is kept with it and can never be widened, and a token never gains kinds of changes added to Nya after it was made.');
+    expect(page).toContain('one that can update balances or make changes at most 30 writes a minute and 500 changes a day, with 2,000 changes a day for all your tokens.');
+    expect(page).toContain('Every change to something that already exists, but a balance, names the version it was made from');
+    expect(page).toContain('Every change is recorded for 30 days under API tokens, with what it changed, where most can be undone or forgotten.');
+    expect(page).toContain('the record of changes made with API tokens, and the short-lived copies');
+    expect(page).toContain('for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).');
+    expect(page).toContain('for a token that can make changes, its writes in the current minute and its changes in the current 24 hours');
+    expect(page).toContain('or an API token is made (saying what it can do)');
+    expect(page).toContain('the API and the MCP server answer nothing from it and change nothing in it');
+    expect(page).not.toMatch(/[\u2013\u2014]/);
+  });
+
+  test('on, the privacy page: the AI caveat, leaving, the record’s row, and the counts', () => {
+    process.env.API_WRITES_ENABLED = '1';
+    mailOn();
+    const page = privacy();
+    expect(page).toContain('With a token you make to make changes, it can also add and change your manual accounts and their transactions, categories and tags; it can be tricked into a change by something it reads');
+    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add and change your manual accounts');
+    expect(page).toContain('Not built yet Writing your bank’s transactions through the API');
+    expect(page).toContain('Changes made with API tokens 30 days, or until you forget them under API tokens or delete your account');
+    expect(page).toContain('A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.');
+    expect(page).toContain('For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours');
+    expect(page).toContain('Each is kept as its name, what it can do, the sign-in account that made it');
+    expect(page).toContain('or an API token is made (saying what it can do)');
+    expect(page).not.toMatch(/[\u2013\u2014]/);
+  });
+});
+
 // A data key per account (docs/operations.md, "Per-container data keys"). The
 // pages read no stored data, so they say it conditionally, and never claim a
 // key of its own for an account made before it, until it is moved.
