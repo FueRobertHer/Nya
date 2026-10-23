@@ -430,7 +430,9 @@ describe('a retype’s re-sign, day by day', () => {
   test('stopped at its time, its kind changed, and the nightly snapshot finishes it', async () => {
     const before = await readers([card]);
     expect(await retypeWithHistory(ctx, card, 'credit', { until: 0 })).toEqual({ changed: true, job: { negated: 0, left: [], pending: true } });
-    expect(await signJobStore.has(ctx, card)).toBe(true);
+    // Stopped before it read the history: planned by the next run.
+    expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'retype', from: 'depository', to: 'credit' });
+    expect((await signJobStore.get(ctx, card))!.plan).toBeUndefined();
     await quiet(() => snapshotData(ctx, []));
     expect(await signJobStore.ids(ctx)).toEqual([]);
     expect(await readers([card])).toEqual(before);

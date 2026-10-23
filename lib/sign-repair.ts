@@ -51,17 +51,19 @@
 // re-encryption, rewriting the map, leaves it to be turned over still; one
 // turned over already, or written since in the new sign, is left. So nothing
 // is ever turned over twice, and a job cut off part way is finished by running
-// it again: by the request that started it, by the nightly snapshot
-// (finishSignJobs, which stops trying one past MAX_FAILED_NIGHTS and leaves
-// it to the operator's dry run), or by the operator. Before running a saved
+// it again: by the request that started it, by the nightly snapshot and the
+// download (finishSignJobs, which stops trying one past MAX_FAILED_NIGHTS
+// and leaves it to the operator's dry run), or by the operator. Before running a saved
 // plan the account's kind is checked again: no longer on the side it was
 // planned for (changed back under the release before, say), the job is
 // dropped with words and nothing more is turned over. Every total stays as
 // recorded; the account's hidden and lifecycle entries take its type now.
 // Under the links lock, as a fold is, within JOB_BUDGET_MS of the lock (a
-// job past it stops between days and is finished by the next run); a forget
-// or an undo of an account with a job pending is refused (lib/links.ts,
-// lib/api-undo.ts).
+// job past it stops between the maps it reads or the days it turns over, and
+// is finished by the next run), so a hold fits the lock's lease inside any
+// route; a forget or an undo of an account with a job pending is refused
+// (lib/links.ts, lib/api-undo.ts), and no job is begun on one being
+// forgotten.
 //
 //   RETYPE   the job is written before the kind changes, and the change is
 //            its first step. Planned under the new kind: 'flip' days, proven
@@ -103,7 +105,9 @@ export { signJobStore, type SignJob, type SignPlan };
 const LAYERS = SIGN_LAYERS;
 
 /** How long a job may run under the links lock in one go, under the lock's
- *  own LINKS_LOCK_REQUEST_SECONDS: past it a job stops between days. */
+ *  own LINKS_LOCK_REQUEST_SECONDS (so a hold inside /api/snapshot's or the
+ *  download's longer time still ends well within its lease): past it a job
+ *  stops between the maps it reads or the days it turns over. */
 export const JOB_BUDGET_MS = 90_000;
 
 /** At most this many candidates on one day are weighed; past it the day is
@@ -135,15 +139,27 @@ type Entry = { layer: SignLayer; date: string; value: number; label: Label; stat
 const cents = (n: number) => Math.round(n * 100);
 const signed = (type: string, v: number) => (isOwedType(type) ? -v : v);
 
-/** Decrypted maps and totals, each read once a run. */
+/** Thrown by a reading past its run's time: the run stops before planning,
+ *  and the next plans again. */
+class OutOfTime extends Error {}
+
+/** Decrypted maps and totals, each read once a run, within `until`. */
 class Reading {
   readonly maps = new Map<string, Record<string, number> | null>();
   readonly totals = new Map<string, number | null>();
-  constructor(readonly ctx: Ctx) {}
+  constructor(
+    readonly ctx: Ctx,
+    readonly until: number = Infinity
+  ) {}
+
+  private inTime(): void {
+    if (Date.now() > this.until) throw new OutOfTime();
+  }
 
   async map(blob: string | undefined): Promise<Record<string, number> | null> {
     if (!blob) return null;
     if (this.maps.has(blob)) return this.maps.get(blob)!;
+    this.inTime();
     const plain = await readSignValue(this.ctx, blob);
     let map: Record<string, number> | null = null;
     if (plain !== null) {
@@ -161,6 +177,7 @@ class Reading {
   async total(blob: string | undefined): Promise<number | null> {
     if (!blob) return null;
     if (this.totals.has(blob)) return this.totals.get(blob)!;
+    this.inTime();
     const plain = await readSignValue(this.ctx, blob);
     const n = plain === null ? NaN : Number(plain);
     const total = Number.isFinite(n) ? n : null;
@@ -275,8 +292,8 @@ async function typesNow(ctx: Ctx, ids: Iterable<string>): Promise<Map<string, st
  *  every day's labels, worked out once for all of them. */
 type Book = { layers: SignLayers; types: Map<string, string>; candidates: Set<string>; real: Map<string, Map<string, Label>>; est: Map<string, Map<string, Label>>; reading: Reading };
 
-async function readBook(ctx: Ctx): Promise<Book> {
-  const reading = new Reading(ctx);
+async function readBook(ctx: Ctx, until: number = Infinity): Promise<Book> {
+  const reading = new Reading(ctx, until);
   // Planned from the layers as they are: the legacy flat record is split off
   // only once a plan is accepted (execute).
   const layers = await readSignLayers(ctx, { split: false });
@@ -459,7 +476,14 @@ async function runLocked(ctx: Ctx, id: string, until: number): Promise<JobOutcom
     });
     const now = account as ConnectorAccount | null;
     if (!now || isOwedType(now.type) !== isOwedType(job.to)) return abandon(ctx, id, job, now?.type ?? null);
-    const { plan, left } = await retypeReading(await readBook(ctx), id, job, now);
+    let book: Book;
+    try {
+      book = await readBook(ctx, until);
+    } catch (err) {
+      if (err instanceof OutOfTime) return { negated: 0, left: [], pending: true };
+      throw err;
+    }
+    const { plan, left } = await retypeReading(book, id, job, now);
     const tag = job.tag;
     job = { ...job, plan, ...(left.length > 0 ? { left } : {}) };
     const saved = job;
@@ -633,7 +657,14 @@ export async function repairSignFlip(ctx: Ctx, id: string, now: number = Date.no
     if (!tracked && !manual.some((a) => a.account_id === id)) {
       throw new SignRepairRefused(`${id} is neither a manual account nor one SimpleFIN or Lunch Flow keeps up to date: only those are repaired here.`, []);
     }
-    const book = await readBook(ctx);
+    let book: Book;
+    try {
+      book = await readBook(ctx, until);
+    } catch (err) {
+      // Nothing written: asked again, it reads again.
+      if (err instanceof OutOfTime) return { negated: 0, left: [], pending: true };
+      throw err;
+    }
     const { plan, left, refused } = await repairReading(book, id);
     if (refused.length > 0) throw refusal(id, refused);
     if (countOf(plan) === 0) return { negated: 0, left };
