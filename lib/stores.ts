@@ -48,6 +48,7 @@ import './review-store';
 import './rules';
 import './share-limit';
 import './shared-expenses/store';
+import './sign-repair-store';
 import './splits';
 import './tags';
 import './timeline-notes';

@@ -49,7 +49,7 @@ afterEach(() => {
 describe('the records of showings, pruned in each container’s run', () => {
   test('first, before the snapshot, never failing it, and with the emails still sent after every container', async () => {
     const { accessLogStore, slotOf } = await import('@/lib/access-log');
-    const { PRUNE_BUDGET_MS, START_BUDGET_MS, MAIL_DEADLINE_MS } = await import('@/lib/snapshot-job');
+    const { PRUNE_BUDGET_MS, SIGN_BUDGET_MS, START_BUDGET_MS, MAIL_DEADLINE_MS } = await import('@/lib/snapshot-job');
     const registry = await register([[A, 'active'], [B, 'active']]);
     // Records whose connections have ended (there are none), in both containers.
     const record = { shown: [{ at: slotOf(Date.now()), times: 1, read: { a: 'balance' as const } }] };
@@ -68,9 +68,9 @@ describe('the records of showings, pruned in each container’s run', () => {
     }
     expect(await accessLogStore.get({ container: A }, 'e'.repeat(32))).toBeNull();
     expect(await accessLogStore.get({ container: B }, 'e'.repeat(32))).toEqual(record);
-    // Its time comes off the start budget, so the last container ends when it would without it.
-    expect(START_BUDGET_MS + PRUNE_BUDGET_MS).toBe(180_000);
-    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + 101_000).toBeLessThan(MAIL_DEADLINE_MS);
+    // Its time comes off the start budget, as the balance sign jobs' does, so the last container ends when it would without them.
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + SIGN_BUDGET_MS).toBe(180_000);
+    expect(START_BUDGET_MS + PRUNE_BUDGET_MS + SIGN_BUDGET_MS + 101_000).toBeLessThan(MAIL_DEADLINE_MS);
   });
 });
 

@@ -58,6 +58,7 @@ import {
   bookIdsOf,
   heldOf,
   heldWithRestored,
+  joinedAt,
   linkedTo,
   oldTwins,
   restoreCovers,
@@ -193,6 +194,15 @@ export function countedRows<T extends ImportedTxn>(
 /** A connection's pairs kept once made (lib/history-import/store.ts
  *  ImportedTwins), as settle reads them. */
 export const twinsOf = (entry: ImportedTwins | null | undefined): Map<string, string> => new Map(Object.entries(entry?.twins ?? {}));
+
+/** Which restored accounts each import's review was matched against, by its
+ *  summary (HistoryImportSummary `matched_restored`): the first stage never
+ *  pairs its rows with theirs (lib/user-restore/restored.ts pairable). */
+export function matchedOf(summaries: ReadonlyMap<string, Pick<HistoryImportSummary, 'matched_restored'>>): Map<string, Set<string>> {
+  const out = new Map<string, Set<string>>();
+  for (const [id, sm] of summaries) if (sm.matched_restored) out.set(id, new Set(sm.matched_restored));
+  return out;
+}
 
 /** What every account with imported rows needs read, once: its rows under
  *  every id, its connection's bank rows, where those begin, and which of
@@ -454,6 +464,7 @@ export async function readImported(
   const fileOrder = importOrder(summaries);
   const fileCovers = coversOf(summaries.entries);
   const importedAt = new Map([...summaries.entries].map(([id, sm]) => [id, sm.imported_at]));
+  const matched = matchedOf(summaries.entries);
   // Where each old connection's rows began, from every account it had here.
   const oldFrom = new Map<string, string>();
   for (const a of restoredReport.entries.values()) {
@@ -468,7 +479,8 @@ export async function readImported(
       notes.push(`${account.institution_name}: transactions imported for ${account.name} aren't shown while the bank's own can't be read`);
       continue;
     }
-    const mine = [...restoredHere.values()].filter(({ current }) => current === id).map(({ a }) => a);
+    const mineIds = [...restoredHere].filter(([, { current }]) => current === id);
+    const mine = mineIds.map(([, { a }]) => a);
     if (twinsUnread.has(account.item_id) || mine.some((a) => twinsUnread.has(a.item_id))) {
       flawed.add(id);
       notes.push(`${account.institution_name}: transactions imported for ${account.name} aren't shown while which of the bank's own stand for them can't be read`);
@@ -487,10 +499,10 @@ export async function readImported(
         rows: restoredRows,
         twins: pairs,
         bankFrom: froms.length > 0 ? froms.reduce((x, y) => (y < x ? y : x)) : null,
-        before: mine.map((a) => a.restored_at).reduce((x, y) => (y < x ? y : x)),
+        joined: new Map(mineIds.map(([rid, { a }]) => [rid, joinedAt(rid, a.restored_at, links)])),
       };
     }
-    const held = heldWithRestored(byAccount.get(id) ?? [], restored, fileOrder, { covers: fileCovers, importedAt });
+    const held = heldWithRestored(byAccount.get(id) ?? [], restored, fileOrder, { covers: fileCovers, importedAt, matched });
     accounts.push({ account, ids, held, banks: bank.rows.filter((b) => b.account_id === id), bank_from: bank.from, twins: twinsOf(twins.entries.get(account.item_id)) });
   }
   const restores = [...restoredReport.entries.values()];
@@ -861,11 +873,12 @@ export async function readAccountContext(ctx: Ctx, account: LinkedAccount, links
             rows,
             twins: pairs,
             bankFrom: froms.length > 0 ? froms.reduce((x, y) => (y < x ? y : x)) : null,
-            before: here.map(([, a]) => a.restored_at).reduce((x, y) => (y < x ? y : x)),
+            joined: new Map(here.map(([id, a]) => [id, joinedAt(id, a.restored_at, links)])),
           },
           order: fileOrder,
           covers: fileCovers,
           importedAt: new Map([...summaries.entries].map(([id, sm]) => [id, sm.imported_at])),
+          matched: matchedOf(summaries.entries),
         };
       }
     }

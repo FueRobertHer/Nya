@@ -734,7 +734,10 @@ export function ConnectorSheet({ ask, onClose, onChanged }: { ask: ConnectorAsk 
     if (res.data.skipped === 'budget') {
       parts.push(`Nya has used today’s requests for your own sync, so their balances come once more are available${backIn(res.data.requests)}: Refresh on its card then, or the daily update brings them.`);
     }
-    if (retype.length) parts.push(`Changed what ${retype.length === 1 ? 'one account is' : `${retype.length} accounts are`}.`);
+    const retyped = typeof res.data.retyped === 'number' ? res.data.retyped : 0;
+    if (retyped > 0) parts.push(`Changed what ${retyped === 1 ? 'one account is' : `${retyped} accounts are`}.`);
+    // What didn't change, or is still being turned over (lib/connectors/manage.ts).
+    if (typeof res.data.retype_note === 'string') parts.push(res.data.retype_note);
     if (res.data.kept) parts.push(`Kept ${res.data.kept} as manual account${res.data.kept === 1 ? '' : 's'}.`);
     const empty = res.data.nothing_to_keep as string[] | undefined;
     if (keep && empty?.length) parts.push(nothingToKeep(empty).trim());

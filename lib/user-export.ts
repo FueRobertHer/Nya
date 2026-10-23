@@ -125,6 +125,7 @@ import { readBudgetMonth } from './budget-month';
 import type { Conversion } from './fx/totals';
 import type { Carries, Carry, CarryFrom } from './rollover';
 import { StoredDataUnreadableError } from './repo';
+import { signJobStore } from './sign-repair-store';
 import {
   groupOf,
   growTaxonomy,
@@ -724,8 +725,28 @@ export async function collectUserData(src: ExportSource): Promise<UserData> {
       ...idProblems('estimate_flat', history.problems.flat),
       ...sections.flatMap(([, r]) => r.problems),
     ],
-    notes: [...new Set(sections.flatMap(([, r]) => r.notes ?? []))],
+    notes: [...new Set([...sections.flatMap(([, r]) => r.notes ?? []), ...(await turningOverNote(src.ctx))])],
   };
+}
+
+/**
+ * Said in the file when an account's history is being turned over to match
+ * its kind (lib/sign-repair.ts) as it is made: its earlier days are then in
+ * account_history partly in each sign. A note rather than a problem, which a
+ * release before reads closed and would refuse the file over; the download
+ * route finishes pending jobs first, so it is said only of one that failed.
+ */
+async function turningOverNote(ctx: Ctx): Promise<string[]> {
+  const ids: string[] = [];
+  for (const id of await signJobStore.ids(ctx)) {
+    // A settle record holds nothing half turned over; one that can't be read is said.
+    const job = await signJobStore.get(ctx, id).catch(() => null);
+    if (job?.kind !== 'settle') ids.push(id);
+  }
+  if (ids.length === 0) return [];
+  return [
+    `The history of ${ids.length === 1 ? 'one account' : `${ids.length} accounts`} (${ids.join(', ')}) is being turned over to match what ${ids.length === 1 ? 'it is' : 'they are'}: until that finishes, some of ${ids.length === 1 ? 'its' : 'their'} earlier days in account_history are in the other sign. Nya’s daily update tries again, and whoever runs your Nya can finish it: download again once it is done.`,
+  ];
 }
 
 // ---- The document ----
