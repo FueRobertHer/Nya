@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { ecbTable } from './fx-fixture';
 import type { Txn } from '@/components/MonthBreakdown';
 import { investedAssets, trailingFlows, type AssetAccount, type AssetInstitution } from '@/lib/fire/inputs';
-import { assetsGap, assetsLeftOut, convertedNote, fiFigures, gapText, notWorkedOutText, spendingGap, spendingLeftOut } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, convertedNote, fiFigures, gapText, notWorkedOutText, spendingGap, spendingLeftOut, spendingOff } from '@/lib/fire/progress';
 import { DEFAULT_PLAN, type FirePlan } from '@/lib/fire/plan';
 import {
   askText,
@@ -609,9 +609,10 @@ describe('the year weighed on each side, money out apart from money in (review r
     expect(gapText(byAmount!, 'year')).toBe(
       'The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your savings.'
     );
-    expect(gapText(byAmount!)).toBe(
-      'Not measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so the year’s figures from the rest would leave that much of your income out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
-    );
+    // The spending figure's own words are never asked of it: the Plan tab's
+    // spending note waits on the spending side, and Home's on an unmeasured
+    // spending figure, which this one isn't.
+    expect(spendingOff(byAmount)).toBe(false);
     // Spending typed: the savings say it in the year's own words.
     const typed = fiFigures(plan({ spending: 42_000 }), { flows, assets, workplace: null, rates }, 'USD');
     expect(typed.view.fiNumber).toBe(1_050_000);
