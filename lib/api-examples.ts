@@ -1538,7 +1538,7 @@ export const API_DOCS: Readonly<Record<string, EndpointDoc>> = {
       ...RUNWAY_LINE('with_income', 'The cash with income: the same, plus a day’s income a day (through income_until, when asked) and the planned income.'),
       [
         'notes',
-        'What it can’t see, in words: months that may be short and why, accounts or balances that couldn’t be read, cash and payments in another currency, a manual account with no transactions in these months (what is spent from it isn’t known), a typed balance not updated for a week, what your cards owe, cash inside investment accounts, planned items that couldn’t be read, hidden accounts. Empty when there is nothing to say.',
+        'What it can’t see, in words: months that may be short and why, accounts or balances that couldn’t be read, cash and payments in another currency, a manual account with no transactions in the last 12 months (what is spent from it isn’t known), a typed balance not updated for a week, what your cards owe, cash inside investment accounts, planned items that couldn’t be read, hidden accounts. Empty when there is nothing to say.',
       ],
     ],
   },

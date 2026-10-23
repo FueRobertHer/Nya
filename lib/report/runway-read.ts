@@ -167,7 +167,7 @@ export async function readRunway(ctx: Ctx, opts: { today: string; timeZone: stri
   // is spent from it isn't known.
   for (const a of position.included) {
     if (a.manual && !rows.some((t) => t.account_id === a.account_id && t.date >= longest.start && t.date <= longest.end)) {
-      notes.push(`${a.name} at ${a.institution} has no transactions in these months, so what you spend from it isn’t in your spending.`);
+      notes.push(`${a.name} at ${a.institution} has no transactions in the last 12 months, so what you spend from it isn’t in your spending.`);
     }
   }
   if (live.some((a) => isInvestmentType(a.type))) {

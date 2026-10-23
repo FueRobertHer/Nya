@@ -246,7 +246,7 @@ describe('the runway from stored data', () => {
     expect(r.notes).toEqual([
       "1 cash account in EUR isn't in this runway, which is in USD.",
       "1 expected payment in EUR isn't in this runway, which is in USD.",
-      'Wallet at Cash has no transactions in these months, so what you spend from it isn’t in your spending.',
+      'Wallet at Cash has no transactions in the last 12 months, so what you spend from it isn’t in your spending.',
       'Cash inside investment accounts, such as a brokerage’s settlement or money market fund, isn’t counted: it is money waiting to be invested, days from being spent.',
       'Hidden accounts are left out, their balances and their transactions.',
     ]);
