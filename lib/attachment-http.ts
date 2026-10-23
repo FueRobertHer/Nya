@@ -24,7 +24,7 @@
 import { NextResponse } from 'next/server';
 import { storeFailure } from './store-failure';
 import { LookupUnreadableError } from './txn-lookup';
-import { AttachmentGoneError, AttachmentRefused, NO_OWN_KEY_MESSAGE } from './attachments';
+import { AttachmentGoneError, AttachmentRefused, NO_OWN_KEY_MESSAGE, wellFormed } from './attachments';
 import { AttachmentDamagedError } from './attachment-crypto';
 import { StoreNotPrivateError, StoreTimeoutError } from './attachment-objects';
 import { NoOwnKeyError } from './crypto';
@@ -106,9 +106,12 @@ export async function readBodyAtMost(req: Request, max: number): Promise<Uint8Ar
 const asciiName = (name: string) => name.replace(/[^\x20-\x7e]|["\\]/g, '_');
 
 /** `Content-Disposition` for a file, RFC 6266: `filename` in ASCII and
- *  `filename*` in UTF-8, its line breaks and quotes taken out. */
+ *  `filename*` in UTF-8, its line breaks and quotes taken out. Safe on any
+ *  string: a lone surrogate (half an emoji, from a record written before
+ *  names were cut between characters) becomes U+FFFD, never a URIError
+ *  (review 5). */
 export function disposition(kind: 'inline' | 'attachment', name: string): string {
-  const clean = name.replace(/[\r\n"]/g, '').trim() || 'file';
+  const clean = wellFormed(name).replace(/[\r\n"]/g, '').trim() || 'file';
   return `${kind}; filename="${asciiName(clean)}"; filename*=UTF-8''${encodeURIComponent(clean)}`;
 }
 

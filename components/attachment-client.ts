@@ -10,7 +10,7 @@
 import { digest, partDigests, type Prepared } from './attachment-capture';
 
 export type FilePlace =
-  | { on: 'transaction'; transaction_id: string; carried?: true; check?: true }
+  | { on: 'transaction'; transaction_id: string; carried?: true; check?: true; posting?: true }
   | { on: 'earlier'; account_id: string; pending: boolean; alike: number }
   | { on: 'none'; why: 'removed' | 'gone' | 'forgotten' | 'emptied'; since: string };
 
@@ -176,13 +176,16 @@ export function quotaNote(u: Usage | null): string | null {
   if (!u) return null;
   const share = quotaShare(u);
   if (share === null || share < 0.8) return null;
-  if (share >= 1) return `The space for receipts and documents on this copy of Nya is full (${sizeWords(u.bytes)} of ${sizeWords(u.quota_bytes!)}, ${u.files} files). Delete some to add more.`;
-  return `${Math.floor(share * 100)}% of the space for receipts and documents on this copy of Nya is used (${sizeWords(u.bytes)} of ${sizeWords(u.quota_bytes!)}).`;
+  if (share >= 1) return `Your space for receipts and documents is full (${sizeWords(u.bytes)} of ${sizeWords(u.quota_bytes!)}, ${u.files} files). Delete some to add more.`;
+  return `${Math.floor(share * 100)}% of your space for receipts and documents is used (${sizeWords(u.bytes)} of ${sizeWords(u.quota_bytes!)}).`;
 }
 
 /** Why a file isn't on a transaction, in words. */
 export function looseWords(p: FilePlace): string | null {
-  if (p.on === 'transaction') return p.check ? 'Check which transaction this is on: two look the same now.' : null;
+  if (p.on === 'transaction') {
+    if (p.posting) return 'Waiting for its transaction to post: your bank removed the pending one, and it goes on the posted one when your bank sends it.';
+    return p.check ? 'Check which transaction this is on: two look the same now.' : null;
+  }
   if (p.on === 'earlier') {
     if (p.pending) return 'Waiting on a disconnected bank: its transaction was still pending, so attach it again by hand once it is back.';
     if (p.alike > 1) return 'Waiting on a disconnected bank: two of its transactions looked the same, so choose which once it is back.';

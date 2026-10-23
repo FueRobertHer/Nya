@@ -381,6 +381,75 @@ describe('deleting', () => {
   });
 });
 
+describe('what a file reserved, given back once (review 4)', () => {
+  test('a delete finished twice, or an upload thrown away twice, gives nothing back twice', async () => {
+    const keep = await upload('t_coffee', jpeg(3000));
+    const gone = await upload('t_lunch', jpeg(3000));
+    store.fail.add('del');
+    await del(gone);
+    store.fail.clear();
+    const deleting = (await record(gone))!;
+    await Promise.all([att.finishDelete(ctx, gone, deleting), att.finishDelete(ctx, gone, deleting)]);
+    await att.finishDelete(ctx, gone, deleting);
+    const kept = (await record(keep))!;
+    expect(await stores.usageStore.get(ctx)).toMatchObject({ files: 1, bytes: kept.stored_bytes });
+    // An upload thrown away by two starts at once.
+    const photo = jpeg(3000);
+    const start = await route.POST(new Request('http://localhost/api/attachments', { method: 'POST', body: JSON.stringify({ transaction_id: 't_lunch', kind: 'image', bytes: photo.length, part_sha256: await partShas(photo, PART_BYTES) }) }));
+    const { id } = await start.json();
+    await Promise.all([att.discardUpload(ctx, id, NOW, { cancelled: true }), att.discardUpload(ctx, id, NOW, { cancelled: true })]);
+    await att.discardUpload(ctx, id, NOW, { cancelled: true });
+    expect(await stores.usageStore.get(ctx)).toMatchObject({ files: 1, bytes: kept.stored_bytes, uploads: {} });
+  });
+});
+
+describe('names (review 5)', () => {
+  test('cut between characters, never inside one, so the file can always be sent', async () => {
+    const name = att.cleanName(`${'a'.repeat(119)}😀.pdf`)!;
+    expect(name.length).toBeLessThanOrEqual(stores.NAME_MAX);
+    expect(name).toBe('a'.repeat(119));
+    expect(() => encodeURIComponent(name)).not.toThrow();
+    expect(att.cleanName('😀'.repeat(70))).toBe('😀'.repeat(60));
+    // A lone half of one is made whole.
+    expect(att.cleanName('a\ud83d')).toBe('a\ufffd');
+    const id = await upload('t_coffee', jpeg(3000), { name: `${'b'.repeat(119)}😀.jpg` });
+    expect((await getFile(id)).status).toBe(200);
+    expect((await getFile(id, 'thumb')).status).toBe(200);
+    expect((await patch(id, { name: `${'c'.repeat(119)}😀` })).status).toBe(200);
+    expect((await getFile(id, 'file', '?download=1')).status).toBe(200);
+    // And the header never throws, whatever a record holds.
+    const { disposition } = await import('@/lib/attachment-http');
+    expect(disposition('attachment', 'x\ud83d.pdf')).toContain("filename*=UTF-8''x%EF%BF%BD.pdf");
+  });
+});
+
+describe('a thumbnail that doesn’t open (review 7)', () => {
+  test('loses its thumbnail, never the file: the file still opens and is still in the ZIP', async () => {
+    const id = await upload('t_coffee', jpeg(3000));
+    store.objects.get(objectsMod.objectPath(ctx, id, 't'))!.bytes[20] ^= 1;
+    expect((await getFile(id, 'thumb')).status).toBe(409);
+    const r = (await record(id))!;
+    expect([r.damaged, r.thumb_damaged]).toEqual([undefined, true]);
+    expect((await getFile(id, 'thumb')).status).toBe(404);
+    expect((await getFile(id)).status).toBe(200);
+    expect((await on('t_coffee'))[0]).toMatchObject({ id, thumb: false });
+    const { makePlan } = await import('@/lib/attachment-zip');
+    expect((await makePlan(ctx, store, NOW)).volumes.flat().map((f) => f.id)).toEqual([id]);
+  });
+
+  test('a file marked damaged by a read that failed once is cleared by one that opens it whole', async () => {
+    const id = await upload('t_coffee', jpeg(3000));
+    const object = store.objects.get(objectsMod.objectPath(ctx, id, 0))!;
+    const original = new Uint8Array(object.bytes);
+    object.bytes[20] ^= 1;
+    expect((await getFile(id)).status).toBe(409);
+    expect((await record(id))!.damaged).toBe(true);
+    object.bytes = original;
+    expect((await getFile(id)).status).toBe(200);
+    expect((await record(id))!.damaged).toBeUndefined();
+  });
+});
+
 describe('moving and renaming', () => {
   test('moved to another transaction, with what it says; renamed; never past ten', async () => {
     const id = await upload('t_coffee', jpeg(3000));
@@ -423,7 +492,7 @@ describe('where a file goes when its transaction changes', () => {
     const { id } = await start.json();
     await putPart(id, '0', photo.subarray(0, PART_BYTES));
     const posted = row({ id: 't_posted', pending_from: 't_pending', amount: 5.25 });
-    await att.settleAfterSync(ctx, new Set(['t_pending']), [posted as never], true, NOW);
+    await att.settleAfterSync(ctx, { removed: new Set(['t_pending']), added: new Set(['t_posted']), rows: [posted as never], historyIn: true }, NOW);
     await putPart(id, '1', photo.subarray(PART_BYTES));
     const r = (await record(id))!;
     expect(r.place).toMatchObject({ on: 'transaction', transaction_id: 't_posted', content: contentKey('acc_chk', posted) });
@@ -436,12 +505,29 @@ describe('where a file goes when its transaction changes', () => {
     const a = await upload('t_coffee', jpeg(3000));
     const b = await upload('t_lunch', jpeg(3000));
     const reposted = row({ id: 't_coffee2' });
-    await att.settleAfterSync(ctx, new Set(['t_coffee', 't_lunch']), [reposted as never], true, NOW);
+    await att.settleAfterSync(ctx, { removed: new Set(['t_coffee', 't_lunch']), added: new Set(['t_coffee2']), rows: [reposted as never], historyIn: true }, NOW);
     expect((await record(a))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_coffee2' });
     expect((await record(b))!.place).toEqual({ on: 'none', why: 'removed', since: new Date(NOW).toISOString(), was: { transaction_id: 't_lunch', account_id: 'acc_chk', content: contentKey('acc_chk', row({ id: 't_lunch', amount: 12, name: 'LUNCH PLACE' })) } });
     // Still listed, still counted, still openable.
     expect((await list()).files).toHaveLength(2);
     expect((await getFile(b)).status).toBe(200);
+  });
+
+  test('a posted row the bank removes never hands its receipt to an identical purchase stored before (review 3)', async () => {
+    // Two coffees, the same day, amount and words, each with its receipt.
+    await seedItem('item_chase', [{ id: 't_coffee' }, { id: 't_coffee_b' }, { id: 't_lunch', amount: 12, name: 'LUNCH PLACE' }]);
+    const a = await upload('t_coffee', jpeg(3000));
+    const b = await upload('t_coffee_b', jpeg(3000));
+    // The bank removes the first, adding nothing: its receipt is let go,
+    // never put beside the other's.
+    await att.settleAfterSync(ctx, { removed: new Set(['t_coffee']), added: new Set(), rows: [row({ id: 't_coffee_b' })] as never, historyIn: true }, NOW);
+    expect((await record(a))!.place).toMatchObject({ on: 'none', why: 'removed' });
+    expect((await stores.placeStore.get(ctx, 't_coffee_b'))!.ids).toEqual([b]);
+    // A re-post (added in the same sync) still takes it.
+    const c2 = await upload('t_coffee_b', jpeg(3000));
+    await att.settleAfterSync(ctx, { removed: new Set(['t_coffee_b']), added: new Set(['t_coffee_c']), rows: [row({ id: 't_coffee_c' })] as never, historyIn: true }, NOW);
+    expect((await record(b))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_coffee_c' });
+    expect((await record(c2))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_coffee_c' });
   });
 
   test('THE ACCEPTANCE: a receipt survives a re-link of its institution', async () => {
@@ -502,7 +588,7 @@ describe('where a file goes when its transaction changes', () => {
   test('a placement step that fails marks the account for the sweep’s check, never fails its caller', async () => {
     const id = await upload('t_coffee', jpeg(3000));
     await fake.hset(ctxKey('account-links'), { acc_chk: 'not-ciphertext-at-all' });
-    await att.settleAfterSync(ctx, new Set(), [row({ id: 'x', account: 'acc_new' })] as never, true, NOW);
+    await att.settleAfterSync(ctx, { removed: new Set(), added: new Set(), rows: [row({ id: 'x', account: 'acc_new' })] as never, historyIn: true }, NOW);
     expect((await stores.sweepStateStore.get(ctx))!.check).toEqual({ since: new Date(NOW).toISOString() });
     expect((await record(id))!.place.on).toBe('transaction');
   });

@@ -16,33 +16,37 @@ export class FakeObjects implements AttachmentObjects {
   readonly objects = new Map<string, { bytes: Uint8Array; uploadedAt: Date }>();
   readonly calls: ObjectCall[] = [];
   fail = new Set<ObjectCall['op']>();
+  /** How long each operation takes, in milliseconds (a slow store). */
+  delay = new Map<ObjectCall['op'], number>();
   clock: () => Date = () => new Date();
 
-  private check(op: ObjectCall['op'], path: string) {
+  private async check(op: ObjectCall['op'], path: string) {
     this.calls.push({ op, path });
+    const ms = this.delay.get(op);
+    if (ms) await new Promise((resolve) => setTimeout(resolve, ms));
     if (this.fail.has(op)) throw new Error(`the fake store refused ${op}`);
   }
   async put(pathname: string, bytes: Uint8Array) {
-    this.check('put', pathname);
+    await this.check('put', pathname);
     this.objects.set(pathname, { bytes: new Uint8Array(bytes), uploadedAt: this.clock() });
   }
   async get(pathname: string) {
-    this.check('get', pathname);
+    await this.check('get', pathname);
     return this.objects.get(pathname)?.bytes ?? null;
   }
   async del(pathnames: string[]) {
-    this.check('del', pathnames.join(','));
+    await this.check('del', pathnames.join(','));
     for (const p of pathnames) this.objects.delete(p);
   }
   async list(prefix: string): Promise<StoredObject[]> {
-    this.check('list', prefix);
+    await this.check('list', prefix);
     return [...this.objects]
       .filter(([p]) => p.startsWith(prefix))
       .sort(([a], [b]) => (a < b ? -1 : 1))
       .map(([pathname, o]) => ({ pathname, size: o.bytes.length, uploadedAt: o.uploadedAt }));
   }
   async folders(prefix: string): Promise<string[]> {
-    this.check('folders', prefix);
+    await this.check('folders', prefix);
     const out = new Set<string>();
     for (const p of this.objects.keys()) {
       if (!p.startsWith(prefix)) continue;
@@ -67,6 +71,7 @@ export class FakeObjects implements AttachmentObjects {
     this.objects.clear();
     this.calls.length = 0;
     this.fail.clear();
+    this.delay.clear();
     this.clock = () => new Date();
   }
 }

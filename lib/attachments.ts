@@ -217,9 +217,11 @@ export async function markForCheck(ctx: Ctx, now: number = Date.now()): Promise<
 const emptyUsage = (): Usage => ({ version: 1, bytes: 0, files: 0, uploads: {} });
 
 /** What the records say is reserved: every record but none, a record that
- *  can't be read as a full file (never as nothing). */
-export async function usageFromRecords(ctx: Ctx, base: Usage | null = null): Promise<Usage> {
+ *  can't be read as a full file (never as nothing). `seen`, when given, gets
+ *  the id of every record read, readable or not. */
+export async function usageFromRecords(ctx: Ctx, base: Usage | null = null, seen?: Set<string>): Promise<Usage> {
   const { entries, unreadable, unrecognised } = await attachmentStore.getAllReport(ctx);
+  if (seen) for (const id of [...entries.keys(), ...unreadable, ...unrecognised]) seen.add(id);
   const out: Usage = { version: 1, bytes: 0, files: 0, uploads: {}, ...(base?.zip_at ? { zip_at: base.zip_at } : {}) };
   for (const [id, a] of entries) {
     out.bytes += a.stored_bytes;
@@ -248,15 +250,33 @@ async function reserve(ctx: Ctx, id: string, bytes: number, quota: number, now: 
 }
 
 /** Gives back what a file reserved (`file`: it is gone, so its bytes and its
- *  count too), or only its upload's place in progress once it is ready. */
-async function release(ctx: Ctx, id: string, bytes: number, file: boolean): Promise<void> {
+ *  count too), or only its upload's place in progress once it is ready.
+ *  Called only by the one call that removed the file's record (review 4: a
+ *  second delete of the same file, or a race with the sweep, gives nothing
+ *  back twice); `held` gives back only what the uploads in progress still
+ *  hold for it, for an upload whose record was never written. */
+async function release(ctx: Ctx, id: string, bytes: number, file: boolean, opts: { held?: boolean } = {}): Promise<void> {
   await usageStore.update(ctx, (cur) => {
     if (!cur) return cur;
+    if (opts.held && !cur.uploads[id]) return cur;
     const uploads = { ...cur.uploads };
     delete uploads[id];
     if (!file) return { ...cur, uploads };
     return { ...cur, bytes: Math.max(0, cur.bytes - bytes), files: Math.max(0, cur.files - 1), uploads };
   });
+}
+
+/** Removes a record in the state `status`, answering whether this call
+ *  removed it (not one that found it gone already, nor in another state). */
+async function removeRecord(ctx: Ctx, id: string, status: Attachment['status']): Promise<boolean> {
+  let removed = false;
+  await attachmentStore.update(ctx, id, (cur) => {
+    removed = false;
+    if (!cur || cur.status !== status) return cur;
+    removed = true;
+    return null;
+  });
+  return removed;
 }
 
 /** What the card shows: what is used, of how much. */
@@ -279,17 +299,32 @@ export type StartInput = {
 const asPlacedOf = (t: FoundTxn): AsPlaced => ({ date: t.date, amount: t.amount, currency: t.currency, name: t.name.slice(0, 500) });
 const placeOn = (t: FoundTxn): Place => ({ on: 'transaction', transaction_id: t.transaction_id, account_id: t.account_id, content: t.content ?? null });
 
+/** A string with no lone surrogate (each becomes U+FFFD), as
+ *  String.prototype.toWellFormed does. */
+export function wellFormed(s: string): string {
+  return s.replace(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/g, '\uFFFD');
+}
+
 /** A file's name as kept: trimmed, without control characters or path
- *  separators, at most NAME_MAX characters; empty is none. */
+ *  separators, at most NAME_MAX characters, cut between characters, never
+ *  inside one (review 5: half an emoji made the file impossible to send);
+ *  empty is none. NAME_MAX counts UTF-16 units, as the record's check does,
+ *  so a name of emoji keeps fewer of them. */
 export function cleanName(raw: string | null): string | null {
   if (raw === null) return null;
-  const name = raw
-    .normalize('NFC')
-    .replace(/[\u0000-\u001f\u007f/\\]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, NAME_MAX)
-    .trim();
+  const chars = Array.from(
+    wellFormed(raw)
+      .normalize('NFC')
+      .replace(/[\u0000-\u001f\u007f/\\]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+  );
+  let name = '';
+  for (const ch of chars) {
+    if (name.length + ch.length > NAME_MAX) break;
+    name += ch;
+  }
+  name = name.trim();
   return name.length > 0 ? name : null;
 }
 
@@ -314,8 +349,7 @@ export async function discardUpload(ctx: Ctx, id: string, now: number, opts: { c
   if (record) {
     const store = objects();
     await withLimit('a delete', STORE_CALL_MS, (signal) => store.del(objectPaths(ctx, id, record.parts, record.thumb_bytes !== null), signal));
-    const gone = await attachmentStore.update(ctx, id, (cur) => (cur && cur.status === 'uploading' ? null : cur));
-    if (gone !== null) return false;
+    if (!(await removeRecord(ctx, id, 'uploading'))) return false;
     const field = fieldOf(record.place);
     if (field) await indexRemove(ctx, field, id);
     await release(ctx, id, record.stored_bytes, true);
@@ -324,7 +358,7 @@ export async function discardUpload(ctx: Ctx, id: string, now: number, opts: { c
   // No record: only what it reserved, if anything.
   const usage = await usageStore.get(ctx);
   const held = usage?.uploads[id];
-  if (held) await release(ctx, id, held.bytes, true);
+  if (held) await release(ctx, id, held.bytes, true, { held: true });
   return Boolean(held);
 }
 
@@ -476,7 +510,7 @@ export class AttachmentGoneError extends Error {
 export async function readFile(ctx: Ctx, id: string, which: 'file' | 'thumb'): Promise<{ record: Attachment; bytes: Uint8Array }> {
   const record = await attachmentStore.get(ctx, id);
   if (!record || record.status !== 'ready') throw new AttachmentRefused(404, 'There is no such receipt or document.');
-  if (which === 'thumb' && record.thumb_bytes === null) throw new AttachmentRefused(404, 'This file has no thumbnail.');
+  if (which === 'thumb' && (record.thumb_bytes === null || record.thumb_damaged)) throw new AttachmentRefused(404, 'This file has no thumbnail.');
   const store = objects();
   try {
     const key = await unwrapFileKey(ctx, id, record.file_key!);
@@ -493,19 +527,43 @@ export async function readFile(ctx: Ctx, id: string, which: 'file' | 'thumb'): P
       bytes.set(p, at);
       at += p.length;
     }
+    // Opened whole: a mark from a read that failed before (a store that
+    // answered badly once) is cleared.
+    if (which === 'file' && record.damaged) await clearDamaged(ctx, id);
     return { record, bytes };
   } catch (err) {
     if (err instanceof AttachmentDamagedError || err instanceof DecryptFailedError) {
-      await markDamaged(ctx, id);
+      // A thumbnail that doesn't open loses its thumbnail, never the file
+      // (review 7): the file's own parts may be fine.
+      if (which === 'thumb') await markThumbDamaged(ctx, id);
+      else await markDamaged(ctx, id);
       throw err instanceof AttachmentDamagedError ? err : new AttachmentDamagedError();
     }
     throw err;
   }
 }
 
-/** Marks a file damaged: the viewer says so, and the ZIP leaves it out. */
+/** Marks a file damaged: the viewer says so. The ZIP tries it again, and a
+ *  read that opens it whole clears the mark. */
 export async function markDamaged(ctx: Ctx, id: string): Promise<void> {
   await attachmentStore.update(ctx, id, (cur) => (cur && !cur.damaged ? { ...cur, damaged: true } : cur)).catch(() => {});
+}
+
+/** Clears the mark once the file opened whole. */
+export async function clearDamaged(ctx: Ctx, id: string): Promise<void> {
+  await attachmentStore
+    .update(ctx, id, (cur) => {
+      if (!cur || !cur.damaged) return cur;
+      const next = { ...cur };
+      delete next.damaged;
+      return next;
+    })
+    .catch(() => {});
+}
+
+/** Marks a thumbnail that doesn't open: the file is shown without one. */
+async function markThumbDamaged(ctx: Ctx, id: string): Promise<void> {
+  await attachmentStore.update(ctx, id, (cur) => (cur && !cur.thumb_damaged ? { ...cur, thumb_damaged: true } : cur)).catch(() => {});
 }
 
 /** What the page is told of a file: never its key, its upload or a path. */
@@ -517,7 +575,7 @@ export type AttachmentView = {
   name: string | null;
   created_at: string;
   place:
-    | { on: 'transaction'; transaction_id: string; carried?: true; check?: true }
+    | { on: 'transaction'; transaction_id: string; carried?: true; check?: true; posting?: true }
     | { on: 'earlier'; account_id: string; pending: boolean; alike: number }
     | { on: 'none'; why: LooseReason; since: string };
   as_placed: AsPlaced | null;
@@ -527,7 +585,13 @@ export type AttachmentView = {
 export function viewOf(id: string, a: Attachment): AttachmentView {
   const place: AttachmentView['place'] =
     a.place.on === 'transaction'
-      ? { on: 'transaction', transaction_id: a.place.transaction_id, ...(a.place.carried ? { carried: true as const } : {}), ...(a.place.check ? { check: true as const } : {}) }
+      ? {
+          on: 'transaction',
+          transaction_id: a.place.transaction_id,
+          ...(a.place.carried ? { carried: true as const } : {}),
+          ...(a.place.check ? { check: true as const } : {}),
+          ...(a.place.posting ? { posting: true as const } : {}),
+        }
       : a.place.on === 'earlier'
         ? { on: 'earlier', account_id: a.place.account_id, pending: a.place.pending, alike: a.place.alike }
         : { on: 'none', why: a.place.why, since: a.place.since };
@@ -535,7 +599,7 @@ export function viewOf(id: string, a: Attachment): AttachmentView {
     id,
     kind: a.kind,
     bytes: a.bytes,
-    thumb: a.thumb_bytes !== null,
+    thumb: a.thumb_bytes !== null && !a.thumb_damaged,
     name: a.name,
     created_at: a.created_at,
     place,
@@ -650,8 +714,7 @@ export async function deleteAttachment(ctx: Ctx, id: string): Promise<{ finished
 export async function finishDelete(ctx: Ctx, id: string, record: Attachment): Promise<void> {
   const store = objects();
   await withLimit('a delete', STORE_CALL_MS, (signal) => store.del(objectPaths(ctx, id, record.parts, record.thumb_bytes !== null), signal));
-  const removed = await attachmentStore.update(ctx, id, (cur) => (cur && cur.status === 'deleting' ? null : cur));
-  if (removed === null) await release(ctx, id, record.stored_bytes, true);
+  if (await removeRecord(ctx, id, 'deleting')) await release(ctx, id, record.stored_bytes, true);
 }
 
 // ---- Moves the app makes (see the header) ----
@@ -723,42 +786,71 @@ function currentContent(content: string, account_id: string, links: ReadonlyMap<
   return current + content.slice(account_id.length);
 }
 
+/** What one sync of an Item changed (lib/transactions.ts): the ids it
+ *  removed, the ids it added (rows its stored state didn't hold before), and
+ *  every row stored now. `historyIn`: the connection's history has all
+ *  arrived (no first pull or older history still coming), which placing a
+ *  carried file waits for. */
+export type SyncChange = { removed: ReadonlySet<string>; added: ReadonlySet<string>; rows: readonly StoredTxn[]; historyIn: boolean };
+
+/** How long a file waits on a pending row that went with no posted row
+ *  naming it, before it is not on a transaction (the sweep's check). Plaid
+ *  posts most within days; a card hold can take two weeks. */
+export const POSTING_WAIT_MS = 14 * 86_400_000;
+
 /**
- * After a sync saved an Item's rows (lib/transactions.ts): the files on rows
- * it removed move to the posted row that replaced a pending one, or to the
- * one row of the same account with the same content (a re-post under a new
- * id), else they are not on a transaction any more; and the files waiting
- * on earlier accounts linked to this Item's accounts are placed where they
- * can be (placeWaiting). `historyIn`: the connection's history has all
- * arrived (no first pull or older history still coming), which placing a
- * carried file waits for. Never throws: a step that fails marks the
- * container for the sweep's check.
+ * After a sync saved an Item's rows (lib/transactions.ts):
+ *   - a file on a pending row moves to the posted row naming it
+ *     (pending_transaction_id), in this sync or any later one: a pending row
+ *     that went with no posted row naming it yet keeps its files on its id,
+ *     `posting` (review 2), and the sweep's check loosens them only after
+ *     POSTING_WAIT_MS;
+ *   - a file on a posted row the bank removed moves to the one row with its
+ *     content that this sync ADDED (a re-post under a new id), never to one
+ *     stored before, which may be an identical purchase with receipts of its
+ *     own (review 3); otherwise it is not on a transaction any more;
+ *   - files waiting on earlier accounts linked to this Item's accounts are
+ *     placed where they can be (placeWaiting).
+ * Never throws: a step that fails marks the container for the sweep's check.
  */
-export async function settleAfterSync(ctx: Ctx, removed: ReadonlySet<string>, rows: readonly StoredTxn[], historyIn: boolean, now: number = Date.now()): Promise<void> {
+export async function settleAfterSync(ctx: Ctx, change: SyncChange, now: number = Date.now()): Promise<void> {
+  const { removed, added, rows, historyIn } = change;
   try {
-    const fields = await indexedAmong(ctx, removed);
-    if (fields.length > 0) {
-      const posted = new Map<string, StoredTxn>();
-      const byContent = new Map<string, StoredTxn[]>();
-      for (const t of rows) {
-        if (t.pending) continue;
-        if (t.pending_transaction_id) posted.set(t.pending_transaction_id, t);
-        const k = contentKey(t.account_id, t);
-        byContent.set(k, [...(byContent.get(k) ?? []), t]);
-      }
-      for (const [field, ids] of await placedOn(ctx, fields)) {
-        for (const id of ids) {
-          await movePlace(ctx, id, (cur) => {
-            if (cur.place.on !== 'transaction' || cur.place.transaction_id !== field) return null;
-            const after = posted.get(field);
-            if (after) return { place: placeOnRow(after), as_placed: asPlacedOfRow(after) };
-            const same = cur.place.content ? (byContent.get(cur.place.content) ?? []).filter((t) => t.transaction_id !== field) : [];
-            if (same.length === 1) return { place: placeOnRow(same[0]), as_placed: asPlacedOfRow(same[0]) };
-            return { place: loose(cur.place, 'removed', now) };
-          });
-        }
+    const posted = new Map<string, StoredTxn>();
+    const addedByContent = new Map<string, StoredTxn[]>();
+    const stored = new Set<string>();
+    for (const t of rows) {
+      stored.add(t.transaction_id);
+      if (t.pending) continue;
+      if (t.pending_transaction_id) posted.set(t.pending_transaction_id, t);
+      if (!added.has(t.transaction_id)) continue;
+      const k = contentKey(t.account_id, t);
+      addedByContent.set(k, [...(addedByContent.get(k) ?? []), t]);
+    }
+    // The rows removed now, and the pending ids a posted row names that no
+    // stored row has: files may wait on one of those since an earlier sync.
+    const fields = await indexedAmong(ctx, [...removed, ...[...posted.keys()].filter((p) => !stored.has(p))]);
+    let wait = false;
+    for (const [field, ids] of await placedOn(ctx, fields)) {
+      for (const id of ids) {
+        await movePlace(ctx, id, (cur) => {
+          if (cur.place.on !== 'transaction' || cur.place.transaction_id !== field) return null;
+          const after = posted.get(field);
+          if (after) return { place: placeOnRow(after), as_placed: asPlacedOfRow(after) };
+          if (!removed.has(field)) return null;
+          // A pending row (no content of its own) that went with nothing
+          // naming it yet: its files wait on its id for the posted row.
+          if (cur.place.content === null) {
+            wait = true;
+            return cur.place.posting ? null : { place: { ...cur.place, posting: new Date(now).toISOString() } };
+          }
+          const same = (addedByContent.get(cur.place.content) ?? []).filter((t) => t.transaction_id !== field);
+          if (same.length === 1) return { place: placeOnRow(same[0]), as_placed: asPlacedOfRow(same[0]) };
+          return { place: loose(cur.place, 'removed', now) };
+        });
       }
     }
+    if (wait) await markForCheck(ctx, now);
   } catch (err) {
     console.warn('attachments: the files on transactions the bank changed were left for the sweep', loggable(err));
     await markForCheck(ctx, now);
@@ -929,16 +1021,25 @@ export async function releaseAllAttachments(ctx: Ctx, now: number = Date.now()):
 
 // ---- When the account goes ----
 
+/** The time step 3b of an account's deletion may take in all (review 8):
+ *  the route's 300 seconds must leave room for the records and the key. */
+export const DELETE_FILES_MS = 30_000;
+
 /**
  * Every object in the account's folder of the file store, deleted, for its
  * deletion (lib/account-deletion.ts step 3b): how many files went, and how
- * many were left (the store out of reach, or its time up), null when the
- * folder couldn't even be listed, undefined when no file store is connected
- * (so none can have been kept). Never throws: once the account's key is
- * destroyed, whatever is left can't be read, and the nightly sweep deletes a
- * deleted account's folder.
+ * many were left (the store out of reach, or its time up: DELETE_FILES_MS
+ * in all, so a slow store at an account's 4,000 files can't use the route's
+ * time before the records and the key go), null when the folder couldn't
+ * even be listed, undefined when no file store is connected (so none can
+ * have been kept). Never throws: once the account's key is destroyed,
+ * whatever is left can't be read, and the nightly sweep deletes a deleted
+ * account's folder.
  */
-export async function deleteContainerFiles(ctx: Ctx): Promise<{ deleted: number; left: number } | null | undefined> {
+export async function deleteContainerFiles(ctx: Ctx, opts: { budgetMs?: number } = {}): Promise<{ deleted: number; left: number } | null | undefined> {
+  const deadline = Date.now() + (opts.budgetMs ?? DELETE_FILES_MS);
+  /** Each call's limit: its own 15 s, within what is left of the budget. */
+  const limit = () => Math.max(1, Math.min(15_000, deadline - Date.now()));
   let store: AttachmentObjects | null;
   let objects: { pathname: string }[];
   try {
@@ -946,7 +1047,7 @@ export async function deleteContainerFiles(ctx: Ctx): Promise<{ deleted: number;
     // No file store connected: none can have been kept.
     if (!store) return undefined;
     const connected = store;
-    objects = await withLimit('a listing', 15_000, (signal) => connected.list(containerFolder(ctx), signal));
+    objects = await withLimit('a listing', limit(), (signal) => connected.list(containerFolder(ctx), signal));
   } catch (err) {
     console.error('Account deletion: the file store couldn’t be listed', loggable(err));
     return null;
@@ -956,12 +1057,14 @@ export async function deleteContainerFiles(ctx: Ctx): Promise<{ deleted: number;
   let done = 0;
   try {
     for (; done < objects.length; done += 100) {
+      if (Date.now() >= deadline) throw new Error('its time was up');
       const page = objects.slice(done, done + 100).map((o) => o.pathname);
-      await withLimit('a delete', 15_000, (signal) => store!.del(page, signal));
+      await withLimit('a delete', limit(), (signal) => store!.del(page, signal));
     }
     return { deleted: total, left: 0 };
   } catch (err) {
     console.error('Account deletion: files were left in the file store for the nightly sweep', loggable(err));
+    // A file is left when any of its objects is.
     const left = files(objects.slice(done));
     return { deleted: total - left, left };
   }

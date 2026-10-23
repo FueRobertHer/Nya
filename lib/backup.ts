@@ -670,6 +670,16 @@ export async function readAttachmentSweep(): Promise<AttachmentSweepStatus | nul
   };
 }
 
+/** Whether the backups' record is there at all. An operator restore
+ *  (lib/restore.ts) deletes it as its first write, with everything else not
+ *  preserved, and never writes it again: the next nightly backup does. So
+ *  while backups are kept, its absence says a restore may be running (or
+ *  ran since the last backup), and the receipts sweep writes nothing then
+ *  (review nit 10). Throws when storage fails. */
+export async function backupRecordExists(): Promise<boolean> {
+  return (await redis().get<unknown>(STATUS())) !== null;
+}
+
 /** Records the sweep's record. Best effort, given up on after RECORD_LIMIT_MS. */
 export async function recordAttachmentSweep(status: AttachmentSweepStatus): Promise<void> {
   let timer: ReturnType<typeof setTimeout> | undefined;

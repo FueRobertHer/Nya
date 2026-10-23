@@ -417,7 +417,10 @@ export default function AttachmentViewer({
 
         {step.kind === 'delete' && (
           <div className="attach-delete">
-            <p className="attach-viewer-note">Delete this {f.kind === 'pdf' ? 'document' : 'receipt'}? It is deleted for good: no backup brings it back.</p>
+            <p className="attach-viewer-note">
+              Delete this {f.kind === 'pdf' ? 'document' : 'receipt'}? It can’t be opened from then on, and once it is gone from the file store (at once, or by a
+              later nightly run if the store can’t be reached), no backup can bring it back.
+            </p>
             <div className="button-pair">
               <button className="secondary" onClick={() => setStep({ kind: 'view' })} disabled={busy}>
                 Keep it

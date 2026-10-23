@@ -11,7 +11,7 @@ import { attachmentObjects } from '@/lib/attachment-objects';
 import { usageStore } from '@/lib/attachment-stores';
 import { attachmentFailure, NO_STORE } from '@/lib/attachment-http';
 import { NOT_CONNECTED_MESSAGE } from '@/lib/attachments';
-import { planVolumes, setToken, setTokenHolds, volumeChunks, volumeName, volumeSize, type VolumePlan } from '@/lib/attachment-zip';
+import { makePlan, planDigest, planToken, readPlanToken, servePlan, setToken, setTokenHolds, volumeChunks, volumeName, volumeNotes, volumeSize, MAX_PLAN_CHARS } from '@/lib/attachment-zip';
 
 // Receipts and documents as ZIP files (lib/attachment-zip.ts), decrypted, for
 // the signed-in person alone. A download of their data like any other
@@ -20,21 +20,31 @@ import { planVolumes, setToken, setTokenHolds, volumeChunks, volumeName, volumeS
 // passphrase, never written down, its size sent ahead so the page keeps only
 // a whole file. Needs only a connected file store, never the quota.
 //
-// GET                 the plan: how many volumes, what each holds, and what
-//                     is left out (a file whose objects are missing or
-//                     damaged), so the card can list them. Counts nothing.
-// POST { volume, set?, passphrase?, password? }
-//                     one volume (from 1). The first of a set counts as the
+// GET                 makes the download ready: the plan (lib/attachment-zip.ts
+//                     makePlan), how many volumes and what each holds, what
+//                     is left out (a file whose objects aren't all there),
+//                     and `plan`, the signed plan the page sends back with
+//                     every volume, for PLAN_MS. Counts nothing.
+// POST { volume, plan, set?, passphrase?, password? }
+//                     one volume (from 1) of that plan, exactly its files
+//                     (servePlan), never a plan worked out again (review
+//                     blocking 1): a file deleted since is named in its
+//                     volume's manifest and the last one's, and files added
+//                     since are in no volume and counted (X-Nya-Added), so the
+//                     card offers a new set. A plan that has run out is 409
+//                     `plan_expired`. The first volume of a set counts as the
 //                     download and sends the email; its answer carries a set
-//                     token (X-Nya-Set), and the other volumes of the same
-//                     listing that present it within the hour count nothing
-//                     more (D7). The fresh sign-in is asked for every volume:
-//                     with Clerk, a long set may ask again after ten minutes.
+//                     token (X-Nya-Set), and the other volumes of the plan
+//                     that present it count nothing more (D7), each answer
+//                     renewing it for an hour. The fresh sign-in is asked for
+//                     every volume: with Clerk, a long set may ask again after
+//                     ten minutes.
 
 // A volume of about 50 MB over a slow connection.
 export const maxDuration = 300;
 
-const MAX_BODY_CHARS = 4096;
+/** The body: the plan, at most MAX_PLAN_CHARS, and a few short fields. */
+const MAX_BODY_CHARS = MAX_PLAN_CHARS + 4096;
 
 async function resolve(): Promise<Ctx | NextResponse> {
   try {
@@ -44,37 +54,43 @@ async function resolve(): Promise<Ctx | NextResponse> {
   }
 }
 
-const summary = (plan: VolumePlan) => ({
-  volumes: plan.volumes.map((files, i) => ({
-    volume: i + 1,
-    files: files.length,
-    bytes: files.reduce((n, f) => n + f.record.bytes, 0),
-    from: files[0]?.name.slice(5, 15) ?? null,
-    to: files.at(-1)?.name.slice(5, 15) ?? null,
-  })),
-  left_out: plan.left_out,
-  unreadable: plan.unreadable,
-});
-
 export async function GET() {
   const ctx = await resolve();
   if (ctx instanceof NextResponse) return ctx;
   const store = attachmentObjects();
   if (!store) return NextResponse.json({ error: NOT_CONNECTED_MESSAGE }, { status: 503, headers: NO_STORE });
   try {
-    return NextResponse.json(summary(await planVolumes(ctx, store)), { headers: NO_STORE });
+    const made = await makePlan(ctx, store);
+    return NextResponse.json(
+      {
+        volumes: made.volumes.map((files, i) => ({
+          volume: i + 1,
+          files: files.length,
+          bytes: files.reduce((n, f) => n + f.record.bytes, 0),
+          // The days its files were added on: the order they go in.
+          from: files[0]?.record.created_at.slice(0, 10) ?? null,
+          to: files.at(-1)?.record.created_at.slice(0, 10) ?? null,
+        })),
+        left_out: made.left_out,
+        unreadable: made.unreadable,
+        plan: planToken(made.plan),
+        until: new Date(made.plan.until).toISOString(),
+      },
+      { headers: NO_STORE }
+    );
   } catch (err) {
     return attachmentFailure(err, 'Your receipts and documents could not be listed.');
   }
 }
 
-type Body = { volume: number; set: string | null; passphrase: string | null; password: string | null };
+type Body = { volume: number; plan: string; set: string | null; passphrase: string | null; password: string | null };
 
 function parseBody(raw: unknown): Body | string {
-  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Send { volume }.';
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return 'Send { volume, plan }.';
   const b = raw as Record<string, unknown>;
-  if (Object.keys(b).some((k) => !['volume', 'set', 'passphrase', 'password'].includes(k))) return 'Unknown field.';
+  if (Object.keys(b).some((k) => !['volume', 'plan', 'set', 'passphrase', 'password'].includes(k))) return 'Unknown field.';
   if (!Number.isInteger(b.volume) || (b.volume as number) < 1 || (b.volume as number) > 10_000) return 'volume must be a whole number from 1.';
+  if (typeof b.plan !== 'string' || b.plan.length > MAX_PLAN_CHARS) return 'plan must be the one the download was made ready with.';
   if (b.set !== undefined && b.set !== null && (typeof b.set !== 'string' || b.set.length > 200)) return 'set must be text.';
   if (b.password !== undefined && b.password !== null && (typeof b.password !== 'string' || b.password.length > PASSWORD_MAX)) return 'password must be text.';
   if (b.passphrase !== undefined && b.passphrase !== null) {
@@ -83,6 +99,7 @@ function parseBody(raw: unknown): Body | string {
   }
   return {
     volume: b.volume as number,
+    plan: b.plan,
     set: typeof b.set === 'string' ? b.set : null,
     passphrase: typeof b.passphrase === 'string' ? b.passphrase : null,
     password: typeof b.password === 'string' ? b.password : null,
@@ -116,12 +133,15 @@ export async function POST(req: Request) {
   const store = attachmentObjects();
   if (!store) return NextResponse.json({ error: NOT_CONNECTED_MESSAGE }, { status: 503, headers: NO_STORE });
 
-  let plan: VolumePlan;
-  try {
-    plan = await planVolumes(ctx, store);
-  } catch (err) {
-    return attachmentFailure(err, 'Your receipts and documents could not be listed.');
+  const now = new Date();
+  const plan = readPlanToken(body.plan, ctx.container, now.getTime());
+  if (plan === 'expired') {
+    return NextResponse.json(
+      { error: 'This download was made ready more than six hours ago. Get it ready again.', plan_expired: true },
+      { status: 409, headers: NO_STORE }
+    );
   }
+  if (plan === null) return NextResponse.json({ error: 'This download wasn’t made ready here for this account. Get it ready again.' }, { status: 400, headers: NO_STORE });
   if (plan.volumes.length === 0) return NextResponse.json({ error: 'There are no receipts or documents to download.' }, { status: 404, headers: NO_STORE });
   if (body.volume > plan.volumes.length) return NextResponse.json({ error: `There are ${plan.volumes.length} volumes.` }, { status: 400, headers: NO_STORE });
 
@@ -144,8 +164,7 @@ export async function POST(req: Request) {
   // password (only ever one person there).
   const signedIn = await freshSignIn(req, body.password);
   if (signedIn instanceof NextResponse) return signedIn;
-  const facts = { container: ctx.container, user: signedIn.userId, digest: plan.digest, volumes: plan.volumes.length };
-  const now = new Date();
+  const facts = { container: ctx.container, user: signedIn.userId, digest: planDigest(body.plan), volumes: plan.volumes.length };
   const inSet = setTokenHolds(body.set, facts, now.getTime());
   if (!inSet) {
     if (body.set !== null) {
@@ -160,8 +179,21 @@ export async function POST(req: Request) {
     }
   }
 
-  const files = plan.volumes[body.volume - 1];
-  const meta = { exported_at: now.toISOString(), volume: body.volume, volumes: plan.volumes.length, left_out: plan.left_out };
+  let served: Awaited<ReturnType<typeof servePlan>>;
+  try {
+    served = await servePlan(ctx, store, plan, body.volume);
+  } catch (err) {
+    return attachmentFailure(err, 'Your receipts and documents could not be listed.');
+  }
+  const files = served.files;
+  const meta = {
+    exported_at: now.toISOString(),
+    volume: body.volume,
+    volumes: plan.volumes.length,
+    left_out: served.left_out,
+    set_left_out: served.set_left_out,
+    added: served.added,
+  };
   const plainBytes = volumeSize(files, meta);
   const name = volumeName(now.toISOString().slice(0, 10), body.volume, plan.volumes.length);
   let sent: { filename: string; contentType: string; bytes: number; chunks: AsyncGenerator<Uint8Array> };
@@ -181,7 +213,9 @@ export async function POST(req: Request) {
     // For the card's reminder (D3): when the files were last downloaded.
     background(usageStore.update(ctx, (cur) => (cur ? { ...cur, zip_at: now.toISOString() } : cur)).then(() => undefined));
   }
-  console.log(`Receipts download: volume ${body.volume} of ${plan.volumes.length}${body.passphrase !== null ? ', protected' : ''}${plan.left_out.length > 0 ? `, ${plan.left_out.length} left out` : ''}`);
+  console.log(
+    `Receipts download: volume ${body.volume} of ${plan.volumes.length}${body.passphrase !== null ? ', protected' : ''}${served.left_out.length > 0 ? `, ${served.left_out.length} left out` : ''}${served.added > 0 ? `, ${served.added} added since` : ''}`
+  );
 
   const chunks = sent.chunks;
   const stream = new ReadableStream<Uint8Array>({
@@ -204,15 +238,14 @@ export async function POST(req: Request) {
     'Content-Disposition': `attachment; filename="${sent.filename}"`,
     'Content-Length': String(sent.bytes),
     'X-Nya-Export-Bytes': String(sent.bytes),
-    'X-Nya-Set': inSet ? (body.set as string) : setToken(facts, now.getTime()),
+    // Renewed with each volume, so a long set stays one download.
+    'X-Nya-Set': setToken(facts, now.getTime()),
     'X-Nya-Volumes': String(plan.volumes.length),
+    'X-Nya-Added': String(served.added),
     'Cache-Control': 'no-store',
     'X-Content-Type-Options': 'nosniff',
   };
-  const notes = [
-    ...(plan.left_out.length > 0 ? [`${plan.left_out.length} ${plan.left_out.length === 1 ? 'file is' : 'files are'} left out: ${plan.left_out.length === 1 ? 'it isn’t' : 'they aren’t'} whole in storage, or can’t be opened. The manifest names ${plan.left_out.length === 1 ? 'it' : 'them'}.`] : []),
-    ...(plan.unreadable > 0 ? [`${plan.unreadable} ${plan.unreadable === 1 ? 'record' : 'records'} of a file couldn’t be read, so ${plan.unreadable === 1 ? 'that file is' : 'those files are'} not in it.`] : []),
-  ];
+  const notes = volumeNotes(served, plan);
   if (notes.length > 0) headers['X-Nya-Export-Notes'] = encodeURIComponent(JSON.stringify(notes));
   return new Response(stream, { headers });
 }

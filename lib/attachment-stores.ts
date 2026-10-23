@@ -60,8 +60,10 @@ export type Place =
   /** On a transaction, by its id. `content`: its posted bank row's content
    *  key (lib/transactions.ts contentKey), when known, what carries it
    *  across a re-link. `carried`: placed by a re-link, by content. `check`:
-   *  two rows have that content now, so the person should check which. */
-  | { on: 'transaction'; transaction_id: string; account_id: string | null; content: string | null; carried?: true; check?: true }
+   *  two rows have that content now, so the person should check which.
+   *  `posting`: since when its row, a pending one, is gone with no posted row
+   *  naming it yet: it waits on that id for the posted row (review 2). */
+  | { on: 'transaction'; transaction_id: string; account_id: string | null; content: string | null; carried?: true; check?: true; posting?: string }
   /** Its bank row went with a disconnect: waiting for the person to link
    *  that account to the re-added one. `alike`: how many of the account's
    *  rows had its content then (pending ones like it too); `pending`: its row
@@ -103,8 +105,11 @@ export type Attachment = {
   as_placed: AsPlaced | null;
   created_at: string;
   ready_at?: string;
-  /** A part failed to open: the viewer says so, and the ZIP leaves it out. */
+  /** A part failed to open: the viewer says so. The ZIP tries it again, and
+   *  a read that opens it whole clears this. */
   damaged?: true;
+  /** The thumbnail failed to open: the file is shown without one. */
+  thumb_damaged?: true;
   /** Only while uploading. */
   upload?: Upload;
 };
@@ -136,13 +141,14 @@ export function isPlace(v: unknown): v is Place {
   if (!isRecord(v)) return false;
   if (v.on === 'transaction') {
     return (
-      onlyKeys(v, ['on', 'transaction_id', 'account_id', 'content', 'carried', 'check']) &&
+      onlyKeys(v, ['on', 'transaction_id', 'account_id', 'content', 'carried', 'check', 'posting']) &&
       typeof v.transaction_id === 'string' &&
       TXN_ID.test(v.transaction_id) &&
       (v.account_id === null || (typeof v.account_id === 'string' && ACCOUNT_ID.test(v.account_id))) &&
       nullOr(v.content, isContent) &&
       (v.carried === undefined || v.carried === true) &&
-      (v.check === undefined || v.check === true)
+      (v.check === undefined || v.check === true) &&
+      (v.posting === undefined || ISO(v.posting))
     );
   }
   if (v.on === 'earlier') {
@@ -201,7 +207,7 @@ function isUpload(v: unknown, parts: number, thumb: boolean): v is Upload {
  *  record unrecognised, never half used. */
 export function isAttachment(v: unknown): v is Attachment {
   if (!isRecord(v)) return false;
-  const keys = ['version', 'status', 'kind', 'bytes', 'parts', 'thumb_bytes', 'stored_bytes', 'file_key', 'name', 'place', 'as_placed', 'created_at', 'ready_at', 'damaged', 'upload'];
+  const keys = ['version', 'status', 'kind', 'bytes', 'parts', 'thumb_bytes', 'stored_bytes', 'file_key', 'name', 'place', 'as_placed', 'created_at', 'ready_at', 'damaged', 'thumb_damaged', 'upload'];
   if (!onlyKeys(v, keys) || v.version !== ATTACHMENT_VERSION) return false;
   if (v.status !== 'uploading' && v.status !== 'ready' && v.status !== 'deleting') return false;
   if (!isAttachmentKind(v.kind)) return false;
@@ -215,6 +221,7 @@ export function isAttachment(v: unknown): v is Attachment {
   if (!isPlace(v.place) || !(v.as_placed === null || isAsPlaced(v.as_placed))) return false;
   if (!ISO(v.created_at) || !(v.ready_at === undefined || ISO(v.ready_at))) return false;
   if (!(v.damaged === undefined || v.damaged === true)) return false;
+  if (!(v.thumb_damaged === undefined || (v.thumb_damaged === true && v.thumb_bytes !== null))) return false;
   // An upload's state is there while it is uploading, never once it is
   // ready; a file deleted part way through its upload may still carry it.
   if (v.status === 'uploading' && v.upload === undefined) return false;

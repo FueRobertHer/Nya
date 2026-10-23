@@ -92,6 +92,9 @@ beforeEach(async () => {
   await registerTestContainer(fake);
   await giveKey(ctx.container);
   await seedItem('item_chase', [row('t_coffee'), row('t_lunch', { amount: 12, name: 'LUNCH' })]);
+  // Backups run here: their record is there (a restore deletes it, and the
+  // sweep then waits for the next one).
+  await backup.recordOutcome({ ok: true }, new Date(T0));
 });
 afterEach(() => {
   process.env = { ...saved };
@@ -142,6 +145,18 @@ describe('the hooks, through the code that changes transactions', () => {
     expect(store.objects.size).toBe(0);
   });
 
+  test('the account’s deletion step keeps to its time, and leaves the rest for the nightly run (review 8)', async () => {
+    for (let i = 0; i < 250; i++) await store.put(`${objectsMod.containerFolder(ctx)}${crypto.randomUUID()}/0`, new Uint8Array(3));
+    store.delay.set('del', 40);
+    const startedAt = Date.now();
+    const out = await att.deleteContainerFiles(ctx, { budgetMs: 60 });
+    expect(Date.now() - startedAt).toBeLessThan(1000);
+    expect(out!.left).toBeGreaterThan(0);
+    expect(out!.deleted + out!.left).toBe(250);
+    expect(store.objects.size).toBe(out!.left);
+    expect(att.DELETE_FILES_MS).toBe(30_000);
+  });
+
   test('the account’s deletion step: every object of its folder, and only its folder', async () => {
     await attach('t_coffee');
     await store.put(`${objectsMod.environmentFolder()}5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70/x/0`, new Uint8Array(1));
@@ -189,6 +204,60 @@ describe('the sweep, per account', () => {
     expect((await record(onPending))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_posted' });
     expect((await record(removed))!.place).toMatchObject({ on: 'none', why: 'removed' });
     expect((await stores.sweepStateStore.get(ctx))!.check).toBeUndefined();
+  });
+
+  test('a pending row gone with nothing naming it yet: its receipt waits on its id, then goes on the posted row that names it, however late (review 2)', async () => {
+    await seedItem('item_chase', [row('t_coffee'), row('t_pend', { pending: true, amount: 9 })]);
+    const id = await attach('t_pend');
+    // The sync that removed the pending row brought no posted row.
+    await seedItem('item_chase', [row('t_coffee')]);
+    await att.settleAfterSync(ctx, { removed: new Set(['t_pend']), added: new Set(), rows: [row('t_coffee')] as never, historyIn: true }, T0);
+    expect((await record(id))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_pend', posting: new Date(T0).toISOString() });
+    expect((await stores.sweepStateStore.get(ctx))!.check).toBeDefined();
+    expect(att.viewOf(id, (await record(id))!).place).toMatchObject({ on: 'transaction', posting: true });
+    // Within the wait, the check leaves it there.
+    await sweep.runAttachmentSweep(new Date(T0 + DAY));
+    expect((await record(id))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_pend' });
+    // A later sync brings the posted row: it goes there at once.
+    const posted = row('t_paid', { pending_transaction_id: 't_pend', amount: 9.5 });
+    await seedItem('item_chase', [row('t_coffee'), posted]);
+    await att.settleAfterSync(ctx, { removed: new Set(), added: new Set(['t_paid']), rows: [row('t_coffee'), posted] as never, historyIn: true }, T0 + 2 * DAY);
+    expect((await record(id))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_paid' });
+    expect((await record(id))!.as_placed!.amount).toBe(9.5);
+    expect((await stores.placeStore.get(ctx, 't_paid'))!.ids).toEqual([id]);
+    expect(await stores.placeStore.get(ctx, 't_pend')).toBeNull();
+  });
+
+  test('one that waited past two weeks is not on a transaction; its posted row arriving after that still finds it', async () => {
+    await seedItem('item_chase', [row('t_coffee'), row('t_pend', { pending: true, amount: 9 })]);
+    const id = await attach('t_pend');
+    await seedItem('item_chase', [row('t_coffee')]);
+    await att.settleAfterSync(ctx, { removed: new Set(['t_pend']), added: new Set(), rows: [row('t_coffee')] as never, historyIn: true }, T0);
+    await att.markForCheck(ctx, T0);
+    await sweep.runAttachmentSweep(new Date(T0 + att.POSTING_WAIT_MS + DAY));
+    expect((await record(id))!.place).toMatchObject({ on: 'none', why: 'removed', was: { transaction_id: 't_pend' } });
+    await seedItem('item_chase', [row('t_coffee'), row('t_paid', { pending_transaction_id: 't_pend', amount: 9.5 })]);
+    await att.markForCheck(ctx, T0 + att.POSTING_WAIT_MS + 2 * DAY);
+    await sweep.runAttachmentSweep(new Date(T0 + att.POSTING_WAIT_MS + 2 * DAY));
+    expect((await record(id))!.place).toMatchObject({ on: 'transaction', transaction_id: 't_paid' });
+    expect((await stores.placeStore.get(ctx, 't_paid'))!.ids).toEqual([id]);
+  });
+
+  test('the count, worked out again, keeps what an upload started meanwhile reserved (review nit 15)', async () => {
+    const ready = await attach('t_coffee');
+    // A start between the sweep's read of the records and its write: the
+    // reservation is there, its record not yet.
+    const started = '0b1c2d3e-4f50-4a61-8b72-9c0d1e2f3a4b';
+    const before = (await stores.usageStore.get(ctx))!;
+    await stores.usageStore.set(ctx, { ...before, bytes: before.bytes + 5000, files: before.files + 1, uploads: { [started]: { bytes: 5000, expires_at: new Date(T0 + att.UPLOAD_MS).toISOString() } } });
+    await sweep.runAttachmentSweep(new Date(T0 + 60_000));
+    const after = (await stores.usageStore.get(ctx))!;
+    expect(after.uploads[started]).toBeDefined();
+    expect(after.files).toBe(2);
+    expect(after.bytes).toBe((await record(ready))!.stored_bytes + 5000);
+    // Once it is past its hour, the sweep lets it go.
+    await sweep.runAttachmentSweep(new Date(T0 + att.UPLOAD_MS + 60_000));
+    expect((await stores.usageStore.get(ctx))!.files).toBe(1);
   });
 
   test('a store of transactions that can’t be read: nothing moves, and the marker stays', async () => {
@@ -255,9 +324,11 @@ describe('the sweep across the store: never a file whose record could come back 
     await fake.hset(ctxKey('attachments'), { [back]: backRecord as string });
     await nightly(2);
     expect(Object.keys((await stores.sweepStateStore.get(ctx))!.unnamed)).toEqual([orphan]);
-    await nightly(4);
+    // Three days kept, but the newest seven backups always are (review 6):
+    // seven days from when it was first seen.
+    await nightly(7);
     expect(objectIds().has(orphan)).toBe(true);
-    await nightly(5);
+    await nightly(8);
     expect(objectIds().has(orphan)).toBe(false);
     expect(objectIds().has(back)).toBe(true);
     for (const id of keep) expect(objectIds().has(id)).toBe(true);
@@ -300,6 +371,7 @@ describe('the sweep across the store: never a file whose record could come back 
       await sweep.runAttachmentSweep(night(n));
     }
     expect(objectIds().has(orphan)).toBe(true);
+    expect(await stores.sweepStateStore.get(ctx).then((s) => s?.unnamed ?? {})).toEqual({});
     // This account archived (being deleted): its folder isn't the pass's.
     await registerTestContainer(fake, 'archived');
     for (let n = 11; n <= 15; n++) await nightly(n);
@@ -315,6 +387,56 @@ describe('the sweep across the store: never a file whose record could come back 
     const r = await nightly(1);
     expect(r.deleted_folders).toBe(1);
     expect([...store.objects.keys()]).toEqual([`${objectsMod.environmentFolder()}${UNKNOWN}/a/0`]);
+  });
+
+  test('waits as long as any kept backup could bring a record back: the newest seven nightly ones, and the database host’s own (review 6)', () => {
+    process.env.BACKUP_KEEP_DAYS = '1';
+    expect(sweep.waitDays()).toBe(7);
+    process.env.BACKUP_KEEP_DAYS = '30';
+    expect(sweep.waitDays()).toBe(31);
+    process.env.DATABASE_BACKUP_DAYS = '40';
+    expect(sweep.waitDays()).toBe(41);
+    process.env.DATABASE_BACKUP_DAYS = 'three';
+    expect(sweep.waitDays()).toBeNull();
+    delete process.env.DATABASE_BACKUP_DAYS;
+    process.env.BACKUP_KEEP_DAYS = 'a month';
+    expect(sweep.waitDays()).toBeNull();
+    // No backups taken: the host's, or two days.
+    delete process.env.BACKUP_KEEP_DAYS;
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(sweep.waitDays()).toBe(2);
+    process.env.DATABASE_BACKUP_DAYS = '3';
+    expect(sweep.waitDays()).toBe(4);
+  });
+
+  test('nothing at all while a restore may be running: an operator restore deletes the backups’ record, and the sweep writes nothing until a backup writes it again (review nit 10)', async () => {
+    const photo = jpeg(3000);
+    const { id: stale } = await att.startUpload(ctx, { transaction_id: 't_lunch', kind: 'image', bytes: photo.length, part_sha256: [await sha(photo)], thumb: null, name: null }, T0);
+    await fake.del(testKey('backups:status'));
+    const r = await sweep.runAttachmentSweep(night(3));
+    expect(r.paused).toBe(true);
+    expect(await record(stale)).not.toBeNull();
+    expect(await fake.get(testKey('backups:status'))).toBeNull();
+    expect(await stores.sweepStateStore.get(ctx)).toBeNull();
+    // The next backup writes it again, and the sweep carries on.
+    await backup.recordOutcome({ ok: true }, night(4));
+    const after = await sweep.runAttachmentSweep(night(4));
+    expect([after.paused, after.uploads_discarded]).toEqual([undefined, 1]);
+  });
+
+  test('an object whose name is no attachment id is never Nya’s: left alone, and the account’s notes still kept (review nit 16)', async () => {
+    for (let i = 0; i < 10; i++) await attach('t_coffee');
+    const odd = `${objectsMod.containerFolder(ctx)}not-an-id/0`;
+    await store.put(odd, new Uint8Array(3));
+    const orphan = await attach('t_lunch');
+    await stores.attachmentStore.remove(ctx, orphan);
+    process.env.BACKUP_KEEP_DAYS = '1';
+    const r = await nightly(1);
+    expect(r.errors).toBe(0);
+    expect(Object.keys((await stores.sweepStateStore.get(ctx))!.unnamed)).toEqual([orphan]);
+    for (let n = 2; n <= 8; n++) await nightly(n);
+    expect(objectIds().has(orphan)).toBe(false);
+    expect(store.objects.has(odd)).toBe(true);
   });
 
   test('runs weekly, not nightly', async () => {

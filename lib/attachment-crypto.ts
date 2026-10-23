@@ -179,41 +179,72 @@ function exifHasLocation(tiff: Uint8Array): boolean {
   return false;
 }
 
+/** Whether an APPn segment carries what a camera saves of where (an Exif
+ *  block with a GPS directory, any XMP block, standard or extended, or a
+ *  Photoshop APP13 block). */
+function segmentHasLocation(marker: number, data: Uint8Array): boolean {
+  if (marker === 0xe1) {
+    if (ascii(data, 0, 'Exif\0\0') && exifHasLocation(data.subarray(6))) return true;
+    if (ascii(data, 0, 'http://ns.adobe.com/xap/1.0/')) return true;
+    if (ascii(data, 0, 'http://ns.adobe.com/xmp/extension/')) return true;
+  }
+  return marker === 0xed;
+}
+
 /**
  * What is wrong with the start of a JPEG for storing, or null: it must start
- * as a JPEG does, and its header (every segment up to the first scan, which
- * part 0 of a file always holds whole) must carry no location: no Exif block
- * with a GPS directory, no XMP block, no Photoshop (APP13) block. A canvas
+ * as a JPEG does, and no segment in the bytes given may carry a location: no
+ * Exif block with a GPS directory, no XMP block (standard or extended), no
+ * Photoshop (APP13) block, in the header (every segment up to the first
+ * scan, which part 0 of a file always holds whole) or between scans further
+ * on, as far as the bytes go (review 17: a later part of a file over 2 MiB
+ * isn't walked, and only a crafted file would carry one there). A canvas
  * writes none of them, so what the browser re-encoded always passes.
  */
 export function jpegProblem(bytes: Uint8Array): string | null {
   if (bytes.length < 4 || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) return 'This isn’t a JPEG photo.';
   let at = 2;
+  let scanned = false;
   while (at + 4 <= bytes.length) {
-    if (bytes[at] !== 0xff) return 'This photo can’t be read.';
+    if (bytes[at] !== 0xff) {
+      // Inside a scan's entropy-coded data: on to the next marker (0xFF then
+      // a byte that is no stuffed 0x00 and no restart marker).
+      if (!scanned) return 'This photo can’t be read.';
+      at += 1;
+      continue;
+    }
     const marker = bytes[at + 1];
-    // Fill bytes, and markers that stand alone.
+    // Fill bytes, a stuffed byte in a scan, and markers that stand alone.
     if (marker === 0xff) {
       at += 1;
+      continue;
+    }
+    if (marker === 0x00 && scanned) {
+      at += 2;
       continue;
     }
     if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7)) {
       at += 2;
       continue;
     }
-    if (marker === 0xda) return null; // the first scan: the header is over
-    if (marker === 0xd9) return 'This photo can’t be read.';
-    const length = (bytes[at + 2] << 8) | bytes[at + 3];
-    if (length < 2 || at + 2 + length > bytes.length) return 'This photo can’t be read.';
-    const data = bytes.subarray(at + 4, at + 2 + length);
-    if (marker === 0xe1) {
-      if (ascii(data, 0, 'Exif\0\0') && exifHasLocation(data.subarray(6))) return LOCATION;
-      if (ascii(data, 0, 'http://ns.adobe.com/xap/1.0/')) return LOCATION;
+    if (marker === 0xd9) return scanned ? null : 'This photo can’t be read.';
+    // After the first scan, only a marker a JPEG puts between scans starts a
+    // segment (the frame and table markers, a scan, APPn, a comment); any
+    // other pair is read past as data.
+    if (scanned && !((marker >= 0xc0 && marker <= 0xcf) || (marker >= 0xda && marker <= 0xef) || marker === 0xfe)) {
+      at += 1;
+      continue;
     }
-    if (marker === 0xed) return LOCATION;
+    const length = (bytes[at + 2] << 8) | bytes[at + 3];
+    if (length < 2) return 'This photo can’t be read.';
+    // A segment cut off by the end of the part: the header (before the
+    // first scan) must be whole; after it, what is there has been walked.
+    if (at + 2 + length > bytes.length) return scanned ? null : 'This photo can’t be read.';
+    if (segmentHasLocation(marker, bytes.subarray(at + 4, at + 2 + length))) return LOCATION;
+    if (marker === 0xda) scanned = true;
     at += 2 + length;
   }
-  return 'This photo can’t be read.';
+  return scanned ? null : 'This photo can’t be read.';
 }
 
 const LOCATION = 'This photo still carries what the camera saved with it, such as where it was taken. Choose it again in the app, which leaves that out.';

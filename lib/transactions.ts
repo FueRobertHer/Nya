@@ -1210,11 +1210,15 @@ async function syncItem(ctx: Ctx,
     await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
     // The receipts and documents on rows this sync removed follow them (to the
-    // posted row a pending one became, or a re-post), and those waiting on an
+    // posted row a pending one became, now or in a later sync, or a re-post
+    // among the rows it added), and those waiting on an
     // earlier account linked to this one are placed once its history is in
     // (lib/attachments.ts). Before the prune below, as approvals move. Never
     // fails the sync. Imported here, when needed, as it reads this module.
-    if (write.persisted) await (await import('./attachments')).settleAfterSync(ctx, removed, Object.values(state.txns), !state.history_pending && !hasMore);
+    if (write.persisted) {
+      const added = new Set(Object.keys(state.txns).filter((id) => !Object.hasOwn(stored.txns, id)));
+      await (await import('./attachments')).settleAfterSync(ctx, { removed, added, rows: Object.values(state.txns), historyIn: !state.history_pending && !hasMore });
+    }
     // Saved without them: what was said about them goes too. Not when the
     // write was refused or failed, which leaves them stored.
     if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed, Object.values(state.txns));

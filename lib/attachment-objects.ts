@@ -217,7 +217,9 @@ export function vercelAttachmentObjects(token: string, deps: { sdk?: () => Promi
         abortSignal: signal,
       });
       if (!isPrivateBlobUrl(result.url)) {
-        await blob.del(pathname, { token }).catch(() => {});
+        // Deleted at once, within a time of its own (review 18): the put's
+        // signal may be near its end.
+        await withLimit('a delete', 15_000, (cleanup) => blob.del(pathname, { token, abortSignal: cleanup })).catch(() => {});
         throw new StoreNotPrivateError();
       }
     },

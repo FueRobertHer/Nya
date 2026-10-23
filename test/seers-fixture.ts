@@ -273,7 +273,10 @@ export async function seedEveryKind(
   // in the file store when the test connected one.
   const stores = await import('@/lib/attachment-stores');
   const receipt = '6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d';
-  const day = ago(3);
+  // On a seeded transaction an account share shows (t_coffee, on acc_chk),
+  // so a path that reads files for the rows it shows would reach it (review
+  // 13).
+  const day = ago(2);
   await stores.attachmentStore.set(ctx, receipt, {
     version: 1,
     status: 'ready',
@@ -284,12 +287,12 @@ export async function seedEveryKind(
     stored_bytes: 1029,
     file_key: 'v2.k1-00000000.c.placeholder',
     name: 'receipt.jpg',
-    place: { on: 'transaction', transaction_id: 'txn_seed_receipt', account_id: 'acc_chk', content: null },
-    as_placed: { date: day, amount: 4.5, currency: 'USD', name: 'Blue Bottle' },
+    place: { on: 'transaction', transaction_id: 't_coffee', account_id: 'acc_chk', content: null },
+    as_placed: { date: day, amount: 5.5, currency: 'USD', name: 'Blue Bottle' },
     created_at: new Date(now).toISOString(),
     ready_at: new Date(now).toISOString(),
   });
-  await stores.placeStore.set(ctx, 'txn_seed_receipt', { ids: [receipt] });
+  await stores.placeStore.set(ctx, 't_coffee', { ids: [receipt] });
   await stores.usageStore.set(ctx, { version: 1, bytes: 1029, files: 1, uploads: {} });
   await stores.sweepStateStore.set(ctx, { version: 1, unnamed: {}, checked_at: new Date(now).toISOString() });
   const objects = (await import('@/lib/attachment-objects')).attachmentObjects();

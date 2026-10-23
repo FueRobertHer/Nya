@@ -21,23 +21,27 @@
 //   - where files are placed, checked against the stored transactions, but
 //     only for an account a failed placement step marked, and every account
 //     at least once a week otherwise (that check reads every bank's stored
-//     transactions): a file on a pending id follows the posted row naming it,
-//     one on a bank's row no Item holds waits on its earlier account by
-//     content (or is not on a transaction), one on a manual or imported row
-//     that is gone is not on a transaction; and a file a re-link placed is
-//     marked "check" when two rows now have its content. Nothing is done when
-//     a store of transactions can't be read.
+//     transactions): a file on a pending id follows the posted row naming it
+//     (one let go from a pending row too, once its posted row arrives), and
+//     waits on that id for POSTING_WAIT_MS while nothing names it; one on a
+//     bank's row no Item holds waits on its earlier account by content (or
+//     is not on a transaction), one on a manual or imported row that is gone
+//     is not on a transaction; and a file a re-link placed is marked "check"
+//     when two rows now have its content. Nothing is done when a store of
+//     transactions can't be read.
 //
 // ACROSS THE STORE, weekly: one folded listing of the environment's folder,
 // a folder per account, and NEVER WHILE A RECORD COULD COME BACK (B1):
-//   - not while any account is being restored, nor while the backups are
-//     failing or their setting is invalid;
+//   - not while any account's registry status says it is being restored,
+//     nor while the backups are failing or their setting is invalid;
 //   - only in an active account's folder: an object no record names (by the
 //     field names, so a record that can't be read still names its file) is
-//     deleted only once it has been seen unnamed for BACKUP_KEEP_DAYS + 1
-//     days (2 with no backups), counted from when it was first seen, the
-//     longest a kept backup could bring back a record naming it; seen named
-//     again, it is forgotten;
+//     deleted only once it has been seen unnamed for waitDays(), counted from
+//     when it was first seen, the longest a kept backup could bring back a
+//     record naming it (the nightly backups' longest life, the newest seven
+//     kept whatever their age, and the database host's own backups); seen
+//     named again, it is forgotten; an object whose name is no attachment id
+//     is never Nya's, and left alone;
 //   - a BREAKER: an account with objects and no record at all, or where more
 //     than 20 percent of its files or more than 50 would go in one pass, has
 //     nothing deleted; that is logged, recorded, and said on the dashboard;
@@ -46,14 +50,21 @@
 //     object goes, unreadable already;
 //   - a folder of an account neither in the registry nor deleted: logged,
 //     never touched.
+//
+// NOTHING AT ALL WHILE A RESTORE MAY BE RUNNING (review nit 10): an operator
+// restore deletes the backups' record as its first write and leaves it for
+// the next nightly backup, so while backups are kept and that record isn't
+// there, a run writes nothing, and it checks again before each account and
+// before the store-wide pass (docs/operations.md also has restores kept away
+// from 17:30 UTC).
 
 import type { Ctx, ContainerId } from './containers';
 import { isContainerId, listContainers } from './containers';
 import { readContainerEntries, readTombstones, ContainerKeyError } from './crypto';
-import { backupProblem, backupRetention, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus } from './backup';
-import { attachmentStore, placeStore, sweepStateStore, usageStore, type Attachment, type Place, type SweepState } from './attachment-stores';
+import { backupProblem, backupRecordExists, backupRetention, databaseBackupDays, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus } from './backup';
+import { attachmentStore, isAttachmentId, placeStore, sweepStateStore, usageStore, type Attachment, type Place, type SweepState } from './attachment-stores';
 import { attachmentObjects, containerFolder, environmentFolder, parseObjectPath, withLimit, type AttachmentObjects } from './attachment-objects';
-import { discardUpload, finishDelete, fieldOf, usageFromRecords } from './attachments';
+import { discardUpload, finishDelete, fieldOf, usageFromRecords, POSTING_WAIT_MS } from './attachments';
 import { findTransactions, LookupUnreadableError } from './txn-lookup';
 import { contentKey, readStoredTxns, StateUnreadableError, type StoredTxn } from './transactions';
 import { getItems } from './storage';
@@ -85,16 +96,25 @@ export type SweepResult = {
   deleted_folders: number;
   held: number;
   errors: number;
+  /** Stopped, writing nothing more, because a restore may be running. */
+  paused?: true;
 };
 
 const emptyState = (): SweepState => ({ version: 1, unnamed: {} });
 
 /** The days a kept backup could bring back a record: an object unnamed this
- *  long can go. Null when the setting is invalid (nothing goes then). */
-function waitDays(): number | null {
+ *  long can go (review 6). The nightly backups' longest life (max_days:
+ *  BACKUP_KEEP_DAYS + 1, and never under MIN_KEPT, since the newest seven are
+ *  kept whatever their age), counted from when the object was first seen
+ *  unnamed, after the last backup that could name it; the database host's
+ *  own backups (DATABASE_BACKUP_DAYS, each a whole copy of the database,
+ *  records included), and a day; and two days at the least. Null when either
+ *  setting is invalid (nothing goes then). */
+export function waitDays(): number | null {
   const b = backupRetention();
-  if (b === null) return null;
-  return b.kept ? b.keep_days + 1 : 2;
+  const host = databaseBackupDays();
+  if (b === null || host === null) return null;
+  return Math.max(b.kept ? b.max_days : 0, host + 1, 2);
 }
 
 // ---- Per account ----
@@ -132,8 +152,22 @@ async function repairIndex(ctx: Ctx, entries: ReadonlyMap<string, Attachment>, u
 /** Where a file is now, given every bank's stored rows, or null to leave it. */
 function checkedPlace(a: Attachment, rows: readonly StoredTxn[] | null, directory: ReadonlySet<string> | null, found: ReadonlySet<string>, now: number): Place | null {
   const p = a.place;
+  const postedFor = (id: string) => rows?.find((t) => !t.pending && t.pending_transaction_id === id) ?? null;
+  const onPosted = (t: StoredTxn): Place => ({ on: 'transaction', transaction_id: t.transaction_id, account_id: t.account_id, content: contentKey(t.account_id, t) });
+  // A file let go from a pending row (by a release before review 2, or after
+  // waiting POSTING_WAIT_MS) whose posted row has arrived since.
+  if (p.on === 'none') {
+    const posted = p.why === 'removed' && p.was?.transaction_id ? postedFor(p.was.transaction_id) : null;
+    return posted ? onPosted(posted) : null;
+  }
   if (p.on !== 'transaction') return null;
   if (found.has(p.transaction_id)) {
+    // Its pending row is stored again: it isn't waiting any more.
+    if (p.posting) {
+      const next = { ...p };
+      delete next.posting;
+      return next;
+    }
     // A file a re-link placed: two rows with its content now mean the person
     // should check which one it is on.
     if (p.carried && !p.check && p.content && rows) {
@@ -147,9 +181,13 @@ function checkedPlace(a: Attachment, rows: readonly StoredTxn[] | null, director
   const keepsId = p.transaction_id.startsWith(MANUAL_TXN_PREFIX) || p.transaction_id.startsWith(IMPORTED_TXN_PREFIX);
   if (keepsId) return { on: 'none', why: 'gone', since, was };
   if (rows === null) return null;
-  // A pending row that posted while the sync's move failed.
-  const posted = rows.find((t) => !t.pending && t.pending_transaction_id === p.transaction_id);
-  if (posted) return { on: 'transaction', transaction_id: posted.transaction_id, account_id: posted.account_id, content: contentKey(posted.account_id, posted) };
+  // A pending row that posted: in a sync after the one that removed it, or
+  // while the sync's move failed.
+  const posted = postedFor(p.transaction_id);
+  if (posted) return onPosted(posted);
+  // A pending row gone with no posted row naming it yet: it waits, for a
+  // while (review 2).
+  if (p.posting && Date.parse(p.posting) + POSTING_WAIT_MS > now) return null;
   // A bank row no Item holds: its account disconnected (wait for a link), or
   // the bank removed it.
   const live = new Set(rows.map((t) => t.account_id));
@@ -176,9 +214,11 @@ async function allBankRows(ctx: Ctx): Promise<StoredTxn[] | null> {
 /** The placement check (see the header). Answers how many files moved, or
  *  null when what it rests on couldn't be read (the marker stays). */
 async function checkPlacements(ctx: Ctx, entries: ReadonlyMap<string, Attachment>, now: number): Promise<number | null> {
-  const placed = [...entries].filter(([, a]) => a.status !== 'deleting' && a.place.on === 'transaction');
+  const placed = [...entries].filter(
+    ([, a]) => a.status !== 'deleting' && (a.place.on === 'transaction' || (a.place.on === 'none' && a.place.why === 'removed' && !!a.place.was?.transaction_id))
+  );
   if (placed.length === 0) return 0;
-  const ids = [...new Set(placed.map(([, a]) => (a.place as { transaction_id: string }).transaction_id))];
+  const ids = [...new Set(placed.flatMap(([, a]) => (a.place.on === 'transaction' ? [a.place.transaction_id] : [])))];
   let found: Set<string>;
   try {
     found = new Set((await findTransactions(ctx, ids)).keys());
@@ -248,13 +288,22 @@ async function sweepContainer(ctx: Ctx, now: number, result: SweepResult): Promi
   // it is bookkeeping derived from the records, which say what it is, and
   // never the person's (one that is unrecognised is left for the release
   // that wrote it).
-  const counted = await usageFromRecords(ctx, usage.value);
+  const seen = new Set<string>();
+  const counted = await usageFromRecords(ctx, usage.value, seen);
   if (usage.unreadable) {
     await usageStore.remove(ctx);
     await usageStore.set(ctx, counted);
   } else if (!usage.unrecognised) {
     await usageStore.update(ctx, (cur) => {
-      const next = { ...counted, ...(cur?.zip_at ? { zip_at: cur.zip_at } : {}) };
+      const next = { ...counted, uploads: { ...counted.uploads }, ...(cur?.zip_at ? { zip_at: cur.zip_at } : {}) };
+      // An upload started after the records were read (its record not
+      // written yet) keeps what it reserved (review 15).
+      for (const [id, u] of Object.entries(cur?.uploads ?? {})) {
+        if (seen.has(id) || Date.parse(u.expires_at) <= now) continue;
+        next.uploads[id] = u;
+        next.bytes += u.bytes;
+        next.files += 1;
+      }
       return cur && JSON.stringify(cur) === JSON.stringify(next) ? cur : next;
     });
   }
@@ -271,7 +320,9 @@ async function orphansIn(ctx: Ctx, store: AttachmentObjects, wait: number, now: 
   const byId = new Map<string, string[]>();
   for (const o of objects) {
     const p = parseObjectPath(ctx, o.pathname);
-    if (!p) continue;
+    // Never Nya's (no attachment id): left alone, and never in the sweep's
+    // notes, whose check takes attachment ids only (review 16).
+    if (!p || !isAttachmentId(p.id)) continue;
     byId.set(p.id, [...(byId.get(p.id) ?? []), o.pathname]);
   }
   const unnamed = [...byId.keys()].filter((id) => !named.has(id));
@@ -345,6 +396,17 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
   const result: SweepResult = { containers: 0, finished: false, uploads_discarded: 0, deletes_finished: 0, placements_moved: 0, listed: false, orphans_deleted: 0, deleted_folders: 0, held: 0, errors: 0 };
   const store = attachmentObjects();
   if (!store) return { ...result, finished: true };
+  // Not while a restore may be running (review nit 10): an operator restore
+  // deletes the backups' record first and leaves it to the next nightly
+  // backup, so while backups are kept and the record isn't there, nothing is
+  // written (nor recorded, which would put the record back). Checked again
+  // before each account and before the store-wide pass.
+  const kept = backupRetention()?.kept === true;
+  const restoreFree = async () => !kept || (await backupRecordExists());
+  if (!(await restoreFree())) {
+    console.warn('Receipts sweep: the backups’ record isn’t there (a restore may be running, or none has run since one), so nothing was done');
+    return { ...result, paused: true };
+  }
   const started = Date.now();
   const budget = opts.budgetMs ?? SWEEP_BUDGET_MS;
   const before: AttachmentSweepStatus = (await readAttachmentSweep().catch(() => null)) ?? { last_ok: null, last_failed: null, reason: null, cursor: null, listed_at: null };
@@ -360,6 +422,10 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
         finished = false;
         break;
       }
+      if (!(await restoreFree())) {
+        console.warn('Receipts sweep: the backups’ record went during the run (a restore may have started), so it stopped there');
+        return { ...result, finished: false, paused: true };
+      }
       try {
         await sweepContainer({ container: id as ContainerId }, now.getTime(), result);
       } catch (err) {
@@ -374,6 +440,7 @@ export async function runAttachmentSweep(now: Date = new Date(), opts: { budgetM
 
     let listed_at = before.listed_at;
     if (finished && (!listed_at || Date.parse(listed_at) + LIST_EVERY_MS <= now.getTime()) && Date.now() - started <= budget) {
+      if (!(await restoreFree())) return { ...result, paused: true };
       if (await storeWide(store, registry, now.getTime(), result)) {
         result.listed = true;
         listed_at = now.toISOString();

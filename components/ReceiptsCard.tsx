@@ -7,8 +7,9 @@
 // as it scrolls into view; an icon instead while amounts are hidden, as on a
 // transaction) and the transaction it is on, as it was when the file was
 // placed. Narrowed by year, by money out over an amount, and to those that
-// need the person: not on a transaction (its transaction went), waiting on a
-// disconnected bank, or on one of two transactions that look the same. Each
+// need the person: not on a transaction (its transaction went), waiting on
+// the bank (a disconnected one, or a pending transaction still to post), or
+// on one of two transactions that look the same. Each
 // opens in the viewer (components/AttachmentViewer.tsx), to be saved, moved,
 // renamed or deleted.
 //
@@ -49,7 +50,7 @@ export type Need = '' | 'loose' | 'waiting' | 'check';
 /** Which of the person's attention a file needs, if any. */
 export function needOf(f: Pick<FileView, 'place'>): Need {
   if (f.place.on === 'none') return 'loose';
-  if (f.place.on === 'earlier') return 'waiting';
+  if (f.place.on === 'earlier' || f.place.posting) return 'waiting';
   return f.place.check ? 'check' : '';
 }
 
@@ -76,7 +77,10 @@ export function downloadReminder(zipAt: string | null, files: number, now: Date 
 // ---- The ZIP files ----
 
 type VolumeSummary = { volume: number; files: number; bytes: number; from: string | null; to: string | null };
-type Plan = { volumes: VolumeSummary[]; left_out: { id: string; why: string }[]; unreadable: number };
+/** The download made ready (GET /api/attachments/download): what each
+ *  volume holds, and `plan`, the signed plan every volume is asked with, so
+ *  each is the one made ready, whatever changes meanwhile. */
+type Plan = { volumes: VolumeSummary[]; left_out: { id: string; why: string }[]; unreadable: number; plan: string };
 
 type ZipPhase =
   | { kind: 'idle' }
@@ -86,8 +90,11 @@ type ZipPhase =
   | { kind: 'error'; message: string };
 
 type Hint = { clerk_error: { type: string; reason: string } };
-type VolumeRequest = { volume: number; volumes: number; set: string | null; passphrase: string | null };
-type VolumeOutcome = { ok: true; blob: Blob; filename: string; set: string | null; notes: string[] } | { ok: false; error: string } | Hint;
+type VolumeRequest = { volume: number; volumes: number; plan: string; set: string | null; passphrase: string | null };
+type VolumeOutcome =
+  | { ok: true; blob: Blob; filename: string; set: string | null; notes: string[]; added: number }
+  | { ok: false; error: string; expired?: true }
+  | Hint;
 
 function isHint(v: unknown): v is Hint {
   const e = (v as Hint | null)?.clerk_error;
@@ -118,7 +125,7 @@ async function requestVolume(r: VolumeRequest, password: string | null, setPhase
     res = await fetch('/api/attachments/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ volume: r.volume, ...(r.set ? { set: r.set } : {}), ...(r.passphrase ? { passphrase: r.passphrase } : {}), ...(password === null ? {} : { password }) }),
+      body: JSON.stringify({ volume: r.volume, plan: r.plan, ...(r.set ? { set: r.set } : {}), ...(r.passphrase ? { passphrase: r.passphrase } : {}), ...(password === null ? {} : { password }) }),
     });
   } catch {
     return { ok: false, error: 'Nya could not be reached. Check your connection and try again.' };
@@ -129,7 +136,7 @@ async function requestVolume(r: VolumeRequest, password: string | null, setPhase
       setPhase({ kind: 'confirming', volume: r.volume });
       return data;
     }
-    return { ok: false, error: typeof data?.error === 'string' ? data.error : 'The download didn’t work. Try again.' };
+    return { ok: false, error: typeof data?.error === 'string' ? data.error : 'The download didn’t work. Try again.', ...(data?.plan_expired === true ? { expired: true as const } : {}) };
   }
   const declared = res.headers.get('x-nya-export-bytes');
   const reader = res.body?.getReader();
@@ -158,6 +165,7 @@ async function requestVolume(r: VolumeRequest, password: string | null, setPhase
     filename: volumeFilename(r.volume, r.volumes, !!r.passphrase),
     set: res.headers.get('x-nya-set'),
     notes: notesOf(res.headers.get('x-nya-export-notes')),
+    added: Number(res.headers.get('x-nya-added') ?? 0) || 0,
   };
 }
 
@@ -176,6 +184,8 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
   const [set, setSet] = useState<string | null>(null);
   const [saved, setSaved] = useState<number[]>([]);
   const [notes, setNotes] = useState<string[]>([]);
+  // Files added after the download was made ready: in no volume of it.
+  const [added, setAdded] = useState(0);
   const [password, setPassword] = useState('');
   const [protect, setProtect] = useState(false);
   const [passphrase, setPassphrase] = useState('');
@@ -193,6 +203,8 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
         setSet(null);
         setSaved([]);
         setNotes([]);
+        setAdded(0);
+        setPhase({ kind: 'idle' });
       }
     } catch {
       setPlanError('Nya could not be reached. Check your connection and try again.');
@@ -207,12 +219,20 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
   const download = async (v: VolumeSummary) => {
     if (!plan) return;
     try {
-      const out = await send({ volume: v.volume, volumes: plan.volumes.length, set, passphrase: protect ? passphrase : null }, needsPassword ? password : null, setPhase);
+      const out = await send({ volume: v.volume, volumes: plan.volumes.length, plan: plan.plan, set, passphrase: protect ? passphrase : null }, needsPassword ? password : null, setPhase);
       if (isHint(out)) return setPhase({ kind: 'error', message: 'Nya couldn’t confirm it’s you. Sign out and in again, then try again.' });
-      if (!out.ok) return setPhase({ kind: 'error', message: out.error });
+      if (!out.ok) {
+        // Made ready too long ago: it is made ready again, from the start.
+        if (out.expired) {
+          setPlan(null);
+          setSaved([]);
+        }
+        return setPhase({ kind: 'error', message: out.error });
+      }
       saveBlob(out.blob, out.filename);
       if (out.set) setSet(out.set);
       setNotes(out.notes);
+      setAdded(out.added);
       const next = [...new Set([...saved, v.volume])];
       setSaved(next);
       setPhase({ kind: 'idle' });
@@ -232,8 +252,8 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
     <div className="receipts-zip">
       <div className="section-label">Download as ZIP files</div>
       <p className="panel-note">
-        Every file, decrypted, in ZIP files of about 50 MB, by the day of its transaction, with a list of what each file is on. Protect them with a passphrase:
-        they show what you bought.
+        Every file, decrypted, in ZIP files of about 50 MB, in the order you added them, each in a folder by the year of its transaction, with a list of what
+        each file is on. Protect them with a passphrase: they show what you bought.
       </p>
       {!plan ? (
         <button className="secondary" onClick={getPlan} disabled={loading}>
@@ -260,7 +280,7 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
                 </button>
                 <span className="receipts-volume-note">
                   {v.files} {v.files === 1 ? 'file' : 'files'}, {formatBytes(v.bytes)}
-                  {v.from && v.to ? `, ${v.from === v.to ? v.from : `${v.from} to ${v.to}`}` : ''}
+                  {v.from && v.to ? `, added ${v.from === v.to ? v.from : `${v.from} to ${v.to}`}` : ''}
                   {saved.includes(v.volume) ? ' · saved' : ''}
                 </span>
               </li>
@@ -293,6 +313,11 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
             {n}
           </p>
         ))}
+        {added > 0 && (
+          <button className="secondary" onClick={getPlan} disabled={busy || loading}>
+            Get the download ready again
+          </button>
+        )}
         {planError && <div className="error">{planError}</div>}
         {phase.kind === 'error' && <div className="error">{phase.message}</div>}
       </div>
@@ -383,7 +408,7 @@ export default function ReceiptsCard({ clerk, rows, onChanged }: { clerk: boolea
           <select className="text-input" value={need} onChange={(e) => setNeed(e.target.value as Need)} aria-label="Show which">
             <option value="">All</option>
             {counts.loose > 0 && <option value="loose">Not on a transaction ({counts.loose})</option>}
-            {counts.waiting > 0 && <option value="waiting">Waiting on a disconnected bank ({counts.waiting})</option>}
+            {counts.waiting > 0 && <option value="waiting">Waiting on your bank ({counts.waiting})</option>}
             {counts.check > 0 && <option value="check">To check which transaction ({counts.check})</option>}
           </select>
           {years.length > 1 && (
@@ -403,7 +428,7 @@ export default function ReceiptsCard({ clerk, rows, onChanged }: { clerk: boolea
         <p className="panel-note">
           {[
             counts.loose > 0 ? `${counts.loose} not on a transaction` : null,
-            counts.waiting > 0 ? `${counts.waiting} waiting on a disconnected bank` : null,
+            counts.waiting > 0 ? `${counts.waiting} waiting on your bank` : null,
             counts.check > 0 ? `${counts.check} to check` : null,
           ]
             .filter(Boolean)

@@ -81,10 +81,16 @@ describe('a file key is wrapped under the account’s own key and nothing else',
     const wrapped = await ac.wrapFileKey(ctx, 'a1', ac.newFileKey());
     const raw = await fake.hget<unknown>(c.containerKeysKey(), ctx.container);
     const entry = typeof raw === 'string' ? JSON.parse(raw) : raw;
-    const another = await c.prepareContainerKey(OTHER.container as never, { born: false });
-    await fake.hset(c.containerKeysKey(), { [ctx.container]: JSON.stringify({ ...entry, key: another!.id }) });
+    // A second key made for the SAME container, stored and mapped in the
+    // first one's place: its record names this container, so it loads as the
+    // container's own, and only decryptOwn's check of the key id refuses the
+    // file key sealed under the first (review 14).
+    const another = (await c.prepareContainerKey(ctx.container as never, { born: false }))!;
+    await fake.hset(c.keysHashKey(), { [another.id]: another.record });
+    await fake.hset(c.containerKeysKey(), { [ctx.container]: JSON.stringify({ ...entry, key: another.id }) });
     c.forgetContainerKey();
-    await expect(ac.unwrapFileKey(ctx, 'a1', wrapped)).rejects.toThrow();
+    expect(await c.hasOwnKey(ctx)).toBe(true);
+    await expect(ac.unwrapFileKey(ctx, 'a1', wrapped)).rejects.toThrow('not under this container’s own key');
   });
 });
 
@@ -148,6 +154,25 @@ describe('what is checked of the bytes', () => {
     expect(ac.jpegProblem(new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0, 16, 1, 2]))).toBe('This photo can’t be read.');
   });
 
+  test('extended XMP, and a location segment placed between scans, are refused too (review nit 17)', () => {
+    expect(ac.jpegProblem(jpeg(4000, 'x', [segment(0xe1, 'http://ns.adobe.com/xmp/extension/\0ABCDEF')]))).toContain('where it was taken');
+    // A progressive JPEG's second scan, with an Exif GPS block before it.
+    const scan = (data: number[]) => new Uint8Array([...data]);
+    const later = (extra: Uint8Array) => {
+      const first = jpeg(600, 'x');
+      const tail = new Uint8Array([...segment(0xc4, new Uint8Array([0, 1, 2, 3])), ...extra, ...segment(0xda, new Uint8Array([1, 1, 0, 0, 0x3f, 0])), ...scan([1, 2, 0xff, 0x00, 3, 0xff, 0xd0, 4]), 0xff, 0xd9]);
+      const out = new Uint8Array(first.length - 2 + tail.length);
+      out.set(first.subarray(0, first.length - 2));
+      out.set(tail, first.length - 2);
+      return out;
+    };
+    expect(ac.jpegProblem(later(new Uint8Array()))).toBeNull();
+    expect(ac.jpegProblem(later(segment(0xe1, exif([0x8825]))))).toContain('where it was taken');
+    expect(ac.jpegProblem(later(segment(0xe1, 'http://ns.adobe.com/xap/1.0/\0<x/>')))).toContain('where it was taken');
+    // A part cut off inside a scan is walked as far as it goes.
+    expect(ac.jpegProblem(later(segment(0xe1, exif([0x8825]))).subarray(0, 300))).toBeNull();
+  });
+
   test('a PDF says so in its first kilobyte, as readers allow', () => {
     expect(ac.pdfProblem(pdf())).toBeNull();
     const late = new Uint8Array(2000);
@@ -201,6 +226,8 @@ describe('the file store', () => {
     const store = objects.vercelAttachmentObjects(TOKEN, { sdk: s.sdk });
     await expect(store.put('attachments/test/c/a/0', new Uint8Array([1]), new AbortController().signal)).rejects.toBeInstanceOf(objects.StoreNotPrivateError);
     expect(s.calls.map((c) => c.op)).toEqual(['put', 'del']);
+    // Within a time of its own (review nit 18), with the token.
+    expect(s.calls[1].args[1]).toMatchObject({ token: TOKEN, abortSignal: expect.any(AbortSignal) });
   });
 
   test('reads go to the private host of the token’s store, with the token, past the cache', async () => {

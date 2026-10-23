@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { setAmountsHidden } from '@/lib/format';
 import { amountTyped, receiptRows, unknownNote } from '@/components/receipt-filter';
@@ -167,8 +169,9 @@ describe('what the sheets say', () => {
     expect([500, 1536 * 1024, 12 * MB, 1.5 * 1024 * MB].map(sizeWords)).toEqual(['1 KB', '1.5 MB', '12 MB', '1.5 GB']);
     const u = { bytes: 0, files: 1, quota_bytes: 1024 * MB, max_files: 4000 };
     expect(quotaNote({ ...u, bytes: 700 * MB })).toBeNull();
-    expect(quotaNote({ ...u, bytes: 870 * MB })).toBe('84% of the space for receipts and documents on this copy of Nya is used (870 MB of 1 GB).');
-    expect(quotaNote({ ...u, bytes: 1024 * MB, files: 12 })).toBe('The space for receipts and documents on this copy of Nya is full (1 GB of 1 GB, 12 files). Delete some to add more.');
+    // The account's own space (review nit 11), not the copy's.
+    expect(quotaNote({ ...u, bytes: 870 * MB })).toBe('84% of your space for receipts and documents is used (870 MB of 1 GB).');
+    expect(quotaNote({ ...u, bytes: 1024 * MB, files: 12 })).toBe('Your space for receipts and documents is full (1 GB of 1 GB, 12 files). Delete some to add more.');
     expect(quotaNote({ ...u, quota_bytes: null, bytes: 99 * MB })).toBeNull();
     expect(quotaNote(null)).toBeNull();
   });
@@ -176,6 +179,7 @@ describe('what the sheets say', () => {
   test('why a file isn’t on a transaction', () => {
     expect(looseWords({ on: 'transaction', transaction_id: 't' })).toBeNull();
     expect(looseWords({ on: 'transaction', transaction_id: 't', check: true })).toContain('Check which transaction');
+    expect(looseWords({ on: 'transaction', transaction_id: 't', posting: true })).toContain('Waiting for its transaction to post');
     expect(looseWords({ on: 'earlier', account_id: 'a', pending: false, alike: 1 })).toContain('when you connect the bank again and link the account');
     expect(looseWords({ on: 'earlier', account_id: 'a', pending: true, alike: 1 })).toContain('attach it again by hand');
     expect(looseWords({ on: 'earlier', account_id: 'a', pending: false, alike: 2 })).toContain('choose which');
@@ -212,6 +216,12 @@ describe('the viewer', () => {
     expect(damaged).toContain('This file is damaged and can’t be opened.');
     expect(damaged).not.toContain('>Save<');
     expect(damaged).not.toContain('<img');
+  });
+
+  test('deleting says what deleted means while the store can’t be reached (review nit 12)', () => {
+    const src = readFileSync(join(import.meta.dir, '..', 'components', 'AttachmentViewer.tsx'), 'utf8');
+    expect(src).toContain('once it is gone from the file store (at once, or by a');
+    expect(src).not.toContain('It is deleted for good');
   });
 
   test('a file not on a transaction says why, and is offered one', () => {
@@ -252,6 +262,7 @@ describe('the Manage card', () => {
       file({ id: 'd', place: { on: 'transaction', transaction_id: 't', check: true }, as_placed: null, created_at: '2025-01-01T00:00:00.000Z' }),
     ];
     expect(files.map(needOf)).toEqual(['', 'loose', 'waiting', 'check']);
+    expect(needOf(file({ place: { on: 'transaction', transaction_id: 't', posting: true } }))).toBe('waiting');
     expect(filterFiles(files, { year: '', over: '', need: 'loose' }).map((f) => f.id)).toEqual(['b']);
     expect(filterFiles(files, { year: '2025', over: '', need: '' }).map((f) => f.id)).toEqual(['c', 'd']);
     expect(filterFiles(files, { year: '', over: '100', need: '' }).map((f) => f.id)).toEqual(['c']);
