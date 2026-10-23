@@ -228,6 +228,16 @@ export async function readRun(ctx: Ctx, date: string): Promise<RunRecord | null>
   return parseRun(await redis().hget(runsKey(ctx), date));
 }
 
+/** The newest day the container's runs record, and its run, or null for a
+ *  record that can't be read (readRuns leaves those out), for the admin's
+ *  view of storage (lib/admin-storage.ts), which says so rather than show an
+ *  older day as the last. Null when no run is recorded. */
+export async function readNewestRun(ctx: Ctx): Promise<{ date: string; run: RunRecord | null } | null> {
+  const all = ((await redis().hgetall(runsKey(ctx))) ?? {}) as Record<string, unknown>;
+  const date = Object.keys(all).sort().pop();
+  return date === undefined ? null : { date, run: parseRun(all[date]) };
+}
+
 /** Whether the date needs no run: recorded, positions and all. A day recorded
  *  with `holdings_failed` is run again for them (see the header). */
 function finished(run: RunRecord | null): boolean {
