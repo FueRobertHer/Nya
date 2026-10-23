@@ -18,8 +18,16 @@ const auth = async () => ({
   userId: clerk.signedIn,
   has: (params: { reverification?: unknown }) => !!clerk.signedIn && (params?.reverification === undefined || clerk.reverified),
 });
+// Every name the app takes from Clerk's server module, clerkClient too: a
+// module mock replaces only the names it gives, so with one left out, a file
+// that loaded Clerk's real module first (through proxy.ts, say) would leave
+// the real one in place for every file after it. Clerk's API is never
+// reachable from a test, so every call to it fails, the same in any order.
 mock.module('@clerk/nextjs/server', () => ({
   auth,
   clerkMiddleware: (handler: any) => (req: any, event: any) => handler(auth, req, event),
   reverificationError,
+  clerkClient: async () => {
+    throw new Error('Clerk’s API is not reachable from a test');
+  },
 }));

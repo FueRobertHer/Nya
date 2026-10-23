@@ -19,6 +19,7 @@
 // (restoredForgetRefusal).
 
 import type { Ctx } from '../containers';
+import { sealedAway } from '../crypto';
 import { forgetAnnotations } from '../txn-annotations';
 import { forgetOverrides } from '../overrides';
 import { forgetSplitsAndGroups } from '../split-gone';
@@ -96,26 +97,34 @@ const REFUSED = 'What a restore brought back for this account is in a form this 
 /**
  * restoredForgetRefusal for many accounts at once, as cheaply as it can be
  * had, for a list that offers Forget (the Earlier accounts list,
- * app/api/account-links): the restored accounts read once; only those a
- * restore brought back looked at further; an entry this version doesn't
- * know refused without its books read; the books of the rest read one at a
- * time until the first this version doesn't know, counting nothing. Each
- * account asked that would be refused is in `refused`, with the words; one
- * whose books couldn't be checked (a book sealed under a key this deployment
- * can't use, storage failing part way) in `unchecked`, offered nothing. The
- * forget itself still asks restoredForgetRefusal, so nothing rests on this.
- * Reading the restored accounts failing throws.
+ * app/api/account-links), over the same accounts and books it reads: the
+ * restored accounts read once; an entry this version doesn't know refused
+ * without its books read; the books of the rest (from the entry, or with
+ * none that can be read, the parts there are) read one at a time until the
+ * first this version doesn't know, counting nothing. Each account asked that
+ * would be refused is in `refused`, with the words; one that couldn't be
+ * checked in `unchecked`, offered nothing, and only that one, with why:
+ * 'sealed' when its entry or a book is sealed under a key this deployment
+ * can't use (lib/crypto.ts sealedAway), which only whoever runs it can
+ * mend; 'failed' when storage failed part way, which may pass. The forget
+ * itself still asks restoredForgetRefusal, so nothing rests on this. Reading
+ * the restored accounts failing as a whole throws.
  */
-export async function restoredRefusals(ctx: Ctx, ids: readonly string[]): Promise<{ refused: Map<string, string>; unchecked: Set<string> }> {
-  const report = await restoredAccountsStore.getAllReport(ctx);
+export async function restoredRefusals(
+  ctx: Ctx,
+  ids: readonly string[]
+): Promise<{ refused: Map<string, string>; unchecked: Map<string, 'sealed' | 'failed'> }> {
+  const report = await restoredAccountsStore.getAllReportNamingSealed(ctx);
   const refused = new Map<string, string>();
-  const unchecked = new Set<string>();
+  const unchecked = new Map<string, 'sealed' | 'failed'>();
   await Promise.all(
     ids.map(async (id) => {
       if (report.unrecognised.includes(id)) return void refused.set(id, REFUSED);
+      if (report.unavailable.includes(id)) return void unchecked.set(id, 'sealed');
       const entry = report.entries.get(id);
-      if (!entry && !report.unreadable.includes(id)) return; // nothing restored for it
       try {
+        // No entry that can be read: the parts there are, as the forget
+        // finds them (none, for an account nothing was restored for).
         const books = entry ? bookIdsOf(id, entry) : await partsOf(ctx, id);
         for (const book of books) {
           try {
@@ -125,8 +134,8 @@ export async function restoredRefusals(ctx: Ctx, ids: readonly string[]): Promis
             if (!(err instanceof StoredDataUnreadableError)) throw err;
           }
         }
-      } catch {
-        unchecked.add(id);
+      } catch (err) {
+        unchecked.set(id, sealedAway(err) ? 'sealed' : 'failed');
       }
     })
   );

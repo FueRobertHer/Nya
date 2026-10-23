@@ -808,7 +808,7 @@ describe('an email each time', () => {
     expect(result.status).toBe(200);
     expect(json(result.bytes).format).toBe('nya-export');
     // Clerk's API isn't reachable here: the email can't find its address.
-    expect(said).toEqual(['Data download: json', 'Download notice: not sent, whom to email could not be found (TypeError).']);
+    expect(said).toEqual(['Data download: json', 'Download notice: not sent, whom to email could not be found (Error).']);
   });
 });
 
