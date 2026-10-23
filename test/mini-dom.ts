@@ -354,6 +354,29 @@ export function click(el: FakeElement) {
   el.dispatchEvent(new FakeEvent('click'));
 }
 
+/** A press held for later: React's own onClick for the element as it is
+ *  now, to call when the test chooses, whatever the element says then
+ *  (disabled, or gone from the page: React takes its handlers off an
+ *  element it removes). What a stale or broken control would do. React
+ *  drops a click on a disabled button, so this is how a test reaches the
+ *  checks behind one. */
+export function holdPress(el: FakeElement): () => unknown {
+  const key = Object.keys(el).find((k) => k.startsWith('__reactProps$'));
+  const onClick = key ? (el as unknown as Record<string, { onClick?: (e: FakeEvent) => unknown }>)[key].onClick : undefined;
+  if (!onClick) throw new Error(`${outline(el)} has no onClick`);
+  return () => {
+    const e = new FakeEvent('click');
+    e.target = el;
+    e.currentTarget = el;
+    return onClick(e);
+  };
+}
+
+/** A press a disabled control lets through anyway, now. */
+export function pressThrough(el: FakeElement): unknown {
+  return holdPress(el)();
+}
+
 /** Typing a whole new value into a field. */
 export function type(el: FakeElement, value: string) {
   el.value = value;

@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from 'bun:test';
-import { installDom, click, type, outline, FakeElement } from './mini-dom';
+import { installDom, click, type, outline, holdPress, pressThrough, FakeElement } from './mini-dom';
 
 // The Plan tab with scenarios, rendered and used as a person would
 // (react-dom/client over test/mini-dom.ts): what is saved where when a
@@ -7,8 +7,11 @@ import { installDom, click, type, outline, FakeElement } from './mini-dom';
 // "They're in" held back while the accounts haven't all loaded without a
 // problem; nothing compared while the saved Plan can't be read; a scenario
 // refused for lasting changes below zero still fixable; and focus back on
-// the scenario's row after "Back to your plan". Every request is answered
-// here, by path; nothing reaches a network.
+// the scenario's row after "Back to your plan". And each drawer's own
+// binding, by itself: the allocation card's and the life events card's, the
+// allocation settings refused inside a scenario, and the tab's forms refused
+// once another plan is shown, even pressed through a disabled Save. Every
+// request is answered here, by path; nothing reaches a network.
 //
 // A rendered element never goes into toEqual or another matcher that diffs:
 // Bun's diff walks it, and the React fibers on it, whole (a million lines,
@@ -32,8 +35,17 @@ const { createRoot } = require('react-dom/client') as typeof import('react-dom/c
 const { default: PlanTab } = await import('@/components/PlanTab');
 const { DEFAULT_PLAN } = await import('@/lib/fire/plan');
 const { NO_CHANGES } = await import('@/lib/fire/scenarios');
+const { default: AllocationCard } = await import('@/components/AllocationCard');
+const { LifeEventsCard } = await import('@/components/PlanEvents');
+const { allocate, planMix } = await import('@/lib/allocation/allocation');
+const { initialListState } = await import('@/lib/whole-list-store');
+const { wholeMoney } = await import('@/components/plan-text');
 type PlanTabProps = import('@/components/PlanTab').PlanTabProps;
 type Entry = import('@/components/plan-scenarios').ScenarioEntry;
+type AllocationCardProps = import('@/components/AllocationCard').AllocationCardProps;
+type AllocationSettings = import('@/lib/allocation/settings').AllocationSettings;
+type LifeEvent = import('@/lib/fire/events').LifeEvent;
+type FirePlan = import('@/lib/fire/plan').FirePlan;
 
 const PLAN = { ...DEFAULT_PLAN, age: 40, targetAge: 55, spending: 40_000, savings: 30_000, assets: 300_000 };
 const entry = (over: Partial<Entry> = {}): Entry => ({
@@ -68,19 +80,22 @@ function serve(answers: Record<string, Answer | [number, unknown]>) {
 const listing = (...scenarios: Entry[]): [number, unknown] => [200, { scenarios, unreadable_ids: [], unrecognised_ids: [] }];
 const settle = (ms = 30) => act(async () => void (await new Promise((r) => setTimeout(r, ms))));
 
-async function render(props: Partial<PlanTabProps> = {}) {
+/** Renders a node into the document, with what a test looks for in it. */
+async function mount(node: React.ReactNode) {
   const container = dom.document.createElement('div');
   dom.document.body.appendChild(container);
   const root = createRoot(container as unknown as Element);
-  const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...props };
-  await act(async () => root.render(<PlanTab {...all} />));
+  await act(async () => root.render(node));
   await settle();
   return {
     container,
-    rerender: async (more: Partial<PlanTabProps>) => {
-      await act(async () => root.render(<PlanTab {...all} {...more} />));
+    show: async (next: React.ReactNode) => {
+      await act(async () => root.render(next));
       await settle();
     },
+    /** Shown, and nothing more waited for: a drawer closing on it is still
+     *  on the page (it slides out for a third of a second). */
+    showNow: (next: React.ReactNode) => act(async () => root.render(next)),
     unmount: () => act(async () => root.unmount()),
     text: () => container.textContent,
     byLabel: (label: string) => container.findAll((e) => e.getAttribute('aria-label') === label)[0] ?? null,
@@ -88,6 +103,15 @@ async function render(props: Partial<PlanTabProps> = {}) {
     dialog: () => container.findAll((e) => e.getAttribute('role') === 'dialog')[0] ?? null,
   };
 }
+
+async function render(props: Partial<PlanTabProps> = {}) {
+  const all: PlanTabProps = { txns: [], txnsLoading: false, txnNotes: [], institutions: [], balancesAsOf: null, currency: 'USD', holdings: [], ...props };
+  const view = await mount(<PlanTab {...all} />);
+  return { ...view, rerender: (more: Partial<PlanTabProps>) => view.show(<PlanTab {...all} {...more} />) };
+}
+
+/** A button in an element, by its words. */
+const button = (within: FakeElement, words: string) => within.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === words)[0] ?? null;
 
 const press = async (el: FakeElement | null) => {
   if (!el) throw new Error('nothing to press');
@@ -147,11 +171,22 @@ describe('a form left open never saves to another plan', () => {
     const dialog = tab.dialog()!;
     const [, ret] = dialog.findAll((e) => e.tagName === 'INPUT');
     await act(async () => type(ret, '4'));
-    await press(dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')[0]);
+    const save = button(dialog, 'Save')!;
+    // A second press of this Save, held to make once the save has been
+    // refused: by then the drawer is closing (its Save disabled), or gone.
+    const late = holdPress(save);
+    await press(save);
     expect(calls.filter((c) => c.method === 'PUT').length).toBe(1);
     expect(tab.text()).toContain('This scenario was changed on another device: here it is as it is now. Nothing of your change was kept');
     // The newer version is what is shown, and the stale form is gone.
     expect(tab.text()).toContain('Withdrawal rate: 3.5%');
+    // Even a press that gets past its Save, disabled or gone, saves nothing:
+    // the form was opened for the version before (PlanTab's saveFor, on its
+    // own).
+    expect(save.disabled).toBe(true);
+    await act(async () => void (await late()));
+    await settle();
+    expect(calls.filter((c) => c.method === 'PUT').length).toBe(1);
     for (const again of dialog.findAll((e) => e.tagName === 'BUTTON' && e.textContent.trim() === 'Save')) await press(again);
     await settle(400);
     expect(tab.dialog()).toBeNull();
@@ -277,5 +312,136 @@ describe('what the tab waits for', () => {
     // Nothing is worked out for it meanwhile.
     expect(tab.text()).not.toContain('Will it last?');
     await tab.unmount();
+  });
+});
+
+describe('each drawer is bound to the plan it was opened for, on its own', () => {
+  const allocInstitutions = [
+    { name: 'Vanguard', item_id: 'i1', error: false, staleAsOf: null, missing: 0, accounts: [{ account_id: 'brk', name: 'Brokerage', type: 'investment', subtype: 'brokerage', balance: 100_000, currency: 'USD' }] },
+  ];
+  const allocHoldings = [
+    { account_id: 'brk', ticker: 'VTI', name: 'VTI', security_type: 'etf', is_cash_equivalent: false, value: 60_000 },
+    { account_id: 'brk', ticker: 'BND', name: 'BND', security_type: 'etf', is_cash_equivalent: false, value: 40_000 },
+  ];
+  const allocated = allocate({ institutions: allocInstitutions, holdings: allocHoldings, settings: null, currency: 'USD' });
+  /** The card, saving the plan into `plans` and the settings into `settings`. */
+  const card = (over: Partial<AllocationCardProps>, plans: FirePlan[], settings: AllocationSettings[]) => (
+    <AllocationCard
+      allocation={{
+        settings: { ...initialListState<AllocationSettings | null>(null), status: 'ready' },
+        load: async () => {},
+        save: async (next) => {
+          settings.push(next);
+          return true;
+        },
+        withSettings: true,
+        alloc: allocated,
+        mix: planMix(allocated),
+      }}
+      plan={PLAN}
+      onSavePlan={async (p) => {
+        plans.push(p);
+        return true;
+      }}
+      planEditable
+      institutions={allocInstitutions}
+      balancesAsOf={null}
+      scenarioName="Retire at 50"
+      planKey="s1@r1"
+      {...over}
+    />
+  );
+
+  test('the allocation card: its drawer closes when another plan is shown, and its confirm, pressed as it slides out, saves nothing', async () => {
+    serve({ 'POST /api/allocation-history': [500, { error: 'not here' }] });
+    const plans: FirePlan[] = [];
+    const view = await mount(card({}, plans, []));
+    // Confirmed for the plan it was opened for: saved.
+    await press(view.buttons('Use my allocation in the plan')[0] ?? null);
+    await press(button(view.dialog()!, 'Use 60/40/0'));
+    expect(plans.map((p) => `${p.stocksPct}/${p.bondsPct}`)).toEqual(['60/40']);
+    await settle(400);
+    // Opened again, and another plan shown before it is confirmed.
+    await press(view.buttons('Use my allocation in the plan')[0] ?? null);
+    const dialog = view.dialog()!;
+    const confirm = button(dialog, 'Use 60/40/0')!;
+    await view.showNow(card({ planKey: 's1@r2' }, plans, []));
+    expect(confirm.disabled).toBe(false);
+    await press(confirm);
+    expect(plans.length).toBe(1);
+    await settle(400);
+    expect(view.dialog()).toBeNull();
+    await view.unmount();
+  });
+
+  test('the allocation settings are never saved from inside a scenario, even by a press its disabled controls let through', async () => {
+    serve({ 'POST /api/allocation-history': [500, { error: 'not here' }] });
+    const saved: AllocationSettings[] = [];
+    const target = async (view: Awaited<ReturnType<typeof mount>>, through: boolean) => {
+      const set = view.buttons('Set a target')[0]!;
+      if (through) await act(async () => void pressThrough(set));
+      else await press(set);
+      await settle();
+      const dialog = view.dialog()!;
+      const fields = dialog.findAll((e) => e.tagName === 'INPUT');
+      // US stocks and bonds, in the form's order of classes.
+      await act(async () => type(fields[0], '60'));
+      await act(async () => type(fields[2], '40'));
+      const save = button(dialog, 'Save')!;
+      if (through) await act(async () => void (await pressThrough(save)));
+      else await press(save);
+      await settle(400);
+      return { save, dialog };
+    };
+    // With the plan open, saved.
+    const plan = await mount(card({ scenarioName: null, planKey: 'plan@r1' }, [], saved));
+    await target(plan, false);
+    expect(saved.map((s) => s.target)).toEqual([{ 'us-stocks': 60, bonds: 40 }]);
+    await plan.unmount();
+    // In a scenario, its controls are disabled, and what gets past them is refused.
+    const view = await mount(card({ settingsLocked: true }, [], saved));
+    expect(view.buttons('Set a target')[0]?.disabled).toBe(true);
+    const { save, dialog } = await target(view, true);
+    expect(save.disabled).toBe(true);
+    expect(saved.length).toBe(1);
+    expect(dialog.textContent).toContain('It was not saved.');
+    await view.unmount();
+  });
+
+  test('the life events card: its drawer closes on a new version of the scenario, and its Save, pressed as it slides out, saves nothing', async () => {
+    const events: LifeEvent[] = [{ id: 'x', kind: 'spending', label: 'Gym', fromAge: 41, yearly: 1_000, years: 5 }];
+    const sent: LifeEvent[][] = [];
+    const lifeEvents = (version: string) => (
+      <LifeEventsCard
+        scenarioName="Retire at 50"
+        version={version}
+        events={events}
+        notes={[]}
+        money={(n) => wholeMoney(n, 'USD')}
+        editable
+        onSave={async (next) => {
+          sent.push(next);
+          return true;
+        }}
+      />
+    );
+    const view = await mount(lifeEvents('s1@r1'));
+    // Saved on the version it was opened on.
+    await press(view.byLabel('Edit Gym'));
+    await press(button(view.dialog()!, 'Save'));
+    expect(sent.length).toBe(1);
+    await settle(400);
+    // Opened again, and the scenario changes before Save.
+    await press(view.byLabel('Edit Gym'));
+    const dialog = view.dialog()!;
+    const save = button(dialog, 'Save')!;
+    await view.showNow(lifeEvents('s1@r2'));
+    expect(save.disabled).toBe(false);
+    await press(save);
+    expect(sent.length).toBe(1);
+    expect(dialog.textContent).toContain('This scenario changed since this was opened, so nothing was saved: open it again.');
+    await settle(400);
+    expect(view.dialog()).toBeNull();
+    await view.unmount();
   });
 });
