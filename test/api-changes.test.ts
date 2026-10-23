@@ -320,6 +320,23 @@ describe('undo', () => {
     expect(await txnAnnotationStore.get(ctx, MARKET)).toEqual(keptSaid);
   });
 
+  test('one finished by sending its key again is done, without what it made, and never undone from a guess', async () => {
+    const made = await send('POST', 'tags', { body: { name: 'Trip' }, headers: { 'idempotency-key': 'k-1' } });
+    // As if the first stopped after the tag was made, before it was settled.
+    const entry = (await changeStore.get(ctx, made.body.change_id))!;
+    const stopped = { ...entry, state: 'pending' as const, at: new Date(NOW - 120_000).toISOString() };
+    delete (stopped as Partial<typeof entry>).before;
+    delete (stopped as Partial<typeof entry>).after;
+    await changeStore.set(ctx, made.body.change_id, stopped);
+    const again = await send('POST', 'tags', { body: { name: 'Trip' }, headers: { 'idempotency-key': 'k-1' } });
+    expect([again.status, again.headers.get('idempotent-replayed'), again.body.tag.id]).toEqual([200, 'true', made.body.tag.id]);
+    const settled = (await changeStore.get(ctx, made.body.change_id))!;
+    expect([settled.state, settled.before, settled.after]).toEqual(['done', undefined, undefined]);
+    const refused = await undo(made.body.change_id);
+    expect([refused.status, refused.body.error.message]).toEqual([409, 'What this change made wasn’t recorded (it was finished when it was sent again), so it can’t be undone here: change it in the app.']);
+    expect((await readTagSet(ctx))!.tags).toHaveLength(1);
+  });
+
   test('refused when what it changed moved since, naming it, and nothing is undone or recorded', async () => {
     const changed = await send('PATCH', `transactions/${MARKET}`, { body: { amount: 30 }, headers: { 'if-match': await versionOf(`transactions/${MARKET}`) } });
     expect((await app('manual-transactions', 'PATCH', { id: MARKET, account_id: WALLET, amount: 31 })).status).toBe(200);

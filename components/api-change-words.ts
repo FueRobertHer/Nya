@@ -186,6 +186,7 @@ export function cannotUndo(c: ListedChange): string | null {
   if (c.undone_by) return 'Undone.';
   if (c.forgotten_at) return 'What it changed is forgotten, so it can’t be undone.';
   if (c.state !== 'done') return 'It may not have been made, so there is nothing to undo.';
+  if (c.before === undefined || c.after === undefined) return 'What it made wasn’t recorded, so it can’t be undone here.';
   return null;
 }
 

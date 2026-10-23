@@ -237,7 +237,9 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
   if (change) {
     const where = await c.locate(change.target.id);
     if (where === 'live') {
-      await settleChange(auth.ctx, found.change, { state: 'done', before: null, after: null });
+      // Made, but what it made wasn't recorded: done, without it, so it is
+      // listed and never undone from a guess (lib/api-undo.ts cannotUndo).
+      await settleChange(auth.ctx, found.change, { state: 'done' });
       return { status: 200, body: { ...(await c.answer(change.target.id)), change_id: found.change }, headers: replayed };
     }
     if (where === 'trace') {

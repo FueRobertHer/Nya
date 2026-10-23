@@ -66,6 +66,7 @@ import { lifecycleStore } from './lifecycle';
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
 };
+const NOT_RECORDED = 'What this change made wasn’t recorded (it was finished when it was sent again), so it can’t be undone here: change it in the app.';
 const CHANGED = (what: string) => `${what} changed since this change was made, so it wasn’t undone. Change it back yourself if you want it as it was.`;
 
 /** Whether two stored states are the same, field for field. */
@@ -278,6 +279,7 @@ function cannotUndo(c: Change): string | null {
   if (c.op === 'undo') return 'An undo isn’t undone: make the change again.';
   if (c.forgotten_at) return 'This change was forgotten, so what it changed isn’t kept to undo it with.';
   if (c.state !== 'done') return 'This change may not have been made, so there is nothing to undo.';
+  if (c.before === undefined || c.after === undefined) return NOT_RECORDED;
   return null;
 }
 
