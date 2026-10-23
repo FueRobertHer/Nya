@@ -1,6 +1,7 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import './clerk-mock';
-import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX } from './fake-redis';
+import { FakeRedis, storageMock, ctxKey, registerTestContainer, unscopedDataKeys, TEST_CTX, testKey } from './fake-redis';
+import { ecbHash } from './fx-fixture';
 
 // Budget rollover and income carryover (#37) through the app's routes: the
 // month of budgets read from the stored history (app/api/budgets/month,
@@ -150,6 +151,39 @@ async function budgetBefore(byName: Record<string, number>, groups: Record<strin
 
 const rollover = (t: Taxonomy, name: string, from: string, kind: 'category' | 'group' = 'category') =>
   post({ action: 'rollover', kind, id: kind === 'category' ? named(t, name).id : group(t, name).id, on: true, from, month: NOW });
+
+describe('with a home currency', () => {
+  test('budgets stay in theirs, and spending in another counts against them converted, carries too, to the cent', async () => {
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    const t = await budgetBefore({ 'food and drink': 400 });
+    await seedBank([
+      row('u1', on(-1), 200),
+      row('e1', on(-1), 100, 'food and drink', { iso_currency_code: 'EUR' }),
+      row('u0', on(0, 2), 120),
+      row('u2', on(0, 4), 30),
+      row('e0', on(0, 3), 50, 'food and drink', { iso_currency_code: 'EUR' }),
+    ]);
+    await rollover(t, 'food and drink', M(-1));
+    const food = named(t, 'food and drink').id;
+    // No home currency: the euros named, never added.
+    let body = (await month()).body;
+    expect([body.currency, body.spent[food], body.carries.categories[food].carry]).toEqual(['USD', 150, 200]);
+    expect(body.left_out_text).toBe("1 transaction in EUR isn't in these budgets, which are in USD.");
+    expect(body.converted_text).toBeNull();
+    // Euros at home: the budgets keep their dollars, and the euros count in
+    // them at each day's rate (the ECB's of 10 Sep, 1.1616; of 14 Sep, the
+    // newest, 1.1551, for October).
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    body = (await month()).body;
+    expect(body.currency).toBe('USD');
+    expect(body.budgets.categories[food]).toEqual({ amount: 400 });
+    expect(body.spent[food]).toBe(150 + 57.76); // 50 × 1.1551
+    expect(Math.round(body.carries.categories[food].carry * 100) / 100).toBe(400 - 200 - 116.16); // 100 × 1.1616
+    expect(body.left_out_text).toBeNull();
+    expect(body.converted_text).toBe('Spending in other currencies counts converted into USD, the currency your budgets are in, at each day’s ECB rate: 1 transaction in EUR.');
+  });
+});
 
 describe('a month of budgets, from the stored history', () => {
   test('budgets saved before rollover existed load without loss and show exactly as before', async () => {

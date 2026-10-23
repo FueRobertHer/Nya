@@ -31,12 +31,10 @@ const ALLOWED: Record<string, string> = {
   'lib/forecast.ts#cashPosition:currency': 'Until step 2: the cash forecast in its cash accounts’ main currency.',
   'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
   // Flows.
-  'components/BudgetsTab.tsx#BudgetsTab:displayCurrency': STEP_2,
   'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,
   'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
   'lib/api-read.ts#readRecurring:currency': STEP_2,
   'lib/api-read.ts#readSpending:currency': STEP_2,
-  'lib/budget-month.ts#monthFromActivity:currency': STEP_2,
   'lib/fire/inputs.ts#trailingFlows:currency': STEP_2,
   'lib/report/build.ts#buildReport:currency': STEP_2,
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,

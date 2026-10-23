@@ -2997,6 +2997,7 @@ export default function Dashboard({
             {tab === 'budgets' && (
               <BudgetsTab
                 txns={txns}
+                fx={txnFx}
                 budgets={budgets}
                 taxonomy={categories.taxonomy}
                 categoriesError={categories.error}

@@ -194,12 +194,15 @@ const join = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '')
 /** What a set of totals converted, in words, or null when nothing was:
  *  "Converted into EUR at each day's ECB rate: 12 transactions in USD and 3
  *  in GBP." Never an amount. */
-export function convertedText(c: Conversion | null, opts: { noun?: string } = {}): string | null {
+export function convertedText(c: Conversion | null, opts: { noun?: string; budgets?: boolean } = {}): string | null {
   if (!c || c.from.length === 0) return null;
   const noun = opts.noun ?? 'transaction';
   const parts = c.from.map((f, i) => (i === 0 ? `${f.count} ${noun}${f.count === 1 ? '' : 's'} in ${f.currency}` : `${f.count} in ${f.currency}`));
   const own = c.own.length > 0 ? `, and your own rate for ${join(c.own)}` : '';
-  return `Converted into ${c.into} at each day’s ECB rate${own}: ${join(parts)}.`;
+  // Budgets keep the currency they are typed in: what is converted is the
+  // spending against them.
+  const lead = opts.budgets ? `Spending in other currencies counts converted into ${c.into}, the currency your budgets are in,` : `Converted into ${c.into}`;
+  return `${lead} at each day’s ECB rate${own}: ${join(parts)}.`;
 }
 
 /** A total's sentence of what it left out for its currency (lib/spending.ts

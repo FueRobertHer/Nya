@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
 import Insights from '@/components/Insights';
+import BudgetsTab from '@/components/BudgetsTab';
 import { localMonth } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
 import { ecbTable } from './fx-fixture';
@@ -24,7 +25,7 @@ const text = (html: string) =>
 
 const month = localMonth();
 const day = (d: number) => `${month}-${String(d).padStart(2, '0')}`;
-const { taxonomy } = categoriesFor({ groceries: 500 }, { words: ['groceries', 'rent and utilities'] });
+const { taxonomy, budgets } = categoriesFor({ groceries: 500 }, { words: ['groceries', 'rent and utilities'] });
 let n = 0;
 const row = (d: number, name: string, amount: number, category: string | null, over: Partial<Txn> = {}): Txn => ({
   transaction_id: `f${++n}`,
@@ -97,5 +98,25 @@ describe('the insights on Home', () => {
     expect(insights()).toContain('Biggest purchase this month: Landlord, $2,100.00');
     // With one, $2,100 is €1,818.02, less than €2,000.
     expect(insights({ fx })).toContain('Biggest purchase this month: Galeries Lafayette, €2,000.00');
+  });
+});
+
+describe('the Budgets tab', () => {
+  const tab = (over: Partial<Parameters<typeof BudgetsTab>[0]> = {}) =>
+    text(
+      renderToStaticMarkup(
+        <BudgetsTab txns={FLOWS} taxonomy={taxonomy} budgets={budgets} onSave={async () => true} goals={[]} onSaveGoals={async () => true} accounts={[]} loading={false} {...over} />
+      )
+    );
+
+  test('budgets stay in the currency they are in; spending in another counts converted into it, to the cent', () => {
+    // Without a home currency: the euros named.
+    expect(tab()).toContain('$412.30 of $500.00');
+    expect(tab()).toContain("1 transaction in BTC and 1 in EUR aren't in these budgets, which are in USD.");
+    // With one: still dollars, €40 counting as $46.20 (40 × 1.1551).
+    const t = tab({ fx });
+    expect(t).toContain('$458.50 of $500.00');
+    expect(t).toContain('Spending in other currencies counts converted into USD, the currency your budgets are in, at each day’s ECB rate: 1 transaction in EUR.');
+    expect(t).toContain("1 transaction in BTC isn't in these budgets, which are in USD: there is no rate for BTC on those days.");
   });
 });

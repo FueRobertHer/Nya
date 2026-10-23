@@ -349,3 +349,18 @@ describe('the month answer', () => {
     expect((await month(NOW, '')).body.suggestions).toBeNull();
   });
 });
+
+describe('with a home currency', () => {
+  test('spending in another currency counts converted into the budgets’, at each day’s rate', async () => {
+    const { totalsIn } = await import('@/lib/fx/totals');
+    const { ecbTable } = await import('./fx-fixture');
+    // Three months of groceries, one of them in euros (after the newest
+    // publication in the fixture, 14 Sep 2026: 1.1551).
+    const rows = [row(`${JUL}-03`, 300), row(`${AUG}-03`, 330), row(`${SEP}-20`, 300, 'groceries', { iso_currency_code: 'EUR' }), row(`${SEP}-21`, 10)];
+    expect(suggest(rows).categories[id('groceries')].average).toBe(213.33); // (300 + 330 + 10) / 3, the euros left out
+    const counted = totalsIn(rows, ecbTable({ home: 'EUR' }), { into: 'most' });
+    expect(counted.currency).toBe('USD');
+    // 300 × 1.1551 = 346.53
+    expect(suggest(counted.rows).categories[id('groceries')].average).toBe(Math.round(((300 + 330 + 346.53 + 10) / 3) * 100) / 100);
+  });
+});
