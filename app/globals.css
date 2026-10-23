@@ -6732,3 +6732,26 @@ button.receipts-item {
   font-size: 13px;
   color: var(--muted);
 }
+
+/* --- stack: spacing set by the container, not by each child ---
+   Children of a stack carry no block margins of their own; the gap spaces
+   them. Use it instead of style={{ marginTop }} on notes, labels and buttons
+   (docs/design/guidelines.md). Appended last so it wins over a child class's
+   own margin at the same specificity. */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stack.tight {
+  gap: 8px;
+}
+
+.stack.loose {
+  gap: 16px;
+}
+
+.stack > * {
+  margin-block: 0;
+}

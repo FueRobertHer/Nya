@@ -1,0 +1,191 @@
+/*
+ * Nya design tokens: reference file for the UI reorganization.
+ *
+ * Not imported by the app yet. Rollout phase 2 (docs/design/rollout.md) moves
+ * these into app/globals.css. Contrast ratios are listed in
+ * docs/design/design-system.md and are checked by the script described there.
+ *
+ * Theme selection: follows the system. Dark when the system is dark or states
+ * no preference, light when it is light. A choice in Settings sets
+ * data-theme="light" or "dark" on <html>, which wins either way.
+ */
+
+/* ---------- Theme-independent scales ---------- */
+:root {
+  /* Type. Nothing on screen goes under --fs-1. */
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  --fs-1: 12px; /* meta: dates, provenance chips, chart ticks */
+  --fs-2: 13px; /* secondary lines, notices, helper text */
+  --fs-3: 15px; /* body, list rows, buttons */
+  --fs-4: 17px; /* card titles, sheet titles */
+  --fs-5: 20px; /* screen titles, summary figures */
+  --fs-6: 24px; /* large figures in a stat strip */
+  --fs-hero: clamp(32px, 9vw, 40px); /* the one hero number per screen */
+  --lh-tight: 1.2;
+  --lh-body: 1.45;
+  --fw-regular: 400;
+  --fw-medium: 500;
+  --fw-semibold: 600;
+  --fw-bold: 700;
+
+  /* Spacing, a 4px grid. */
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-5: 20px;
+  --sp-6: 24px;
+  --sp-8: 32px;
+
+  /* Radii. */
+  --r-xs: 6px; /* chips, badges */
+  --r-sm: 8px; /* inputs, small buttons, segmented items */
+  --r-md: 12px; /* buttons, notices */
+  --r-lg: 16px; /* cards, sheets */
+  --r-pill: 999px;
+
+  /* Sizes. */
+  --tap: 44px; /* minimum touch target */
+  --row-min: 48px; /* minimum list row height */
+  --icon: 20px;
+  --content-max: 760px;
+
+  /* Motion. One reduced-motion rule zeroes these (design-system.md). */
+  --dur-fast: 140ms;
+  --dur-base: 220ms;
+  --ease: cubic-bezier(0.2, 0, 0, 1);
+
+  /* Layers. */
+  --z-header: 20;
+  --z-tabbar: 30;
+  --z-sheet-backdrop: 40;
+  --z-sheet: 50;
+  --z-toast: 60;
+}
+
+/* ---------- Dark (default) ---------- */
+:root,
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* Surfaces */
+  --canvas: #0d0f14;
+  --surface: #151821;
+  --elevated: #1c202b;
+  --glass: rgba(21, 24, 33, 0.88); /* header and tab bar, over a blur */
+
+  /* Lines */
+  --border-subtle: #232834; /* dividers between rows */
+  --border-strong: #2b3140; /* card and sheet edges */
+  --border-input: #707889; /* field outlines: 3:1 on canvas, surface and elevated */
+
+  /* Text */
+  --text-1: #eceef2;
+  --text-2: #9499a6;
+  --text-3: #868c9b;
+
+  /* Meaning, as text or icon color */
+  --accent: #5b8def; /* links, selected states, focus */
+  --pos: #34d399;
+  --neg: #f87171;
+  --warn: #fbbf24;
+
+  /* Meaning, as a background tint (text in the matching color sits on it) */
+  --accent-tint: #1d263a;
+  --pos-tint: #192e2f;
+  --neg-tint: #30232b;
+  --warn-tint: #312c21;
+  --caveat-surface: #191d27; /* neutral information notices */
+
+  /* Fills with white labels */
+  --accent-fill: #2563eb;
+  --danger-fill: #dc2626;
+  --on-fill: #ffffff;
+
+  --focus: #5b8def;
+  --scrim: rgba(0, 0, 0, 0.55);
+}
+
+/* ---------- Light ---------- */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) {
+    color-scheme: light;
+    --canvas: #f6f7f9;
+    --surface: #ffffff;
+    --elevated: #f0f2f6;
+    --glass: rgba(255, 255, 255, 0.88);
+    --border-subtle: #e6e8ef;
+    --border-strong: #d5d9e2;
+    --border-input: #757c8a;
+    --text-1: #11141c;
+    --text-2: #525866;
+    --text-3: #636a77;
+    --accent: #2563eb;
+    --pos: #047857;
+    --neg: #b91c1c;
+    --warn: #92400e;
+    --accent-tint: #eef3fd;
+    --pos-tint: #ebf4f2;
+    --neg-tint: #fceeee;
+    --warn-tint: #fcf4eb;
+    --caveat-surface: #f1f3f8;
+    --accent-fill: #2563eb;
+    --danger-fill: #dc2626;
+    --on-fill: #ffffff;
+    --focus: #2563eb;
+    --scrim: rgba(17, 20, 28, 0.4);
+  }
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --canvas: #f6f7f9;
+  --surface: #ffffff;
+  --elevated: #f0f2f6;
+  --glass: rgba(255, 255, 255, 0.88);
+  --border-subtle: #e6e8ef;
+  --border-strong: #d5d9e2;
+  --border-input: #757c8a;
+  --text-1: #11141c;
+  --text-2: #525866;
+  --text-3: #636a77;
+  --accent: #2563eb;
+  --pos: #047857;
+  --neg: #b91c1c;
+  --warn: #92400e;
+  --accent-tint: #eef3fd;
+  --pos-tint: #ebf4f2;
+  --neg-tint: #fceeee;
+  --warn-tint: #fcf4eb;
+  --caveat-surface: #f1f3f8;
+  --accent-fill: #2563eb;
+  --danger-fill: #dc2626;
+  --on-fill: #ffffff;
+  --focus: #2563eb;
+  --scrim: rgba(17, 20, 28, 0.4);
+}
+
+/* ---------- Aliases for today's names ----------
+ * Let globals.css move to the new tokens a component at a time. Each alias
+ * goes once nothing reads it (rollout.md, phase 2).
+ */
+:root {
+  --bg: var(--canvas);
+  --card: var(--surface);
+  --raised: var(--elevated);
+  --border: var(--border-strong);
+  --line: var(--border-subtle);
+  --text: var(--text-1);
+  --muted: var(--text-2);
+  --up: var(--pos);
+  --down: var(--neg);
+  /* --accent and --warn keep their names. */
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-fast: 0ms;
+    --dur-base: 0ms;
+  }
+}

@@ -116,6 +116,7 @@ Before you push, run `bun run typecheck && bun run test`. The tests need no Redi
 | [Authentication and sharing](docs/authentication.md) | The password gate, sessions, Clerk sign-in, adding people, account deletion and its receipt, sharing, demo accounts, API tokens. |
 | [Downloading your data](docs/data-export.md) | Getting everything Nya stores about you: the JSON, CSV and OFX formats field by field, what is left out, protecting a file with a passphrase and opening it, bringing a download back into an empty account, and how it differs from the operator backup. |
 | [Architecture](docs/architecture.md) | Storage and encryption, the storage seam new stores are built on, caching, how net-worth history is recorded and reconstructed, accounts that end applied on read, the import pipeline and importing into a linked account, the connector interface and its guard against forged requests, containers, where hiding amounts applies, the weekly summary and its job. |
+| [Design](docs/design/README.md) | The guidelines every new UI follows (enforced in part by a test), and the proposed UI reorganization: what each tab is for and what moves where, the end of Manage mode, the design system and tokens in light and dark, the rollout order, and mockups of every screen. |
 | [Operations](docs/operations.md) | Backups and restores, encryption key setup and rotation, containers, the one-time data move, email and what the weekly summary logs, and the admin's view of storage across accounts. |
 
 ## Limitations
