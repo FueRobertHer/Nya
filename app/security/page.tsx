@@ -444,6 +444,13 @@ export default function SecurityPage() {
             both need a fresh sign-in and are refused while a bank is connected, so a connection is never left running at
             Plaid, SimpleFIN or Lunch Flow.
           </p>
+          <p>
+            A bank brought back from Plaid counts before you link it only on your answer, never inferred, and each answer is
+            checked against what is stored when you give it. Any connection made since holds its transactions until you say
+            whether it is that bank, from the moment the connection is saved, so they are never counted twice; what can’t be
+            read holds them too, and says so. Carrying an account from SimpleFIN or Lunch Flow on with one tracked in its place
+            is asked of you while one waits, never assumed, says what it matched, and can be undone.
+          </p>
         </InfoSection>
       )}
 

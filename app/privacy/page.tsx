@@ -229,7 +229,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ],
   [
     'A download you brought back',
-    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you connect it again and link its accounts (then they count as its own), or Forget it. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
+    'What it held is your data, kept as the rest is. A bank in it that was connected through Plaid keeps its transactions, encrypted, until you Forget it: they count once you connect it again and link its accounts (then as its own), or once you say the bank is gone (then as an ended account’s, up to the day you give). What you answer about it (that it is gone, which connections made since it isn’t at, which account carries it on) is kept with it, encrypted and in your download, until you Forget it, undo the restore, empty the account or delete it. An account from SimpleFIN or Lunch Flow you carry on with the one you track in its place keeps what it was, so undoing that puts it back. The record of the restore (when the file was made, its size, and how much came back) stays until you undo the restore, empty the account or delete it; the file itself is never stored.',
   ],
   [
     'A SimpleFIN connection',
