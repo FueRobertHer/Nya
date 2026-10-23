@@ -250,6 +250,14 @@ Every component on `origin/main` that renders on a tab or a sheet, with its new 
 | CategoryPicker | Editors | Unchanged |
 | InfoPage, OpenProtectedDownload, UnsubscribeForm, ServiceWorkerRegistration | Standalone pages and plumbing | Unchanged |
 
+## Building blocks
+
+Components that only serve other components (a picker, a chart, a row, a notice) are listed here in one line each, with what they serve, instead of a row in the table above. A new component goes in one or the other; `test/design-guard.test.ts` fails until it does.
+
+- AccountSparkline, ForecastChart, RunwayChart, PlanFanChart, PlanGrid, MonthFlowChart: charts, inside their cards and sheets.
+- CategoryPicker, TagChips, SplitRows, SharedRows, ScenarioTag, DownloadOptions: shared parts of the editors and sheets that use them.
+- Sheet: every form, confirmation and detail view.
+
 ## Vocabulary
 
 One word for one thing, everywhere:
