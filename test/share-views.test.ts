@@ -1011,3 +1011,36 @@ describe('a viewer reaches nothing that isn’t shared with them', () => {
     expect((await as('user_owner', () => route('connections', 'DELETE', { id: pair }))).status).toBe(200);
   });
 });
+
+describe('with the owner’s home currency (decision 5)', () => {
+  test('net worth, spending, budgets and holdings in it, converted as the owner’s own screens convert, saying so, never a rate', async () => {
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    const { ecbHash } = await import('./fx-fixture');
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD' });
+    await shareViews({
+      net_worth: { detail: 'total', accounts: false },
+      spending: { detail: 'amounts', by: 'group' },
+      budgets: { detail: 'amounts', by: 'group' },
+      holdings: { detail: 'amounts', positions: false },
+    });
+    const views = await partnerViews();
+    // Net worth: the owner's own, in their home currency.
+    const own = await readNetWorth(ctx, { base: true });
+    expect(views.net_worth).toMatchObject({ currency: 'USD', total: own.base!.net_worth, converted: { own_rates: false } });
+    // Spending: the euros at their rate, counted, as the owner's Activity tab
+    // counts them once they chose a home currency, to the cent.
+    const paris = monthOf(dateOf('t_paris'));
+    const month = views.spending.months.find((m: any) => m.month === paris);
+    const theirs = await readSpending(ctx, { from: `${paris}-01`, to: `${paris}-31` });
+    expect(views.spending).toMatchObject({ currency: 'USD', converted: { own_rates: false } });
+    expect(month.total).toBe(theirs.base!.money_out);
+    expect(month.left_out).toBeNull();
+    // Budgets keep their currency; the euros count against them, converted.
+    expect(views.budgets).toMatchObject({ currency: 'USD', converted: { own_rates: false } });
+    expect(views.holdings.currency).toBe('USD');
+    // What a share shows of the conversion: that it is one, never a rate.
+    const text = JSON.stringify(views);
+    expect(text).not.toMatch(/1\.1551|0\.8657|rate_day|own_rates":\[/);
+  });
+});

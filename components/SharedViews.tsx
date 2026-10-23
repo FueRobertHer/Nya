@@ -27,6 +27,7 @@ import {
   type HoldingsLine,
   type HoldingsView,
   type NetWorthView,
+  type SharedConversion,
   type SharedViews,
   type SpendingView,
   type ViewKind,
@@ -88,6 +89,13 @@ export function SharedViewsList({ views, whose }: { views: SharedViews; whose: s
   );
 }
 
+/** A figure converted into the owner's home currency (decision 5), in
+ *  words: whose rates, never a rate. */
+export function convertedWords(into: string | null, c: SharedConversion | undefined, lead = 'Converted into'): string | null {
+  if (!c || !into) return null;
+  return `${lead} ${into} at the ECB’s daily rates${c.own_rates ? ', and their own rates' : ''}.`;
+}
+
 // ---- Net worth ----
 
 function NetWorthKind({ v }: { v: NetWorthView }) {
@@ -98,8 +106,11 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
         <span className="incoming-account-date">{v.as_of ? `As of ${shortDate(v.as_of)}${v.from && v.from !== v.as_of ? `, balances from ${shortDate(v.from)} on` : ''}` : ''}</span>
         <span className="incoming-account-value">{v.total === null ? 'No balance yet' : <Masked>{formatMoney(v.total, v.currency)}</Masked>}</span>
       </div>
+      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
       {v.other_currencies.map((o) => (
-        <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: a share doesn’t convert currencies.`}</p>
+        <p key={o.currency} className="panel-note">{`${o.accounts === 1 ? '1 account' : `${o.accounts} accounts`} in ${o.currency} ${o.accounts === 1 ? 'isn’t' : 'aren’t'} in this total: ${
+          v.converted ? 'there is no rate for it' : 'their totals don’t convert currencies'
+        }.`}</p>
       ))}
       {v.without_balance > 0 && (
         <p className="panel-note">{`${v.without_balance === 1 ? '1 account has' : `${v.without_balance} accounts have`} no balance yet, so ${v.without_balance === 1 ? 'it isn’t' : 'they aren’t'} in this total.`}</p>
@@ -110,7 +121,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
             <NetWorthChart points={history} label="Net worth" currency={v.currency} rangeSet="balance" />
             <p className="panel-note">
               One point a week. Dashed stretches are estimates, worked out from transactions rather than recorded.
-              {v.history_mixed ? ' It adds accounts in other currencies as they are, unconverted: a share doesn’t convert currencies.' : ''}
+              {v.history_mixed ? ' It adds accounts in other currencies as they are, unconverted, as their own chart does.' : ''}
             </p>
           </>
         ) : (
@@ -213,6 +224,7 @@ function SpendingKind({ v }: { v: SpendingView }) {
         {amounts ? 'What went out, by their own categories' : 'Each part’s share of what went out, by their own categories'}: never transfers, cash taken out, loan
         payments, or what they left out of their totals, and never the transactions themselves.
       </p>
+      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
       {spendingNotes(v, m).map((n) => (
         <p key={n} className="panel-note">
           {n}
@@ -273,6 +285,7 @@ function HoldingsKind({ v }: { v: HoldingsView }) {
           ))}
         </div>
       )}
+      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted)}</p>}
       {v.notes.map((n) => (
         <p key={n} className="panel-note">
           {n}
@@ -339,6 +352,7 @@ function BudgetsKind({ v }: { v: BudgetsView }) {
         </div>
       ))}
       <p className="panel-note">Spent against what is available, with what rolled over, by their own budgets.</p>
+      {v.converted && <p className="panel-note">{convertedWords(v.currency, v.converted, 'Spending in other currencies counts converted into')}</p>}
       {v.filing_unread && <p className="stale-note">{FILING_UNREAD}</p>}
     </>
   );

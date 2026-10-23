@@ -31,7 +31,8 @@ const ALLOWED: Record<string, string> = {
     'The Plan’s currency, the one most of its accounts are in, which what the person types in the Plan is in: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
   'lib/forecast.ts#cashPosition:currency':
     'The forecast’s currency, its cash accounts’ main one, which the warning the person typed is in: with a home currency the rest converts into it at the newest rates, never relabelled.',
-  'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
+  'lib/share-views.ts#holdingsView:currency':
+    'Without the owner’s home currency only: a share’s holdings in their main currency, the rest named. With one, in it, converted at the newest rates (lib/allocation/allocation.ts inputsIn, decision 5).',
   // Flows.
   'components/MonthFlowChart.tsx#MonthFlowChart:currency':
     'Only when the Activity tab gives it no currency: its rows are the ones the tab totals, already converted into the home currency through lib/fx/totals.ts totalsIn, so this is the label of what they are in.',
@@ -40,7 +41,6 @@ const ALLOWED: Record<string, string> = {
   'lib/api-read.ts#readSpending:currency': 'Version 1’s field keeps its meaning: one currency, the rest named, never added. With a home currency, base converts (lib/fx/totals.ts totalsIn).',
   'lib/report/build.ts#buildReport:currency':
     'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
-  'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',
 };
 

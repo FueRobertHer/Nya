@@ -606,3 +606,31 @@ test('the card for a kind lists itself under its own name, whoever’s it is', (
   const html = renderToStaticMarkup(<SharedViewsList views={{ net_worth: { unreadable: true } }} whose="Your" />);
   expect(text(html)).toContain('Your net worth couldn’t be read just now');
 });
+
+describe('a share in the owner’s home currency', () => {
+  test('says it is converted, at whose rates, never a rate; what has no rate is named as having none', () => {
+    const views: SharedViews = {
+      net_worth: { detail: 'total', currency: 'EUR', total: 1000, as_of: '2026-09-14', from: '2026-09-14', other_currencies: [{ currency: 'AED', accounts: 1 }], without_balance: 0, converted: { own_rates: true } },
+      spending: {
+        detail: 'shares',
+        by: 'group',
+        currency: 'EUR',
+        converted: { own_rates: false },
+        months: [{ month: '2026-09', so_far: true, groups: [{ name: 'Food', pct: 100, label: '100%' }], left_out: null }],
+      },
+      budgets: {
+        detail: 'progress',
+        by: 'group',
+        currency: 'USD',
+        converted: { own_rates: false },
+        months: [{ month: '2026-09', total: { name: 'All budgets', pct: 50, label: '50%', over: false }, groups: [], left_out: null, may_be_incomplete: false }],
+      },
+    };
+    const t = text(renderToStaticMarkup(<SharedViewsList views={views} whose="Sam’s" />));
+    expect(t).toContain('Converted into EUR at the ECB’s daily rates, and their own rates.');
+    expect(t).toContain('1 account in AED isn’t in this total: there is no rate for it.');
+    expect(t).toContain('Converted into EUR at the ECB’s daily rates.');
+    expect(t).toContain('Spending in other currencies counts converted into USD at the ECB’s daily rates.');
+    expect(t).not.toContain('a share doesn’t convert');
+  });
+});

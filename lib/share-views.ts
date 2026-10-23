@@ -73,6 +73,16 @@
 // queue), as the owner's Activity tab counts and says them. Storage out of
 // reach says nothing of the data, and throws (lib/sharing.ts then shows
 // nothing of the share, as for its accounts).
+//
+// THE OWNER'S HOME CURRENCY (decision 5). Once the owner has chosen one, a
+// net worth, spending or holdings share is in it, converted as their own
+// screens convert (net worth's base, lib/fx/totals.ts totalsIn, the
+// allocation's inputsIn), and a budgets share counts spending in other
+// currencies converted into the budgets' own, as their Budgets tab does. Each
+// says only that it is converted, at the ECB's daily rates and, where one was
+// used, the owner's own rates (SharedConversion): never a rate's value, nor
+// which currency an own rate is for. What has no rate is named by its
+// currency alone, as before.
 
 import type { Ctx } from './containers';
 import { readAccounts, readHoldings, readNetWorth, readNetWorthAndHistory, budgetsAnswer, type ApiAccount, type ApiAccounts } from './api-read';
@@ -80,11 +90,13 @@ import { readGoals, type ApiGoal } from './api-goals';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import { readBudgetMonths } from './budget-month';
 import { summarize, tidy, type SummaryCategory } from './totals';
-import { leftOutByCurrency, totalsCurrency, type LeftOut } from './spending';
+import { leftOutByCurrency, type LeftOut } from './spending';
 import { coveredOutOfDays, noTransactionsView, spendingUnknown, type NoTransactionsView } from './no-transactions';
 import { withImportedFiles } from './history-import/without-files';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
-import { allocate, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
+import { allocate, inputsIn, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
+import { readFlowFx } from './fx/read';
+import { conversionIn, totalsIn } from './fx/totals';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
 import { BUCKET_NAMES, BUCKET_SLOTS } from './allocation/buckets';
 import { allocationSettingsStore } from './allocation-settings';
@@ -169,24 +181,44 @@ async function ownerToday(theirs: Ctx, now: number): Promise<string> {
 
 async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balancesShown: PromiseLike<ReadonlySet<string>> | ReadonlySet<string>): Promise<NetWorthView | Unreadable> {
   const read =
-    s.detail === 'history' ? readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }) : readNetWorth(theirs).then((now) => ({ now, history: null }));
+    s.detail === 'history'
+      ? readNetWorthAndHistory(theirs, { includeEstimated: true, interval: 'week' }, { base: true })
+      : readNetWorth(theirs, { base: true }).then((now) => ({ now, history: null }));
   const [{ now, history }, listed] = await Promise.all([read, s.accounts ? reads.accounts() : Promise.resolve(null)]);
   // An account that couldn't be read, or hasn't been loaded, would leave the
   // total short: none is shown rather than a short one.
   if (now.missing_accounts.length > 0 || (listed !== null && listed.missing_accounts.length > 0)) return UNREADABLE;
   const [main, ...others] = now.totals;
-  const view: NetWorthView = {
-    detail: s.detail,
-    currency: main?.currency ?? null,
-    total: main ? main.net_worth : null,
-    as_of: now.balances_to,
-    from: now.balances_from,
-    other_currencies: others.map((t) => ({ currency: t.currency ?? '', accounts: t.accounts })),
-    without_balance: now.accounts_without_balance,
-  };
+  // In the owner's home currency once they chose one, as their own net worth
+  // is: unless nothing can be converted into it (it has no rate itself).
+  const base = now.base && now.base_currency && !now.base.left_out.some((l) => l.why === 'base_has_no_rate') ? now.base : null;
+  const view: NetWorthView = base
+    ? {
+        detail: s.detail,
+        currency: now.base_currency!,
+        total: now.totals.length > 0 ? base.net_worth : null,
+        as_of: now.balances_to,
+        from: now.balances_from,
+        other_currencies: base.left_out.map((l) => ({ currency: l.currency, accounts: l.accounts })),
+        without_balance: now.accounts_without_balance,
+        converted: { own_rates: base.own_rates.length > 0 },
+      }
+    : {
+        detail: s.detail,
+        currency: main?.currency ?? null,
+        total: main ? main.net_worth : null,
+        as_of: now.balances_to,
+        from: now.balances_from,
+        other_currencies: others.map((t) => ({ currency: t.currency ?? '', accounts: t.accounts })),
+        without_balance: now.accounts_without_balance,
+      };
   if (history) {
-    view.history = history.points.map((p) => ({ date: p.date, value: p.value, ...(p.estimated ? { estimated: true as const } : {}) }));
-    if (history.mixed_currencies) view.history_mixed = true;
+    // Converted, each point at its own day's rate; a point that can't be is
+    // not drawn, as the owner's chart leaves it out.
+    view.history = base
+      ? history.points.flatMap((p) => (p.to_base === null ? [] : [{ date: p.date, value: p.to_base, ...(p.estimated ? { estimated: true as const } : {}) }]))
+      : history.points.map((p) => ({ date: p.date, value: p.value, ...(p.estimated ? { estimated: true as const } : {}) }));
+    if (!base && history.mixed_currencies) view.history_mixed = true;
   }
   if (listed) {
     // The accounts counted now whose balances the share of accounts shows
@@ -238,11 +270,12 @@ function addMonths(month: string, n: number): string {
  *  "What went out in EUR isn’t in these totals, which are in USD." In the
  *  currencies' own order, so neither says which had more. Null when nothing
  *  was. */
-function leftOutWords(leftOut: LeftOut, currency: string | null, what: string, where: string): string | null {
+function leftOutWords(leftOut: LeftOut, currency: string | null, what: string, where: string, converted = false): string | null {
   if (leftOut.length === 0) return null;
   const names = leftOut.map((l) => l.currency).sort();
   const list = names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
-  return `${what} in ${list} isn’t in ${where}${currency ? `, which are in ${currency}` : ''}.`;
+  // Converted: what is left out has no rate to convert it at.
+  return `${what} in ${list} isn’t in ${where}${currency ? `, which are in ${currency}` : ''}${converted ? ': there is no rate for it' : ''}.`;
 }
 
 /** A category's and its group's names, as the owner's own screens show them. */
@@ -285,9 +318,11 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
   const bank = await assembleBankRows(theirs, { sync: false, readOnly: true });
   const finished = await finishActivity(theirs, bank.payload, bank.hidden);
   if (transactionsDamaged(bank.sources, finished.manual_unread, finished.unread_notes.length)) return UNREADABLE;
-  const rows = finished.transactions;
-  // The currency the Activity tab's totals are in: the one most rows are in.
-  const currency = totalsCurrency(rows);
+  // As the Activity tab counts them: in the one currency most rows are in,
+  // or, once the owner chose a home currency, converted into it.
+  const counting = totalsIn(finished.transactions, await readFlowFx(theirs, finished.transactions));
+  const rows = counting.rows;
+  const currency = counting.currency;
   const describe = describer(indexTaxonomy(finished.taxonomy));
   const thisMonth = today.slice(0, 7);
   // No month before the first with any transaction: before it, nothing is
@@ -307,7 +342,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
       so_far: month === thisMonth,
       ...(s.detail === 'amounts' ? { total: sum.money_out } : {}),
       groups: spendingMonth(sum.categories, sum.money_out, s),
-      left_out: leftOutWords(leftOut, currency, 'What went out', 'these totals'),
+      left_out: leftOutWords(leftOut, currency, 'What went out', 'these totals', !!counting.conversion),
       // Counted although whether they were excluded couldn't be read, as the
       // Activity tab counts them; said, never how many.
       ...(sum.exclusion_unknown > 0 ? { exclusions_unknown: true as const } : {}),
@@ -318,6 +353,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
     detail: s.detail,
     by: s.by,
     currency,
+    ...(counting.conversion ? { converted: { own_rates: counting.conversion.own.length > 0 } } : {}),
     months,
     ...(incomplete ? { may_be_incomplete: true as const } : {}),
     ...(bank.own_read.exclusions ? {} : { exclusions_unread: true as const }),
@@ -382,13 +418,23 @@ async function budgetsView(theirs: Ctx, s: BudgetsShare, today: string): Promise
       month: read.month,
       total: budgetLine('All budgets', answer.total.spent, answer.total.available, s),
       groups,
-      left_out: leftOutWords(answer.left_out, read.currency, 'What was spent', 'these budgets'),
+      left_out: leftOutWords(answer.left_out, read.currency, 'What was spent', 'these budgets', !!read.conversion),
       may_be_incomplete:
         answer.incomplete_months.some((m) => m.month === read.month) || (read.earliest !== null && read.month < read.earliest) || carriesUncertain,
     };
   });
   const filing = filingUnread(activity.bank.own_read.categories, activity.review_unread.defaults, activity.review_unread.approvals);
-  return { detail: s.detail, by: s.by, currency: reads[0].currency, months, ...(filing ? { filing_unread: true as const } : {}) };
+  // Spending in other currencies counted converted into the budgets' own, in
+  // the months shown.
+  const conv = reads.map((r) => conversionIn(r.monthRows, r.conversion)).filter((c) => c !== null && c.from.length > 0);
+  return {
+    detail: s.detail,
+    by: s.by,
+    currency: reads[0].currency,
+    ...(conv.length > 0 ? { converted: { own_rates: conv.some((c) => c!.own.length > 0) } } : {}),
+    months,
+    ...(filing ? { filing_unread: true as const } : {}),
+  };
 }
 
 // ---- Holdings ----
@@ -416,15 +462,20 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
     .flatMap((h) =>
       h.positions.map((p) => ({ account_id: h.account_id, name: p.name, ticker: p.ticker, security_type: p.type, is_cash_equivalent: p.cash_equivalent, value: p.value, currency: p.currency }))
     );
-  const currency = dominantCurrency(counted.map((a) => ({ iso_currency_code: a.currency })));
-  const alloc = allocate({ institutions: [...institutions.values()], holdings, settings, currency });
+  // In the owner's home currency once they chose one, at the newest rates,
+  // as the Plan's allocation converts (inputsIn); else the main one.
+  const fx = await readFlowFx(theirs, [], Date.now(), { accounts: true });
+  const currency = fx?.home ?? dominantCurrency(counted.map((a) => ({ iso_currency_code: a.currency })));
+  const converting = fx ? inputsIn([...institutions.values()], holdings, { home: fx.home!, latest: fx.latest, own: [...fx.own] }, currency) : null;
+  const alloc = allocate({ institutions: converting?.institutions ?? [...institutions.values()], holdings: converting?.holdings ?? holdings, settings, currency });
   const amounts = s.detail === 'amounts';
   const lines = <K extends string>(totals: Record<K, number>, order: readonly K[], names: Record<K, string>): HoldingsLine[] =>
     shares(totals, order).map((x) => ({ slot: x.slot, name: names[x.slot], pct: x.pct, label: x.label, ...(amounts ? { amount: tidy(x.amount) } : {}) }));
   const notes: string[] = [];
   if (counted.length === 0) notes.push('No investment accounts to show.');
   if ((alloc.classes.unclassified ?? 0) !== 0) notes.push('Unclassified is money Nya can’t place in a class: a fund it doesn’t know, or money no position explains.');
-  for (const o of alloc.otherCurrencies) notes.push(`What is held in ${o.currency} isn’t counted here: a share doesn’t convert currencies.`);
+  for (const o of alloc.otherCurrencies)
+    notes.push(fx ? `What is held in ${o.currency} isn’t counted here: there is no rate for it.` : `What is held in ${o.currency} isn’t counted here: their totals don’t convert currencies.`);
   if (alloc.unpriced > 0) notes.push(`${alloc.unpriced === 1 ? 'A position' : `${alloc.unpriced} positions`} with no value ${alloc.unpriced === 1 ? 'isn’t' : 'aren’t'} counted.`);
   // As net worth says an account with no balance yet: never counted as nothing.
   if (alloc.noBalance > 0) {
@@ -438,6 +489,7 @@ async function holdingsView(theirs: Ctx, s: HoldingsShare, reads: Reads): Promis
   return {
     detail: s.detail,
     currency,
+    ...(converting?.converted ? { converted: { own_rates: converting.converted.own.length > 0 } } : {}),
     as_of: days[days.length - 1] ?? null,
     from: days[0] ?? null,
     ...(amounts ? { total: tidy(alloc.total) } : {}),
