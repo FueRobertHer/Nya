@@ -39,7 +39,10 @@
 // and `shared_person`, the person's random id: never a name, which only the
 // JSON download's `expense-people` holds. Adding up `amount` still gives the
 // money as it moved, and `nya_amount` of the rows not excluded the app's
-// totals.
+// totals. What a re-link carried applies here as there: a share or payment
+// kept under a transaction of an earlier account applies to the row with
+// its content key under the account the file's links resolve it to, one to
+// one (lib/shared-expenses/rows.ts, ACROSS A RE-LINK).
 //
 // AN OFX STATEMENT lists each transaction once, whole, as a bank's statement
 // does (its amounts add up to the balance), and says in its memo how it is
@@ -86,8 +89,17 @@ export function splitInputsOf(part: (key: string) => unknown, problems: readonly
 }
 
 /** The file's shared expenses as the read layer applies them, from its own
- *  parts and setting (see SHARED EXPENSES), or null when it holds none. */
-export function shareInputsOf(part: (key: string) => unknown, problems: readonly Problem[], ix: CategoryIndex, stands?: ReadonlyMap<string, readonly string[]>): ShareInputs | null {
+ *  parts and setting (see SHARED EXPENSES), or null when it holds none.
+ *  `carry`, what carries a share or payment across a re-link as the app
+ *  carries it: the file's bank rows' accounts and content keys, and its
+ *  links (lib/user-export.ts shareCarryOf). */
+export function shareInputsOf(
+  part: (key: string) => unknown,
+  problems: readonly Problem[],
+  ix: CategoryIndex,
+  stands?: ReadonlyMap<string, readonly string[]>,
+  carry?: Pick<ShareInputs, 'rowFacts' | 'accounts'>
+): ShareInputs | null {
   const unread = (section: string) => problems.filter((p) => p.section === section);
   const shares = entriesOf<Share>(part(expenseSharesStore.name), isShare);
   const payments = entriesOf<Payment>(part(expensePaymentsStore.name), isPayment);
@@ -109,6 +121,7 @@ export function shareInputsOf(part: (key: string) => unknown, problems: readonly
     iousUnread,
     ix,
     ...(stands && stands.size > 0 ? { stands } : {}),
+    ...(carry ?? {}),
   };
 }
 

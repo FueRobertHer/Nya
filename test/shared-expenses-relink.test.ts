@@ -17,17 +17,21 @@ const daysAgo = (n: number) => new Date(Date.now() - n * DAY).toISOString().slic
 
 const plaidTxns: Record<string, any[]> = {};
 const plaidAccounts: Record<string, any[]> = {};
+// Rows a later sync brings (the rest of the history), and Plaid's status:
+// INITIAL_UPDATE_COMPLETE while the history beyond the first days is to come.
+const plaidLater: Record<string, any[]> = {};
+const plaid = { status: 'HISTORICAL_UPDATE_COMPLETE' };
 mock.module('@/lib/plaid', () => ({
   plaidClient: {
     transactionsSync: async (req: any) => ({
       data: {
-        added: req.cursor ? [] : (plaidTxns[req.access_token] ?? []),
+        added: req.cursor ? (plaidLater[req.access_token] ?? []).splice(0) : (plaidTxns[req.access_token] ?? []),
         modified: [],
         removed: [],
         accounts: plaidAccounts[req.access_token] ?? [],
         next_cursor: 'c1',
         has_more: false,
-        transactions_update_status: 'HISTORICAL_UPDATE_COMPLETE',
+        transactions_update_status: plaid.status,
       },
     }),
     accountsGet: async (req: any) => ({ data: { accounts: plaidAccounts[req.access_token] ?? [] } }),
@@ -81,9 +85,9 @@ async function addItem(item_id: string, account_id: string, txns: any[], seenOn 
   await links.recordDirectory(ctx, [inst as any], seenOn);
 }
 
-const route = async (path: string, method: string, body?: unknown) => {
+const route = async (path: string, method: string, body?: unknown, refresh = true) => {
   const mod: any = await import(`@/app/api/${path}/route`);
-  const url = `http://x/api/${path}${method === 'GET' ? '?refresh=1' : ''}`;
+  const url = `http://x/api/${path}${method === 'GET' && refresh ? '?refresh=1' : ''}`;
   const res = await mod[method](new Request(url, { method, body: body ? JSON.stringify(body) : undefined }));
   return { status: res.status as number, body: await res.json() };
 };
@@ -102,6 +106,8 @@ const quietly = async <T>(fn: () => Promise<T>): Promise<T> => {
 
 beforeEach(async () => {
   fake.reset();
+  plaid.status = 'HISTORICAL_UPDATE_COMPLETE';
+  for (const k of Object.keys(plaidLater)) delete plaidLater[k];
   (await import('@/lib/sessions')).forgetEpochs();
   await registerTestContainer(fake);
 });
@@ -206,6 +212,102 @@ describe('a re-link carries what is shared and paid', () => {
     expect(after.shared_expenses.gone).toEqual({ shares: [], payments: [] });
     expect(rowOf(after, 'n_v').settles).toMatchObject({ rest: 0 });
     expect((await card()).balances[person]).toEqual([{ currency: 'USD', amount: 45, open: 2, oldest: daysAgo(10), over: 0 }]);
+  });
+
+  test('linked while the new connection is still bringing its history: nothing is gone, each waits, said, until its transaction comes', async () => {
+    const { person } = await before();
+    await quietly(() => route('disconnect', 'POST', { item_id: 'item_old' }));
+    // Its first days only: the cashout (3 days ago) has come, not the dinner
+    // (10) nor the lunch (8), whose words the bank changed this time.
+    plaid.status = 'INITIAL_UPDATE_COMPLETE';
+    await addItem('item_new', 'acct_new', [row('n_v', 'acct_new', venmo)]);
+    plaidLater['token-item_new'] = [row('n_d', 'acct_new'), row('n_l', 'acct_new', { amount: 40, date: daysAgo(8), name: 'CAFE 12 SAN FRANCISCO', merchant_name: 'Cafe' })];
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    // Read as stored, without the sync that would bring the rest.
+    const waiting = (await route('transactions', 'GET', undefined, false)).body;
+    expect(waiting.shared_expenses.gone).toEqual({ shares: [], payments: [] });
+    expect([...waiting.shared_expenses.coming.shares].sort()).toEqual(['t_d', 't_l']);
+    expect(rowOf(waiting, 'n_v').settles).toMatchObject({ rest: 0, kept_under: 't_v' });
+    expect(waiting.notes.join(' ')).toContain('2 shared transactions from before you re-linked wait for their transactions to come in from your bank: they carry across once they do.');
+    expect((await card()).balances[person]).toEqual([{ currency: 'USD', amount: 45, open: 2, oldest: daysAgo(10), over: 0 }]);
+
+    // The rest of the history: the dinner carries; the lunch, its words
+    // changed, is gone now, with its row to move to.
+    plaid.status = 'HISTORICAL_UPDATE_COMPLETE';
+    const all = await listed();
+    expect(rowOf(all, 'n_d')).toMatchObject({ amount: 60, shared_carried_from: 't_d' });
+    expect(all.shared_expenses.coming).toEqual({ shares: [], payments: [] });
+    expect(all.shared_expenses.gone).toEqual({ shares: ['t_l'], payments: [] });
+    expect(all.shared_expenses.moves.shares.t_l).toEqual([{ transaction_id: 'n_l', account_id: 'acct_new' }]);
+    expect((await card()).balances[person]).toEqual([{ currency: 'USD', amount: 45, open: 2, oldest: daysAgo(10), over: 0 }]);
+  });
+
+  test('nothing else is written onto a row a re-link carried to: a share without its id, a payment, a split or a group', async () => {
+    const { person } = await before();
+    await quietly(() => route('disconnect', 'POST', { item_id: 'item_old' }));
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    await listed();
+    const refused = (r: { status: number; body: any }, words: string) => expect([r.status, r.body.error]).toEqual([409, words]);
+    // A share as a page loaded before the link sends it, and one naming another kept share.
+    refused(await route('shared-expenses/shares', 'PUT', { transaction_id: 'n_d', entries: [{ person, amount: 60 }] }), 'This transaction is shared already. Reload to see it as it is, and change it there.');
+    refused(await route('shared-expenses/shares', 'PUT', { transaction_id: 'n_d', carried_from: 't_l', entries: [{ person, amount: 60 }] }), 'That share isn’t carried to this transaction. Reload to see it as it is.');
+    // A share on the row a payment carried to.
+    refused(await route('shared-expenses/shares', 'PUT', { transaction_id: 'n_v', entries: [{ person, amount: 10 }] }), 'This transaction pays something back: reopen that payment to share it instead.');
+    // A payment on the carried shared row, and on the carried payment's.
+    const iou = (await route('shared-expenses/ious', 'POST', { person, direction: 'by_you', amount: 30, currency: 'USD', date: daysAgo(12), what: 'Tickets' })).body.id;
+    refused(await route('shared-expenses/payments', 'POST', { transaction_id: 'n_d', allocations: [{ item: iou, amount: 30 }] }), 'This transaction is shared: a shared expense can’t also be a repayment.');
+    refused(await route('shared-expenses/payments', 'POST', { transaction_id: 'n_v', allocations: [{ item: iou, amount: 30 }] }), 'This payment was already confirmed.');
+    // A split or a group of either.
+    const cat = (await route('categories', 'GET')).body.categories.categories.find((c: any) => c.name === 'food and drink').id;
+    const split = await route('transaction-splits', 'PUT', { transaction_id: 'n_d', parts: [{ amount: 100, category_id: cat }, { amount: 20, category_id: cat }] });
+    expect([split.status, split.body.error]).toEqual([409, 'This transaction is shared whole under Shared expenses: stop sharing it to split it, then share one of its parts.']);
+    expect((await route('transaction-splits', 'PUT', { transaction_id: 'n_v', parts: [{ amount: -20, category_id: cat }, { amount: -15, category_id: cat }] })).status).toBe(409);
+    const group = await route('transaction-groups', 'POST', { name: 'Dinner and lunch', category_id: cat, members: ['n_l', 'n_d'] });
+    expect(group.status).toBe(409);
+    expect(group.body.error).toContain('This transaction is shared under Shared expenses, which says how it counts: stop sharing it to group it.');
+    // Nothing moved: the dinner at your part, the balance as it was.
+    const after = await listed();
+    expect(rowOf(after, 'n_d')).toMatchObject({ amount: 60, shared_carried_from: 't_d' });
+    expect(after.shared_expenses.gone.shares).toEqual(['t_l']);
+    // Alex's $45, less the $30 IOU you added just now.
+    expect((await card()).balances[person]).toEqual([{ currency: 'USD', amount: 15, open: 3, oldest: daysAgo(12), over: 0 }]);
+    // As the read says it is kept, it moves onto the row.
+    const moved = await route('shared-expenses/shares', 'PUT', { transaction_id: 'n_d', carried_from: 't_d', entries: [{ person, amount: 60 }] });
+    expect(moved.status).toBe(200);
+  });
+
+  test('the download carries across a re-link as the app does: the CSV to the cent, and the statement’s memo', async () => {
+    const { entry } = await before();
+    await quietly(() => route('disconnect', 'POST', { item_id: 'item_old' }));
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    const app = await listed();
+    const { collectUserData, buildUserExport, exportFile, TRANSACTION_COLUMNS } = await import('@/lib/user-export');
+    const { ofxFile } = await import('@/lib/ofx-export');
+    const { parseCsv } = await import('./csv-parse');
+    const data = await collectUserData({ ctx, userId: null });
+    const doc = buildUserExport(data, new Date());
+    const [header, ...lines] = parseCsv([...exportFile(doc, 'transactions-csv').pieces()].join(''));
+    expect(header).toEqual([...TRANSACTION_COLUMNS]);
+    const col = (r: string[], n: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(n)];
+    const line = (id: string) => lines.find((r) => col(r, 'transaction_id') === id)!;
+    // The dinner at your part beside Alex's; the cashout paid back the $35.
+    expect([col(line('n_d'), 'amount'), col(line('n_d'), 'nya_amount')]).toEqual(['120', '60']);
+    expect([col(line(`share:${entry}`), 'nya_amount'), col(line(`share:${entry}`), 'excluded'), col(line(`share:${entry}`), 'shared_of')]).toEqual(['60', 'true', 'n_d']);
+    expect([col(line('n_v'), 'amount'), col(line('n_v'), 'nya_amount')]).toEqual(['-35', '0']);
+    // The lunch didn't carry (its words changed): whole, in the app and the file.
+    expect(col(line('n_l'), 'nya_amount')).toBe('40');
+    // What isn't excluded adds up to the app's own rows, to the cent.
+    const cents = (v: string | number) => Math.round(Number(v) * 100);
+    const counted = lines.filter((r) => col(r, 'excluded') !== 'true' && col(r, 'nya_amount') !== '').reduce((n, r) => n + cents(col(r, 'nya_amount')), 0);
+    expect(counted).toBe(app.transactions.filter((t: any) => !t.excluded).reduce((n: number, t: any) => n + cents(t.amount), 0));
+    // And the statement says so in its memo.
+    const made = ofxFile(data, doc, 'acct_new', new Date());
+    if (!('file' in made)) throw new Error(made.refused);
+    const ofx = [...made.file.pieces()].join('');
+    expect(ofx).toContain('Shared in Nya: your part 60.00; others 60.00');
+    expect(ofx).toContain('Paid back in Nya: 35.00');
   });
 
   test('a carried share edited from its new row moves onto it in the same step', async () => {

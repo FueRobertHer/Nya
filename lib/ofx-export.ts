@@ -166,6 +166,7 @@ import {
   manualTransactionsIn,
   restoredBanksIn,
   restoredRowsNote,
+  shareCarryOf,
   splitFactRows,
   type ExportFile,
   type ExportLifecycle,
@@ -729,7 +730,7 @@ export function ofxFile(
   const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc, imported.rows), splitInputs) : null;
   // And shared expenses after them (lib/export-splits.ts appliedSharesOf):
   // your part and the others', and what a payment paid back, never a name.
-  const shareInputs = shareInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents);
+  const shareInputs = shareInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents, shareCarryOf(doc));
   const sharedWords = shareInputs ? appliedSharesOf(splitFactRows(doc, imported.rows), splitInputs, shareInputs) : null;
   const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
     const words = [applied && splitMemoOf(r, splitInputs, applied), sharedWords?.get(r.id)].filter((w): w is string => !!w).join('. ');
