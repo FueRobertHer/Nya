@@ -11,6 +11,7 @@ import AccountSparkline from './AccountSparkline';
 import AccountLinks from './AccountLinks';
 import AdminUnusedItems from './AdminUnusedItems';
 import DownloadMyData from './DownloadMyData';
+import ReceiptsCard from './ReceiptsCard';
 import InventoryEntry from './InventoryEntry';
 import RestoreCard from './RestoreCard';
 import RestoreBanner from './RestoreBanner';
@@ -548,6 +549,9 @@ export default function Dashboard({
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
   const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null } | null>(null);
+  // The nightly clean-up of receipts and documents, said the same way
+  // (lib/backup.ts attachmentSweepProblem).
+  const [filesProblem, setFilesProblem] = useState<{ last_ok: string | null; reason: string | null; held: boolean } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -556,6 +560,10 @@ export default function Dashboard({
   // What the loaded rows' totals convert with, once a home currency is chosen
   // (app/api/transactions `fx`, lib/fx/totals.ts): null without one.
   const [txnFx, setTxnFx] = useState<FxTable | null>(null);
+  // Whether receipts and documents can be opened and added here
+  // (app/api/transactions `attachments`): null until loaded, and then none
+  // is shown where the file store isn't connected.
+  const [filesMode, setFilesMode] = useState<{ connected: boolean; uploads: boolean } | null>(null);
   // Your categories (components/categories-state.ts): the lists to choose one
   // from, the group rollups, and what budgets are set on.
   const categories = useCategories();
@@ -793,6 +801,7 @@ export default function Dashboard({
       setBalancesSaved(false);
       setBalancesFailed(false);
       setBackupProblem(data.backup_problem ?? null);
+      setFilesProblem(data.attachments_problem ?? null);
       setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
 
@@ -861,6 +870,7 @@ export default function Dashboard({
       const data = await res.json();
       setTxns(data.transactions);
       setTxnFx(asFxTable(data.fx));
+      setFilesMode(data.attachments && typeof data.attachments === 'object' ? { connected: data.attachments.connected === true, uploads: data.attachments.uploads === true } : null);
       // The categories the rows were filed by, the tags they carry, and the queue.
       acceptCategories(data.categories);
       acceptTags(data.tags);
@@ -2103,6 +2113,17 @@ export default function Dashboard({
                       {backupProblem.reason ? ` (${backupProblem.reason})` : ''} Check the backup cron in Vercel.
                     </div>
                   )}
+                  {filesProblem && (
+                    <div className="stale-note">
+                      {filesProblem.held
+                        ? 'The nightly clean-up of receipts and documents held back: in an account, it found more stored files with no record than it removes at once, so it removed none of them there.'
+                        : filesProblem.reason
+                          ? 'The nightly clean-up of receipts and documents failed'
+                          : 'The nightly clean-up of receipts and documents hasn’t run'}
+                      {filesProblem.held ? '' : filesProblem.last_ok ? `; the last one finished on ${fmtInstantDay(filesProblem.last_ok)}.` : '; none has finished yet.'}
+                      {filesProblem.reason ? ` (${filesProblem.reason})` : ''} {filesProblem.held ? 'Its log in Vercel names the account.' : 'Check the clean-up cron in Vercel.'}
+                    </div>
+                  )}
                   {pausedSince && (
                     <div className="stale-note">
                       No net-worth total has been saved since {fmtDay(pausedSince)}. A day
@@ -2932,6 +2953,10 @@ export default function Dashboard({
                   />
                 )}
 
+                {/* Receipts and documents (#47): every file kept, and as ZIP
+                    files, beside the download of the rest. */}
+                {manageMode && filesMode?.connected && <ReceiptsCard clerk={clerk} rows={txns} onChanged={txnEdits.refresh} />}
+
                 {/* What Nya keeps about you, kind by kind (app/your-data),
                     beside the download; for the admin, also storage
                     across accounts (/admin/storage). */}
@@ -3035,6 +3060,8 @@ export default function Dashboard({
                 // so the list is read again quietly after a change.
                 onSplitsChanged={txnEdits.refresh}
                 review={review}
+                // Receipts and documents (#47), where the file store is connected.
+                onAttachmentsChanged={filesMode?.connected ? txnEdits.refresh : undefined}
                 actionError={txnEdits.error}
                 incomplete={txnIncomplete}
                 stopped={stoppedTxns}

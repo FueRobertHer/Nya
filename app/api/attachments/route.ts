@@ -1,8 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
-import { attachmentsMode, attachmentsOn, listAttachments, readUsage, startUpload, MAX_FILES, PER_TRANSACTION, type StartInput } from '@/lib/attachments';
-import { attachmentFailure, isDemo, DEMO_REFUSAL, NO_STORE } from '@/lib/attachment-http';
+import { attachmentsOn, listAttachments, readUsage, startUpload, MAX_FILES, PER_TRANSACTION, type StartInput } from '@/lib/attachments';
+import { attachmentFailure, isDemo, personMode, DEMO_REFUSAL, NO_STORE } from '@/lib/attachment-http';
 import { isAttachmentKind, NAME_MAX } from '@/lib/attachment-stores';
 import { MAX_FILE_BYTES, MAX_PARTS, MAX_THUMB_BYTES, PART_BYTES } from '@/lib/attachment-crypto';
 import { isTransactionId } from '@/lib/txn-annotations';
@@ -19,7 +19,8 @@ import { isSplitOrGroupId } from '@/lib/split-rows';
 //                     can't be listed at all, never "none").
 // GET ?ids=a,b        the files on these transactions (a row's own and the
 //                     rows it stands for, as /api/transactions says in
-//                     `attached_on`), at most PER_TRANSACTION each.
+//                     `attached_on`), at most PER_TRANSACTION each, with
+//                     what is used of the quota (null when unreadable).
 // POST { transaction_id, kind: "image" | "pdf", bytes, part_sha256: [..],
 //        thumb?: { bytes, sha256 }, name? }
 //                     starts an upload (lib/attachments.ts startUpload):
@@ -43,14 +44,20 @@ export async function GET(req: Request) {
   const url = new URL(req.url);
   const keys = [...url.searchParams.keys()];
   if (keys.some((k) => k !== 'ids')) return NextResponse.json({ error: 'Unknown parameter.' }, { status: 400, headers: NO_STORE });
-  const mode = attachmentsMode();
+  const mode = await personMode();
   try {
     if (url.searchParams.has('ids')) {
       const ids = (url.searchParams.get('ids') ?? '').split(',').filter(Boolean);
       if (ids.length === 0 || ids.length > MAX_IDS || ids.some((id) => !isTransactionId(id) || isSplitOrGroupId(id))) {
         return NextResponse.json({ error: 'Send the ids of up to 12 transactions.' }, { status: 400, headers: NO_STORE });
       }
-      return NextResponse.json({ mode, files: await attachmentsOn(ctx, ids) }, { headers: NO_STORE });
+      // With what is used of the quota, for the transaction's sheet to say
+      // when it is nearly full; null when that can't be read.
+      const [files, usage] = await Promise.all([attachmentsOn(ctx, ids), readUsage(ctx).catch(() => null)]);
+      return NextResponse.json(
+        { mode, files, usage: usage ? { bytes: usage.bytes, files: usage.files, quota_bytes: mode.quota_bytes, max_files: MAX_FILES } : null },
+        { headers: NO_STORE }
+      );
     }
     const [list, usage] = await Promise.all([listAttachments(ctx), readUsage(ctx)]);
     return NextResponse.json(

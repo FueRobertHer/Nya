@@ -32,6 +32,7 @@ import { clerkEnabled } from './auth-mode';
 import { isDemoUser } from './demo';
 import { CONTENT_TYPES, type AttachmentKind } from './attachment-stores';
 import { loggable } from './log-safe';
+import { attachmentsMode, type AttachmentsMode } from './attachments-mode';
 
 export const NO_STORE = { 'Cache-Control': 'no-store' };
 
@@ -43,6 +44,13 @@ export async function isDemo(): Promise<boolean> {
   const { auth } = await import('@clerk/nextjs/server');
   const { userId } = await auth();
   return !!userId && isDemoUser(userId);
+}
+
+/** What this copy allows (lib/attachments-mode.ts), for the signed-in person:
+ *  adding is off for a demo account too, so the page doesn't offer it. */
+export async function personMode(): Promise<AttachmentsMode> {
+  const mode = attachmentsMode();
+  return mode.uploads && (await isDemo().catch(() => false)) ? { ...mode, uploads: false } : mode;
 }
 
 /** The answer for anything a route of receipts and documents can fail with. */

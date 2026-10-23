@@ -153,6 +153,21 @@ describe('without a session', () => {
     expect((await call('/api/v1x')).status).toBe(401);
   });
 
+  // Receipts and documents (#47) are the signed-in person's alone: an API
+  // token is never a way in (review S15), and only their clean-up cron,
+  // which checks the cron secret itself, is outside the gate.
+  test('a receipt’s routes take no API token: a Bearer token alone is a 401', async () => {
+    const id = '6a7b8c9d-0e1f-4a2b-8c3d-4e5f6a7b8c9d';
+    for (const path of ['/api/attachments', `/api/attachments?ids=t_1`, `/api/attachments/${id}`, `/api/attachments/${id}/file`, `/api/attachments/${id}/thumb`, `/api/attachments/${id}/parts/0`, '/api/attachments/download']) {
+      for (const method of ['GET', 'POST', 'PUT', 'PATCH', 'DELETE']) {
+        const res = await call(path, { method, headers: { authorization: 'Bearer nya_whatever' } });
+        expect([path, method, res.status]).toEqual([path, method, 401]);
+      }
+    }
+    expect(gated('/api/attachments/sweep')).toBe(false);
+    for (const path of ['/api/attachments', '/api/attachments/sweep/x', '/api/attachments/sweeps', `/api/attachments/${id}/file`]) expect([path, gated(path)]).toEqual([path, true]);
+  });
+
   test('only those exact paths', async () => {
     for (const path of ['/security/x', '/privacy2', '/securityx', '/login/x', '/developers/x', '/developer', '/open-download/x', '/open', '/unsubscribe/x', '/unsubscribes', '/']) {
       expect((await call(path)).headers.get('location')).toBe('https://nya.test/login');

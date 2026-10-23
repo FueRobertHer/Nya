@@ -165,6 +165,13 @@ export type Txn = {
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // Whether it has receipts or documents (lib/attachments.ts), for the
+  // person's own Activity alone (lib/activity.ts finishActivity's
+  // `attached`): true, or null when that couldn't be read; absent for none,
+  // and on every row the API or a share answers. `attached_on`: the ids whose
+  // files it shows (its own, and the imported rows it stands for).
+  attached?: true | null;
+  attached_on?: string[];
   // On a posted bank row, the pending one it replaced (Plaid's
   // pending_transaction_id), whose approval is its own until the sync that
   // removes the pending one moves it (lib/review-store.ts). Never sent.
