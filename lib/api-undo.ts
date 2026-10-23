@@ -84,6 +84,7 @@ import { plannedStore } from './planned-store';
 import { ownerSharesAccount } from './sharing';
 import { dismissedGroup, seriesGroupsOfEither } from './recurring';
 import { pendingJob, pendingWords } from './sign-repair-store';
+import { expensePaymentsStore, expenseSharesStore } from './shared-expenses/store';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
@@ -149,6 +150,9 @@ async function undoTransaction(ctx: Ctx, c: Change, now: number, run: Run): Prom
   if (c.op === 'transaction.create') {
     if (!found || !same(found.row, after!.row) || !same(said, after!.said)) refuse(CHANGED('The transaction'));
     if ((await splitStore.has(ctx, id)) || memberIndex(await groupStore.getAll(ctx)).has(id)) refuse(CHANGED('The transaction'));
+    // Shared since, or confirmed as paying something back (lib/shared-expenses/):
+    // what someone owes stays with it, so it isn't taken away.
+    if (await sharedOrPaying(ctx, id)) refuse(CHANGED('The transaction'));
     const gone = await removeManualTransaction(ctx, id, found!.account_id, { expect: (row) => (same(row, after!.row) ? undefined : refuse(CHANGED('The transaction'))) });
     if (!gone) refuse(CHANGED('The transaction'));
     return { before: { row: found!.row, said }, after: null };
@@ -272,7 +276,16 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
       refuse(NOT_REMOVED(`A transaction on it (${row.id}) was changed since in another way, or something was said about it`));
     }
     if ((await splitStore.has(ctx, row.id)) || grouped.has(row.id)) refuse(NOT_REMOVED(`A transaction on it (${row.id}) was split or put in a group since`));
+    if (await sharedOrPaying(ctx, row.id)) refuse(NOT_REMOVED(`A transaction on it (${row.id}) was shared, or confirmed as paying something back, since`));
   }
+}
+
+/** Whether a transaction is shared or pays something back under Shared
+ *  expenses (#49): an undo leaves it, as a delete through the API does
+ *  (lib/api-writes.ts). */
+async function sharedOrPaying(ctx: Ctx, id: string): Promise<boolean> {
+  const [shared, paying] = await Promise.all([expenseSharesStore.has(ctx, id), expensePaymentsStore.has(ctx, id)]);
+  return shared || paying;
 }
 
 async function undoAccount(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
