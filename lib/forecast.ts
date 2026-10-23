@@ -69,6 +69,9 @@ export type ForecastRange = (typeof FORECAST_RANGES)[number];
 export type ForecastAccount = {
   account_id: string;
   name: string;
+  /** Its last digits, as the bank gives them: what a planned payment may
+   *  name it by (namesCard). */
+  mask?: string | null;
   type: string;
   subtype?: string | null;
   balance: number | null;
@@ -719,15 +722,17 @@ export function forecastNotes(opts: {
   // with what is owed of its statement, from Plaid's payment details. Not said
   // when that statement is paid already (a payment on or after its issue
   // date covers it), when a planned expense near the due date is that
-  // payment, or when a payment held for a card it can't tell is near what this
-  // one owes: it may be that one. Planned items name no account, so only one
-  // whose name names the card (namesCard: the card's name or its bank's) is
-  // taken for a part of its payment, each time it falls near the due date:
-  // when they come to less than it, what they come to is said, and the rest.
-  // Rent or a phone bill due the same week is no part of it, and nothing they
-  // come to ever quiets the note.
+  // payment (near the statement, or under the card's name near its minimum),
+  // or when a payment held for a card it can't tell is near what this one
+  // owes: it may be that one. Planned items name no account, so only one
+  // whose name names the card itself (namesCard: a word of its own name, its
+  // mask, or its bank's name with "card") is taken for a part of its payment,
+  // each time it falls near the due date: coming to what is owed, that is
+  // planned; to less, what they come to is said, and the rest. Rent, a phone
+  // bill, or the bank's loan or savings transfer due the same week is no part
+  // of it, and nothing they come to ever quiets the note. Near is within a
+  // quarter, in whole minor units, so the edges are exact.
   const paid = opts.series?.cardsPaid;
-  const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
   if (opts.until)
     for (const i of institutions)
       for (const a of i.accounts) {
@@ -740,14 +745,27 @@ export function forecastNotes(opts: {
         const owed = statement === null ? null : Math.max(0, Math.round((statement - since) * 100) / 100);
         if (owed === 0) continue;
         const figure = owed ?? l.minimum_payment;
+        const scale = minorScale(a.currency ?? position.currency);
+        const close = (x: number, y: number | null | undefined) => {
+          if (y === null || y === undefined || y <= 0) return false;
+          const [mx, my] = [toMinor(x, scale), toMinor(y, scale)];
+          return Math.abs(mx - my) <= my * CARD_NEAR;
+        };
         if (paid?.unknown.some((x) => close(x, figure) || close(x, l.minimum_payment))) continue;
         const [from, to] = [addDays(due, -CARD_PLANNED_DAYS), addDays(due, CARD_PLANNED_DAYS)];
         const around = (opts.planned ?? []).filter(
           (p) => p.kind === 'expense' && inCurrency({ iso_currency_code: p.currency }, position.currency) && plannedDates(p, from, to, 1).length > 0
         );
-        if (around.some((p) => close(p.amount, figure) || close(p.amount, l.minimum_payment))) continue;
-        const forCard = around.filter((p) => namesCard(p.name, [a.name, i.institution_name]));
+        const forCard = around.filter((p) => namesCard(p.name, { name: a.name, mask: a.mask, institution: i.institution_name }));
+        // One planned near what is owed of the statement is taken for its
+        // payment, whatever its name (the note asks for it so); one near the
+        // minimum only under the card's name, since many small bills are as
+        // much (a $40 minimum is not a $45 gym).
+        if (owed !== null && around.some((p) => close(p.amount, owed))) continue;
+        if (forCard.some((p) => close(p.amount, l.minimum_payment))) continue;
         const part = Math.round(forCard.reduce((n, p) => n + p.amount * plannedDates(p, from, to).length, 0) * 100) / 100;
+        // Parts under its name that come to it: planned, as one would be.
+        if (part > 0 && close(part, figure)) continue;
         const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
         const amount =
           owed === null
@@ -797,16 +815,45 @@ export function forecastNotes(opts: {
   return notes;
 }
 
-/** Whether a planned item's name names a card: its account's name or its
- *  bank's, as whole words, in any case ("Sapphire payment", "chase card";
- *  never "Sapphires"). */
-export function namesCard(name: string, names: readonly string[]): boolean {
-  return names.some((n) => {
-    const words = n.trim();
-    if (!words) return false;
-    const escaped = words.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, 'iu').test(name);
-  });
+/** Words a card's own name shares with other cards, or that say only what
+ *  it is: alone, they never name one card. */
+const CARD_WORDS = new Set(['card', 'cards', 'credit', 'debit', 'preferred', 'rewards', 'reward', 'visa', 'mastercard', 'signature', 'account', 'world', 'elite', 'the', 'my', 'and', 'of']);
+/** Words that say an item is a card or its payment, beside a word of the
+ *  card's own name. */
+const PAY_WORDS = new Set(['payment', 'payments', 'pay', 'card', 'minimum', 'min', 'autopay', 'visa', 'mastercard', 'amex']);
+const wordsOf = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
+
+/**
+ * Whether a planned item's name names this card itself, as whole words in
+ * any case: a word of its own name that tells it apart (not "card", "credit"
+ * or "preferred", nor its bank's name, and never "Sapphires") beside a word
+ * that says it is the card or its payment ("Sapphire payment" for "Chase
+ * Sapphire Preferred", "Delta card", "Costco Visa payment"), with only the
+ * card's or its bank's own words between them; its mask, four digits ("Card
+ * 4821"); or its bank's name with a word that says it is a card ("Chase
+ * card", "Chase credit card", "Chase Visa"). A card's word alone is often a
+ * merchant's or a payee's ("Costco", "Delta Dental", "Southwest Gas",
+ * "Apple iCloud"), and the bank's name alone names the person's other
+ * accounts there too (a car loan, a savings transfer), so neither ever does.
+ */
+export function namesCard(name: string, card: { name: string; mask?: string | null; institution: string }): boolean {
+  const tokens = wordsOf(name);
+  const said = new Set(tokens);
+  const bank = wordsOf(card.institution);
+  const own = new Set(wordsOf(card.name).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !CARD_WORDS.has(w) && !bank.includes(w)));
+  const between = new Set([...wordsOf(card.name), ...bank]);
+  const paidBeside = (i: number, step: 1 | -1) => {
+    for (let j = i + step; j >= 0 && j < tokens.length; j += step) {
+      if (PAY_WORDS.has(tokens[j])) return true;
+      if (!between.has(tokens[j])) return false;
+    }
+    return false;
+  };
+  if (tokens.some((t, i) => own.has(t) && (paidBeside(i, 1) || paidBeside(i, -1)))) return true;
+  if (card.mask && /^\d{4}$/.test(card.mask) && new RegExp(`(?<!\\d)${card.mask}(?!\\d)`).test(name)) return true;
+  // The bank's name, whole and in order, and a card word.
+  const at = wordsOf(name).join(' ');
+  return bank.length > 0 && ` ${at} `.includes(` ${bank.join(' ')} `) && ['card', 'visa', 'mastercard'].some((w) => said.has(w));
 }
 
 /** A sentence of what was left out for its currency, with why each has no

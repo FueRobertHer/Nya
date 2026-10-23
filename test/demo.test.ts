@@ -1,11 +1,12 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
+import { mockForFile } from './scoped-mock';
 import { FakeRedis, storageMock, registerTestContainer, testKey } from './fake-redis';
 
 // Tickets, mocked at our own module, not Clerk's.
 const tickets: string[] = [];
 let ticketFails = false;
-mock.module('@/lib/clerk-tickets', () => ({
+await mockForFile('@/lib/clerk-tickets', () => ({
   signInTicket: async (id: string) => {
     if (ticketFails) throw new Error('clerk down');
     tickets.push(id);

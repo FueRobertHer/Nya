@@ -1,7 +1,8 @@
 import { describe, expect, test, mock } from 'bun:test';
-// Every name the app's components take from Clerk's client, so this mock can
-// stand in for another file's while they share the process.
-mock.module('@clerk/nextjs', () => ({
+import { mockForFile } from './scoped-mock';
+// Every name the app's components take from Clerk's client, for this file
+// only (test/scoped-mock.ts).
+await mockForFile('@clerk/nextjs', () => ({
   useClerk: () => ({ signOut: async () => {} }),
   useReverification: (fetcher: unknown) => fetcher,
 }));

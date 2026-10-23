@@ -170,7 +170,8 @@ describe('AccountLinksView', () => {
             links: [],
             earlier: [
               { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
-              { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: true },
+              { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: 'failed' },
+              { id: 'A9', label: 'Ally Savings ••3333', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: 'sealed' },
             ],
             ...over,
           }}
@@ -190,6 +191,10 @@ describe('AccountLinksView', () => {
     expect(done).not.toContain('Checking which');
     expect(done.match(/>Forget</g)?.length).toBe(1);
     expect(done).toContain('Chase Sapphire ••2222 (Jan 1, 2024 to Jun 30, 2025). Whether it can be forgotten couldn’t be checked just now: try again later.');
+    // Sealed under a key this copy doesn't have: trying again won't mend it.
+    expect(done).toContain(
+      'Ally Savings ••3333 (Jan 1, 2024 to Jun 30, 2025). What a restore brought back for it is sealed under a key this copy of Nya doesn’t have, so whether it can be forgotten can’t be checked: ask whoever runs this copy of Nya.'
+    );
   });
 
   test('points to where the accounts SimpleFIN or Lunch Flow kept up to date that were let go are forgotten, even with nothing else to show', () => {
