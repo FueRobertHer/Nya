@@ -151,6 +151,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // one is in use.
   'runway-scenarios': 'data',
   'sharing-access-log': 'machinery',
+  // A re-sign of an account's past balances under way (lib/sign-repair.ts):
+  // derived from the history it names, and goes with it.
+  'sign-repairs': 'machinery',
   tags: 'data',
   'timeline-notes': 'data',
   'transaction-annotations': 'data',

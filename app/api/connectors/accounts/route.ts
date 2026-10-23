@@ -3,7 +3,7 @@ import { dataCtx } from '@/lib/data-ctx';
 import { connectionsStore, connectorAccountsStore } from '@/lib/connectors/store';
 import { connectionView } from '@/lib/connectors/view';
 import { requestsLeft } from '@/lib/connectors/sync';
-import { confirmSigns, keepRefusal, othersOf, releaseAccounts, retypeAccounts, trackAccounts, ConnectorRefused, MAX_CONNECTOR_ACCOUNTS, type Released, type TrackChoice } from '@/lib/connectors/manage';
+import { confirmSigns, keepRefusal, othersOf, releaseAccounts, retypeAccountsReport, trackAccounts, ConnectorRefused, MAX_CONNECTOR_ACCOUNTS, type Released, type TrackChoice } from '@/lib/connectors/manage';
 import { OWED_SIGNS, type OwedSign } from '@/lib/connectors/store';
 import { isManualId, MANUAL_TYPES, type ManualType } from '@/lib/manual';
 import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respond';
@@ -13,7 +13,9 @@ import { connectorError, isConnectionId, readJson } from '@/lib/connectors/respo
 // `track` may say, for each account, which account a restore brought back it
 // carries on (`continues`; lib/connectors/continue.ts), asked while one
 // waits. `retype` changes what
-// kind tracked ones are, then `sign` records how to read a card's or a loan's
+// kind tracked ones are (a change between money held and owed turns each
+// one's past balances over to match, lib/sign-repair.ts; `retype_note` says
+// in words what didn't change, or is still being turned over), then `sign` records how to read a card's or a loan's
 // balance (`as_reported`, or `owed_positive` when the server reports what is
 // owed as positive), then `stop` lets accounts go (kept as manual accounts
 // unless `keep` is false; keeping one whose sign still waits is refused, so
@@ -92,11 +94,12 @@ export async function PUT(req: Request) {
     }
 
     let retyped = 0;
+    let retypeNote: string | null = null;
     let signed = 0;
     let released: Released = { kept: [], removed: [], nothing_to_keep: [] };
     let fetched: Awaited<ReturnType<typeof trackAccounts>> | null = null;
     try {
-      if (retype.length > 0) retyped = await retypeAccounts(ctx, retype);
+      if (retype.length > 0) ({ changed: retyped, note: retypeNote } = await retypeAccountsReport(ctx, retype));
       if (sign.length > 0) signed = await confirmSigns(ctx, sign);
       if (stop && stop.account_ids.length > 0) released = await releaseAccounts(ctx, stop.account_ids, stop.keep);
       if (track.length > 0) fetched = await trackAccounts(ctx, body.connection_id, track);
@@ -114,6 +117,7 @@ export async function PUT(req: Request) {
       removed: released.removed.length,
       nothing_to_keep: released.nothing_to_keep,
       retyped,
+      retype_note: retypeNote,
       signed,
       tracked: track.length,
       skipped: fetched?.skipped ?? null,

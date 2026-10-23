@@ -22,6 +22,7 @@ import { timeZoneOf } from '@/lib/access-log';
 import { protectFile } from '@/lib/protected-download';
 import { sendAccessNotice } from '@/lib/download-notice';
 import { background } from '@/lib/background';
+import { finishSignJobs } from '@/lib/sign-repair';
 
 // Download my data (lib/user-export.ts): everything Nya stores about the
 // person signed in, decrypted, as one file streamed to the browser. It is
@@ -183,6 +184,10 @@ export async function POST(req: Request) {
   const now = new Date();
   let data: UserData;
   let doc: UserExport;
+  // An account's history being turned over to match its kind is finished
+  // first, so the file holds it in one sign (lib/sign-repair.ts); one that
+  // can't be is said in the file's notes. Never throws.
+  await finishSignJobs(ctx);
   try {
     data = await collectUserData({ ctx, userId: signedIn.userId });
     doc = buildUserExport(data, now);
