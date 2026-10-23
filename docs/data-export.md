@@ -213,6 +213,8 @@ One point per day. `kind` is `recorded` for a total Nya measured that day, or `e
 
 Each account's own balance by day, one point per day, by the same rules the app's account chart uses: a balance measured on a day one of your banks failed (so no total was recorded) counts as recorded, and comes before the recorded map for that day; then the recorded map; then the estimate (the newer of the two estimate layers first). A day whose recorded map doesn't name the account has no point: it wasn't there that day. Accounts you linked across a reconnect keep their own ids here; the app joins them using `account_links.links`. A day whose balances can't all be read is named under [`problems`](#problems).
 
+Each balance is in the sign the account is read with now: a card's or a loan's debt positive. An account whose kind changed between money held and money owed (SimpleFIN's or Lunch Flow's **Choose accounts**, or the operator's repair of one changed under an older release) has its earlier days' balances turned over to match, so its points read alike across the change, and each day's total, unchanged, is what was counted that day. The record of such a change still under way is bookkeeping and not in the file.
+
 A point kept outside its kind's own layer says where, in `layer`: `partial` for a recorded balance measured on a day no total was recorded, `extended` for an estimate made past the estimated totals (from transactions imported into the account, say). Without `layer`, a recorded point is in the recorded map and an estimated one among the estimated totals' balances. Bringing the file back puts each where it was.
 
 ### `estimate_flat`

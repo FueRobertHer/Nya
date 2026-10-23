@@ -19,6 +19,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [Exchange rates, and rolling back](#exchange-rates-and-rolling-back)
 - [Turning on restores](#turning-on-restores)
+- [Repairing balance signs](#repairing-balance-signs)
 - [Email and the weekly summary](#email-and-the-weekly-summary)
 - [An address locked out of the login](#an-address-locked-out-of-the-login)
 
@@ -545,6 +546,16 @@ Writing through the API and the MCP server ([features.md](features.md#writing-th
 - **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the new stores, so values written by writing would stay under the keys they were written with; run them after rolling forward.
 
 Rolling forward again, everything reads as before: the tokens made to write work again, and their changes are in the record, undoable for what is left of their 30 days.
+
+## Repairing balance signs
+
+An account read as the other kind (money held, money owed) from some day on reads every day before it the other way in converted history, the chart with it hidden and the estimate, though every recorded total stays right ([architecture.md](architecture.md#net-worth-history), `lib/sign-repair.ts`). A change of what a SimpleFIN or Lunch Flow account is re-signs its history itself, and a manual account can no longer change at all. What is left is accounts changed under an older release: a manual account flipped before the app refused it, or a tracked one whose kind was changed before a change re-signed its history. `POST /api/ops/sign-repair` (locked like every ops route) finds and repairs them, one container at a time:
+
+1. **The dry run.** `{"container": "<id>"}` (the ids from `/api/ops/containers`) writes nothing, and answers each manual or tracked account in it whose recorded totals prove some of its days were counted the other way: its id, whether it is manual or tracked, its type now, how many values a repair would turn over by layer (`r` recorded, `p` partial, `e` and `f` the estimate's walked and flat, `x` walked past it), and the first and last day. One that can't be repaired as it stands has `refused`, with the days nothing says how it was counted on, and why; one with a repair under way has `pending`. Ids, days and counts only: never an amount or a name.
+2. **The repair.** `{"container": "<id>", "account_id": "<id>", "repair": true}` turns that account's value over on exactly those days, under the links lock, each in one step, and answers how many (`negated`). Every total stays as it was recorded. Refused (409, with the `days`) when the day it changed can't be found exactly, writing nothing; answered `negated: 0` when there is nothing to repair. Run again, it finds nothing.
+3. **Cut off part way** (a timeout, a 500), it is finished by sending the same body again, or by the next nightly snapshot, which finishes every repair under way; neither turns a day over twice.
+
+A container being restored answers 409; run it once the restore is done. **Rolling back** past this release is safe: no stored shape changes and no reader does, so the release before reads every repaired day right. It ignores the record of a repair under way (`sign-repairs`), so finish any before rolling back: until then those accounts read there as they always did. Its own change of a tracked account's kind doesn't re-sign anything, as before, and this release's dry run finds the account afterwards.
 
 ## Email and the weekly summary
 
