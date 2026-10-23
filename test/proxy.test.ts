@@ -10,7 +10,7 @@ const gated = (path: string) => new RegExp(`^${config.matcher[0]}$`).test(path);
 
 describe('the session gate', () => {
   test('skips exactly the routes that authenticate themselves', () => {
-    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/ops/container-keys', '/api/login', '/api/weekly-summary/unsubscribe']) {
+    for (const path of ['/api/snapshot', '/api/snapshot/catchup', '/api/backup', '/api/ingest/balance', '/api/v1/accounts', '/api/v1/transactions', '/api/plaid/webhook', '/api/plaid/check-items', '/api/ops/export', '/api/ops/rotate-master', '/api/ops/container-keys', '/api/ops/sign-repair', '/api/login', '/api/weekly-summary/unsubscribe']) {
       expect(gated(path)).toBe(false);
     }
   });

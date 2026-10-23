@@ -207,6 +207,7 @@ const NOT_HELD: Readonly<Record<string, string>> = {
   'invtxns-lock:': 'a lock, read only by the save of investment transactions it guards',
   'move:': 'the record of the one-time data move, read only by that move',
   'history:forgetting:': 'the progress of forgetting an account, read only by the forgetting',
+  'sign-repairs': 'a re-sign of an account’s past balances under way, read only by the re-sign and the nightly job that finishes it',
   'connector-secrets': 'the credential, read only by the sync, which these paths never run; the connection made here holds one, and a restore leaves it out',
 };
 /** Counters hold a count for a window, read only to limit how often: their
