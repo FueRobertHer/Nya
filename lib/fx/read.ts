@@ -84,7 +84,7 @@ type FlowRow = { date: string; iso_currency_code: string | null; unofficial_curr
  *  as last loaded) and the account directory's, the first that knows one
  *  winning. LENIENT, for showing figures: an entry that can't be read is left
  *  out (its rows still bring their own currency). */
-async function accountCurrencies(ctx: Ctx): Promise<Map<string, string>> {
+export async function accountCurrencies(ctx: Ctx): Promise<Map<string, string>> {
   const [manual, remembered, linked] = await Promise.all([getManualAccountsReport(ctx), rememberedAccountsReport(ctx), directoryCurrencies(ctx)]);
   const out = new Map<string, string>();
   const add = (id: string, c: string | null | undefined) => {

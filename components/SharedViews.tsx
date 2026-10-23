@@ -137,6 +137,7 @@ function NetWorthKind({ v }: { v: NetWorthView }) {
               <span>
                 <span className="incoming-account-name">{a.label}</span>
                 {a.as_of && <span className="incoming-account-date"> · {shortDate(a.as_of)}</span>}
+                {a.converted && <span className="incoming-account-date"> · converted</span>}
               </span>
               <span className="incoming-account-value">
                 <Masked>{`${formatMoney(a.balance, a.currency)}${a.debt ? ' owed' : ''}`}</Masked>

@@ -1043,4 +1043,26 @@ describe('with the owner’s home currency (decision 5)', () => {
     const text = JSON.stringify(views);
     expect(text).not.toMatch(/1\.1551|0\.8657|rate_day|own_rates":\[/);
   });
+
+  test('an account a rate of the owner’s own converts: listed converted only, and the preview says the rate could be worked out', async () => {
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    const { ecbHash } = await import('./fx-fixture');
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'USD', own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }] });
+    await saveManualAccount(ctx, { account_id: 'manual_pesos', name: 'Pesos', institution_name: 'Banco', type: 'depository', subtype: null, balance: 1_000_000, currency: 'ARS', updated_at: NOW.toISOString() });
+    await shareViews({ net_worth: { detail: 'total', accounts: true } }, { acc_chk: 'balance', manual_pesos: 'balance' });
+    const nw = (await partnerViews()).net_worth;
+    expect(nw.converted).toEqual({ own_rates: true });
+    const pesos = nw.accounts.find((a: any) => a.label.includes('Pesos'));
+    // 1,000,000 ARS at the owner's 0.00071 USD: 710 USD, never beside its pesos.
+    expect(pesos).toMatchObject({ balance: 710, currency: 'USD', converted: true });
+    expect(JSON.stringify(nw)).not.toContain('1000000');
+    // One at the ECB's rates, or in the home currency, keeps its own.
+    expect(nw.accounts.find((a: any) => a.label.includes('Checking'))).toMatchObject({ currency: 'USD' });
+    expect(nw.accounts.find((a: any) => a.label.includes('Checking')).converted).toBeUndefined();
+    // The preview says what the account's own share still gives away.
+    const preview = await previewOf();
+    expect(preview.status).toBe(200);
+    expect((preview.body.inferences ?? []).map((i: any) => i.id)).toContain('own_rate');
+  });
 });

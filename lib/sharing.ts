@@ -141,7 +141,7 @@ import { inferences, type FactAccount, type FactGoal, type Inference } from './s
 // dataUnreadable: whether an error says the owner's stored data can't be
 // decoded, as opposed to storage being out of reach; one rule for the
 // accounts here and the other kinds there.
-import { dataUnreadable, investmentAccountIds, projectViews, shareableGoals } from './share-views';
+import { dataUnreadable, investmentAccountIds, ownRatedAccountIds, projectViews, shareableGoals } from './share-views';
 
 export type { Level } from './share-rules';
 export type Share = {
@@ -1175,14 +1175,14 @@ export async function previewShare(me: string, id: string, now: number = Date.no
  */
 async function inferencesOf(shown: Projected, share: Share): Promise<Inference[]> {
   const mine = await shareableAccounts(shown.theirs, { readOnly: true });
-  const investment = await investmentAccountIds(shown.theirs, mine.map((a) => a.id));
+  const [investment, ownRated] = await Promise.all([investmentAccountIds(shown.theirs, mine.map((a) => a.id)), ownRatedAccountIds(shown.theirs, mine.map((a) => a.id))]);
   const seen = new Map(shown.view.accounts.map((a) => [a.id, a]));
   const accounts: FactAccount[] = mine
     .filter((a) => !seen.get(a.id)?.ended)
     .map((a) => {
       const s = seen.get(a.id);
       const level = !s ? null : s.level === 'exists' ? 'exists' : s.balance === null ? null : s.level;
-      return { id: a.id, label: a.label, level, investment: investment.has(a.id) };
+      return { id: a.id, label: a.label, level, investment: investment.has(a.id), ...(ownRated.has(a.id) ? { ownRate: true } : {}) };
     });
   const views: ShareViews = {};
   for (const kind of sharedKinds(share.views)) {

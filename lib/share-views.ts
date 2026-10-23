@@ -95,7 +95,9 @@ import { coveredOutOfDays, noTransactionsView, spendingUnknown, type NoTransacti
 import { withImportedFiles } from './history-import/without-files';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
 import { allocate, inputsIn, isMoney, shareLabel, shares, type AllocHolding, type AllocInstitution } from './allocation/allocation';
-import { readFlowFx } from './fx/read';
+import { accountCurrencies, readFlowFx } from './fx/read';
+import { readSettingsForDisplay } from './fx/settings';
+import { toBase } from './fx/api-base';
 import { conversionIn, totalsIn } from './fx/totals';
 import { CLASS_NAMES, SLOTS, ASSET_CLASSES, type Slot } from './allocation/classes';
 import { BUCKET_NAMES, BUCKET_SLOTS } from './allocation/buckets';
@@ -230,6 +232,25 @@ async function netWorthView(theirs: Ctx, s: NetWorthShare, reads: Reads, balance
     view.accounts = listed.accounts
       .filter((a) => countsNow(a) && a.balance !== null && shown.has(a.id))
       .map((a) => ({ label: labelOf(a), balance: a.balance!, currency: a.currency, debt: a.is_debt, as_of: a.as_of }));
+    // Converted with a rate of the owner's own: its balance converted alone,
+    // never beside its own currency's, which with the converted total would
+    // give that rate away (decision 5). One at the ECB's rates keeps its own:
+    // those are public.
+    const owned = new Set(base ? base.parts.filter((p) => p.currency !== now.base_currency && p.rate_source === 'own').map((p) => p.currency) : []);
+    if (base && owned.size > 0) {
+      const home = now.base_currency!;
+      const main = now.totals[0]?.currency ?? null;
+      const fx = await readFlowFx(theirs, [], Date.now(), { also: [...owned] });
+      const today = new Date().toISOString().slice(0, 10);
+      view.accounts = view.accounts.flatMap((a) => {
+        const c = a.currency ?? main;
+        if (!c || !owned.has(c)) return [a];
+        // A balance that couldn't be converted isn't shown: in its own
+        // currency beside the total it would give the rate away too.
+        const converted = fx ? toBase(fx, a.balance, c, today) : null;
+        return converted === null ? [] : [{ ...a, balance: converted, currency: home, converted: true as const }];
+      });
+    }
   }
   return view;
 }
@@ -665,6 +686,24 @@ export async function shareableGoals(ctx: Ctx): Promise<ShareableGoal[]> {
  *  on: a remembered record that can't be read, or records that can't be read
  *  at all just now (the report throws for a key that can't be had), leave
  *  their accounts to the directory. */
+/** Of these accounts, those in a currency a rate of the owner's own converts
+ *  into their home currency (or every one in another currency, when their own
+ *  rate is for the home currency itself): what a converted figure counting
+ *  one, beside it in its own currency, gives away (lib/share-inference.ts
+ *  own_rate). None without a home currency. LENIENT, for these words only:
+ *  an account whose currency isn't known is taken to be in none. */
+export async function ownRatedAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
+  const { settings } = await readSettingsForDisplay(ctx);
+  const home = settings.home;
+  if (!home || settings.own.length === 0) return new Set();
+  const own = new Set(settings.own.map((o) => o.currency));
+  const currencies = await accountCurrencies(ctx).catch(() => new Map<string, string>());
+  return new Set(ids.filter((id) => {
+    const c = currencies.get(id);
+    return !!c && c !== home && (own.has(c) || own.has(home));
+  }));
+}
+
 export async function investmentAccountIds(ctx: Ctx, ids: readonly string[]): Promise<Set<string>> {
   const [types, kept, remembered] = await Promise.all([
     directoryTypes(ctx, [...ids]),

@@ -270,7 +270,16 @@ export type SharedConversion = { own_rates: boolean };
 
 /** One account behind a net worth: as its own share labels it, with its
  *  newest measured balance (Plaid's sign: a card's or a loan's is owed). */
-export type NetWorthAccount = { label: string; balance: number; currency: string | null; debt: boolean; as_of: string | null };
+export type NetWorthAccount = {
+  label: string;
+  balance: number;
+  currency: string | null;
+  debt: boolean;
+  as_of: string | null;
+  /** Its balance converted into the total's currency, its own not shown: it
+   *  is converted with a rate of the owner's own (decision 5). */
+  converted?: true;
+};
 
 export type NetWorthView = {
   detail: NetWorthShare['detail'];

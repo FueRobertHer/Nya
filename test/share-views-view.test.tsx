@@ -287,6 +287,15 @@ describe('on the card of the one it is shared with', () => {
     expect(page).not.toContain('What is spent in October 2026 may be off');
   });
 
+  test('an account the owner’s own rate converts is marked converted, its own currency never shown', () => {
+    const nw = VIEWS.net_worth as any;
+    const page = text(card({ net_worth: { ...nw, converted: { own_rates: true }, accounts: [nw.accounts[0], { label: 'Pesos', balance: 710, currency: 'USD', debt: false, as_of: '2026-10-19', converted: true }] } }));
+    expect(page).toContain('Pesos');
+    expect(page).toContain('Pesos · Oct 19 · converted $710.00');
+    expect(page).not.toContain('ARS');
+    expect(page.match(/· converted/g)).toHaveLength(1);
+  });
+
   test('a net worth with one point of history says when it begins, not a chart of one', () => {
     const one = text(card({ net_worth: { ...(VIEWS.net_worth as any), history: [{ date: '2026-10-18', value: 1 }], accounts: undefined } }));
     expect(one).toContain('Its history begins Oct 18');

@@ -244,3 +244,29 @@ describe('from the combination, never one share alone', () => {
     expect(RESIDUAL_NOTE).not.toMatch(/[\u2013\u2014]/);
   });
 });
+
+describe('a figure converted with a rate of the owner’s own, beside what it converts', () => {
+  const pesos: FactAccount = { id: 'ars', label: 'Banco Pesos', level: null, investment: false, ownRate: true };
+
+  test('a net worth beside the balance of an account an own rate converts: the rate may be worked out', () => {
+    const f = facts(NET_TOTAL, [at(checking, 'balance'), at(pesos, 'balance')]);
+    expect(ids(f)).toContain('own_rate');
+    expect(textOf(f, 'own_rate')).toBe(
+      'They see the balance of Banco Pesos in its own currency, and your net worth converted into your home currency with your own exchange rate for it: with the ECB’s rates for the rest, which are public, they may be able to work out your rate.'
+    );
+  });
+
+  test('holdings or spending in amounts beside what they convert; nothing when the account isn’t shown, or no figure counts it', () => {
+    const fund = { ...pesos, investment: true };
+    expect(ids(facts({ holdings: { detail: 'amounts', positions: false } }, [at(fund, 'balance')]))).toContain('own_rate');
+    expect(ids(facts({ spending: { detail: 'amounts', by: 'group' } }, [at(pesos, 'transactions')]))).toContain('own_rate');
+    expect(ids(facts({ budgets: { detail: 'amounts', by: 'group' } }, [at(pesos, 'transactions')]))).toContain('own_rate');
+    // Its balance alone, beside spending: no transaction of it is seen.
+    expect(ids(facts({ spending: { detail: 'amounts', by: 'group' } }, [at(pesos, 'balance')]))).not.toContain('own_rate');
+    // Not shown, or as a percentage only.
+    expect(ids(facts(NET_TOTAL, [at(pesos, 'exists')]))).not.toContain('own_rate');
+    expect(ids(facts({ spending: { detail: 'shares', by: 'group' } }, [at(pesos, 'transactions')]))).not.toContain('own_rate');
+    // An account at the ECB's rates gives nothing away: they are public.
+    expect(ids(facts(NET_TOTAL, [at(checking, 'balance')]))).not.toContain('own_rate');
+  });
+});
