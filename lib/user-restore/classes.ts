@@ -9,9 +9,10 @@
 // download's STORED_KEYS, so a store added later has to take a side.
 //
 //   machinery  the app's own bookkeeping, counters, locks and caches; the
-//              person's API tokens (they read whatever the account holds) and
+//              person's API tokens (they read whatever the account holds),
 //              their record of showings (about sharing, which is not part of a
-//              restore). Ignored by the scan. Undo and emptying keep only the
+//              restore) and their receipts and documents (kept through an
+//              emptying, which no restore brings back). Ignored by the scan. Undo and emptying keep only the
 //              part of it that is independent of the data they delete
 //              (keptWhenEmptied): what is derived from that data (the
 //              holdings index, the walk's record, a connection's markers)
@@ -100,6 +101,16 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // The person's record of what they brought over from other apps, and its
   // Undo (lib/migration/store.ts).
   'app-imports': 'data',
+  // Receipts and documents (lib/attachment-stores.ts): kept when the account
+  // is emptied or a restore undone, each file then not on a transaction
+  // (lib/account-deletion.ts sweepContainerExcept), since a photo is often
+  // the only copy of a receipt and no restore brings files back. So they
+  // never make an account count as in use, as API tokens don't. Their index
+  // is derived from where the files were, and goes.
+  attachments: 'machinery',
+  'attachment-places': 'machinery',
+  'attachment-sweep': 'machinery',
+  'attachment-usage': 'machinery',
   'budget-months': 'data',
   'budget-set': 'data',
   'carried-annotations': 'data',
@@ -175,7 +186,8 @@ export function classOfKey(key: string): { family: string | null; cls: KeyClass 
 /** The machinery that is independent of the person's data (see the header):
  *  counters (by kind), sessions, caches, the rate limits, locks, the
  *  snapshot's own log and lock (SNAPSHOT_KEPT), the move's records, the API
- *  tokens, the record of showings and the weekly summary's key. */
+ *  tokens, the record of showings, the weekly summary's key, and receipts and
+ *  documents with their bookkeeping. */
 const KEPT_WHEN_EMPTIED: ReadonlySet<string> = new Set([
   'ratelimit:',
   'sessions:',
@@ -186,6 +198,10 @@ const KEPT_WHEN_EMPTIED: ReadonlySet<string> = new Set([
   'api-tokens',
   'sharing-access-log',
   'weekly-summary-state',
+  // Receipts and documents, and what is kept about them (see STORE_CLASSES).
+  'attachments',
+  'attachment-sweep',
+  'attachment-usage',
 ]);
 
 /** Whether undo and emptying keep a key (relative to the environment's

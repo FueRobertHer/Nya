@@ -1752,6 +1752,69 @@ export async function decrypt(ctx: Ctx, payload: string, context?: string): Prom
   return new TextDecoder().decode(plain);
 }
 
+/** The container has no data key of its own, so nothing can be sealed under
+ *  one (encryptOwn): one made before this release, until the migration pass
+ *  gives it a key, or a copy without a master key. Not a ContainerError: the
+ *  container works, only what needs its own key is refused. */
+export class NoOwnKeyError extends Error {
+  constructor(readonly container: string) {
+    super(`Container ${container} has no data key of its own.`);
+    this.name = 'NoOwnKeyError';
+  }
+}
+
+/**
+ * Seals under the container's own key and nothing else, bound to `context`:
+ * for a secret whose readability must end with that key (the key of a file
+ * attached to a transaction, lib/attachment-crypto.ts). encrypt() without its
+ * fallbacks: NoOwnKeyError when the container has no key of its own, and
+ * ContainerKeyError when it has one that can't be used. The context names
+ * what the value belongs to and never the environment prefix (see the
+ * header), so a copy in another place doesn't open.
+ *
+ * THE INVARIANT this rests on (docs/architecture.md, "Per-container data
+ * keys"): a container's own key is never replaced or retired while the
+ * container lives. A value sealed here sits inside another value (a seam
+ * record), where no pass that reads value headers can see it, so a re-keying
+ * that moved the records and retired the old key would leave these unopenable.
+ * Any future re-keying must open each one with decryptOwn and seal it again.
+ */
+export async function encryptOwn(ctx: Ctx, plaintext: string, context: string): Promise<string> {
+  checkContext(context);
+  const own = await ownKey(ctx);
+  if (!own) throw new NoOwnKeyError(ctx.container);
+  return sealV2(plaintext, own.id, own.key, context);
+}
+
+/**
+ * Opens a value encryptOwn sealed, and only such a value: v2, bound to
+ * `context`, under the key the container's map entry names as its own.
+ * Stricter than decrypt(), which reads a value under k0 or an environment key
+ * in any container and ignores the context of a value bound to none: a
+ * secret wrapped some other way by a bug would open there, and destroying
+ * the container's key would not end it. Throws DecryptFailedError for a value
+ * that isn't one, NoOwnKeyError when the container has no key of its own, and
+ * as decrypt() does otherwise.
+ */
+export async function decryptOwn(ctx: Ctx, payload: string, context: string): Promise<string> {
+  checkContext(context);
+  const p = parse(payload);
+  if (p.version !== 2 || !p.flags.includes('c')) throw new DecryptFailedError(p.keyId, 'the value is not sealed to its own context');
+  const own = await ownKey(ctx);
+  if (!own) throw new NoOwnKeyError(ctx.container);
+  if (own.id !== p.keyId) throw new DecryptFailedError(p.keyId, 'the value is not under this container’s own key');
+  const plain = await open(own.key, p.keyId, p.body, v2Aad(p.header, context));
+  return new TextDecoder().decode(plain);
+}
+
+/** Whether the container has a data key of its own that can be used now
+ *  (NoOwnKeyError's opposite), for a route that refuses what needs one
+ *  before it writes anything. Throws ContainerKeyError for one that can't be
+ *  used, and a storage failure as it is. */
+export async function hasOwnKey(ctx: Ctx): Promise<boolean> {
+  return (await ownKey(ctx)) !== null;
+}
+
 /**
  * The format a stored value claims, without decrypting it: which version, key
  * and flags. For a re-encryption pass to find what still needs moving. It does
