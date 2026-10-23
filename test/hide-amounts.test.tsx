@@ -1289,10 +1289,13 @@ const COUNT = new RegExp(
  *  shapes the views draw: a time's zone ("around 16:00 CET"), and a word of
  *  a bank's description written in capitals ("SHELL OIL 5544", "LANDLORD
  *  REF 99812", a store's or a payment's number), told by the capitals word
- *  before it. Only a whole number, so a figure with cents or thousands
- *  there is still an amount. */
+ *  before it, and never a real currency's code (ISO 4217, as Intl knows
+ *  them): "CARD PAYMENT SEK 950" is an amount, as is a whole figure en-US
+ *  writes after ISK or that the Plan writes in any currency. Only a whole
+ *  number, so a figure with cents or thousands there is still an amount. */
+const ISO_CODES = Intl.supportedValuesOf('currency').join('|');
 const NOT_CODES = new RegExp(
-  [String.raw`\b\d{1,2}:\d{2}(?=[\s\u00a0][A-Z]{3}\b)`, String.raw`(?<=\b[A-Z]{2,}[\s\u00a0][A-Z]{3}[\s\u00a0])\d+(?![\d.,])`].join('|'),
+  [String.raw`\b\d{1,2}:\d{2}(?=[\s\u00a0][A-Z]{3}\b)`, String.raw`(?<=\b[A-Z]{2,}[\s\u00a0](?!(?:${ISO_CODES})\b)[A-Z]{3}[\s\u00a0])\d+(?![\d.,])`].join('|'),
   'gu'
 );
 function withoutLookalikes(line: string): string {
@@ -1345,6 +1348,11 @@ describe('a backstop over every view the suites draw, amounts hidden', () => {
       'Groceries SEK 950 this month',
       'CARD PAYMENT SEK 1,250',
       'CARD PAYMENT SEK 950.00',
+      // A whole figure after a real code, behind a word in capitals: still one.
+      'CARD PAYMENT SEK 950',
+      'Roth IRA CHF 950',
+      'ATM ISK 12500',
+      'HSA NOK 400 this month',
       'opens at 16:00 CET with SEK 950',
       // Beside a rate, an amount is still one, before it or after it, and a
       // rate's shape around one never makes it pass.
