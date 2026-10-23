@@ -74,7 +74,7 @@ import {
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, transactionCoverage, transactionsMissing, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, spendingOff, transactionCoverage, transactionsMissing, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
@@ -1250,10 +1250,11 @@ export function FiCard({
   // what may be missing.
   let spendingNote: React.ReactNode;
   // Without a home currency, a year that would rest on a part of the
-  // spending is no figure at all (lib/fire/progress.ts spendingGap).
+  // spending is no figure at all (lib/fire/progress.ts spendingGap); one
+  // with only its income left out still measures the spending (spendingOff).
   const flowsGap = spendingGap(flows, shareRates);
   if (spending.source === 'typed') spendingNote = 'typed by you';
-  else if (flowsGap) spendingNote = <Notes source="not measured" warnings={[gapText(flowsGap)]} />;
+  else if (spendingOff(flowsGap)) spendingNote = <Notes source="not measured" warnings={[gapText(flowsGap!)]} />;
   else if (!flows) {
     spendingNote = txnsLoading ? (
       'loading your transactions…'

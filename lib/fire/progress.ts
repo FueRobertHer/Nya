@@ -203,17 +203,27 @@ export function unmeasuredNeed(missing: Missing, view: Pick<FiView, 'spending' |
   return null;
 }
 
+/** Whether a year's gap leaves its spending unmeasured: each figure needs
+ *  only what it uses, so spending only when more than a tenth of the money
+ *  out is left out (or the year is weighed whole); savings, which need the
+ *  income too, whenever there is a gap at all. */
+export const spendingOff = (gap: CurrencyGap | null): boolean => gap !== null && (gap.sides === undefined || gap.sides.includes('spending'));
+
 /** The measured inputs a plan's figures start from (each can be typed over
  *  in the plan): spending and savings from a year of transactions, savings
  *  with workplace plan contributions added, and invested assets. None from
  *  a part of what it measures (spendingGap, assetsGap): the FI number,
- *  progress and years to FI then wait for a home currency or a typed figure. */
+ *  progress and years to FI then wait for a home currency or a typed figure.
+ *  With only the income left out, spending is still measured, and the FI
+ *  number with it; savings and what rests on them aren't. */
 export function measuredInputs({ flows, workplace, assets, rates }: FiInputs): Measured {
-  const yearGap = spendingGap(flows, rates) !== null;
+  const gap = spendingGap(flows, rates);
+  const yearGap = gap !== null;
+  const spendingGapped = spendingOff(gap);
   const assetsOff = assetsGap(assets, rates) !== null;
-  const unmeasured = [...(yearGap ? (['spending', 'savings'] as const) : []), ...(assetsOff ? (['assets'] as const) : [])];
+  const unmeasured = [...(spendingGapped ? (['spending'] as const) : []), ...(yearGap ? (['savings'] as const) : []), ...(assetsOff ? (['assets'] as const) : [])];
   return {
-    spending: flows && !yearGap ? flows.spending : null,
+    spending: flows && !spendingGapped ? flows.spending : null,
     savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) : null,
     assets: assetsOff ? null : assets.total,
     ...(unmeasured.length > 0 ? { unmeasured } : {}),

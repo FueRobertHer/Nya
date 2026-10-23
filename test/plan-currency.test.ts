@@ -581,20 +581,34 @@ describe('the year weighed on each side, money out apart from money in (review r
     expect(html).not.toContain('years to FI');
   });
 
-  test('the mirror: income in euros and spending in dollars isn’t measured either, by amount or by count, and says it is the income', () => {
-    const rows = months.flatMap((m) => [
-      t({ date: day(m, 1), amount: -5_000, category: 'income', name: 'Pay', iso_currency_code: 'EUR' }),
-      ...Array.from({ length: 10 }, (_, k) => t({ date: day(m, k + 2), amount: 350 })),
-    ]);
+  // The mirror: income in euros, spending in dollars.
+  const mirror = months.flatMap((m) => [
+    t({ date: day(m, 1), amount: -5_000, category: 'income', name: 'Pay', iso_currency_code: 'EUR' }),
+    ...Array.from({ length: 10 }, (_, k) => t({ date: day(m, k + 2), amount: 350 })),
+  ]);
+
+  test('the mirror: with the income in euros, the year’s income isn’t measured, by amount or by count, and says it is the income; the spending, all in dollars, still is', () => {
+    const rows = mirror;
     const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
     const byAmount = spendingGap(flows, rates);
     expect(byAmount).toMatchObject({ judged: 'amount', sides: ['income'], leftOut: [{ currency: 'EUR', count: 12 }] });
     // Twelve of 132 transactions, under a tenth of the whole year by count,
     // yet all of the income.
     expect(spendingGap(flows)).toMatchObject({ judged: 'count', sides: ['income'] });
+    // Each figure needs only what it uses: the spending and the FI number
+    // stand, and savings, the savings rate and years to FI wait.
     const f = fiFigures(DEFAULT_PLAN, { flows, assets, workplace: null, rates }, 'USD');
+    expect(f.view.spending).toEqual({ value: flows.spending, source: 'measured' });
+    expect(flows.spending).toBeGreaterThan(42_000); // under a year of history, scaled up
+    expect(f.view.fiNumber).toBe(flows.spending / 0.04);
+    expect(f.view.progress).not.toBeNull();
     expect(f.view.savings).toEqual({ value: null, source: 'unmeasured' });
+    expect(f.view.yearsToFi).toBeNull();
     expect(f.savingsRate).toBeNull();
+    expect(notWorkedOutText(f.view, 'below')).toBe('Not worked out: your savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
+    expect(gapText(byAmount!, 'year')).toBe(
+      'The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your savings.'
+    );
     expect(gapText(byAmount!)).toBe(
       'Not measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so the year’s figures from the rest would leave that much of your income out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
     );
@@ -603,7 +617,22 @@ describe('the year weighed on each side, money out apart from money in (review r
     expect(typed.view.fiNumber).toBe(1_050_000);
     expect(typed.view.savings.source).toBe('unmeasured');
     expect(typed.view.yearsToFi).toBeNull();
-    expect(gapText(byAmount!, 'year')).toStartWith('The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount');
+  });
+
+  test('Home, for the mirror: the FI number is shown, years to FI aren’t, and both say why', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const React = await import('react');
+    const { FiProgressView } = await import('@/components/FiProgressCard');
+    const { transactionCoverage } = await import('@/lib/fire/progress');
+    const { NO_CONNECTIONS_WITHOUT } = await import('@/lib/no-transactions');
+    const flows = trailingFlows(mirror, '2026-09-14', { currency: 'USD' })!;
+    const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, mirror.length), rates };
+    const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(DEFAULT_PLAN, inputs, 'USD'), plan: DEFAULT_PLAN, saved: true, repaired: false, inputs, onOpenPlan: () => {} })).replace(/&#x27;|&#39;/g, "'");
+    expect(html).toContain(`<span class="fi-lead-value">$${Math.round(flows.spending / 0.04).toLocaleString('en-US')}</span><span class="plan-stat-label">FI number</span>`);
+    expect(html).toContain('The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year).');
+    expect(html).toContain('Years to FI aren’t worked out: your savings aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
+    expect(html).not.toMatch(/years?<\/span><span class="plan-stat-label">to FI/);
+    expect(html).not.toContain('Not measured: more than a tenth');
   });
 
   test('a small income in another currency is weighed as small, and both sides over are both said', () => {

@@ -602,6 +602,21 @@ describe('each side of the year, the rates at hand, and the simulation card (rev
     await tab.unmount();
   });
 
+  test('the mirror: income in euros and spending in dollars, so the FI number is shown and years to FI aren’t, with the income’s reason', async () => {
+    const mirror = months.flatMap((m) => [
+      row({ date: day(m, 1), amount: -5_000, category: 'income', name: 'Pay', iso_currency_code: 'EUR' }),
+      ...Array.from({ length: 10 }, (_, k) => row({ date: day(m, k + 2), amount: 350 })),
+    ]);
+    serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
+    const tab = await render({ institutions: dollars, txns: mirror });
+    expect(tab.text()).toMatch(/FI number\$[\d,]+\$[\d,]+ a year ÷ 4% withdrawal rate/);
+    expect(tab.text()).toMatch(/Annual spending\$[\d,]+from \d+ days of transactions/);
+    expect(tab.text()).toContain('Years to FI--Not worked out: your savings aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
+    expect(tab.text()).toMatch(/Annual savings--not measuredThe year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
+    expect(tab.text()).not.toContain('Not measured: more than a tenth');
+    await tab.unmount();
+  });
+
   test('rates never fetched: weighed by count, and said as rates Nya doesn’t have at hand, never as ones the ECB doesn’t publish', async () => {
     const rows = months.flatMap((m) => [row({ date: day(m, 1), amount: 3_000 }), row({ date: day(m, 2), amount: 3_000, iso_currency_code: 'CAD' })]);
     const calls = serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, { ...ECB, ecb: { date: null, rates: {}, stale: true, fetch_ok: null } }] });
