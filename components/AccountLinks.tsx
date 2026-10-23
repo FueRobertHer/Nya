@@ -68,8 +68,11 @@ export type AccountLinksPayload = {
   /** Earlier accounts the user can forget for good; `refused`: why one
    *  can't be forgotten here (what a restore brought back for it is in a
    *  form this version doesn't know), said in place of Forget; `unchecked`:
+   *  ('sealed': what a restore brought back for it is under a key this copy
+   *  doesn't have, which whoever runs it must mend; 'failed': a read that
+   *  may pass)
    *  that couldn't be checked just now, so it offers no Forget either. */
-  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean; refused?: string; unchecked?: true }[];
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean; refused?: string; unchecked?: 'sealed' | 'failed' }[];
   /** Whether `earlier` was checked for forgets that would be refused, which
    *  is asked once the list is opened (?earlier=1): until then no Forget is
    *  offered. Absent: checked. */
@@ -474,7 +477,11 @@ export function AccountLinksView({
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
                       {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
                       {e.refused ? `. ${e.refused}` : ''}
-                      {e.unchecked ? '. Whether it can be forgotten couldn’t be checked just now: try again later.' : ''}
+                      {e.unchecked === 'sealed'
+                        ? '. What a restore brought back for it is sealed under a key this copy of Nya doesn’t have, so whether it can be forgotten can’t be checked: ask whoever runs this copy of Nya.'
+                        : e.unchecked
+                          ? '. Whether it can be forgotten couldn’t be checked just now: try again later.'
+                          : ''}
                     </span>
                     {checked && !e.refused && !e.unchecked && (
                       <button

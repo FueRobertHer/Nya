@@ -1,13 +1,16 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
+import { mockForFile } from './scoped-mock';
 import { NextRequest } from 'next/server';
 
-// An account's verified emails, mocked at our own module, not Clerk's.
+// An account's verified emails, mocked at our own module, not Clerk's, for
+// this file only (test/scoped-mock.ts): other files ask the real one, which
+// can't reach Clerk here.
 const emailsOf: Record<string, string[]> = {};
 const unverifiedOf: Record<string, string[]> = {};
 let lookups = 0;
 let lookupFails = false;
-mock.module('@/lib/clerk-emails', () => ({
+await mockForFile('@/lib/clerk-emails', () => ({
   emailAddresses: async (id: string) => {
     lookups++;
     if (lookupFails) throw new Error('clerk down');
