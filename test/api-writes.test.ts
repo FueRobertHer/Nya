@@ -238,9 +238,10 @@ describe('the gate', () => {
     expect([post.status, post.body.error.code, post.headers.get('allow')]).toEqual([405, 'method_not_allowed', 'GET']);
     expect((await send('POST', 'manual-accounts', { body: { name: 'Jar' } })).status).toBe(404);
     expect((await send('GET', 'changes')).status).toBe(404);
-    expect((await send('PATCH', `transactions/${MARKET}`, { body: { note: 'x' } })).headers.get('allow')).toBe('GET');
-    // Reading by id is reading: it works either way.
-    expect((await send('GET', `transactions/${MARKET}`)).status).toBe(200);
+    expect((await send('PATCH', `transactions/${MARKET}`, { body: { note: 'x' } })).status).toBe(404);
+    // Reading one resource by id came with writing, and goes with it.
+    for (const path of [`transactions/${MARKET}`, `manual-accounts/${WALLET}`, 'changes']) expect([path, (await send('GET', path)).status]).toEqual([path, 404]);
+    expect((await send('GET', `transactions/${MARKET}`)).body).toEqual({ error: { code: 'not_found', message: 'There is no such endpoint. The endpoints are listed at /developers.' } });
     expect(await manualTxnStore.get(ctx, WALLET)).toMatchObject({ rows: [{ id: MARKET, note: 'apples' }] });
   });
 

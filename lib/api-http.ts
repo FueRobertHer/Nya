@@ -57,7 +57,7 @@ import { loggable } from './log-safe';
 import { argsFromQuery, BadRequest, NotFound, type Operation } from './api-ops';
 import { restoreUnfinished } from './user-restore/restored';
 import { ApiFailure, bodyFromJson, idFromPath, OPERATION_SPECS, RESOURCE_SPECS, type Args, type ResourceSpec } from './api-spec';
-import { checkAccess, gate, writesNeeded } from './api-run';
+import { checkAccess, gate } from './api-run';
 import { apiWritesEnabled } from './api-writes-enabled';
 import { runResource } from './api-writes';
 import { readIfMatch } from './api-versions';
@@ -266,8 +266,9 @@ async function readBody(req: Request, spec: ResourceSpec): Promise<Args> {
 export async function serveResource(req: Request, spec: ResourceSpec, rawId?: string): Promise<NextResponse> {
   // While this copy doesn't let tokens make changes, the API answers as it
   // did before writing existed: a write to a path that reads is a 405, and a
-  // path only a write has is no endpoint at all.
-  if (writesNeeded(spec) && !apiWritesEnabled()) return notTaken(spec.path);
+  // path only writing brought (one resource by id, a write's) is no endpoint
+  // at all, its reads too: they are documented, and needed, only for writing.
+  if (!apiWritesEnabled()) return notTaken(spec.path);
   const admitted = await admit(req);
   if (admitted instanceof NextResponse) return admitted;
   const headers: Record<string, string> = { ...admitted.limits };
@@ -291,12 +292,12 @@ export async function serveResource(req: Request, spec: ResourceSpec, rawId?: st
 }
 
 /** The answer for a method a path doesn't take, as this copy is set up: the
- *  methods its operations take (its writes only while tokens may make
+ *  methods its operations take (one resource's only while tokens may make
  *  changes), or no endpoint at all where none is left. */
 export function notTaken(path: string): NextResponse {
   const methods = new Set<string>();
   if (OPERATION_SPECS.some((o) => o.name === path)) methods.add('GET');
-  for (const r of RESOURCE_SPECS) if (r.path === path && (!writesNeeded(r) || apiWritesEnabled())) methods.add(r.method);
+  if (apiWritesEnabled()) for (const r of RESOURCE_SPECS) if (r.path === path) methods.add(r.method);
   const allow = ['GET', 'POST', 'PATCH', 'DELETE'].filter((m) => methods.has(m)).join(', ');
   return allow ? methodNotAllowed(allow) : apiError(404, 'not_found', 'There is no such endpoint. The endpoints are listed at /developers.');
 }
