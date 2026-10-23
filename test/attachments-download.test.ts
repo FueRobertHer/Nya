@@ -118,7 +118,16 @@ afterEach(async () => {
   process.env = { ...saved };
   c.forgetContainerKey();
 });
-afterAll(() => objectsMod.setAttachmentObjectsForTests(undefined));
+afterAll(() => {
+  objectsMod.setAttachmentObjectsForTests(undefined);
+  // Bun runs every file in one process, and a later file with no storage mock
+  // of its own reaches this fake, whose last test left the test container a
+  // key of its own; lib/crypto.ts would then cache that key for every file in
+  // the next minute. So nothing of this file's fake or keys outlives it.
+  fake.reset();
+  c.forgetContainerKey();
+  c.forgetActiveKey();
+});
 afterEach(() => zip.setVolumeLimitsForTests(null));
 
 describe('names', () => {

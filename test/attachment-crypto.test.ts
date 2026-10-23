@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { FakeRedis, storageMock, TEST_CTX, registerTestContainer } from './fake-redis';
@@ -39,6 +39,15 @@ beforeEach(async () => {
 afterEach(() => {
   process.env = { ...saved };
   c.forgetContainerKey();
+});
+afterAll(() => {
+  // Bun runs every file in one process, and a later file with no storage mock
+  // of its own reaches this fake, whose last test left the test container a
+  // key of its own; lib/crypto.ts would then cache that key for every file in
+  // the next minute. So nothing of this file's fake or keys outlives it.
+  fake.reset();
+  c.forgetContainerKey();
+  c.forgetActiveKey();
 });
 
 describe('a file key is wrapped under the account’s own key and nothing else', () => {
