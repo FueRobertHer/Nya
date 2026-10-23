@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { buildForecast, cashPosition, countsInForecast, forecastEvents, forecastNotes, withPurchase, type ForecastEvent, type ForecastInstitution, type PendingRow } from '@/lib/forecast';
+import { buildForecast, cashPosition, countsInForecast, forecastEvents, forecastNotes, namesCard, withPurchase, type ForecastEvent, type ForecastInstitution, type PendingRow } from '@/lib/forecast';
 import { addDays, detectRecurring, scheduleDates, type RecurringRow } from '@/lib/recurring';
 import type { PlannedItem } from '@/lib/planned';
 import { localDate } from '@/lib/local-date';
@@ -561,7 +561,10 @@ describe('what it says it may be missing', () => {
     // The card itself: a word of a longer name of its own, or its mask.
     const preferred = (planned: PlannedItem[]) =>
       notesFor([inst({ accounts: [acct(), { ...sapphire, name: 'Chase Sapphire Preferred', mask: '4821', liability: { ...sapphire.liability, last_statement_balance: 1000 } }] })], planned);
-    expect(preferred([{ ...payment, name: 'Sapphire', amount: 500 }, { ...payment, id: 'p2', name: 'Card 4821', amount: 450, date: '2026-10-24' }])).toEqual([]);
+    expect(preferred([{ ...payment, name: 'Sapphire payment', amount: 500 }, { ...payment, id: 'p2', name: 'Card 4821', amount: 450, date: '2026-10-24' }])).toEqual([]);
+    // A word of its own name alone doesn't name it (a merchant's may be the
+    // same word): only the mask's $450 is a part then.
+    expect(preferred([{ ...payment, name: 'Sapphire', amount: 500 }, { ...payment, id: 'p2', name: 'Card 4821', amount: 450, date: '2026-10-24' }])[0]).toContain('The $450.00 you planned around then for it may be part of it');
     expect(preferred([{ ...payment, name: 'Preferred card', amount: 500 }, { ...payment, id: 'p2', name: 'Chase loan', amount: 450, date: '2026-10-24' }])).toHaveLength(1);
     // Within a quarter of what is owed, exactly, to the cent.
     expect(notesFor(withCard, [{ ...payment, amount: 304.65 }, { ...payment, id: 'p2', amount: 304.65, date: '2026-10-24' }])).toEqual([]);
@@ -581,6 +584,65 @@ describe('what it says it may be missing', () => {
     ).toEqual([
       "Sapphire's payment, statement balance $400.00, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.",
     ]);
+  });
+
+  // Review: a co-branded or plain-word card's own word is often a merchant's
+  // or a payee's, so it names the card only beside a card or payment word.
+  test('a planned item names a card by its own word only beside a card or payment word, by its four-digit mask, or by its bank with a card word', () => {
+    const cases: [string, string, string, boolean][] = [
+      ['Chase Freedom Unlimited', 'Chase', 'Freedom Mobile', false],
+      ['Freedom Flex', 'Chase', 'Flex rent', false],
+      ['Chase Freedom Unlimited', 'Chase', 'Unlimited data plan', false],
+      ['Delta SkyMiles Gold Card', 'American Express', 'Delta Dental', false],
+      ['Gold Card', 'American Express', "Gold's Gym", false],
+      ['Blue Cash Preferred', 'American Express', 'Blue Cross premium', false],
+      ['Costco Anywhere Visa Card', 'Citibank', 'Costco', false],
+      ['Southwest Rapid Rewards Plus', 'Chase', 'Southwest Gas', false],
+      ['Southwest Rapid Rewards Plus', 'Chase', 'Southwest Gas payment', false],
+      ['Prime Visa', 'Chase', 'Amazon Prime', false],
+      ['Apple Card', 'Goldman Sachs', 'Apple iCloud', false],
+      ['United Explorer', 'Chase', 'United Healthcare', false],
+      ['Target Circle Card', 'TD Bank', 'Target groceries', false],
+      ['Hilton Honors', 'American Express', 'Hilton hotel', false],
+      ['Active Cash', 'Wells Fargo', 'Active Network', false],
+      ['Sapphire Preferred', 'Chase', 'Sapphire', false],
+      ['Sapphire Preferred', 'Chase', 'Sapphires club payment', false],
+      ['CREDIT CARD', 'Chase', 'Chase auto loan', false],
+      ['CREDIT CARD', 'Chase', 'Credit card', false],
+      // Named as the card, or its payment.
+      ['Sapphire Preferred', 'Chase', 'Sapphire payment', true],
+      ['Sapphire Preferred', 'Chase', 'Chase Sapphire Preferred minimum', true],
+      ['Sapphire Preferred', 'Chase', 'Pay Sapphire', true],
+      ['Delta SkyMiles Gold Card', 'American Express', 'Delta card', true],
+      ['Costco Anywhere Visa Card', 'Citibank', 'Costco Visa payment', true],
+      ['Capital One Quicksilver', 'Capital One', 'Quicksilver autopay', true],
+      ['Citi Double Cash Card', 'Citibank', 'Double Cash payment', true],
+      ['Discover it Card', 'Discover', 'Discover Card payment', true],
+      ['CREDIT CARD', 'Chase', 'Chase card', true],
+      ['Visa Signature', 'Bank of America', 'Bank of America Visa', true],
+    ];
+    for (const [card, bank, bill, named] of cases) expect([card, bill, namesCard(bill, { name: card, institution: bank })]).toEqual([card, bill, named]);
+    // Four digits only: a shorter mask is any number.
+    expect(namesCard('Card 4821', { name: 'CREDIT CARD', mask: '4821', institution: 'Chase' })).toBe(true);
+    expect(namesCard('Rent 14821', { name: 'CREDIT CARD', mask: '4821', institution: 'Chase' })).toBe(false);
+    expect(namesCard('Pay on the 21st', { name: 'CREDIT CARD', mask: '21', institution: 'Chase' })).toBe(false);
+  });
+
+  test('a bill that shares a word with a card never quiets its note, nor is said to be part of its payment', () => {
+    const card = (name: string, statement: number, minimum: number | null, institution: string) =>
+      inst({ institution_name: institution, accounts: [acct(), { account_id: 'card', name, type: 'credit', balance: statement, currency: 'USD', liability: { minimum_payment: minimum, next_due_date: '2026-10-22', last_statement_balance: statement } }] });
+    const cardNotes = (institutions: ForecastInstitution[], planned: PlannedItem[]) =>
+      forecastNotes({ institutions, position: cashPosition(institutions), eventsLeftOut: [], series: { cardsPaid: { known: new Set(), unknown: [] } }, until: '2026-11-08', today: '2026-10-09', days, planned });
+    const full = (name: string, owed: string) =>
+      `${name}'s payment, statement balance ${owed}, is due on 2026-10-22 and isn't in this forecast, since it changes each month. Add it as a planned expense if you'll pay it from checking.`;
+    const at = (name: string, amount: number, over: Partial<PlannedItem> = {}) => plannedItem({ id: name, name, amount, date: '2026-10-20', ...over });
+    expect(cardNotes([card('Delta SkyMiles Gold Card', 1200, 40, 'American Express')], [at('Delta Dental', 42)])).toEqual([full('Delta SkyMiles Gold Card', '$1,200.00')]);
+    expect(cardNotes([card('Southwest Rapid Rewards Plus', 900, 40, 'Chase')], [at('Southwest Gas', 48)])).toEqual([full('Southwest Rapid Rewards Plus', '$900.00')]);
+    expect(cardNotes([card('Costco Anywhere Visa Card', 320, null, 'Citibank')], [at('Costco', 150, { date: '2026-10-18', cadence: 'weekly' })])).toEqual([full('Costco Anywhere Visa Card', '$320.00')]);
+    expect(cardNotes([card('Apple Card', 600, null, 'Goldman Sachs')], [at('Apple iCloud', 2.99), at('Apple Music', 10.99)])).toEqual([full('Apple Card', '$600.00')]);
+    // Named for the card, the same amounts are its payment, or part of it.
+    expect(cardNotes([card('Delta SkyMiles Gold Card', 1200, 40, 'American Express')], [at('Delta card minimum', 42)])).toEqual([]);
+    expect(cardNotes([card('Costco Anywhere Visa Card', 320, null, 'Citibank')], [at('Costco Visa payment', 150, { date: '2026-10-18', cadence: 'weekly' })])).toEqual([]);
   });
 
   test('pay that stopped coming or varies too much, and a series on an account of unknown type', () => {

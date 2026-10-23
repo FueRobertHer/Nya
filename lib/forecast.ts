@@ -818,24 +818,39 @@ export function forecastNotes(opts: {
 /** Words a card's own name shares with other cards, or that say only what
  *  it is: alone, they never name one card. */
 const CARD_WORDS = new Set(['card', 'cards', 'credit', 'debit', 'preferred', 'rewards', 'reward', 'visa', 'mastercard', 'signature', 'account', 'world', 'elite', 'the', 'my', 'and', 'of']);
+/** Words that say an item is a card or its payment, beside a word of the
+ *  card's own name. */
+const PAY_WORDS = new Set(['payment', 'payments', 'pay', 'card', 'minimum', 'min', 'autopay', 'visa', 'mastercard', 'amex']);
 const wordsOf = (s: string): string[] => s.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? [];
 
 /**
  * Whether a planned item's name names this card itself, as whole words in
- * any case: a word of its own name that tells it apart ("Sapphire payment"
- * for "Chase Sapphire Preferred": not "card", "credit" or "preferred", nor
- * its bank's name, and never "Sapphires"), its mask ("Card 4821"), or its
- * bank's name with a word that says it is a card ("Chase card", "Chase
- * credit card", "Chase Visa"). The bank's name alone names the person's
- * other accounts there too (a car loan, a savings transfer), so it never
- * does.
+ * any case: a word of its own name that tells it apart (not "card", "credit"
+ * or "preferred", nor its bank's name, and never "Sapphires") beside a word
+ * that says it is the card or its payment ("Sapphire payment" for "Chase
+ * Sapphire Preferred", "Delta card", "Costco Visa payment"), with only the
+ * card's or its bank's own words between them; its mask, four digits ("Card
+ * 4821"); or its bank's name with a word that says it is a card ("Chase
+ * card", "Chase credit card", "Chase Visa"). A card's word alone is often a
+ * merchant's or a payee's ("Costco", "Delta Dental", "Southwest Gas",
+ * "Apple iCloud"), and the bank's name alone names the person's other
+ * accounts there too (a car loan, a savings transfer), so neither ever does.
  */
 export function namesCard(name: string, card: { name: string; mask?: string | null; institution: string }): boolean {
-  const said = new Set(wordsOf(name));
+  const tokens = wordsOf(name);
+  const said = new Set(tokens);
   const bank = wordsOf(card.institution);
-  const own = wordsOf(card.name).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !CARD_WORDS.has(w) && !bank.includes(w));
-  if (own.some((w) => said.has(w))) return true;
-  if (card.mask && /^\d{2,}$/.test(card.mask) && new RegExp(`(?<!\\d)${card.mask}(?!\\d)`).test(name)) return true;
+  const own = new Set(wordsOf(card.name).filter((w) => w.length >= 3 && !/^\d+$/.test(w) && !CARD_WORDS.has(w) && !bank.includes(w)));
+  const between = new Set([...wordsOf(card.name), ...bank]);
+  const paidBeside = (i: number, step: 1 | -1) => {
+    for (let j = i + step; j >= 0 && j < tokens.length; j += step) {
+      if (PAY_WORDS.has(tokens[j])) return true;
+      if (!between.has(tokens[j])) return false;
+    }
+    return false;
+  };
+  if (tokens.some((t, i) => own.has(t) && (paidBeside(i, 1) || paidBeside(i, -1)))) return true;
+  if (card.mask && /^\d{4}$/.test(card.mask) && new RegExp(`(?<!\\d)${card.mask}(?!\\d)`).test(name)) return true;
   // The bank's name, whole and in order, and a card word.
   const at = wordsOf(name).join(' ');
   return bank.length > 0 && ` ${at} `.includes(` ${bank.join(' ')} `) && ['card', 'visa', 'mastercard'].some((w) => said.has(w));
