@@ -85,7 +85,8 @@ export type Group = (typeof GROUPS)[number][0];
  *  is shown something read from it, or worked out from it (a setting that
  *  decides what a share shows is seen, in that share). Plaid and the
  *  connectors are written by hand, as where a kind came from; the other three
- *  are held to the code by test/inventory-seers.test.ts, which records every
+ *  are held to the code by test/inventory-seers.test.ts, which stores
+ *  something of every kind (test/seers-fixture.ts) and then records every
  *  family each of them is answered from. */
 export type Seer = 'plaid' | 'connector' | 'shared' | 'api' | 'email';
 export const SEERS: Readonly<Record<Seer, string>> = {
@@ -255,7 +256,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Its name and bank, kept after you disconnect the bank, so its history still has a name.',
     unit: ACCOUNT,
     kept: 'A bank you disconnect',
-    seen: ['plaid', 'shared'],
+    seen: ['plaid', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'account-links': {
@@ -495,6 +496,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Kept so that linking the account again says them again.',
     unit: ACCOUNT,
     kept: 'A bank you disconnect',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'carried-imported-twins': {
@@ -565,6 +567,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Accounts you stopped tracking through SimpleFIN or Lunch Flow',
     unit: ACCOUNT,
     kept: BOTH_CONNECTORS,
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'connector-requests': {
@@ -702,6 +705,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Which bank transactions stand for rows you imported',
     unit: CONNECTION,
     kept: 'Your data',
+    seen: ['shared', 'api', 'email'],
     plain: ITEM_IDS,
   },
   imports: {
@@ -760,6 +764,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Transactions brought back from a download',
     unit: ENTRY,
     kept: 'A download you brought back',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'review-settings': {
