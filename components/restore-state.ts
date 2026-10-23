@@ -186,6 +186,16 @@ export function leftOutLines(left: Readonly<Record<string, number>>, never: { ap
   return out;
 }
 
+/** "Mar 13, 2024": a calendar day, as the card says one (a day is no
+ *  instant: read in UTC, so it is the same day everywhere). */
+export const calendarDay = (d: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${d}T00:00:00Z`));
+
+/** The accounts the file says ended, which count here as they did there
+ *  (lib/user-restore/file.ts Preview `counted`), in words. */
+export function countedLines(counted: readonly { institution_name: string; name: string | null; mask: string | null; day: string }[]): string[] {
+  return counted.map((a) => `${a.institution_name} ${accountWords(a)} ended in your other copy on ${calendarDay(a.day)}: its transactions up to then count here too, as they did there`);
+}
+
 /** The API tokens made here (app/api/user-restore, with the scan): they
  *  stay through a restore, and read what it brings back. */
 export type TokensNow = { kept: number; writing: number };

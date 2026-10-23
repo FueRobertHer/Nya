@@ -28,8 +28,9 @@ const { restoredAnswersStore, userRestoreStore } = await import('@/lib/user-rest
 const { connectionsStore, connectorAccountsStore } = await import('@/lib/connectors/store');
 const { institutionRef } = await import('@/lib/connectors/institutions');
 const { removeItem } = await import('@/lib/storage');
-const { EXPORTED, downloadText, restoreAll, connectAgain, call } = await import('./restore-run');
-const { NOV, month, every, shared } = await import('./restore-readers');
+const { EXPORTED, downloadText, restoreAll, connectAgain, call, planned } = await import('./restore-run');
+const { NOV, JAN, month, every, shared } = await import('./restore-readers');
+const { countedLines } = await import('@/components/restore-state');
 
 const ctx = TEST_CTX;
 
@@ -233,5 +234,57 @@ describe('what the card is told', () => {
   test('an answer that can’t be read is said, never counted', async () => {
     await fake.hset(ctxKey('restored-answers'), { acc_chk: 'not a value Nya wrote' });
     expect((await call('GET', '/api/user-restore')).body.answers.unreadable).toBe(true);
+  });
+});
+
+describe('a file that says an account ended', () => {
+  /** The old copy, its checking account closed on Jan 3 there, downloaded;
+   *  then this account emptied again, to bring it back. */
+  async function endedThere() {
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    await seedOld(fake, ctx);
+    await markEnded(ctx, 'acc_chk', { state: 'closed', on: '2026-01-03' }, { type: 'depository', label: { name: 'Checking', institution: 'Chase', mask: '1111' }, item_id: 'item_chase', currency: 'USD' });
+    const text = await downloadText(EXPORTED);
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    return text;
+  }
+
+  test('counts it here as it counted there, up to its end, by the file’s word; the preview says so', async () => {
+    const text = await endedThere();
+    const { p } = await planned(text);
+    expect(countedLines(p.counted)).toEqual(['Chase Checking ••1111 ended in your other copy on Jan 3, 2026: its transactions up to then count here too, as they did there']);
+    await restoreAll(text);
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toMatchObject({ counted: { by: 'file', ended: null } });
+    // The card, which didn't end there, waits for an answer.
+    expect(await restoredAnswersStore.get(ctx, 'acc_card')).toBeNull();
+    expect(await month(NOV)).toEqual(every(61.2));
+    expect(await month(JAN)).toEqual(every(4.5, JAN));
+  });
+
+  test('one that didn’t end counts nothing until it is answered for', async () => {
+    const { p } = await planned(OLD);
+    expect(p.counted).toEqual([]);
+    expect(await restoredAnswersStore.getAll(ctx)).toEqual(new Map());
+  });
+});
+
+describe('a download of a copy that answered, brought back again', () => {
+  test('keeps its answers and its ends: every reader counts as it did', async () => {
+    await answer({ action: 'count', account_ids: ['acc_chk'], end: CLOSED });
+    const was = await restoredAnswersStore.get(ctx, 'acc_chk');
+    const text = await downloadText(new Date());
+    expect(JSON.parse(text)['restored-answers']).toHaveLength(1);
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    await restoreAll(text);
+    expect(await restoredAnswersStore.get(ctx, 'acc_chk')).toEqual(was);
+    expect((await lifecycleStore.get(ctx, 'acc_chk'))!.lifecycle).toEqual(CLOSED);
+    expect(await month(NOV)).toEqual(every(61.2));
+    expect(await shared(NOV)).toBe(61.2);
   });
 });

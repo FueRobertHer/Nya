@@ -274,6 +274,43 @@ export function accountsOf(c: Collected): { restored: RestoredAccountFacts[]; di
   return { restored, directory };
 }
 
+/** The accounts a restore brings back from the file's Plaid banks
+ *  (accountsOf `restored`) that the file says ended, each with its day: the
+ *  file's own ends, applied through its links as every reader applies one
+ *  (lib/lifecycle.ts effectiveLifecycle: an account's own entry first, else
+ *  the newest of its ids'). The old copy counted their rows up to that end,
+ *  so the finish answers count for them (lib/user-restore/commit.ts
+ *  fileAnswers), and the preview says so. Pure. */
+export function endedInFile(c: Collected, restored: readonly RestoredAccountFacts[]): { account: RestoredAccountFacts; day: string }[] {
+  const links = new Map<string, string>();
+  for (const e of c.entries.get('account-links') ?? []) if (isRecord(e.value) && typeof e.value.to === 'string') links.set(e.id, e.value.to);
+  const rootOf = (id: string) => {
+    const seen = new Set<string>();
+    let at = id;
+    while (links.has(at) && !seen.has(at)) {
+      seen.add(at);
+      at = links.get(at)!;
+    }
+    return at;
+  };
+  const best = new Map<string, { own: boolean; set_at: string; day: string | null }>();
+  const entries = [...(c.entries.get('account-lifecycle') ?? [])].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  for (const e of entries) {
+    if (!isRecord(e.value) || !isRecord(e.value.lifecycle)) continue;
+    const l = e.value.lifecycle;
+    const day = l.state === 'closed' || l.state === 'left' ? l.on : l.state === 'untracked' ? l.from : null;
+    const root = rootOf(e.id);
+    const own = root === e.id;
+    const set_at = typeof e.value.set_at === 'string' ? e.value.set_at : '';
+    const held = best.get(root);
+    if (!held || (!held.own && (own || set_at > held.set_at))) best.set(root, { own, set_at, day: typeof day === 'string' ? day : null });
+  }
+  return restored.flatMap((account) => {
+    const day = best.get(account.account_id)?.day;
+    return day ? [{ account, day }] : [];
+  });
+}
+
 /** Each account's first and last day of balance history in the file. */
 function historySpans(c: Collected): Map<string, { first: string; last: string }> {
   const out = new Map<string, { first: string; last: string }>();
@@ -492,6 +529,9 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...entries('connector-ended'),
     ...legacy('hidden', byId(hidden)),
     ...entries('account-lifecycle'),
+    // What was answered about the accounts restored there (lib/user-restore/
+    // answers.ts): beside the accounts, ends and connector accounts it names.
+    ...entries('restored-answers'),
     ...legacy('links', byId(linkRecords)),
     ...legacy('declined', byId(declined)),
   ];

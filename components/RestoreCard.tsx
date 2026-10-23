@@ -43,7 +43,7 @@ import { formatMoney, plainNumber } from '@/lib/format';
 import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
-import { accountWords, broughtLines, canUndo, leftOutLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -668,6 +668,7 @@ export function PreviewView({
   const p = loaded.preview;
   const brought = broughtLines(p.brought, p.history);
   const left = leftOutLines(p.left_out, p.collected.never);
+  const counted = countedLines(p.counted ?? []);
   return (
     <div className="restore-section">
       <div className="section-label">What comes back</div>
@@ -683,6 +684,16 @@ export function PreviewView({
           <li key={l}>{l}</li>
         ))}
       </ul>
+      {counted.length > 0 && (
+        <>
+          <div className="section-label">Accounts that ended</div>
+          <ul className="restore-list">
+            {counted.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
       {sharing.length > 0 && (
         <>
           <div className="section-label">Shared already</div>
