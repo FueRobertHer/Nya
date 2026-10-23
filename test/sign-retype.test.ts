@@ -443,7 +443,7 @@ describe('a retype’s re-sign, day by day', () => {
 
   test('stopped at its time, its kind changed, and the nightly snapshot finishes it', async () => {
     const before = await readers([card]);
-    expect(await retypeWithHistory(ctx, card, 'credit', { until: 0 })).toEqual({ changed: true, job: { negated: 0, left: [], pending: true } });
+    expect(await retypeWithHistory(ctx, card, 'credit', { until: 0 })).toEqual({ changed: true, job: { negated: 0, left: [], pending: true, stalled: true } });
     // Stopped before it read the history: planned by the next run.
     expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'retype', from: 'depository', to: 'credit' });
     expect((await signJobStore.get(ctx, card))!.plan).toBeUndefined();
@@ -592,5 +592,63 @@ describe('a retype, beside what else the day holds', () => {
     await finishSignJobs(ctx, { nightly: true });
     expect(await signJobStore.ids(ctx)).toEqual([]);
     expect(historyNow()).toEqual(raw);
+  });
+});
+
+describe('a retype, in a large household or asked twice', () => {
+  test('more than 24 accounts holding a balance, most at Plaid: its own still weighed, and turned over', async () => {
+    // Twenty-four more accounts at the bank, in the directory as checking, on Friday.
+    const map: Record<string, number> = { chk: 1000, [card]: -300 };
+    for (let i = 0; i < 24; i++) {
+      const id = `plaid_${i}`;
+      map[id] = 100 + i;
+      await fake.hset(ctxKey('accounts:directory'), {
+        [id]: await encrypt(ctx, JSON.stringify({ item_id: 'item_bank', institution_id: 'ins_1', institution_name: 'Bank', name: `Acct ${i}`, official_name: null, mask: null, type: 'depository', subtype: 'checking', persistent_account_id: null, first_seen: '2026-09-01', last_seen: FRI })),
+      });
+    }
+    await put('history:accounts', { [FRI]: map });
+    await put('history:net-worth', { [FRI]: String(Object.values(map).reduce((a, b) => a + b, 0)) });
+    const r = await toCard();
+    expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 1, null]);
+    expect((await stored('history:accounts', FRI))[card]).toBe(300);
+  });
+
+  test('asked for the kind it already has: said so, nothing changed', async () => {
+    await retype('credit');
+    const raw = historyNow();
+    const r = await toCard();
+    expect([r.status, r.body.retyped, r.body.retype_note]).toEqual([200, 0, 'Euro card is already what you chose: nothing to change.']);
+    expect(historyNow()).toEqual(raw);
+  });
+
+  test('finished nights later: its settle record decides the day it began again too', async () => {
+    const real = history.negateAccountOn;
+    const late = await encrypt(ctx, JSON.stringify({ chk: 1000, [card]: -300 }));
+    let wrote = false;
+    const racing = spyOn(history, 'negateAccountOn').mockImplementation(async (...args: any[]) => {
+      // Cut off at the step after today's, which a late recording then rewrites.
+      if (wrote) throw new Error('the function was stopped');
+      const out = await (real as any)(...args);
+      if (args[1] === 'r' && args[2] === DAY) {
+        await fake.hset(ctxKey('history:accounts'), { [DAY]: late });
+        wrote = true;
+      }
+      return out;
+    });
+    try {
+      await quiet(() => toCard());
+    } finally {
+      racing.mockRestore();
+    }
+    expect((await signJobStore.get(ctx, card))!.kind).toBe('retype');
+    // Finished two nights later.
+    setSystemTime(new Date(NOW + 2 * 86_400_000));
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    expect(await signJobStore.get(ctx, card)).toMatchObject({ kind: 'settle', began: DAY });
+    expect((await stored('history:accounts', DAY))[card]).toBe(-300);
+    setSystemTime(new Date(NOW + 2 * 86_400_000 + SETTLE_AFTER_MS));
+    await quiet(() => finishSignJobs(ctx, { nightly: true }));
+    expect(await stored('history:accounts', DAY)).toEqual({ chk: 1000, [card]: 300 });
+    expect(await signJobStore.ids(ctx)).toEqual([]);
   });
 });

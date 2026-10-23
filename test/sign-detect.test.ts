@@ -247,6 +247,19 @@ describe('a day nothing decides', () => {
     expect(await dry()).toEqual([]);
   });
 
+  test('more than 24 manual accounts holding a balance on a day: nothing proven there, and said why', async () => {
+    const map: Record<string, number> = {};
+    for (let i = 0; i < 25; i++) {
+      await manual(`manual_${i}`, 'depository', 100 + i);
+      map[`manual_${i}`] = 100 + i;
+    }
+    // The first of them a card on Friday: counted owed.
+    await put('history:accounts', { [FRI]: map });
+    await put('history:net-worth', { [FRI]: String(Object.values(map).reduce((a, b) => a + b, 0) - 200) });
+    const found = (await dry()).find((f) => f.account_id === 'manual_0');
+    expect(found).toMatchObject({ days: {}, undetermined: { count: 1, days: [FRI], why: { 'too-many': 1 } } });
+  });
+
   test('a run of days counted the other way reaching an end nothing marks refuses the repair', async () => {
     // Flipped to a card: measured without a total on the 9th, before Friday's flip.
     await manual('manual_s', 'credit', 5000);

@@ -315,7 +315,7 @@ const LEFT_WHY: Record<Why, string> = {
   'no-total': 'recorded without a total',
   ambiguous: 'whose total more than one set of your accounts could explain',
   untyped: 'with an account on it whose kind Nya no longer knows',
-  'too-many': `with more than ${MAX_WEIGHED} accounts holding a balance`,
+  'too-many': `with more than ${MAX_WEIGHED} manual, SimpleFIN or Lunch Flow accounts holding a balance`,
   unexplained: 'whose total no change of kind explains',
   unreadable: 'part of which can’t be read',
 };
@@ -349,11 +349,14 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
   const held: string[] = [];
   const failed: string[] = [];
   const turning: string[] = [];
+  /** Already the kind asked (changed elsewhere since the sheet was read). */
+  const already: string[] = [];
   const left: [string, readonly [string, Why][]][] = [];
   const across = async (c: { account_id: string; type: ManualType }) => {
     try {
       const r = await retypeWithHistory(ctx, c.account_id, c.type, { until });
       if (r.changed) changed.add(c.account_id);
+      else if (!r.job && (await connectorAccountsStore.get(ctx, c.account_id))?.type === c.type) already.push(nameOf(c.account_id));
       if (r.job?.pending) turning.push(nameOf(c.account_id));
       if (r.job?.left.length) left.push([nameOf(c.account_id), r.job.left]);
     } catch (err) {
@@ -383,16 +386,19 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
   for (let i = 0; i < rest.length; i += MANY_AT_ONCE) {
     const chunk = rest.slice(i, i + MANY_AT_ONCE);
     let here: string[] = [];
+    let same: string[] = [];
     let crossesNow: typeof chunk = [];
     await connectorAccountsStore.updateMany(
       ctx,
       chunk.map((c) => c.account_id),
       (stored) => {
         here = []; // this may run more than once
+        same = [];
         crossesNow = [];
         const writes = new Map<string, ConnectorAccount | null>();
         for (const c of chunk) {
           const a = stored.get(c.account_id);
+          if (a && a.type === c.type) same.push(c.account_id);
           if (!a || a.type === c.type) continue;
           if (isOwedType(a.type) !== isOwedType(c.type)) {
             crossesNow.push(c);
@@ -405,6 +411,7 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
       }
     );
     for (const id of here) changed.add(id);
+    for (const id of same) already.push(nameOf(id));
     late.push(...crossesNow);
   }
   for (const c of late) await across(c);
@@ -420,6 +427,7 @@ export async function retypeAccountsReport(ctx: Ctx, changes: { account_id: stri
     notes.push(`${listed(held)} ${held.length === 1 ? 'wasn’t' : 'weren’t'} changed: an earlier change to ${held.length === 1 ? 'it is' : 'them is'} still being finished, or ${held.length === 1 ? 'it is' : 'they are'} being forgotten. Try again after Nya’s next daily update.`);
   }
   if (failed.length > 0) notes.push(`${listed(failed)} couldn’t be changed. Try again.`);
+  if (already.length > 0) notes.push(`${listed(already)} ${already.length === 1 ? 'is' : 'are'} already what you chose: nothing to change.`);
   if (turning.length > 0) {
     notes.push(
       `${listed(turning)} ${turning.length === 1 ? 'was' : 'were'} changed, but not every earlier day of ${turning.length === 1 ? 'its' : 'their'} history could be turned over to match yet: Nya’s next daily update finishes it, and until then some of those days may count the other way.`

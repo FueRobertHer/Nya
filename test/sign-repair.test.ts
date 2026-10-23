@@ -353,7 +353,7 @@ describe('the legacy estimate record, held flat for every estimated day', () => 
 describe('a repair under way', () => {
   test('stopped at its time, it says so, and the next run finishes it', async () => {
     await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
-    expect(await runSignJob(ctx, 'manual_eur', Date.now() - 1)).toEqual({ negated: 0, left: [], pending: true });
+    expect(await runSignJob(ctx, 'manual_eur', Date.now() - 1)).toEqual({ negated: 0, left: [], pending: true, stalled: true });
     expect(await signJobStore.has(ctx, 'manual_eur')).toBe(true);
     expect(await runSignJob(ctx, 'manual_eur')).toEqual({ negated: 3, left: [] });
     expect(await pendingIds()).toEqual([]);
@@ -473,5 +473,67 @@ describe('a repair cut off, then the history rewritten', () => {
     }
     await quiet(() => finishSignJobs(ctx, { nightly: true }));
     for (const d of EST) expect([d, await stored('history:accounts:est:flatd', d)]).toEqual([d, { manual_eur: 5000, manual_jar: 5000 }]);
+  });
+});
+
+describe('a long repair, a little each night', () => {
+  /** Runs `fn` with the clock moving on `ms` at every turning over. */
+  const slow = async <T>(ms: number, fn: () => Promise<T>): Promise<{ out: T; calls: string[] }> => {
+    const real = history.negateAccountOn;
+    const calls: string[] = [];
+    const ticking = spyOn(history, 'negateAccountOn').mockImplementation(async (...args) => {
+      calls.push(`${args[1]}:${args[2]}`);
+      setSystemTime(new Date(Date.now() + ms));
+      return real(...args);
+    });
+    try {
+      return { out: await fn(), calls };
+    } finally {
+      ticking.mockRestore();
+    }
+  };
+
+  test('each night starts where the last stopped, never going over a day twice', async () => {
+    // Forty more days counted as savings, before Friday.
+    for (let i = 0; i < 40; i++) {
+      const d = new Date(Date.parse('2026-07-01T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10);
+      await put('history:accounts', { [d]: { chk: 1000, manual_eur: 5000 } });
+      await put('history:net-worth', { [d]: '6000' });
+    }
+    // Cut off after ten.
+    await cutAt(11, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    const job = (await signJobStore.get(ctx, 'manual_eur'))!;
+    // What it went through is out of the plan: 41 recorded days and 3 estimated, less ten.
+    expect([job.plan!.r!.length, job.plan!.f!.length]).toEqual([31, 3]);
+    const seen: string[] = [];
+    for (let night = 1; night <= 6 && (await pendingIds()).length > 0; night++) {
+      // A second of time a night, a tenth of one for each day.
+      const { calls } = await slow(100, () => quiet(() => finishSignJobs(ctx, { budgetMs: 1000, nightly: true })));
+      expect(calls.length).toBeGreaterThan(0);
+      seen.push(...calls);
+      expect((await signJobStore.get(ctx, 'manual_eur'))?.failures ?? 0).toBe(0);
+    }
+    expect(await pendingIds()).toEqual([]);
+    expect(seen.length).toBe(34);
+    expect(new Set(seen).size).toBe(34);
+    for (const [d] of job.plan!.r!) expect([d, (await stored('history:accounts', d)).manual_eur]).toEqual([d, -5000]);
+  });
+
+  test('a night that runs out of time before a single day counts as failing, and three stop it', async () => {
+    await cutAt(2, () => ops({ container: ctx.container, account_id: 'manual_eur', repair: true }));
+    // Something slow before its first day, each night.
+    const slowStart = spyOn(history, 'splitLegacyFlat').mockImplementation(async () => {
+      setSystemTime(new Date(Date.now() + 2000));
+    });
+    try {
+      for (let night = 1; night <= 4; night++) await quiet(() => finishSignJobs(ctx, { budgetMs: 1000, nightly: true }));
+    } finally {
+      slowStart.mockRestore();
+    }
+    expect(await signJobStore.get(ctx, 'manual_eur')).toMatchObject({ failures: 3, error: 'Stalled' });
+    expect((await ops({ container: ctx.container })).body.accounts).toEqual([
+      expect.objectContaining({ account_id: 'manual_eur', pending: { kind: 'repair', failures: 3, error: 'Stalled', stopped: true } }),
+    ]);
+    await expect(forgetEarlierAccount(ctx, 'manual_eur')).rejects.toThrow(SIGN_JOB_STOPPED);
   });
 });

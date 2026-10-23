@@ -31,10 +31,12 @@
 // labelled. One in every explanation was counted the other way that day under
 // each of them ('flip'); one in some but not all can't be told ('ambiguous':
 // two accounts flipped together whose values add up to a third's, a held 300
-// beside an owed 300); one in none was counted as now ('ok'). With none, a
-// value of an account whose type isn't known, more than MAX_WEIGHED accounts
-// holding a balance, or anything unreadable, nothing is proven ('unknown',
-// with why). Estimated days the same, against the estimated total, the walked
+// beside an owed 300); one in none was counted as now ('ok'). Past
+// MAX_WEIGHED accounts holding a balance, only the candidates are weighed,
+// every other account taken as counted as now, so the proof leans on that.
+// With no explanation, a value of an account whose type isn't known, more
+// than MAX_WEIGHED candidates holding a balance, or anything unreadable,
+// nothing is proven ('unknown', with why). Estimated days the same, against the estimated total, the walked
 // map and that day's flat record. A value of 0 needs nothing.
 //
 // INFERRED FROM NEIGHBOURS. A day without a total (a partial day, a value
@@ -61,9 +63,11 @@
 // planned value, in the right sign.
 // So nothing is ever turned over twice, and a job cut off part way is
 // finished by running it again: by the request that started it, by the
-// nightly snapshot (within its own small budget, counting a night it fails;
-// past MAX_FAILED_NIGHTS it is left to the operator's dry run) and the
-// download (finishSignJobs), or by the operator. Before running a saved plan
+// nightly snapshot (within its own small budget, counting a night it fails
+// or runs out of time before going through a single day; past
+// MAX_FAILED_NIGHTS it is left to the operator's dry run) and the download
+// (finishSignJobs), or by the operator. A run that stops takes what it went
+// through out of the plan, so the next starts where it left off. Before running a saved plan
 // the account's kind is checked again: no longer on the side it was planned
 // for (changed back under the release before, say), the job is dropped with
 // words and nothing more is turned over. Every total stays as recorded; the
@@ -124,8 +128,9 @@ const LAYERS = SIGN_LAYERS;
  *  stops between the maps it reads or the days it turns over. */
 export const JOB_BUDGET_MS = 90_000;
 
-/** At most this many accounts holding a balance on one day are weighed; past
- *  it the day is 'unknown' for every candidate on it (never guessed). */
+/** At most this many accounts holding a balance on one day are weighed: past
+ *  it the candidates alone, and past it among them too the day is 'unknown'
+ *  for every candidate on it (never guessed). */
 export const MAX_WEIGHED = 24;
 /** Past this many explanations of one day, every candidate is 'ambiguous'. */
 const MAX_EXPLANATIONS = 256;
@@ -276,13 +281,17 @@ function labelDay(breakdown: Record<string, unknown>, total: number | null, type
     sum += c;
     values.push([k, cents(c)]);
   }
-  if (why === null && values.length > MAX_WEIGHED) why = 'too-many';
+  // Past the cap, the candidates alone are weighed, every other account
+  // taken as counted as now (see the header); past it among them too,
+  // nothing is proven.
+  const weighed = values.length > MAX_WEIGHED ? values.filter(([k]) => candidates.has(k)) : values;
+  if (why === null && weighed.length > MAX_WEIGHED) why = 'too-many';
   const labels = new Map<string, Label>();
   let balanced = false;
   if (why === null) {
     const gap = cents(sum) - cents(total!);
     balanced = gap === 0;
-    const { count, surely, involved } = explanations(values, gap);
+    const { count, surely, involved } = explanations(weighed, gap);
     if (count === 0) why = 'unexplained';
     else for (const k of present) labels.set(k, surely.has(k) ? 'flip' : involved.has(k) ? 'ambiguous' : 'ok');
   }
@@ -499,21 +508,40 @@ async function labelNow(ctx: Ctx, types: Types, id: string, layer: SignLayer, da
  *  proves it so ('ok'), or every account as it reads now adds up to its
  *  total; otherwise, proven the other way or not told, the plan's reading
  *  stands. Stops between days past `until`, answering what is left. */
-async function execute(ctx: Ctx, id: string, job: SignJob, plan: SignPlan, until: number): Promise<{ negated: number; stopped: boolean }> {
+async function execute(ctx: Ctx, id: string, job: SignJob, plan: SignPlan, until: number): Promise<{ negated: number; visited: number; rest: SignPlan | null }> {
   await splitLegacyFlat(ctx);
   const types = new Types(ctx);
+  const steps = LAYERS.flatMap((layer) => (plan[layer] ?? []).map(([date, value]) => ({ layer, date, value })));
+  const restFrom = (i: number): SignPlan => {
+    const rest: SignPlan = {};
+    for (const { layer, date, value } of steps.slice(i)) (rest[layer] ??= []).push([date, value]);
+    return rest;
+  };
+  // What a run has been through is taken out of the plan when it stops (out
+  // of time, or cut off), so the next one starts where it left off.
+  const keep = async (i: number) => {
+    const rest = restFrom(i);
+    await signJobStore.update(ctx, id, (cur) => (cur && cur.tag === job.tag ? { ...cur, plan: rest } : cur));
+  };
   let negated = 0;
-  for (const layer of LAYERS) {
-    for (const [date, value] of plan[layer] ?? []) {
-      if (Date.now() > until) return { negated, stopped: true };
+  let i = 0;
+  try {
+    for (; i < steps.length; i++) {
+      if (Date.now() > until) break;
+      const { layer, date, value } = steps[i];
       const still = async (map: Record<string, number>) => {
         const now = await labelNow(ctx, types, id, layer, date, map);
         return !now || (now.label !== 'ok' && !now.balanced);
       };
       if ((await negateAccountOn(ctx, layer, date, id, value, job.tag, still)) === 'done') negated++;
     }
+  } catch (err) {
+    if (i > 0) await keep(i).catch(() => {});
+    throw err;
   }
-  return { negated, stopped: false };
+  if (i === steps.length) return { negated, visited: i, rest: null };
+  if (i > 0) await keep(i);
+  return { negated, visited: i, rest: restFrom(i) };
 }
 
 /** The account's hidden and lifecycle entries take the kind it is read as
@@ -531,6 +559,9 @@ export type JobOutcome = {
   left: [string, Why][];
   /** Stopped at its time, to be finished by the next run. */
   pending?: true;
+  /** And stopped before going through a single day (or before the history
+   *  was read): a night that does this counts as failing. */
+  stalled?: true;
   /** Dropped, the account's kind no longer the one it was planned for. */
   abandoned?: string;
 };
@@ -568,7 +599,9 @@ const dayBefore = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) - 86_
 
 /**
  * A settle record's run (see the header): the day its job finished and the
- * day before, each decided again by its total, and turned over where it
+ * day before, and the day it began and the day before (a recording that
+ * read the old kind lands just after the change, and the job may have
+ * finished nights later), each decided again by its total, and turned over where it
  * proves the account counted the other way. Answers how many; the record
  * goes, also when its account is gone, of another kind, or being forgotten.
  */
@@ -578,8 +611,8 @@ async function settle(ctx: Ctx, id: string, job: SignJob): Promise<number> {
   const forgetting = !!(await getHiddenAccounts(ctx)).get(id)?.forget_tag;
   if (now !== null && isOwedType(now) === isOwedType(job.to) && !forgetting) {
     const types = new Types(ctx);
-    const day = job.at.slice(0, 10);
-    for (const date of [dayBefore(day), day]) {
+    const days = [job.at.slice(0, 10), ...(job.began ? [job.began] : [])];
+    for (const date of [...new Set(days.flatMap((d) => [dayBefore(d), d]))].sort()) {
       const { map } = await readSignDay(ctx, 'r', date);
       const plain = map ? await readSignValue(ctx, map) : null;
       let value: unknown;
@@ -623,7 +656,7 @@ async function runLocked(ctx: Ctx, id: string, until: number): Promise<JobOutcom
     try {
       book = await readBook(ctx, until);
     } catch (err) {
-      if (err instanceof OutOfTime) return { negated: 0, left: [], pending: true };
+      if (err instanceof OutOfTime) return { negated: 0, left: [], pending: true, stalled: true };
       throw err;
     }
     const { plan, left } = await retypeReading(book, id, job, now);
@@ -638,12 +671,12 @@ async function runLocked(ctx: Ctx, id: string, until: number): Promise<JobOutcom
     const now = await kindOf(ctx, id);
     if (now === null || isOwedType(now) !== isOwedType(job.to)) return abandon(ctx, id, job, now);
   }
-  const { negated, stopped } = await execute(ctx, id, job, job.plan!, until);
+  const { negated, visited, rest } = await execute(ctx, id, job, job.plan!, until);
   const left = job.left ?? [];
-  if (stopped) return { negated, left, pending: true };
+  if (rest) return { negated, left, pending: true, ...(visited === 0 ? { stalled: true as const } : {}) };
   await retypeEntries(ctx, id, job.to);
   const done = job;
-  const settling: SignJob = { v: 1, kind: 'settle', from: job.from, to: job.to, at: new Date().toISOString(), tag: `sign-${randomUUID()}` };
+  const settling: SignJob = { v: 1, kind: 'settle', from: job.from, to: job.to, at: new Date().toISOString(), tag: `sign-${randomUUID()}`, began: job.at.slice(0, 10) };
   await signJobStore.update(ctx, id, (cur) => (cur && cur.tag === done.tag ? settling : cur));
   await dropFoldProgress(ctx, done.tag);
   await clearCaches(ctx);
@@ -719,8 +752,17 @@ export async function finishSignJobs(ctx: Ctx, opts: { budgetMs?: number; nightl
     try {
       const job = await signJobStore.get(ctx, id);
       if (!job || (job.kind !== 'settle' && (job.failures ?? 0) >= MAX_FAILED_NIGHTS)) continue;
+      // A run given less than half the time (others took the rest) can't say
+      // the job is stuck.
+      const fair = until - Date.now() >= (opts.budgetMs ?? JOB_BUDGET_MS) / 2;
       try {
-        await runSignJob(ctx, id, until);
+        const out = await runSignJob(ctx, id, until);
+        if (opts.nightly && out?.stalled && fair) {
+          // Out of time before going through a single day: a night failed, so
+          // one that never gets anywhere is stopped and named in the dry run.
+          await signJobStore.update(ctx, id, (cur) => (cur && cur.tag === job.tag ? { ...cur, failures: (cur.failures ?? 0) + 1, error: 'Stalled' } : cur));
+          console.error('Balance signs: a pending repair ran out of time before turning anything over');
+        }
       } catch (err) {
         // Another change to accounts holds the lock: tried again later.
         if (err instanceof ForgetRefused) continue;

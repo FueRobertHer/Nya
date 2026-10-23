@@ -41,11 +41,16 @@ export type SignJob = {
   at: string;
   /** The tag its progress is marked under (lib/history.ts). */
   tag: string;
-  /** Planned once its kind is the new one; absent before. */
+  /** A settle record's: the day its job began, decided again too. */
+  began?: string;
+  /** Planned once its kind is the new one; absent before. What a run has
+   *  been through is taken out of it when the run stops, so the next one
+   *  starts where it left off. */
   plan?: SignPlan;
   /** The days it left as they were, each with why nothing says how it was counted. */
   left?: [string, Why][];
-  /** Nights it failed, and the last failure's kind: past MAX_FAILED_NIGHTS
+  /** Nights it failed (or turned nothing over, out of time: 'Stalled'), and
+   *  the last failure's kind: past MAX_FAILED_NIGHTS
    *  the nightly job leaves it to the operator, whose dry run names it. */
   failures?: number;
   error?: string;
@@ -73,7 +78,7 @@ export function isSignJob(v: unknown): v is SignJob {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return false;
   const j = v as Record<string, unknown>;
   return (
-    Object.keys(j).every((k) => ['v', 'kind', 'from', 'to', 'at', 'tag', 'plan', 'left', 'failures', 'error'].includes(k)) &&
+    Object.keys(j).every((k) => ['v', 'kind', 'from', 'to', 'at', 'tag', 'began', 'plan', 'left', 'failures', 'error'].includes(k)) &&
     j.v === 1 &&
     (j.kind === 'retype' || j.kind === 'repair' || j.kind === 'settle') &&
     isText(j.from, 40) &&
@@ -81,6 +86,7 @@ export function isSignJob(v: unknown): v is SignJob {
     isText(j.at, 40) &&
     !Number.isNaN(Date.parse(j.at)) &&
     isText(j.tag, 80) &&
+    (j.began === undefined || (typeof j.began === 'string' && DAY.test(j.began))) &&
     (j.plan === undefined || isPlan(j.plan)) &&
     (j.left === undefined ||
       (Array.isArray(j.left) && j.left.every((e) => Array.isArray(e) && e.length === 2 && typeof e[0] === 'string' && DAY.test(e[0]) && (WHYS as readonly unknown[]).includes(e[1])))) &&
