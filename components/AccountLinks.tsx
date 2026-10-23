@@ -13,13 +13,16 @@
 //   - collapsed, linking any earlier account by hand: no time limit, and
 //     still possible after "Not the same", so a missed match stays fixable;
 //   - collapsed, every earlier account, each with Forget: the user decides
-//     what is kept about accounts they no longer have.
+//     what is kept about accounts they no longer have. Each is named as
+//     lib/earlier-names.ts names it, which the restore card's notes use too:
+//     two that would read the same are told apart by the end of each id.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
 import { formatMoney } from '@/lib/format';
+import { earlierNames } from '@/lib/earlier-names';
 import { Masked } from './HideAmounts';
 
 type Suggestion = {
@@ -218,6 +221,7 @@ export function AccountLinksView({
   const broken = data?.broken ?? [];
   const manual = useMemo(() => data?.manual ?? [], [data]);
   const earlier = useMemo(() => data?.earlier ?? [], [data]);
+  const earlierName = useMemo(() => earlierNames(earlier), [earlier]);
   const [earlierOpen, setEarlierOpen] = useState(open?.earlier ?? false);
   const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
@@ -429,7 +433,7 @@ export function AccountLinksView({
                 net-worth totals don&apos;t change.
               </p>
               {earlier.map((e) => {
-                const name = e.label ?? 'Balance history';
+                const name = earlierName.get(e.id) ?? e.label ?? 'Balance history';
                 return (
                   <div key={e.id} className="account-link-linked">
                     <span>
