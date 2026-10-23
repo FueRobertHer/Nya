@@ -415,6 +415,18 @@ export function recordSave(base: FirePlan, s: ScenarioChanges, next: FirePlan): 
   return { ok: { set, income, expenses, events: s.events } };
 }
 
+/** The changes without leave-outs of Plan items the Plan no longer has
+ *  (nothing to leave out), unless a replacement still names one: they would
+ *  otherwise pile up toward the limit. Every save does this. */
+export function pruneMoot(base: FirePlan, s: ScenarioChanges): ScenarioChanges {
+  const prune = <T extends Item>(items: readonly Item[], ch: ListChanges<T>): ListChanges<T> => {
+    const ids = new Set(items.map((x) => x.id));
+    const adds = new Set(ch.add.map((x) => x.id));
+    return { leaveOut: ch.leaveOut.filter((id) => ids.has(id) || adds.has(id)), add: ch.add };
+  };
+  return { ...s, income: prune(base.income, s.income), expenses: prune(base.expenses, s.expenses) };
+}
+
 /** The scenario without one of its settings: that one follows the Plan. */
 export function unsetChange(s: ScenarioChanges, field: SetField): ScenarioChanges {
   const set = { ...s.set };

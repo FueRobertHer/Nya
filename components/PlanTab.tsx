@@ -110,6 +110,7 @@ import {
   currencyFor,
   hasAmounts,
   otherCurrency,
+  pruneMoot,
   recordSave,
   resolveScenario,
   restoreItem,
@@ -503,7 +504,8 @@ export default function PlanTab({
   // currency its amounts are in (the Plan's when this is its first).
   const persist = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string> => {
     if (!entry) return false;
-    const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, changes, planCurrency), ...changes };
+    const kept = pruneMoot(basePlan, changes);
+    const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, kept, planCurrency), ...kept };
     if (hasAmounts(draft) && draft.currency === null) return 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.';
     const r = await scenarios.save(entry.id, draft, entry.rev);
     return 'ok' in r ? true : r.error;
@@ -522,9 +524,14 @@ export default function PlanTab({
   const formProps = { plan: formPlan, onSave: savers.form, onDone: close, editable: editable && !other, scenario: entry?.name ?? null };
   const scenarioName = entry?.name ?? null;
   const headingRef = useRef<HTMLHeadingElement | null>(null);
+  // Opening one moves focus to its card's heading, and the status line says
+  // which plan the tab shows, so the switch is never silent.
+  const everOpened = useRef(false);
+  if (entry) everOpened.current = true;
   useEffect(() => {
     if (openId !== null) headingRef.current?.focus();
   }, [openId]);
+  const shownStatus = entry ? `Showing the scenario ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
   // "They're in" is offered only once the accounts have all loaded without a
   // problem: the Plan's currency is the one most of them are in, and may
   // read otherwise while they load.
@@ -615,6 +622,9 @@ export default function PlanTab({
       )}
       {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
       {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving} onSave={savers.repair} money={money} />}
+      <div className="visually-hidden" role="status">
+        {shownStatus}
+      </div>
       {scenarioBar}
       {entry && !shown ? (
         scenariosCard

@@ -563,3 +563,14 @@ describe('names and currency', () => {
     expect(otherCurrency({ ...changes({ set: { targetAge: 50 } }), currency: 'USD' }, 'EUR')).toBeNull();
   });
 });
+
+describe('saving drops what can’t apply', () => {
+  test('leave-outs of Plan items that are gone, unless a replacement still names one', async () => {
+    const { pruneMoot } = await import('@/lib/fire/scenarios');
+    const orphan = income({ id: 'old' });
+    const s = changes({ income: { leaveOut: ['ss', 'gone', 'old'], add: [orphan] }, expenses: { leaveOut: ['roof', 'x'], add: [] } });
+    const p = pruneMoot(thePlan, s);
+    expect(p.income).toEqual({ leaveOut: ['ss', 'old'], add: [orphan] });
+    expect(p.expenses).toEqual({ leaveOut: ['roof'], add: [] });
+  });
+});
