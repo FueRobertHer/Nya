@@ -74,6 +74,7 @@ import { rememberAccounts } from './last-known';
 import { recordDirectory } from './links';
 import { clearCaches } from './cache';
 import { pruneAccessLog } from './access-log';
+import { pruneChanges } from './api-changes';
 import { nightlyLogIds } from './sharing';
 import { MAIL_BUDGET_MS, prepareNotices, sendNotices, type PendingNotices, type SendOptions } from './connection-notices';
 import { checkContainerKey, ContainerKeyError } from './crypto';
@@ -317,6 +318,9 @@ export async function snapshotData(ctx: Ctx, outbox?: PendingNotices[], live = n
   // The records of showings first (see the header): never throws, and stops
   // taking on more after PRUNE_BUDGET_MS.
   await pruneAccessLog(ctx, Date.now(), live, { until: Date.now() + PRUNE_BUDGET_MS });
+  // The record of changes made with API tokens keeps its window even when
+  // the API goes quiet (lib/api-changes.ts). Never throws.
+  await pruneChanges(ctx, Date.now());
   // The daily fetch from the connectors the person brought (SimpleFIN,
   // lib/connectors/sync.ts), beside Plaid's: a few requests within a deadline
   // shorter than Plaid's worst case. It never throws; its accounts are read

@@ -82,6 +82,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { UnreadableEntriesError, type CounterWindow } from './repo';
 import { apiTokenStore, apiRequestCount, apiWriteCount, apiWriteDays, type ApiToken } from './api-token-store';
+import { forgetClaims } from './api-changes';
 import { getContainer, isContainerId, type ContainerId, type Ctx } from './containers';
 import { clerkEnabled, clerkUserAccess } from './auth-mode';
 import { ownedContainer } from './owners';
@@ -242,6 +243,8 @@ export async function revokeToken(ctx: Ctx, id: string, opts: { unreadable?: boo
   await apiRequestCount.remove(ctx, id).catch(() => {});
   await apiWriteCount.remove(ctx, id).catch(() => {});
   await apiWriteDays.remove(ctx, id, `${id}.creates`).catch(() => {});
+  // And the keys its creates were sent with; what it changed stays recorded.
+  await forgetClaims(ctx, id).catch(() => {});
   return true;
 }
 

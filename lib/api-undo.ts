@@ -19,12 +19,13 @@
 //                         about it, while its account is there and the id is
 //                         nowhere
 //   account created       while its details and balance are as made, it isn't
-//                         hidden, and every row in its book was added by the
-//                         same token: its rows, the account, and its balance on
-//                         every day recorded since, through the app's own
-//                         delete and its own "hide it, then forget it"
-//                         (lib/links.ts), so past totals read as though it
-//                         never was
+//                         hidden or marked closed, and every row in its book
+//                         was added by the same token: its rows, the account,
+//                         and its balance on every day recorded since, through
+//                         the app's own delete and the steps the app's forget
+//                         of a hidden account takes (lib/links.ts
+//                         forgetEarlierAccount, which refuses a manual id), so
+//                         past totals read as though it never was
 //   account changed       its details set back
 //   balance set           set back, if it still holds what was set; a day
 //                         recorded since keeps its point (today's is written
@@ -57,9 +58,10 @@ import { readTagSet, TagError, type Tag } from './tags';
 import { deleteTag, finishDeleting } from './tag-delete';
 import { editTag } from './tag-actions';
 import { rulesStore } from './rules';
-import { getHiddenAccounts, setAccountHidden } from './hidden';
-import { ForgetRefused, forgetEarlierAccount, withLinksLock } from './links';
-import { loggable } from './log-safe';
+import { getHiddenAccounts, markForgetting, setAccountHidden } from './hidden';
+import { dropFoldProgress, foldHiddenAccount, forgetAccountBalances } from './history';
+import { ForgetRefused, withLinksLock } from './links';
+import { lifecycleStore } from './lifecycle';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
@@ -167,22 +169,38 @@ async function undoAccount(ctx: Ctx, c: Change, now: number): Promise<Undone> {
   // Made: taken out whole, while nothing but the token that made it touched it.
   if (accountVersion(cur) !== accountVersion(after) || Math.round(cur.balance * 100) !== Math.round(after.balance * 100)) refuse(CHANGED('The account'));
   if ((await getHiddenAccounts(ctx)).has(id)) refuse('The account was hidden since, so it wasn’t removed: remove it in the app.');
+  if (await lifecycleStore.has(ctx, id)) refuse('The account was marked closed since, so it wasn’t removed: remove it in the app.');
   if (!c.token || !(await rowsAllFrom(ctx, id, c.token.id))) refuse('Transactions were added to the account since in another way, so it wasn’t removed: remove it in the app.');
-  await deleteManualAccount(ctx, id);
-  await invalidate(ctx, true);
-  // Its balance on every day recorded since: hidden, then forgotten, as the
-  // app's own way of taking an account out of past totals. An account no
-  // day recorded has nothing to take out (the forget is refused: nothing
-  // knows it).
-  try {
-    await setAccountHidden(ctx, id, cur.type, true);
-    await withLinksLock(ctx, () => forgetEarlierAccount(ctx, id));
-  } catch (err) {
-    if (!(err instanceof ForgetRefused)) throw err;
-    await setAccountHidden(ctx, id, cur.type, false).catch((e) => console.warn('API undo: a hidden entry was left behind', loggable(e)));
-  }
+  await withLinksLock(ctx, async () => {
+    await deleteManualAccount(ctx, id);
+    await invalidate(ctx, true);
+    await forgetMadeBalances(ctx, id, cur.type, { first: c.at.slice(0, 10), last: new Date(now).toISOString().slice(0, 10) });
+  });
   await invalidate(ctx, true);
   return { before: cur, after: null };
+}
+
+/**
+ * Takes a deleted account's balance out of every day recorded since it was
+ * made, totals included: hidden, folded out of each total point by point,
+ * then its balances removed from every per-account layer, as the app's
+ * forget of a hidden account does (lib/links.ts forgetEarlierAccount, whose
+ * listing refuses a manual id, so its steps are taken here). Under the links
+ * lock, after the delete, so no recording writes the account again. Stopped
+ * part way, the account stays hidden with its progress kept, out of the
+ * totals as a hidden account is, and the undo says it may not have been made.
+ */
+async function forgetMadeBalances(ctx: Ctx, id: string, type: string, life: { first: string; last: string }): Promise<void> {
+  await setAccountHidden(ctx, id, type, true);
+  const entry = (await getHiddenAccounts(ctx)).get(id);
+  if (!entry) throw new Error('The account could not be hidden to take it out of past totals.');
+  const tag = entry.forget_tag ?? crypto.randomUUID();
+  if (!entry.forget_tag) await markForgetting(ctx, id, entry, tag);
+  await foldHiddenAccount(ctx, id, type, tag, life);
+  await dropFoldProgress(ctx, tag);
+  await setAccountHidden(ctx, id, '', false);
+  await forgetAccountBalances(ctx, id);
+  await forgetAccountBalances(ctx, id, { today: true });
 }
 
 async function undoCategory(ctx: Ctx, c: Change): Promise<Undone> {
@@ -291,7 +309,11 @@ export async function undoChange(ctx: Ctx, changeId: string, who: { auth: Authen
   try {
     undone = await reverse(ctx, c, now);
   } catch (err) {
-    await changeStore.remove(ctx, id).catch(() => {});
+    // Refused (what it changed moved since, or the app's own rules): nothing
+    // was undone, so the undo is taken back out. Anything else may have
+    // stopped part way, and says so.
+    if (err instanceof ApiFailure) await changeStore.remove(ctx, id).catch(() => {});
+    else await settleChange(ctx, id, { state: 'failed', error: 'internal' });
     throw err;
   }
   await settleChange(ctx, id, { state: 'done', before: (undone.before as object | null) ?? null, after: (undone.after as object | null) ?? null });
