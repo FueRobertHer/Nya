@@ -9,6 +9,7 @@ mock.module('@clerk/nextjs', () => ({
 const { renderToStaticMarkup } = await import('react-dom/server');
 const { ApiTokensView, RevokeSheet, mcpConfig, shortDay, ACCESS_CHOICES, CHANGES_NOTE } = await import('@/components/ApiTokens');
 const { MAX_TOKENS, REQUESTS_PER_MINUTE } = await import('@/lib/api-limits');
+const { writingIn } = await import('./writing-words');
 
 type Props = Parameters<typeof ApiTokensView>[0];
 
@@ -197,6 +198,9 @@ describe('what a token can do, while this copy lets tokens write', () => {
     expect(t).not.toContain('What it can do');
     expect(t).not.toContain('Reads and makes changes');
     expect(view()).not.toContain('type="radio"');
+    // Nothing of writing at all, a token made to write listed or not.
+    expect(writingIn(t)).toEqual([]);
+    expect(writingIn(text(view({ list: ready([info()]) })))).toEqual([]);
   });
 
   test('on, the choice is a fieldset of three, read chosen, each explained, and the warning under either of the others', () => {
@@ -208,13 +212,17 @@ describe('what a token can do, while this copy lets tokens write', () => {
     for (const c of ACCESS_CHOICES) {
       expect(t).toContain(c.name);
       expect(t).toContain(c.note);
-      expect(html).toContain(`aria-describedby="api-access-${c.value}"`);
+      // Each choice beyond reading is described by the warning about changes too.
+      expect(html).toContain(c.value === 'read' ? 'aria-describedby="api-access-read"' : `aria-describedby="api-access-${c.value} api-access-warning"`);
       expect(html).toContain(`id="api-access-${c.value}"`);
     }
     expect(html).toMatch(/value="read" checked=""|checked="" value="read"|value="read"[^>]*checked/);
     expect(t).not.toContain(CHANGES_NOTE);
     expect(t).toContain('changes nothing unless you choose, when you make it, that it may update balances or make changes');
+    // Said as soon as it appears.
+    expect(html).toMatch(/<div aria-live="polite"><\/div>/);
     for (const access of ['balances', 'write'] as const) {
+      expect(view({ list: writing(), label: 'Claude', access })).toContain('<div aria-live="polite"><p class="panel-note api-access-warning" id="api-access-warning">');
       const chosen = text(view({ list: writing(), label: 'Claude', access }));
       expect(chosen).toContain(CHANGES_NOTE);
       expect(chosen).toContain('a token never gains kinds of changes added to Nya after it was made');

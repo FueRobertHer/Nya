@@ -469,12 +469,12 @@ const STORES: Readonly<Record<string, Entry>> = {
     unit: ['change', 'changes'],
     kept: 'Changes made with API tokens',
     seen: ['api'],
-    plain: 'The day each change was made and the id of the token that made it, as field names.',
+    plain: 'The day each change was made and a reference to the token that made it (worked out from its id, never the id itself), as field names.',
   },
   'api-change-keys': {
     group: 'access',
     name: 'Keys your tokens sent with what they made',
-    about: 'A fingerprint of each key a program sent so that making something twice makes it once, with which change it made.',
+    about: 'A fingerprint of each key a program sent so that making something twice makes it once, with which change it was for and whether that made it, so a key sent again never makes again what you deleted.',
     unit: ['token', 'tokens'],
     kept: 'Requests counted for each API token',
     plain: 'Each token’s id, as a field name.',
@@ -490,10 +490,10 @@ const STORES: Readonly<Record<string, Entry>> = {
   'api-write-days': {
     group: 'access',
     name: 'Changes counted for each API token, by the day',
-    about: 'How many changes each token that can make them has made in the current day, and how many all of them have, for their limits.',
+    about: 'How many changes each token that can make them has made in the current day, and how many all of them have, for their limits; and for each manual account whose balance a token set, that it did today, so the estimated history is rebuilt at most once a day for it.',
     unit: COUNT,
     kept: 'Requests counted for each API token',
-    plain: 'Each token’s id and its counts, as plain text.',
+    plain: 'Each token’s id, and each such manual account’s, with its counts, as plain text.',
   },
   'api-tokens': {
     group: 'access',

@@ -66,6 +66,10 @@ describe('the list', () => {
     expect(t).toContain('Importer through the API');
     expect(html.match(/>Undo<\/button>/g)).toHaveLength(1);
     expect(html.match(/>Forget<\/button>/g)).toHaveLength(1);
+    // Each button is described by the change it acts on.
+    const id = change().id;
+    expect(html).toContain(`<div class="api-change-text" id="api-change-${id}">`);
+    expect(html.match(new RegExp(`aria-describedby="api-change-${id.replaceAll('.', '\\.')}"`, 'g'))).toHaveLength(2);
   });
 
   test('a revoked token is named so; an assistant’s change says so; the app’s undo is yours', () => {

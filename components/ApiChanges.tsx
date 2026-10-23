@@ -163,7 +163,7 @@ export function ApiChangesView({
                 const who = c.token ? `${c.token.label}${c.revoked ? ' (since revoked)' : ''}` : 'You';
                 return (
                   <li key={c.id} className="api-change">
-                    <div className="api-change-text">
+                    <div className="api-change-text" id={`api-change-${c.id}`}>
                       <Masked>{changeSentence(c, names, c.undoes ? byId.get(c.undoes) : undefined)}</Masked>
                       {c.state !== 'done' && <span className="api-change-state"> It may not have been made.</span>}
                     </div>
@@ -174,14 +174,14 @@ export function ApiChangesView({
                     </div>
                     <div className="api-change-actions">
                       {why === null ? (
-                        <button className="secondary" onClick={() => setAsking({ kind: 'undo', change: c, id: c.id })}>
+                        <button className="secondary" onClick={() => setAsking({ kind: 'undo', change: c, id: c.id })} aria-describedby={`api-change-${c.id}`}>
                           Undo
                         </button>
                       ) : (
                         c.op !== 'undo' && !c.undone_by && <span className="api-change-why">{why}</span>
                       )}
                       {!c.forgotten_at && c.state === 'done' && (
-                        <button className="secondary" onClick={() => setAsking({ kind: 'forget', change: c, id: c.id })}>
+                        <button className="secondary" onClick={() => setAsking({ kind: 'forget', change: c, id: c.id })} aria-describedby={`api-change-${c.id}`}>
                           Forget
                         </button>
                       )}

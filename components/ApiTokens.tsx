@@ -53,7 +53,7 @@ export const ACCESS_CHOICES: readonly { value: Access; name: string; note: strin
   {
     value: 'write',
     name: 'Read, and make changes',
-    note: 'Add and change manual accounts and their transactions, categories and tags. It can never delete an account or change its past history, or change your bank’s transactions, sharing, tokens or settings.',
+    note: 'Add, change and delete the transactions entered on your manual accounts, add and change manual accounts, categories and tags, and undo its own changes: an undo deletes what the change made, and an account it made goes with its transactions and its past balances. It can never delete any other account, category or tag, or change your bank’s transactions, sharing, tokens or settings.',
   },
 ];
 
@@ -400,7 +400,7 @@ export function ApiTokensView({
                           value={c.value}
                           checked={access === c.value}
                           onChange={() => setAccess(c.value)}
-                          aria-describedby={`api-access-${c.value}`}
+                          aria-describedby={c.value === 'read' ? `api-access-${c.value}` : `api-access-${c.value} api-access-warning`}
                         />
                         <span>
                           <span className="lifecycle-choice-name">{c.name}</span>
@@ -410,7 +410,14 @@ export function ApiTokensView({
                         </span>
                       </label>
                     ))}
-                    {access !== 'read' && <p className="panel-note api-access-warning">{CHANGES_NOTE}</p>}
+                    {/* Said as soon as a choice beyond reading is made. */}
+                    <div aria-live="polite">
+                      {access !== 'read' && (
+                        <p className="panel-note api-access-warning" id="api-access-warning">
+                          {CHANGES_NOTE}
+                        </p>
+                      )}
+                    </div>
                   </fieldset>
                 )}
                 {needsPassword ? (

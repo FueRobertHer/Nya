@@ -4,6 +4,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import SecurityPage from '@/app/security/page';
 import PrivacyPage from '@/app/privacy/page';
 import { CoverageNote, TrustLinks } from '@/components/TrustLinks';
+import { writingIn } from './writing-words';
 import nextConfig from '@/next.config.js';
 import { backupRetention, keepDays, MIN_KEPT } from '@/lib/backup';
 import { backupDaysAtMost, buildDeletionReceipt, PLAID_PORTAL, type DeletionCounts } from '@/lib/deletion-receipt';
@@ -714,11 +715,7 @@ describe('writing through a token, on both pages, only while this copy lets toke
   test('off: nothing of writing on either page', () => {
     delete process.env.API_WRITES_ENABLED;
     mailOn();
-    for (const page of [security(), privacy()]) {
-      for (const words of ['make changes', 'Changes made with API tokens', 'saying what it can do', 'update balances', 'undone or forgotten', 'record of changes']) {
-        expect([words, page.includes(words)]).toEqual([words, false]);
-      }
-    }
+    for (const [name, page] of [['security', security()], ['privacy', privacy()]] as const) expect([name, writingIn(page)]).toEqual([name, []]);
     expect(security()).toContain('A token can read but never change anything');
     expect(security()).toContain('the read-only API, the MCP server and what you share answer nothing from it.');
     expect(privacy()).toContain('Not built yet Writing through the API');
@@ -730,7 +727,7 @@ describe('writing through a token, on both pages, only while this copy lets toke
     const page = security();
     expect(page).toContain('Programs you give an API token to What the API and the MCP server serve (the Developers page lists it)');
     expect(page).toContain(
-      'A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add and change your manual accounts and their transactions, categories and tags, but never delete an account or change its past history, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
+      'A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted).'
     );
     expect(page).not.toContain('and they can never change anything.');
     expect(page).toContain('lets a program read your data, and, if you choose when you make it, change some of it, through Nya’s API and its MCP server');
@@ -740,9 +737,11 @@ describe('writing through a token, on both pages, only while this copy lets toke
     expect(page).toContain('Every change is recorded for 30 days under API tokens, with what it changed, where most can be undone or forgotten.');
     expect(page).toContain('the record of changes made with API tokens, and the short-lived copies');
     expect(page).toContain('for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).');
-    expect(page).toContain('for a token that can make changes, its writes in the current minute and its changes in the current 24 hours');
+    expect(page).toContain('for a token that can update balances or make changes, its writes in the current minute and its changes in the current 24 hours, all your tokens’ changes in the current 24 hours, and the manual accounts whose balance a token set in the current 24 hours, by their ids');
     expect(page).toContain('or an API token is made (saying what it can do)');
     expect(page).toContain('the API and the MCP server answer nothing from it and change nothing in it');
+    // The words the off page is held to not saying are said here.
+    expect(writingIn(page).length).toBeGreaterThan(3);
     expect(page).not.toMatch(/[\u2013\u2014]/);
   });
 
@@ -750,13 +749,17 @@ describe('writing through a token, on both pages, only while this copy lets toke
     process.env.API_WRITES_ENABLED = '1';
     mailOn();
     const page = privacy();
-    expect(page).toContain('With a token you make to make changes, it can also add and change your manual accounts and their transactions, categories and tags; it can be tricked into a change by something it reads');
-    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add and change your manual accounts');
+    expect(page).toContain('With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads');
+    expect(page).toContain('An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts');
     expect(page).toContain('Not built yet Writing your bank’s transactions through the API');
-    expect(page).toContain('Changes made with API tokens 30 days, or until you forget them under API tokens or delete your account');
+    expect(page).toContain('Changes made with API tokens 30 days, or until you delete your account: each change a token made');
+    // A forgotten change keeps its line: Forget removes what it changed.
+    expect(page).toContain('Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the 30 days.');
+    expect(page).toContain('whether a token set each manual account’s balance in the current 24 hours');
     expect(page).toContain('A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.');
     expect(page).toContain('For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours');
     expect(page).toContain('Each is kept as its name, what it can do, the sign-in account that made it');
+    expect(writingIn(page).length).toBeGreaterThan(3);
     expect(page).toContain('or an API token is made (saying what it can do)');
     expect(page).not.toMatch(/[\u2013\u2014]/);
   });

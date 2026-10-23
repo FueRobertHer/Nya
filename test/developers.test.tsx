@@ -2,6 +2,7 @@ import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import './clerk-mock';
 import { FakeRedis, storageMock, registerTestContainer } from './fake-redis';
+import { writingIn } from './writing-words';
 
 // The developer page (app/developers) and its reference (lib/api-examples.ts),
 // held to the code: every endpoint, parameter and tool the code has is on the
@@ -118,6 +119,7 @@ describe('the page', () => {
     expect(p).toContain('JSON over HTTPS, read only. Nothing you call can change your data.');
     expect(p).toContain('Writing anything: adding transactions, changing categories, budgets or balances.');
     expect(p).toContain('Every tool is read only, and reads what the API above reads.');
+    expect(writingIn(p)).toEqual([]);
     for (const word of ['If-Match', 'Idempotency-Key', 'make changes', 'writes', 'version_mismatch', 'Write-RateLimit', 'balances or write', 'undo']) {
       expect([word, p.includes(word)]).toEqual([word, false]);
     }
@@ -146,6 +148,7 @@ describe('the page', () => {
     expect(p).toContain('a token never gains kinds of changes added to Nya after it was made');
     expect(p).toContain('A call never reaches your bank or Plaid.');
     expect(p).toContain('it records no point in your history by itself');
+    expect(writingIn(p).length).toBeGreaterThan(10);
     expect(p).not.toContain('Writing anything: adding transactions');
     expect(p).not.toContain('Nothing you call can change your data.');
     expect(p).toContain('in 10 minutes, or, for a change, more than 30 writes a minute');

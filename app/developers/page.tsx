@@ -166,8 +166,9 @@ export default function DevelopersPage() {
           {writes ? (
             <li>
               Version {API_VERSION}, at <code>{base}/api/v1</code>: JSON over HTTPS. A token reads, unless you chose when
-              you made it that it may update manual accounts’ balances or make changes; then it can add and change your
-              manual accounts and their transactions, your categories and your tags, and nothing else (Writing, below).
+              you made it that it may update manual accounts’ balances or make changes; then it can add, change and delete
+              the transactions entered on your manual accounts, add and change your manual accounts, your categories and
+              your tags, and undo its own changes, and nothing else (Writing, below).
             </li>
           ) : (
             <li>
@@ -315,8 +316,9 @@ export default function DevelopersPage() {
       {writes && (
         <InfoSection title="Writing">
           <p>
-            A token made to make changes can add and change your manual accounts and the transactions on them, your
-            categories and category groups, and your tags, through the endpoints after the ones that read. One made to
+            A token made to make changes can add, change and delete the transactions entered on your manual accounts,
+            and add and change your manual accounts, your categories and category groups, and your tags, through the
+            endpoints after the ones that read. One made to
             update balances can set a manual account’s balance. A call never reaches your bank or Plaid.
           </p>
           <ul>
@@ -337,7 +339,8 @@ export default function DevelopersPage() {
               ASCII characters) with a POST that makes something. Sent again within {IDEMPOTENCY_HOURS} hours with the same
               body, it answers what the first made, as it is now, with <code>Idempotent-Replayed: true</code>, and makes
               nothing; if that was deleted since, the answer says so (<code>deleted: true</code>, with its{' '}
-              <code>change_id</code>). Another body under the same key is refused (422).
+              <code>change_id</code>, or 409 when the first never finished), and nothing is made again. Another body
+              under the same key is refused (422).
             </li>
             <li>
               <strong>Transactions</strong> are written only on manual accounts, and only those entered in the app or by a
@@ -351,7 +354,8 @@ export default function DevelopersPage() {
               again changes nothing.
             </li>
             <li>
-              <strong>Never:</strong> deleting an account, a category, a group or a tag; changing a manual account between
+              <strong>Never:</strong> deleting an account, a category, a group or a tag, but by undoing the change that made
+              it; changing a manual account between
               money held and money owed (the app does that, and redoes its past balances); budgets, rules, splits, groups of
               transactions, goals, sharing, tokens or settings. Some changes reach further than they look: moving a
               category to a group of another kind changes how its transactions count in budgets and reports, and
@@ -370,8 +374,8 @@ export default function DevelopersPage() {
             <code>Write-RateLimit-Limit</code>, <code>Write-RateLimit-Remaining</code> and{' '}
             <code>Write-RateLimit-Reset</code> for the minute, and once it changes something,{' '}
             <code>Write-Day-Limit</code>, <code>Write-Day-Remaining</code> and <code>Write-Day-Reset</code> for the
-            token’s day, beside the <code>RateLimit</code> headers for requests. A balance that changes nothing, and a
-            create sent again, count against no day.
+            token’s day, beside the <code>RateLimit</code> headers for requests. Only a change that is made counts against
+            a day: a refused one, a balance that changes nothing, and a create sent again count against none.
           </p>
           <p>
             <strong>Every change is recorded</strong> for {CHANGES_KEEP_DAYS} days with what it changed, before and after.
@@ -648,7 +652,7 @@ export default function DevelopersPage() {
           {writes ? (
             <li>
               Writing a bank’s transactions, splits, groups of transactions, rules, budgets, goals or settings; deleting
-              accounts, categories, groups or tags.
+              accounts, categories, groups or tags, but by undoing the change that made one.
             </li>
           ) : (
             <li>Writing anything: adding transactions, changing categories, budgets or balances.</li>

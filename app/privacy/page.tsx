@@ -119,7 +119,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
     promise: 'AI features are opt-in and act only on what you point them at.',
     today: `Nya has no AI features of its own, and sends nothing to an AI provider unless you connect one. If you connect an AI assistant to Nya’s MCP server, with a token you make for it, it can read what that token reads (the Developers page lists it) until you revoke the token, and its provider keeps what it reads under its own terms.${
       writes
-        ? ` With a token you make to make changes, it can also add and change your manual accounts and their transactions, categories and tags; it can be tricked into a change by something it reads, so each change is listed for you under API tokens for ${CHANGES_KEEP_DAYS} days, where most can be undone.`
+        ? ` With a token you make to make changes, it can also add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags; it can be tricked into a change by something it reads, so each change is listed for you under API tokens for ${CHANGES_KEEP_DAYS} days, where most can be undone.`
         : ''
     }`,
     next: { label: 'Planned', text: 'Reading receipts: off unless you turn it on, and only for the receipt you choose.' },
@@ -130,7 +130,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
       <>
         You can download everything stored about you, and delete your account and everything stored for you, at any time.
         {writes
-          ? ' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add and change your manual accounts and their transactions, categories and tags (see the '
+          ? ' An API lets programs you choose, each with a token you can revoke, read your data whenever you like and, with a token made for it, add, change and delete the transactions entered on your manual accounts, and add and change your manual accounts, categories and tags (see the '
           : ' A read-only API lets programs you choose read your data whenever you like, with a token you can revoke (see the '}
         <a href="/developers">Developers page</a>).
       </>
@@ -266,7 +266,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
     'Requests counted for each API token',
     `Its count for the current ${RATE_WINDOW_SECONDS}-second window, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens.${
       writes
-        ? ` For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
+        ? ` For a token that can update balances or make changes, also its writes in the current minute and its changes in the current 24 hours (each counted from the first), and all your tokens’ changes in the current 24 hours, whether a token set each manual account’s balance in the current 24 hours, and a fingerprint of each key a program sent so that making something twice makes it once, kept ${IDEMPOTENCY_HOURS} hours: deleted when the token is revoked, or once their window is over. Never in backups.`
         : ''
     }`,
   ],
@@ -274,7 +274,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
     ? ([
         [
           'Changes made with API tokens',
-          `${CHANGES_KEEP_DAYS} days, or until you forget them under API tokens or delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
+          `${CHANGES_KEEP_DAYS} days, or until you delete your account: each change a token made, and each undo, when, which token, through the API or an AI assistant, and what it changed, before and after, encrypted, so a transaction a change deleted is kept with it for those ${CHANGES_KEEP_DAYS} days. Forgetting a change under API tokens removes what it changed, before and after, at once (and what its undo kept); its line, saying when, which token, what kind of change and the id of what it changed, stays for the ${CHANGES_KEEP_DAYS} days. A token that can make changes can read its own; tokens that only read can’t. In your download and in backups; never brought back with a download.`,
         ],
       ] as [string, string][])
     : []),
