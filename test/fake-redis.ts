@@ -893,6 +893,16 @@ export class FakeRedis {
       }
       return name === '-- nya:repo-counter-read' ? [`v${value}`, ttl] : [Number(value), ttl];
     }
+    // A counter map store's counts read as stored, "v" and the text or ""
+    // (lib/repo.ts COUNTERS_PEEK), counting nothing.
+    if (name === '-- nya:repo-counters-peek') {
+      if (this.strings.has(keys[0])) throw new Error('WRONGTYPE');
+      const h = this.hashes.get(keys[0]);
+      return args.map((id) => {
+        const raw = h?.get(id);
+        return raw === undefined ? '' : `v${raw}`;
+      });
+    }
     // A counter map store's: one id's count and the end of its window, as one
     // step, the hash kept two windows past it (lib/repo.ts COUNTERS_TAKE).
     if (name === '-- nya:repo-counters-take') {

@@ -1485,6 +1485,33 @@ function contract(b: Backend) {
       expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
     });
 
+    test('peek reads ids\' windows as they stand, in one step, counting nothing', async () => {
+      await counters.take(A, 't1', at(0));
+      await counters.take(A, 't1', at(10));
+      await b.raw.hset(countersKey(), 'old', `5:${endOf(0) - WINDOW}`);
+      await b.raw.hset(countersKey(), 'ahead', `5:${endOf(0) + 5 * WINDOW}`);
+      expect(await sentBy(() => counters.peek(A, ['t1', 'never', 'old', 'ahead'], at(20)))).toEqual(['eval']);
+      expect(await counters.peek(A, ['t1', 'never', 'old', 'ahead'], at(20))).toEqual([
+        { count: 2, secondsLeft: WINDOW - 20 },
+        { count: 0, secondsLeft: 0 },
+        { count: 0, secondsLeft: 0 },
+        { count: 0, secondsLeft: 0 },
+      ]);
+      expect(await b.raw.hget(countersKey(), 't1')).toBe(`2:${endOf(0)}`);
+      expect(await counters.peek(B, ['t1'], at(20))).toEqual([{ count: 0, secondsLeft: 0 }]);
+      expect(await counters.peek(A, [], at(20))).toEqual([]);
+    });
+
+    test('peek names a count that is not one, and fails closed when storage does', async () => {
+      await counters.take(A, 't1', at(0));
+      await b.raw.hset(countersKey(), 't2', '3');
+      const err = await counters.peek(A, ['t1', 't2'], at(1)).catch((e) => e);
+      expect([err instanceof UnreadableEntriesError, err.unreadable]).toEqual([true, ['t2']]);
+      b.failNext('eval');
+      expect((await notBlamed(() => counters.peek(A, ['t1'], at(1)))).message).toContain('armed failure');
+      await expect(counters.peek(A, ['has space'], at(1))).rejects.toThrow('Invalid id');
+    });
+
     test('remove forgets those ids\' windows and no other', async () => {
       await counters.take(A, 't1', at(0));
       await counters.take(A, 't2', at(0));
