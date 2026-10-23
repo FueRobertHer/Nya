@@ -5,7 +5,7 @@ import { getHiddenAccounts } from '@/lib/hidden';
 import { assembleBankRows, finishActivity, isPlaidPayload, type PlaidPayload } from '@/lib/activity';
 import { storeFailure } from '@/lib/store-failure';
 import { withImportedFiles } from '@/lib/history-import/without-files';
-import { readFlowFx } from '@/lib/fx/read';
+import { flowFxReader } from '@/lib/fx/read';
 
 // The Activity tab's transactions: every linked institution's, synced with
 // Plaid, and the rows entered on manual accounts, with what the person said
@@ -51,11 +51,15 @@ import { readFlowFx } from '@/lib/fx/read';
 // accounts' currency), read after the cache on every load (lib/fx/read.ts
 // readFlowFx), so no cached payload holds a converted figure and a change of
 // home currency or rate needs no cache dropped. Absent without one: every
-// total is then today's.
+// total is then today's. The settings and the accounts' currencies are read
+// beside the rows; rates that can't be read leave the rows of other
+// currencies without one (named in every total), never fail the load.
 
 export async function GET(req: Request) {
   try {
     const ctx = await dataCtx();
+    // Begun now, beside the rows' reads (see EXCHANGE RATES).
+    const readRates = flowFxReader(ctx, { accounts: true });
     const refresh = new URL(req.url).searchParams.get('refresh') === '1';
     const cached = refresh ? null : await readCache<unknown>(ctx, CacheKey.Transactions);
 
@@ -83,7 +87,7 @@ export async function GET(req: Request) {
       // load, never cached: the cached part is Plaid's alone.
       withImportedFiles(ctx, plaid.without_transactions ?? []),
     ]);
-    const fx = await readFlowFx(ctx, transactions, Date.now(), { accounts: true });
+    const fx = await readRates(transactions);
     // The connections without transactions are Plaid's part too: a manual
     // account is not a connection. The views that count spending weigh them
     // against these rows, manual ones included (lib/no-transactions.ts).

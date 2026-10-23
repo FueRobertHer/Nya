@@ -65,6 +65,43 @@ describe('the transactions’ exchange rates', () => {
     expect(JSON.stringify(await readCache(ctx, CacheKey.Transactions))).not.toContain('"home"');
   });
 
+  test('rates that can’t be read just now: the rows still come, and what is in another currency is left out and named', async () => {
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    const hmget = fake.hmget.bind(fake);
+    fake.hmget = (async (key: string, ...fields: string[]) => {
+      if (key.includes('fx:ecb')) throw new Error('storage out of reach');
+      return hmget(key, ...fields);
+    }) as typeof fake.hmget;
+    const [error] = [console.error];
+    console.error = () => {};
+    try {
+      const res = await route.GET(new Request('http://localhost/api/transactions'));
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as any;
+      expect(body.transactions).toHaveLength(2);
+      const t = totalsIn(body.transactions, asFxTable(body.fx));
+      // No rate on any day: the dollars stay in their own currency, named, and why.
+      expect(t.rows.map((r: any) => r.iso_currency_code)).toEqual(['USD', 'USD']);
+      expect(t.conversion?.unrated).toEqual([{ currency: 'USD', why: 'not-fetched', unrated: 'USD' }]);
+    } finally {
+      fake.hmget = hmget;
+      console.error = error;
+    }
+  });
+
+  test('a row that says no currency: its account’s, from what Nya keeps of the accounts', async () => {
+    await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
+    await saveManualAccount(ctx, { account_id: 'manual_gbp', name: 'Pounds', institution_name: 'Bank', type: 'depository', subtype: null, balance: 1, currency: 'GBP', updated_at: '2026-09-01T00:00:00.000Z' });
+    const { readFlowFx } = await import('@/lib/fx/read');
+    const fx = await readFlowFx(ctx, [{ date: '2026-09-14', iso_currency_code: null, account_id: 'manual_gbp' }]);
+    expect(fx?.accounts).toEqual({ manual_gbp: 'GBP' });
+    expect(Object.keys(fx!.series)).toContain('GBP:2026');
+    // 10 GBP on the 14th, at 0.85598: 11.68 EUR.
+    const t = totalsIn([{ transaction_id: 'x', date: '2026-09-14', amount: 10, iso_currency_code: null, transaction_code: null, category: 'groceries', account_id: 'manual_gbp' }], fx);
+    expect(t.rows[0]).toMatchObject({ amount: 11.68, iso_currency_code: 'EUR', converted: { amount: 10, currency: 'GBP' } });
+    expect(t.conversion?.assumed).toBe(0);
+  });
+
   test('with the rates of the accounts’ currencies too, which no row is in: the Plan converts into its accounts’ currency', async () => {
     await currencySettingsStore.set(ctx, { ...NO_SETTINGS, home: 'EUR' });
     await saveManualAccount(ctx, { account_id: 'manual_isa', name: 'ISA', institution_name: 'Broker', type: 'investment', subtype: null, balance: 5_000, currency: 'GBP', updated_at: '2026-09-01T00:00:00.000Z' });

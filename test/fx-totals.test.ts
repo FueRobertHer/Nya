@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { ecbTable } from './fx-fixture';
-import { convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
+import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
 import { countsInTotals, leftOutByCurrency, leftOutText } from '@/lib/spending';
 
 // The one seam for totals of flows (lib/fx/totals.ts): without a home
@@ -111,6 +111,27 @@ describe('with one', () => {
       [5, null],
     ]);
     expect(t.conversion?.assumed).toBe(1);
+  });
+
+  test('a row that says none: its account’s from the table (readFlowFx), else the one most rows are in, as before, and said', () => {
+    const rows = [
+      row('usd', '2026-09-14', 100, 'USD'),
+      row('usd2', '2026-09-14', 10, 'USD'),
+      row('on-euro', '2026-09-14', 20, null, { account_id: 'acc_eur' }),
+      row('unknown', '2026-09-14', 5, null, { account_id: 'acc_gone' }),
+    ];
+    const t = totalsIn(rows, { ...fx, accounts: { acc_eur: 'EUR' } });
+    const by = new Map(t.rows.map((r: any) => [r.transaction_id, r]));
+    // In its account's currency, the home one: as it is.
+    expect(by.get('on-euro')).toMatchObject({ amount: 20, iso_currency_code: 'EUR' });
+    expect((by.get('on-euro') as any).currency_assumed).toBeUndefined();
+    // Its account isn't known: in USD, the one most rows are in, converted.
+    expect(by.get('unknown')).toMatchObject({ amount: 4.33, iso_currency_code: 'EUR', converted: { amount: 5, currency: 'USD' }, currency_assumed: true });
+    expect(t.conversion).toMatchObject({ assumed: 1, assumedIn: 'USD' });
+    expect(convertedText(t.conversion)).toBe('Converted into EUR at each day’s ECB rate: 3 transactions in USD. 1 transaction says no currency, so it is counted in USD, the currency most are in.');
+    // Narrowed to rows without it: nothing assumed is said.
+    expect(conversionIn(t.rows.slice(0, 2), t.conversion)).toMatchObject({ assumed: 0 });
+    expect(conversionIn(t.rows.slice(0, 2), t.conversion)?.assumedIn).toBeUndefined();
   });
 
   test('a split’s parts each converted, and their whole what they came to', () => {

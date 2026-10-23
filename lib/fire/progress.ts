@@ -21,7 +21,7 @@ import { fiView, type FirePlan, type FiView, type Measured } from './plan';
 import type { InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
 import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText } from '@/lib/spending';
-import { leftOutWhy } from '@/lib/fx/totals';
+import { assumedText, leftOutWhy } from '@/lib/fx/totals';
 import { reasonText } from '@/lib/fx/words';
 
 /** What the Plan measures from, as the hook gathers it. */
@@ -95,9 +95,11 @@ export function convertedNote({ flows, assets }: Pick<FiInputs, 'flows' | 'asset
     const own = ac.own.length > 0 ? `, and your own rate for ${join(ac.own)},` : '';
     parts.push(`invested assets at the ECB's newest rates${own} (${counted(ac.from, 'account')})`);
   }
-  if (parts.length === 0) return null;
+  // Rows that say no currency, counted in the main one: said too.
+  const assumed = assumedText(fc);
+  if (parts.length === 0) return assumed;
   const into = fc?.into ?? ac?.into;
-  return `The Plan is in ${into}, so what is in other currencies is converted into it: ${join(parts)}.`;
+  return `The Plan is in ${into}, so what is in other currencies is converted into it: ${join(parts)}.${assumed ? ` ${assumed}` : ''}`;
 }
 
 /** What the year's spending and income leave out, as the Plan's label says

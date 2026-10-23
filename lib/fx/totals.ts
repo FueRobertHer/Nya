@@ -15,8 +15,10 @@
 // totals' minor unit), in the totals' currency, saying what it was
 // (`converted`). A row with no rate stays as it is, in its own currency, so
 // the rules leave it out and name it as they always have, and the notes say
-// why. A row that says no currency is in its account's currency where the
-// reader knows it, else in the totals'. A split transaction's parts convert
+// why. A row that says no currency is in its account's currency where it is
+// known (the reader's, or the table's: lib/fx/read.ts readFlowFx), else in
+// the one most rows are in, as every total has counted it, and the notes say
+// how many were (`assumed`). A split transaction's parts convert
 // one by one, and their copies' whole (split_parent.amount) is what they came
 // to. Nothing else on a row changes, so transfers, exclusions, splits, groups
 // and counts work as before. The copies are for adding up only: every reader
@@ -51,8 +53,9 @@ export type Conversion = {
   /** Each currency left in its own for having no rate, and why. */
   unrated: { currency: string; why: NoRate; unrated: string }[];
   /** Rows that said no currency, in an account whose currency isn't known:
-   *  counted in the totals' currency. */
+   *  counted in `assumedIn`, the one most rows are in. */
   assumed: number;
+  assumedIn?: string;
   /** Whether the newest rates are older than they should be, and a row
    *  dated after them was converted at them (a row on a day the ECB
    *  published converts at that day's own rate, however old). */
@@ -106,19 +109,25 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
   // Each split's parts as converted, to give their copies the whole they make.
   const wholes = new Map<string, { sum: number; parts: number; converted: number }>();
 
+  // A row that says no currency: its account's, where known, else the one
+  // most rows are in (see the header).
+  const accountOf = opts.accountCurrency ?? ((t: T) => (t.account_id ? (fx.accounts?.[t.account_id] ?? null) : null));
   const out = rows.map((t) => {
     const said = currencyOf(t);
-    const c = said ?? opts.accountCurrency?.(t) ?? null;
-    if (c === null) {
-      if (said === null) assumed++;
-      return t;
-    }
-    if (c === into) return said === null ? ({ ...t, iso_currency_code: into } as T) : t;
+    const known = said ?? accountOf(t) ?? null;
+    const guessed = said === null && known === null;
+    if (guessed) assumed++;
+    const c = known ?? today;
+    if (c === null) return t;
+    // A copy of a row that says none says the currency it is counted in, and
+    // whether that was only the main one (`currency_assumed`).
+    const labelled = (to: string) => ({ ...t, iso_currency_code: to, ...(guessed ? { currency_assumed: true } : {}) }) as T;
+    if (c === into) return said === null ? labelled(into) : t;
     const r = convert(fx, t.amount, c, into, t.date);
     if (!r.ok) {
       if (!unrated.has(c)) unrated.set(c, { currency: c, why: r.why, unrated: r.currency });
       // In its own currency, said, so the rules name it.
-      return said === null ? ({ ...t, iso_currency_code: c } as T) : t;
+      return said === null ? labelled(c) : t;
     }
     const counter = counters.get(c) ?? transactionCounter();
     counter.add(t);
@@ -128,7 +137,14 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
       if (side.source === 'own') own.add(side === r.from ? c : into);
       else if (side.source === 'ecb') seen(side.day);
     }
-    const copy = { ...t, amount: r.amount, iso_currency_code: into, unofficial_currency_code: null, converted: { amount: t.amount, currency: c } satisfies WasIn } as T;
+    const copy = {
+      ...t,
+      amount: r.amount,
+      iso_currency_code: into,
+      unofficial_currency_code: null,
+      converted: { amount: t.amount, currency: c } satisfies WasIn,
+      ...(guessed ? { currency_assumed: true } : {}),
+    } as T;
     const of = (t as { split_of?: string }).split_of;
     if (of !== undefined) {
       const w = wholes.get(of) ?? { sum: 0, parts: 0, converted: 0 };
@@ -165,6 +181,7 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
       own: [...own].sort(),
       unrated: [...unrated.values()].sort((a, b) => (a.currency < b.currency ? -1 : 1)),
       assumed,
+      ...(assumed > 0 && today !== null ? { assumedIn: today } : {}),
       stale: beyond && isStale(fx, opts.now ?? Date.now()),
     },
   };
@@ -176,7 +193,9 @@ export function conversionIn(rows: readonly Convertible[], c: Conversion | null)
   if (!c) return null;
   const counters = new Map<string, ReturnType<typeof transactionCounter>>();
   const left = new Set<string>();
+  let assumed = 0;
   for (const t of rows) {
+    if ((t as { currency_assumed?: true }).currency_assumed) assumed++;
     const was = (t as { converted?: WasIn }).converted;
     if (was) {
       const counter = counters.get(was.currency) ?? transactionCounter();
@@ -189,7 +208,16 @@ export function conversionIn(rows: readonly Convertible[], c: Conversion | null)
   }
   const from = [...counters].map(([currency, n]) => ({ currency, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1));
   const own = c.own.filter((o) => counters.has(o) || o === c.into);
-  return { ...c, from, own, unrated: c.unrated.filter((u) => left.has(u.currency)), stale: c.stale && from.length > 0 };
+  const { assumedIn, ...rest } = c;
+  return {
+    ...rest,
+    from,
+    own,
+    unrated: c.unrated.filter((u) => left.has(u.currency)),
+    assumed,
+    ...(assumed > 0 && assumedIn ? { assumedIn } : {}),
+    stale: c.stale && from.length > 0,
+  };
 }
 
 /** The sum of rows' amounts as the totals add them: a float sum of amounts
@@ -206,14 +234,23 @@ const join = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '')
  *  "Converted into EUR at each day's ECB rate: 12 transactions in USD and 3
  *  in GBP." Never an amount. */
 export function convertedText(c: Conversion | null, opts: { noun?: string; budgets?: boolean } = {}): string | null {
-  if (!c || c.from.length === 0) return null;
+  if (!c) return null;
+  const assumed = assumedText(c);
+  if (c.from.length === 0) return assumed;
   const noun = opts.noun ?? 'transaction';
   const parts = c.from.map((f, i) => (i === 0 ? `${f.count} ${noun}${f.count === 1 ? '' : 's'} in ${f.currency}` : `${f.count} in ${f.currency}`));
   const own = c.own.length > 0 ? `, and your own rate for ${join(c.own)}` : '';
   // Budgets keep the currency they are typed in: what is converted is the
   // spending against them.
   const lead = opts.budgets ? `Spending in other currencies counts converted into ${c.into}, the currency your budgets are in,` : `Converted into ${c.into}`;
-  return `${lead} at each day’s ECB rate${own}: ${join(parts)}.`;
+  return `${lead} at each day’s ECB rate${own}: ${join(parts)}.${assumed ? ` ${assumed}` : ''}`;
+}
+
+/** Rows that said no currency, on an account whose currency isn't known,
+ *  counted in the one most rows are in, in words, or null with none. */
+export function assumedText(c: Pick<Conversion, 'assumed' | 'assumedIn'> | null): string | null {
+  if (!c || c.assumed === 0 || !c.assumedIn) return null;
+  return `${c.assumed === 1 ? '1 transaction says' : `${c.assumed} transactions say`} no currency, so ${c.assumed === 1 ? 'it is' : 'they are'} counted in ${c.assumedIn}, the currency most are in.`;
 }
 
 /** A total's sentence of what it left out for its currency (lib/spending.ts

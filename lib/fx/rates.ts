@@ -90,6 +90,10 @@ export type FxTable = {
    *  said as rates Nya doesn't have, never as rates the ECB didn't publish,
    *  until the nightly fetch writes them again (lib/fx/ecb-fetch.ts). */
   unusable?: readonly string[];
+  /** The currency of each account a row that says none is on, where it is
+   *  known (lib/fx/read.ts readFlowFx): what such a row is counted in
+   *  (lib/fx/totals.ts totalsIn). */
+  accounts?: Readonly<Record<string, string>>;
 };
 
 /** A table with nothing in it: no home currency, so nothing converts. */
