@@ -469,6 +469,9 @@ async function callWriteTool(auth: Authenticated, tool: WriteTool, raw: unknown)
     if (err instanceof BadRequest) return toolError(err.message);
     throw err;
   }
+  // What the tool needs, in its own words (an endpoint says If-Match).
+  const needed = tool.required.find((name) => args[name] === undefined || args[name] === null);
+  if (needed) return toolError(`${needed} is needed.`);
   const { version, idempotency_key, ...rest } = args;
   const id = tool.idArg ? (rest[tool.idArg] as string | undefined) : undefined;
   if (tool.idArg) delete rest[tool.idArg];
