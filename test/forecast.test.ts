@@ -154,6 +154,27 @@ describe('where it starts', () => {
       ]);
       expect(p.pending).toEqual({ amount: 100, count: 1 });
     });
+
+    test('by account id where a row has one: two accounts of one name at one bank are two, and a hidden one of that name is never cash', () => {
+      const twins = [
+        inst({
+          accounts: [
+            acct({ account_id: 'tc1', name: 'Total Checking', balance: 1000 }),
+            acct({ account_id: 'tc2', name: 'Total Checking', balance: 500 }),
+            acct({ account_id: 'tc3', name: 'Total Checking', balance: 9999, hidden: true }),
+          ],
+        }),
+      ];
+      const on = (id: string, amount: number, over: Partial<PendingRow> = {}) => pending(amount, { account_id: id, account_name: 'Total Checking', ...over });
+      const p = cashPosition(twins, [
+        on('tc1', 250, { name: 'Transfer out', category: 'transfer out' }),
+        on('tc2', -250, { name: 'Transfer in', category: 'transfer in' }),
+        on('tc3', 77),
+      ]);
+      expect(p.pending).toEqual({ amount: 0, count: 0 });
+      // A row with no id, or one no account here has, is told by its name.
+      expect(cashPosition(twins, [pending(12, { account_name: 'Total Checking' }), on('elsewhere', 8)]).pending).toEqual({ amount: 20, count: 2 });
+    });
   });
 });
 

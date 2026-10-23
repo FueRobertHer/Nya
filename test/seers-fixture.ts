@@ -101,6 +101,7 @@ export async function seedEveryKind(
   const food = taxonomy.categories.find((c) => c.provider_keys.some((p) => p.key === 'FOOD_AND_DRINK'))!;
   const { incomeCarryoverStore } = await import('@/lib/budget-months-store');
   await incomeCarryoverStore.set(ctx, { version: 1, enabled: true, start: today.slice(0, 7) });
+  ok('a runway scenario', await route('runway-scenarios', 'POST', { scenario: { name: 'Leaner months', months: 6, lower_by: 0, currency: null, income_until: null, planned: true, leave_out_one_offs: false } }));
 
   // ---- Settings, each as the app keeps it.
   const { allocationSettingsStore } = await import('@/lib/allocation-settings');

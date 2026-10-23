@@ -134,6 +134,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'restored-transactions': 'data',
   'review-settings': 'setting',
   rules: 'data',
+  // What-ifs the person kept for the runway: theirs, so an account holding
+  // one is in use.
+  'runway-scenarios': 'data',
   'sharing-access-log': 'machinery',
   tags: 'data',
   'timeline-notes': 'data',

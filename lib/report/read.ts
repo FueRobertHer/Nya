@@ -85,6 +85,7 @@ import {
   type MissedFacts,
   type RemovedFacts,
   type Report,
+  type ReportInput,
   type SourceFacts,
 } from './build';
 import { addDays, dayIn, type Period } from './period';
@@ -92,7 +93,7 @@ import { connectorBanksReport, connectorCardId, needsSign, type ConnectorBanksRe
 import { connectorBadge } from '../connectors/health';
 import { endedAccountsStore, type EndedAccount } from '../connectors/store';
 import { connectorOf } from '../connectors/registry';
-import type { TxnCoverage } from '../transactions';
+import type { OlderTxn, TxnCoverage } from '../transactions';
 import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 import { restoredAccountsStore } from '../user-restore/store';
 
@@ -174,6 +175,27 @@ export async function readReport(
   period: Period,
   opts: { currency?: string | null; now?: number; appendixLimit?: number } = {}
 ): Promise<Report> {
+  return buildReport((await readReportInput(ctx, period, opts)).input);
+}
+
+/** What readReport builds its report from, read once: the report's input, and
+ *  the rows before its period that recurring detection may need (the
+ *  assembly's `history`, lib/activity.ts), for a report built on more than
+ *  one period of the same read (the runway and year over year,
+ *  lib/report/runway-read.ts and lib/report/year-over-year-read.ts, which
+ *  build each of their periods from it with buildReport and periodRows).
+ *  `marked: false` skips the categories marked for taxes (lib/report/store.ts)
+ *  for a reader that never shows them: they are read only for the
+ *  accountant's report's group, so neither answer depends on that setting
+ *  being readable, and nothing read from it reaches them (`marked` null,
+ *  `markedUnreadable` false). */
+export type ReportRead = { input: ReportInput; history: OlderTxn[] };
+
+export async function readReportInput(
+  ctx: Ctx,
+  period: Period,
+  opts: { currency?: string | null; now?: number; appendixLimit?: number; marked?: boolean } = {}
+): Promise<ReportRead> {
   const now = opts.now ?? Date.now();
   // Each row with its account, and an ended account's later rows kept: left
   // out by buildReport, by the Activity tab's rule, and said.
@@ -188,14 +210,17 @@ export async function readReport(
     getManualAccountsReport(ctx),
     getItems(ctx),
     // Strict underneath: marked categories that can't be read leave the group
-    // out, and the report says so; never "none marked".
-    reportSettingsStore.get(ctx).then(
-      (value) => ({ ok: true as const, value }),
-      (err: unknown) => {
-        if (err instanceof StoredDataUnreadableError) return { ok: false as const };
-        throw err;
-      }
-    ),
+    // out, and the report says so; never "none marked". Not read at all for a
+    // reader that never shows them (`marked: false`).
+    opts.marked === false
+      ? Promise.resolve({ ok: true as const, value: null })
+      : reportSettingsStore.get(ctx).then(
+          (value) => ({ ok: true as const, value }),
+          (err: unknown) => {
+            if (err instanceof StoredDataUnreadableError) return { ok: false as const };
+            throw err;
+          }
+        ),
     // LENIENT, for this display only: a connection whose accounts can't be
     // read has none here, so none of a removed connection's accounts is taken
     // to be back through it, and its kinds don't widen what the report says
@@ -359,7 +384,7 @@ export async function readReport(
     ...gone.removed,
   ];
 
-  return buildReport({
+  const input: ReportInput = {
     period,
     generatedAt: new Date(now).toISOString(),
     rows: activity.transactions,
@@ -384,7 +409,8 @@ export async function readReport(
     appendixLimit: opts.appendixLimit,
     ended: lifecycle.ended,
     missed: [...lifecycle.missed, ...fedMissed],
-  });
+  };
+  return { input, history: activity.history };
 }
 
 /** "My Bank (through SimpleFIN)": a bank a connection reaches, as a report

@@ -774,6 +774,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Your data',
     seen: ['shared', 'api', 'email'],
   },
+  'runway-scenarios': {
+    group: 'plans',
+    name: 'Your saved runway scenarios',
+    about: 'The name and settings of each what-if you saved on the runway report, never a figure.',
+    unit: ['scenario', 'scenarios'],
+    kept: 'Your data',
+    plain: RANDOM_IDS,
+  },
   rules: {
     group: 'settings',
     name: 'Your rules',

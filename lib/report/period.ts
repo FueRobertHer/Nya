@@ -165,3 +165,22 @@ export function periodMonths(period: Period): { month: string; start: string; en
   }
   return out;
 }
+
+/** What a runway's or a year over year's query asks (app/api/reports/runway,
+ *  app/api/reports/year-over-year): the time zone to read today in (`tz`,
+ *  UTC when not given) and, where it is taken, the currency to keep
+ *  (`currency`); nothing else, and nothing twice. */
+export function readZoneParams(params: URLSearchParams, takes: readonly ('tz' | 'currency')[]): { timeZone: string; currency: string | null } | { error: string } {
+  const allowed = new Set<string>(takes);
+  const seen = new Set<string>();
+  for (const key of params.keys()) {
+    if (!allowed.has(key)) return { error: `Unknown parameter "${key.slice(0, 40)}".` };
+    if (seen.has(key)) return { error: `"${key}" is given more than once.` };
+    seen.add(key);
+  }
+  const tz = canonicalTimeZone(params.get('tz') ?? 'UTC');
+  if (!tz) return { error: 'tz must be a time zone, like America/New_York.' };
+  const currency = params.get('currency');
+  if (currency !== null && !CURRENCY.test(currency)) return { error: 'currency must be a currency code, like USD.' };
+  return { timeZone: tz, currency };
+}
