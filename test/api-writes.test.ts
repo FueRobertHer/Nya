@@ -594,6 +594,42 @@ describe('idempotency keys', () => {
     expect(await rows()).toHaveLength(1);
   });
 
+  test('removing a damaged change settles only its own key: another of its token’s keys, nothing begun under it, is still made', async () => {
+    const other = await claimedAlone('k-other');
+    const first = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-damaged-2' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    expect((await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }))).body).toEqual({ removed: true });
+    const claims = (await claimStore.get(ctx, writerId))!.claims;
+    expect(claims.find((c) => c.change === other)?.made).toBeUndefined();
+    setSystemTime(new Date(LATER));
+    const made = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-other' } });
+    expect(made.status).toBe(201);
+  });
+
+  test('a damaged change whose token’s keys can’t be read is left, and the words say what to do', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged-3' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    fake.hashes.get(ctxKey('api-change-keys'))!.set(writerId, 'not a stored value');
+    const refused = await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }));
+    expect([refused.status, refused.body.error]).toEqual([
+      409,
+      'The keys of the token “Importer” can’t be read, so this change was left as it is: removing it now could let one of those keys make it again. Revoking the token “Importer” forgets its keys; then remove this change.',
+    ]);
+    expect(fake.hashes.get(ctxKey('api-changes'))!.get(first.body.change_id)).toBe('not a stored value');
+  });
+
+  test('another token’s keys that can’t be read don’t hold back the removal', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-damaged-4' } });
+    await stopped(first.body.change_id, { unmade: true });
+    fake.hashes.get(ctxKey('api-changes'))!.set(first.body.change_id, 'not a stored value');
+    const { info } = await createToken(ctx, 'Sorter', new Date(NOW), null, 'write');
+    fake.hashes.get(ctxKey('api-change-keys'))!.set(info.id, 'not a stored value');
+    expect((await quietly(() => app('api-changes', 'DELETE', { id: first.body.change_id }))).body).toEqual({ removed: true });
+    expect((await claimStore.get(ctx, writerId))!.claims.find((c) => c.change === first.body.change_id)?.made).toBe(true);
+  });
+
   test('stopped after its row landed, before its key was marked made, then deleted in the app: refused, never made again', async () => {
     const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
     expect(first.status).toBe(201);
