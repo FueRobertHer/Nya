@@ -26,7 +26,6 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { forgetEpochs } = await import('@/lib/sessions');
-const { taxonomyStore } = await import('@/lib/category-store');
 const { markEnded } = await import('@/lib/lifecycle');
 const { restoredAnswersStore } = await import('@/lib/user-restore/store');
 const { coverageStart, handoverCut, unanswered } = await import('@/lib/user-restore/answers');
@@ -34,12 +33,9 @@ const { connectionsStore, connectorAccountsStore, endedAccountsStore } = await i
 const { institutionRef } = await import('@/lib/connectors/institutions');
 const { manualTxnStore } = await import('@/lib/manual-txns');
 const { saveManualAccount } = await import('@/lib/manual');
-const { importedForShare } = await import('@/lib/history-import/read');
-const { queryTransactions, readSpending, readBudgets } = await import('@/lib/api-read');
-const { readCashFlow } = await import('@/lib/api-cash-flow');
-const { readReport } = await import('@/lib/report/read');
-const { resolvePeriod } = await import('@/lib/report/period');
+const { queryTransactions } = await import('@/lib/api-read');
 const { EXPORTED, downloadText, restoreAll, activity, rowsOf, connectAgain, hold } = await import('./restore-run');
+const { NOV, JAN, month, every, shared } = await import('./restore-readers');
 
 const ctx = TEST_CTX;
 
@@ -54,45 +50,6 @@ beforeEach(async () => {
   await registerTestContainer(fake);
   await restoreAll(OLD);
 });
-
-const NOV = { from: '2025-11-01', to: '2025-11-30' };
-const JAN = { from: '2026-01-01', to: '2026-01-31' };
-const cents = (n: number) => Math.round(n * 100) / 100;
-
-async function foodId(): Promise<string> {
-  const taxonomy = (await taxonomyStore.get(ctx))!;
-  return taxonomy.categories.find((c) => c.provider_keys.some((k) => k.key === 'FOOD_AND_DRINK'))!.id;
-}
-
-/** A month's money out, as every reader counts it: Activity, the API's
- *  transactions, spending, cash flow, a report, and the food budget (in
- *  November: the restored grocery is food, its split's parts too). */
-async function month(range: { from: string; to: string }) {
-  const shown = rowsOf(await activity()).filter((r) => r[1] >= range.from && r[1] <= range.to);
-  const page = await queryTransactions(ctx, { ...range, limit: 100 });
-  const spending = await readSpending(ctx, range);
-  const flow = await readCashFlow(ctx, range);
-  const period = resolvePeriod({ kind: 'range', start: range.from, end: range.to }, 'UTC', Date.now());
-  if ('error' in period) throw new Error(period.error);
-  const report = await readReport(ctx, period);
-  const out = {
-    activity: cents(shown.reduce((s, r) => s + Number(r[2]), 0)),
-    api: cents(page.transactions.reduce((s, t) => s + t.amount, 0)),
-    spending: cents(spending.money_out),
-    cash_flow: cents(flow.money_out),
-    report: cents(report.totals.money_out),
-  };
-  if (range !== NOV) return out;
-  const food = await foodId();
-  const budgets = await readBudgets(ctx, { month: '2025-11' });
-  return { ...out, budget: cents(budgets.budgets.find((b) => b.category_id === food)?.spent ?? 0) };
-}
-const every = (n: number, range = NOV) => ({ activity: n, api: n, spending: n, cash_flow: n, report: n, ...(range === NOV ? { budget: n } : {}) });
-/** What a share of the restored checking account shows of a month. */
-async function shared(range: { from: string; to: string }) {
-  const read = await importedForShare(ctx, new Set(['acc_chk']), range.from);
-  return cents([...(read.rows.get('acc_chk') ?? [])].filter((r) => r.date <= range.to).reduce((s, r) => s + r.amount, 0));
-}
 
 const AT = () => new Date().toISOString();
 /** The person's answer for the restored checking account: count it, ended
