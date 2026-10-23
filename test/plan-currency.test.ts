@@ -328,7 +328,7 @@ describe('without a home currency, no figure from a part of what it measures', (
     const assets = investedAssets(broker, false, null, Date.now(), 'USD');
     const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
     expect(flows.count).toBe(3);
-    expect(spendingGap(flows)).toEqual({ what: 'spending', counted: 3, leftOut: [{ currency: 'EUR', count: 360 }], into: 'USD', judged: 'count', unrated: [] });
+    expect(spendingGap(flows)).toEqual({ what: 'spending', counted: 3, leftOut: [{ currency: 'EUR', count: 360 }], into: 'USD', judged: 'count', unrated: [], ratesAtHand: false, sides: ['spending'] });
     const f = fiFigures(typed, { flows, assets, workplace: null }, 'USD');
     expect(f.view.spending.value).toBeNull();
     expect(f.view.fiNumber).toBeNull();
@@ -336,7 +336,7 @@ describe('without a home currency, no figure from a part of what it measures', (
     expect(f.view.yearsToFi).toBeNull();
     expect(f.savingsRate).toBeNull();
     expect(gapText(spendingGap(flows)!)).toBe(
-      'Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD (360 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+      'Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (360 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
     );
     // Typed, the figure is the person's own, and the FI number is back.
     expect(fiFigures({ ...typed, spending: 36_500 }, { flows, assets, workplace: null }, 'USD').view.fiNumber).toBe(912_500);
@@ -361,7 +361,7 @@ describe('without a home currency, no figure from a part of what it measures', (
   test('invested assets the same, by account: said as “they’re in USD” with three accounts in EUR and one small one in dollars', () => {
     const accounts = [inst([acct({ currency: 'EUR' }), acct({ currency: 'EUR' }), acct({ currency: 'EUR' }), acct({ balance: 1_000 })])];
     const assets = investedAssets(accounts, false, null, Date.now(), 'USD');
-    expect(assetsGap(assets)).toEqual({ what: 'assets', counted: 1, leftOut: [{ currency: 'EUR', count: 3 }], into: 'USD', judged: 'count', unrated: [] });
+    expect(assetsGap(assets)).toEqual({ what: 'assets', counted: 1, leftOut: [{ currency: 'EUR', count: 3 }], into: 'USD', judged: 'count', unrated: [], ratesAtHand: false });
     const f = fiFigures(plan({ spending: 40_000 }), { flows: null, assets, workplace: null }, 'USD');
     expect(f.view.fiNumber).toBe(1_000_000);
     expect(f.view.assets.value).toBeNull();
@@ -382,7 +382,7 @@ describe('without a home currency, no figure from a part of what it measures', (
     const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
     const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, rows.length) };
     const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(typed, inputs, 'USD'), plan: typed, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
-    expect(html).toContain('Not measured: more than a tenth of what would count, by count, is in another currency');
+    expect(html).toContain('Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency');
     expect(html).not.toContain('FI number');
   });
 });
@@ -465,7 +465,7 @@ describe('a figure not measured is never counted as zero (review round 2, B10)',
     expect(counted.view.savings.source).toBe('unmeasured');
     expect(counted.view.yearsToFi).toBeNull();
     expect(counted.savingsRate).toBeNull();
-    expect(gapText(spendingGap(flows)!, 'year')).toStartWith('The year’s income and savings aren’t measured: more than a tenth of what would count, by count, is in another currency');
+    expect(gapText(spendingGap(flows)!, 'year')).toStartWith('The year’s income and savings aren’t measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency');
     expect(gapText(spendingGap(flows)!, 'rate')).toStartWith('The savings rate isn’t measured:');
     // By amount, twenty dollars a month in Canada is nothing: measured.
     const weighed = fiFigures(typed, { flows, assets, workplace: null, rates }, 'USD');
@@ -508,7 +508,7 @@ describe('Home’s FI card, rendered, never from a figure not measured (review r
     const accounts = [inst([acct({ account_id: 'e1', balance: 600_000, currency: 'EUR' }), acct({ account_id: 'e2', balance: 300_000, currency: 'EUR' }), acct({ account_id: 'u', balance: 5_000 })])];
     const rows = months.flatMap((d) => [t({ date: d, amount: 4_000 }), t({ date: d, amount: -6_000, category: 'income' })]);
     const html = await home(plan({ age: 40, targetAge: 55 }), accounts, rows, null);
-    expect(html).toContain('Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, EUR (1 account in USD).');
+    expect(html).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, EUR (1 account in USD).');
     expect(html).toContain('Years to FI aren’t worked out: your invested assets aren’t measured (above), and a figure that isn’t measured is never counted as zero.');
     expect(html).not.toMatch(/about [\d.]+ years<\/span><span class="plan-stat-label">to FI/);
     // Weighed by amount, measured, and worked out.
@@ -520,12 +520,132 @@ describe('Home’s FI card, rendered, never from a figure not measured (review r
   test('spending typed and the year not measured: the savings rate’s absence is said, in the year’s own words', async () => {
     const rows = months.flatMap((d) => [t({ date: d, amount: 3_000, iso_currency_code: 'USD' }), t({ date: d, amount: -5_000, category: 'income', iso_currency_code: 'USD' }), t({ date: d, amount: 20, iso_currency_code: 'CAD' })]);
     const html = await home(plan({ spending: 40_000 }), [inst([acct({ balance: 400_000 })])], rows, 'USD');
-    expect(html).toContain('The year’s income and savings aren’t measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD');
+    expect(html).toContain('The year’s income and savings aren’t measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD');
     expect(html).not.toContain('savings rate, last 12 months');
     expect(html).toContain('Years to FI aren’t worked out: your savings aren’t measured (above)');
     // Savings typed too: only the rate is missing, and said so.
     const both = await home(plan({ spending: 40_000, savings: 20_000 }), [inst([acct({ balance: 400_000 })])], rows, 'USD');
     expect(both).toContain('The savings rate isn’t measured:');
     expect(both).not.toContain('aren’t worked out');
+  });
+});
+
+describe('the year weighed on each side, money out apart from money in (review round 3)', () => {
+  let n = 0;
+  const t = (over: Partial<Txn>): Txn => ({ transaction_id: `w${++n}`, date: '2026-09-01', name: 'Shop', amount: 500, pending: false, account_name: 'Checking', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'USD', ...over }) as Txn;
+  const months = Array.from({ length: 12 }, (_, m) => `${m < 3 ? 2025 : 2026}-${String(m < 3 ? m + 10 : m - 2).padStart(2, '0')}`);
+  const day = (month: string, d: number) => `${month}-${String(d).padStart(2, '0')}`;
+  const rates = ecbTable({ home: null }).latest!.rates;
+  const usd = [inst([acct({ balance: 400_000 })])];
+  const assets = investedAssets(usd, false, null, Date.now(), 'USD');
+  // The review's probe: $200k of income in dollars, $42k of spending in
+  // dollars and €18k in euros, about a third of the spending.
+  const highEarner = months.flatMap((m) => [
+    t({ date: day(m, 1), amount: -200_000 / 12, category: 'income', name: 'Pay' }),
+    ...Array.from({ length: 7 }, (_, k) => t({ date: day(m, k + 2) })),
+    ...Array.from({ length: 3 }, (_, k) => t({ date: day(m, k + 11), iso_currency_code: 'EUR' })),
+  ]);
+
+  test('a large income in the Plan’s currency doesn’t hide spending in another: by amount, the year isn’t measured, and the FI number isn’t worked out from the dollars alone', () => {
+    const flows = trailingFlows(highEarner, '2026-09-14', { currency: 'USD' })!;
+    expect(flows.volume!.spending).toMatchObject({ counted: 42_000, count: 84, leftOut: [{ currency: 'EUR', amount: 18_000, count: 36 }] });
+    expect(flows.volume!.income).toMatchObject({ count: 12, leftOut: [] });
+    expect(flows.volume!.income.counted).toBeCloseTo(200_000, 2);
+    // Over the whole year's money the euros were about 8%, under a tenth;
+    // against the spending alone they are about a third.
+    const g = spendingGap(flows, rates);
+    expect(g).toEqual({ what: 'spending', counted: 84, leftOut: [{ currency: 'EUR', count: 36 }], into: 'USD', judged: 'amount', unrated: [], ratesAtHand: true, sides: ['spending'] });
+    const f = fiFigures(DEFAULT_PLAN, { flows, assets, workplace: null, rates }, 'USD');
+    expect(f.view.spending).toEqual({ value: null, source: 'unmeasured' });
+    expect(f.view.fiNumber).toBeNull();
+    expect(f.view.yearsToFi).toBeNull();
+    expect(f.savingsRate).toBeNull();
+    expect(gapText(g!)).toBe(
+      'Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (36 transactions in EUR this year). Without a home currency nothing is converted, so a figure from the rest would leave that much of your spending out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+    );
+    // By count the same, as before.
+    expect(spendingGap(flows)).toMatchObject({ judged: 'count', sides: ['spending'] });
+  });
+
+  test('Home says so for the high earner, rather than an FI number from the dollars alone', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const React = await import('react');
+    const { FiProgressView } = await import('@/components/FiProgressCard');
+    const { transactionCoverage } = await import('@/lib/fire/progress');
+    const { NO_CONNECTIONS_WITHOUT } = await import('@/lib/no-transactions');
+    const flows = trailingFlows(highEarner, '2026-09-14', { currency: 'USD' })!;
+    const inputs = { flows, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, highEarner.length), rates };
+    const html = renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(DEFAULT_PLAN, inputs, 'USD'), plan: DEFAULT_PLAN, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
+    expect(html).toContain('Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (36 transactions in EUR this year).');
+    expect(html).not.toContain('FI number');
+    expect(html).not.toContain('years to FI');
+  });
+
+  test('the mirror: income in euros and spending in dollars isn’t measured either, by amount or by count, and says it is the income', () => {
+    const rows = months.flatMap((m) => [
+      t({ date: day(m, 1), amount: -5_000, category: 'income', name: 'Pay', iso_currency_code: 'EUR' }),
+      ...Array.from({ length: 10 }, (_, k) => t({ date: day(m, k + 2), amount: 350 })),
+    ]);
+    const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
+    const byAmount = spendingGap(flows, rates);
+    expect(byAmount).toMatchObject({ judged: 'amount', sides: ['income'], leftOut: [{ currency: 'EUR', count: 12 }] });
+    // Twelve of 132 transactions, under a tenth of the whole year by count,
+    // yet all of the income.
+    expect(spendingGap(flows)).toMatchObject({ judged: 'count', sides: ['income'] });
+    const f = fiFigures(DEFAULT_PLAN, { flows, assets, workplace: null, rates }, 'USD');
+    expect(f.view.savings).toEqual({ value: null, source: 'unmeasured' });
+    expect(f.savingsRate).toBeNull();
+    expect(gapText(byAmount!)).toBe(
+      'Not measured: more than a tenth of the year’s income, by amount at the ECB’s newest rates (used only to weigh it), is in another currency than the Plan’s, USD (12 transactions in EUR this year). Without a home currency nothing is converted, so the year’s figures from the rest would leave that much of your income out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert them, or type your spending.'
+    );
+    // Spending typed: the savings say it in the year's own words.
+    const typed = fiFigures(plan({ spending: 42_000 }), { flows, assets, workplace: null, rates }, 'USD');
+    expect(typed.view.fiNumber).toBe(1_050_000);
+    expect(typed.view.savings.source).toBe('unmeasured');
+    expect(typed.view.yearsToFi).toBeNull();
+    expect(gapText(byAmount!, 'year')).toStartWith('The year’s income and savings aren’t measured: more than a tenth of the year’s income, by amount');
+  });
+
+  test('a small income in another currency is weighed as small, and both sides over are both said', () => {
+    const rows = months.flatMap((m, i) => [
+      t({ date: day(m, 1), amount: -200_000 / 12, category: 'income', name: 'Pay' }),
+      ...Array.from({ length: 7 }, (_, k) => t({ date: day(m, k + 2) })),
+      ...(i < 2 ? [t({ date: day(m, 20), amount: -500, category: 'income', name: 'Talk', iso_currency_code: 'EUR' })] : []),
+    ]);
+    const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
+    expect(spendingGap(flows, rates)).toBeNull();
+    // By count two of fourteen paid in: over a tenth of the income.
+    expect(spendingGap(flows)).toMatchObject({ sides: ['income'] });
+    const both = months.flatMap((m) => [
+      t({ date: day(m, 1), amount: -4_000, category: 'income', name: 'Pay', iso_currency_code: 'GBP' }),
+      t({ date: day(m, 2), amount: -2_000, category: 'income', name: 'Pay' }),
+      t({ date: day(m, 3), amount: 1_000 }),
+      t({ date: day(m, 4), amount: 1_000, iso_currency_code: 'GBP' }),
+    ]);
+    const g = spendingGap(trailingFlows(both, '2026-09-14', { currency: 'USD' })!, rates)!;
+    expect(g).toMatchObject({ sides: ['spending', 'income'], leftOut: [{ currency: 'GBP', count: 24 }] });
+    expect(gapText(g)).toContain('more than a tenth of both the year’s spending and its income, by amount');
+    expect(gapText(g)).toContain('so a figure from the rest would leave that much of your spending and income out.');
+  });
+
+  test('without the ECB’s rates at hand, never said to be a rate the ECB doesn’t publish (review round 3, C2)', () => {
+    const rows = months.flatMap((m) => [t({ date: day(m, 1), amount: 3_000 }), t({ date: day(m, 2), amount: 3_000, iso_currency_code: 'CAD' })]);
+    const flows = trailingFlows(rows, '2026-09-14', { currency: 'USD' })!;
+    // Never fetched or unusable (GET /api/currency answers no rates), or
+    // still loading or failed (none passed).
+    for (const none of [{}, null, undefined]) {
+      const g = spendingGap(flows, none)!;
+      expect(g).toMatchObject({ judged: 'count', unrated: [], ratesAtHand: false });
+      expect(gapText(g)).toContain('more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency');
+      expect(gapText(g)).not.toContain('publishes no rate');
+    }
+    // A currency the ECB really doesn't publish is still named so.
+    const coins = months.flatMap((m) => [t({ date: day(m, 1), amount: 3_000 }), t({ date: day(m, 2), amount: 3_000, iso_currency_code: 'BTC' })]);
+    const g = spendingGap(trailingFlows(coins, '2026-09-14', { currency: 'USD' })!, rates)!;
+    expect(g).toMatchObject({ judged: 'count', unrated: ['BTC'], ratesAtHand: true });
+    expect(gapText(g)).toContain('by count, as the ECB publishes no rate for BTC,');
+    // And for accounts the same.
+    const accounts = investedAssets([inst([acct({ account_id: 'e', balance: 600_000, currency: 'EUR' }), acct({ account_id: 'u', balance: 400_000 })])], false);
+    expect(gapText(assetsGap(accounts, {})!)).toContain('by count, as Nya doesn’t have the ECB’s rates at hand,');
   });
 });

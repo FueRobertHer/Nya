@@ -224,9 +224,12 @@ export type TrailingFlows = {
    *  currency, one with no rate): in none of the figures, by currency. */
   leftOut: LeftOut;
   /** How much money the counted rows and the ones left out moved, each in
-   *  its own currency, unscaled: only to judge how much of the year is left
-   *  out (lib/fire/progress.ts spendingGap), never a figure. */
-  volume?: { counted: number; leftOut: { currency: string; amount: number }[] };
+   *  its own currency, unscaled, and how many transactions they are: money
+   *  out (spending, loan payments, cash and refunds) apart from money in
+   *  (income), so a large income can't hide spending in another currency,
+   *  nor large spending income in one. Only to judge how much of the year is
+   *  left out (lib/fire/progress.ts spendingGap), never a figure. */
+  volume?: Record<FlowSide, SideVolume>;
   /** What was converted into `currency`, for the label; null (or absent)
    *  without a home currency. */
   conversion?: Conversion | null;
@@ -235,6 +238,14 @@ export type TrailingFlows = {
    *  is none. */
   uncategorized?: number;
 };
+
+/** Money out (what the spending figure is made of) or money in (income). */
+export type FlowSide = 'spending' | 'income';
+
+/** One side of the year, only to weigh what is left out (TrailingFlows
+ *  volume): the money its counted rows moved and how many transactions they
+ *  are, and the same for each currency left out. */
+export type SideVolume = { counted: number; count: number; leftOut: { currency: string; amount: number; count: number }[] };
 
 const DAY_MS = 86_400_000;
 const dayNumber = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / DAY_MS;
@@ -293,9 +304,11 @@ export function trailingFlows(
     transfer: 0,
   };
   const counted = transactionCounter();
-  // Only to weigh how much is left out for its currency (volume).
-  let countedVolume = 0;
-  const leftOutVolume = new Map<string, number>();
+  // Only to weigh how much is left out for its currency (volume), each side
+  // of the year on its own.
+  const weigh = () => ({ amount: 0, n: transactionCounter() });
+  const sides = { spending: { counted: weigh(), leftOut: new Map<string, ReturnType<typeof weigh>>() }, income: { counted: weigh(), leftOut: new Map<string, ReturnType<typeof weigh>>() } };
+  const sideOf = (flow: PlanFlow) => sides[flow === 'income' ? 'income' : 'spending'];
   // Only to say what most rows are in, beside the Plan's own currency.
   const mostIn = totalsCurrency(over);
   const excludedCount = transactionCounter();
@@ -321,7 +334,13 @@ export function trailingFlows(
         const counter = leftOutBy.get(c) ?? transactionCounter();
         counter.add(t);
         leftOutBy.set(c, counter);
-        if (counts(flow)) leftOutVolume.set(c, (leftOutVolume.get(c) ?? 0) + Math.abs(t.amount));
+        if (counts(flow)) {
+          const away = sideOf(flow).leftOut;
+          const w = away.get(c) ?? weigh();
+          w.amount += Math.abs(t.amount);
+          w.n.add(t);
+          away.set(c, w);
+        }
       }
       continue;
     }
@@ -342,7 +361,9 @@ export function trailingFlows(
     }
     if (counts(flow)) {
       counted.add(t);
-      countedVolume += Math.abs(t.amount);
+      const side = sideOf(flow).counted;
+      side.amount += Math.abs(t.amount);
+      side.n.add(t);
     }
   }
   let largestRefund: TrailingFlows['largestRefund'] = null;
@@ -380,9 +401,17 @@ export function trailingFlows(
     currency,
     mostIn,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
-    volume: { counted: countedVolume, leftOut: [...leftOutVolume].map(([currency, amount]) => ({ currency, amount })) },
+    volume: { spending: sideVolume(sides.spending), income: sideVolume(sides.income) },
     conversion: counting.conversion,
     uncategorized,
+  };
+}
+
+function sideVolume(side: { counted: { amount: number; n: { n: number } }; leftOut: Map<string, { amount: number; n: { n: number } }> }): SideVolume {
+  return {
+    counted: side.counted.amount,
+    count: side.counted.n.n,
+    leftOut: [...side.leftOut].map(([currency, w]) => ({ currency, amount: w.amount, count: w.n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
   };
 }
 

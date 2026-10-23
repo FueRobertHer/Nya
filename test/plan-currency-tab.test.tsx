@@ -501,7 +501,7 @@ describe('a figure not measured is never counted as zero (review round 2)', () =
   test('the Plan tab: assets not measured by count, so years to FI, Coast FI and the balance at the target age say why, never from zero', async () => {
     serve(planServer({ plan: AGED }).answers);
     const tab = await render({ institutions: euros, txns: euroYear, currency: 'EUR' });
-    expect(tab.text()).toContain('Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, EUR (1 account in USD).');
+    expect(tab.text()).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, EUR (1 account in USD).');
     expect(tab.text()).toContain('Years to FI--Not worked out: your invested assets aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
     expect(tab.text()).toContain('Your invested assets aren’t measured (below), so whether you have that much isn’t said.');
     expect(tab.text()).toContain('At age 55--Not worked out: your invested assets aren’t measured (below)');
@@ -525,7 +525,7 @@ describe('a figure not measured is never counted as zero (review round 2)', () =
     const year = months.flatMap((d) => [row({ date: d, amount: 3_000, iso_currency_code: 'USD' }), row({ date: d, amount: -5_000, category: 'income', iso_currency_code: 'USD' }), row({ date: d, amount: 20, iso_currency_code: 'CAD' })]);
     const tab = await render({ institutions: broker([USD({ balance: 400_000 })]), txns: year });
     expect(tab.text()).toContain('Annual spending$40,000typed by you');
-    expect(tab.text()).toMatch(/Annual savings--not measuredThe year’s income and savings aren’t measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD \(\d+ transactions in CAD this year\)\./);
+    expect(tab.text()).toMatch(/Annual savings--not measuredThe year’s income and savings aren’t measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD \(\d+ transactions in CAD this year\)\./);
     expect(tab.text()).toContain('Not worked out: your savings aren’t measured (below)');
     await tab.unmount();
   });
@@ -574,6 +574,51 @@ describe('with amounts hidden', () => {
     expect(tab.text()).toContain(MASK);
     expect(tab.text()).not.toContain('1,000,000');
     expect(tab.buttons('They’re in USD').map(outline)).toEqual(['<button>They’re in USD</button>']);
+    await tab.unmount();
+  });
+});
+
+describe('each side of the year, the rates at hand, and the simulation card (review round 3)', () => {
+  let n = 0;
+  const row = (over: Partial<Txn>): Txn => ({ transaction_id: `r${++n}`, date: '2026-09-01', name: 'Shop', amount: 500, pending: false, account_name: 'Checking', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'USD', ...over }) as Txn;
+  const months = Array.from({ length: 12 }, (_, m) => `${m < 3 ? 2025 : 2026}-${String(m < 3 ? m + 10 : m - 2).padStart(2, '0')}`);
+  const day = (month: string, d: number) => `${month}-${String(d).padStart(2, '0')}`;
+  const ECB = { home: null, own: [], changes: [], problem: null, removable: false, ecb: { date: '2026-09-14', rates: { USD: '1.1551', CAD: '1.6012' }, stale: false, fetch_ok: true } };
+  const dollars = broker([USD({ balance: 400_000 })]);
+
+  test('the high earner: $200k paid in dollars hides none of the €18k spent in euros, so the FI number waits, and the simulation card says why', async () => {
+    const highEarner = months.flatMap((m) => [
+      row({ date: day(m, 1), amount: -200_000 / 12, category: 'income', name: 'Pay' }),
+      ...Array.from({ length: 7 }, (_, k) => row({ date: day(m, k + 2) })),
+      ...Array.from({ length: 3 }, (_, k) => row({ date: day(m, k + 11), iso_currency_code: 'EUR' })),
+    ]);
+    serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, ECB] });
+    const tab = await render({ institutions: dollars, txns: highEarner });
+    expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by amount at the ECB’s newest rates \(used only to weigh it\), is in another currency than the Plan’s, USD \(\d+ transactions in EUR this year\)\./);
+    expect(tab.text()).toContain('FI number--Needs your annual spending, which isn’t measured (below).Years to FI--Needs your annual spending, which isn’t measured (below).');
+    expect(tab.text()).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card above says why). Type it above.');
+    expect(tab.text()).not.toContain('connect accounts with transactions');
+    expect(tab.text()).not.toContain('$1,097');
+    await tab.unmount();
+  });
+
+  test('rates never fetched: weighed by count, and said as rates Nya doesn’t have at hand, never as ones the ECB doesn’t publish', async () => {
+    const rows = months.flatMap((m) => [row({ date: day(m, 1), amount: 3_000 }), row({ date: day(m, 2), amount: 3_000, iso_currency_code: 'CAD' })]);
+    const calls = serve({ ...planServer({ plan: DEFAULT_PLAN }).answers, 'GET /api/currency': [200, { ...ECB, ecb: { date: null, rates: {}, stale: true, fetch_ok: null } }] });
+    const tab = await render({ institutions: dollars, txns: rows });
+    expect(calls.some((c) => c.url === '/api/currency')).toBe(true);
+    expect(tab.text()).toMatch(/Not measured: more than a tenth of the year’s spending, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD \(\d+ transactions in CAD this year\)\./);
+    expect(tab.text()).not.toContain('publishes no rate');
+    await tab.unmount();
+  });
+
+  test('a simulation starting from invested assets that aren’t measured says so, not that there are none to count', async () => {
+    const euros = broker([EUR({ account_id: 'e1', balance: 600_000 }), EUR({ account_id: 'e2', balance: 300_000 }), USD({ balance: 5_000 })]);
+    const year = months.flatMap((m) => [row({ date: day(m, 5), amount: 4_000, iso_currency_code: 'EUR' }), row({ date: day(m, 5), amount: -6_000, category: 'income', iso_currency_code: 'EUR' })]);
+    serve(planServer({ plan: { ...DEFAULT_PLAN, age: 40, targetAge: 55, start: 'assets' } }).answers);
+    const tab = await render({ institutions: euros, txns: year, currency: 'EUR' });
+    expect(tab.text()).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card above says why). Type them above, or start from your FI number (Change).');
+    expect(tab.text()).not.toContain('none to count yet');
     await tab.unmount();
   });
 });

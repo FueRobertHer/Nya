@@ -201,7 +201,7 @@ describe('the FI card', () => {
     expect(card(plan())).not.toContain("aren't in your spending");
     // More than a tenth (one of three): not measured from the rest, and why (lib/fire/progress.ts assetsGap).
     const gap = card(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
-    expect(gap).toContain('Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD (1 account in EUR).');
+    expect(gap).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (1 account in EUR).');
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {
@@ -423,6 +423,15 @@ describe('the simulation card', () => {
   test('explains what is missing instead of simulating nothing', () => {
     expect(read(plan(), { spending: null, savings: null, assets: null })).toContain('withdraws your annual spending, so it needs it');
     expect(read(plan({ start: 'assets' }), { spending: 40_000, savings: null, assets: null })).toContain('none to count yet');
+  });
+
+  test('what it needs and isn’t measured is said so, in compare mode’s words, never as none to count (review round 3)', () => {
+    const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
+    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card above says why). Type them above, or start from your FI number (Change).');
+    expect(assets).not.toContain('none to count yet');
+    const spending = read(plan(), { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] });
+    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card above says why). Type it above.');
+    expect(spending).not.toContain('connect accounts with transactions');
   });
 });
 

@@ -74,7 +74,7 @@ import {
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, transactionCoverage, transactionsMissing, type ShareRates } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, transactionCoverage, transactionsMissing, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
@@ -1422,6 +1422,8 @@ export function FiCard({
 
   // The same words as the FI card on Home (components/FiProgressCard.tsx).
   const yearsLine = fiShort ? 'None' : yearsToFiText(view.yearsToFi);
+  // Spending there but not measured is said so, never as none to count.
+  const spendingNeed = view.spending.source === 'unmeasured' ? 'Needs your annual spending, which isn’t measured (below).' : null;
   let yearsNote = '';
   if (fiShort) {
     yearsNote = fiShort;
@@ -1435,7 +1437,7 @@ export function FiCard({
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
   } else if (view.yearsToFi === null) {
     // A figure not measured is never taken as zero: what rests on it says why.
-    yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
+    yearsNote = view.fiNumber === null ? (spendingNeed ?? 'Needs your annual spending.') : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
   }
   const notWorkedOut = notWorkedOutText(view, 'below');
 
@@ -1453,7 +1455,7 @@ export function FiCard({
             ? `${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !formulasTake(plan)
               ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
-              : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
+              : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
       {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
@@ -1543,6 +1545,15 @@ const MISSING_TEXT: Record<Missing, string> = {
   balance: 'Type the balance to start with (Change).',
 };
 
+/** Why the simulation can't run: what it needs, and when that is there but
+ *  isn't measured, said so in compare mode's words (unmeasuredNeed). */
+function missingText(missing: Missing, view: FiView): string {
+  const need = unmeasuredNeed(missing, view);
+  if (need && missing === 'assets') return `The simulation starts with ${need} (the FI card above says why). Type them above, or start from your FI number (Change).`;
+  if (need) return `The simulation withdraws ${need} (the FI card above says why). Type it above.`;
+  return MISSING_TEXT[missing];
+}
+
 export function SimulationCard({
   scenarioName = null,
   startsWith = null,
@@ -1624,7 +1635,7 @@ export function SimulationCard({
     return (
       <div className="card">
         {header}
-        <p className="empty-note">{MISSING_TEXT[engine.missing]}</p>
+        <p className="empty-note">{missingText(engine.missing, view)}</p>
       </div>
     );
   }

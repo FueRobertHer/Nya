@@ -210,6 +210,25 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(row('fi').cells[3].pending).toBe(false);
   });
 
+  test('one that needs a figure that isn’t measured says so, for invested assets and for spending, rather than that it needs one (review round 3)', () => {
+    const noAssets = planFigures(plan({ age: 40, targetAge: 55, start: 'assets' }), { ...measured, assets: null, unmeasured: ['assets'] }, []) as PlanFigures;
+    const noSpending = planFigures(base, { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] }, []) as PlanFigures;
+    const none = planFigures(base, { spending: null, savings: null, assets: 300_000 }, []) as PlanFigures;
+    const cells = compareRows(
+      [
+        { id: 'plan', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: fBase, result: run(fBase) } },
+        ...[noAssets, noSpending, none].map((f, i): CompareColumn => ({ id: `m${i}`, name: `M${i}`, isPlan: false, outcome: { kind: 'figures', figures: f, result: 'sim' in f.engine ? run(f) : { missing: f.engine.missing } } })),
+      ],
+      money,
+      TODAY
+    ).rows.find((r) => r.key === 'lasted')!.cells;
+    expect(cells.slice(1).map((c) => c.value)).toEqual([
+      'needs your invested assets, which aren’t measured (the FI card above says why)',
+      'needs your annual spending, which isn’t measured (the FI card above says why)',
+      'needs your annual spending',
+    ]);
+  });
+
   test('plans that start with different balances show no amount difference; the same start shows one', () => {
     const typed = figs(plan({ age: 40, targetAge: 55, start: 'assets' }));
     const spendMore = figs(plan({ age: 40, targetAge: 55, withdrawalRate: 0.035 }));

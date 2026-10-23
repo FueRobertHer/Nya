@@ -17,7 +17,7 @@
 // And a plan that starts with more than it would have says so in its own
 // success cell, and in what a screen reader is given for it.
 
-import { notMeasuredWhat } from '@/lib/fire/progress';
+import { notMeasuredWhat, unmeasuredNeed } from '@/lib/fire/progress';
 import type { SimResult } from '@/lib/fire/simulate';
 import type { PlanFigures } from '@/lib/fire/plan-figures';
 import type { Missing } from '@/lib/fire/plan';
@@ -125,8 +125,8 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     const r = c.outcome.result;
     if (needsResult && r === 'pending') return { ...empty, pending: true };
     if (needsResult && typeof r === 'object' && r !== null && 'missing' in r) {
-      const unmeasured = r.missing === 'assets' && c.outcome.figures.view.assets.source === 'unmeasured';
-      return { ...empty, value: unmeasured ? 'needs your invested assets, which aren’t measured (the FI card above says why)' : MISSING_TEXT[r.missing] };
+      const need = unmeasuredNeed(r.missing, c.outcome.figures.view);
+      return { ...empty, value: need ? `needs ${need} (the FI card above says why)` : MISSING_TEXT[r.missing] };
     }
     if (needsResult && typeof r === 'object' && r !== null && 'error' in r) return { ...empty, value: 'couldn’t be worked out' };
     const result = resultOf(c);
