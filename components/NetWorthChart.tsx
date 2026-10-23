@@ -22,9 +22,19 @@
 // straight line across days nothing was recorded (bridgeInteriorEstimates in
 // lib/history.ts). A segment joining two points more than a day apart draws
 // dashed too, even between real points: every day it spans is unmeasured.
+//
+// Notes on the timeline (#50, lib/timeline-notes.ts) mark their days: a
+// dotted rule and a small marker, never a change to the line, so a step (an
+// account that closed, a house bought) stays as it happened and says what it
+// was. Scrubbing to a marked day puts its note in the readout, on the date's
+// own line and cut to fit it, so the readout never grows under the finger;
+// the whole note is in the list. For keyboard and screen reader, the notes in
+// the range are listed under the chart as buttons that select their day, and
+// the selection is announced.
 
 import { useId, useMemo, useRef, useState } from 'react';
-import { formatMoney, compactMoney } from '@/lib/format';
+import { formatMoney, compactMoney, spoken } from '@/lib/format';
+import { Masked } from './HideAmounts';
 import {
   availableRanges,
   axisTicks,
@@ -38,6 +48,8 @@ import {
 
 export type HistoryPoint = { date: string; value: number; estimated?: boolean };
 type Baseline = { date: string; value: number }[] | null;
+/** A note on the timeline: its day, and what it says. */
+export type ChartNote = { date: string; text: string };
 
 const W = 340;
 const H = 150;
@@ -97,6 +109,7 @@ export default function NetWorthChart({
   initialRange: forcedRange,
   owed = false,
   reserveSplit = false,
+  notes,
 }: {
   points: HistoryPoint[];
   label?: string;
@@ -119,12 +132,16 @@ export default function NetWorthChart({
    *  (the account's transactions are still loading): it appears in the same
    *  place instead of pushing the chart down when they arrive. */
   reserveSplit?: boolean;
+  /** Notes on the timeline, marked on their days (see the header). */
+  notes?: readonly ChartNote[];
 }) {
   const svgRef = useRef<SVGSVGElement | null>(null);
   const [activeState, setActive] = useState<number | null>(null);
   const [measureState, setMeasure] = useState<[number, number] | null>(null);
   const [picked, setPicked] = useState<RangeKey | null>(forcedRange ?? null);
   const [showInfo, setShowInfo] = useState(false);
+  // The note last chosen from the list, for the announcement.
+  const [chosenNote, setChosenNote] = useState<number | null>(null);
   const infoId = useId();
   // Pointers down on the plot (id -> clientX), and where a mouse drag began.
   const pointers = useRef(new Map<number, number>());
@@ -147,6 +164,7 @@ export default function NetWorthChart({
     setGesturePoints(points);
     setActive(null);
     setMeasure(null);
+    setChosenNote(null);
     active = null;
     measure = null;
   }
@@ -225,6 +243,24 @@ export default function NetWorthChart({
     return { vals, xs, y, runs, area, baseY, ticks: niceTicks(lo, hi), xTicks, hasGap, base, basePath, baseStart };
   }, [points, baseline]);
 
+  // The notes in the range, a day each (several notes on one day join), each
+  // at the point on its day, or the first one after it: where its step shows.
+  const marked = useMemo(() => {
+    if (!notes || notes.length === 0 || points.length === 0) return [];
+    const first = points[0].date;
+    const lastDay = points[points.length - 1].date;
+    const byDay = new Map<string, string[]>();
+    for (const n of notes) if (n.date >= first && n.date <= lastDay) byDay.set(n.date, [...(byDay.get(n.date) ?? []), n.text]);
+    return [...byDay]
+      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+      .map(([date, texts]) => ({ date, text: texts.join('; '), index: Math.max(0, points.findIndex((p) => p.date >= date)) }));
+  }, [notes, points]);
+  /** The note text on a point, if any. */
+  const noteOn = (i: number) => {
+    const here = marked.filter((m) => m.index === i);
+    return here.length > 0 ? here.map((m) => m.text).join('; ') : null;
+  };
+
   const { vals, xs, y, runs, area, baseY, ticks, xTicks, hasGap, base, basePath, baseStart } = geo;
   const last = points.length - 1;
   const hasEstimated = points.some((p) => p.estimated) || hasGap;
@@ -282,13 +318,14 @@ export default function NetWorthChart({
     }
   }
 
-  const notes: string[] = [];
+  const info: string[] = [];
   if (baseStart >= 0) {
-    notes.push(`Grey line: the balance on ${day(baseStart)} plus money added since. The gap above it is growth.`);
+    info.push(`Grey line: the balance on ${day(baseStart)} plus money added since. The gap above it is growth.`);
   }
-  if (hasEstimated) notes.push('Dashed: estimated, from transactions or across days with no data.');
-  if (rangeChange.approx) notes.push('≈: the change starts or ends on an estimated balance.');
-  notes.push('Touch with two fingers, or drag with a mouse, to compare two days.');
+  if (hasEstimated) info.push('Dashed: estimated, from transactions or across days with no data.');
+  if (rangeChange.approx) info.push('≈: the change starts or ends on an estimated balance.');
+  if (marked.length > 0) info.push('Dotted lines mark your notes: touch the day to read one, or pick it from the list below.');
+  info.push('Touch with two fingers, or drag with a mouse, to compare two days.');
 
   function indexAt(clientX: number): number {
     const svg = svgRef.current;
@@ -317,6 +354,7 @@ export default function NetWorthChart({
   function onPointerDown(e: React.PointerEvent<SVGSVGElement>) {
     // Only the main mouse button; a right-click opens the menu, not a drag.
     if (e.pointerType === 'mouse' && e.button !== 0) return;
+    setChosenNote(null);
     // Captured by the chart itself, for every kind of pointer: otherwise a
     // touch is captured by the dot or crosshair it landed on, which is
     // replaced as it moves, and a finger lifted off the chart would never
@@ -377,15 +415,25 @@ export default function NetWorthChart({
     setPicked(key);
     setActive(null);
     setMeasure(null);
+    setChosenNote(null);
+  }
+
+  /** A note chosen from the list: its day is scrubbed to, and announced. */
+  function chooseNote(i: number) {
+    setMeasure(null);
+    setActive(marked[i].index);
+    setChosenNote(i);
   }
 
   let readValue: string;
   let readDate: string;
+  let readNote: string | null = null;
   if (measure) {
     readValue = change(measure[0], measure[1]).text;
     readDate = `${day(measure[0])} to ${day(measure[1])}`;
   } else if (active !== null) {
     readValue = formatMoney(vals[active], currency);
+    readNote = noteOn(active);
     readDate = `${day(active)}${points[active].estimated ? ' · estimated' : ''}`;
   } else {
     readValue = rangeChange.text;
@@ -395,8 +443,17 @@ export default function NetWorthChart({
   return (
     <div>
       <div className="chart-readout chart-readout-stable">
-        <span className="chart-readout-value">{readValue}</span>
-        <span className="chart-readout-date">{readDate}</span>
+        <span className="chart-readout-value">
+          <Masked>{readValue}</Masked>
+        </span>
+        {readNote ? (
+          <span className="chart-readout-date chart-readout-noted">
+            <span className="chart-readout-day">{readDate}</span>
+            <span className="chart-readout-note">{`\u00a0·\u00a0${readNote}`}</span>
+          </span>
+        ) : (
+          <span className="chart-readout-date">{readDate}</span>
+        )}
         <button
           type="button"
           className="chart-info-btn"
@@ -416,7 +473,7 @@ export default function NetWorthChart({
           scrubbing to a day without a split (or the data arriving late) moves
           nothing below it. */}
       {(splitText || reserveSplit || baselineFor) && (
-        <div className="chart-readout-split">{splitText || <>&nbsp;</>}</div>
+        <div className="chart-readout-split">{splitText ? <Masked>{splitText}</Masked> : <>&nbsp;</>}</div>
       )}
 
       <svg
@@ -424,7 +481,9 @@ export default function NetWorthChart({
         className="chart-svg"
         viewBox={`0 0 ${W} ${H}`}
         role="img"
-        aria-label={`${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.`}
+        aria-label={spoken(
+          `${label} from ${day(0)} to ${day(last)}. Currently ${formatMoney(vals[last], currency)}. Low ${formatMoney(Math.min(...vals), currency)}, high ${formatMoney(Math.max(...vals), currency)}.${marked.length > 0 ? ` ${marked.length === 1 ? 'One note is' : `${marked.length} notes are`} marked, listed below the chart.` : ''}`
+        )}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
@@ -480,6 +539,18 @@ export default function NetWorthChart({
           />
         ))}
 
+        {/* notes: a dotted rule on each marked day, and a small marker at
+            its foot; the chosen one's in full. The line itself is untouched. */}
+        {marked.map((m) => {
+          const on = active === m.index;
+          return (
+            <g key={m.date} className="chart-note-mark" opacity={on ? 1 : 0.6}>
+              <line x1={xs[m.index]} x2={xs[m.index]} y1={PAD_TOP} y2={baseY} stroke="var(--warn)" strokeWidth={1} strokeDasharray="1 3" />
+              <path d={`M${xs[m.index].toFixed(1)},${baseY - 7}l3.5,3.5l-3.5,3.5l-3.5,-3.5Z`} fill="var(--warn)" />
+            </g>
+          );
+        })}
+
         {/* crosshairs: one while scrubbing, two while measuring */}
         {(measure ?? (active !== null ? [active] : [])).map((i) => (
           <line key={i} x1={xs[i]} x2={xs[i]} y1={PAD_TOP} y2={baseY} stroke="#3a4150" strokeWidth={1} />
@@ -514,10 +585,29 @@ export default function NetWorthChart({
         </div>
       )}
 
+      {/* The notes in the range, for a keyboard and a screen reader: each
+          selects its day, as scrubbing to it does. */}
+      {marked.length > 0 && (
+        <ul className="chart-notes" aria-label="Notes on this chart">
+          {marked.map((m, i) => (
+            <li key={m.date}>
+              <button type="button" className="chart-note-btn" aria-pressed={active === m.index} onClick={() => chooseNote(i)} onFocus={() => chooseNote(i)}>
+                <span className="chart-note-day">{fmtDay(m.date, withYear)}</span> {m.text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="visually-hidden" aria-live="polite">
+        {chosenNote !== null && marked[chosenNote] && points[marked[chosenNote].index]
+          ? spoken(`${fmtDay(marked[chosenNote].date, true)}: ${marked[chosenNote].text}. ${label} ${formatMoney(vals[marked[chosenNote].index], currency)} on ${day(marked[chosenNote].index)}.`)
+          : ''}
+      </p>
+
       {/* In the markup even while closed (hidden), so it is one tap to show and
           the page never shifts while loading it. */}
       <div id={infoId} className="chart-info" hidden={!showInfo}>
-        {notes.map((n) => (
+        {info.map((n) => (
           <p key={n}>{n}</p>
         ))}
       </div>

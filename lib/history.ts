@@ -19,9 +19,11 @@
 import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt, MalformedCiphertextError, DecryptFailedError } from './crypto';
+import { encrypt, decrypt, sealedAway, MalformedCiphertextError, DecryptFailedError } from './crypto';
 import { type HiddenMap } from './hidden';
 import { signedContribution } from './balance';
+import { openStored } from './repo';
+import { pendingJob, SignJobPending } from './sign-repair-store';
 
 const HISTORY_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth');
 const ESTIMATED_HASH = (ctx: Ctx) => kc(ctx, 'history:net-worth:est');
@@ -110,7 +112,7 @@ export async function recordSnapshot(ctx: Ctx,
   let mapLanded = false;
   if (accountBalances && Object.keys(accountBalances).length > 0) {
     try {
-      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(JSON.stringify(accountBalances)) });
+      await redis().hset(ACCOUNTS_HASH(ctx), { [today]: await encrypt(ctx, JSON.stringify(accountBalances)) });
       mapLanded = true;
     } catch {
       // The total still goes in. What's lost is subtracting a hidden account
@@ -119,7 +121,7 @@ export async function recordSnapshot(ctx: Ctx,
   }
 
   try {
-    await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(String(netWorth)) });
+    await redis().hset(HISTORY_HASH(ctx), { [today]: await encrypt(ctx, String(netWorth)) });
   } catch {
     // Best-effort: a missed snapshot leaves a gap in the chart.
     return null;
@@ -160,7 +162,7 @@ export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, n
   try {
     const blob = await redis().hget<string>(ACCOUNTS_PARTIAL_HASH(ctx), today);
     if (blob) {
-      const parsed = JSON.parse(await decrypt(blob));
+      const parsed = JSON.parse(await decrypt(ctx, blob));
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return;
       existing = parsed as Record<string, number>;
     }
@@ -170,7 +172,7 @@ export async function recordPartialAccounts(ctx: Ctx, balances: Record<string, n
 
   try {
     await redis().hset(ACCOUNTS_PARTIAL_HASH(ctx), {
-      [today]: await encrypt(JSON.stringify({ ...existing, ...balances })),
+      [today]: await encrypt(ctx, JSON.stringify({ ...existing, ...balances })),
     });
   } catch {
     // Best-effort: the account's chart falls back to the estimate for today.
@@ -218,7 +220,7 @@ async function replaceRange(
 }
 
 export async function replaceEstimated(ctx: Ctx, points: { date: string; value: number }[]): Promise<void> {
-  await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(String(p.value)));
+  await replaceRange(ESTIMATED_HASH(ctx), points, (p) => encrypt(ctx, String(p.value)));
 }
 /**
  * Replaces the flat (non-cash) balances backfill folded into `rest`, one map per
@@ -229,7 +231,7 @@ export async function replaceEstimatedFlat(ctx: Ctx,
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
   await replaceRange(ACCOUNTS_EST_FLAT_BY_DATE(ctx), points, (p) =>
-    encrypt(JSON.stringify(p.balances))
+    encrypt(ctx, JSON.stringify(p.balances))
   );
 }
 
@@ -249,7 +251,7 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
     const newestFlat = Object.keys(flatByDate ?? {}).sort().pop();
     const flatSample = newestFlat ? flatByDate?.[newestFlat] : undefined;
     if (flatSample) {
-      const parsed = JSON.parse(await decrypt(flatSample)) as Record<string, number>;
+      const parsed = JSON.parse(await decrypt(ctx, flatSample)) as Record<string, number>;
       if (account_id in (parsed ?? {})) return true;
     }
   } catch {
@@ -266,7 +268,7 @@ export async function estimatedLayerCovers(ctx: Ctx, account_id: string): Promis
     const newest = Object.keys(map ?? {}).sort().pop();
     const sample = newest ? map?.[newest] : undefined;
     if (!sample) return false;
-    return account_id in ((JSON.parse(await decrypt(sample)) as Record<string, number>) ?? {});
+    return account_id in ((JSON.parse(await decrypt(ctx, sample)) as Record<string, number>) ?? {});
   } catch {
     return false; // unreadable: report not-covered, so the caller forces a recompute
   }
@@ -283,7 +285,7 @@ export async function getEstimatedFlat(ctx: Ctx): Promise<Record<string, number>
   try {
     const blob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
     if (!blob) return {}; // never written (layer predates this key): genuinely empty
-    return JSON.parse(await decrypt(blob)) as Record<string, number>;
+    return JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
   } catch {
     return null; // unreadable: not the same as "nothing to subtract"
   }
@@ -340,28 +342,31 @@ const digestOf = (blob: string) => createHash('sha256').update(blob).digest('bas
 /**
  * A per-date balance map, decrypted once per process. getHistory reads every
  * per-account map on every load while anything is hidden, so without this the
- * same year of immutable maps is decrypted on every dashboard load. Keyed by a
- * digest of the ciphertext, so a rewritten map is a different key and never
- * served stale, and one container's entries can't answer for another's. LRU
- * within a byte budget; forgetting an account evicts the maps it rewrote
- * (evictDecrypted) so its balances don't stay in memory.
+ * same year of immutable maps is decrypted on every dashboard load. Keyed by
+ * the container and a digest of the ciphertext, so a rewritten map is a
+ * different key and never served stale, and one container's entries can't
+ * answer for another's, not even a copy of the same bytes, which must go
+ * through decrypt(ctx, ) and its check of the container's key. LRU within a byte
+ * budget; forgetting an account evicts the maps it rewrote (evictDecrypted)
+ * so its balances don't stay in memory.
  */
-async function decryptMap(blob: string): Promise<Record<string, number>> {
-  const key = digestOf(blob);
+const decryptedKey = (ctx: Ctx, blob: string) => `${ctx.container}:${digestOf(blob)}`;
+async function decryptMap(ctx: Ctx, blob: string): Promise<Record<string, number>> {
+  const key = decryptedKey(ctx, blob);
   const hit = DECRYPTED_MAPS.get(key);
   if (hit) return hit;
   // Frozen: every caller shares it.
-  const map = Object.freeze(JSON.parse(await decrypt(blob))) as Record<string, number>;
+  const map = Object.freeze(JSON.parse(await decrypt(ctx, blob))) as Record<string, number>;
   DECRYPTED_MAPS.set(key, map, blob.length * COST_PER_CHAR);
   return map;
 }
-function evictDecrypted(blob: string): void {
-  DECRYPTED_MAPS.delete(digestOf(blob));
+function evictDecrypted(ctx: Ctx, blob: string): void {
+  DECRYPTED_MAPS.delete(decryptedKey(ctx, blob));
 }
 /** For tests: the cache itself. */
-export const decryptMapForTest = (blob: string) => decryptMap(blob);
+export const decryptMapForTest = (ctx: Ctx, blob: string) => decryptMap(ctx, blob);
 /** For tests: whether a map is held decrypted. */
-export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(blob));
+export const isDecryptedCached = (ctx: Ctx, blob: string) => DECRYPTED_MAPS.has(decryptedKey(ctx, blob));
 
 /**
  * The flat balances that applied on one date: the per-date record, falling back
@@ -369,6 +374,7 @@ export const isDecryptedCached = (blob: string) => DECRYPTED_MAPS.has(digestOf(b
  * `{}` vs `null` contract as getEstimatedFlat.
  */
 async function flatFor(
+  ctx: Ctx,
   byDate: Record<string, string> | null,
   date: string,
   legacy: Record<string, number> | null
@@ -376,7 +382,7 @@ async function flatFor(
   const blob = byDate?.[date];
   if (!blob) return legacy;
   try {
-    return await decryptMap(blob);
+    return await decryptMap(ctx, blob);
   } catch {
     return null;
   }
@@ -387,7 +393,7 @@ async function flatFor(
 export async function replaceEstimatedAccounts(ctx: Ctx, 
   points: { date: string; balances: Record<string, number> }[]
 ): Promise<void> {
-  await replaceRange(ACCOUNTS_EST_HASH(ctx), points, (p) => encrypt(JSON.stringify(p.balances)));
+  await replaceRange(ACCOUNTS_EST_HASH(ctx), points, (p) => encrypt(ctx, JSON.stringify(p.balances)));
 }
 
 /**
@@ -408,7 +414,7 @@ export async function replaceEstimatedExtension(ctx: Ctx,
   await replaceRange(
     ACCOUNTS_EST_EXT_HASH(ctx),
     points,
-    (p) => encrypt(JSON.stringify(p.balances)),
+    (p) => encrypt(ctx, JSON.stringify(p.balances)),
     coveredFrom
   );
 }
@@ -459,7 +465,7 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
     try {
       const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), date);
       if (!blob) continue;
-      balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      balances = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
     } catch {
       continue; // undecryptable date (rotated key): try the day before
     }
@@ -470,6 +476,115 @@ export async function getLatestAccountSnapshot(ctx: Ctx): Promise<{
     if (Object.keys(usable).length > 0) return { date, balances: usable };
   }
   return null;
+}
+
+/** One account's newest measured balance (latestMeasuredBalances). */
+export type MeasuredBalance = {
+  /** The UTC day it was measured. */
+  date: string;
+  value: number;
+  /** Where it was found: the map recorded with a total ('recorded'), or a
+   *  partial one, measured on a day one institution failed ('partial'). */
+  layer: 'recorded' | 'partial';
+};
+
+/** Each account's newest measured balance, and the accounts whose newest one
+ *  can't be told (latestMeasuredBalances). */
+export type MeasuredBalances = {
+  balances: Map<string, MeasuredBalance>;
+  /** Accounts whose newest measured balance may be in a map sealed under a
+   *  key this deployment can't use (lib/crypto.ts sealedAway): none is
+   *  answered for them, never an older one. */
+  unavailable: Set<string>;
+};
+
+/**
+ * Each account's newest MEASURED balance and its UTC day, never an estimate:
+ * the balance the read-only API gives a linked account (lib/api-read.ts),
+ * which never asks Plaid. The precedence of getAccountHistory's measured
+ * points, which this must keep agreeing with: on each date, a partial map
+ * naming the account wins (recordSnapshot clears the day's partial map when it
+ * records a total, so one beside a recorded map is newer), then the recorded
+ * map; within a map, the account's current id, then its earlier ids in order
+ * (`accounts` maps each account to its ids, current first). Future dates are
+ * passed over, as getLatestAccountSnapshot passes them: clock skew can mint
+ * one. Reads the dates, then only the maps it needs, newest first and a few
+ * more each round trip, until every account has a balance: on most days the
+ * newest map names them all. A map damaged for good (unreadableForGood) is
+ * passed over (the next date down answers, with its own date). A map sealed
+ * under a key this deployment can't use (a failed decrypt under k0, which a
+ * replaced PLAID_ENCRYPTION_KEY looks exactly like, or a data key the key
+ * store lacks) is not damage: every account not answered by then, which it
+ * may hold the newest balance of, is `unavailable`, never answered with an
+ * older balance, as a manual account sealed so is (lib/manual.ts). Any other
+ * failure that may pass (storage, the master key) throws. An account no
+ * measured map names is left out.
+ */
+export async function latestMeasuredBalances(ctx: Ctx, accounts: Map<string, string[]>): Promise<MeasuredBalances> {
+  const found = new Map<string, MeasuredBalance>();
+  const unavailable = new Set<string>();
+  if (accounts.size === 0) return { balances: found, unavailable };
+  const [recordedDates, partialDates] = await Promise.all([redis().hkeys(ACCOUNTS_HASH(ctx)), redis().hkeys(ACCOUNTS_PARTIAL_HASH(ctx))]);
+  const recorded = new Set(recordedDates);
+  const partial = new Set(partialDates);
+  const today = new Date().toISOString().slice(0, 10);
+  const dates = [...new Set([...recordedDates, ...partialDates])].filter((d) => d <= today).sort().reverse();
+
+  /** A day's map, null for none (or one damaged for good: the date before
+   *  answers), or 'sealed' for one this deployment can't open. */
+  const mapAt = async (key: string, date: string): Promise<Record<string, number> | null | 'sealed'> => {
+    const blob = await redis().hget<string>(key, date); // uncaught: storage failing is never "no balance"
+    if (!blob) return null;
+    try {
+      return await decryptMap(ctx, blob);
+    } catch (err) {
+      if (sealedAway(err)) return 'sealed';
+      if (!unreadableForGood(err)) throw err;
+      return null; // damaged for good: the date before answers
+    }
+  };
+  const valueIn = (map: Record<string, number> | null, ids: string[]): number | null => {
+    for (const id of ids) {
+      const v = map?.[id];
+      if (typeof v === 'number' && Number.isFinite(v)) return v;
+    }
+    return null;
+  };
+
+  for (let i = 0, size = 1; i < dates.length && found.size + unavailable.size < accounts.size; i += size, size = Math.min(size * 4, 32)) {
+    const batch = await Promise.all(
+      dates.slice(i, i + size).map(async (date) => {
+        const [p, r] = await Promise.all([
+          partial.has(date) ? mapAt(ACCOUNTS_PARTIAL_HASH(ctx), date) : null,
+          recorded.has(date) ? mapAt(ACCOUNTS_HASH(ctx), date) : null,
+        ]);
+        return { date, p, r };
+      })
+    );
+    for (const { date, p, r } of batch) {
+      for (const [account, ids] of accounts) {
+        if (found.has(account) || unavailable.has(account)) continue;
+        // The partial map first, as its precedence says: one that can't be
+        // opened may name it, and would win, so nothing older can stand in.
+        if (p === 'sealed') {
+          unavailable.add(account);
+          continue;
+        }
+        const fromPartial = valueIn(p, ids);
+        if (fromPartial !== null) {
+          found.set(account, { date, value: fromPartial, layer: 'partial' });
+          continue;
+        }
+        if (r === 'sealed') {
+          unavailable.add(account);
+          continue;
+        }
+        const value = valueIn(r, ids);
+        if (value !== null) found.set(account, { date, value, layer: 'recorded' });
+      }
+    }
+  }
+  return { balances: found, unavailable };
 }
 
 /** The moment the snapshot dated `date` was last written, or null if unknown. */
@@ -527,7 +642,7 @@ export async function getAccountHistory(ctx: Ctx,
   async function balanceIn(blob: string | undefined): Promise<number | null> {
     if (!blob) return null;
     try {
-      const balances = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      const balances = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
       for (const id of ids) {
         const value = balances[id];
         if (typeof value === 'number' && Number.isFinite(value)) return value;
@@ -563,6 +678,268 @@ export async function getAccountHistory(ctx: Ctx,
   return points
     .filter((p): p is HistoryPoint => p !== null)
     .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * The balances measured on each of `dates`, per account, for allocation over
+ * time (app/api/allocation-history): the real and partial layers only, never
+ * an estimate, by the precedence getAccountHistory reads them with. On a date,
+ * a partial measurement comes first for the accounts it names (recordSnapshot
+ * clears a day's partial map when it writes a real one, so a partial beside a
+ * real one is newer), then the real map. Keyed by the id each balance was
+ * recorded under: the caller follows links and leaves hidden accounts out.
+ *
+ * A date neither layer has is absent. A date whose map is damaged for good
+ * (unreadableForGood) is named in `unreadable`, never taken for a day with no
+ * balances; a failure that may pass (the key store unreachable) throws.
+ * Reads only the dates asked for, two commands in all.
+ */
+export async function readMeasuredBalances(
+  ctx: Ctx,
+  dates: readonly string[]
+): Promise<{ balances: Map<string, Record<string, number>>; unreadable: string[] }> {
+  const balances = new Map<string, Record<string, number>>();
+  const unreadable: string[] = [];
+  const wanted = [...new Set(dates)];
+  if (wanted.length === 0) return { balances, unreadable };
+  const [real, partial] = await Promise.all(
+    [ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx)].map(
+      async (key) => (await redis().hmget<Record<string, string | null>>(key, ...wanted)) ?? {}
+    )
+  );
+  /** A stored map's finite balances, or null when it is damaged for good. */
+  const open = async (blob: unknown): Promise<Record<string, number> | null> => {
+    try {
+      if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
+      const map = await decryptMap(ctx, blob);
+      const out: Record<string, number> = {};
+      for (const [id, value] of Object.entries(map ?? {})) if (typeof value === 'number' && Number.isFinite(value)) out[id] = value;
+      return out;
+    } catch (err) {
+      if (unreadableForGood(err)) return null;
+      throw err;
+    }
+  };
+  await Promise.all(
+    wanted.map(async (date) => {
+      const realBlob = real[date] ?? null;
+      const partialBlob = partial[date] ?? null;
+      if (realBlob === null && partialBlob === null) return;
+      const [r, p] = await Promise.all([realBlob === null ? {} : open(realBlob), partialBlob === null ? {} : open(partialBlob)]);
+      if (r === null || p === null) {
+        unreadable.push(date);
+        return;
+      }
+      balances.set(date, { ...r, ...p });
+    })
+  );
+  unreadable.sort();
+  return { balances, unreadable };
+}
+
+/** One day of a stored series, as the download of my data gives it. */
+export type StoredPoint = {
+  date: string;
+  value: number;
+  estimated: boolean;
+  /** An account's balance measured on a day the snapshot was partial
+   *  (ACCOUNTS_PARTIAL_HASH): the moment that day's snapshot was taken
+   *  (snapshotTakenAt) isn't this balance's. */
+  partial?: true;
+  /** An account's estimated balance on a day past the estimated totals
+   *  (ACCOUNTS_EST_EXT_HASH), the breakdown of no total. */
+  extended?: true;
+};
+
+/** The balances each estimated total held flat (ACCOUNTS_EST_FLAT_BY_DATE),
+ *  by day, and those of totals from before they were kept by day
+ *  (ACCOUNTS_EST_FLAT_LEGACY), for the download of my data: what takes a
+ *  hidden account out of an estimated day, as the chart does. */
+export type FlatForExport = { days: Map<string, Record<string, number>>; before: Record<string, number> | null };
+
+/** The days a series has stored that can't be used, by why, each in date
+ *  order, as the storage seam reports entries (lib/repo.ts getAllReport):
+ *  `unreadable`, their stored bytes are damaged; `unrecognised`, stored intact
+ *  in a form this code does not know (a total that isn't a number, a map
+ *  that isn't one of balances, or one holding a balance that isn't a
+ *  number). */
+export type UnusableDays = { unreadable: string[]; unrecognised: string[] };
+
+/**
+ * Every stored balance, for the download of my data (lib/user-export.ts): the
+ * net-worth totals and each account's own series, recorded and estimated
+ * points marked. One point per day per series, by the precedence the app
+ * reads them with: for the totals a recorded one wins over an estimate
+ * (getHistory); for an account a partial measurement, then the recorded map,
+ * then the extension, then the estimate (getAccountHistory, which this must
+ * keep agreeing with; test/user-export.test.ts checks that it does).
+ *
+ * Nothing the chart adds on read: no hidden account is subtracted (stored
+ * totals include hidden accounts, lib/hidden.ts), no estimate between two
+ * recorded days is replaced by a line (bridgeInteriorEstimates), and no
+ * earlier id is joined to the account it was linked to (the download lists
+ * the links). A point kept outside its kind's own layer says so (`partial`,
+ * `extended`), so a download brought back puts it where it was. The flat
+ * balances behind estimated totals are read apart (`flat`): they are
+ * balances of the day backfill ran, copied onto past days, not a history of
+ * those accounts (see ACCOUNTS_EST_FLAT_BY_DATE), but what takes a hidden
+ * account out of an estimated day.
+ *
+ * A day that can't be used is NAMED, never dropped quietly and never a reason
+ * to stop: `problems` lists it, by the storage seam's rules (lib/repo.ts
+ * openStored), for the series it is missing from. So is a day whose map reads
+ * but holds a balance that isn't a finite number (a later version's shape,
+ * say): its numbers are used, as the chart uses them, and the day is named
+ * `unrecognised`, since an account's balance on it is left out. It is not
+ * read around either: a day whose recorded total or map can't be used gets
+ * no estimate in its place, as the chart gives it none. A partial measurement
+ * that can't be used, on a day with no recorded map, does fall back to the
+ * estimate, marked as one, as the chart does. Anything that says nothing
+ * about the data is thrown as it is: storage out of reach, a key this
+ * deployment can't load, a failed decrypt under k0 (which a replaced
+ * PLAID_ENCRYPTION_KEY would look exactly like). An estimate on a day that
+ * also has a recorded value is superseded and not read, so it can never be
+ * named.
+ */
+export async function readHistoryForExport(ctx: Ctx): Promise<{
+  totals: StoredPoint[];
+  accounts: Map<string, StoredPoint[]>;
+  flat: FlatForExport;
+  problems: { totals: UnusableDays; accounts: UnusableDays; flat: UnusableDays };
+}> {
+  const [[real, est, realAcc, partialAcc, estAcc, extAcc, flatAcc], flatBefore] = await Promise.all([
+    Promise.all(
+      [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ACCOUNTS_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)].map(
+        async (key) => (await redis().hgetall<Record<string, unknown>>(key)) ?? {}
+      )
+    ),
+    redis().get<unknown>(ACCOUNTS_EST_FLAT_LEGACY(ctx)),
+  ]);
+  const totalsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
+  const accountsNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
+  const flatNamed = { unreadable: new Set<string>(), unrecognised: new Set<string>() };
+
+  /** A stored total, or null when it can't be used, named. */
+  const total = async (date: string, blob: unknown): Promise<number | null> => {
+    const opened = await openStored(ctx, blob);
+    if (!opened.ok) {
+      totalsNamed[opened.flaw].add(date);
+      return null;
+    }
+    // Number('') is 0: an empty value is no zero net worth.
+    const value = opened.text.trim() === '' ? NaN : Number(opened.text);
+    if (Number.isFinite(value)) return value;
+    totalsNamed.unrecognised.add(date);
+    return null;
+  };
+  const totals = (
+    await Promise.all([
+      ...Object.entries(real).map(async ([date, blob]) => ({ date, value: await total(date, blob), estimated: false })),
+      ...Object.entries(est)
+        .filter(([date]) => !Object.hasOwn(real, date))
+        .map(async ([date, blob]) => ({ date, value: await total(date, blob), estimated: true })),
+    ])
+  ).filter((p): p is StoredPoint => p.value !== null);
+
+  /** A stored map of balances, or null when it can't be used, named. */
+  const open = async (date: string, blob: unknown, named = accountsNamed): Promise<Record<string, unknown> | null> => {
+    const opened = await openStored(ctx, blob);
+    if (!opened.ok) {
+      named[opened.flaw].add(date);
+      return null;
+    }
+    let map: unknown;
+    try {
+      map = JSON.parse(opened.text);
+    } catch {
+      map = null;
+    }
+    if (!map || typeof map !== 'object' || Array.isArray(map)) {
+      named.unrecognised.add(date);
+      return null;
+    }
+    // A balance that isn't a finite number is one this code doesn't know (no
+    // writer stores one): the day is named, and the rest of the map is used.
+    if (Object.values(map).some((v) => typeof v !== 'number' || !Number.isFinite(v))) named.unrecognised.add(date);
+    return map as Record<string, unknown>;
+  };
+  /** A layer's maps that can be used, for the days given. */
+  const maps = async (layer: Record<string, unknown>, dates: string[]) => {
+    const read = await Promise.all(dates.map(async (date) => [date, await open(date, layer[date])] as const));
+    return new Map(read.filter((e): e is readonly [string, Record<string, unknown>] => e[1] !== null));
+  };
+  // The estimate layers are read only for days with no recorded map: where one
+  // is stored, readable or not, they are superseded (below).
+  const unrecorded = (layer: Record<string, unknown>) => Object.keys(layer).filter((date) => !Object.hasOwn(realAcc, date));
+  const [realMaps, partialMaps, estMaps, extMaps] = await Promise.all([
+    maps(realAcc, Object.keys(realAcc)),
+    maps(partialAcc, Object.keys(partialAcc)),
+    maps(estAcc, unrecorded(estAcc)),
+    maps(extAcc, unrecorded(extAcc)),
+  ]);
+  // A value that isn't a finite number is no balance, as getAccountHistory
+  // reads it; its day is named (open, above).
+  const num = (map: Record<string, unknown> | undefined, id: string): number | null => {
+    const v = map && Object.hasOwn(map, id) ? map[id] : undefined;
+    return typeof v === 'number' && Number.isFinite(v) ? v : null;
+  };
+
+  const accounts = new Map<string, StoredPoint[]>();
+  const dates = new Set([...realMaps.keys(), ...partialMaps.keys(), ...estMaps.keys(), ...extMaps.keys()]);
+  for (const date of dates) {
+    const [partial, recorded, ext, estimate] = [partialMaps.get(date), realMaps.get(date), extMaps.get(date), estMaps.get(date)];
+    const ids = new Set([partial, recorded, ext, estimate].flatMap((m) => Object.keys(m ?? {})));
+    for (const id of ids) {
+      let point: StoredPoint | null = null;
+      const measured = num(partial, id);
+      if (measured !== null) point = { date, value: measured, estimated: false, partial: true };
+      else if (Object.hasOwn(realAcc, date)) {
+        // A recorded map that doesn't name the account says it wasn't there
+        // that day: no estimate stands in for it. Nor for a recorded map that
+        // can't be read, which is named instead.
+        const value = num(recorded, id);
+        point = value === null ? null : { date, value, estimated: false };
+      } else {
+        const extended = num(ext, id);
+        const value = extended ?? num(estimate, id);
+        point = value === null ? null : { date, value, estimated: true, ...(extended !== null ? { extended: true as const } : {}) };
+      }
+      if (!point) continue;
+      const series = accounts.get(id) ?? [];
+      series.push(point);
+      accounts.set(id, series);
+    }
+  }
+  const byDate = (a: StoredPoint, b: StoredPoint) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0);
+  for (const series of accounts.values()) series.sort(byDate);
+  // The flat balances of each estimated day kept (see FlatForExport): every
+  // one, as stored, whatever day it is for; one that can't be used is named.
+  const days = new Map<string, Record<string, number>>();
+  for (const [date, blob] of Object.entries(flatAcc)) {
+    const map = await open(date, blob, flatNamed);
+    if (!map) continue;
+    const balances: Record<string, number> = {};
+    for (const [id, v] of Object.entries(map)) if (typeof v === 'number' && Number.isFinite(v)) balances[id] = v;
+    days.set(date, balances);
+  }
+  let before: Record<string, number> | null = null;
+  if (flatBefore !== null && flatBefore !== undefined && flatBefore !== '') {
+    const map = await open('before', flatBefore, flatNamed);
+    if (map) {
+      before = {};
+      for (const [id, v] of Object.entries(map)) if (typeof v === 'number' && Number.isFinite(v)) before[id] = v;
+    }
+  }
+  const sorted = (named: { unreadable: Set<string>; unrecognised: Set<string> }): UnusableDays => ({
+    unreadable: [...named.unreadable].sort(),
+    unrecognised: [...named.unrecognised].sort(),
+  });
+  return {
+    totals: totals.sort(byDate),
+    accounts,
+    flat: { days: new Map([...days].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))), before },
+    problems: { totals: sorted(totalsNamed), accounts: sorted(accountsNamed), flat: sorted(flatNamed) },
+  };
 }
 
 // The backfill flag makes /api/backfill idempotent; linking a new institution
@@ -623,20 +1000,22 @@ export async function clearBackfillPending(ctx: Ctx): Promise<void> {
   }
 }
 
-export async function clearBackfillDone(ctx: Ctx): Promise<void> {
+export async function clearBackfillDone(ctx: Ctx, opts: { strict?: boolean } = {}): Promise<void> {
   try {
     await redis().del(BACKFILL_FLAG(ctx));
-  } catch {
-    // Worst case the next backfill is skipped; harmless.
+  } catch (err) {
+    // Worst case the next backfill is skipped; harmless. A caller that keeps
+    // its reason to clear it until it is cleared is told (lib/api-rebuilds.ts).
+    if (opts.strict) throw err;
   }
 }
 
 /** Per-date balances for a layer, or null when that date has no map at all. */
-async function balancesFor(source: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
+async function balancesFor(ctx: Ctx, source: Record<string, string> | null, date: string): Promise<Record<string, number> | null> {
   const blob = source?.[date];
   if (!blob) return null;
   try {
-    return await decryptMap(blob);
+    return await decryptMap(ctx, blob);
   } catch {
     return null;
   }
@@ -651,10 +1030,54 @@ type HiddenSources = {
 };
 
 /**
+ * The stored layers a read of net worth's history is made from: the recorded
+ * and estimated totals, and, when something is to be taken out of the points
+ * or split by currency, the per-account maps behind them (`sources`, null
+ * when not read). Read once, in parallel: a caller that knows it will need
+ * them before it knows what it will take out or split (net worth's route,
+ * which learns the accounts in other currencies only from the fetch) starts
+ * the read early and hands it to readHistoryPoints.
+ */
+export type HistoryLayers = {
+  realMap: Record<string, string> | null;
+  estMap: Record<string, string> | null;
+  sources: HiddenSources | null;
+};
+
+export async function readHistoryLayers(ctx: Ctx, perAccount: boolean): Promise<HistoryLayers> {
+  const [realMap, estMap, sources] = await Promise.all([
+    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    perAccount ? readPerAccountSources(ctx) : null,
+  ]);
+  return { realMap, estMap, sources };
+}
+
+async function readPerAccountSources(ctx: Ctx): Promise<HiddenSources> {
+  const [realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
+    redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+    getEstimatedFlat(ctx),
+  ]);
+  return { realAccounts, estAccounts, estFlatByDate, legacyFlat };
+}
+
+/**
+ * Accounts that stop counting from a day (lib/lifecycle.ts: closed, left or
+ * untracked), by every id each has had: the day, and the kind each id is
+ * subtracted as, or null when it isn't known (a point naming such an id with
+ * a balance can't be corrected, and is dropped).
+ */
+export type EndedAccounts = ReadonlyMap<string, { type: string | null; from: string }>;
+
+/**
  * What one hidden account contributed to one point, signed as it was added to the
  * total; null when that can't be told, and the point must be dropped. The one
  * rule used both to subtract a hidden account (getHistory) and to fold a
- * forgotten one out of the totals (foldHiddenAccount).
+ * forgotten one out of the totals (foldHiddenAccount). An ended account
+ * (EndedAccounts) is subtracted by it too, on the days from its end; with no
+ * kind known, a balance it holds can't be signed (null).
  *
  * REAL points: the per-account map recorded with the total. A real date with no
  * map is reachable (recordSnapshot's two writes are separate awaits) and can't
@@ -669,21 +1092,22 @@ type HiddenSources = {
  * nothing here can be trusted. Absent from a readable map means the account was
  * never in these points (linked after the last backfill): nothing to remove.
  */
-async function hiddenContribution(src: HiddenSources, date: string, estimated: boolean, id: string, type: string): Promise<number | null> {
+async function hiddenContribution(ctx: Ctx, src: HiddenSources, date: string, estimated: boolean, id: string, type: string | null): Promise<number | null> {
+  const signed = (b: number) => (type === null ? null : signedContribution(type, b));
   if (!estimated) {
-    const balances = await balancesFor(src.realAccounts, date);
+    const balances = await balancesFor(ctx, src.realAccounts, date);
     if (!balances) return null;
     const b = balances[id];
-    return typeof b === 'number' ? signedContribution(type, b) : 0;
+    return typeof b === 'number' ? signed(b) : 0;
   }
-  const estFlat = await flatFor(src.estFlatByDate, date, src.legacyFlat);
+  const estFlat = await flatFor(ctx, src.estFlatByDate, date, src.legacyFlat);
   if (estFlat === null) return null;
   const flatBalance = estFlat[id];
-  if (typeof flatBalance === 'number') return signedContribution(type, flatBalance);
-  const balances = await balancesFor(src.estAccounts, date);
+  if (typeof flatBalance === 'number') return signed(flatBalance);
+  const balances = await balancesFor(ctx, src.estAccounts, date);
   if (!balances) return null;
   const b = balances[id];
-  return typeof b === 'number' ? signedContribution(type, b) : 0;
+  return typeof b === 'number' ? signed(b) : 0;
 }
 
 /**
@@ -695,59 +1119,195 @@ async function hiddenContribution(src: HiddenSources, date: string, estimated: b
  * be removed from every point. Hiding a $40k 401k redraws the whole chart as if
  * it was never counted instead of leaving a permanent $40k cliff. Subtraction
  * never consults a live balance, so it works while an institution is erroring.
+ *
+ * `ended` (lib/lifecycle.ts) is subtracted the same way, but only from each
+ * account's end day on: every point before it is untouched, so the step on
+ * that day stays, as it happened. An id that is also hidden is subtracted
+ * once, as hidden. The days they end are breaks for bridgeInteriorEstimates,
+ * so a stretch with nothing recorded across one keeps its step there, on its
+ * day, when the end moved the total (movingBreaks).
+ *
+ * `short` are days whose recorded totals are known to be short of an account
+ * (lib/lifecycle.ts shortDays: it was missing from its bank's answer, assumed
+ * closed, and came back): their recorded points are left out, so the chart
+ * bridges them as it bridges any day with nothing recorded, rather than draw
+ * a dip that never happened. Read only: the real layer keeps them.
  */
-export async function getHistory(ctx: Ctx, hidden?: HiddenMap): Promise<HistoryPoint[]> {
-  const hiding = !!hidden && hidden.size > 0;
+export async function getHistory(ctx: Ctx, hidden?: HiddenMap, ended?: EndedAccounts, short?: ReadonlySet<string>): Promise<HistoryPoint[]> {
+  return (await getHistoryWithBreaks(ctx, hidden, ended, short)).points;
+}
 
-  // Per-account maps are read only when something is hidden: decrypting a year
-  // of them on every load to subtract nothing would be waste.
-  const [realMap, estMap, realAccounts, estAccounts, estFlatByDate, legacyFlat] = await Promise.all([
-    redis().hgetall<Record<string, string>>(HISTORY_HASH(ctx)),
-    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_HASH(ctx)) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_HASH(ctx)) : null,
-    hiding ? redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)) : null,
-    hiding ? getEstimatedFlat(ctx) : null,
-  ]);
-  const sources: HiddenSources = { realAccounts, estAccounts, estFlatByDate, legacyFlat };
+/** getHistory, with the end days its bridging stepped on (`breaks`), which
+ *  withTodayPoint needs to bridge the same way once today's point closes a
+ *  hole. */
+export async function getHistoryWithBreaks(
+  ctx: Ctx,
+  hidden?: HiddenMap,
+  ended?: EndedAccounts,
+  short?: ReadonlySet<string>
+): Promise<{ points: HistoryPoint[]; breaks: string[] }> {
+  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short);
+  return { points: bridgeInteriorEstimates(points, breaks), breaks };
+}
+
+/**
+ * Accounts in another currency than the one most accounts are in, by every id
+ * each has had (lib/fx/known-accounts.ts): what a point's split by currency
+ * reads (getHistoryWithSplit), with the kind each is signed as (null when
+ * unknown: then a balance it holds can't be signed, and the split can't be
+ * told).
+ */
+export type ForeignAccounts = ReadonlyMap<string, { currency: string; type: string | null }>;
+
+/** A point with its split by currency (lib/fx/net-worth.ts SplitPoint):
+ *  `parts` each foreign account's signed contribution added up by currency,
+ *  the rest being the main currency's; null when it can't be told. */
+export type SplitHistoryPoint = HistoryPoint & { parts?: Record<string, number> | null };
+
+/**
+ * getHistoryWithBreaks, and the same points before bridging, each with its
+ * split by currency, for converting each day at its own rate
+ * (lib/fx/net-worth.ts): never converted here, and never written. With no
+ * foreign accounts it reads exactly what getHistoryWithBreaks reads.
+ */
+export async function getHistoryWithSplit(
+  ctx: Ctx,
+  hidden: HiddenMap | undefined,
+  ended: EndedAccounts | undefined,
+  short: ReadonlySet<string> | undefined,
+  foreign: ForeignAccounts | null,
+  layers?: PromiseLike<HistoryLayers> | HistoryLayers
+): Promise<{ points: HistoryPoint[]; breaks: string[]; raw: SplitHistoryPoint[] }> {
+  const { points, breaks } = await readHistoryPoints(ctx, hidden, ended, short, foreign ?? undefined, layers);
+  const plain = points.map(({ date, value, estimated }) => ({ date, value, ...(estimated ? { estimated: true } : {}) }));
+  return { points: bridgeInteriorEstimates(plain, breaks), breaks, raw: points };
+}
+
+/**
+ * The points getHistory draws, before any bridging, date-sorted, and the end
+ * days that move a total: for a caller comparing two readings, which bridging
+ * would set apart by the breaks alone (lib/lifecycle.ts endedForgetRefusal).
+ * With `foreign`, each point also carries its split by currency.
+ */
+export async function readHistoryPoints(
+  ctx: Ctx,
+  hidden?: HiddenMap,
+  ended?: EndedAccounts,
+  short?: ReadonlySet<string>,
+  foreign?: ForeignAccounts,
+  layers?: PromiseLike<HistoryLayers> | HistoryLayers
+): Promise<{ points: SplitHistoryPoint[]; breaks: string[] }> {
+  const ending = [...(ended ?? [])].filter(([id]) => !hidden?.has(id));
+  const hiding = (!!hidden && hidden.size > 0) || ending.length > 0;
+  const splitting = !!foreign && foreign.size > 0;
+  const endingFrom = new Map(ending.map(([id, e]) => [id, e.from]));
+
+  // Per-account maps are read only when something is hidden, or a point is to
+  // be split by currency: decrypting a year of them on every load to subtract
+  // nothing would be waste. Layers read already (readHistoryLayers, started
+  // before what this waited for) are used as they are, the per-account maps
+  // read now only if they lack them and they are needed.
+  const perAccount = hiding || splitting;
+  let read = layers ? await layers : await readHistoryLayers(ctx, perAccount);
+  if (perAccount && !read.sources) read = { ...read, sources: await readPerAccountSources(ctx) };
+  const { realMap, estMap } = read;
+  const sources: HiddenSources = read.sources ?? { realAccounts: null, estAccounts: null, estFlatByDate: null, legacyFlat: null };
 
   const entries: { date: string; blob: string; estimated: boolean }[] = [];
   for (const [date, blob] of Object.entries(realMap ?? {})) {
+    // Known short of an account: left out, as if nothing were recorded.
+    if (short?.has(date)) continue;
     entries.push({ date, blob, estimated: false });
   }
   for (const [date, blob] of Object.entries(estMap ?? {})) {
-    if (!realMap?.[date]) entries.push({ date, blob, estimated: true });
+    if (!realMap?.[date] || short?.has(date)) entries.push({ date, blob, estimated: true });
   }
 
   const points = await Promise.all(
-    entries.map(async ({ date, blob, estimated }): Promise<HistoryPoint | null> => {
+    entries.map(async ({ date, blob, estimated }): Promise<SplitHistoryPoint | null> => {
       let value: number;
       try {
-        value = Number(await decrypt(blob));
+        value = Number(await decrypt(ctx, blob));
       } catch {
         return null; // undecryptable point (rotated key) -- drop it
       }
       if (!Number.isFinite(value)) return null;
 
       if (hiding) {
-        for (const [id, { type }] of hidden!) {
-          const c = await hiddenContribution(sources, date, estimated, id, type);
+        for (const [id, { type }] of hidden ?? []) {
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
           // Can't tell what this account contributed: dropped rather than
           // showing a spike the size of the account (see hiddenContribution).
           if (c === null) return null;
           value -= c;
         }
+        for (const [id, { type, from }] of ending) {
+          if (date < from) continue; // before its end: untouched
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
+          if (c === null) return null;
+          value -= c;
+        }
       }
 
-      return { date, value, ...(estimated ? { estimated: true } : {}) };
+      // Split by currency: what each account in another currency put into
+      // this point, by the same rule hiding takes one out by. One whose part
+      // can't be told leaves the split unknown (null), never guessed. Hidden
+      // ones, and ended ones from their end day, are out of the point already.
+      let parts: Record<string, number> | null | undefined;
+      if (splitting) {
+        parts = {};
+        for (const [id, { currency, type }] of foreign!) {
+          if (hidden?.has(id)) continue;
+          const end = endingFrom.get(id);
+          if (end !== undefined && date >= end) continue;
+          const c = await hiddenContribution(ctx, sources, date, estimated, id, type);
+          if (c === null) {
+            parts = null;
+            break;
+          }
+          if (c !== 0) parts[currency] = (parts[currency] ?? 0) + c;
+        }
+      }
+
+      return { date, value, ...(estimated ? { estimated: true } : {}), ...(parts !== undefined ? { parts } : {}) };
     })
   );
-  return bridgeInteriorEstimates(
-    points.filter((p): p is HistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1))
-  );
+  const sorted = points.filter((p): p is SplitHistoryPoint => p !== null).sort((a, b) => (a.date < b.date ? -1 : 1));
+  return { points: sorted, breaks: ending.length > 0 ? await movingBreaks(ctx, sorted, ending, sources) : [] };
+}
+
+/** The days the ended accounts stop counting: bridgeInteriorEstimates keeps a
+ *  step on each rather than a line across it. Every end, moving or not:
+ *  getHistory keeps only those that move a total (movingBreaks). */
+export function endBreaks(ended: Iterable<readonly [string, { from: string }]>): string[] {
+  return [...new Set([...ended].map(([, e]) => e.from))].sort();
+}
+
+/**
+ * The end days that move a total: an end where the last point before it
+ * counted the account with a balance, or with one that can't be told. An end
+ * that moved nothing (an account closed at zero) is no step, so the stretch
+ * around it is bridged as any other, never drawn as a step on that day.
+ */
+async function movingBreaks(ctx: Ctx, points: readonly HistoryPoint[], ending: readonly [string, { type: string | null; from: string }][], sources: HiddenSources): Promise<string[]> {
+  const days = new Set<string>();
+  for (const [id, { type, from }] of ending) {
+    if (days.has(from)) continue;
+    // Where a stretch with nothing recorded across its end would begin.
+    let before: HistoryPoint | undefined;
+    for (const p of points) {
+      if (p.date >= from) break;
+      before = p;
+    }
+    if (!before) continue;
+    if ((await hiddenContribution(ctx, sources, before.date, !!before.estimated, id, type)) === 0) continue;
+    days.add(from);
+  }
+  return [...days].sort();
 }
 
 const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
+const dayBefore = (date: string) => new Date(dayMs(date) - 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
 /**
  * Replaces every run of estimated points that has a real point on BOTH sides
@@ -767,26 +1327,51 @@ const dayMs = (date: string) => Date.parse(`${date}T00:00:00Z`);
  *
  * For the TOTAL only: a single account's walk is that account's own flows, so
  * getAccountHistory keeps it.
+ *
+ * `breaks` are days an account ended (lib/lifecycle.ts, movingBreaks): a known
+ * step. A hole across one is not drawn as a line, which would spread the step
+ * over the whole hole and smooth the cliff away, but as a step on that day:
+ * the earlier recorded value up to it, the later one from it on, with a point
+ * on the day before it and one on the day itself wherever nothing recorded or
+ * estimated is there (both estimated, display only, never written), so the
+ * drop falls on its own day and a note on that day marks it. Still exact at
+ * both ends, still dashed.
  */
-export function bridgeInteriorEstimates(points: HistoryPoint[]): HistoryPoint[] {
+export function bridgeInteriorEstimates(points: HistoryPoint[], breaks: readonly string[] = []): HistoryPoint[] {
   const out = points.slice();
+  const steps: HistoryPoint[] = [];
   let lastReal = -1;
   for (let i = 0; i < out.length; i++) {
     if (out[i].estimated) continue;
-    if (lastReal >= 0 && i - lastReal > 1) {
+    if (lastReal >= 0) {
       const from = out[lastReal];
       const to = out[i];
-      const t0 = dayMs(from.date);
-      const span = dayMs(to.date) - t0;
-      for (let j = lastReal + 1; j < i; j++) {
-        const f = span > 0 ? (dayMs(out[j].date) - t0) / span : 0;
-        const value = Math.round((from.value + (to.value - from.value) * f) * 100) / 100;
-        out[j] = { date: out[j].date, value, estimated: true };
+      const step = breaks.find((d) => d > from.date && d <= to.date);
+      if (i - lastReal > 1) {
+        const t0 = dayMs(from.date);
+        const span = dayMs(to.date) - t0;
+        for (let j = lastReal + 1; j < i; j++) {
+          const f = span > 0 ? (dayMs(out[j].date) - t0) / span : 0;
+          const value =
+            step !== undefined
+              ? out[j].date < step
+                ? from.value
+                : to.value
+              : Math.round((from.value + (to.value - from.value) * f) * 100) / 100;
+          out[j] = { date: out[j].date, value, estimated: true };
+        }
+      }
+      if (step !== undefined) {
+        const inside = new Set(out.slice(lastReal + 1, i).map((p) => p.date));
+        const before = dayBefore(step);
+        if (before > from.date && !inside.has(before)) steps.push({ date: before, value: from.value, estimated: true });
+        if (step < to.date && !inside.has(step)) steps.push({ date: step, value: to.value, estimated: true });
       }
     }
     lastReal = i;
   }
-  return out;
+  if (steps.length === 0) return out;
+  return [...out, ...steps].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 /**
@@ -804,16 +1389,18 @@ export function bridgeInteriorEstimates(points: HistoryPoint[]): HistoryPoint[] 
  * lib/last-known.ts (display-only) can never be charted as if measured today.
  *
  * Bridged again afterwards: today's point can be the real one that closes a
- * hole, turning trailing estimates into interior ones.
+ * hole, turning trailing estimates into interior ones. `breaks` as for
+ * bridgeInteriorEstimates (endBreaks of the accounts that ended).
  */
 export function withTodayPoint(
   history: HistoryPoint[],
   today: string,
-  visible: number
+  visible: number,
+  breaks: readonly string[] = []
 ): HistoryPoint[] {
   const rest = history.filter((p) => p.date !== today);
   rest.push({ date: today, value: visible });
-  return bridgeInteriorEstimates(rest.sort((a, b) => (a.date < b.date ? -1 : 1)));
+  return bridgeInteriorEstimates(rest.sort((a, b) => (a.date < b.date ? -1 : 1)), breaks);
 }
 
 // Forgetting an earlier account (#46)
@@ -861,6 +1448,8 @@ export async function forgetAccountBalances(
   /** Only today's date, in the layers written today (a second pass). */
   opts: { today?: boolean } = {}
 ): Promise<{ changed: number; unreadableDates: string[] }> {
+  // Never beside a job turning this account's balances over (lib/sign-repair.ts).
+  if (await pendingJob(ctx, account_id)) throw new SignJobPending(account_id);
   let changed = 0;
   const unreadable = new Set<string>();
   const hashes = [ACCOUNTS_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_EXT_HASH(ctx), ACCOUNTS_PARTIAL_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)];
@@ -873,7 +1462,7 @@ export async function forgetAccountBalances(
     if (known) return known;
     let map: Record<string, number> | 'unreadable';
     try {
-      map = JSON.parse(await decrypt(blob)) as Record<string, number>;
+      map = JSON.parse(await decrypt(ctx, blob)) as Record<string, number>;
     } catch (err) {
       if (!unreadableForGood(err)) throw err;
       map = 'unreadable';
@@ -884,12 +1473,12 @@ export async function forgetAccountBalances(
 
   // Without the account, or null when it isn't in the map.
   const without = async (blob: string): Promise<string | null | 'unreadable'> => {
-    evictDecrypted(blob);
+    evictDecrypted(ctx, blob);
     const map = await decryptOnce(blob);
     if (map === 'unreadable') return 'unreadable';
     if (!map || typeof map !== 'object' || !(account_id in map)) return null;
     const { [account_id]: _gone, ...rest } = map;
-    return encrypt(JSON.stringify(rest));
+    return encrypt(ctx, JSON.stringify(rest));
   };
 
   const scrub = async (key: string, date: string, first: string) => {
@@ -1029,11 +1618,13 @@ export async function foldHiddenAccount(
   tag: string,
   life: { first: string | null; last: string | null } = { first: null, last: null }
 ): Promise<{ folded: number; deleted: number }> {
+  // Never beside a job turning this account's balances over (lib/sign-repair.ts).
+  if (await pendingJob(ctx, account_id)) throw new SignJobPending(account_id);
   const progress = FOLD_PROGRESS(ctx, tag);
   const strict = async (blob: string | null | undefined): Promise<Record<string, number> | null | 'unreadable'> => {
     if (!blob) return null;
     try {
-      return await decryptMap(blob);
+      return await decryptMap(ctx, blob);
     } catch (err) {
       if (unreadableForGood(err)) return 'unreadable';
       throw err;
@@ -1114,12 +1705,12 @@ export async function foldHiddenAccount(
         } else if (c !== 0) {
           let value: number;
           try {
-            value = Number(await decrypt(total));
+            value = Number(await decrypt(ctx, total));
           } catch (err) {
             if (!unreadableForGood(err)) throw err;
             value = NaN; // unreadable for good: dropped from the chart anyway
           }
-          if (Number.isFinite(value)) newTotal = await encrypt(String(value - c));
+          if (Number.isFinite(value)) newTotal = await encrypt(ctx, String(value - c));
         }
       }
       const pairs: string[] = [];
@@ -1127,7 +1718,7 @@ export async function foldHiddenAccount(
         const m = maps[i];
         let next = blobs[i] ?? '';
         if (m && m !== 'unreadable' && account_id in m && m[account_id] !== 0) {
-          next = await encrypt(JSON.stringify({ ...m, [account_id]: 0 }));
+          next = await encrypt(ctx, JSON.stringify({ ...m, [account_id]: 0 }));
         }
         pairs.push(blobs[i] ?? '', next);
       }
@@ -1136,7 +1727,7 @@ export async function foldHiddenAccount(
       );
       if (answer === 2) return; // folded already, by an attempt still finishing
       if (answer === 1) {
-        for (const b of blobs) if (b) evictDecrypted(b);
+        for (const b of blobs) if (b) evictDecrypted(ctx, b);
         folded++;
         if (newTotal === '-') {
           deleted++;
@@ -1168,4 +1759,276 @@ export async function foldHiddenAccount(
 /** Deletes a finished fold's progress record. */
 export async function dropFoldProgress(ctx: Ctx, tag: string): Promise<void> {
   await redis().del(FOLD_PROGRESS(ctx, tag));
+}
+
+// Re-signing one account's balances (lib/sign-repair.ts)
+//
+// An account whose kind changed between money held and money owed has its
+// per-account values on chosen days negated, every total left as recorded,
+// so each day reads as it was counted. Only the reads and the one write it
+// needs live here, beside the layers they touch.
+
+/** The per-account layers a re-sign reads and writes, by a letter of its own:
+ *  recorded (r), partial (p), walked estimate (e), flat per date (f) and
+ *  walked past the estimate (x). */
+export type SignLayer = 'r' | 'p' | 'e' | 'f' | 'x';
+const SIGN_LAYER_KEY: Record<SignLayer, (ctx: Ctx) => string> = {
+  r: ACCOUNTS_HASH,
+  p: ACCOUNTS_PARTIAL_HASH,
+  e: ACCOUNTS_EST_HASH,
+  f: ACCOUNTS_EST_FLAT_BY_DATE,
+  x: ACCOUNTS_EST_EXT_HASH,
+};
+
+/** Every layer as stored, by date: the totals (recorded, estimated) and the
+ *  per-account maps, encrypted, as a re-sign plans from them. */
+export type SignLayers = { totals: Record<string, string>; estTotals: Record<string, string> } & Record<SignLayer, Record<string, string>>;
+
+/** Reads every layer a re-sign plans from. With `split`, the legacy flat
+ *  record is first copied to each estimated date still relying on it (as a
+ *  fold does), so each date's flat balances are a value of their own to
+ *  negate; without (a dry run, which writes nothing), those dates read it
+ *  where it is. */
+export async function readSignLayers(ctx: Ctx, opts: { split: boolean }): Promise<SignLayers> {
+  if (opts.split) await splitLegacyFlat(ctx);
+  const legacyBlob = opts.split ? null : await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+  const [totals, estTotals, r, p, e, f, x] = await Promise.all(
+    [HISTORY_HASH(ctx), ESTIMATED_HASH(ctx), ...(['r', 'p', 'e', 'f', 'x'] as const).map((l) => SIGN_LAYER_KEY[l](ctx))].map(
+      async (key) => (await redis().hgetall<Record<string, string>>(key)) ?? {}
+    )
+  );
+  if (legacyBlob && !opts.split) for (const date of Object.keys(estTotals)) f[date] ??= legacyBlob;
+  return { totals, estTotals, r, p, e, f, x };
+}
+
+/** Copies the legacy flat record to each estimated date still relying on it,
+ *  as a fold does: the same balances, read the same, each date's a value of
+ *  its own to turn over. Only once a re-sign's plan is accepted. */
+export async function splitLegacyFlat(ctx: Ctx): Promise<void> {
+  const legacyBlob = await redis().get<string>(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+  if (!legacyBlob) return;
+  const [estTotals, flatd] = await Promise.all([
+    redis().hgetall<Record<string, string>>(ESTIMATED_HASH(ctx)),
+    redis().hgetall<Record<string, string>>(ACCOUNTS_EST_FLAT_BY_DATE(ctx)),
+  ]);
+  for (const date of Object.keys(estTotals ?? {})) {
+    if (!flatd?.[date]) await redis().eval(HISTORY_SET_IF_ABSENT, [ACCOUNTS_EST_FLAT_BY_DATE(ctx)], [date, legacyBlob]);
+  }
+}
+
+/** One day of one layer as stored, encrypted: the account map, the total it
+ *  is decided by (the recorded one for r, the estimated one for e and f, none
+ *  for the partial and walked-past layers), and for an estimated day the
+ *  other estimated map beside it. */
+export async function readSignDay(ctx: Ctx, layer: SignLayer, date: string): Promise<{ map: string | null; total: string | null; other: string | null }> {
+  const totalKey = layer === 'r' ? HISTORY_HASH(ctx) : layer === 'e' || layer === 'f' ? ESTIMATED_HASH(ctx) : null;
+  const otherKey = layer === 'e' ? SIGN_LAYER_KEY.f(ctx) : layer === 'f' ? SIGN_LAYER_KEY.e(ctx) : null;
+  const [map, total, other] = await Promise.all([
+    redis().hget<string>(SIGN_LAYER_KEY[layer](ctx), date),
+    totalKey ? redis().hget<string>(totalKey, date) : null,
+    otherKey ? redis().hget<string>(otherKey, date) : null,
+  ]);
+  return { map: map ?? null, total: total ?? null, other: other ?? null };
+}
+
+/** A stored map or total, decrypted, or null when it can't be read for good
+ *  (damaged: nothing can be decided from it). A failure that may pass throws. */
+export async function readSignValue(ctx: Ctx, blob: string): Promise<string | null> {
+  try {
+    return await decrypt(ctx, blob);
+  } catch (err) {
+    if (unreadableForGood(err)) return null;
+    throw err;
+  }
+}
+
+/**
+ * Turns one account's value over in one layer on one date, only while that
+ * value is still `planned` (whatever else the map holds: a fold of another
+ * account, a re-encryption, rewrite the map and keep it), in one step
+ * (HISTORY_FOLD, with no total, the whole map as read compared and written):
+ * 'done'; 'already' when it holds -planned (turned over before); 'changed'
+ * when it holds anything else, or the map is gone or can't be read (written
+ * since in another sign: left as it is). Read again while another write lands
+ * between the read and the step. Each step's mark under `tag` is its own, so
+ * a value written back since in the old sign can be turned over again.
+ * `still`, given the map as read, says whether the day is still one to turn
+ * over (lib/sign-repair.ts decides it again from its total): when not, it is
+ * 'changed' too.
+ */
+export async function negateAccountOn(
+  ctx: Ctx,
+  layer: SignLayer,
+  date: string,
+  account_id: string,
+  planned: number,
+  tag: string,
+  still?: (map: Record<string, number>) => Promise<boolean>
+): Promise<'done' | 'already' | 'changed'> {
+  const key = SIGN_LAYER_KEY[layer](ctx);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const blob = await redis().hget<string>(key, date);
+    const plain = blob ? await readSignValue(ctx, blob) : null;
+    if (!blob || plain === null) return 'changed';
+    const map = JSON.parse(plain) as Record<string, number>;
+    const value = map[account_id];
+    if (value === -planned) return 'already';
+    if (value !== planned) return 'changed';
+    if (still && !(await still(map))) return 'changed';
+    const next = await encrypt(ctx, JSON.stringify({ ...map, [account_id]: -planned }));
+    const answer = Number(await redis().eval(HISTORY_FOLD, [key, FOLD_PROGRESS(ctx, tag)], [date, `${layer}:${date}:${crypto.randomUUID()}`, blob, next]));
+    if (answer === 1) {
+      evictDecrypted(ctx, blob);
+      return 'done';
+    }
+  }
+  throw new Error(`history: ${date} kept changing while an account's balance was turned over`);
+}
+
+// Estimated history drawn from imported transactions (#52)
+//
+// lib/history-import/extend.ts continues the estimated layer back from its
+// earliest point, through the transactions imported into linked accounts. It
+// reads that point here (readEarliestPoint) and writes only ESTIMATED dates
+// older than it (replaceEstimatedBefore): the real layer is never read for
+// writing, never written, and no point at or after the earliest one changes.
+// The points are the estimated layer's own (totals, walked balances and the
+// flat term), so hiding, forgetting, the per-account charts and the download
+// treat them as every other estimate.
+
+/** How many fields one write carries: years of daily points are thousands. */
+const EXTENSION_BATCH = 500;
+
+/** A map of balances read for the anchor, strictly: storage failing, a key
+ *  this deployment can't open, or a map damaged or not a map, throws. */
+async function anchorMap(ctx: Ctx, blob: unknown): Promise<Record<string, number>> {
+  if (typeof blob !== 'string') throw new SyntaxError('a balance map is not stored as text');
+  const map = JSON.parse(await decrypt(ctx, blob));
+  if (!map || typeof map !== 'object' || Array.isArray(map)) throw new SyntaxError('a balance map is not a map');
+  const out: Record<string, number> = {};
+  for (const [id, v] of Object.entries(map as Record<string, unknown>)) if (typeof v === 'number' && Number.isFinite(v)) out[id] = v;
+  return out;
+}
+
+/**
+ * The net-worth series' earliest point, recorded or estimated, leaving out
+ * the days `skip` names (an earlier drawing's own, [from, until)), with every
+ * account's balance it was made of: the recorded map for a recorded point;
+ * the walked map and the flat term for an estimate, with the accounts walked
+ * (`walked`: each one's balance there follows its transactions; the flat
+ * term's are held at the balance the estimate began from). Null when the
+ * series has no point. Strict: anything that can't be read throws, since an
+ * extension joined to a point read wrongly would be wrong for every day
+ * before it.
+ */
+export async function readEarliestPoint(
+  ctx: Ctx,
+  skip: { from: string; until: string } | null
+): Promise<{ date: string; total: number; balances: Record<string, number>; estimated: boolean; walked: string[] | null } | null> {
+  const [real, est] = await Promise.all([redis().hkeys(HISTORY_HASH(ctx)), redis().hkeys(ESTIMATED_HASH(ctx))]);
+  const today = new Date().toISOString().slice(0, 10);
+  const kept = (d: string) => d <= today && !(skip && d >= skip.from && d < skip.until);
+  const realDays = new Set(real.filter(kept));
+  const date = [...realDays, ...est.filter(kept)].sort()[0];
+  if (!date) return null;
+  const estimated = !realDays.has(date);
+  const totalBlob = await redis().hget<string>(estimated ? ESTIMATED_HASH(ctx) : HISTORY_HASH(ctx), date);
+  const total = Number(await decrypt(ctx, String(totalBlob)));
+  if (!Number.isFinite(total)) throw new SyntaxError('the earliest net-worth total is not a number');
+  if (!estimated) {
+    // A total recorded without its map (the two are separate writes) names
+    // no account: nothing can be walked from it.
+    const map = await redis().hget(ACCOUNTS_HASH(ctx), date);
+    return { date, total, balances: map === null || map === undefined ? {} : await anchorMap(ctx, map), estimated, walked: null };
+  }
+  const [walkedBlob, flatBlob] = await Promise.all([redis().hget(ACCOUNTS_EST_HASH(ctx), date), redis().hget(ACCOUNTS_EST_FLAT_BY_DATE(ctx), date)]);
+  const walked = walkedBlob === null || walkedBlob === undefined ? {} : await anchorMap(ctx, walkedBlob);
+  let flat: Record<string, number>;
+  if (flatBlob !== null && flatBlob !== undefined) flat = await anchorMap(ctx, flatBlob);
+  else {
+    // Points written before the per-date record: the single one applies.
+    const legacy = await redis().get(ACCOUNTS_EST_FLAT_LEGACY(ctx));
+    flat = legacy === null || legacy === undefined ? {} : await anchorMap(ctx, legacy);
+  }
+  return { date, total, balances: { ...flat, ...walked }, estimated, walked: Object.keys(walked) };
+}
+
+/**
+ * Writes the estimated points drawn from imported history, all older than the
+ * earliest point they continue: each date's walked balances and flat term
+ * first, then its total (the order every writer of this layer keeps, so a
+ * fold reading between them sees a new breakdown beside an old total, never
+ * the reverse). The dates an earlier drawing wrote in `clear` ([from, until))
+ * that this one doesn't are deleted, totals first. A date with a recorded
+ * snapshot is never written, nor deleted from: the real layer is not this
+ * function's to touch, and its dates are read strictly so a failed read can't
+ * pass for none.
+ */
+export async function replaceEstimatedBefore(
+  ctx: Ctx,
+  opts: {
+    clear: { from: string; until: string } | null;
+    points: { date: string; total: number; walked: Record<string, number>; held: Record<string, number> }[];
+  }
+): Promise<void> {
+  const real = new Set(await redis().hkeys(HISTORY_HASH(ctx)));
+  const points = opts.points.filter((p) => !real.has(p.date));
+  const writing = new Set(points.map((p) => p.date));
+  if (opts.clear) {
+    const { from, until } = opts.clear;
+    const doomed = (dates: string[]) => dates.filter((d) => d >= from && d < until && !writing.has(d) && !real.has(d));
+    for (const key of [ESTIMATED_HASH(ctx), ACCOUNTS_EST_HASH(ctx), ACCOUNTS_EST_FLAT_BY_DATE(ctx)]) {
+      const gone = doomed(await redis().hkeys(key));
+      for (let i = 0; i < gone.length; i += EXTENSION_BATCH) await redis().hdel(key, ...gone.slice(i, i + EXTENSION_BATCH));
+    }
+  }
+  for (let i = 0; i < points.length; i += EXTENSION_BATCH) {
+    const batch = points.slice(i, i + EXTENSION_BATCH);
+    const walked: Record<string, string> = {};
+    const flat: Record<string, string> = {};
+    for (const p of batch) {
+      walked[p.date] = await encrypt(ctx, JSON.stringify(p.walked));
+      flat[p.date] = await encrypt(ctx, JSON.stringify(p.held));
+    }
+    await redis().hset(ACCOUNTS_EST_HASH(ctx), walked);
+    await redis().hset(ACCOUNTS_EST_FLAT_BY_DATE(ctx), flat);
+  }
+  for (let i = 0; i < points.length; i += EXTENSION_BATCH) {
+    const totals: Record<string, string> = {};
+    for (const p of points.slice(i, i + EXTENSION_BATCH)) totals[p.date] = await encrypt(ctx, String(p.total));
+    await redis().hset(ESTIMATED_HASH(ctx), totals);
+  }
+}
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** The layers a restore writes days into, by the name its plan gives each
+ *  (lib/user-restore/check.ts HISTORY_LAYERS). */
+const RESTORE_LAYERS: Readonly<Record<string, (ctx: Ctx) => string>> = {
+  'net-worth': HISTORY_HASH,
+  'net-worth:est': ESTIMATED_HASH,
+  accounts: ACCOUNTS_HASH,
+  'accounts:partial': ACCOUNTS_PARTIAL_HASH,
+  'accounts:est': ACCOUNTS_EST_HASH,
+  'accounts:est:ext': ACCOUNTS_EST_EXT_HASH,
+  'accounts:est:flatd': ACCOUNTS_EST_FLAT_BY_DATE,
+};
+
+/** Days of one layer as a restore brings them back: each as the download
+ *  has it, a total or a map of balances, checked by the restore (real days,
+ *  finite numbers, no measurement after the download). Breakdowns before
+ *  totals, as recordSnapshot writes them, is the plan's order. */
+export async function restoreHistoryDays(ctx: Ctx, layer: string, days: readonly { date: string; value: number | Record<string, number> }[]): Promise<void> {
+  const key = RESTORE_LAYERS[layer];
+  if (!key) throw new TypeError(`No history layer ${layer} to restore into.`);
+  if (days.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const d of days) fields[d.date] = await encrypt(ctx, typeof d.value === 'number' ? String(d.value) : JSON.stringify(d.value));
+  await redis().hset(key(ctx), fields);
+}
+
+/** The flat balances of estimated totals from before they were kept by day,
+ *  as a restore brings them back: the one value that describes those days. */
+export async function restoreFlatBefore(ctx: Ctx, balances: Record<string, number>): Promise<void> {
+  await redis().set(ACCOUNTS_EST_FLAT_LEGACY(ctx), await encrypt(ctx, JSON.stringify(balances)));
 }

@@ -3,6 +3,7 @@ import { connection } from 'next/server';
 import { ClerkProvider } from '@clerk/nextjs';
 import './globals.css';
 import { clerkEnabled } from '@/lib/auth-mode';
+import { ServiceWorkerRegistration } from '@/components/ServiceWorkerRegistration';
 
 export const metadata: Metadata = {
   title: 'Nya',
@@ -49,25 +50,26 @@ export default async function RootLayout({ children }: { children: React.ReactNo
   // Clerk only when its keys are set (lib/auth-mode.ts): without them its
   // provider would fail, and the app signs in with the shared password.
   // Decided per request, never at build: a page prerendered without the keys
-  // would keep the password sign-in after Clerk was turned on.
+  // would keep the password sign-in after Clerk was turned on. Rendering per
+  // request is also what lets every page carry its own nonce
+  // (lib/security-headers.ts).
   await connection();
   const page = (
     <html lang="en">
       <body>
         {children}
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              if ('serviceWorker' in navigator) {
-                window.addEventListener('load', function () {
-                  navigator.serviceWorker.register('/service-worker.js').catch(function () {});
-                });
-              }
-            `,
-          }}
-        />
+        <ServiceWorkerRegistration />
       </body>
     </html>
   );
-  return clerkEnabled() ? <ClerkProvider appearance={CLERK_APPEARANCE}>{page}</ClerkProvider> : page;
+  // `dynamic`: Clerk renders its script tags on the server, with the nonce
+  // proxy.ts made for this request, as the policy requires. That is Clerk's
+  // documented way to work under a nonce-based policy.
+  return clerkEnabled() ? (
+    <ClerkProvider appearance={CLERK_APPEARANCE} dynamic>
+      {page}
+    </ClerkProvider>
+  ) : (
+    page
+  );
 }

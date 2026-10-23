@@ -34,13 +34,20 @@ import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
 import { isManualId } from './manual';
 import { measuredAccountHistoryKeys, forgetAccountBalances, foldHiddenAccount, dropFoldProgress } from './history';
+import { forgetAccountHoldings, forgetRecentHoldings } from './holdings-history';
 import { forgetCarried, pruneOrphanOverrides } from './overrides';
-import { storedAccountIds } from './transactions';
+import { forgetCarriedAnnotations, pruneOrphanAnnotations } from './txn-annotations';
+import { pruneSplitsAndGroups } from './split-gone';
+import { storedAccountIds, storedTransactionIds } from './transactions';
 import { storedInvestmentAccountIds } from './invstore';
-import { isOwedType } from './balance';
+import { isOwedType, isInvestmentType } from './balance';
 import { getHiddenAccounts, setAccountHidden, markForgetting, type HiddenMap } from './hidden';
-import { rememberedIdsByItem, forgetStaleRecords } from './last-known';
+import { rememberedIdsByItem, rememberedAccountsReport, couldNotRead, forgetStaleRecords } from './last-known';
 import { getLinks, readLinks, effectiveLinks, resolveId, sameAccountIds, linksKey, type Link } from './link-core';
+import { forgetImportedHistory } from './history-import/commit';
+import { forgetRestoredAccount, restoredForgetRefusal } from './user-restore/forget';
+import type { Unlisted } from './earlier-names';
+import { pendingJob, pendingWords } from './sign-repair-store';
 
 // Keys are functions of the container.
 const directoryKey = (ctx: Ctx) => kc(ctx, 'accounts:directory');
@@ -77,6 +84,12 @@ export type DirectoryEntry = {
    *  balance, or the day it was first seen live. */
   first_seen: string;
   last_seen: string;
+  /** Its balance's currency (an ISO code, or Plaid's unofficial one), where
+   *  known: absent on entries written before it was kept. What prices an
+   *  account in net worth's history after it was disconnected
+   *  (lib/fx/known-accounts.ts). The release before keeps reading an entry
+   *  with it, and drops it from an entry it writes again. */
+  currency?: string | null;
 };
 
 /** Every readable entry, and the ids whose entries couldn't be read. Those
@@ -89,13 +102,165 @@ async function readDirectory(ctx: Ctx): Promise<{ entries: Record<string, Direct
   await Promise.all(
     Object.entries(raw).map(async ([id, blob]) => {
       try {
-        entries[id] = JSON.parse(await decrypt(blob)) as DirectoryEntry;
+        entries[id] = JSON.parse(await decrypt(ctx, blob)) as DirectoryEntry;
       } catch {
         unreadable.add(id);
       }
     })
   );
   return { entries, unreadable };
+}
+
+/** Every account in the directory with its currency (null where the entry
+ *  predates it being kept) and kind, for pricing net worth's history
+ *  (lib/fx/known-accounts.ts). LENIENT, for that display only: an entry that
+ *  can't be read is left out, and its account is then counted in the main
+ *  currency, as before. Storage out of reach throws. */
+export async function directoryCurrencies(ctx: Ctx): Promise<{ account_id: string; currency: string | null; type: string | null }[]> {
+  const { entries } = await readDirectory(ctx);
+  return Object.entries(entries)
+    .filter(([, e]) => e && typeof e === 'object')
+    .map(([account_id, e]) => ({ account_id, currency: typeof e.currency === 'string' ? e.currency : null, type: typeof e.type === 'string' ? e.type : null }));
+}
+
+/** The ids the directory has an entry under, readable or not, without
+ *  reading any: a restored account is read for its rows only while it has
+ *  one (lib/user-restore/restored.ts), so forgetting it ends it. */
+export async function directoryIds(ctx: Ctx): Promise<Set<string>> {
+  return new Set((await redis().hkeys(directoryKey(ctx))) ?? []);
+}
+
+/** The whole directory, for the download of my data (lib/user-export.ts).
+ *  Strict: throws when it can't be read or any entry can't be, rather than
+ *  leaving an account's name out. */
+export async function readDirectoryStrict(ctx: Ctx): Promise<Map<string, DirectoryEntry>> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  if (unreadable.size > 0) throw new Error('An entry in the account directory could not be read');
+  for (const e of Object.values(entries)) {
+    if (!e || typeof e !== 'object' || typeof e.institution_name !== 'string') {
+      throw new Error('An entry in the account directory has an unexpected shape');
+    }
+  }
+  return new Map(Object.entries(entries));
+}
+
+/** What the directory knows of an account, for allocation over time. */
+export type KnownAccount = {
+  /** The first day it is known to have existed (first_seen). */
+  first_seen: string | null;
+  /** "<name> at <institution>", for naming an account the dashboard no
+   *  longer shows; null when the directory has no name for it. */
+  label: string | null;
+};
+
+/**
+ * What the directory knows of each account, by the id it was seen under: when
+ * it is first known to have existed, so a day after that and before the
+ * account was first recorded is a day it is missing from rather than one
+ * before it existed, and its name. The ids whose entries can't be read are
+ * named, so the caller can tell "not known" from "not in it".
+ */
+export async function readKnownAccounts(ctx: Ctx): Promise<{ known: Map<string, KnownAccount>; unreadable: Set<string> }> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  const known = new Map<string, KnownAccount>();
+  const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  for (const [id, e] of Object.entries(entries)) {
+    if (!e || typeof e !== 'object') {
+      unreadable.add(id);
+      continue;
+    }
+    const first = typeof e.first_seen === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(e.first_seen) ? e.first_seen : null;
+    if (first === null) unreadable.add(id);
+    const name = text(e.name) ?? text(e.official_name);
+    const at = text(e.institution_name);
+    known.set(id, { first_seen: first, label: name ? (at ? `${name} at ${at}` : name) : null });
+  }
+  return { known, unreadable };
+}
+
+/** One account as the directory remembers it, for a report. */
+export type DirectoryAccount = {
+  account_id: string;
+  name: string | null;
+  /** The last four digits, as the institution shows them. */
+  mask: string | null;
+  type: string | null;
+};
+
+/** A connection that is no longer stored, as the directory remembers it: the
+ *  directory outlives a disconnect, which deletes the connection's
+ *  transactions (lib/disconnect-item.ts). */
+export type RemovedConnection = {
+  item_id: string;
+  institution_name: string;
+  institution_id: string | null;
+  /** The first and last UTC days any of its accounts was seen (first_seen,
+   *  last_seen): the span it was connected for, as far as Nya saw. */
+  first_seen: string;
+  last_seen: string;
+  accounts: DirectoryAccount[];
+};
+
+/** An account of a connection stored now, as the directory remembers it. */
+export type LiveSeenAccount = DirectoryAccount & { item_id: string; institution_id: string | null; institution_name: string; first_seen: string };
+
+/**
+ * What a report needs from the directory, read once: the connections it
+ * remembers that aren't among `liveItemIds` (the Items stored now), one per
+ * Item, oldest first, with their accounts, so a report can say when one that
+ * was there during its period was removed, taking its transactions with it,
+ * and whether each of its accounts is back; and the stored connections'
+ * accounts (`live`), with the day each was first seen (lib/report/read.ts).
+ * LENIENT, for that display only, which nothing writes, deletes or records
+ * on: an entry that can't be read, or that lacks its days, is counted in
+ * `unreadable` instead. Throws only when the directory can't be read at all.
+ */
+export async function removedConnections(
+  ctx: Ctx,
+  liveItemIds: ReadonlySet<string>
+): Promise<{ removed: RemovedConnection[]; live: LiveSeenAccount[]; unreadable: number }> {
+  const { entries, unreadable } = await readDirectory(ctx);
+  let unusable = unreadable.size;
+  const day = (v: unknown): v is string => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+  const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v.trim() : null);
+  const byItem = new Map<string, RemovedConnection>();
+  const live: LiveSeenAccount[] = [];
+  for (const [id, e] of Object.entries(entries)) {
+    if (!e || typeof e !== 'object' || typeof e.item_id !== 'string' || !day(e.first_seen) || !day(e.last_seen)) {
+      unusable++;
+      continue;
+    }
+    if (isManualId(id)) continue;
+    const name = text(e.institution_name) ?? 'A removed connection';
+    const institution_id = text(e.institution_id);
+    const account: DirectoryAccount = { account_id: id, name: text(e.name) ?? text(e.official_name), mask: text(e.mask), type: text(e.type) };
+    if (liveItemIds.has(e.item_id)) {
+      live.push({ ...account, item_id: e.item_id, institution_id, institution_name: name, first_seen: e.first_seen });
+      continue;
+    }
+    const seen = byItem.get(e.item_id);
+    if (!seen) {
+      byItem.set(e.item_id, { item_id: e.item_id, institution_name: name, institution_id, first_seen: e.first_seen, last_seen: e.last_seen, accounts: [account] });
+      continue;
+    }
+    if (e.first_seen < seen.first_seen) seen.first_seen = e.first_seen;
+    // The name it was last seen under.
+    if (e.last_seen > seen.last_seen) Object.assign(seen, { last_seen: e.last_seen, institution_name: name });
+    seen.institution_id ??= institution_id;
+    seen.accounts.push(account);
+  }
+  const removed = [...byItem.values()]
+    .map((r) => ({ ...r, accounts: r.accounts.sort((a, b) => (a.account_id < b.account_id ? -1 : 1)) }))
+    .sort((a, b) => (a.first_seen < b.first_seen ? -1 : a.first_seen > b.first_seen ? 1 : a.item_id < b.item_id ? -1 : 1));
+  return { removed, live: live.sort((a, b) => (a.account_id < b.account_id ? -1 : 1)), unreadable: unusable };
+}
+
+/** Every offer the user declined (dismissPair, dismissAll): "<old>><new>" or
+ *  "<old>>*" -> when. For the download of my data; strict, unlike
+ *  getDismissed. */
+export async function readDismissedStrict(ctx: Ctx): Promise<Map<string, string>> {
+  const raw = (await redis().hgetall<Record<string, unknown>>(dismissedKey(ctx))) ?? {};
+  return new Map(Object.entries(raw).map(([k, v]) => [k, String(v)]));
 }
 
 export type Span = { first: string; last: string; firstBalance: number; lastBalance: number };
@@ -116,7 +281,7 @@ export async function historySpans(ctx: Ctx): Promise<Record<string, Span>> {
     const decoded = await Promise.all(
       Object.entries(map).map(async ([date, blob]) => {
         try {
-          return [date, JSON.parse(await decrypt(blob)) as Record<string, number>] as const;
+          return [date, JSON.parse(await decrypt(ctx, blob)) as Record<string, number>] as const;
         } catch {
           return null;
         }
@@ -147,6 +312,7 @@ type SeenAccount = {
   type?: string | null;
   subtype?: string | null;
   persistent_account_id?: string | null;
+  currency?: string | null;
 };
 type SeenInstitution = {
   item_id: string;
@@ -197,9 +363,10 @@ export async function recordDirectory(ctx: Ctx, institutions: SeenInstitution[],
         persistent_account_id: a.persistent_account_id ?? prev?.persistent_account_id ?? null,
         first_seen: prev?.first_seen ?? spans[a.account_id]?.first ?? day,
         last_seen: day,
+        ...(a.currency ? { currency: a.currency } : prev?.currency ? { currency: prev.currency } : {}),
       };
       if (prev && JSON.stringify({ ...prev, last_seen: day }) === JSON.stringify(next)) continue;
-      writes[a.account_id] = await encrypt(JSON.stringify(next));
+      writes[a.account_id] = await encrypt(ctx, JSON.stringify(next));
     }
     if (Object.keys(writes).length > 0) await redis().hset(directoryKey(ctx), writes);
   } catch (err) {
@@ -259,6 +426,9 @@ export function lastSeenOf(id: string, directory: Record<string, DirectoryEntry>
 const normal = (s: string | null | undefined) => (s ?? '').trim().toLowerCase();
 const label = (e: DirectoryEntry | undefined, id: string) =>
   e ? `${e.institution_name} ${e.name ?? 'account'}${e.mask ? ` ••${e.mask}` : ''}` : id;
+/** How the Earlier accounts list names an account its directory knows
+ *  ("Chase Checking ••1111"), for a note that must name it the same way. */
+export const earlierAccountLabel = (e: DirectoryEntry): string => label(e, '');
 const sameInstitution = (a: DirectoryEntry, b: DirectoryEntry) =>
   a.institution_id && b.institution_id
     ? a.institution_id === b.institution_id
@@ -473,6 +643,33 @@ export function isManualChoice(old: string, to: string, choices: Unclaimed[]): b
 /** An earlier account the user can forget: what it was, and its span. */
 export type Earlier = { id: string; label: string | null; first: string | null; last: string | null };
 
+/** What decides which earlier accounts can be forgotten (forgettableAccounts,
+ *  whyUnlisted): loadSuggestionInputs, with the live accounts read strictly. */
+type ForgetInputs = {
+  directory: Record<string, DirectoryEntry>;
+  spans: Record<string, Span>;
+  liveIds: Set<string>;
+  links: Map<string, Link>;
+  unreadableLinks?: Set<string>;
+};
+
+/** Why each id isn't an earlier account the user can forget, in the order
+ *  lib/earlier-names.ts Unlisted gives, or null for one that is. */
+function unlistedBy(input: ForgetInputs, storedItems: Set<string>): (id: string) => Unlisted | null {
+  const { directory, spans, liveIds, links } = input;
+  const targets = new Set([...links.values()].map((l) => l.to));
+  return (id) => {
+    if (liveIds.has(id)) return 'live';
+    if (isManualId(id)) return 'manual';
+    if (directory[id] && storedItems.has(directory[id].item_id)) return 'connected';
+    if (input.unreadableLinks?.has(id)) return 'link-unreadable';
+    if (links.has(id)) return 'linked';
+    if (targets.has(id)) return 'linked-to';
+    if (!directory[id] && !spans[id]) return 'unknown';
+    return null;
+  };
+}
+
 /**
  * The earlier accounts the user can FORGET (forgetEarlierAccount): accounts
  * of an institution that is no longer connected. Not live, not manual, not
@@ -483,22 +680,11 @@ export type Earlier = { id: string; label: string | null; first: string | null; 
  * safe; it goes when the institution is disconnected. `hidden` says it is
  * hidden, which forgetting keeps out of past totals. Pure. Most recent first.
  */
-export function forgettableAccounts(
-  input: {
-    directory: Record<string, DirectoryEntry>;
-    spans: Record<string, Span>;
-    liveIds: Set<string>;
-    links: Map<string, Link>;
-    unreadableLinks?: Set<string>;
-  },
-  hidden: Set<string>,
-  storedItems: Set<string>
-): (Earlier & { hidden: boolean })[] {
-  const { directory, spans, liveIds, links } = input;
-  const linked = new Set([...links.keys(), ...[...links.values()].map((l) => l.to), ...(input.unreadableLinks ?? [])]);
+export function forgettableAccounts(input: ForgetInputs, hidden: Set<string>, storedItems: Set<string>): (Earlier & { hidden: boolean })[] {
+  const { directory, spans } = input;
+  const unlisted = unlistedBy(input, storedItems);
   return [...new Set([...Object.keys(directory), ...Object.keys(spans)])]
-    .filter((id) => !liveIds.has(id) && !isManualId(id) && !linked.has(id))
-    .filter((id) => !directory[id] || !storedItems.has(directory[id].item_id))
+    .filter((id) => unlisted(id) === null)
     .map((id) => ({
       id,
       label: directory[id] ? label(directory[id], id) : null,
@@ -507,6 +693,12 @@ export function forgettableAccounts(
       hidden: hidden.has(id),
     }))
     .sort((a, b) => ((a.last ?? '') < (b.last ?? '') ? 1 : (a.last ?? '') > (b.last ?? '') ? -1 : a.id < b.id ? -1 : 1));
+}
+
+/** Why forgettableAccounts doesn't list this account (lib/earlier-names.ts
+ *  Unlisted), or null when it does. Pure. */
+export function whyUnlisted(input: ForgetInputs, storedItems: Set<string>, id: string): Unlisted | null {
+  return unlistedBy(input, storedItems)(id);
 }
 
 /** A refusal to show the user: nothing was changed. */
@@ -539,37 +731,66 @@ export async function withLinksLock<T>(ctx: Ctx, fn: () => Promise<T>): Promise<
 
 /**
  * Forgets an earlier account for good, at the user's request: its balances
- * in every per-account layer, its directory entry (name, mask, institution),
- * the categories recorded to carry across a re-link, dismissed offers that
- * name it, leftover remembered records naming it, and its hidden entry. The
- * past net-worth totals stay as they were (they were the user's net worth on
- * those dates); a hidden account is folded out of them first, so the chart
- * shows them as it did while it was hidden (lib/history.ts foldHiddenAccount).
+ * in every per-account layer, its positions in holdings history, its
+ * directory entry (name, mask, institution), the categories recorded to carry
+ * across a re-link, the transactions imported into it from files, the bank
+ * rows a restore brought back for it and what was said about them, dismissed
+ * offers that name it, leftover remembered records naming it, and its hidden
+ * entry. The past net-worth totals stay as they were
+ * (they were the user's net worth on those dates); a hidden account is folded
+ * out of them first, so the chart shows them as it did while it was hidden
+ * (lib/history.ts foldHiddenAccount).
  *
  * Refused (ForgetRefused) unless it is forgettable right now, re-checked here
  * from fresh, strict reads; an account known only from balances is also
  * checked against every stored Item's transaction and investment stores.
- * Balances go before the name, so a failure part way leaves it listed, and
- * running it again finishes. Call inside withLinksLock.
+ * Balances and positions go before the name, so a failure part way leaves it
+ * listed, and running it again finishes. Call inside withLinksLock.
  *
  * A backfill or snapshot running beside it isn't locked out: both write each
  * breakdown before its total, which is the order a fold is safe against
  * (foldHiddenAccount). A backfill that fetched before the institution was
  * disconnected sees it gone before writing, and writes nothing.
+ *
+ * `unreadableDates` are days of balances too damaged for anyone to read, and
+ * `holdingsDamaged` says holdings records that could hold the account are
+ * (lib/holdings-history.ts forgetAccountHoldings): left as they are. Holdings
+ * records this version does not recognise stop the forget before anything is
+ * changed, for an account that could be in them (UnreadableEntriesError).
+ * What a restore brought back for it in a form this version doesn't know
+ * stops it the same way, as a refusal (lib/user-restore/forget.ts
+ * restoredForgetRefusal).
+ *
+ * `unlisted` also takes an account the list can't show for having nothing to
+ * list it by (whyUnlisted 'unknown': no directory entry that can be read, and
+ * no balance history), for the restore card, which offers it for a restored
+ * account whose entry can't be read either (app/api/user-restore/forget).
+ * Every other check stands.
  */
-export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ changed: number; unreadableDates: string[] }> {
+export async function forgetEarlierAccount(
+  ctx: Ctx,
+  id: string,
+  opts: { unlisted?: boolean } = {}
+): Promise<{ changed: number; unreadableDates: string[]; holdingsDamaged: boolean }> {
   const [inputs, hidden, items] = await Promise.all([
     liveAccountIds(ctx, { strict: true }).then((live) => loadSuggestionInputs(ctx, live)),
     getHiddenAccounts(ctx),
     getItems(ctx),
   ]);
   if (inputs.unreadableLinks.size > 0) throw new ForgetRefused('A saved link can\'t be read. Remove it first.');
+  // Never beside a job turning its balances over (lib/sign-repair.ts): a
+  // fold would read them half in each sign.
+  const pending = await pendingJob(ctx, id);
+  if (pending) throw new ForgetRefused(pendingWords(pending));
   const storedItems = new Set(items.map((i) => i.item_id));
-  const found = forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id);
+  const found =
+    forgettableAccounts(inputs, new Set(hidden.keys()), storedItems).find((e) => e.id === id) ??
+    (opts.unlisted && whyUnlisted(inputs, storedItems, id) === 'unknown' ? { id, label: null, first: null, last: null, hidden: hidden.has(id) } : undefined);
   if (!found) throw new ForgetRefused('That account can\'t be forgotten: its institution is still connected, it is linked, or it is unknown.');
   if (!inputs.directory[id]) {
-    // Known only from balances: make sure no connected institution still
-    // stores it. Strict: an unreadable store is not an absent one.
+    // Known only from balances, or not even those (`unlisted`): make sure no
+    // connected institution still stores it. Strict: an unreadable store is
+    // not an absent one.
     for (const item of items) {
       const [txnIds, invIds] = await Promise.all([storedAccountIds(ctx, item.item_id), storedInvestmentAccountIds(ctx, item.item_id, true)]);
       if (txnIds.has(id) || invIds.includes(id)) {
@@ -577,6 +798,26 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
       }
     }
   }
+
+  // An account that ended (#50) is taken out of the totals after its end by
+  // its balances: refused when forgetting them would put it back.
+  const refusal = await (await import('./lifecycle')).endedForgetRefusal(ctx, id, found.hidden);
+  if (refusal) throw new ForgetRefused(refusal);
+  // What a restore brought back for it, in a form this version doesn't know,
+  // is never removed (lib/user-restore/forget.ts): refused here, before
+  // anything is changed.
+  const unknown = await restoredForgetRefusal(ctx, id);
+  if (unknown) throw new ForgetRefused(unknown);
+
+  // What it held, from every month of holdings history. First, as the one
+  // step that stops for what is stored (a record this version does not
+  // recognise that may hold the account), so a forget it stops has changed
+  // nothing. An account known not to be an investment account never had
+  // positions: holdings records are not read for it at all, so nothing in
+  // them, not even a record no one can read, holds its forget back.
+  const type = inputs.directory[id]?.type ?? hidden.get(id)?.type ?? null;
+  const mayHoldPositions = type === null || isInvestmentType(type);
+  const holdings = mayHoldPositions ? await forgetAccountHoldings(ctx, id) : { changed: 0, damaged: false };
 
   if (found.hidden) {
     // Taken out of every past total for good, point by point, each in one step
@@ -599,18 +840,38 @@ export async function forgetEarlierAccount(ctx: Ctx, id: string): Promise<{ chan
   );
   if (dismissed.length > 0) await redis().hdel(dismissedKey(ctx), ...dismissed);
   await forgetCarried(ctx, id);
+  await forgetCarriedAnnotations(ctx, id);
+  // The receipts waiting on it stay, not on a transaction (lib/attachments.ts;
+  // never throws): a forget never deletes a file.
+  await (await import('./attachments')).forgetEarlierAttachments(ctx, id);
+  // The transactions imported into it from files (#52), their records, and
+  // what was said about them: kept past its disconnect for a re-link, gone now.
+  await forgetImportedHistory(ctx, id);
+  // The bank rows a restore brought back for it, and what was said about
+  // them (lib/user-restore/forget.ts): no pruner takes those by itself.
+  await forgetRestoredAccount(ctx, id);
   await forgetStaleRecords(ctx, id, storedItems);
   // Once more for today, after everything else: a same-day partial record
-  // read before the pass above could have written the account back.
+  // read before the pass above could have written the account back, and a
+  // recording of holdings already under way could have too.
   await forgetAccountBalances(ctx, id, { today: true });
+  if (mayHoldPositions) await forgetRecentHoldings(ctx, id);
+  // Its closure and the note about it, which name it too (#50).
+  await (await import('./lifecycle')).forgetLifecycle(ctx, id);
   // Last: while the entry exists the account is still listed, so a retry is
   // offered. A map nobody can decrypt doesn't hold it back: nothing in it can
   // be read by anyone.
   await redis().hdel(directoryKey(ctx), id);
   // Categories of its transactions that nothing can show any more (a failed
-  // disconnect-time cleanup would otherwise leave them for good).
-  await pruneOrphanOverrides(ctx, items.map((i) => i.item_id)).catch(() => 0);
-  return result;
+  // disconnect-time cleanup would otherwise leave them for good), and what
+  // was said about them, their splits and their places in groups, the same
+  // way. Each checked against the Items stored
+  // when it runs, never the list read when the forget started: a bank linked
+  // meanwhile (linking takes no lock) has rows, and records on them, too.
+  await pruneOrphanOverrides(ctx).catch(() => 0);
+  await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx)).catch(() => 0);
+  await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx)).catch(() => undefined);
+  return { ...result, holdingsDamaged: holdings.damaged };
 }
 
 /** Whether "None of these" is offered for an earlier account right now. */
@@ -637,7 +898,10 @@ export async function dismissAll(ctx: Ctx, old: string, now: number = Date.now()
 
 export async function linkAccounts(ctx: Ctx, old: string, to: string, evidence: Record<string, unknown>, now: number = Date.now()): Promise<void> {
   const link: Link = { to, linked_at: new Date(now).toISOString(), evidence };
-  await redis().hset(linksKey(ctx), { [old]: await encrypt(JSON.stringify(link)) });
+  await redis().hset(linksKey(ctx), { [old]: await encrypt(ctx, JSON.stringify(link)) });
+  // The receipts waiting on the earlier account go onto the linked one's
+  // transactions where they can (lib/attachments.ts; never throws).
+  await (await import('./attachments')).placeAfterLink(ctx, to, now);
 }
 
 export async function unlinkAccount(ctx: Ctx, old: string): Promise<void> {
@@ -703,16 +967,33 @@ export async function directoryParts(ctx: Ctx, ids: string[]): Promise<Record<st
  * to PAUSE links whose old id is live again, so an empty set errs toward
  * following links: it can hide more, never reveal. A caller that WRITES on the
  * answer (Unhide clears every id it finds) passes strict, and fails instead.
+ * A caller that must change nothing (the download of my data, or someone
+ * else's read of what is shared with them, lib/sharing.ts) passes readOnly,
+ * which leaves old-shaped remembered records where they are.
  */
-export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}): Promise<Set<string>> {
+export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean; readOnly?: boolean } = {}): Promise<Set<string>> {
   try {
-    const [byItem, items] = await Promise.all([rememberedIdsByItem(ctx, opts.strict), getItems(ctx)]);
+    const [byItem, items] = await Promise.all([rememberedIdsByItem(ctx, opts.strict, !opts.readOnly), getItems(ctx)]);
     const stored = new Set(items.map((i) => i.item_id));
     return new Set(Object.entries(byItem).flatMap(([item_id, ids]) => (stored.has(item_id) ? ids : [])));
   } catch (err) {
     if (opts.strict) throw err;
     return new Set();
   }
+}
+
+/**
+ * The live account ids, as liveAccountIds reads them, and the stored Items
+ * whose record of their accounts can't be read (`unreadable`), named rather
+ * than thrown or taken for none: for a reader that can tell whether those
+ * matter to its answer (lib/txn-lookup.ts importedStoodFor). Only reads.
+ * Storage failing throws.
+ */
+export async function liveAccountsReport(ctx: Ctx): Promise<{ ids: Set<string>; unreadable: string[] }> {
+  const [remembered, items] = await Promise.all([rememberedAccountsReport(ctx), getItems(ctx)]);
+  const stored = new Set(items.map((i) => i.item_id));
+  const ids = new Set(Object.entries(remembered.byItem).flatMap(([item_id, accounts]) => (stored.has(item_id) ? accounts.map((a) => a.account_id) : [])));
+  return { ids, unreadable: couldNotRead(remembered).filter((id) => stored.has(id)) };
 }
 
 /**
@@ -735,7 +1016,9 @@ export async function liveAccountIds(ctx: Ctx, opts: { strict?: boolean } = {}):
  */
 export async function getEffectiveHidden(
   ctx: Ctx,
-  opts: { describe?: boolean } = {}
+  /** readOnly: change nothing while reading, as liveAccountIds (someone
+   *  else's request reading what is shared with them, lib/sharing.ts). */
+  opts: { describe?: boolean; readOnly?: boolean } = {}
 ): Promise<{
   /** Every id of every hidden account: what totals and filters subtract. */
   hidden: HiddenMap;
@@ -758,7 +1041,7 @@ export async function getEffectiveHidden(
     ),
     // Unreadable counts as empty here (see liveAccountIds), but callers are
     // told, since an empty set can also be a user with nothing connected.
-    liveAccountIds(ctx, { strict: true }).then(
+    liveAccountIds(ctx, { strict: true, readOnly: opts.readOnly }).then(
       (ids) => ({ ok: true, ids }),
       () => ({ ok: false, ids: new Set<string>() })
     ),
@@ -801,15 +1084,16 @@ async function describeGone(ctx: Ctx, list: HiddenForClient[], live: Set<string>
 }
 
 /** Just these ids' directory entries (one read each, not the whole directory);
- *  an unreadable or missing one is left out. */
-async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
+ *  an unreadable or missing one is left out. Also how an account missing from
+ *  its bank's answer is named and signed (lib/lifecycle-questions.ts). */
+export async function directoryEntries(ctx: Ctx, ids: string[]): Promise<Record<string, DirectoryEntry>> {
   const blobs = await Promise.all(ids.map((id) => redis().hget<string>(directoryKey(ctx), id)));
   const out: Record<string, DirectoryEntry> = {};
   await Promise.all(
     ids.map(async (id, i) => {
       if (!blobs[i]) return;
       try {
-        out[id] = JSON.parse(await decrypt(blobs[i]!)) as DirectoryEntry;
+        out[id] = JSON.parse(await decrypt(ctx, blobs[i]!)) as DirectoryEntry;
       } catch {
         // unlabelled, like an account the directory never knew
       }
@@ -850,4 +1134,30 @@ export function hiddenForClient(hidden: HiddenMap, links: Map<string, Link>): Hi
     if (!seen.has(current)) seen.set(current, type);
   }
   return [...seen].map(([account_id, type]) => ({ account_id, type }));
+}
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** Directory entries as a restore brings them back: each as the old copy had
+ *  it (its days its own, never restarted), checked by the restore. */
+export async function restoreDirectoryEntries(ctx: Ctx, entries: readonly (readonly [string, DirectoryEntry])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, entry] of entries) fields[id] = await encrypt(ctx, JSON.stringify(entry));
+  await redis().hset(directoryKey(ctx), fields);
+}
+
+/** Links as a restore brings them back, each with its own time and evidence. */
+export async function restoreLinks(ctx: Ctx, links: readonly (readonly [string, Link])[]): Promise<void> {
+  if (links.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [old, link] of links) fields[old] = await encrypt(ctx, JSON.stringify(link));
+  await redis().hset(linksKey(ctx), fields);
+}
+
+/** Declined offers as a restore brings them back ("<old>><new>", or
+ *  "<old>>*" for "None of these"), each with when it was declined. */
+export async function restoreDeclined(ctx: Ctx, offers: readonly (readonly [string, string])[]): Promise<void> {
+  if (offers.length === 0) return;
+  await redis().hset(dismissedKey(ctx), Object.fromEntries(offers));
 }

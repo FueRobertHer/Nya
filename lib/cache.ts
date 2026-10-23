@@ -23,8 +23,10 @@ import { webhooksEnabled } from './webhook-url';
  * Refresh, a webhook or the daily snapshot goes to Plaid. Read per call, not at
  * import, so it follows the environment.
  */
-const SHORT_TTL_SECONDS = 15 * 60;
-const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
+// Exported for the retention table on the privacy page (app/privacy), which a
+// test holds to these.
+export const SHORT_TTL_SECONDS = 15 * 60;
+export const WEBHOOK_TTL_SECONDS = 6 * 60 * 60;
 const ttlSeconds = () => (webhooksEnabled() ? WEBHOOK_TTL_SECONDS : SHORT_TTL_SECONDS);
 
 /** The caches a caller can name. The value is the key inside the container. */
@@ -70,7 +72,7 @@ export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null>
   try {
     const blob = await redis().get<string>(keyOf(ctx, which));
     if (!blob) return null;
-    return JSON.parse(await decrypt(blob)) as T;
+    return JSON.parse(await decrypt(ctx, blob)) as T;
   } catch {
     // Decrypt/parse failure (rotated key, corrupted value) is just a miss.
     return null;
@@ -79,7 +81,7 @@ export async function readCache<T>(ctx: Ctx, which: CacheKey): Promise<T | null>
 
 export async function writeCache(ctx: Ctx, which: CacheKey, value: unknown): Promise<void> {
   try {
-    await redis().set(keyOf(ctx, which), await encrypt(JSON.stringify(value)), { ex: ttlSeconds() });
+    await redis().set(keyOf(ctx, which), await encrypt(ctx, JSON.stringify(value)), { ex: ttlSeconds() });
   } catch {
     // A cache write failure must never break the request that produced the data.
   }
@@ -96,7 +98,7 @@ export async function readAccountCache<T>(ctx: Ctx, field: string): Promise<T | 
   try {
     const blob = await redis().hget<string>(keyOf(ctx, INVESTMENT_ACTIVITY), field);
     if (!blob) return null;
-    const { at, value } = JSON.parse(await decrypt(blob)) as { at: number; value: T };
+    const { at, value } = JSON.parse(await decrypt(ctx, blob)) as { at: number; value: T };
     // Per-field expiry is enforced here, not by Redis: a hash has one TTL for all
     // fields and every write slides it, so under an expand/collapse loop a field
     // written 40 minutes ago would keep being renewed by writes to other accounts.
@@ -112,7 +114,7 @@ export async function writeAccountCache(ctx: Ctx, field: string, value: unknown)
   const key = keyOf(ctx, INVESTMENT_ACTIVITY);
   try {
     await redis().hset(key, {
-      [field]: await encrypt(JSON.stringify({ at: Date.now(), value })),
+      [field]: await encrypt(ctx, JSON.stringify({ at: Date.now(), value })),
     });
     // Best-effort cleanup only; if this fails the stamp above still expires
     // every field on read, so a hash with no TTL can serve stale data to nobody.

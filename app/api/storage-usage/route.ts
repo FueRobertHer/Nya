@@ -3,9 +3,12 @@ import { readStorageUsage } from '@/lib/blob-sizes';
 import { maxBlobChars } from '@/lib/blob';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 
-// How much this deployment's container stores in transaction and investment
-// blobs, per Item and in total, measured now (lib/blob-sizes.ts), with the
-// per-blob ceiling each one is measured against. Behind the session gate.
+// How much this deployment's container stores where it can grow large,
+// measured now (lib/blob-sizes.ts): the transaction and investment blobs per
+// Item, and every store on the storage seam that holds something, each with
+// its largest value, beside the ceiling each write is measured against. Not
+// the older stores kept as hashes, so no figure here is the container's whole
+// size. Behind the session gate.
 
 export async function GET() {
   try {

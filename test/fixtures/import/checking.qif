@@ -1,0 +1,50 @@
+!Type:Bank
+D8/31'26
+T1,000.00
+CX
+POpening Balance
+L[Checking]
+^
+D9/ 1'26
+T-4.50
+PSQ *BLUE BOTTLE COFFEE
+MPOS PURCHASE
+LDining:Coffee
+^
+D9/ 2'26
+T2,450.00
+PACME CORP PAYROLL
+LSalary
+^
+D9/ 3'26
+T-500.00
+PTransfer to savings
+L[Savings]
+^
+D9/10'26
+T-1,450.00
+N1042
+PPacific Property Mgmt
+LHousing:Rent
+^
+D9/12'26
+T-61.37
+PAT&T Wireless
+LUtilities:Phone/Personal
+^
+D9/15'26
+T-210.00
+PCostco
+SGroceries
+EFood
+$-150.00
+SHousehold
+$-60.00
+^
+D9/20'26
+U-30.25
+T-30.25
+PShell Oil 57442
+MGas
+LAuto:Fuel
+^

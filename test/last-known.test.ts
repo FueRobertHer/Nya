@@ -17,12 +17,15 @@ const {
   rememberedIdsForItem,
   findRememberedAccount,
   forgetItem,
+  rememberedAccountsByItem,
+  rememberedIdsByItem,
 } = await import('@/lib/last-known');
+const { liveAccountIds } = await import('@/lib/links');
 const { applyHidden } = await import('@/lib/hidden');
 const { accountBalanceMap } = await import('@/lib/networth');
 
 async function writeAccountSnapshot(date: string, balances: Record<string, number>) {
-  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(JSON.stringify(balances)) });
+  await fake.hset(ctxKey('history:accounts'), { [date]: await encrypt(TEST_CTX, JSON.stringify(balances)) });
 }
 
 // Recovery only looks back a bounded number of DAYS, so every fixture has to
@@ -160,10 +163,27 @@ describe('rememberAccounts', () => {
   test('clears records left over from the previous per-account shape', async () => {
     await remember('item_a', [acct('card', 'Venture', 'credit')]);
     await fake.hset(ctxKey('accounts:meta'), {
-      old_acct_id: await encrypt(JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+      old_acct_id: await encrypt(TEST_CTX, JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
     });
 
     expect(await findRememberedAccount(ctx, 'old_acct_id')).toBeNull();
+    expect(await fake.hkeys(ctxKey('accounts:meta'))).toEqual(['item_a']);
+  });
+
+  // The download of my data, and the count an account deletion takes for its
+  // receipt, promise to change nothing: their strict reads skip the tidying.
+  test('a strict read for the download leaves records of the old shape where they are', async () => {
+    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify({ item_id: 'item_a', institution_name: 'Chase', encrypted_access_token: 'x' }) });
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await fake.hset(ctxKey('accounts:meta'), {
+      old_acct_id: await encrypt(TEST_CTX, JSON.stringify({ item_id: 'gone', type: 'credit', name: 'Old' })),
+    });
+
+    expect(Object.keys(await rememberedAccountsByItem(ctx))).toEqual(['item_a']);
+    expect([...(await liveAccountIds(ctx, { strict: true, readOnly: true }))]).toEqual(['card']);
+    expect((await fake.hkeys(ctxKey('accounts:meta'))).sort()).toEqual(['item_a', 'old_acct_id']);
+    // Any other strict read still tidies, as before.
+    expect(await rememberedIdsByItem(ctx, true)).toEqual({ item_a: ['card'] });
     expect(await fake.hkeys(ctxKey('accounts:meta'))).toEqual(['item_a']);
   });
 
@@ -567,5 +587,56 @@ describe('the total it produces', () => {
     // hgetall of the metadata hash, and one of the account links (lib/links.ts).
     // None of them per institution.
     expect(fake.ops).toBe(5);
+  });
+});
+
+// The connection health view names the accounts a failure affects (#51): the
+// ones recovery could not show, by name and mask, never by balance. Their
+// kind and currency go with them, so allocation over time still expects the
+// investment ones (components/AllocationCard.tsx seriesAccountsOf).
+describe('the accounts a broken card cannot show', () => {
+  test('are named when some, all, or none of the balances could be recovered', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit'), acct('save', 'Savings', 'depository', { mask: '7777' })]);
+    const none = broken('item_a');
+    await fillFromLastKnown(ctx, [none]);
+    expect((none as any).unshown_accounts).toEqual([
+      { account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' },
+      { account_id: 'save', name: 'Savings', mask: '7777', type: 'depository', currency: 'USD' },
+    ]);
+
+    await writeAccountSnapshot(RECENT, { card: 500 });
+    const some = broken('item_a');
+    await fillFromLastKnown(ctx, [some]);
+    expect(some.accounts.map((a) => a.account_id)).toEqual(['card']);
+    expect((some as any).unshown_accounts).toEqual([{ account_id: 'save', name: 'Savings', mask: '7777', type: 'depository', currency: 'USD' }]);
+
+    await writeAccountSnapshot(RECENT, { card: 500, save: 20 });
+    const all = broken('item_a');
+    await fillFromLastKnown(ctx, [all]);
+    expect((all as any).unshown_accounts).toBeUndefined();
+  });
+
+  test('past the age limit, every remembered account is unshown', async () => {
+    await remember('item_a', [acct('card', 'Venture', 'credit')]);
+    await writeAccountSnapshot(daysAgo(60), { card: 500 });
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    expect(inst.stale_too_old).toBe(daysAgo(60));
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' }]);
+    expect(JSON.stringify(inst)).not.toContain('500');
+  });
+
+  // Review nit: "Not counted in net worth" named accounts the person hid.
+  test('a hidden one is left out, as every total leaves it out', async () => {
+    const { applyHidden } = await import('@/lib/hidden');
+    await remember('item_a', [acct('card', 'Venture', 'credit'), acct('save', 'Savings', 'depository', { mask: '7777' })]);
+    const inst = broken('item_a');
+    await fillFromLastKnown(ctx, [inst]);
+    applyHidden([inst], new Map([['save', {}]]) as any);
+    expect((inst as any).unshown_accounts).toEqual([{ account_id: 'card', name: 'Venture', mask: '0189', type: 'credit', currency: 'USD' }]);
+    const allHidden = broken('item_a');
+    await fillFromLastKnown(ctx, [allHidden]);
+    applyHidden([allHidden], new Map([['save', {}], ['card', {}]]) as any);
+    expect((allHidden as any).unshown_accounts).toBeUndefined();
   });
 });

@@ -175,7 +175,7 @@ describe('the route', () => {
   const cached = async () => (await readCache(ctx, CacheKey.NetWorth)) !== null;
 
   beforeEach(async () => {
-    await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt('tok') });
+    await saveItem(ctx, { item_id: 'item1', institution_name: 'Bank', encrypted_access_token: await encrypt(TEST_CTX, 'tok') });
     await writeCache(ctx, CacheKey.NetWorth, { netWorth: 1 });
   });
 
@@ -202,5 +202,19 @@ describe('the route', () => {
   test('one that changes nothing leaves the caches', async () => {
     expect((await call(hook({ webhook_code: 'RECURRING_TRANSACTIONS_UPDATE' }))).status).toBe(200);
     expect(await cached()).toBe(true);
+  });
+
+  test("Plaid's warning that a connection will end is recorded for its Item, and LOGIN_REPAIRED clears it (#51)", async () => {
+    const { warningsStore } = await import('@/lib/connection-records');
+    const ends = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    expect((await call(hook({ webhook_type: 'ITEM', webhook_code: 'PENDING_EXPIRATION', consent_expiration_time: ends }))).status).toBe(200);
+    expect(await warningsStore.get(ctx, 'item1')).toMatchObject({ kind: 'pending_expiration', ends_at: ends, ends_estimated: false });
+    expect(await cached()).toBe(false);
+    // Forged, or for an Item that isn't this container's: nothing recorded.
+    expect((await call(hook({ webhook_type: 'ITEM', webhook_code: 'PENDING_DISCONNECT', item_id: 'someone_elses' }))).status).toBe(200);
+    expect((await call(hook({ webhook_type: 'ITEM', webhook_code: 'PENDING_DISCONNECT' }), { header: token('{}') })).status).toBe(401);
+    expect([...(await warningsStore.getAll(ctx)).keys()]).toEqual(['item1']);
+    expect((await call(hook({ webhook_type: 'ITEM', webhook_code: 'LOGIN_REPAIRED' }))).status).toBe(200);
+    expect(await warningsStore.get(ctx, 'item1')).toBeNull();
   });
 });

@@ -40,3 +40,16 @@ export function signedContribution(type: string, balance: number): number {
 export function isInvestmentType(type: string): boolean {
   return type === 'investment' || type === 'brokerage';
 }
+
+/**
+ * The subtype a manual account is saved with when the person says it is cash
+ * on hand (a wallet, a jar): a depository account, like checking, that holds
+ * the cash taken out at an ATM. The Plan reads it to count withdrawals and the
+ * cash spending entered on it once (lib/fire/inputs.ts). A manual checking or
+ * savings account is not cash unless the person says so.
+ */
+export const CASH_SUBTYPE = 'cash';
+
+export function isCashOnHand(a: { type: string; subtype?: string | null }): boolean {
+  return a.type === 'depository' && a.subtype === CASH_SUBTYPE;
+}

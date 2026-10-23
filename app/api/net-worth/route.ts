@@ -1,19 +1,33 @@
-import { backupProblem, type BackupProblem } from '@/lib/backup';
+import { attachmentSweepProblem, backupNotice, type AttachmentSweepProblem, type BackupProblem } from '@/lib/backup';
 import { NextResponse } from 'next/server';
-import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
+import { dataCtx } from '@/lib/data-ctx';
 import type { Ctx } from '@/lib/containers';
 import { computeNetWorth, recordFetch, isRecordable, type InstitutionResult } from '@/lib/networth';
+import { holdsTotals, type TotalsHold } from '@/lib/user-restore/restored';
 import { readCache, writeCache, clearNetWorthCache, CacheKey } from '@/lib/cache';
 import {
-  getHistory,
+  getHistoryWithSplit,
+  readHistoryLayers,
   withTodayPoint,
   isBackfillDone,
+  type ForeignAccounts,
   type HistoryPoint,
 } from '@/lib/history';
+import { signedContribution } from '@/lib/balance';
 import { applyHidden } from '@/lib/hidden';
-import { getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
+import { directoryCurrencies, getEffectiveHidden, recordDirectory, type HiddenForClient } from '@/lib/links';
 import { fillFromLastKnown, rememberAccounts } from '@/lib/last-known';
 import { itemsWithNewAccounts } from '@/lib/new-accounts';
+import { readHealthForDisplay, recordSyncs, withHealth, type HealthReads } from '@/lib/connection-health';
+import { loggable } from '@/lib/log-safe';
+import { readDrawState } from '@/lib/history-import/extend';
+import { importedHistoryView, type ImportedHistoryView } from '@/lib/history-import/view';
+import { getEffectiveLifecycle, lifecycleForClient, applyLifecycle, isLifecycleUnreadable, shortDays, type LifecycleForClient } from '@/lib/lifecycle';
+import { holdMissingAccounts, askAboutZeroBalances, askAboutReportedEnds } from '@/lib/lifecycle-questions';
+import { storeFailure } from '@/lib/store-failure';
+import { readSettingsForDisplay } from '@/lib/fx/settings';
+import type { HistorySplit, NetWorthBase } from '@/lib/fx/net-worth-base';
+import { foreignFor, historySplit, lifecycleAccounts, listedAccounts, mainCurrency, readNetWorthBase, visibleRows } from '@/lib/fx/net-worth-read';
 
 type NetWorthPayload = {
   institutions: InstitutionResult[];
@@ -24,8 +38,37 @@ type NetWorthPayload = {
   // vanish from the Hidden card with no way to unhide them. `hidden_at` is stored
   // but not shipped (nothing renders it).
   hidden: HiddenForClient[];
+  // The accounts that ended (lib/lifecycle.ts): closed, left or untracked,
+  // one per account, for the Accounts tab's own section. Like `hidden`, the
+  // stored set, so one whose institution is gone is still listed.
+  lifecycle: LifecycleForClient[];
   as_of: string;
+  // With a home currency (lib/fx/settings.ts): the chart's points split by
+  // currency, unconverted, so a cached load converts them as a fresh one does
+  // (lib/fx/net-worth-base.ts). Server only: never sent, never converted here.
+  history_split?: HistorySplit;
+  /** Why no total is recorded while a restore holds it (lib/user-restore/
+   *  restored.ts totalsHold), said under the Home total: absent otherwise. */
+  restore_hold?: TotalsHold;
 };
+
+/** The answer's figures in the home currency, when one is chosen, worked out
+ *  after the cache on every answer (`base`), and why there are none when the
+ *  settings can't be read (`currency_problem`). Additive: `netWorth` and
+ *  `history` keep what they always meant, so a page from the release before,
+ *  or this one's own snapshot in the browser, never shows a converted figure
+ *  under another currency's label. */
+async function baseFields(
+  ctx: Ctx,
+  institutions: InstitutionResult[],
+  split: HistorySplit | undefined,
+  known: Awaited<ReturnType<typeof readSettingsForDisplay>>
+): Promise<{ base?: NetWorthBase; currency_problem?: string }> {
+  if (known.problem) return { currency_problem: known.problem };
+  if (!known.settings.home || !split) return {};
+  const { base } = await readNetWorthBase(ctx, { institutions, split, now: Date.now(), known });
+  return base ? { base } : {};
+}
 
 // Whether the estimated layer was built by an older algorithm and should be
 // recomputed. The client can't work this out itself: its only other trigger is
@@ -37,9 +80,39 @@ type NetWorthPayload = {
 // TTL, and cached false would swallow a recompute clearBackfillDone() just asked
 // for. The backups' state rides along for the same reason: a frozen notice would
 // outlive a backup that just recovered (lib/backup.ts).
-async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null }> {
-  const [done, backup_problem] = await Promise.all([isBackfillDone(ctx), backupProblem()]);
-  return { backfill_stale: !done, backup_problem };
+//
+// The estimated history drawn back through imported transactions (#52) rides
+// along the same way: whether it is marked to draw again (one more reason to
+// ask /api/backfill), and what it covers, for the chart to say which stretch
+// comes from imported rows and what it couldn't draw (imported_history),
+// never naming a hidden account (any id it has had), which the chart leaves
+// out, nor what of an account that ended was drawn from its end day on: when
+// the hidden set can't be read, the note says nothing.
+async function staleFlag(
+  ctx: Ctx
+): Promise<{ backfill_stale: boolean; backup_problem: BackupProblem | null; attachments_problem: AttachmentSweepProblem | null; imported_history?: ImportedHistoryView }> {
+  // The nightly clean-up of receipts and documents says so too, the same way
+  // (lib/attachment-sweep.ts): a notice, never a reason to fail the load.
+  // A backups record missing altogether is said too (backupNotice), and the
+  // sweep pauses then, which it says.
+  const [done, backup_problem, drawn, attachments_problem] = await Promise.all([isBackfillDone(ctx), backupNotice(), readDrawState(ctx), attachmentSweepProblem()]);
+  // The accounts that ended too (lib/lifecycle.ts), which the chart leaves
+  // out from their end day: an end that can't be read fails the load itself,
+  // so here it only says nothing more.
+  const seen = drawn
+    ? await getEffectiveHidden(ctx, { readOnly: true }).then(
+        async (h) => ({
+          hidden: new Set(h.hidden.keys()),
+          ended: await getEffectiveLifecycle(ctx, h.links).then(
+            (l) => l.ended,
+            () => new Map<string, { from: string }>()
+          ),
+        }),
+        () => null
+      )
+    : { hidden: new Set<string>(), ended: new Map<string, { from: string }>() };
+  const view = seen ? importedHistoryView(drawn, seen.hidden, seen.ended) : null;
+  return { backfill_stale: !done || (!!drawn && drawn.built !== drawn.generation), backup_problem, attachments_problem, ...(view ? { imported_history: view } : {}) };
 }
 
 /**
@@ -51,6 +124,21 @@ async function staleFlag(ctx: Ctx): Promise<{ backfill_stale: boolean; backup_pr
 function withNewAccounts(institutions: InstitutionResult[], items: Set<string>): InstitutionResult[] {
   if (items.size === 0) return institutions;
   return institutions.map((inst) => (items.has(inst.item_id) ? { ...inst, new_accounts_available: true } : inst));
+}
+
+/**
+ * Each connection's health (lib/connection-health.ts), applied to the response
+ * and never stored in the cache, for the same reason as new_accounts_available:
+ * Plaid's warning arrives by webhook, and a load in flight when it lands would
+ * freeze the old answer for the cache's TTL. `health_unavailable` says the
+ * warnings and sync times could not be read, so the view doesn't present an
+ * unknown as healthy.
+ */
+function healthFields(institutions: InstitutionResult[], reads: HealthReads | null, answeredAt: string) {
+  return {
+    institutions: withHealth(institutions, reads, answeredAt),
+    ...(reads === null ? { health_unavailable: true } : {}),
+  };
 }
 
 /**
@@ -81,14 +169,23 @@ export async function GET(req: Request) {
     // whichever one we take rather than adding a round trip to the end of it.
     const stalePromise = eager(staleFlag(ctx));
     const newAccountsPromise = itemsWithNewAccounts(ctx); // never throws: a failed read is "none"
+    const healthPromise = readHealthForDisplay(ctx); // never throws: a failed read is null, and said
+    // Whether the person chose a home currency (lib/fx/settings.ts): only then
+    // is anything converted, or anything more read. Lenient, for display.
+    const settingsPromise = eager(readSettingsForDisplay(ctx));
 
     if (!refresh) {
-      const cached = await readCache<NetWorthPayload>(ctx, CacheKey.NetWorth);
-      if (cached) {
+      const [cached, known] = await Promise.all([readCache<NetWorthPayload>(ctx, CacheKey.NetWorth), settingsPromise]);
+      // A payload cached before a home currency was chosen has no split to
+      // convert the chart from: load afresh once, which caches one.
+      if (cached && (!known.settings.home || cached.history_split)) {
+        const { history_split, ...shown } = cached;
         return NextResponse.json({
-          ...cached,
-          institutions: withNewAccounts(cached.institutions, await newAccountsPromise),
+          ...shown,
+          // A cached payload holds only institutions that answered, when it was made.
+          ...healthFields(withNewAccounts(cached.institutions, await newAccountsPromise), await healthPromise, cached.as_of),
           ...(await stalePromise),
+          ...(await baseFields(ctx, cached.institutions, history_split, known)),
           from_cache: true,
         });
       }
@@ -104,9 +201,48 @@ export async function GET(req: Request) {
     // Hidden accounts follow account links (lib/links.ts): every id an account
     // has had is hidden with it, and the client sees one current id each.
     const hiddenPromise = eager(getEffectiveHidden(ctx, { describe: true }));
-    const historyPromise = eager(hiddenPromise.then((h) => getHistory(ctx, h.hidden)));
+    // Which accounts ended (lib/lifecycle.ts), through the same links, read
+    // strictly: an entry that can't be read fails this load (409, below)
+    // rather than count an account the person closed. Awaited below the
+    // snapshot like the hidden set, so it can't cost today's point.
+    const readLifecycle = () => eager(hiddenPromise.then((h) => getEffectiveLifecycle(ctx, h.links)));
+    let lifecyclePromise = readLifecycle();
+    // With a home currency, the history is split by currency as it is read
+    // (lib/history.ts getHistoryWithSplit), which needs the accounts in other
+    // currencies: known once the fetch is in (`foreign`, settled below). So
+    // its stored layers, the per-account maps with them, are read at once,
+    // overlapping the fetch as the history's read always has, and only
+    // working out the points waits for them. Without one, `foreign` is
+    // settled at once and nothing changes.
+    let settleForeign: (f: ForeignAccounts | null) => void = () => {};
+    const foreignPromise = new Promise<ForeignAccounts | null>((resolve) => (settleForeign = resolve));
+    settingsPromise.then(
+      ({ settings }) => {
+        if (!settings.home) settleForeign(null);
+      },
+      () => settleForeign(null)
+    );
+    const directoryPromise = eager(settingsPromise.then(({ settings }) => (settings.home ? directoryCurrencies(ctx) : [])));
+    const layersPromise = eager(settingsPromise.then(({ settings }) => (settings.home ? readHistoryLayers(ctx, true) : undefined)));
+    // The days known short of an account that came back after an assumed
+    // closure are left out (lib/lifecycle.ts shortDays).
+    const readHistory = () =>
+      eager(
+        Promise.all([hiddenPromise, lifecyclePromise, foreignPromise, layersPromise]).then(([h, l, f, layers]) =>
+          getHistoryWithSplit(ctx, h.hidden, l.ended, shortDays(l, h.hidden), f, layers)
+        )
+      );
+    let historyPromise = readHistory();
 
-    const { institutions, netWorth } = await computeNetWorth(ctx);
+    const { institutions, netWorth, lifecycleChanged } = await computeNetWorth(ctx);
+    // The fetch recorded or lifted an assumed closure (lib/vanished.ts): what
+    // was read before it is out of date.
+    if (lifecycleChanged) {
+      lifecyclePromise = readLifecycle();
+      historyPromise = readHistory();
+    }
+    // When the institutions that answered did: their last good sync.
+    const answeredAt = new Date().toISOString();
 
     // Record today's snapshot only when every institution answered cleanly and at
     // least one is linked: a partial fetch would chart an artificial dip, and zero
@@ -122,7 +258,8 @@ export async function GET(req: Request) {
     // second clock read, so the point charted below is labelled with the day
     // actually written even if the request straddles UTC midnight. When it didn't
     // land, the accounts that did answer are still recorded for their own charts.
-    const snapshotDate = await recordFetch(ctx, institutions, netWorth);
+    // Their positions go into holdings history the same way (lib/holdings-history.ts).
+    const { date: snapshotDate, hold } = await recordFetch(ctx, institutions, netWorth);
 
     // Capture how to render each account while its institution is answering, so a
     // later failure can still draw its card. Per institution, not gated on
@@ -132,6 +269,9 @@ export async function GET(req: Request) {
     // institution's accounts can be matched to the ones they replace. Awaited
     // before responding so it overlaps the reads below. It never throws.
     const directoryWrite = recordDirectory(ctx, institutions);
+    // And when each connection last answered, for the connection health view
+    // and the daily notices (lib/connection-health.ts). It never throws.
+    const syncWrite = recordSyncs(ctx, institutions, Date.parse(answeredAt));
 
     // Everything from here down is display-only. `visibleNetWorth` excludes hidden
     // accounts and is what ships as `netWorth`: the client never gets the true
@@ -153,26 +293,91 @@ export async function GET(req: Request) {
       );
     }
 
-    const { hidden, forClient: hiddenList } = await hiddenPromise;
+    const { hidden, forClient: hiddenList, links } = await hiddenPromise;
+    const lifecycle = await lifecyclePromise;
     await directoryWrite;
+    await syncWrite;
+
+    // An account missing from a healthy answer is HELD at its last known
+    // balance, with its question, and a zero for weeks is asked about
+    // (lib/lifecycle-questions.ts). Display only, below the gates and after
+    // the accounts were remembered: a held row is never recorded.
+    await holdMissingAccounts(ctx, institutions, lifecycle, links ?? new Map());
+    await askAboutZeroBalances(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // And one that ended but whose bank still returns it moving is asked
+    // about again, from a copy of its row (`ended_reported`).
+    await askAboutReportedEnds(ctx, institutions, lifecycle, links ?? new Map(), hidden);
+    // Every account listed, with its currency, before those that ended leave
+    // the list: what prices each one's part of the chart (lib/fx).
+    const listed = listedAccounts(institutions);
+    // And an account that ended leaves the live accounts (and with them every
+    // total) for the Accounts tab's own section, unless it is hidden too: the
+    // Hidden card lists it, and every total leaves it out already.
+    const endedRows = applyLifecycle(institutions, lifecycle, hidden);
     // Plaid's cross-Item account identity is for matching on the server only
     // (lib/links.ts); it has no business in the payload, the cache or the
-    // browser's localStorage.
-    for (const inst of institutions) for (const a of inst.accounts) delete a.persistent_account_id;
+    // browser's localStorage. Nor has the raw holdings answer recorded above:
+    // the payload carries the holdings already, in the shape the client reads.
+    for (const inst of institutions) {
+      delete inst.holdings_observed;
+      delete inst.missing_ids;
+      for (const a of inst.accounts) delete a.persistent_account_id;
+    }
     const visibleNetWorth = applyHidden(institutions, hidden);
+    // With a home currency, the accounts in another currency than the main
+    // one, by every id each has had: what the history's split reads, which
+    // waits for them (see readHistory).
+    const { settings } = await settingsPromise;
+    const main = mainCurrency(institutions);
+    let unknownCurrency = 0;
+    if (settings.home) {
+      const { foreign, unknown } = foreignFor([listed, lifecycleAccounts(lifecycle), await directoryPromise], links, main);
+      unknownCurrency = unknown;
+      settleForeign(foreign);
+    }
     // Started before the fetch, so it predates this request's snapshot: today's
     // point comes from the live figures instead. See withTodayPoint.
     const stored = await historyPromise;
-    const history = snapshotDate
-      ? withTodayPoint(stored, snapshotDate, visibleNetWorth)
-      : stored;
+    // An end on the person's today can be the UTC day after (lib/lifecycle.ts
+    // lastEndDay): it leaves the live total at once, but today's point is the
+    // UTC day, before that end, where the account still counts, as the day
+    // reads once recorded.
+    const notYet = snapshotDate
+      ? endedRows.filter((r) => r.end > snapshotDate && r.type !== null).reduce((n, r) => n + signedContribution(r.type!, r.balance ?? 0), 0)
+      : 0;
+    const history = snapshotDate ? withTodayPoint(stored.points, snapshotDate, visibleNetWorth + notYet, stored.breaks) : stored.points;
+    // The same points split by currency, and today's rows, for converting
+    // after the cache: unconverted, a regrouping of what was stored.
+    const currencyOfListed = new Map(listed.map((a) => [a.account_id, a.currency]));
+    const split = settings.home
+      ? historySplit({
+          main,
+          breaks: stored.breaks,
+          raw: stored.raw,
+          today: snapshotDate
+            ? {
+                date: snapshotDate,
+                rows: [
+                  ...visibleRows(institutions),
+                  ...endedRows
+                    .filter((r) => r.end > snapshotDate && r.type !== null)
+                    .map((r) => ({ amount: signedContribution(r.type!, r.balance ?? 0), currency: currencyOfListed.get(r.account_id) ?? null })),
+                ],
+              }
+            : null,
+          unknown: unknownCurrency,
+        })
+      : undefined;
 
     const payload: NetWorthPayload = {
       institutions,
       netWorth: visibleNetWorth,
       history,
       hidden: hiddenList,
+      lifecycle: lifecycleForClient(lifecycle),
       as_of: new Date().toISOString(),
+      ...(split ? { history_split: split } : {}),
+      ...(holdsTotals(hold) ? { restore_hold: hold } : {}),
     };
 
     // Don't cache payloads containing errors: an institution that needs reauth
@@ -190,16 +395,19 @@ export async function GET(req: Request) {
       await clearNetWorthCache(ctx);
     }
 
+    const { history_split, ...shown } = payload;
     return NextResponse.json({
-      ...payload,
-      institutions: withNewAccounts(payload.institutions, await newAccountsPromise),
+      ...shown,
+      ...healthFields(withNewAccounts(payload.institutions, await newAccountsPromise), await healthPromise, answeredAt),
       ...(await stalePromise),
+      ...(await baseFields(ctx, payload.institutions, history_split, await settingsPromise)),
       from_cache: false,
     });
   } catch (err: any) {
-    const unavailable = containerUnavailable(err);
-    if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
-    return NextResponse.json({ error: 'Failed to fetch net worth' }, { status: 500 });
+    // No container: 503. Account closures that can't be read: 409, flagged,
+    // with the ids (lib/store-failure.ts), never a total that counts an
+    // account the person closed; `repair` tells the Accounts tab it may offer
+    // to remove the damaged ones (app/api/account-lifecycle). Anything else: 500.
+    return storeFailure(err, 'Failed to fetch net worth', isLifecycleUnreadable(err) ? { repair: 'account-lifecycle' } : undefined);
   }
 }

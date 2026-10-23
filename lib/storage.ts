@@ -128,14 +128,20 @@ export function containerPrefix(ctx: Ctx): string {
  *   - the encryption key store (lib/crypto.ts): a data key id must mean the same
  *     key everywhere in an environment;
  *   - the container registry (lib/containers.ts), which can't live inside one;
- *   - the login rate limiter (app/api/login), which runs before anyone is known;
+ *   - the rate limiters that count by address, before anyone is known: the
+ *     login's (lib/rate-limit.ts) and the demo sign-in's
+ *     (app/api/demo/sign-in); a limit on what a signed-in person does is a
+ *     counter store on the storage seam (lib/repo.ts), in their container;
  *   - the cutoff for sessions from before sessions named a container
  *     (lib/sessions.ts);
  *   - the nightly backup's last outcome (lib/backup.ts);
  *   - which signed-in account owns which container (lib/owners.ts), which decides
  *     the container;
  *   - who shares which accounts with whom (lib/sharing.ts), which is between
- *     containers.
+ *     containers;
+ *   - public data that belongs to no one, kept once for everyone by a public
+ *     store on the seam (lib/repo.ts definePublicMapStore, which builds its
+ *     key): the ECB's exchange rates (lib/fx/ecb-store.ts).
  */
 export function kEnv(key: string): string {
   return `${ENV_PREFIX}:${key}`;
@@ -149,6 +155,14 @@ export type StoredItem = {
    *  institution already linked can be recognized even while this Item can't be
    *  read. Absent on Items linked before it was stored. */
   institution_id?: string | null;
+  /** Whether Plaid was billing Transactions on the Item when it was linked
+   *  (from /item/get's `billed_products`), so the transactions sync knows
+   *  whether a call would start that charge (lib/item-products.ts). Absent on
+   *  Items linked before it was stored, all of which required Transactions;
+   *  null when the lookup failed. Plain text, like the name, and listed on the
+   *  Security page with it: it says whether Plaid included transactions when
+   *  the connection was linked, nothing about what they are. */
+  transactions_billed?: boolean | null;
 };
 
 const ITEMS_HASH = (ctx: Ctx) => kc(ctx, 'plaid:items');

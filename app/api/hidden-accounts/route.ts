@@ -6,6 +6,7 @@ import { clearCaches, readCache, CacheKey } from '@/lib/cache';
 import { estimatedLayerCovers, clearBackfillDone } from '@/lib/history';
 import { findRememberedAccount } from '@/lib/last-known';
 import { effectiveLinks, getLinks, liveAccountIds, sameAccountIds, withLinksLock, ForgetRefused } from '@/lib/links';
+import { loggable } from '@/lib/log-safe';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -30,7 +31,7 @@ export async function POST(req: Request) {
     if (err instanceof ForgetRefused) return NextResponse.json({ error: err.message }, { status: 409 });
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err);
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Failed to update hidden accounts' }, { status: 500 });
   }
 }

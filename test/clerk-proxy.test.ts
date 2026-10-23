@@ -1,13 +1,16 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
 import { clerk } from './clerk-mock';
+import { mockForFile } from './scoped-mock';
 import { NextRequest } from 'next/server';
 
-// An account's verified emails, mocked at our own module, not Clerk's.
+// An account's verified emails, mocked at our own module, not Clerk's, for
+// this file only (test/scoped-mock.ts): other files ask the real one, which
+// can't reach Clerk here.
 const emailsOf: Record<string, string[]> = {};
 const unverifiedOf: Record<string, string[]> = {};
 let lookups = 0;
 let lookupFails = false;
-mock.module('@/lib/clerk-emails', () => ({
+await mockForFile('@/lib/clerk-emails', () => ({
   emailAddresses: async (id: string) => {
     lookups++;
     if (lookupFails) throw new Error('clerk down');
@@ -63,6 +66,19 @@ describe('with Clerk on', () => {
     // Anywhere else, they come back there once signed in (an invite link).
     expect((await call('/connect/abc')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fconnect%2Fabc');
     expect((await call('/api/net-worth')).status).toBe(401);
+    // Under /api/v1, a path that is no endpoint is the API's own 404, not a sign-in's 401.
+    const res = await call('/api/v1/acounts');
+    expect(res.status).toBe(404);
+    expect((await res.json()).error.code).toBe('not_found');
+  });
+
+  // Review should-fix 1: a notice email's link, opened signed out, still ends
+  // on the Connection health card once signed in.
+  test('signed out, where they were going comes back once signed in, query and all', async () => {
+    expect((await call('/?view=connections')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2F%3Fview%3Dconnections');
+    expect((await call('/connect/abc?x=1')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fconnect%2Fabc%3Fx%3D1');
+    // Never a path that could be read as another site.
+    expect((await call('//evil.example/x')).headers.get('location')).toBe('https://nya.test/sign-in');
   });
 
   test('sign-in and the not-allowed page stay open', async () => {
@@ -71,6 +87,37 @@ describe('with Clerk on', () => {
       expect(res.status).toBe(200);
       expect(res.headers.get('location')).toBeNull();
     }
+  });
+
+  test('so do the security, privacy, developer and protected-download pages, and the password login (which sends people to sign-in)', async () => {
+    for (const path of ['/security', '/privacy', '/developers', '/open-download', '/login']) {
+      const res = await call(path);
+      expect(res.status).toBe(200);
+      expect(res.headers.get('location')).toBeNull();
+    }
+    expect((await call('/security/x')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fsecurity%2Fx');
+    expect((await call('/developers/x')).headers.get('location')).toBe('https://nya.test/sign-in?redirect_url=%2Fdevelopers%2Fx');
+  });
+
+  test("pages get the policy, with Clerk's host from the publishable key; the API gets none", async () => {
+    process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY = `pk_live_${btoa('clerk.nya.example.com$').replace(/=+$/, '')}`;
+    for (const path of ['/sign-in', '/security']) {
+      const policy = (await call(path)).headers.get('content-security-policy-report-only');
+      expect(policy).toContain('https://clerk.nya.example.com');
+      expect(policy).toContain('https://challenges.cloudflare.com');
+    }
+    clerk.signedIn = 'user_owner';
+    const page = await call('/');
+    expect(page.status).toBe(200);
+    const policy = page.headers.get('content-security-policy-report-only')!;
+    expect(page.headers.get('x-middleware-request-x-nonce')).toBe(/'nonce-([^']+)'/.exec(policy)![1]);
+    const api = await call('/api/net-worth');
+    expect(api.status).toBe(200);
+    expect(api.headers.get('content-security-policy-report-only')).toBeNull();
+    expect(api.headers.get('content-security-policy')).toBeNull();
+    // A browser sent to an /api/ path that does not exist gets the HTML 404 page, so the policy too.
+    const nav = await proxy(new NextRequest('https://nya.test/api/nope', { headers: { accept: 'text/html' } }), {} as any);
+    expect(nav.headers.get('content-security-policy-report-only')).toContain("'strict-dynamic'");
   });
 
   test('an allowed account gets in', async () => {

@@ -1,0 +1,4 @@
+[test]
+# Clears, before and after each test, what a test file may have set for the
+# files after it (every file runs in one process).
+preload = ["./test/preload.ts"]

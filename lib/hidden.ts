@@ -62,7 +62,7 @@ export async function getHiddenAccounts(ctx: Ctx): Promise<HiddenMap> {
   await Promise.all(
     Object.entries(map).map(async ([account_id, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as Partial<HiddenAccount>;
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as Partial<HiddenAccount>;
         if (typeof parsed.type !== 'string') {
           throw new Error('missing type');
         }
@@ -97,21 +97,39 @@ export async function setAccountHidden(ctx: Ctx,
   const existing = await redis().hget<string>(HIDDEN_HASH(ctx), account_id);
   if (existing) {
     try {
-      const parsed = JSON.parse(await decrypt(existing)) as Partial<HiddenAccount>;
+      const parsed = JSON.parse(await decrypt(ctx, existing)) as Partial<HiddenAccount>;
       if (typeof parsed.forget_tag === 'string') forget_tag = parsed.forget_tag;
     } catch (err) {
       throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
     }
   }
   const value: HiddenAccount = { type, hidden_at: new Date().toISOString(), ...(forget_tag ? { forget_tag } : {}) };
-  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
+}
+
+/** A hidden account's entry with the type it is subtracted as changed, as
+ *  it was hidden otherwise (lib/sign-repair.ts, whose re-sign reads every
+ *  day of it by that type): under the links lock, as every write here, and
+ *  read again just before, so an entry pruned meanwhile (pruneHidden, which
+ *  takes no lock) isn't brought back. */
+export async function setHiddenType(ctx: Ctx, account_id: string, type: string): Promise<void> {
+  const blob = await redis().hget<string>(HIDDEN_HASH(ctx), account_id);
+  if (!blob) return;
+  let entry: HiddenAccount;
+  try {
+    entry = JSON.parse(await decrypt(ctx, blob)) as HiddenAccount;
+  } catch (err) {
+    throw new Error(`Hidden account ${account_id} could not be read`, { cause: err });
+  }
+  if (entry.type === type) return;
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify({ ...entry, type })) });
 }
 
 /** Marks a hidden account as being forgotten, with the tag its progress is
  *  kept under (see HiddenAccount.forget_tag). */
 export async function markForgetting(ctx: Ctx, account_id: string, entry: HiddenAccount, forget_tag: string): Promise<void> {
   const value: HiddenAccount = { ...entry, forget_tag };
-  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(JSON.stringify(value)) });
+  await redis().hset(HIDDEN_HASH(ctx), { [account_id]: await encrypt(ctx, JSON.stringify(value)) });
 }
 
 /**
@@ -131,10 +149,12 @@ export async function pruneHidden(ctx: Ctx, account_ids: string[]): Promise<void
 }
 
 type MarkableAccount = { account_id: string; balance: number | null; type: string; hidden?: boolean };
-type MarkableInstitution = { accounts: MarkableAccount[] };
+type MarkableInstitution = { accounts: MarkableAccount[]; unshown_accounts?: { account_id: string }[] };
 
 /**
- * Marks each account `hidden` and returns the net worth EXCLUDING them.
+ * Marks each account `hidden` and returns the net worth EXCLUDING them. The
+ * accounts a broken institution can't show, which its connection health names
+ * (lib/last-known.ts), leave the hidden ones out, as every total does.
  *
  * Separate from computeNetWorth(), which the daily snapshot cron and the ingest
  * route also call: if it read the hidden set, a transient Redis error on an
@@ -148,6 +168,20 @@ export function applyHidden(institutions: MarkableInstitution[], hidden: HiddenM
       if (a.hidden || a.balance == null) continue;
       visible += signedContribution(a.type, a.balance);
     }
+    if (inst.unshown_accounts) {
+      const shown = inst.unshown_accounts.filter((a) => !hidden.has(a.account_id));
+      if (shown.length > 0) inst.unshown_accounts = shown;
+      else delete inst.unshown_accounts;
+    }
   }
   return visible;
+}
+
+/** Hidden accounts as a restore brings them back (lib/user-restore/
+ *  commit.ts), each with when it was hidden, checked there. */
+export async function restoreHiddenAccounts(ctx: Ctx, entries: readonly (readonly [string, HiddenAccount])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, entry] of entries) fields[id] = await encrypt(ctx, JSON.stringify(entry));
+  await redis().hset(HIDDEN_HASH(ctx), fields);
 }

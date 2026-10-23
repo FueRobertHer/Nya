@@ -13,13 +13,21 @@
 //   - collapsed, linking any earlier account by hand: no time limit, and
 //     still possible after "Not the same", so a missed match stays fixable;
 //   - collapsed, every earlier account, each with Forget: the user decides
-//     what is kept about accounts they no longer have.
+//     what is kept about accounts they no longer have. Each is named as
+//     lib/earlier-names.ts names it, which the restore card's notes use too:
+//     two that would read the same are told apart by the end of each id. One
+//     whose forget would be refused says why instead (`refused`);
+//   - accounts a SimpleFIN or Lunch Flow connection fed that were let go, by
+//     how many, with where they are forgotten: the Reports page.
 // Every choice shows a chart preview first, so a wrong pairing is visible as a
 // jump before it is made. Nothing links without a tap here.
 
+import type { CarriedEnd } from '@/lib/link-ends';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import AccountSparkline from './AccountSparkline';
-import { formatMoney } from '@/lib/format';
+import { formatMoney, plainNumber } from '@/lib/format';
+import { earlierNames } from '@/lib/earlier-names';
+import { Masked } from './HideAmounts';
 
 type Suggestion = {
   old: string;
@@ -58,19 +66,60 @@ export type AccountLinksPayload = {
   unclaimed: Unclaimed[];
   /** Every earlier account that can be linked by hand, and to what. */
   manual?: Unclaimed[];
-  /** Earlier accounts the user can forget for good. */
-  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean }[];
+  /** Earlier accounts the user can forget for good; `refused`: why one
+   *  can't be forgotten here (what a restore brought back for it is in a
+   *  form this version doesn't know), said in place of Forget; `unchecked`:
+   *  ('sealed': what a restore brought back for it is under a key this copy
+   *  doesn't have, which whoever runs it must mend; 'failed': a read that
+   *  may pass)
+   *  that couldn't be checked just now, so it offers no Forget either. */
+  earlier?: { id: string; label: string | null; first: string | null; last: string | null; hidden: boolean; refused?: string; unchecked?: 'sealed' | 'failed' }[];
+  /** Whether `earlier` was checked for forgets that would be refused, which
+   *  is asked once the list is opened (?earlier=1): until then no Forget is
+   *  offered. Absent: checked. */
+  earlier_checked?: boolean;
   links: Linked[];
   /** Saved links that can't be read. While one exists and an account is
    *  hidden, the dashboard can't load, so each gets a Remove button. */
   broken?: string[];
+  /** How many accounts a SimpleFIN or Lunch Flow connection fed were let go:
+   *  their names are kept for reports, and forgotten on the Reports page,
+   *  which this points to. */
+  stopped?: number;
+  /** The links on offer that would end the live account they link to, an
+   *  earlier account's end carried across (lib/link-ends.ts). */
+  ends?: CarriedEnd[];
 };
 type Payload = AccountLinksPayload;
+
+/** What linking says when it would end the live account (lib/link-ends.ts):
+ *  an end follows an account across a link. Null when it wouldn't. */
+export function carriedEndNote(ends: readonly CarriedEnd[] | undefined, old: string, to: string, toLabel: string): string | null {
+  const e = ends?.find((x) => x.old === old && x.to === to);
+  if (!e) return null;
+  const how = e.state === 'closed' ? `closed on ${fmtDay(e.day)}` : e.state === 'left' ? `was no longer yours from ${fmtDay(e.day)}` : `wasn’t followed from ${fmtDay(e.day)}`;
+  return `The earlier account ${how}, and an end follows an account across a link: linked, ${toLabel} counts in nothing from that day either. To keep it counting, reopen it under Accounts that ended once it is linked.`;
+}
 
 /** What to say when the server refuses a change and gives no reason. */
 export function refusalText(action: string | undefined, body: { error?: unknown }): string {
   if (typeof body.error === 'string' && body.error) return body.error;
   return action === 'forget' ? 'Could not forget that account' : 'Could not update the link';
+}
+
+/** What to say after a forget left damaged records as they were: days of
+ *  balance history, and holdings history that could have held the account.
+ *  Null when nothing was. */
+export function forgottenNotice(body: { unreadable_days?: unknown; damaged_holdings?: unknown }): string | null {
+  const n = Number(body.unreadable_days) || 0;
+  const damaged = [n > 0 ? `${n} day${n === 1 ? '' : 's'} of history` : null, body.damaged_holdings === true ? 'some holdings history' : null].filter(
+    (s): s is string => s !== null
+  );
+  if (damaged.length === 0) return null;
+  const one = damaged.length === 1 && n <= 1;
+  const what = damaged.join(' and ');
+  const them = one ? 'it was' : 'they were';
+  return `Forgotten. ${what.charAt(0).toUpperCase()}${what.slice(1)} ${one ? 'is' : 'are'} damaged and can't be read, so ${them} left as ${them}.`;
 }
 
 function fmtDay(iso: string | null): string {
@@ -93,17 +142,21 @@ export default function AccountLinks({
   const [notice, setNotice] = useState('');
   const [preview, setPreview] = useState<{ old: string; to: string } | null>(null);
   const [picked, setPicked] = useState<Record<string, string>>({});
+  // Whether the Earlier accounts list is open: while it is, each load asks
+  // which of them can be forgotten, which reads what a restore brought back
+  // for each, so nothing reads it while the list is closed.
+  const [checkEarlier, setCheckEarlier] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const res = await fetch('/api/account-links');
+      const res = await fetch(checkEarlier ? '/api/account-links?earlier=1' : '/api/account-links');
       if (!res.ok) throw new Error();
       setData(await res.json());
     } catch {
       // Optional feature: a failed load just shows nothing.
       setData(null);
     }
-  }, []);
+  }, [checkEarlier]);
 
   useEffect(() => {
     load();
@@ -122,23 +175,17 @@ export default function AccountLinks({
       if (!res.ok) {
         const j = await res.json().catch(() => ({}));
         setError(refusalText(body.action, j));
-        // A forget that stopped part way may have changed some things already.
-        if (body.action === 'forget' && res.status >= 500) {
+        // A forget that stopped part way may have changed some things already
+        // (a 409 too: a record that kept changing, say).
+        if (body.action === 'forget' && (res.status === 409 || res.status >= 500)) {
           await load();
           onChanged();
         }
         return;
       }
       if (body.action === 'forget') {
-        const j = await res.json().catch(() => ({}));
-        const n = Number(j.unreadable_days) || 0;
-        if (n > 0) {
-          setNotice(
-            `Forgotten. ${n} day${n === 1 ? '' : 's'} of history ${n === 1 ? 'is' : 'are'} damaged and can't be read, so ${
-              n === 1 ? 'it was' : 'they were'
-            } left as ${n === 1 ? 'it was' : 'they were'}.`
-          );
-        }
+        const notice = forgottenNotice(await res.json().catch(() => ({})));
+        if (notice) setNotice(notice);
       }
       setPreview(null);
       // A pick may no longer be offered (Not this one removes it), so the
@@ -174,6 +221,7 @@ export default function AccountLinks({
         setPreview(null);
       }}
       onAct={act}
+      onEarlierOpen={setCheckEarlier}
     />
   );
 }
@@ -190,10 +238,14 @@ export function AccountLinksView({
   onPreview,
   onPick,
   onAct,
+  onEarlierOpen,
   open,
 }: {
   /** Sections to start expanded (for tests and previews). */
   open?: { byHand?: boolean; earlier?: boolean };
+  /** The Earlier accounts list was opened (true) or closed: while it is
+   *  open, ask which can be forgotten. */
+  onEarlierOpen?: (open: boolean) => void;
   data: Payload | null;
   busy: boolean;
   error: string;
@@ -208,6 +260,8 @@ export function AccountLinksView({
   const broken = data?.broken ?? [];
   const manual = useMemo(() => data?.manual ?? [], [data]);
   const earlier = useMemo(() => data?.earlier ?? [], [data]);
+  const earlierName = useMemo(() => earlierNames(earlier), [earlier]);
+  const checked = data?.earlier_checked !== false;
   const [earlierOpen, setEarlierOpen] = useState(open?.earlier ?? false);
   const [byHandOpen, setByHandOpen] = useState(open?.byHand ?? false);
   const [byHandOld, setByHandOld] = useState('');
@@ -219,7 +273,8 @@ export function AccountLinksView({
       manual.length === 0 &&
       earlier.length === 0 &&
       data.links.length === 0 &&
-      broken.length === 0)
+      broken.length === 0 &&
+      !data.stopped)
   ) {
     return null;
   }
@@ -253,9 +308,11 @@ export function AccountLinksView({
           </p>
           <p className="chart-note">
             {s.evidence.persistent_match ? 'Plaid identifies them as the same account. ' : ''}
-            {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
-              ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
-              : ''}
+            <Masked>
+              {s.evidence.old_last_balance != null && s.evidence.new_first_balance != null
+                ? `Last balance ${formatMoney(s.evidence.old_last_balance)}, first balance ${formatMoney(s.evidence.new_first_balance)}.`
+                : ''}
+            </Masked>
           </p>
           <div className="manual-row-actions">
             {previewButton(s.old, s.to)}
@@ -266,6 +323,7 @@ export function AccountLinksView({
               Not the same
             </button>
           </div>
+          {carriedEndNote(data.ends, s.old, s.to, s.to_label) && <p className="stale-note">{carriedEndNote(data.ends, s.old, s.to, s.to_label)}</p>}
           {isPreviewing(s.old, s.to) && <AccountSparkline accountId={s.to} previewWith={s.old} />}
         </div>
       ))}
@@ -279,7 +337,7 @@ export function AccountLinksView({
             <p>
               {u.old_label ? <strong>{u.old_label}</strong> : 'Balance history'} from {fmtDay(u.first)} to{' '}
               {fmtDay(u.last)}
-              {u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''} isn&apos;t
+              <Masked>{u.last_balance != null ? ` (last balance ${formatMoney(u.last_balance)})` : ''}</Masked> isn&apos;t
               attached to any current account. It may be one you reconnected.
             </p>
             <p className="chart-note">
@@ -312,6 +370,9 @@ export function AccountLinksView({
                 None of these
               </button>
             </div>
+            {carriedEndNote(data.ends, u.old, to, u.candidates.find((c) => c.id === to)?.label ?? 'the account') && (
+              <p className="stale-note">{carriedEndNote(data.ends, u.old, to, u.candidates.find((c) => c.id === to)?.label ?? 'the account')}</p>
+            )}
             {isPreviewing(u.old, to) && <AccountSparkline accountId={to} previewWith={u.old} />}
           </div>
         );
@@ -398,6 +459,9 @@ export function AccountLinksView({
                   Link history
                 </button>
               </div>
+              {carriedEndNote(data.ends, handOld.old, handTo, handOld.candidates.find((c) => c.id === handTo)?.label ?? 'the account') && (
+                <p className="stale-note">{carriedEndNote(data.ends, handOld.old, handTo, handOld.candidates.find((c) => c.id === handTo)?.label ?? 'the account')}</p>
+              )}
               {isPreviewing(handOld.old, handTo) && <AccountSparkline accountId={handTo} previewWith={handOld.old} />}
             </>
           )}
@@ -406,43 +470,71 @@ export function AccountLinksView({
 
       {earlier.length > 0 && (
         <div className="account-link-row">
-          <button className="link-btn" onClick={() => setEarlierOpen(!earlierOpen)} aria-expanded={earlierOpen}>
+          <button
+            className="link-btn"
+            onClick={() => {
+              onEarlierOpen?.(!earlierOpen);
+              setEarlierOpen(!earlierOpen);
+            }}
+            aria-expanded={earlierOpen}
+          >
             {earlierOpen ? 'Hide earlier accounts' : `Earlier accounts (${earlier.length})`}
           </button>
           {earlierOpen && (
             <>
               <p className="chart-note">
-                Accounts of institutions you disconnected. Forget one to delete its balance history, its name
-                and the categories saved for it, for good. Past net-worth totals don&apos;t change.
+                Accounts of institutions you disconnected. Forget one to delete its balance history, its name,
+                the categories saved for it and the transactions imported into it from files, for good. Past
+                net-worth totals don&apos;t change.
               </p>
+              {!checked && <p className="chart-note">Checking which of them can be forgotten…</p>}
               {earlier.map((e) => {
-                const name = e.label ?? 'Balance history';
+                const name = earlierName.get(e.id) ?? e.label ?? 'Balance history';
                 return (
                   <div key={e.id} className="account-link-linked">
                     <span>
                       {name}
                       {e.first || e.last ? ` (${fmtDay(e.first)} to ${fmtDay(e.last)})` : ''}
                       {e.hidden ? '. Hidden: forgetting it keeps it out of past totals' : ''}
+                      {e.refused ? `. ${e.refused}` : ''}
+                      {e.unchecked === 'sealed'
+                        ? '. What a restore brought back for it is sealed under a key this copy of Nya doesn’t have, so whether it can be forgotten can’t be checked: ask whoever runs this copy of Nya.'
+                        : e.unchecked
+                          ? '. Whether it can be forgotten couldn’t be checked just now: try again later.'
+                          : ''}
                     </span>
-                    <button
-                      className="link-btn danger-link"
-                      disabled={busy}
-                      onClick={() => {
-                        const sure =
-                          typeof window === 'undefined' ||
-                          window.confirm(
-                            `Forget ${name} for good? Its balance history, name and saved categories are deleted and can't be restored.`
-                          );
-                        if (sure) onAct('POST', { action: 'forget', old: e.id });
-                      }}
-                    >
-                      Forget
-                    </button>
+                    {checked && !e.refused && !e.unchecked && (
+                      <button
+                        className="link-btn danger-link"
+                        disabled={busy}
+                        onClick={() => {
+                          const sure =
+                            typeof window === 'undefined' ||
+                            window.confirm(
+                              `Forget ${name} for good? Its balance history, name, saved categories and the transactions imported into it from files are deleted and can't be restored. Rows a later import into another account found already here stay with that import.`
+                            );
+                          if (sure) onAct('POST', { action: 'forget', old: e.id });
+                        }}
+                      >
+                        Forget
+                      </button>
+                    )}
                   </div>
                 );
               })}
             </>
           )}
+        </div>
+      )}
+
+      {!!data.stopped && (
+        <div className="account-link-row">
+          <p className="chart-note">
+            {data.stopped === 1
+              ? 'An account SimpleFIN or Lunch Flow kept up to date was let go: Nya keeps its name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.'
+              : `${plainNumber(data.stopped)} accounts SimpleFIN or Lunch Flow kept up to date were let go: Nya keeps each one’s name, bank and the day you let it go, so a report on a period it was tracked in can say what may be missing.`}{' '}
+            To forget {data.stopped === 1 ? 'it' : 'one'}, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.
+          </p>
         </div>
       )}
 
@@ -468,7 +560,8 @@ export function AccountLinksView({
       {notice && <p className="chart-note">{notice}</p>}
       <p className="chart-note">
         Linking joins balance history, keeps a hidden account hidden, and carries categories you set across to
-        matching transactions. Nothing stored is changed, and Unlink puts it back as it was.
+        matching transactions. Splits and groups don&apos;t carry across: split or group those transactions again.
+        Nothing stored is changed, and Unlink puts it back as it was.
       </p>
     </div>
   );

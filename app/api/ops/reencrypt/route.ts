@@ -1,19 +1,29 @@
 import { NextResponse } from 'next/server';
 import { opsGuard, notPost } from '@/lib/ops';
 import { MasterKeyError } from '@/lib/crypto';
+import { isContainerId } from '@/lib/containers';
 import { reencrypt } from '@/lib/reencrypt';
 
-// Move every stored value to the active data key (see lib/reencrypt.ts). Two
-// bodies:
+// The migration pass: give each container a data key of its own and move its
+// values to it (see lib/reencrypt.ts). Bodies:
 //
-//   {} or empty       check only: count what is still under another key, and
-//                     anything unreadable or unlisted. Writes nothing.
-//   {"run": true}     move values, until done or the time limit. Call it
-//                     again until it answers "complete": true.
+//   {} or empty       check only: per container, whether it has a key, is
+//                     moved, and what is still under another key; anything
+//                     unreadable or unlisted. Writes nothing.
+//   {"run": true}     make keys and move values, until done or the time
+//                     limit. Call it again until it answers "complete": true.
+//   "after": "<id>"   with either: start after this container, the
+//                     `next_after` of the call before, so a sequence of calls
+//                     reaches every container however many there are.
+//   "after_rollback": true
+//                     with "run": data archives were taken by hand while
+//                     rolled back, which the backups can't see: every
+//                     container's `moved` is cleared, and its `shared_in` dated
+//                     now, first.
 //
 // Anything else is refused. Locked like every /api/ops route (lib/ops.ts).
-// The response carries key names, field names, counts and error types, never
-// values.
+// The response carries container ids, key names, field names, counts and error
+// types, never values.
 
 export const maxDuration = 60;
 /** Leaves room under maxDuration to finish the value in hand and answer. */
@@ -39,12 +49,19 @@ export async function POST(req: Request) {
     }
   }
   if (!body || typeof body !== 'object' || Array.isArray(body)) return bad('Body must be a JSON object');
-  const fields = Object.keys(body);
-  const run = fields.length === 1 && fields[0] === 'run' && (body as Record<string, unknown>).run === true;
-  if (fields.length !== 0 && !run) return bad('Send {"run": true}, or an empty body to check.');
+  const b = body as Record<string, unknown>;
+  const fields = Object.keys(b);
+  const known = new Set(['run', 'after', 'after_rollback']);
+  if (fields.some((f) => !known.has(f))) return bad('Send {"run": true}, or an empty body to check, each with "after" if you have one.');
+  if ('run' in b && b.run !== true) return bad('"run" can only be true.');
+  if ('after' in b && !isContainerId(b.after)) return bad('"after" must be a container id: the next_after of the call before.');
+  if ('after_rollback' in b && (b.after_rollback !== true || b.run !== true)) return bad('"after_rollback" can only be true, and only with "run".');
+  const run = b.run === true;
 
   try {
-    return NextResponse.json(await reencrypt({ dryRun: !run, budgetMs: BUDGET_MS }));
+    return NextResponse.json(
+      await reencrypt({ dryRun: !run, budgetMs: BUDGET_MS, after: (b.after as string | undefined) ?? null, afterRollback: b.after_rollback === true })
+    );
   } catch (err) {
     // Written for you: names key ids and fingerprints, never key material.
     if (err instanceof MasterKeyError) return bad(err.message, 409);

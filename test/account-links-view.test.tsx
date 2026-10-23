@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { AccountLinksView, refusalText, type AccountLinksPayload } from '@/components/AccountLinks';
+import { AccountLinksView, refusalText, forgottenNotice, type AccountLinksPayload } from '@/components/AccountLinks';
 
 const noop = () => {};
 const view = (data: AccountLinksPayload | null, picked: Record<string, string> = {}) =>
@@ -77,6 +77,8 @@ describe('AccountLinksView', () => {
     expect(html).not.toContain('Same account as');
     expect(html).toContain('412 of 431 categorized transactions carried over so far');
     expect(html).toContain('1 of 1 categorized transaction carried over. 2 matched more than one transaction');
+    // What a link doesn't carry (#39): a disconnect takes splits and groups with it.
+    expect(html).toContain('Splits and groups don&#x27;t carry across: split or group those transactions again.');
   });
 
   test('shows the card for linking by hand alone', () => {
@@ -127,10 +129,125 @@ describe('AccountLinksView', () => {
     expect(html).toContain('Same account as');
   });
 
+  // A forget the server would refuse (what a restore brought back for it is
+  // in a form this version doesn't know) is never offered: its words instead.
+  test('an earlier account whose forget would be refused is listed with why, and no Forget', () => {
+    const why = 'What a restore brought back for this account is in a form this version of Nya doesn’t know: a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here: ask whoever runs this copy of Nya.';
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          earlier: [
+            { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+            { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, refused: why },
+          ],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    expect(html.match(/>Forget</g)?.length).toBe(1);
+    expect(html).toContain('Chase Sapphire ••2222 (');
+    expect(html).toContain('a newer version wrote it, or it is a fault. It is kept as it is, so the account can’t be forgotten here');
+  });
+
+  test('until the server has checked which can be forgotten, none offers Forget; one it couldn’t check says so', () => {
+    const list = (over: Partial<AccountLinksPayload>) =>
+      renderToStaticMarkup(
+        <AccountLinksView
+          open={{ earlier: true }}
+          data={{
+            suggestions: [],
+            unclaimed: [],
+            links: [],
+            earlier: [
+              { id: 'A7', label: 'Chase Checking ••4821', first: '2024-01-01', last: '2025-06-30', hidden: false },
+              { id: 'A8', label: 'Chase Sapphire ••2222', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: 'failed' },
+              { id: 'A9', label: 'Ally Savings ••3333', first: '2024-01-01', last: '2025-06-30', hidden: false, unchecked: 'sealed' },
+            ],
+            ...over,
+          }}
+          busy={false}
+          error=""
+          preview={null}
+          picked={{}}
+          onPreview={noop}
+          onPick={noop}
+          onAct={noop}
+        />
+      );
+    const waiting = list({ earlier_checked: false });
+    expect(waiting).toContain('Checking which of them can be forgotten…');
+    expect(waiting).not.toContain('>Forget<');
+    const done = list({ earlier_checked: true });
+    expect(done).not.toContain('Checking which');
+    expect(done.match(/>Forget</g)?.length).toBe(1);
+    expect(done).toContain('Chase Sapphire ••2222 (Jan 1, 2024 to Jun 30, 2025). Whether it can be forgotten couldn’t be checked just now: try again later.');
+    // Sealed under a key this copy doesn't have: trying again won't mend it.
+    expect(done).toContain(
+      'Ally Savings ••3333 (Jan 1, 2024 to Jun 30, 2025). What a restore brought back for it is sealed under a key this copy of Nya doesn’t have, so whether it can be forgotten can’t be checked: ask whoever runs this copy of Nya.'
+    );
+  });
+
+  test('points to where the accounts SimpleFIN or Lunch Flow kept up to date that were let go are forgotten, even with nothing else to show', () => {
+    const empty = { suggestions: [], unclaimed: [], links: [] };
+    expect(view({ ...empty, stopped: 0 })).toBe('');
+    const one = view({ ...empty, stopped: 1 });
+    expect(one).toContain('An account SimpleFIN or Lunch Flow kept up to date was let go');
+    expect(one).toContain('To forget it, open <a href="/reports?stopped=1">Accounts you stopped tracking</a> on the Reports page.');
+    expect(view({ ...empty, stopped: 3 })).toContain('3 accounts SimpleFIN or Lunch Flow kept up to date were let go');
+  });
+
+  test('three earlier accounts that would read the same are told apart by the end of each id, so Forget takes the one meant', () => {
+    const alike = (id: string) => ({ id, label: null, first: '2025-11-01', last: '2025-11-02', hidden: false });
+    const html = renderToStaticMarkup(
+      <AccountLinksView
+        open={{ earlier: true }}
+        data={{
+          suggestions: [],
+          unclaimed: [],
+          links: [],
+          earlier: [alike('acc_9f2Lq7'), alike('acc_Xw31Bd'), alike('acc_kP0z5e'), { id: 'A7', label: 'Chase Checking ••4821', first: '2025-11-01', last: '2025-11-02', hidden: false }],
+        }}
+        busy={false}
+        error=""
+        preview={null}
+        picked={{}}
+        onPreview={noop}
+        onPick={noop}
+        onAct={noop}
+      />
+    );
+    const names = [...html.matchAll(/<span>([^<(]+) \(/g)].map((m) => m[1]);
+    expect(names).toEqual(['Balance history · …2Lq7', 'Balance history · …31Bd', 'Balance history · …0z5e', 'Chase Checking ••4821']);
+    expect(html.match(/>Forget</g)?.length).toBe(4);
+  });
+
   test('says what was refused, in the server’s words when it gave some', () => {
     expect(refusalText('forget', {})).toBe('Could not forget that account');
     expect(refusalText('link', {})).toBe('Could not update the link');
     expect(refusalText('forget', { error: 'Unlink it first.' })).toBe('Unlink it first.');
+  });
+
+  test('after a forget, says what damaged records were left as they were, and nothing when none were', () => {
+    expect(forgottenNotice({ unreadable_days: 0 })).toBeNull();
+    expect(forgottenNotice({})).toBeNull();
+    expect(forgottenNotice({ unreadable_days: 1 })).toBe("Forgotten. 1 day of history is damaged and can't be read, so it was left as it was.");
+    expect(forgottenNotice({ unreadable_days: 3 })).toBe("Forgotten. 3 days of history are damaged and can't be read, so they were left as they were.");
+    expect(forgottenNotice({ unreadable_days: 0, damaged_holdings: true })).toBe(
+      "Forgotten. Some holdings history is damaged and can't be read, so it was left as it was."
+    );
+    expect(forgottenNotice({ unreadable_days: 1, damaged_holdings: true })).toBe(
+      "Forgotten. 1 day of history and some holdings history are damaged and can't be read, so they were left as they were."
+    );
   });
 
   test('shows a note after a change that worked, not as an error', () => {
