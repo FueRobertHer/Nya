@@ -172,7 +172,8 @@ import {
   type UserData,
   type UserExport,
 } from './user-export';
-import { anySplitsOrGroups, appliedSplitsOf, splitInputsOf, splitMemoOf } from './export-splits';
+import { anySplitsOrGroups, appliedSharesOf, appliedSplitsOf, shareInputsOf, splitInputsOf, splitMemoOf } from './export-splits';
+import { expensePaymentsStore, expenseSharesStore } from './shared-expenses/store';
 import { splitFor } from './split-rows';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
@@ -726,8 +727,12 @@ export function ofxFile(
   // accounts, a transaction in two, a split on a row pending or in another
   // currency now, each as the app has it.
   const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc, imported.rows), splitInputs) : null;
+  // And shared expenses after them (lib/export-splits.ts appliedSharesOf):
+  // your part and the others', and what a payment paid back, never a name.
+  const shareInputs = shareInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents);
+  const sharedWords = shareInputs ? appliedSharesOf(splitFactRows(doc, imported.rows), splitInputs, shareInputs) : null;
   const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
-    const words = applied && splitMemoOf(r, splitInputs, applied);
+    const words = [applied && splitMemoOf(r, splitInputs, applied), sharedWords?.get(r.id)].filter((w): w is string => !!w).join('. ');
     return words ? { split: words } : {};
   };
 
@@ -1033,6 +1038,16 @@ export function ofxFile(
       `How ${plural(unreadSplits, 'of these transactions is', 'of these transactions are')} split couldn’t be read, so ${unreadSplits === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadSplits === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
     );
     incomplete.add(splitStore.name);
+  }
+  // A share or a payment that couldn't be read (lib/export-splits.ts
+  // appliedSharesOf): the transaction is whole here anyway, its memo silent.
+  const unreadShared = shareInputs ? rows.filter((r) => shareInputs.sharesUnknown.has(r.id) || shareInputs.paymentsUnknown.has(r.id)).length : 0;
+  if (shareInputs && unreadShared > 0) {
+    notes.push(
+      `Whether ${plural(unreadShared, 'of these transactions is', 'of these transactions are')} shared, or paid something back, couldn’t be read, so ${unreadShared === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadShared === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
+    );
+    if (rows.some((r) => shareInputs.sharesUnknown.has(r.id))) incomplete.add(expenseSharesStore.name);
+    if (rows.some((r) => shareInputs.paymentsUnknown.has(r.id))) incomplete.add(expensePaymentsStore.name);
   }
   if (rows.length > 0 && splitInputs.groupsUnknown > 0) {
     notes.push(`Some of your groups couldn’t be read, so a transaction’s memo may not say the group it is in. The JSON download lists them under problems. ${UNCHANGED}`);

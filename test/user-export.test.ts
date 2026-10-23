@@ -1241,6 +1241,12 @@ describe('stores built on the storage seam', () => {
       'connector-connections',
       'connector-ended',
       'currency-settings',
+      'expense-dismissed',
+      'expense-ious',
+      'expense-payments',
+      'expense-people',
+      'expense-settings',
+      'expense-shares',
       'export-test-plans',
       'export-test-settings',
       'fire-plan',
@@ -1627,9 +1633,10 @@ describe('writing it out', () => {
     const file = exportFile(doc, 'transactions-csv');
     const [header, ...rows] = parseCsv([...file.pieces()].join(''));
     expect(header).toEqual([...TRANSACTION_COLUMNS]);
-    expect(header.slice(-13, -5)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group', 'tags', 'nya_name', 'excluded']);
-    // Splits and groups (#39), at the end since.
-    expect(header.slice(-5)).toEqual(['nya_amount', 'split_of', 'split_index', 'group_id', 'group_name']);
+    expect(header.slice(-16, -8)).toEqual(['source', 'note', 'nya_category', 'nya_category_id', 'nya_group', 'tags', 'nya_name', 'excluded']);
+    // Splits and groups (#39), at the end since; then shared expenses (#49).
+    expect(header.slice(-8, -3)).toEqual(['nya_amount', 'split_of', 'split_index', 'group_id', 'group_name']);
+    expect(header.slice(-3)).toEqual(['shared_of', 'shared_kind', 'shared_person']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[TRANSACTION_COLUMNS.indexOf(name)];
     // Newest first, among the bank's rows; on a day, after the rows with a time.
     expect(rows.map((r) => col(r, 'transaction_id'))).toEqual(['t_evil', 't_posted', typed, 't_card', 't_pending', imported, 't_coffee', 't_bakery']);

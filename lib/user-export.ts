@@ -110,7 +110,8 @@ import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Laye
 import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
-import { csvLinesWithSplits, splitInputsOf, type CsvLine } from './export-splits';
+import { csvLinesWithSplits, shareInputsOf, splitInputsOf, type CsvLine } from './export-splits';
+import { expenseIousStore, expensePaymentsStore, expenseSettingsStore, expenseSharesStore } from './shared-expenses/store';
 import { rulesStore } from './rules';
 import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
@@ -1243,6 +1244,40 @@ const PART_WORDS: Record<string, PartWords> = {
     inCsv: (counts) =>
       `Not all of your ${groupStore.what} could be read: ${counts}. Their transactions are in this file on their own, each counted in nya_amount, as the app counts them until they can be read.`,
   },
+  // What shared expenses add to the transactions CSV (lib/export-splits.ts):
+  // in a CSV, the rows that show as the bank has them instead.
+  [expenseSettingsStore.name]: {
+    noun: expenseSettingsStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'Your shared transactions count whole in the app until it can be read.',
+    valueInCsv: (why) =>
+      `Your ${expenseSettingsStore.what} could not be read (${why}), so each shared transaction is in this file as the bank shows it, counted whole in nya_amount, with no row for anyone else’s part, as the app counts them until it can be read.`,
+  },
+  [expenseSharesStore.name]: {
+    noun: expenseSharesStore.what,
+    one: 'shared transaction',
+    many: 'shared transactions',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${expenseSharesStore.what} could be read: ${counts}. Those transactions are in this file whole, and nya_amount counts each whole, as the app shows them until they can be read.`,
+  },
+  [expenseIousStore.name]: {
+    noun: expenseIousStore.what,
+    one: 'IOU',
+    many: 'IOUs',
+    missing: missingFrom,
+    inCsv: (counts) => `Not all of your ${expenseIousStore.what} could be read: ${counts}. This file has no row for those, as the app counts none of them until they can be read.`,
+  },
+  [expensePaymentsStore.name]: {
+    noun: 'confirmed payments',
+    one: 'payment',
+    many: 'payments',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your confirmed payments could be read: ${counts}. Those transactions are in this file as the bank shows them, counted in nya_amount, as the app counts them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
@@ -1764,6 +1799,12 @@ export const TRANSACTION_COLUMNS = [
   'split_index',
   'group_id',
   'group_name',
+  // Added with shared expenses (#49), at the end too: which transaction a
+  // row shared expenses add is of, what it is, and whose, by id
+  // (lib/export-splits.ts).
+  'shared_of',
+  'shared_kind',
+  'shared_person',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -2308,7 +2349,8 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
     }),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
-  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix, imported.represents), blankCells)) {
+  const part = (key: string) => doc[key];
+  for (const row of csvLinesWithSplits(rows, splitInputsOf(part, doc.problems, ix, imported.represents), blankCells, shareInputsOf(part, doc.problems, ix, imported.represents))) {
     const cells = row.cells();
     yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
   }
@@ -2429,6 +2471,12 @@ export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonl
     // rows, and nya_amount.
     splitStore.name,
     groupStore.name,
+    // Shared expenses (lib/export-splits.ts): the others' parts, what a
+    // payment paid back, an IOU's row, and nya_amount.
+    expenseSettingsStore.name,
+    expenseSharesStore.name,
+    expenseIousStore.name,
+    expensePaymentsStore.name,
   ],
   // The days, the names of the manual accounts the rows are for, the
   // accounts' ends and the notes.
