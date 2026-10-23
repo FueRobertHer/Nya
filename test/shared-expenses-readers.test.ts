@@ -12,6 +12,9 @@ import { countToReview } from '@/lib/review-layer';
 import { summarize } from '@/lib/totals';
 import type { Txn } from '@/lib/transactions';
 import { row as runwayRow } from './runway-fixture';
+import { totalsIn } from '@/lib/fx/totals';
+import { bankRows } from '@/lib/split-rows';
+import { ecbTable } from './fx-fixture';
 
 // The readers with rules of their own, held to the shared-expense rule
 // (lib/shared-expenses/rows.ts): the rows it adds are never evidence of where
@@ -20,7 +23,8 @@ import { row as runwayRow } from './runway-fixture';
 // by a scan of the source); the runway matches a shared bill by the bill and
 // adds your part on its dates; the Plan counts an IOU settled in cash once
 // beside the withdrawal; the calendar's day says your part; a shared
-// transaction is reviewed once.
+// transaction is reviewed once; a shared transaction in another currency is
+// ranked by its whole converted, never by its own currency's figure.
 
 const AT = '2026-10-01T12:00:00.000Z';
 const day = (today: string, back: number) => new Date(Date.parse(`${today}T00:00:00Z`) - back * 86_400_000).toISOString().slice(0, 10);
@@ -33,16 +37,36 @@ const half = (id: string, whole: number, date: string): [string, Share] => [
 ];
 
 describe('rows the layer adds are never evidence of history (Blocking 1)', () => {
-  test('an old IOU leaves the Plan’s history length, and so its spending, as the bank’s rows make it', () => {
+  test('an old IOU leaves the Plan’s history length as the bank’s rows make it, and, dated before them, counts in no figure but is named', () => {
     const today = '2026-10-23';
     const bank = Array.from({ length: 40 }, (_, i) => base(`b${i}`, { date: day(today, i), amount: 50 }));
     const old = applyShares([], inputs({ ious: new Map([['i1', iou({ date: day(today, 300) })]]) })).rows;
     expect(old).toHaveLength(1);
     const without = trailingFlows(bank, today)!;
+    expect(Math.round(without.spending)).toBe(18250);
     const withIou = trailingFlows([...bank, ...old], today)!;
     expect(withIou.days).toBe(without.days);
-    // The IOU's $25 counts, scaled as the bank's history is: never a year of $50 a day spread over 300 days.
-    expect(Math.round(withIou.spending)).toBe(Math.round(without.spending + 25 * (365 / without.days)));
+    // Outside the 40 days measured: never scaled up to $228, left out and said.
+    expect(withIou.spending).toBe(without.spending);
+    expect(withIou.iousBefore).toEqual({ count: 1, amount: 25 });
+    expect(without.iousBefore).toBeUndefined();
+  });
+
+  test('a year of IOUs typed in (from Splitwise, say) beside 40 days of the bank’s: only those inside the 40 days count, scaled as the bank’s are', () => {
+    const today = '2026-10-23';
+    const bank = Array.from({ length: 40 }, (_, i) => base(`b${i}`, { date: day(today, i), amount: 50 }));
+    // Twelve monthly $100 IOUs over the past year: days 0, 30 inside the 40.
+    const monthly = new Map(Array.from({ length: 12 }, (_, i) => [`m${i}`, iou({ amount: 100, date: day(today, i * 30) })] as [string, Iou]));
+    const rows = applyShares([], inputs({ ious: monthly })).rows;
+    const f = trailingFlows([...bank, ...rows], today)!;
+    expect(f.days).toBe(40);
+    expect(Math.round(f.spending)).toBe(Math.round((40 * 50 + 200) * (365 / 40)));
+    expect(f.iousBefore).toEqual({ count: 10, amount: 1000 });
+    // The reviewer's case, every IOU before the bank's rows: none counts, all named.
+    const before = new Map(Array.from({ length: 12 }, (_, i) => [`m${i}`, iou({ amount: 100, date: day(today, 45 + i * 25) })] as [string, Iou]));
+    const g = trailingFlows([...bank, ...applyShares([], inputs({ ious: before })).rows], today)!;
+    expect(Math.round(g.spending)).toBe(18250);
+    expect(g.iousBefore).toEqual({ count: 12, amount: 1200 });
   });
 
   test('the cash flow’s late-history note names the bank’s first day, never an IOU’s', () => {
@@ -159,5 +183,33 @@ describe('the calendar and the review queue', () => {
     expect(entry.counted).toBe(-60);
     expect(countToReview(rows)).toBe(1);
     expect(summarize(rows, (d) => d.startsWith('2026-10'), 'USD').excluded).toBe(0);
+  });
+});
+
+describe('a shared transaction in another currency, converted whole (Should fix 1)', () => {
+  test('a ¥12,000 dinner shared half is $77.64 whole beside a $900 laptop, so the laptop is the biggest purchase', () => {
+    const dinner = base('jp', { date: '2026-10-10', amount: 12000, iso_currency_code: 'JPY', name: 'Sushi' });
+    const laptop = base('lap', { date: '2026-10-10', amount: 900, name: 'Laptop' });
+    const shares = new Map<string, Share>([['jp', { version: 1, account_id: 'chk', amount_was: 12000, currency: 'JPY', date: dinner.date, what: 'Sushi', entries: [{ id: 'e1', person: 'alex', amount: 6000 }], created_at: AT, updated_at: AT }]]);
+    const rows = applyShares([dinner, laptop], inputs({ shares })).rows;
+    const counted = totalsIn(rows, ecbTable({ home: 'USD' }), { into: { currency: 'USD' } });
+    // What Insights ranks: each bank row whole, in the home currency.
+    const whole = bankRows(counted.rows, { groups: 'keep' });
+    const jp = whole.find((t) => t.transaction_id === 'jp')!;
+    expect(jp.iso_currency_code).toBe('USD');
+    // The whole is its rows converted, added up: your part and Alex's.
+    const parts = counted.rows.filter((t) => t.shared_of === 'jp');
+    expect(parts.map((t) => t.amount)).toEqual([38.82, 38.82]);
+    expect(jp.amount).toBe(77.64);
+    const biggest = whole.filter((t) => t.amount > 0).reduce((a, b) => (b.amount > a.amount ? b : a));
+    expect(biggest.transaction_id).toBe('lap');
+  });
+
+  test('a shared transaction already in the home currency keeps its whole as it was', () => {
+    const dinner = base('t-dinner', { date: '2026-10-10', amount: 120 });
+    const rows = applyShares([dinner], inputs({ shares: new Map([half('t-dinner', 120, '2026-10-10')]) })).rows;
+    const counted = totalsIn(rows, ecbTable({ home: 'USD' }), { into: { currency: 'USD' } });
+    expect(counted.rows.find((t) => t.transaction_id === 't-dinner')!.shared_was).toBe(120);
+    expect(bankRows(counted.rows, { groups: 'keep' }).map((t) => [t.transaction_id, t.amount])).toEqual([['t-dinner', 120]]);
   });
 });
