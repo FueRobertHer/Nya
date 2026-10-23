@@ -273,10 +273,17 @@ describe('Home’s notes', () => {
 });
 
 describe('the offer to show totals in one currency (decision 1)', () => {
-  test('nothing while the accounts’ balances are in one currency (transactions don’t bring it in this step)', () => {
+  test('nothing while the accounts’ balances are in one currency and so are the last year’s transactions', () => {
     expect(offerFor({ accounts: ['USD', 'USD', null], budgets: 'USD', main: 'USD' })).toBeNull();
-    // Budgets read in another currency than the accounts change nothing yet.
-    expect(offerFor({ accounts: ['USD'], budgets: 'JPY', main: 'USD' })).toBeNull();
+    expect(offerFor({ accounts: ['USD'], budgets: 'JPY', main: 'USD', transactions: ['JPY', 'JPY', null] })).toBeNull();
+  });
+
+  test('for transactions in more than one over the last year (decision A, step 2): offered, saying why', () => {
+    expect(offerFor({ accounts: ['USD'], budgets: 'USD', main: 'USD', transactions: ['USD', 'EUR', null] })).toEqual({ budgets: 'USD', accounts: null, why: 'transactions' });
+    const html = renderToStaticMarkup(<CurrencyOffer offer={{ budgets: 'USD', accounts: null, why: 'transactions' }} onChoose={noop} onDismiss={noop} />);
+    expect(text(html)).toContain('Your transactions over the last year are in more than one currency, and your spending totals leave out those in the others.');
+    expect(text(html)).toContain('Nothing changes until you do.');
+    expect(buttons(html)).toEqual(['Use USD your budgets are in it', 'Choose another', 'Not now']);
   });
 
   test('for accounts in more than one: the budgets’ currency, and the accounts’ main one beside it when they differ', () => {

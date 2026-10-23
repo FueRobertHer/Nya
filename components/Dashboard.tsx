@@ -1811,11 +1811,15 @@ export default function Dashboard({
     if (txns === null) return null;
     // The same window as lib/budget-month.ts windowStart (LOOKBACK_DAYS, 365 UTC days).
     const since = new Date(Date.now() - 365 * 86_400_000).toISOString().slice(0, 10);
-    const budgets = totalsCurrency(txns.filter((t) => t.date >= since));
+    const year = txns.filter((t) => t.date >= since);
+    const budgets = totalsCurrency(year);
     return offerFor({
       accounts: institutions.flatMap((i) => i.accounts.filter((a) => a.balance !== null).map((a) => a.currency)),
       budgets,
       main: accountCurrency,
+      // The last year's transactions in more than one currency: they convert
+      // too, so the offer is made for them (decision A, step 2).
+      transactions: year.map((t) => t.iso_currency_code || t.unofficial_currency_code || null),
     });
   }, [institutions, txns, accountCurrency]);
   // What Home shows: net worth in the home currency once one is chosen
