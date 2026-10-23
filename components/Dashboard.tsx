@@ -2074,6 +2074,7 @@ export default function Dashboard({
 
                 <Insights
                   txns={txns}
+                  fx={txnFx}
                   budgets={budgets}
                   taxonomy={categories.taxonomy}
                   budgetCarries={budgetMonth.view?.month === thisMonth ? budgetMonth.view.carries : null}

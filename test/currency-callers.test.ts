@@ -32,7 +32,6 @@ const ALLOWED: Record<string, string> = {
   'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
   // Flows.
   'components/BudgetsTab.tsx#BudgetsTab:displayCurrency': STEP_2,
-  'components/Insights.tsx#Insights:displayCurrency': STEP_2,
   'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,
   'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
   'lib/api-read.ts#readRecurring:currency': STEP_2,

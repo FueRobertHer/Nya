@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import MonthBreakdown, { type Txn } from '@/components/MonthBreakdown';
+import Insights from '@/components/Insights';
 import { localMonth } from '@/lib/local-date';
 import { categoriesFor } from './category-fixture';
 import { ecbTable } from './fx-fixture';
@@ -84,5 +85,17 @@ describe('the Activity tab', () => {
     // Listed in its own currency.
     expect(t).toContain('-$412.30');
     expect(t).toContain('-€40.00');
+  });
+});
+
+describe('the insights on Home', () => {
+  const rows = [...FLOWS, row(6, 'Galeries Lafayette', 2000, 'shopping', { iso_currency_code: 'EUR' })];
+  const insights = (over: Partial<Parameters<typeof Insights>[0]> = {}) => text(renderToStaticMarkup(<Insights txns={rows} accounts={[]} {...over} />));
+
+  test('the biggest purchase is ranked by what it came to, and said in its own currency', () => {
+    // Without a home currency, the dollars only: the rent.
+    expect(insights()).toContain('Biggest purchase this month: Landlord, $2,100.00');
+    // With one, $2,100 is €1,818.02, less than €2,000.
+    expect(insights({ fx })).toContain('Biggest purchase this month: Galeries Lafayette, €2,000.00');
   });
 });
