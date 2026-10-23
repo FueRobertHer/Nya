@@ -44,7 +44,7 @@ import { Masked } from './HideAmounts';
 import { openFile, openFailure } from './OpenProtectedDownload';
 import DownloadMyData from './DownloadMyData';
 import RestoreAnswers from './RestoreAnswers';
-import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
+import { accountWords, broughtLines, canUndo, countedLines, leftOutLines, signRepairLines, turningLines, looksProtected, sharingLines, tokensLine, unreadableNotes, waitingBanks, type RestoreState, type UnreadableNote } from './restore-state';
 
 const EMPTY_WORDS = 'empty my account';
 
@@ -405,6 +405,11 @@ function RestoreFlow({ ask: send, needsPassword, onChanged, autoScan = false, re
           />
 
           {record && <RecordSummary record={record} />}
+          {signRepairLines(state.sign_repairs).map((l) => (
+            <p key={l.text} className={l.warn ? 'stale-note' : 'panel-note'}>
+              {l.text}
+            </p>
+          ))}
 
           {unfinished && record?.status === 'writing' && record.done < record.plan.batches && (
             <p className="stale-note">
@@ -689,6 +694,7 @@ export function PreviewView({
   const brought = broughtLines(p.brought, p.history);
   const left = leftOutLines(p.left_out, p.collected.never);
   const counted = countedLines(p.counted ?? []);
+  const turning = turningLines(p.turning ?? []);
   return (
     <div className="restore-section">
       <div className="section-label">What comes back</div>
@@ -709,6 +715,16 @@ export function PreviewView({
           <div className="section-label">Accounts that ended</div>
           <ul className="restore-list">
             {counted.map((l) => (
+              <li key={l}>{l}</li>
+            ))}
+          </ul>
+        </>
+      )}
+      {turning.length > 0 && (
+        <>
+          <div className="section-label">Balance history being turned over</div>
+          <ul className="restore-list">
+            {turning.map((l) => (
               <li key={l}>{l}</li>
             ))}
           </ul>

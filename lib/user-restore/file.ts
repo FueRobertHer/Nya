@@ -27,7 +27,7 @@
 import { readJsonBytes, JsonReadError, type JsonEvent, type JsonPath } from './stream';
 import { CORE, HEADER, checkFormat, problemShape, seamEntry, type Check } from './shapes';
 import { CORE_PARTS, HEADER_PARTS, NEVER_CORE, SEAM, isKnownPart } from './parts';
-import { acrossParts, accountsOf, Batcher, endedInFile, historySpan, restoreProblems, restoredRowOf, smallParts, type BookEntry, type Collected, type Fact, type Without } from './plan';
+import { acrossParts, accountsOf, Batcher, endedInFile, historySpan, turningIn, restoreProblems, restoredRowOf, smallParts, type BookEntry, type Collected, type Fact, type Without } from './plan';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, MAX_BATCHES, restoredBookId } from './ids';
 import { isRecord } from './records';
 
@@ -300,6 +300,9 @@ export type Preview = {
   /** The accounts the file says ended that count here as they did there,
    *  up to their end (plan.ts endedInFile), each named as the card names it. */
   counted: { institution_name: string; name: string | null; mask: string | null; day: string }[];
+  /** The accounts the file says were being turned over to match their kind
+   *  (plan.ts turningIn), which the finish repairs where it can. */
+  turning: { account_id: string; name: string }[];
 };
 
 /** What the file would bring back (see Preview). */
@@ -320,7 +323,7 @@ export function previewOf(c: Collected): Preview {
     earlier.push(...(Array.isArray(prior.earlier) ? (prior.earlier as Preview['earlier']) : []), { exported_at: prior.source.exported_at, restored_at: prior.started_at });
   }
   const counted = endedInFile(c, accounts.restored).map(({ account: a, day }) => ({ institution_name: a.institution_name, name: a.name, mask: a.mask, day }));
-  return { collected: c, refuse, without, brought, left_out: small.left_out, history: historySpan(c), earlier: earlier.slice(-50), counted };
+  return { collected: c, refuse, without, brought, left_out: small.left_out, history: historySpan(c), earlier: earlier.slice(-50), counted, turning: turningIn(c) };
 }
 
 /** A batch as it is built: its part, its body (exactly the bytes sent), and

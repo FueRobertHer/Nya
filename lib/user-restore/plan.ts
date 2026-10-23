@@ -30,6 +30,7 @@ import { legacyCopy } from '../budget-set';
 import { bankFieldsOf, isRecord } from './records';
 import { BATCH_BYTES, BOOK_ROWS, investmentCoverageId, investmentPartId, restoredBookId, restoredId } from './ids';
 import { SEAM } from './parts';
+import { turningOverIds } from '../sign-turning';
 
 // ---- What the page read ----
 
@@ -309,6 +310,23 @@ export function endedInFile(c: Collected, restored: readonly RestoredAccountFact
     const day = best.get(account.account_id)?.day;
     return day ? [{ account, day }] : [];
   });
+}
+
+/** The accounts the file's notes say were being turned over to match their
+ *  kind as it was made (lib/sign-turning.ts), that the file has as a manual
+ *  account or one tracked through SimpleFIN or Lunch Flow (only those are
+ *  turned over), each with the name it had. In id order. Pure. */
+export function turningIn(c: Collected): { account_id: string; name: string }[] {
+  const ids = new Set(c.notes.flatMap((n) => turningOverIds(n) ?? []));
+  if (ids.size === 0) return [];
+  const names = new Map<string, string>();
+  for (const m of (c.core.manual_accounts as { account_id?: unknown; name?: unknown }[] | undefined) ?? []) {
+    if (typeof m.account_id === 'string') names.set(m.account_id, typeof m.name === 'string' ? m.name : 'An account');
+  }
+  for (const e of c.entries.get('connector-accounts') ?? []) {
+    if (isRecord(e.value)) names.set(e.id, typeof e.value.name === 'string' ? e.value.name : 'An account');
+  }
+  return [...ids].filter((id) => names.has(id)).sort().map((account_id) => ({ account_id, name: names.get(account_id)! }));
 }
 
 /** Each account's first and last day of balance history in the file. */
@@ -621,6 +639,10 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...entries('runway-scenarios'),
     ...value('currency-settings'),
     ...value('weekly-summary'),
+    // The accounts the file says were being turned over to match their kind
+    // (lib/sign-turning.ts), last: the finish plans each one's repair from
+    // the history written by then (lib/sign-repair.ts planRestoredRepairs).
+    ...legacy('sign-turning', turningIn(c).map(({ account_id }) => ({ id: account_id }))),
   ];
   if (c.bank.pending.size > 0) left_out.pending_transactions = c.bank.pending.size;
   if (c.never.api_tokens > 0) left_out.api_tokens = c.never.api_tokens;

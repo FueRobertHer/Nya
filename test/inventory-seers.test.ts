@@ -197,6 +197,7 @@ const NOT_HELD: Readonly<Record<string, string>> = {
   'move:': 'the record of the one-time data move, read only by that move',
   'history:forgetting:': 'the progress of forgetting an account, read only by the forgetting',
   'sign-repairs': 'a re-sign of an account’s past balances under way, read only by the re-sign and the nightly job that finishes it',
+  'restored-sign-repairs': 'what a restore found of a re-sign its file left under way, read only by the restore’s finish, its card, the operator’s repair and the nightly job that finishes re-signs',
   'connector-secrets': 'the credential, read only by the sync, which these paths never run; the connection made here holds one, and a restore leaves it out',
 };
 /** Counters hold a count for a window, read only to limit how often: their

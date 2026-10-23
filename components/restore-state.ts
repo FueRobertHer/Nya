@@ -13,6 +13,7 @@ import type { RecordView } from '@/lib/user-restore/store';
 import type { WaitingAccount } from '@/lib/user-restore/restored';
 import type { AnswersView, AnsweredAccount, AnsweredBank, HolderView } from '@/lib/user-restore/answering';
 import type { AnsweredEnd } from '@/lib/user-restore/store';
+import type { RestoredRepairView } from '@/lib/sign-repair';
 import type { RestoredRows } from '@/lib/user-restore/forget';
 import { idEnds, type Unlisted } from '@/lib/earlier-names';
 
@@ -44,6 +45,10 @@ export type RestoreState = {
    *  about each, and the connections made since (lib/user-restore/
    *  answering.ts answersView); null when that couldn't be read. */
   answers?: AnswersView | null;
+  /** What became of the accounts the file was turning over to match their
+   *  kind (lib/sign-repair.ts restoredRepairsView); null when that couldn't
+   *  be read. */
+  sign_repairs?: RestoredRepairView[] | null;
 };
 
 /** A restored account whose entry can't be read (app/api/user-restore): what
@@ -154,7 +159,7 @@ const SETTINGS = new Set([
 ]);
 
 /** Kept as the file has them, with nothing to say on their own. */
-const QUIET = new Set(['directory', 'hidden', 'declined', 'carried-categories', 'store:carried-annotations', 'store:carried-imported-twins', 'store:imported-twins', 'store:connector-accounts', 'store:connector-ended', 'store:restored-transactions', 'store:restored-accounts', 'store:restored-investment-transactions', 'investment_transactions']);
+const QUIET = new Set(['directory', 'hidden', 'declined', 'sign-turning', 'carried-categories', 'store:carried-annotations', 'store:carried-imported-twins', 'store:imported-twins', 'store:connector-accounts', 'store:connector-ended', 'store:restored-transactions', 'store:restored-accounts', 'store:restored-investment-transactions', 'investment_transactions']);
 
 /** What comes back, in words (see BROUGHT), the balance history by its days. */
 export function broughtLines(brought: Readonly<Record<string, number>>, history: { first: string; last: string } | null): string[] {
@@ -452,4 +457,35 @@ export const allAnswered = (view: AnswersView) => view.banks.flatMap((b) => b.ac
 export function toCount(bank: AnsweredBank): { ids: string[]; needEnd: AnsweredAccount[] } {
   const open = bank.accounts.filter((a) => !a.counted);
   return { ids: open.map((a) => a.account_id), needEnd: open.filter((a) => !a.end) };
+}
+
+// ---- Balance history being turned over ----
+
+/** The accounts a file says were being turned over to match their kind as
+ *  it was made (lib/user-restore/plan.ts turningIn), as the preview says
+ *  them. */
+export function turningLines(turning: readonly { name: string }[]): string[] {
+  return turning.map(
+    (a) => `${a.name}’s balance history was being turned over to match its kind in your other copy: Nya finishes it here where your totals prove every day, and if some day can’t be told, turns nothing over and says so`
+  );
+}
+
+/** What became of each of those accounts here (RestoredRepairView), as the
+ *  card says it: under way, waiting for whoever runs Nya with the first days
+ *  nothing tells, or not looked at yet. A list that couldn't be read is said
+ *  once. */
+export function signRepairLines(list: readonly RestoredRepairView[] | null | undefined): { text: string; warn: boolean }[] {
+  if (list === undefined) return [];
+  if (list === null) return [{ text: 'Whether the accounts your download was turning over to match their kind are done can’t be read right now.', warn: true }];
+  return list.map((a) => {
+    if (a.state === 'waiting') {
+      const days = a.days.map(calendarDay);
+      return {
+        text: `${a.name}’s balance history was being turned over to match its kind in your other copy, and nothing says how it was counted on ${joinWords(days)}${a.days.length >= 10 ? ' and other days' : ''}: so nothing was turned over, and some of its earlier days may count the other way. Whoever runs your Nya can repair it, after looking at what it would change.`,
+        warn: true,
+      };
+    }
+    if (a.state === 'planned') return { text: `${a.name}’s balance history is being turned over to match its kind, as your other copy had begun: Nya’s next daily update finishes it.`, warn: false };
+    return { text: `${a.name}’s balance history was being turned over to match its kind in your other copy: Nya looks at it with its next daily update.`, warn: false };
+  });
 }

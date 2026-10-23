@@ -411,6 +411,14 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     kept: 'The app’s own records about your data',
     plain: 'Each account’s id, as a field name.',
   },
+  'restored-sign-repairs': {
+    group: 'machinery',
+    name: 'Accounts a download was turning over',
+    about: 'For each account a download you brought back was turning over to match its kind as it was made: whether its repair here was planned, needed nothing, or waits for whoever runs your Nya, with the first days nothing could tell.',
+    unit: ACCOUNT,
+    kept: 'The app’s own records about your data',
+    plain: 'Each account’s id, as a field name.',
+  },
   'sessions:': {
     group: 'access',
     name: 'Your sign-out-everywhere count',

@@ -19,7 +19,8 @@
 import type { Ctx } from '../containers';
 import { StoreRefusedError, type MapStore, type ValueStore } from '../repo';
 import { saveManualAccount, manualAccountIds, type ManualAccount } from '../manual';
-import { restoreDirectoryEntries, restoreLinks, restoreDeclined, type DirectoryEntry } from '../links';
+import { restoreDirectoryEntries, restoreLinks, restoreDeclined, ForgetRefused, type DirectoryEntry } from '../links';
+import { planRestoredRepairs } from '../sign-repair';
 import type { Link } from '../link-core';
 import { restoreHiddenAccounts, type HiddenAccount } from '../hidden';
 import { restoreCarried, restoreOverrides, type CarriedRows } from '../overrides';
@@ -39,6 +40,7 @@ import { storeOfPart } from './check';
 import { restoredAccountsStore, restoredAnswersStore, restoredTxnStore, type RestoredAccount, type RestoredAnswer, type RestoredBook, type RestoredTxn, type UserRestoreRecord } from './store';
 import { effectiveLifecycle, endOf, lifecycleOf, lifecycleStore } from '../lifecycle';
 import { getLinks } from '../link-core';
+import { restoredSignRepairsStore } from '../sign-repair-store';
 
 /** A batch that can't be written as it is: refused, nothing written. */
 export class BatchNotWritten extends StoreRefusedError {
@@ -153,6 +155,11 @@ export async function writeBatch(ctx: Ctx, part: string, records: readonly Rec[]
       return restoreLinks(ctx, pairs<Link>(records));
     case 'declined':
       return restoreDeclined(ctx, pairs<string>(records));
+    case 'sign-turning': {
+      // Named, for the finish to plan (lib/sign-repair.ts planRestoredRepairs).
+      const at = new Date().toISOString();
+      return restoredSignRepairsStore.setMany(ctx, records.map((r) => [r.id as string, { v: 1, state: 'named', days: [], set_at: at }] as const));
+    }
     case 'budgets': {
       const r = records[0];
       return restoreBudgets(ctx, r.set as BudgetSet | null, r.copy as Record<string, number>);
@@ -293,5 +300,19 @@ export async function finishWrites(ctx: Ctx, opts: { before?: () => Promise<void
   }
   await before();
   await restoreHoldingsIndex(ctx);
+  // The accounts the file was turning over to match their kind as it was
+  // made (lib/sign-repair.ts, BROUGHT BACK): each one's repair planned from
+  // the history written, and run, within RESTORED_REPAIR_MS; told exactly or
+  // not at all. One it doesn't get to (the lock held, out of time) is planned
+  // by the next run that finishes jobs.
+  try {
+    await planRestoredRepairs(ctx, { until: Date.now() + RESTORED_REPAIR_MS, before });
+  } catch (err) {
+    if (!(err instanceof ForgetRefused)) throw err;
+  }
   await clearCaches(ctx);
 }
+
+/** How long the finish gives the repairs of what the file was turning over,
+ *  well inside the batch route's own time: the rest is finished later. */
+export const RESTORED_REPAIR_MS = 20_000;

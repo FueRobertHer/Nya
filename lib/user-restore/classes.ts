@@ -154,6 +154,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // A re-sign of an account's past balances under way (lib/sign-repair.ts):
   // derived from the history it names, and goes with it.
   'sign-repairs': 'machinery',
+  // What a restore found of a re-sign the other copy left under way: about
+  // the history it brought back, and goes with it.
+  'restored-sign-repairs': 'machinery',
   tags: 'data',
   'timeline-notes': 'data',
   'transaction-annotations': 'data',

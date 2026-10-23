@@ -25,6 +25,7 @@ import { restoredRowsOf } from '@/lib/user-restore/forget';
 import { apiTokenStore } from '@/lib/api-token-store';
 import { answersView, type AnswersView } from '@/lib/user-restore/answering';
 import { rememberedAccountsReport } from '@/lib/last-known';
+import { restoredRepairsView, type RestoredRepairView } from '@/lib/sign-repair';
 import type { TokensNow, UnreadableAccount, UnrecognisedAccount } from '@/components/restore-state';
 
 // Bringing a download back into this account (docs/data-export.md,
@@ -43,6 +44,10 @@ import type { TokensNow, UnreadableAccount, UnrecognisedAccount } from '@/compon
 //                             the connections made since that hold them
 //                             (lib/user-restore/answering.ts answersView;
 //                             null when that can't be read, said);
+//                             `sign_repairs`, the accounts the file was
+//                             turning over to match their kind, and what
+//                             became of each here (lib/sign-repair.ts
+//                             restoredRepairsView);
 //                             `accounts_unreadable`, the restored accounts
 //                             whose entry can't be read (`entries`, each
 //                             named as the Earlier accounts list names it, or
@@ -253,6 +258,18 @@ async function answersNow(ctx: Ctx): Promise<AnswersView | null> {
   }
 }
 
+/** What became of the accounts the file was turning over to match their
+ *  kind (lib/sign-repair.ts restoredRepairsView), for the card; null when
+ *  that can't be read, which the card says. Never fails the rest. */
+async function signRepairsNow(ctx: Ctx): Promise<RestoredRepairView[] | null> {
+  try {
+    return await restoredRepairsView(ctx);
+  } catch (err) {
+    console.warn('Restore: what became of the accounts being turned over could not be read', err instanceof Error ? err.name : typeof err);
+    return null;
+  }
+}
+
 export async function GET(req: Request) {
   let ctx: Ctx;
   try {
@@ -280,6 +297,7 @@ export async function GET(req: Request) {
       undo_days: UNDO_DAYS,
       waiting: waiting.accounts,
       answers: await answersNow(ctx),
+      sign_repairs: await signRepairsNow(ctx),
     };
     if (new URL(req.url).searchParams.get('scan') === '1') {
       const counted = await previewsCount.take(ctx);
