@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { MASK, setAmountsHidden } from '@/lib/format';
-import { InventoryView, figures, encryptionText, keyText, sizeText, type Inventory, type InventoryRow } from '@/components/DataInventory';
+import { InventoryView, figures, encryptionText, keyText, sizeText, backupText, type Inventory, type InventoryRow } from '@/components/DataInventory';
 import { AdminStorageView, sortContainers, itemState, ofCeiling, SORTS, type AdminContainer, type AdminPage } from '@/components/AdminStorage';
 import InventoryEntry from '@/components/InventoryEntry';
 
@@ -43,6 +43,7 @@ const base: InventoryRow = {
   chars: 3 * 1024 * 1024 + 200_000,
   encryption: { kind: 'encrypted', own: 0, shared: 1234, unclear: 0, not_ciphertext: 0 },
   download: { included: true, text: 'In your download, under net_worth_history (recorded).' },
+  backed_up: true,
   kept: ['Your data'],
   kept_detail: null,
   seen: ['Programs you give an API token to'],
@@ -54,6 +55,7 @@ const inv: Inventory = {
   as_of: '2026-10-22T12:00:00.000Z',
   key: { own: true, since: '2026-02-01T00:00:00.000Z', moved: null },
   measured: true,
+  backups: 'kept',
   groups: [
     {
       id: 'history',
@@ -90,6 +92,15 @@ describe('Your data, in words', () => {
     expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 1, not_ciphertext: 1 } }))).toBe(
       'Yes: 2 with your account’s own key; 1 with a key this copy of Nya shares; 1 with a key whose id can’t be read; 1 that don’t look encrypted, so can’t be read.'
     );
+  });
+
+  test('the nightly backups, as this copy keeps them', () => {
+    expect(backupText(base, 'kept')).toBe('Copied into each one, as it is stored.');
+    expect(backupText(row({ backed_up: false }), 'kept')).toBe('Left out of them.');
+    expect(backupText(base, 'none')).toBeNull();
+    expect(backupText(base, 'invalid')).toContain('retention setting is not valid');
+    expect(text(renderToStaticMarkup(<InventoryView inv={{ ...inv, backups: 'none' }} />))).toContain('This copy of Nya takes no nightly backups.');
+    expect(text(renderToStaticMarkup(<InventoryView inv={{ ...inv, backups: 'none' }} />))).not.toContain('Nightly backups Copied');
   });
 
   test('the data key', () => {

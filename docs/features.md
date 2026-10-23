@@ -1137,6 +1137,7 @@ Each kind, under a heading (banks and accounts, balances and history, transactio
 - **Encrypted**: whether it is, and with which key: your account's own, or one the deployment shares between accounts (the original single key, or a shared data key, until the [migration pass](operations.md#moving-existing-data-to-keys-of-its-own-the-migration-pass) moves your data). Each value's key is read from what the value says of itself, its first bytes, never by opening it; a value in an encrypted kind that doesn't look encrypted at all is counted as one that can't be read.
 - **Plain text**: what is stored around it unencrypted, said as such: the days with a balance as field names, account and transaction ids, the merchant names you renamed, Plaid's ids in the names transactions are kept under, and the kinds that hold no ciphertext at all.
 - **In your download**, from the download's own lists, with where in the file.
+- **In the nightly backups**, from the backup's own lists (`lib/export.ts`), where the deployment takes backups.
 - **How long it is kept**, as the row of the privacy page's retention table it is kept by, and for a count that limits how often, its window.
 - **Who else can see it**: Plaid, SimpleFIN or Lunch Flow where it came from, people you share with (only what you choose), programs you give an API token to, and the email service where an email names it. Whoever runs the deployment, the database and the host can reach all of it, which the page says once at the top.
 

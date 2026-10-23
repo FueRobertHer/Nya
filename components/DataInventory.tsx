@@ -30,6 +30,7 @@ export type InventoryRow = {
   chars: number | null;
   encryption: Encryption;
   download: { included: boolean; text: string };
+  backed_up: boolean;
   kept: string[];
   kept_detail: string | null;
   seen: string[];
@@ -40,6 +41,7 @@ export type Inventory = {
   as_of: string;
   key: { own: boolean; since: string | null; moved: string | null } | null;
   measured: boolean;
+  backups: 'kept' | 'none' | 'invalid';
   groups: { id: string; title: string; rows: InventoryRow[] }[];
   unknown: { keys: number; chars: number | null } | null;
   elsewhere: InventoryRow[];
@@ -89,7 +91,15 @@ export function keyText(key: Inventory['key']): string {
   return `Your account has a data key of its own.${made} What was stored before it may still be under a key this copy of Nya shares until whoever runs it moves it: each kind below says which.`;
 }
 
-function Row({ r }: { r: InventoryRow }) {
+/** Whether the nightly backups copy a kind, as this copy of Nya keeps them. */
+export function backupText(r: InventoryRow, backups: Inventory['backups']): string | null {
+  if (backups === 'none') return null;
+  if (!r.backed_up) return 'Left out of them.';
+  return backups === 'kept' ? 'Copied into each one, as it is stored.' : 'Copied into them once they are taken again: their retention setting is not valid just now.';
+}
+
+function Row({ r, backups }: { r: InventoryRow; backups: Inventory['backups'] }) {
+  const backed = backupText(r, backups);
   return (
     <details className="inventory-row">
       <summary>
@@ -108,6 +118,12 @@ function Row({ r }: { r: InventoryRow }) {
         )}
         <dt>Your download</dt>
         <dd>{r.download.text}</dd>
+        {backed && (
+          <>
+            <dt>Nightly backups</dt>
+            <dd>{backed}</dd>
+          </>
+        )}
         <dt>How long it is kept</dt>
         <dd>
           As the <a href="/privacy">Privacy page</a> says under {r.kept.map((k) => `“${k}”`).join(' and ')}.{r.kept_detail ? ` ${r.kept_detail}` : ''}
@@ -159,7 +175,7 @@ export function InventoryView({ inv }: { inv: Inventory }) {
               <div className="inst-name">{g.title}</div>
             </div>
             {stored.map((r) => (
-              <Row key={r.id} r={r} />
+              <Row key={r.id} r={r} backups={inv.backups} />
             ))}
             {none.length > 0 && (
               <details className="inventory-none">
@@ -168,7 +184,7 @@ export function InventoryView({ inv }: { inv: Inventory }) {
                   {plainNumber(none.length)} {stored.length > 0 ? (none.length === 1 ? 'more kind' : 'more kinds') : none.length === 1 ? 'kind' : 'kinds'}
                 </summary>
                 {none.map((r) => (
-                  <Row key={r.id} r={r} />
+                  <Row key={r.id} r={r} backups={inv.backups} />
                 ))}
               </details>
             )}
@@ -194,7 +210,7 @@ export function InventoryView({ inv }: { inv: Inventory }) {
           <div className="inst-name">Kept, but not about you by name</div>
         </div>
         {inv.elsewhere.map((r) => (
-          <Row key={r.id} r={r} />
+          <Row key={r.id} r={r} backups={inv.backups} />
         ))}
       </section>
 
@@ -204,8 +220,8 @@ export function InventoryView({ inv }: { inv: Inventory }) {
         </div>
         <p className="panel-note">
           Your sign-in (your email address, and your name and picture if you sign in with another account) is kept by Clerk, the sign-in service, when this copy
-          of Nya uses it. The nightly backups hold copies of all of the above but API tokens and the access SimpleFIN or Lunch Flow gave Nya. Your device keeps
-          your accounts, their balances and your net-worth history as the app last showed them, until you sign out on it.
+          of Nya uses it. {inv.backups === 'none' ? 'This copy of Nya takes no nightly backups. ' : 'Each kind above says whether the nightly backups copy it. '}Your device
+          keeps your accounts, their balances and your net-worth history as the app last showed them, until you sign out on it.
         </p>
       </section>
     </>

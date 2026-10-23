@@ -204,6 +204,21 @@ describe('reading it', () => {
     expect(row(inv, 'connector-secrets').download).toEqual({ included: false, text: 'Not in your download: a credential, not your data.' });
   });
 
+  test('whether the nightly backups copy each kind comes from the backup’s own lists', async () => {
+    const { isExcluded } = await import('@/lib/export');
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect((await readInventory(ctx, { userId: null, now: NOW })).backups).toBe('none');
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
+    process.env.BACKUP_KEEP_DAYS = 'a month';
+    expect((await readInventory(ctx, { userId: null, now: NOW })).backups).toBe('invalid');
+    delete process.env.BACKUP_KEEP_DAYS;
+    const inv = await readInventory(ctx, { userId: null, now: NOW });
+    expect(inv.backups).toBe('kept');
+    for (const r of [...rows(inv), ...inv.elsewhere]) expect([r.id, r.backed_up]).toEqual([r.id, !isExcluded(r.id) && r.id !== 'fx:ecb']);
+    expect(['history:net-worth', 'txns:', 'goals'].map((id) => row(inv, id).backed_up)).toEqual([true, true, true]);
+    expect(['api-tokens', 'connector-secrets', 'cache:', 'snapshot:'].map((id) => row(inv, id).backed_up)).toEqual([false, false, false, false]);
+  });
+
   test('under the account’s own key, or one this copy shares, told apart by what each value claims', async () => {
     await fake.hset(testKey('crypto:container-keys'), { [ctx.container]: JSON.stringify({ key: OWN_KEY, since: '2026-02-01T00:00:00.000Z' }) });
     await fake.hset(ctxKey('manual:accounts'), {

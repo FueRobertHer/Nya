@@ -34,6 +34,8 @@ import { myConnections } from './sharing';
 import { ownedContainer } from './owners';
 import { sendsEmail } from './notice-recipients';
 import { clerkEnabled } from './auth-mode';
+import { isExcluded, isRefetched } from './export';
+import { backupRetention } from './backup';
 import { containerEntry, families, GROUPS, keptRows, kindOf, outsideEntries, SEERS, type Entry, type Group, type Outside, type Seer } from './inventory';
 
 /** How a kind's values are kept. For an encrypted kind, how many of its
@@ -65,6 +67,10 @@ export type InventoryRow = {
   chars: number | null;
   encryption: Encryption;
   download: { included: boolean; text: string };
+  /** Whether the nightly backups copy it, by the backup's own lists
+   *  (lib/export.ts EXCLUDED_PREFIXES and REFETCHED_PREFIXES), where this
+   *  copy of Nya takes backups (Inventory.backups). */
+  backed_up: boolean;
   /** The privacy page's retention rows it is kept by. */
   kept: string[];
   /** For a count kept for a window: how long. */
@@ -81,6 +87,10 @@ export type Inventory = {
   /** False when the container couldn't be walked: every kind in it is then
    *  unreadable. */
   measured: boolean;
+  /** Whether this copy of Nya takes nightly backups: "kept", "none" (no
+   *  backup store is set up), or "invalid" (set up, but none is taken while
+   *  their retention setting is not valid), as lib/backup.ts says. */
+  backups: 'kept' | 'none' | 'invalid';
   groups: { id: Group; title: string; rows: InventoryRow[] }[];
   /** Keys in the container that no kind names (a later version's, say):
    *  how many, and their size, null when some of them couldn't be measured.
@@ -176,6 +186,7 @@ const rowOf = (
   ...read,
   unit: e.unit,
   download,
+  backed_up: !isExcluded(id) && !isRefetched(id),
   kept: [...keptRows(e)],
   kept_detail: counterWindow(id),
   seen: seenBy(e.seen),
@@ -304,10 +315,12 @@ export async function readInventory(ctx: Ctx, opts: { userId: string | null; now
     (o.about_you ? rows : elsewhere).push(row);
   }
 
+  const backups = backupRetention();
   return {
     as_of: new Date(opts.now ?? Date.now()).toISOString(),
     key,
     measured: measure !== FAILED,
+    backups: backups === null ? 'invalid' : backups.kept ? 'kept' : 'none',
     groups: GROUPS.map(([id, title]) => ({ id, title, rows: rows.filter((r) => r.group === id) })).filter((g) => g.rows.length > 0),
     unknown: unknown.keys > 0 ? { keys: unknown.keys, chars: unknownUnmeasured ? null : unknown.chars } : null,
     elsewhere,
