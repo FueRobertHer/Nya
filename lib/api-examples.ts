@@ -12,9 +12,11 @@
 export type FieldDoc = readonly [path: string, meaning: string];
 export type EndpointDoc = { query: string; example: unknown; fields: readonly FieldDoc[] };
 
-/** How a write's version moves besides its own fields (lib/api-versions.ts:
- *  keyed with a key derived from PLAID_ENCRYPTION_KEY). */
-const VERSION_MOVES = 'and otherwise only if the server’s encryption key is ever replaced, which moves every version once (a change sent with one read before is then refused with 412: read it again)';
+/** How a version moves besides its own fields (lib/api-versions.ts: keyed
+ *  with a key derived from PLAID_ENCRYPTION_KEY). Drawn whatever the switch
+ *  says, so it speaks of reading alone; the developer page says what that
+ *  means for a write while writing is on. */
+const VERSION_MOVES = 'and otherwise only if the server’s encryption key is ever replaced, which moves every version once';
 
 const SOURCES: readonly FieldDoc[] = [
   ['sources', 'Where the transactions come from: one entry per linked institution, and one per bank a SimpleFIN or Lunch Flow connection reaches.'],

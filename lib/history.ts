@@ -999,11 +999,13 @@ export async function clearBackfillPending(ctx: Ctx): Promise<void> {
   }
 }
 
-export async function clearBackfillDone(ctx: Ctx): Promise<void> {
+export async function clearBackfillDone(ctx: Ctx, opts: { strict?: boolean } = {}): Promise<void> {
   try {
     await redis().del(BACKFILL_FLAG(ctx));
-  } catch {
-    // Worst case the next backfill is skipped; harmless.
+  } catch (err) {
+    // Worst case the next backfill is skipped; harmless. A caller that keeps
+    // its reason to clear it until it is cleared is told (lib/api-rebuilds.ts).
+    if (opts.strict) throw err;
   }
 }
 

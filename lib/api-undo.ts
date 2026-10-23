@@ -36,7 +36,9 @@
 //                         past totals read as though it never was. Each step's
 //                         name is written on the undo before the step, so an
 //                         undo cut off part way is taken up again where it
-//                         stopped by the next undo asked
+//                         stopped by the next undo asked, but for one cut off
+//                         inside its delete, which never folds a total it
+//                         can't be sure it took the account out of
 //   account changed       its details set back
 //   balance set           set back, if it still holds what was set; a day
 //                         recorded since keeps its point (today's is written
@@ -58,7 +60,7 @@ import type { ResourceAnswer, ResourceInput } from './api-writes';
 import { getManualAccount, type ManualAccount } from './manual';
 import { AccountEditRefused, invalidate, saveAccountEdit, setAccountBalance } from './manual-account-writes';
 import { deleteManualAccount } from './manual-account-delete';
-import { addManualTxn, findManualTxn, manualTxnStore, type ManualTxn } from './manual-txns';
+import { addManualTxn, findManualTxn, manualRowForDisplay, manualTxnStore, type ManualTxn } from './manual-txns';
 import { ACCOUNT_WENT, changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
 import { restoreAnnotation, txnAnnotationStore, type TxnAnnotation } from './txn-annotations';
 import { splitStore } from './splits';
@@ -80,7 +82,7 @@ import { timelineNotesStore } from './timeline-notes';
 import { allocationSettingsStore } from './allocation-settings';
 import { plannedStore } from './planned-store';
 import { ownerSharesAccount } from './sharing';
-import { normalizeInstitutionName } from './manual';
+import { dismissedGroup, seriesGroupsOfEither } from './recurring';
 
 const refuse = (message: string): never => {
   throw new ApiFailure(409, 'conflict', message);
@@ -112,6 +114,23 @@ type Step = NonNullable<Change['progress']>;
  * the lock (another run of a resumed undo may be writing it meanwhile).
  */
 type Run = { resume: boolean; began: boolean; held: boolean; progress: Step | undefined; step: (s: Step, before?: unknown) => Promise<void> };
+
+/**
+ * A refusal after the undo began, answered as `answer` and recorded with a
+ * code of its own (`code`), so the record says what happened. `ends` an undo
+ * of an account made that can't be finished as it stands: its name comes
+ * off the change, so the change can be forgotten, or undone afresh.
+ */
+class RefusedAs extends Error {
+  constructor(
+    readonly answer: ApiFailure,
+    readonly code: string,
+    readonly ends = false
+  ) {
+    super(answer.message);
+    this.name = 'RefusedAs';
+  }
+}
 
 /** The app's own refusal, in the API's shape. */
 function refusalOf(err: unknown): unknown {
@@ -163,8 +182,8 @@ async function undoTransaction(ctx: Ctx, c: Change, now: number, run: Run): Prom
     );
     if (done === 'gone') refuse(CHANGED('The transaction'));
     if (done === 'account-gone') {
-      run.began = true; // written, then gone with the account: recorded failed
-      refuse(`${ACCOUNT_WENT} It wasn’t undone.`);
+      run.began = true; // written, then gone with the account: recorded failed, as the write's is
+      throw new RefusedAs(new ApiFailure(409, 'conflict', `${ACCOUNT_WENT} It wasn’t undone.`), 'account-gone');
     }
     return { before: after, after: { row: (done as { saved: ManualTxn }).saved, said } };
   }
@@ -220,19 +239,21 @@ async function checkUntouched(ctx: Ctx, c: Change, cur: ManualAccount): Promise<
   const allocation = await allocationSettingsStore.get(ctx);
   if (allocation && [...allocation.buckets, ...allocation.accounts].some((s) => s.account_id === id)) refuse(NOT_REMOVED('A tax bucket or split on the Plan tab is set for the account'));
   if (await ownerSharesAccount(ctx, id)) refuse(NOT_REMOVED('The account is shared with someone you’re connected with'));
-  // A detected series is named by its kind, then the institution and account
-  // its rows are shown under (lib/recurring.ts groupOf), compared as the
-  // Accounts tab groups institutions: without case.
-  const under = `|${normalizeInstitutionName(cur.institution_name) || 'Manual'}|${cur.name}|`.toLowerCase();
-  const names = (d: string) => d.indexOf('|') > 0 && d.slice(d.indexOf('|')).toLowerCase().startsWith(under);
-  if ((await plannedStore.get(ctx))?.dismissed.some(names)) {
-    refuse(NOT_REMOVED('A recurring series on the account was marked not recurring'));
-  }
 
   // Every row: made by this token, as its last change of it left it, row and
   // what is said beside it, and neither split nor in a group.
   const rows = (await manualTxnStore.get(ctx, id))?.rows ?? [];
   if (rows.length === 0) return;
+  // A series the person marked not recurring, of this account's own rows: a
+  // series is named by its kind, the institution and account its rows are
+  // shown under, the payee and the currency (lib/recurring.ts), so one on
+  // another account of the same names is never this one's. Compared without
+  // case, as the Activity tab spells an institution as the first of its
+  // accounts does.
+  const groups = new Set(rows.flatMap((r) => seriesGroupsOfEither(manualRowForDisplay(cur, r))).map((g) => g.toLowerCase()));
+  if ((await plannedStore.get(ctx))?.dismissed.some((d) => groups.has(dismissedGroup(d)?.toLowerCase() ?? ''))) {
+    refuse(NOT_REMOVED('A recurring series on the account was marked not recurring'));
+  }
   const said = await txnAnnotationStore.getMany(
     ctx,
     rows.map((r) => r.id)
@@ -295,7 +316,11 @@ async function undoAccount(ctx: Ctx, c: Change, now: number, run: Run): Promise<
  *               from every per-account layer.
  *
  * Deleted before it is folded, so no recording can write it again into a day
- * the fold has passed.
+ * the fold has passed. One cut off inside its delete ends at the next undo
+ * asked, recorded failed, when it finds the account still there and named
+ * by something else (the person kept it), or gone (it can't tell who
+ * deleted it, and the app's own delete keeps past totals): either way it
+ * folds nothing.
  */
 async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Promise<Undone> {
   const id = c.target.id;
@@ -307,12 +332,13 @@ async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Prom
     if (cur) {
       // There: checked again, a resume too. One cut off inside its delete
       // may have taken the rows already (they go before the account), so a
-      // refusal now says so, and the undo is kept, failed, to be finished
-      // once nothing names the account.
+      // refusal now says so, and ends that undo, recorded failed: the account
+      // is the person's to keep from here, and the change can be forgotten,
+      // or undone afresh once nothing else names the account.
       try {
         await checkUntouched(ctx, c, cur);
       } catch (err) {
-        if (reached === 'deleting' && err instanceof ApiFailure) throw new ApiFailure(err.status, err.code, `${err.message} ${CUT_IN_DELETE}`);
+        if (reached === 'deleting' && err instanceof ApiFailure) throw new RefusedAs(new ApiFailure(err.status, err.code, `${err.message} ${CUT_IN_DELETE}`), 'standing', true);
         throw err;
       }
       await run.step('deleting', cur);
@@ -321,8 +347,13 @@ async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Prom
       await invalidate(ctx, true);
     } else if (!reached) {
       refuse('The account no longer exists.');
+    } else if (reached === 'deleting') {
+      // Gone, but its delete never said it was done ('folding' is named just
+      // after it): the person may have deleted it in the app since, and the
+      // app's delete keeps past totals, so they are never folded from here.
+      throw new RefusedAs(new ApiFailure(409, 'conflict', GONE_UNSAID), 'removed', true);
     } else {
-      run.began = true; // deleted by the undo cut off
+      run.began = true; // deleted by the undo cut off, which said so
     }
     const type = cur?.type ?? (c.after as ManualAccount).type;
     if (reached !== 'forgetting') {
@@ -445,7 +476,8 @@ async function markUndoing(ctx: Ctx, changeId: string, from: string | undefined,
 }
 
 const UNDER_WAY = 'An undo of this change is under way. Ask again in a moment.';
-const CUT_IN_DELETE = 'An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is kept, and is finished by the next undo asked once nothing else names the account.';
+const CUT_IN_DELETE = 'An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is recorded as stopped, and the change can be undone again once nothing else names the account.';
+const GONE_UNSAID = 'The account is gone, but an earlier undo stopped part way through taking it out and can’t tell whether it was deleted in the app since, so past totals are left as they are, as the app’s own delete leaves them.';
 
 /**
  * Undoes one change and records the undo: `who` is the token undoing its own
@@ -455,7 +487,8 @@ const CUT_IN_DELETE = 'An earlier undo of it stopped part way through taking it 
  * Recorded truthfully: an undo refused before it wrote anything is taken
  * back out; one that stopped after a write (refused or not) is settled
  * failed, never dropped. An undo of an account made, cut off part way, is
- * named on the change (`undoing`) and taken up again by the next undo asked.
+ * named on the change (`undoing`) and taken up again by the next undo asked,
+ * or ended there, recorded failed, when it can't be finished as it stands.
  */
 export async function undoChange(
   ctx: Ctx,
@@ -510,16 +543,19 @@ export async function undoChange(
   try {
     undone = await reverse(ctx, c, now, run);
   } catch (err) {
+    const as = err instanceof RefusedAs ? err : null;
+    const answer = as ? as.answer : err;
     if (resume && !run.held) {
       // Refused before it held the account's lock: another run of this undo
       // may hold it, and its record is that run's to write.
-    } else if (!run.began && err instanceof ApiFailure) {
+    } else if (!run.began && answer instanceof ApiFailure) {
       await changeStore.remove(ctx, id).catch(() => {});
       if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, id, null).catch(() => {});
     } else {
-      await settleChange(ctx, id, { state: 'failed', error: err instanceof ApiFailure ? err.code : 'internal' });
+      await settleChange(ctx, id, { state: 'failed', error: as ? as.code : answer instanceof ApiFailure ? answer.code : 'internal' });
+      if (as?.ends) await markUndoing(ctx, changeId, id, null).catch(() => {});
     }
-    throw err;
+    throw answer;
   }
   const headers = who ? await countDay(who.auth, { create: false }, now) : {};
   await changeStore
