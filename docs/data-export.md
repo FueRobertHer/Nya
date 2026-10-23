@@ -567,7 +567,7 @@ Your IOUs, one entry each: `id` is random, and `value` holds:
 
 #### `expense-payments`
 
-The rows you confirmed paid something back, or paid what you owed: `id` is the row's transaction id (a row pays once), and `value` holds `version` (1), `account_id`, `row` (its `amount` in Plaid's sign, `currency` and `date` when you confirmed it), `allocations[]` (each `item`, a share's entry id or an IOU's id, and `amount`, how much of it the row closed, positive), `note` (when there is one), `kept_gone` (when you said to keep it though its transaction was gone, absent otherwise) and `confirmed_at`.
+The rows you confirmed paid something back, or paid what you owed: `id` is the row's transaction id (a row pays once), and `value` holds `version` (1), `account_id`, `row` (its `amount` in Plaid's sign, `currency` and `date` when you confirmed it), `allocations[]` (each `item`, a share's entry id or an IOU's id, and `amount`, how much of it the row closed, positive), `note` (when there is one), `kept_gone` (when you said to keep it though its transaction was gone, absent otherwise), `carry_key` (as a share's, below) and `confirmed_at`.
 
 #### `expense-people`
 
@@ -589,6 +589,7 @@ Your shared transactions: `id` is the transaction's id (a bank's, as in `transac
 | `what` | What it was for, up to 120 characters. |
 | `entries[]` | Who owes what of it, up to 20: each with `id` (random), `person` (by id), `amount` (positive), `how` (how it was worked out, for the sheet: `half`, `even` with `ways`, `percent` with `percent`, or `amount`) and `closed[]` (as an IOU's). Your part is the rest. |
 | `kept_gone` | When you said to keep it though its transaction was gone. Absent otherwise. |
+| `carry_key` | Recorded when you disconnected the transaction's institution: the transaction's account, day, amount in cents and the bank's own description (`account\|date\|cents\|description`), which find it again under the account you link the old one to. Absent otherwise. |
 | `created_at`, `updated_at` | When it was made and last changed. |
 
 #### `fire-plan`

@@ -564,6 +564,7 @@ Shared expenses ([features.md](features.md#shared-expenses)) need no variable an
 
 - **A restore into an account with shared expenses is refused there**, since its check that an account is empty counts every key it doesn't know as data. Make it after rolling forward.
 - **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the six stores, so their values would stay under the keys they were written with; run them after rolling forward.
+- **A cached Activity read from before the rollback** (for its lifetime, 15 minutes, or 6 hours with webhooks) can carry a field on each posted bank row that the release before doesn't take out before sending it (`content_key`: the row's account id, day, amount and the bank's words, all the person's own), so their own browser receives it, and it is shown nowhere. A disconnect while rolled back records no `carry_key`, so the shares and payments on that institution's transactions don't carry across a re-link after rolling forward: they are listed as gone, to move or keep.
 
 ## Repairing balance signs
 
