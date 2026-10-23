@@ -49,7 +49,8 @@ export const DEFAULT_PAGE = 20;
 const AT_ONCE = 4;
 
 /** One Plaid Item of a container, as stored. Its sizes and markers are null
- *  when its container couldn't be measured: not known, never 0 or none. */
+ *  when they couldn't be measured (the container's walk failed, or the step
+ *  that held one of its keys): not known, never 0 or none. */
 export type AdminItem = {
   item_id: string;
   institution_name: string;
@@ -89,11 +90,13 @@ export type AdminContainer = {
   /** Null where the Items' records couldn't be read. */
   items: AdminItem[] | null;
   /** Blobs whose Item is no longer linked: they cost the same. Null where
-   *  the container couldn't be measured or its Items read. */
+   *  the container couldn't be measured (or a blob of it wasn't) or its
+   *  Items read. */
   orphaned: { item_id: string; txns_chars: number; invtxns_chars: number }[] | null;
   /** Counted from the measure: connections, those still holding the access
    *  they were given (one without needs connecting again), and the accounts
-   *  they keep up to date. Null where the container couldn't be measured. */
+   *  they keep up to date. Null where the container, or one of those stores,
+   *  couldn't be measured. */
   connectors: { connections: number; with_credential: number; accounts: number } | null;
   /** The newest recorded run of the daily snapshot; null for none, or when
    *  it couldn't be read (`snapshot_unreadable`: the runs couldn't be read,
@@ -117,6 +120,27 @@ const lenient = <T>(what: string, run: () => Promise<T>): Promise<T | typeof fai
     console.error(`Admin storage: ${what} could not be read.`, err instanceof Error ? err.name : typeof err);
     return failed;
   });
+
+/** The kinds of key an Item's blobs and markers are kept under. */
+const ITEM_KEYS = ['txns:', 'invtxns:', 'txns-blocked:', 'txns-unsaved:'] as const;
+/** The connector stores the counts are read off. */
+const CONNECTOR_STORES = ['connector-connections', 'connector-secrets', 'connector-accounts'];
+
+/** What a measure that missed some keys can't say: the Items whose blob or
+ *  marker is among them (their sizes and markers unknown), whether a blob of
+ *  any Item is (so which are left behind is unknown), and whether a
+ *  connector store is (so its counts are). */
+function unmeasuredOf(measure: ContainerMeasure) {
+  const items = new Set<string>();
+  let blobs = false;
+  for (const key of measure.unmeasured) {
+    const kind = ITEM_KEYS.find((p) => key.startsWith(p));
+    if (!kind) continue;
+    items.add(key.slice(kind.length));
+    if (kind === 'txns:' || kind === 'invtxns:') blobs = true;
+  }
+  return { items, blobs, connectors: measure.unmeasured.some((key) => CONNECTOR_STORES.includes(key)) };
+}
 
 /** Sizes by Item from the measure's key names: "txns:<item>", "invtxns:<item>"
  *  and the markers beside them. */
@@ -152,6 +176,8 @@ async function containerRow(
   ]);
   const count = (store: string) => (measure === failed ? 0 : (measure.keys.find((k) => k.key === store)?.entries ?? 0));
   const blobs = measure === failed ? null : blobsOf(measure);
+  // What one failed step left unknown is null too, never 0 or none.
+  const missed = measure === failed ? null : unmeasuredOf(measure);
   const linked = items === failed ? null : new Set(items.map((i) => i.item_id));
   return {
     container: c.id,
@@ -172,7 +198,7 @@ async function containerRow(
         ? null
         : items
             .map((i: StoredItem): AdminItem => {
-              const b = blobs === null ? null : (blobs.get(i.item_id) ?? { txns: 0, invtxns: 0, blocked: false, unsaved: false });
+              const b = blobs === null || missed!.items.has(i.item_id) ? null : (blobs.get(i.item_id) ?? { txns: 0, invtxns: 0, blocked: false, unsaved: false });
               const u = usage === failed ? 'unreadable' : usage.get(i.item_id);
               return {
                 item_id: i.item_id,
@@ -188,14 +214,14 @@ async function containerRow(
             })
             .sort((a, b) => (b.txns_chars ?? 0) + (b.invtxns_chars ?? 0) - ((a.txns_chars ?? 0) + (a.invtxns_chars ?? 0)) || (a.item_id < b.item_id ? -1 : 1)),
     orphaned:
-      blobs === null || linked === null
+      blobs === null || linked === null || missed!.blobs
         ? null
         : [...blobs]
             .filter(([id, b]) => !linked.has(id) && b.txns + b.invtxns > 0)
             .map(([item_id, b]) => ({ item_id, txns_chars: b.txns, invtxns_chars: b.invtxns }))
             .sort((a, b) => (a.item_id < b.item_id ? -1 : 1)),
     connectors:
-      measure === failed
+      measure === failed || missed!.connectors
         ? null
         : { connections: count('connector-connections'), with_credential: count('connector-secrets'), accounts: count('connector-accounts') },
     snapshot: newest === failed || newest === null || newest.run === null ? null : { date: newest.date, ...newest.run },

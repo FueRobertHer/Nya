@@ -209,6 +209,20 @@ describe('the view', () => {
     expect(view.containers[0].snapshot?.date).toBe('2026-10-21');
   });
 
+  test('one step that fails: what its keys hold is unknown, said as such, never 0 or nothing refused', async () => {
+    await saveItem(admin, { item_id: 'item1', institution_name: 'Chase', encrypted_access_token: await encrypt(admin, 'access-1') });
+    await fake.set(ctxKey('txns:item1'), 'x'.repeat(5000));
+    await fake.set(ctxKey('txns-blocked:item1'), JSON.stringify({ at: '2026-10-21T08:00:00.000Z', chars: 9_000_000 }));
+    await fake.hset(ctxKey('connector-connections'), { c1: await encrypt(admin, '{}') });
+    // The walk works; the step measuring the admin's keys doesn't.
+    fake.failNext('eval');
+    const [mine, theirs] = (await readAdminStorage(admin, { now: NOW })).containers;
+    expect(mine.storage!.unmeasured).toBeGreaterThan(0);
+    expect(mine.items!.map((i) => [i.item_id, i.txns_chars, i.invtxns_chars, i.blocked, i.unsaved])).toEqual([['item1', null, null, null, null]]);
+    expect([mine.connectors, mine.orphaned]).toEqual([null, null]);
+    expect(theirs.connectors).toEqual({ connections: 0, with_credential: 0, accounts: 0 });
+  });
+
   test('records that can’t be read are said so: an Item’s check, and the newest snapshot run, never an older one in its place', async () => {
     await seed();
     await fake.hset(ctxKey('snapshot:item-usage'), { item2: 'not a record' });

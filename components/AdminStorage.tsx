@@ -61,7 +61,7 @@ const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: '
 /** The largest stored transaction blob of an account, the one nearest the
  *  ceiling, or null when its blobs couldn't be measured. */
 const largestBlob = (c: AdminContainer): number | null =>
-  c.storage === null || c.items === null
+  c.storage === null || c.items === null || c.orphaned === null || c.items.some((i) => i.txns_chars === null || i.invtxns_chars === null)
     ? null
     : Math.max(0, ...c.items.map((i) => Math.max(i.txns_chars ?? 0, i.invtxns_chars ?? 0)), ...(c.orphaned ?? []).map((o) => Math.max(o.txns_chars, o.invtxns_chars)));
 

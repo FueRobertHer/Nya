@@ -232,6 +232,9 @@ describe('storage across accounts, in words', () => {
     expect(u).toContain('Chase : its stored transactions couldn’t be measured');
     expect(u).not.toMatch(/0 bytes|0% of the limit/);
     expect(ids(sortContainers([unknown, a, b], 'ceiling'))).toEqual(['a', 'b', 'e']);
+    // One Item unmeasured: the account's largest blob isn't known either.
+    const partly = account({ container: 'f0000000-0000-4000-8000-000000000006', items: [item({ txns_chars: 900 }), item({ item_id: 'item2', txns_chars: null, invtxns_chars: null, blocked: null, unsaved: null })] });
+    expect(ids(sortContainers([partly, a], 'ceiling'))).toEqual(['a', 'f']);
     const hidden = inBrowser(() => {
       setAmountsHidden(true);
       return renderToStaticMarkup(<AdminStorageView pages={page} sort="stored" onSort={() => {}} />);
