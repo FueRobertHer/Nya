@@ -16,6 +16,7 @@ import { isConnectorKind } from '../connectors/types';
 import type { HealthState } from '../connection-state';
 import type { NoTransactionsReason } from '../item-products';
 import type { Gap, Report, ReportEnded } from './build';
+import { convertedText, leftOutWhy } from '../fx/totals';
 
 /** How a calendar day (YYYY-MM-DD) is written. */
 export type DayFormat = (day: string) => string;
@@ -270,7 +271,7 @@ export function caveatLines(report: Report, day: DayFormat): string[] {
  *  transfers, what the person excluded and what a rule hides, what couldn't
  *  be read, and other currencies; and the transactions dated from the day
  *  their account ended (see lib/report/build.ts ENDED ACCOUNTS). */
-export function totalsNote(report: Pick<Report, 'totals'> & { ended?: readonly Pick<ReportEnded, 'not_counted'>[] }): string {
+export function totalsNote(report: Pick<Report, 'totals' | 'conversion'> & { ended?: readonly Pick<ReportEnded, 'not_counted'>[] }): string {
   const t = report.totals;
   const afterEnd = (report.ended ?? []).reduce((n, e) => n + e.not_counted, 0);
   const byRule = t.hidden_by_rule;
@@ -289,7 +290,9 @@ export function totalsNote(report: Pick<Report, 'totals'> & { ended?: readonly P
       `Whether you excluded ${plural(t.exclusion_unknown, 'transaction')} couldn’t be read, so ${t.exclusion_unknown === 1 ? 'it counts' : 'they count'} here.`
     );
   }
-  if (t.left_out_text) parts.push(t.left_out_text);
+  // With a home currency, why each left out has no rate.
+  const otherCurrencies = leftOutWhy(t.left_out_text, report.conversion ?? null);
+  if (otherCurrencies) parts.push(otherCurrencies);
   if (afterEnd > 0) {
     parts.push(
       `${plural(afterEnd, 'transaction')} on an account that had ended by ${afterEnd === 1 ? 'its' : 'their'} date ${afterEnd === 1 ? 'is' : 'are'} left out, as everywhere in Nya.`
@@ -329,6 +332,18 @@ export function endedConnection(endedBy: string, day: DayFormat): string {
 export const ENDED_NOTE =
   'Each of these counts on every day before the one it ended, and on none after, as everywhere in Nya. Closed: it no longer exists. No longer yours: it still exists, but isn’t yours. Not followed: it is still yours, but you stopped following it, so its later transactions aren’t here.';
 
+/** What a report converted into its currency, with a home currency, as its
+ *  heading and its file say it, or null when nothing was: "Converted into
+ *  EUR at each day's ECB rate, from Jan 2, 2026 to Sep 14, 2026: 12
+ *  transactions in USD." `day` writes a day. Never an amount. */
+export function reportConvertedText(report: Pick<Report, 'conversion'>, day: (iso: string) => string): string | null {
+  const c = report.conversion ?? null;
+  const text = convertedText(c);
+  if (!text || !c) return null;
+  const days = c.days ? (c.days.first === c.days.last ? `, of ${day(c.days.first)}` : `, from ${day(c.days.first)} to ${day(c.days.last)}`) : '';
+  return text.replace(' at each day’s ECB rate', ` at each day’s ECB rate${days}`) + (c.stale ? ' The newest rates Nya has are older than they should be.' : '');
+}
+
 /** Where an appendix row came from: a bank's, or a manual row's source as
  *  the Activity tab names it. */
 export function sourceName(source: string): string {
@@ -337,13 +352,20 @@ export function sourceName(source: string): string {
 
 /** The words for how an appendix row stands in the totals, or null when it
  *  counts as any other. */
-export function appendixStatus(row: {
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
-  pending: boolean;
-  exclusion_unknown: boolean;
-  currency: string | null;
-}): string | null {
+export function appendixStatus(
+  row: {
+    not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
+    pending: boolean;
+    exclusion_unknown: boolean;
+    currency: string | null;
+    counted_as?: number;
+  },
+  /** Writes an amount in the report's currency, for one converted into it. */
+  money?: (n: number) => string
+): string | null {
   const parts: string[] = [];
+  // In another currency, converted at its day's rate (with a home currency).
+  if (row.counted_as !== undefined && row.not_counted === null && money) parts.push(`Counted as ${money(-row.counted_as || 0)}, at its day’s rate`);
   if (row.not_counted === 'excluded') parts.push('Not counted: you excluded it');
   if (row.not_counted === 'hidden') parts.push('Not counted: hidden by a rule');
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');

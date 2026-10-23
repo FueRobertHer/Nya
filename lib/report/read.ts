@@ -95,6 +95,7 @@ import { connectorOf } from '../connectors/registry';
 import type { TxnCoverage } from '../transactions';
 import { coveredAccountsOf, importedCoverage } from '../history-import/read';
 import { restoredAccountsStore } from '../user-restore/store';
+import { readFlowFx } from '../fx/read';
 
 /** An instant a record holds, unless it is the stand-in a reader puts where a
  *  record had none (lib/manual.ts writes 1970-01-01). */
@@ -359,11 +360,16 @@ export async function readReport(
     ...gone.removed,
   ];
 
+  // With a home currency, the rates the rows convert with into the report's
+  // currency (lib/fx/read.ts): read once, after the rows, never written.
+  const fx = await readFlowFx(ctx, activity.transactions, now, { also: opts.currency ? [opts.currency] : [] });
+
   return buildReport({
     period,
     generatedAt: new Date(now).toISOString(),
     rows: activity.transactions,
     currency: opts.currency ?? null,
+    fx,
     sources,
     notes: activity.unread_notes,
     caveatNotes: notesBesides(activity.notes, activity.unread_notes),

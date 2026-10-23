@@ -255,13 +255,18 @@ export default function ReportsPage() {
               </button>
             </div>
           )}
-          {report && report.currencies.length > 1 && (
+          {report && (report.currencies.length > 1 || (!!report.home && report.currencies.some((c) => c.currency !== report.home))) && (
             <label className="field">
               Currency
               <select value={form.currency ?? report.currency ?? ''} onChange={(e) => make({ currency: e.target.value })}>
+                {/* With a home currency: it first, then the period's, any of
+                    them converted into (lib/report/build.ts). */}
+                {report.home && !report.currencies.some((c) => c.currency === report.home) && (
+                  <option value={report.home}>{report.home} (your home currency)</option>
+                )}
                 {report.currencies.map((c) => (
                   <option key={c.currency} value={c.currency}>
-                    {c.currency} ({c.transactions} transaction{c.transactions === 1 ? '' : 's'})
+                    {c.currency} ({c.transactions} transaction{c.transactions === 1 ? '' : 's'}){c.currency === report.home ? ', your home currency' : ''}
                   </option>
                 ))}
               </select>

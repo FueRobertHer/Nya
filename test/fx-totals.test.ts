@@ -75,8 +75,12 @@ describe('with one', () => {
       assumed: 0,
       stale: false,
     });
-    // Rates older than they should be are said to be.
-    expect(totalsIn(ROWS, fx, { now: NOW + 3 * 86_400_000 }).conversion?.stale).toBe(true);
+    // Rates older than they should be are said to be, once a row after them
+    // was converted at them; a row on a day the ECB published has its own.
+    expect(totalsIn(ROWS, fx, { now: NOW + 3 * 86_400_000 }).conversion?.stale).toBe(false);
+    const later = [...ROWS, row('late', '2026-09-16', 5, 'USD')];
+    expect(totalsIn(later, fx, { now: NOW + 3 * 86_400_000 }).conversion?.stale).toBe(true);
+    expect(totalsIn(later, fx, { now: NOW }).conversion?.stale).toBe(false);
   });
 
   test('a converted total is its rows converted, to the cent', () => {

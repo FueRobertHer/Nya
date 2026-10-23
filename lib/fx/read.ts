@@ -99,9 +99,15 @@ async function accountCurrencies(ctx: Ctx): Promise<Set<string>> {
  * cache cleared. `accounts`: the currencies of the person's accounts too, so
  * the Plan can convert a year of spending into its accounts' currency when
  * no row is in it (lib/fire/inputs.ts trailingFlows), read only with a home
- * currency chosen.
+ * currency chosen. `also`: currencies the reader converts into (a report's
+ * asked for).
  */
-export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number = Date.now(), opts: { accounts?: boolean } = {}): Promise<FxTable | null> {
+export async function readFlowFx(
+  ctx: Ctx,
+  rows: readonly FlowRow[],
+  now: number = Date.now(),
+  opts: { accounts?: boolean; also?: readonly string[] } = {}
+): Promise<FxTable | null> {
   const today = new Date(now).toISOString().slice(0, 10);
   let from = today;
   const currencies = new Set<string>();
@@ -113,6 +119,7 @@ export async function readFlowFx(ctx: Ctx, rows: readonly FlowRow[], now: number
   const known = await readSettingsForDisplay(ctx);
   if (!known.settings.home) return null;
   if (opts.accounts) for (const c of await accountCurrencies(ctx)) currencies.add(c);
+  for (const c of opts.also ?? []) currencies.add(c);
   const { fx } = await readFx(ctx, { currencies, from, to: today }, known);
   return fx.home ? fx : null;
 }

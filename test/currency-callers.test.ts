@@ -33,11 +33,13 @@ const ALLOWED: Record<string, string> = {
     'The forecast’s currency, its cash accounts’ main one, which the warning the person typed is in: with a home currency the rest converts into it at the newest rates, never relabelled.',
   'lib/share-views.ts#holdingsView:currency': 'Until step 2: a share’s holdings in their main currency; shares convert in step 2 (decision 5), and say they don’t until then.',
   // Flows.
-  'components/MonthFlowChart.tsx#MonthFlowChart:currency': STEP_2,
+  'components/MonthFlowChart.tsx#MonthFlowChart:currency':
+    'Only when the Activity tab gives it no currency: its rows are the ones the tab totals, already converted into the home currency through lib/fx/totals.ts totalsIn, so this is the label of what they are in.',
   'lib/api-cash-flow.ts#readCashFlow:currency': STEP_2,
   'lib/api-read.ts#readRecurring:currency': STEP_2,
   'lib/api-read.ts#readSpending:currency': STEP_2,
-  'lib/report/build.ts#buildReport:currency': STEP_2,
+  'lib/report/build.ts#buildReport:currency':
+    'Without a home currency only, as before: the one most rows are in, the rest named. With one, the home currency or the one asked for, the rest converted through lib/fx/totals.ts totalsIn.',
   'lib/share-views.ts#spendingView:currency': `${STEP_2} A share says it doesn’t convert.`,
   'lib/weekly-summary/gather.ts#gatherWeekly:spending': STEP_2,
   'components/Dashboard.tsx#Dashboard:budgets': 'The currency the budgets are read in today, which the offer to choose a home currency suggests (decision 1): never a total.',

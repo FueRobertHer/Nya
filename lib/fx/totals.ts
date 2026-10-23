@@ -53,7 +53,9 @@ export type Conversion = {
   /** Rows that said no currency, in an account whose currency isn't known:
    *  counted in the totals' currency. */
   assumed: number;
-  /** Whether the newest rates are older than they should be. */
+  /** Whether the newest rates are older than they should be, and a row
+   *  dated after them was converted at them (a row on a day the ECB
+   *  published converts at that day's own rate, however old). */
   stale: boolean;
 };
 
@@ -95,6 +97,8 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
   let first: string | null = null;
   let last: string | null = null;
   let assumed = 0;
+  // A row converted at rates older than its day: after the newest publication.
+  let beyond = false;
   const seen = (day: string) => {
     if (first === null || day < first) first = day;
     if (last === null || day > last) last = day;
@@ -119,6 +123,7 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
     const counter = counters.get(c) ?? transactionCounter();
     counter.add(t);
     counters.set(c, counter);
+    if (fx.latest && t.date > fx.latest.date) beyond = true;
     for (const side of [r.from, r.to]) {
       if (side.source === 'own') own.add(side === r.from ? c : into);
       else if (side.source === 'ecb') seen(side.day);
@@ -160,7 +165,7 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
       own: [...own].sort(),
       unrated: [...unrated.values()].sort((a, b) => (a.currency < b.currency ? -1 : 1)),
       assumed,
-      stale: from.length > 0 && isStale(fx, opts.now ?? Date.now()),
+      stale: beyond && isStale(fx, opts.now ?? Date.now()),
     },
   };
 }

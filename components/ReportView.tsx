@@ -33,6 +33,7 @@ import {
   MANUAL_NOTE,
   MARKED_NOTE,
   NO_TRANSACTIONS_WORDS,
+  reportConvertedText,
   sourceName,
   STATE_WORDS,
   statusHeadline,
@@ -100,7 +101,9 @@ export function ReportView({ report }: { report: Report }) {
           <p className="report-meta">
             {reportDay(period.start)} to {reportDay(period.through)}
             {report.caveats.not_over && ` (the year runs to ${reportDay(period.end)})`}. Amounts in {report.currency ?? 'the currency the transactions are in'}
-            {report.currencies.length > 1 && `; ${report.currencies.length - 1} other ${report.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
+            {!report.conversion && report.currencies.length > 1 && `; ${report.currencies.length - 1} other ${report.currencies.length === 2 ? 'currency is' : 'currencies are'} named below and left out`}.
+            {/* With a home currency: what was converted, and the days of the rates. */}
+            {reportConvertedText(report, reportDay) && ` ${reportConvertedText(report, reportDay)}`}
           </p>
           <p className="report-meta">
             {report.data_as_of
@@ -398,7 +401,7 @@ export function ReportView({ report }: { report: Report }) {
                 </thead>
                 <tbody>
                   {report.appendix.rows.map((r, i) => {
-                    const status = appendixStatus(r);
+                    const status = appendixStatus(r, money);
                     return (
                       <tr key={i}>
                         <td className="report-nowrap">{reportDay(r.date)}</td>
