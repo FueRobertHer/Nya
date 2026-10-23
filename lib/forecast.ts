@@ -719,13 +719,14 @@ export function forecastNotes(opts: {
   // with what is owed of its statement, from Plaid's payment details. Not said
   // when that statement is paid already (a payment on or after its issue
   // date covers it), when a planned expense near the due date is that
-  // payment, or when a payment held for a card it can't tell is near what this
-  // one owes: it may be that one. Planned items name no account, so only one
+  // payment (near the statement, or under the card's name near its minimum),
+  // or when a payment held for a card it can't tell is near what this one
+  // owes: it may be that one. Planned items name no account, so only one
   // whose name names the card (namesCard: the card's name or its bank's) is
   // taken for a part of its payment, each time it falls near the due date:
-  // when they come to less than it, what they come to is said, and the rest.
-  // Rent or a phone bill due the same week is no part of it, and nothing they
-  // come to ever quiets the note.
+  // coming to what is owed, that is planned; to less, what they come to is
+  // said, and the rest. Rent or a phone bill due the same week is no part of
+  // it, and nothing they come to ever quiets the note.
   const paid = opts.series?.cardsPaid;
   const close = (a: number, b: number | null | undefined) => b !== null && b !== undefined && b > 0 && Math.abs(a - b) <= b * CARD_NEAR;
   if (opts.until)
@@ -745,9 +746,16 @@ export function forecastNotes(opts: {
         const around = (opts.planned ?? []).filter(
           (p) => p.kind === 'expense' && inCurrency({ iso_currency_code: p.currency }, position.currency) && plannedDates(p, from, to, 1).length > 0
         );
-        if (around.some((p) => close(p.amount, figure) || close(p.amount, l.minimum_payment))) continue;
         const forCard = around.filter((p) => namesCard(p.name, [a.name, i.institution_name]));
+        // One planned near what is owed of the statement is taken for its
+        // payment, whatever its name (the note asks for it so); one near the
+        // minimum only under the card's name, since many small bills are as
+        // much (a $40 minimum is not a $45 gym).
+        if (owed !== null && around.some((p) => close(p.amount, owed))) continue;
+        if (forCard.some((p) => close(p.amount, l.minimum_payment))) continue;
         const part = Math.round(forCard.reduce((n, p) => n + p.amount * plannedDates(p, from, to).length, 0) * 100) / 100;
+        // Parts under its name that come to it: planned, as one would be.
+        if (part > 0 && close(part, figure)) continue;
         const money = (n: number) => formatMoney(n, a.currency ?? position.currency);
         const amount =
           owed === null

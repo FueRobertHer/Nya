@@ -531,9 +531,16 @@ describe('what it says it may be missing', () => {
     expect(notesFor(withCard, [{ ...payment, name: 'chase card', amount: 300 }])).toEqual([partly(300)]);
     // Each time it falls near the due date: weekly, twice.
     expect(notesFor(withCard, [{ ...payment, amount: 100, date: '2026-10-18', cadence: 'weekly' }])).toEqual([partly(200)]);
-    // Parts under its name that come to it or more: no part, so said as
-    // before, never quiet.
-    expect(notesFor(withCard, [{ ...payment, amount: 400 }, { ...payment, id: 'p2', amount: 412.4, date: '2026-10-24' }])).toEqual([named]);
+    // Parts under its name that come to what is owed (within a quarter):
+    // planned, so not asked again; far more than it, said as before.
+    expect(notesFor(withCard, [{ ...payment, amount: 400 }, { ...payment, id: 'p2', amount: 412.4, date: '2026-10-24' }])).toEqual([]);
+    expect(notesFor(withCard, [{ ...payment, amount: 600 }, { ...payment, id: 'p2', amount: 600, date: '2026-10-24' }])).toEqual([named]);
+    // Near the minimum, only under the card's name or its bank's: a small
+    // bill planned that week (review: Gym $45, Phone $35 beside a $40
+    // minimum) is no payment of it.
+    expect(notesFor(withCard, [{ ...payment, name: 'Gym', amount: 45, date: '2026-10-20' }])).toEqual([named]);
+    expect(notesFor(withCard, [{ ...payment, name: 'Phone', amount: 35, date: '2026-10-20' }])).toEqual([named]);
+    expect(notesFor(withCard, [{ ...payment, name: 'Chase minimum', amount: 35, date: '2026-10-20' }])).toEqual([]);
     // Planned items that name neither the card nor its bank are no part of it
     // (review): a gym, rent, or the month's other bills near the due date.
     expect(notesFor(withCard, [{ ...payment, name: 'Gym', amount: 55 }])).toEqual([named]);
