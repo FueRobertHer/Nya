@@ -519,18 +519,29 @@ export default function PlanTab({
   // Saving into the open scenario: what a form's save changes, recorded as
   // the scenario's own changes (lib/fire/scenarios.ts recordSave), with the
   // currency its amounts are in (the Plan's when this is its first).
-  const persist = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string> => {
-    if (!entry) return false;
+  const persistIn = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<true | { error: string; stale: boolean }> => {
+    if (!entry) return { error: 'It wasn’t saved. Try again in a moment.', stale: false };
     const kept = pruneMoot(basePlan, changes);
     const draft: ScenarioDraft = { name: entry.name, currency: currencyNow !== undefined ? currencyNow : currencyFor(entry, kept, planCurrency), ...kept };
-    if (hasAmounts(draft) && draft.currency === null) return 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.';
+    if (hasAmounts(draft) && draft.currency === null) return { error: 'Your plan has no currency yet (no accounts to take it from), so a scenario can’t hold amounts: add an account first.', stale: false };
     const r = await scenarios.save(entry.id, draft, entry.rev);
     if ('ok' in r) {
       setNotice(null);
       return true;
     }
     if (r.stale) setNotice({ for: entry.id, text: `${r.error} Nothing of your change was kept: make it again if it still applies.` });
-    return r.error;
+    return { error: r.error, stale: !!r.stale };
+  };
+  /** For a drawer's form: what to say in it (it closes on a stale save). */
+  const persist = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string> => {
+    const r = await persistIn(changes, currencyNow);
+    return r === true ? true : r.error;
+  };
+  /** For a button on the page (the scenario's card, an item's row): null
+   *  when the notice says it already, so it isn't said twice. */
+  const persistHere = async (changes: ScenarioChanges, currencyNow?: string | null): Promise<boolean | string | null> => {
+    const r = await persistIn(changes, currencyNow);
+    return r === true ? true : r.stale ? null : r.error;
   };
   const saveToScenario: Save | null = entry
     ? async (next) => {
@@ -556,9 +567,16 @@ export default function PlanTab({
   // Back to the Plan puts focus on that scenario's row, where it can be
   // opened again, rather than losing it with the card that goes.
   const [backFrom, setBackFrom] = useState<string | null>(null);
+  // A notice is about the scenario as it was open: leaving it, or opening
+  // one, starts without it.
   const back = () => {
     setBackFrom(entry?.id ?? null);
+    setNotice(null);
     setOpenId(null);
+  };
+  const openScenario = (id: string | null) => {
+    setNotice(null);
+    setOpenId(id);
   };
   const headingRef = useRef<HTMLHeadingElement | null>(null);
   // Opening one moves focus to its card's heading, and the status line says
@@ -586,7 +604,7 @@ export default function PlanTab({
         leftOut: changes.flatMap((c) => (c.kind === 'left-out' ? [{ list: c.list, item: c.item }] : [])),
         onRestore: async (list: 'income' | 'expenses', id: string) => {
           const r = restoreItem(basePlan, entry, list, id);
-          return 'error' in r ? r.error : persist(r.ok);
+          return 'error' in r ? r.error : persistHere(r.ok);
         },
       }
     : null;
@@ -617,7 +635,7 @@ export default function PlanTab({
               : null
       }
       openId={entry ? entry.id : null}
-      onOpen={setOpenId}
+      onOpen={openScenario}
       focusId={backFrom}
       onFocused={() => setBackFrom(null)}
       run={(job, signal) => runner().run(job, signal)}
@@ -641,8 +659,8 @@ export default function PlanTab({
       money={money}
       eventsCount={entry.events.length}
       headingRef={headingRef}
-      onSave={(c) => persist(c)}
-      onConfirmCurrency={() => persist(changesOf(entry), planCurrency)}
+      onSave={(c) => persistHere(c)}
+      onConfirmCurrency={() => persistHere(changesOf(entry), planCurrency)}
       onFix={fixForm}
       notice={notice && notice.for === entry.id ? notice.text : null}
       onBack={back}
@@ -1681,7 +1699,8 @@ export type ScenarioMarks = {
   replaced: Set<string>;
   added: Set<string>;
   leftOut: { list: 'income' | 'expenses'; item: PlanIncome | PlanExpense }[];
-  onRestore: (list: 'income' | 'expenses', id: string) => Promise<boolean | string>;
+  /** null: not saved, and the scenario's card says why. */
+  onRestore: (list: 'income' | 'expenses', id: string) => Promise<boolean | string | null>;
 };
 
 export function EventsCard({
@@ -1752,7 +1771,7 @@ export function EventsCard({
                 aria-label={`Use your plan’s ${item.label}`}
                 onClick={async () => {
                   const r = await scenario.onRestore(list, item.id);
-                  setRestoreError(r === true ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
+                  setRestoreError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
                 }}
               >
                 Use your plan’s

@@ -607,8 +607,9 @@ export function ScenarioBar({
   money: (n: number) => string;
   eventsCount: number;
   headingRef: RefObject<HTMLHeadingElement | null>;
-  onSave: (changes: ScenarioChanges) => Promise<boolean | string>;
-  onConfirmCurrency: () => Promise<boolean | string>;
+  /** null: not saved, and `notice` says why (so the card doesn't say it twice). */
+  onSave: (changes: ScenarioChanges) => Promise<boolean | string | null>;
+  onConfirmCurrency: () => Promise<boolean | string | null>;
   onFix: (form: Exclude<FixForm, null>) => void;
   /** What a save said that has no form left to say it in. */
   notice?: string | null;
@@ -619,7 +620,7 @@ export function ScenarioBar({
   const act = async (next: { ok: ScenarioChanges } | { error: string }) => {
     if ('error' in next) return setError(next.error);
     const r = await onSave(next.ok);
-    setError(r === true ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
+    setError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
   };
   const undo = (c: ScenarioChange) => {
     switch (c.kind) {
@@ -658,7 +659,7 @@ export function ScenarioBar({
               disabled={!editable}
               onClick={async () => {
                 const r = await onConfirmCurrency();
-                setError(r === true ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
+                setError(r === true || r === null ? '' : typeof r === 'string' ? r : 'It wasn’t saved. Try again in a moment.');
               }}
             >
               They’re in {planCurrency}

@@ -160,6 +160,32 @@ describe('a form left open never saves to another plan', () => {
     await tab.unmount();
   });
 
+  test('a change on the scenario’s card made to an older version is said once, and not again once it is left', async () => {
+    const newer = entry({ rev: 'r2', set: { targetAge: 50, withdrawalRate: 0.035 } });
+    const stale = 'This scenario was changed on another device: here it is as it is now.';
+    let listed = entry();
+    const calls = serve({
+      'GET /api/fire-plan': [200, { plan: PLAN }],
+      'GET /api/plan-scenarios': () => listing(listed),
+      'PUT /api/plan-scenarios': () => {
+        listed = newer;
+        return [409, { error: stale, stale: true, scenario: newer }];
+      },
+      'GET /api/allocation-settings': [200, { settings: null }],
+    });
+    const tab = await render();
+    await press(tab.byLabel('Open Retire at 50'));
+    await press(tab.byLabel('Use your plan’s retirement age'));
+    expect(calls.filter((c) => c.method === 'PUT').length).toBe(1);
+    expect(tab.text().split(stale).length - 1).toBe(1);
+    expect(tab.text()).toContain('Nothing of your change was kept');
+    await press(tab.buttons('Back to your plan').find((b) => b.getAttribute('aria-label') === null) ?? null);
+    await press(tab.byLabel('Open Retire at 50'));
+    expect(tab.text()).toContain('Scenario: Retire at 50');
+    expect(tab.text()).not.toContain(stale);
+    await tab.unmount();
+  });
+
   test('with the Plan open, its forms save the Plan, and never a scenario', async () => {
     const calls = serve({
       'GET /api/fire-plan': [200, { plan: PLAN }],
