@@ -103,7 +103,8 @@ async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<s
  * for what a restore brought back for it (in a form this version doesn't
  * know, a newer version's or a fault: lib/user-restore/forget.ts
  * restoredRefusals) is listed with those words (`refused`), and one that
- * couldn't be checked says so (`unchecked`); neither is offered Forget, and
+ * couldn't be checked says so, and why (`unchecked`, 'sealed' or 'failed');
+ * neither is offered Forget, and
  * the rest are listed as they are. That reads the restored books, so it is
  * done only once the list is opened.
  */
@@ -117,8 +118,11 @@ async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offer
   }
   if (!check || earlier.length === 0) return earlier;
   const ids = earlier.map((e) => e.id);
-  const { refused, unchecked } = await restoredRefusals(ctx, ids).catch(() => ({ refused: new Map<string, string>(), unchecked: new Set(ids) }));
-  return earlier.map((e) => (refused.has(e.id) ? { ...e, refused: refused.get(e.id)! } : unchecked.has(e.id) ? { ...e, unchecked: true as const } : e));
+  const { refused, unchecked } = await restoredRefusals(ctx, ids).catch(() => ({
+    refused: new Map<string, string>(),
+    unchecked: new Map(ids.map((id) => [id, 'failed' as const])),
+  }));
+  return earlier.map((e) => (refused.has(e.id) ? { ...e, refused: refused.get(e.id)! } : unchecked.has(e.id) ? { ...e, unchecked: unchecked.get(e.id)! } : e));
 }
 
 /** How many accounts a SimpleFIN or Lunch Flow connection fed were let go, as

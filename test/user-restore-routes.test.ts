@@ -437,7 +437,7 @@ describe('the routes', () => {
     const body = await (await linksRoute.GET(new Request('http://localhost/api/account-links?earlier=1'))).json();
     expect(body.earlier_checked).toBe(true);
     const card = body.earlier.find((e: any) => e.id === 'acc_card');
-    expect([card.unchecked, card.refused]).toEqual([true, undefined]);
+    expect([card.unchecked, card.refused]).toEqual(['sealed', undefined]);
     // Listed, never the whole list emptied for one account's check.
     expect(body.earlier.filter((e: any) => e.id !== 'acc_card').every((e: any) => !e.unchecked && !e.refused)).toBe(true);
   });
@@ -453,8 +453,8 @@ describe('the routes', () => {
     const sealed = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(entry))));
     await fake.hset(ctxKey('restored-accounts'), { acc_card: Buffer.concat([iv, sealed]).toString('base64') });
     const body = await (await linksRoute.GET(new Request('http://localhost/api/account-links?earlier=1'))).json();
-    const said = Object.fromEntries(body.earlier.map((e: any) => [e.id, e.unchecked ? 'unchecked' : e.refused ? 'refused' : 'ok']));
-    expect(said).toMatchObject({ acc_card: 'unchecked', acc_old: 'ok', acc_chk: 'ok' });
+    const said = Object.fromEntries(body.earlier.map((e: any) => [e.id, e.unchecked ?? (e.refused ? 'refused' : 'ok')]));
+    expect(said).toMatchObject({ acc_card: 'sealed', acc_old: 'ok', acc_chk: 'ok' });
   });
 
   test('an earlier account whose only restored data is a book this version doesn’t know, with no entry, offers no Forget, as the forget refuses it', async () => {
