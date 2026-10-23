@@ -191,7 +191,7 @@ export function hasAmounts(c: ScenarioChanges): boolean {
 function parseSet(raw: unknown): { ok: ScenarioSet } | { error: string } {
   if (!isObject(raw)) return { error: 'set must be an object' };
   const unknown = Object.keys(raw).find((k) => !(SET_FIELDS as readonly string[]).includes(k));
-  if (unknown) return { error: `set.${unknown.slice(0, 40)} isn't a setting a scenario can change` };
+  if (unknown) return { error: `set.${unknown.slice(0, 40)} isn’t a setting a scenario can change` };
   if (Object.hasOwn(raw, 'targetAge') && typeof raw.targetAge !== 'number') return { error: 'set.targetAge must be an age' };
   if (Object.hasOwn(raw, 'startBalance') && typeof raw.startBalance !== 'number') return { error: 'set.startBalance must be an amount' };
   if (Object.hasOwn(raw, 'mix')) {
@@ -229,7 +229,7 @@ function parseLeaveOut(raw: unknown, at: string): { ok: string[] } | { error: st
 export function parseScenarioDraft(raw: unknown): { ok: ScenarioDraft } | { error: string } {
   if (!isObject(raw)) return { error: 'Send the scenario, as JSON' };
   const extra = Object.keys(raw).find((k) => !DRAFT_KEYS.includes(k));
-  if (extra) return { error: `${extra.slice(0, 40)} isn't part of a scenario` };
+  if (extra) return { error: `${extra.slice(0, 40)} isn’t part of a scenario` };
   const missing = DRAFT_KEYS.find((k) => !Object.hasOwn(raw, k));
   if (missing) return { error: `A scenario needs ${missing}` };
   if (typeof raw.name !== 'string') return { error: 'A scenario needs a name' };

@@ -127,6 +127,8 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   imports: 'data',
   'income-carryover': 'setting',
   'manual-transactions': 'data',
+  // What-ifs the person kept beside their Plan: theirs, as the runway's are.
+  'plan-scenarios': 'data',
   'planned-items': 'data',
   'report-settings': 'setting',
   'restored-accounts': 'data',

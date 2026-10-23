@@ -99,7 +99,7 @@ export function isLifeEvent(v: unknown): v is LifeEvent {
 export function parseLifeEvent(raw: unknown, at: string): { ok: LifeEvent } | { error: string } {
   if (!isLifeEvent(raw)) {
     const kind = typeof raw === 'object' && raw !== null ? (raw as { kind?: unknown }).kind : undefined;
-    return { error: typeof kind === 'string' && (EVENT_KINDS as readonly string[]).includes(kind) ? `${at} has fields its kind doesn't take, or misses one` : `${at} is not a kind of life event` };
+    return { error: typeof kind === 'string' && (EVENT_KINDS as readonly string[]).includes(kind) ? `${at} has fields its kind doesn’t take, or misses one` : `${at} is not a kind of life event` };
   }
   const e = raw;
   if (!ID.test(e.id)) return { error: `${at}.id must be a short id` };
