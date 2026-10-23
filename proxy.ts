@@ -10,7 +10,8 @@ import { isAdminSignIn } from '@/lib/admin-gate';
 // below); static PWA assets (they must be publicly fetchable for install/offline
 // to work); and routes that authenticate themselves:
 //   - the cron endpoints (the snapshot and its catch-up, the nightly backup, the
-//     ECB rates' fetch, the unused-Item check), via CRON_SECRET;
+//     ECB rates' fetch, the unused-Item check, the receipts' clean-up), via
+//     CRON_SECRET;
 //   - the manual-balance ingest, via INGEST_SECRET;
 //   - the API (each /api/v1 endpoint, listed one by one) and the MCP server
 //     (/api/mcp), via a personal API token (lib/api-tokens.ts). They read no
@@ -42,7 +43,7 @@ import { isAdminSignIn } from '@/lib/admin-gate';
 // here too.
 export const config = {
   matcher: [
-    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/fx/fetch$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/tags$|api/v1/rules$|api/v1/budgets$|api/v1/spending$|api/v1/cash-flow$|api/v1/recurring$|api/v1/goals$|api/v1/holdings$|api/v1/runway$|api/v1/year-over-year$|api/v1/transactions/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/manual-accounts$|api/v1/manual-accounts/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/manual-accounts/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*/balance$|api/v1/categories/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/category-groups$|api/v1/category-groups/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/tags/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/changes$|api/v1/changes/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*/undo$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|api/weekly-summary/unsubscribe$|api/ops/container-keys$|api/ops/sign-repair$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
+    '/((?!api/login$|api/demo/sign-in$|api/snapshot$|api/snapshot/catchup$|api/backup$|api/attachments/sweep$|api/fx/fetch$|api/ingest/balance$|api/v1/me$|api/v1/accounts$|api/v1/net-worth$|api/v1/balance-history$|api/v1/transactions$|api/v1/categories$|api/v1/tags$|api/v1/rules$|api/v1/budgets$|api/v1/spending$|api/v1/cash-flow$|api/v1/recurring$|api/v1/goals$|api/v1/holdings$|api/v1/runway$|api/v1/year-over-year$|api/v1/transactions/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/manual-accounts$|api/v1/manual-accounts/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/manual-accounts/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*/balance$|api/v1/categories/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/category-groups$|api/v1/category-groups/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/tags/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*$|api/v1/changes$|api/v1/changes/(?:[A-Za-z0-9_:-]|%3[Aa])(?:[A-Za-z0-9_.:-]|%3[Aa])*/undo$|api/mcp$|api/plaid/webhook$|api/plaid/check-items$|api/ops/export$|api/ops/rotate-master$|api/ops/reencrypt$|api/ops/containers$|api/weekly-summary/unsubscribe$|api/ops/container-keys$|api/ops/sign-repair$|_next/static/|_next/image/|favicon.ico$|icon.svg$|apple-icon.png$|manifest.json$|icons/|service-worker.js$).*)',
   ],
 };
 
@@ -90,10 +91,15 @@ const forConnections = (req: NextRequest) => req.nextUrl.pathname === '/' && req
 // so a request that asks for HTML gets the policy wherever it goes.
 // `to`, when given, is a path to render in the request's place (a rewrite):
 // an admin page sent where it lives, or to MISSING (ADMIN_PAGES), gets the
-// policy as every page does.
+// policy as every page does. A receipt or document (ATTACHMENT_FILE) is the
+// exception: a navigation to one asks for HTML too, and the page's policy
+// would stop a browser's own viewer, so its route sends a policy of its own
+// (lib/attachment-http.ts fileHeaders), stricter for what it is.
+const ATTACHMENT_FILE = /^\/api\/attachments\/[0-9a-f-]{36}\/(file|thumb)$/;
 function pass(req: NextRequest, to?: string): NextResponse {
   const go = (init?: { request: { headers: Headers } }) => (to ? NextResponse.rewrite(new URL(to, req.url), init) : NextResponse.next(init));
-  const document = !req.nextUrl.pathname.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html');
+  const path = req.nextUrl.pathname;
+  const document = !ATTACHMENT_FILE.test(path) && (!path.startsWith('/api/') || (req.headers.get('accept') ?? '').includes('text/html'));
   if (!document) return go();
   const headers = new Headers(req.headers);
   for (const name of NONCE_CARRIERS) headers.delete(name);

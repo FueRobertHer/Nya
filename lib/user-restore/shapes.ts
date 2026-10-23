@@ -261,6 +261,7 @@ export const CORE: Record<CorePart, { each?: Check; whole?: Check }> = {
   },
   // Never brought back (parts.ts NEVER_CORE): read to count, whatever they hold.
   api_tokens: { whole: (v, at) => (Array.isArray(v) ? null : said(at, 'must be a list')) },
+  attachments: { whole: (v, at) => (Array.isArray(v) ? null : said(at, 'must be a list')) },
   sharing: { whole: any },
 };
 

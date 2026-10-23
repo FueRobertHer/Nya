@@ -7,7 +7,8 @@
 // manual account deleted, an import undone (into a manual account, or into a
 // linked one: lib/history-import/commit.ts), the rows imported into an
 // earlier account forgotten with it, a SimpleFIN account let go and removed
-// (forgetSplitsAndGroups); a sync that saved the bank's removal of a
+// (forgetSplitsAndGroups, which also lets their receipts and documents go
+// onto no transaction, kept); a sync that saved the bank's removal of a
 // transaction, a disconnect, an earlier account forgotten (pruneSplitsAndGroups,
 // by the rules every such prune keeps: nothing while a store of transactions
 // can't be read or is behind, never a record this release doesn't
@@ -21,14 +22,19 @@ import { forgetGroupMembers, groupStore } from './groups';
 import { approvalsToPrune, forgetApprovals } from './review-store';
 
 /** Forgets the splits of these transactions, takes them out of their groups
- *  (a group left with none goes), and forgets their approvals. Each on its
- *  own, so one failing leaves the others done (and throws after). */
+ *  (a group left with none goes), and forgets their approvals; their
+ *  receipts and documents stay, not on a transaction any more
+ *  (lib/attachments.ts: a file is never deleted as a side effect). Each on
+ *  its own, so one failing leaves the others done (and throws after). */
 export async function forgetSplitsAndGroups(ctx: Ctx, transaction_ids: readonly string[]): Promise<void> {
   if (transaction_ids.length === 0) return;
   let failed: unknown = null;
   await forgetSplits(ctx, transaction_ids).catch((err) => (failed = err));
   await forgetGroupMembers(ctx, transaction_ids).catch((err) => (failed ??= err));
   await forgetApprovals(ctx, transaction_ids).catch((err) => (failed ??= err));
+  // Imported when needed: lib/attachments.ts reaches this module through
+  // lib/links.ts.
+  await (await import('./attachments')).releaseAttachments(ctx, transaction_ids).catch((err) => (failed ??= err));
   if (failed) throw failed;
 }
 

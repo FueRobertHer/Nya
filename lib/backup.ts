@@ -54,7 +54,7 @@ import { exportLines, type ExportClient } from './export';
 import { envPrefix, kEnv, redis, rawRedis } from './storage';
 import { rewriteAfterDeletion, writeKeyArchive, type KeyArchiveResult, type KeysLock, type KeysPending } from './key-archive';
 import { containersUnderSharedKeys, keyIdsByContainer, namedKeyIds } from './archive-scan';
-import { MasterKeyError, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
+import { MasterKeyError, masterKeyConfigured, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
 
 /** What a backup needs from object storage. Vercel Blob in production
  *  (vercelBlobStore); tests pass one kept in memory. Each call is given a
@@ -557,7 +557,11 @@ export function rewriteKeyArchivesAfterDeletion(
 
 const STATUS = () => kEnv('backups:status');
 
-type Status = { last_ok: string | null; last_failed: string | null; reason: string | null };
+/** The backups' record's key, for the operator restore, which deletes it
+ *  first (lib/restore.ts restoreArchive; see backupRecordExists). */
+export const backupStatusKey = STATUS;
+
+type Status = { last_ok: string | null; last_failed: string | null; reason: string | null; attachments?: unknown };
 
 async function readStatus(): Promise<Status | null> {
   const raw = await redis().get<unknown>(STATUS());
@@ -580,9 +584,11 @@ export async function recordOutcome(
   try {
     const write = async () => {
       const prev = await readStatus();
+      // The receipts sweep's own record rides along unchanged (below).
+      const kept = prev?.attachments !== undefined ? { attachments: prev.attachments } : {};
       const next: Status = outcome.ok
-        ? { last_ok: now.toISOString(), last_failed: null, reason: null }
-        : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200) };
+        ? { last_ok: now.toISOString(), last_failed: null, reason: null, ...kept }
+        : { last_ok: prev?.last_ok ?? null, last_failed: now.toISOString(), reason: outcome.reason.slice(0, 200), ...kept };
       await redis().set(STATUS(), JSON.stringify(next));
     };
     const timeout = new Promise<never>((_, reject) => {
@@ -596,7 +602,11 @@ export async function recordOutcome(
   }
 }
 
-export type BackupProblem = { last_ok: string | null; reason: string | null };
+/** What the dashboard says of backups. `none`: they are kept here, and no
+ *  run has been recorded at all (a new deployment's first day, the night
+ *  after an operator restore, or a run that never gets as far as recording
+ *  itself): said, so it can't be silent for good (review nit 22). */
+export type BackupProblem = { last_ok: string | null; reason: string | null; none?: true };
 
 /** Something the dashboard should say about backups, or null. Null too when
  *  none has ever run (they aren't set up) and when the status can't be read:
@@ -609,11 +619,147 @@ export async function backupProblem(now: Date = new Date()): Promise<BackupProbl
     return null;
   }
   if (!status) return null;
+  return problemOf(status, now);
+}
+
+/** What a backups record says is wrong, or null. */
+function problemOf(status: Status, now: Date): BackupProblem | null {
   if (status.last_failed) return { last_ok: status.last_ok, reason: status.reason };
   // Two days: the cron runs at 16:00 UTC, so yesterday's copy being the
   // newest is normal for most of the day.
   if (status.last_ok && now.getTime() - Date.parse(status.last_ok) > 2 * 86_400_000) {
     return { last_ok: status.last_ok, reason: null };
   }
+  return null;
+}
+
+/** What the dashboard says of backups: backupProblem's, and, where backups
+ *  are kept, that none has been recorded at all (`none`). From the one read
+ *  backupProblem makes. Never throws. */
+export async function backupNotice(now: Date = new Date()): Promise<BackupProblem | null> {
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch {
+    return null;
+  }
+  if (!status) return backupRetention()?.kept ? { last_ok: null, reason: null, none: true } : null;
+  return problemOf(status, now);
+}
+
+// ---- The nightly sweep of receipts and documents (lib/attachment-sweep.ts) ----
+//
+// Its outcome, and where it got to, kept inside the backups' own record
+// (backups:status, environment-wide, plain text, no ciphertext) as its
+// `attachments` field: it cleans up the same private store, and Vercel sends
+// no alert for a failed cron either. A field of that record rather than a key
+// of its own, since no new key family is built by hand
+// (test/storage-boundary.test.ts). Each writer keeps the other's part: the
+// backup's recordOutcome carries it over, and the sweep writes only it. The
+// two run at different times of night (vercel.json), so the read and the
+// write of one never meet the other's.
+
+export type AttachmentSweepStatus = {
+  last_ok: string | null;
+  last_failed: string | null;
+  reason: string | null;
+  /** The container after which the next run carries on, or null to start
+   *  from the first. */
+  cursor: string | null;
+  /** When the store-wide pass last ran. */
+  listed_at: string | null;
+  /** The breaker held a pass back (B1): when, and in how many accounts. */
+  held?: { at: string; containers: number };
+};
+
+/** The sweep's record, or null when none was ever kept (or it can't be
+ *  parsed: then the sweep starts from the first account, which only redoes
+ *  work). Throws when storage fails. */
+export async function readAttachmentSweep(): Promise<AttachmentSweepStatus | null> {
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch (err) {
+    if (err instanceof SyntaxError) return null;
+    throw err;
+  }
+  return sweepOf(status);
+}
+
+/** The sweep's record inside the backups' one, or null. */
+function sweepOf(status: Status | null): AttachmentSweepStatus | null {
+  const parsed = status?.attachments;
+  if (!parsed || typeof parsed !== 'object') return null;
+  const s = parsed as Partial<AttachmentSweepStatus>;
+  const iso = (v: unknown) => (typeof v === 'string' && !Number.isNaN(Date.parse(v)) ? v : null);
+  return {
+    last_ok: iso(s.last_ok),
+    last_failed: iso(s.last_failed),
+    reason: typeof s.reason === 'string' ? s.reason.slice(0, 200) : null,
+    cursor: typeof s.cursor === 'string' && s.cursor.length <= 64 ? s.cursor : null,
+    listed_at: iso(s.listed_at),
+    ...(s.held && typeof s.held === 'object' && iso(s.held.at) && Number.isInteger(s.held.containers) ? { held: { at: s.held.at, containers: s.held.containers } } : {}),
+  };
+}
+
+/** Whether the backups' record is there at all. An operator restore
+ *  (lib/restore.ts) deletes it as its first write, with everything else not
+ *  preserved, and never writes it again: the next nightly backup does. So
+ *  while backups are kept, its absence says a restore may be running (or
+ *  ran since the last backup), and the receipts sweep writes nothing then
+ *  (review nit 10). Throws when storage fails. */
+export async function backupRecordExists(): Promise<boolean> {
+  return (await redis().get<unknown>(STATUS())) !== null;
+}
+
+/** Records the sweep's record. Best effort, given up on after RECORD_LIMIT_MS. */
+export async function recordAttachmentSweep(status: AttachmentSweepStatus): Promise<void> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`took longer than ${RECORD_LIMIT_MS / 1000}s`)), RECORD_LIMIT_MS);
+    });
+    const write = async () => {
+      let prev: Status | null = null;
+      try {
+        prev = await readStatus();
+      } catch (err) {
+        if (!(err instanceof SyntaxError)) throw err;
+      }
+      const next: Status = { last_ok: prev?.last_ok ?? null, last_failed: prev?.last_failed ?? null, reason: prev?.reason ?? null, attachments: status };
+      await redis().set(STATUS(), JSON.stringify(next));
+    };
+    await Promise.race([write(), timeout]);
+  } catch (err) {
+    console.error('Receipts sweep outcome not recorded', err instanceof Error ? err.message : err);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** `paused`: backups are kept and their record isn't there, so the sweep
+ *  writes nothing (lib/attachment-sweep.ts): said, never silent. */
+export type AttachmentSweepProblem = { last_ok: string | null; reason: string | null; held: boolean; paused?: true };
+
+/** Something the dashboard should say about the sweep, or null: its last run
+ *  failed, its breaker held a pass back in the last week, or none has
+ *  succeeded for nine days (it walks every account at least weekly). Null
+ *  when it never ran (no files kept here) or the record can't be read: a
+ *  notice, never a reason to fail a page. */
+export async function attachmentSweepProblem(now: Date = new Date()): Promise<AttachmentSweepProblem | null> {
+  let status: Status | null;
+  try {
+    status = await readStatus();
+  } catch {
+    return null;
+  }
+  // Paused while the backups' record isn't there (review nit 22), where
+  // files can be kept at all (a master key: lib/attachments.ts).
+  if (!status) return backupRetention()?.kept && masterKeyConfigured() ? { last_ok: null, reason: null, held: false, paused: true } : null;
+  const s = sweepOf(status);
+  if (!s) return null;
+  if (s.last_failed) return { last_ok: s.last_ok, reason: s.reason, held: false };
+  if (s.held && now.getTime() - Date.parse(s.held.at) < 7 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: true };
+  if (s.last_ok && now.getTime() - Date.parse(s.last_ok) > 9 * 86_400_000) return { last_ok: s.last_ok, reason: null, held: false };
   return null;
 }
