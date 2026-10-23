@@ -300,6 +300,22 @@ describe('the route', () => {
     expect(Number(await fake.get<string>(ctxKey('download-count')))).toBe(1);
   });
 
+  test('a file not whole in storage when the download is made ready is named in the set’s list, never counted as added (review 19)', async () => {
+    const ids = [await attach('t1', jpeg(3000), 'image', NOW), await attach('t2', jpeg(3000), 'image', NOW + 1), await attach('t3', jpeg(3000), 'image', NOW + 2)];
+    store.objects.delete(objectsMod.objectPath(ctx, ids[1], 0));
+    const made = await ready();
+    expect(made.left_out).toEqual([{ id: ids[1], why: 'missing' }]);
+    const v1 = await volume({ volume: 1, plan: made.plan });
+    expect(v1.ids).toEqual([ids[0], ids[2]]);
+    expect(v1.manifest.left_out).toEqual([]);
+    expect(v1.manifest.set_left_out).toEqual([{ id: ids[1], why: 'missing' }]);
+    expect([v1.added, v1.manifest.added_since]).toEqual([0, 0]);
+    expect(v1.notes).toEqual(['1 file wasn’t whole in storage when the download was made ready, so it is in none of its ZIP files. The list in this one (nya-attachments.json, set_left_out) names it.']);
+    // Deleted since: named as deleted.
+    await att.deleteAttachment(ctx, ids[1]);
+    expect((await volume({ volume: 1, plan: made.plan, set: v1.set })).manifest.set_left_out).toEqual([{ id: ids[1], why: 'deleted' }]);
+  });
+
   test('a plan made ready too long ago, or not here for this account, is refused', async () => {
     await attach('t1', jpeg(3000));
     const made = await ready();
@@ -308,7 +324,10 @@ describe('the route', () => {
     const old = zip.planToken({ ...(plan as Exclude<typeof plan, null | 'expired'>), until: Date.now() - 1 });
     const expired = await post({ volume: 1, plan: old, password: 'hunter2' });
     expect(expired.status).toBe(409);
-    expect((await expired.json()).plan_expired).toBe(true);
+    const said = await expired.json();
+    expect(said.plan_expired).toBe(true);
+    // What was saved from it is no part of the new set (review nit 24).
+    expect(said.error).toContain('save every ZIP file of the new set, and put away any you saved from this one');
     const elsewhere = zip.planToken({ ...(plan as Exclude<typeof plan, null | 'expired'>), container: '5d1c7e2a-9b3f-4c6d-8e1a-2b3c4d5e6f70' });
     expect((await post({ volume: 1, plan: elsewhere, password: 'hunter2' })).status).toBe(400);
     const [head, mac] = [made.plan.slice(0, made.plan.lastIndexOf('.')), made.plan.slice(made.plan.lastIndexOf('.') + 1)];

@@ -286,8 +286,23 @@ describe('the sweep across the store: never a file whose record could come back 
   async function nightly(n: number) {
     const status = await backup.readAttachmentSweep();
     if (status) await backup.recordAttachmentSweep({ ...status, listed_at: null });
-    await backup.recordOutcome({ ok: true }, night(n));
+    await backupNight(n);
     return sweep.runAttachmentSweep(night(n));
+  }
+
+  /** The nightly backup of night n, two hours before the sweep: a data
+   *  archive in the backups' folder of the same store, pruned as
+   *  lib/backup.ts prunes (older than BACKUP_KEEP_DAYS, never the newest
+   *  seven), and its outcome recorded. */
+  async function backupNight(n: number) {
+    const taken = new Date(night(n).getTime() - 2 * 3600_000);
+    const folder = backup.backupFolder();
+    await store.put(`${folder}nya-${taken.toISOString().replace(/[:.]/g, '-')}.f2.ndjson`, new Uint8Array(1));
+    const archives = [...store.objects.keys()].filter((p) => p.startsWith(folder)).sort().reverse();
+    for (const p of archives.slice(backup.MIN_KEPT)) {
+      if (Date.parse(backup.dataArchiveName(p)!.taken) < taken.getTime() - backup.keepDays() * DAY) store.objects.delete(p);
+    }
+    await backup.recordOutcome({ ok: true }, night(n));
   }
 
   test('records wiped (an operator restore mid-way, a bad migration): nothing is deleted until 31 days after the objects were first seen unnamed', async () => {
@@ -325,8 +340,9 @@ describe('the sweep across the store: never a file whose record could come back 
     await nightly(2);
     expect(Object.keys((await stores.sweepStateStore.get(ctx))!.unnamed)).toEqual([orphan]);
     // Three days kept, but the newest seven backups always are (review 6):
-    // seven days from when it was first seen.
-    await nightly(7);
+    // night 1's archive, taken before it was first seen, is kept through
+    // night 7, and pruned by night 8's backup.
+    for (let n = 3; n <= 7; n++) await nightly(n);
     expect(objectIds().has(orphan)).toBe(true);
     await nightly(8);
     expect(objectIds().has(orphan)).toBe(false);
@@ -386,27 +402,56 @@ describe('the sweep across the store: never a file whose record could come back 
     await fake.hset(c.tombstonesKey(), { 'k9-deadbeef': JSON.stringify({ container: DELETED, on: '2026-09-01' }) });
     const r = await nightly(1);
     expect(r.deleted_folders).toBe(1);
-    expect([...store.objects.keys()]).toEqual([`${objectsMod.environmentFolder()}${UNKNOWN}/a/0`]);
+    expect([...store.objects.keys()].filter((p) => p.startsWith('attachments/'))).toEqual([`${objectsMod.environmentFolder()}${UNKNOWN}/a/0`]);
   });
 
-  test('waits as long as any kept backup could bring a record back: the newest seven nightly ones, and the database host’s own (review 6)', () => {
-    process.env.BACKUP_KEEP_DAYS = '1';
-    expect(sweep.waitDays()).toBe(7);
-    process.env.BACKUP_KEEP_DAYS = '30';
-    expect(sweep.waitDays()).toBe(31);
+  test('waits as long as any kept backup could bring a record back: until the oldest archive kept was taken after it was first seen, and the database host’s own (review 6, nit 23)', () => {
+    const DAYS = (n: number) => n * DAY;
+    const seen = T0;
+    // The floor: the database host's backups and a day, two days at least.
+    expect(sweep.floorDays()).toBe(2);
     process.env.DATABASE_BACKUP_DAYS = '40';
-    expect(sweep.waitDays()).toBe(41);
+    expect(sweep.floorDays()).toBe(41);
     process.env.DATABASE_BACKUP_DAYS = 'three';
-    expect(sweep.waitDays()).toBeNull();
+    expect(sweep.floorDays()).toBeNull();
     delete process.env.DATABASE_BACKUP_DAYS;
     process.env.BACKUP_KEEP_DAYS = 'a month';
-    expect(sweep.waitDays()).toBeNull();
-    // No backups taken: the host's, or two days.
+    expect(sweep.floorDays()).toBeNull();
     delete process.env.BACKUP_KEEP_DAYS;
-    delete process.env.BLOB_READ_WRITE_TOKEN;
-    expect(sweep.waitDays()).toBe(2);
-    process.env.DATABASE_BACKUP_DAYS = '3';
-    expect(sweep.waitDays()).toBe(4);
+    // The nightly backups, exactly: an archive kept from before it was first
+    // seen holds it back, however long ago that was.
+    const rule = (oldest: number | null) => ({ floor_days: 2, oldest_archive: oldest });
+    expect(sweep.mayGo(seen, rule(seen - DAYS(1)), seen + DAYS(60))).toBe(false);
+    expect(sweep.mayGo(seen, rule(seen + DAYS(1)), seen + DAYS(1))).toBe(false); // the floor
+    expect(sweep.mayGo(seen, rule(seen + DAYS(1)), seen + DAYS(2))).toBe(true);
+    expect(sweep.mayGo(seen, rule(null), seen + DAYS(2))).toBe(true);
+  });
+
+  test('after a long backup outage, never while an archive from before the object was first seen is kept (review nit 23)', async () => {
+    for (let i = 0; i < 10; i++) await attach('t_coffee');
+    const orphan = await attach('t_lunch');
+    await stores.attachmentStore.remove(ctx, orphan);
+    process.env.BACKUP_KEEP_DAYS = '30';
+    await nightly(1);
+    expect(Object.keys((await stores.sweepStateStore.get(ctx))!.unnamed)).toEqual([orphan]);
+    // Backups fail for four weeks: nothing is pruned, and no pass runs.
+    for (let n = 2; n <= 30; n++) {
+      const status = await backup.readAttachmentSweep();
+      if (status) await backup.recordAttachmentSweep({ ...status, listed_at: null });
+      await backup.recordOutcome({ ok: false, reason: 'down' }, night(n));
+      await sweep.runAttachmentSweep(night(n));
+    }
+    // They come back: night 1's archive is among the seven newest, so it is
+    // kept, and still names the record. Waiting thirty-one days would have
+    // deleted it on night 32.
+    for (let n = 31; n <= 36; n++) {
+      await nightly(n);
+      expect([n, objectIds().has(orphan)]).toEqual([n, true]);
+    }
+    // Night 37's backup, the seventh since, prunes night 1's archive: now
+    // none kept could name it.
+    await nightly(37);
+    expect(objectIds().has(orphan)).toBe(false);
   });
 
   test('nothing at all while a restore may be running: an operator restore deletes the backups’ record, and the sweep writes nothing until a backup writes it again (review nit 10)', async () => {
@@ -422,6 +467,24 @@ describe('the sweep across the store: never a file whose record could come back 
     await backup.recordOutcome({ ok: true }, night(4));
     const after = await sweep.runAttachmentSweep(night(4));
     expect([after.paused, after.uploads_discarded]).toEqual([undefined, 1]);
+  });
+
+  test('a missing backups record is said on the dashboard, and so is the paused sweep, so neither is silent for good (review nit 22)', async () => {
+    await fake.del(testKey('backups:status'));
+    expect(await backup.backupNotice(night(1))).toEqual({ last_ok: null, reason: null, none: true });
+    expect(await backup.attachmentSweepProblem(night(1))).toEqual({ last_ok: null, reason: null, held: false, paused: true });
+    // Where no file can be kept (no master key), the sweep's notice says nothing.
+    delete process.env.MASTER_KEY;
+    expect(await backup.attachmentSweepProblem(night(1))).toBeNull();
+    process.env.MASTER_KEY = MASTER;
+    // A backup recorded: neither has anything to say.
+    await backupNight(1);
+    expect(await backup.backupNotice(night(1))).toBeNull();
+    expect(await backup.attachmentSweepProblem(night(1))).toBeNull();
+    // Without backups at all, a missing record is nothing to say either.
+    await fake.del(testKey('backups:status'));
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(await backup.backupNotice(night(1))).toBeNull();
   });
 
   test('an object whose name is no attachment id is never Nya’s: left alone, and the account’s notes still kept (review nit 16)', async () => {

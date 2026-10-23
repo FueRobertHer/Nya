@@ -122,12 +122,14 @@ export type PlannedFile = { id: string; record: Attachment; name: string };
 /** A file left out, and why: its objects aren't all in the store
  *  (`missing`), it was deleted after the download was made ready
  *  (`deleted`), or its record can't be read now (`unreadable`). `volume`:
- *  the volume it was planned for, in the last volume's list of the set's. */
+ *  in the last volume's list of the set's, the volume it was planned for,
+ *  absent for a file left out when the download was made ready. */
 export type LeftOut = { id: string; why: 'missing' | 'deleted' | 'unreadable'; volume?: number };
 
-/** A download made ready: which files, by id, go in which volume, for one
- *  account, until a time. */
-export type Plan = { container: string; until: number; volumes: string[][] };
+/** A download made ready: which files, by id, go in which volume, and which
+ *  ready files it left out then (`missing`: their objects weren't all
+ *  there), for one account, until a time. */
+export type Plan = { container: string; until: number; volumes: string[][]; missing: string[] };
 
 /** The volume limits, which a test may set smaller (setVolumeLimitsForTests). */
 let limits = { bytes: VOLUME_BYTES, files: VOLUME_FILES };
@@ -194,7 +196,7 @@ export async function makePlan(
     volumes,
     left_out,
     unreadable: report.unreadable.length + report.unrecognised.length,
-    plan: { container: ctx.container, until: now + PLAN_MS, volumes: volumes.map((v) => v.map((f) => f.id)) },
+    plan: { container: ctx.container, until: now + PLAN_MS, volumes: volumes.map((v) => v.map((f) => f.id)), missing: left_out.map((l) => l.id) },
   };
 }
 
@@ -206,9 +208,12 @@ export type ServedVolume = {
   left_out: LeftOut[];
   /** For the last volume: every file of the set that isn't ready and whole
    *  now, with the volume it was planned for (one deleted after its volume
-   *  was saved is in that volume). Null for another volume. */
+   *  was saved is in that volume), and every file the plan left out when it
+   *  was made (review 19), so the set's own record names every file the
+   *  account had. Null for another volume. */
   set_left_out: LeftOut[] | null;
-  /** Ready files the plan doesn't hold: added after it was made ready. */
+  /** Ready files the plan neither holds nor left out: added after it was
+   *  made ready. */
   added: number;
 };
 
@@ -242,8 +247,15 @@ export async function servePlan(ctx: Ctx, store: AttachmentObjects, plan: Plan, 
         if (typeof s === 'string') set_left_out!.push({ id, why: s, volume: i + 1 });
       }
     });
+    // Left out when it was made ready: named still, as it is now (a file
+    // whose objects came back since is in no volume of this set, so it is
+    // named as missing from it).
+    for (const id of plan.missing) {
+      const s = now(id);
+      set_left_out.push({ id, why: typeof s === 'string' ? s : 'missing' });
+    }
   }
-  const planned = new Set(plan.volumes.flat());
+  const planned = new Set([...plan.volumes.flat(), ...plan.missing]);
   let added = 0;
   for (const [id, a] of report.entries) if (a.status === 'ready' && !planned.has(id)) added++;
   return { files, left_out, set_left_out, added };
@@ -261,7 +273,13 @@ export function volumeNotes(served: { left_out: LeftOut[]; set_left_out: LeftOut
   if (why(own, 'deleted') > 0) out.push(`${fileCount(why(own, 'deleted'))} planned for this ZIP file ${why(own, 'deleted') === 1 ? 'was' : 'were'} deleted after the download was made ready.`);
   if (why(own, 'missing') > 0) out.push(`${fileCount(why(own, 'missing'))} planned for this ZIP file ${why(own, 'missing') === 1 ? 'isn’t' : 'aren’t'} whole in storage now, so ${why(own, 'missing') === 1 ? 'it is' : 'they are'} left out.`);
   if (why(own, 'unreadable') > 0) out.push(`${fileCount(why(own, 'unreadable'))} planned for this ZIP file can’t be read just now, so ${why(own, 'unreadable') === 1 ? 'it is' : 'they are'} left out.`);
-  const earlier = (served.set_left_out ?? []).filter((l) => l.volume !== plan.volumes.length);
+  const earlier = (served.set_left_out ?? []).filter((l) => l.volume !== undefined && l.volume !== plan.volumes.length);
+  const atStart = (served.set_left_out ?? []).filter((l) => l.volume === undefined);
+  if (atStart.length > 0) {
+    out.push(
+      `${fileCount(atStart.length)} ${atStart.length === 1 ? 'wasn’t' : 'weren’t'} whole in storage when the download was made ready, so ${atStart.length === 1 ? 'it is' : 'they are'} in none of its ZIP files. The list in this one (nya-attachments.json, set_left_out) names ${atStart.length === 1 ? 'it' : 'them'}.`
+    );
+  }
   if (earlier.length > 0) {
     out.push(
       `${fileCount(earlier.length)} planned for an earlier ZIP file of this download ${earlier.length === 1 ? 'was' : 'were'} deleted or can’t be read now. The list in this one (nya-attachments.json, set_left_out) names each, with the ZIP file it was planned for: if you saved that one before, you have it.`
@@ -283,12 +301,25 @@ const idText = (b: Buffer) => {
 const macOf = (key: Buffer, body: string) => createHmac('sha256', key).update(body).digest('base64url');
 const sameMac = (a: string, b: string) => a.length === b.length && createHash('sha256').update(a).digest().equals(createHash('sha256').update(b).digest());
 
-/** The plan as the page keeps it until the set is saved: the volumes' ids,
- *  sixteen bytes each, signed with the environment's key, so a volume asked
- *  for later is the one made ready. */
+/** Ids as one base64url run, sixteen bytes each. */
+const idRun = (ids: readonly string[]) => Buffer.concat(ids.map(idBytes)).toString('base64url');
+
+/** Ids back from idRun, or null for anything else. */
+function idsOf(run: string): string[] | null {
+  const b = Buffer.from(run, 'base64url');
+  if (b.length % 16 !== 0 || b.toString('base64url') !== run) return null;
+  const ids: string[] = [];
+  for (let at = 0; at < b.length; at += 16) ids.push(idText(b.subarray(at, at + 16)));
+  return ids.every(isAttachmentId) ? ids : null;
+}
+
+/** The plan as the page keeps it until the set is saved: the volumes' ids
+ *  and the ids left out when it was made, sixteen bytes each, signed with a
+ *  key of its own derived from the environment's, so a volume asked for
+ *  later is the one made ready. */
 export function planToken(p: Plan): string {
-  const vols = p.volumes.map((ids) => Buffer.concat(ids.map(idBytes)).toString('base64url')).join('~');
-  const body = `p1.${p.container}.${p.until}.${vols}`;
+  const vols = p.volumes.map(idRun).join('~');
+  const body = `p1.${p.container}.${p.until}.${vols}.${idRun(p.missing)}`;
   return `${body}.${macOf(planKey(), body)}`;
 }
 
@@ -297,23 +328,22 @@ export function planToken(p: Plan): string {
 export function readPlanToken(token: unknown, container: string, now: number = Date.now()): Plan | 'expired' | null {
   if (typeof token !== 'string' || token.length > MAX_PLAN_CHARS) return null;
   const parts = token.split('.');
-  if (parts.length !== 5 || parts[0] !== 'p1') return null;
-  const [, owner, untilText, vols, mac] = parts;
-  if (!sameMac(macOf(planKey(), parts.slice(0, 4).join('.')), mac)) return null;
+  if (parts.length !== 6 || parts[0] !== 'p1') return null;
+  const [, owner, untilText, vols, left, mac] = parts;
+  if (!sameMac(macOf(planKey(), parts.slice(0, 5).join('.')), mac)) return null;
   if (owner !== container) return null;
   const until = Number(untilText);
   if (!Number.isInteger(until) || until > now + PLAN_MS) return null;
   if (until <= now) return 'expired';
   const volumes: string[][] = [];
   for (const v of vols === '' ? [] : vols.split('~')) {
-    const b = Buffer.from(v, 'base64url');
-    if (b.length === 0 || b.length % 16 !== 0 || b.toString('base64url') !== v) return null;
-    const ids: string[] = [];
-    for (let at = 0; at < b.length; at += 16) ids.push(idText(b.subarray(at, at + 16)));
-    if (!ids.every(isAttachmentId)) return null;
+    const ids = idsOf(v);
+    if (!ids || ids.length === 0) return null;
     volumes.push(ids);
   }
-  return { container: owner, until, volumes };
+  const missing = idsOf(left);
+  if (!missing) return null;
+  return { container: owner, until, volumes, missing };
 }
 
 /** What a set token binds a plan by. */

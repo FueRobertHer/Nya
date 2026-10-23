@@ -548,10 +548,10 @@ export default function Dashboard({
   // the note under the chart. Sent beside the payload, never cached with it.
   const [importedHistory, setImportedHistory] = useState<ImportedHistoryView | null>(null);
   const [asOf, setAsOf] = useState<string | null>(null);
-  const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null } | null>(null);
+  const [backupProblem, setBackupProblem] = useState<{ last_ok: string | null; reason: string | null; none?: true } | null>(null);
   // The nightly clean-up of receipts and documents, said the same way
   // (lib/backup.ts attachmentSweepProblem).
-  const [filesProblem, setFilesProblem] = useState<{ last_ok: string | null; reason: string | null; held: boolean } | null>(null);
+  const [filesProblem, setFilesProblem] = useState<{ last_ok: string | null; reason: string | null; held: boolean; paused?: true } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [connecting, setConnecting] = useState(false);
@@ -2108,12 +2108,24 @@ export default function Dashboard({
                   )}
                   {backupProblem && (
                     <div className="stale-note">
-                      {backupProblem.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}
-                      {backupProblem.last_ok ? `; the last one saved was on ${fmtInstantDay(backupProblem.last_ok)}.` : '; none has been saved yet.'}
-                      {backupProblem.reason ? ` (${backupProblem.reason})` : ''} Check the backup cron in Vercel.
+                      {backupProblem.none ? (
+                        'No nightly backup has been recorded yet.'
+                      ) : (
+                        <>
+                          {backupProblem.reason ? 'The nightly backup failed' : 'The nightly backup hasn’t run'}
+                          {backupProblem.last_ok ? `; the last one saved was on ${fmtInstantDay(backupProblem.last_ok)}.` : '; none has been saved yet.'}
+                          {backupProblem.reason ? ` (${backupProblem.reason})` : ''}
+                        </>
+                      )}{' '}
+                      Check the backup cron in Vercel.
                     </div>
                   )}
-                  {filesProblem && (
+                  {filesProblem?.paused && (
+                    <div className="stale-note">
+                      The nightly clean-up of receipts and documents is paused until a nightly backup is recorded: it waits while a restore may be running.
+                    </div>
+                  )}
+                  {filesProblem && !filesProblem.paused && (
                     <div className="stale-note">
                       {filesProblem.held
                         ? 'The nightly clean-up of receipts and documents held back: in an account, it found more stored files with no record than it removes at once, so it removed none of them there.'

@@ -20,7 +20,7 @@ const c = await import('@/lib/crypto');
 const att = await import('@/lib/attachments');
 const stores = await import('@/lib/attachment-stores');
 const objectsMod = await import('@/lib/attachment-objects');
-const { PART_BYTES } = await import('@/lib/attachment-crypto');
+const { PART_BYTES, PART_FORMAT } = await import('@/lib/attachment-crypto');
 const { encodeJsonBlob } = await import('@/lib/blob');
 const { forgetEpochs } = await import('@/lib/sessions');
 const { contentKey } = await import('@/lib/transactions');
@@ -141,9 +141,13 @@ describe('an upload, in parts', () => {
     // In the file store: three objects (two parts, a thumbnail) in the
     // account's folder, none readable, no name, no marker.
     expect([...store.objects.keys()].sort()).toEqual([0, 1, 't'].map((p) => objectsMod.objectPath(ctx, id, p as never)));
+    // Each object starts with the format byte, never as a JPEG does; and no
+    // marker long enough to mean something is anywhere in the store (a
+    // short one, three or four bytes, turns up in megabytes of ciphertext by
+    // chance: review 21).
+    for (const [path, o] of store.objects) expect([path, o.bytes[0], o.bytes[0] === 0xff && o.bytes[1] === 0xd8]).toEqual([path, PART_FORMAT, false]);
     const all = store.everything();
-    for (const needle of ['RECEIPT-MARKER-PLAINTEXT', 'THUMB-MARKER', 'Pharmacy', 'JFIF', 'Blue Bottle']) expect([needle, contains(all, needle)]).toEqual([needle, false]);
-    expect(contains(all, new Uint8Array([0xff, 0xd8, 0xff]))).toBe(false);
+    for (const needle of ['RECEIPT-MARKER-PLAINTEXT', 'THUMB-MARKER', 'Pharmacy IMG', 'JFIF\0\u0001\u0001', 'Blue Bottle']) expect([needle, contains(all, needle)]).toEqual([needle, false]);
     // The record keeps no path, no URL and no plaintext key.
     expect(JSON.stringify(r)).not.toMatch(/blob\.vercel-storage|attachments\//);
     // Back whole, with its own headers.

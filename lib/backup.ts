@@ -54,7 +54,7 @@ import { exportLines, type ExportClient } from './export';
 import { envPrefix, kEnv, redis, rawRedis } from './storage';
 import { rewriteAfterDeletion, writeKeyArchive, type KeyArchiveResult, type KeysLock, type KeysPending } from './key-archive';
 import { containersUnderSharedKeys, keyIdsByContainer, namedKeyIds } from './archive-scan';
-import { MasterKeyError, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
+import { MasterKeyError, masterKeyConfigured, readContainerEntries, readKeyRecords, updateContainerEntry, ContainerKeyError } from './crypto';
 
 /** What a backup needs from object storage. Vercel Blob in production
  *  (vercelBlobStore); tests pass one kept in memory. Each call is given a
@@ -557,6 +557,10 @@ export function rewriteKeyArchivesAfterDeletion(
 
 const STATUS = () => kEnv('backups:status');
 
+/** The backups' record's key, for the operator restore, which deletes it
+ *  first (lib/restore.ts restoreArchive; see backupRecordExists). */
+export const backupStatusKey = STATUS;
+
 type Status = { last_ok: string | null; last_failed: string | null; reason: string | null; attachments?: unknown };
 
 async function readStatus(): Promise<Status | null> {
@@ -598,7 +602,11 @@ export async function recordOutcome(
   }
 }
 
-export type BackupProblem = { last_ok: string | null; reason: string | null };
+/** What the dashboard says of backups. `none`: they are kept here, and no
+ *  run has been recorded at all (a new deployment's first day, the night
+ *  after an operator restore, or a run that never gets as far as recording
+ *  itself): said, so it can't be silent for good (review nit 22). */
+export type BackupProblem = { last_ok: string | null; reason: string | null; none?: true };
 
 /** Something the dashboard should say about backups, or null. Null too when
  *  none has ever run (they aren't set up) and when the status can't be read:
@@ -616,6 +624,19 @@ export async function backupProblem(now: Date = new Date()): Promise<BackupProbl
   // newest is normal for most of the day.
   if (status.last_ok && now.getTime() - Date.parse(status.last_ok) > 2 * 86_400_000) {
     return { last_ok: status.last_ok, reason: null };
+  }
+  return null;
+}
+
+/** What the dashboard says of backups: backupProblem, and, where backups are
+ *  kept, that none has been recorded at all (`none`). Never throws. */
+export async function backupNotice(now: Date = new Date()): Promise<BackupProblem | null> {
+  const problem = await backupProblem(now);
+  if (problem) return problem;
+  try {
+    if (backupRetention()?.kept && !(await backupRecordExists())) return { last_ok: null, reason: null, none: true };
+  } catch {
+    // A notice, never a reason to fail the page.
   }
   return null;
 }
@@ -705,7 +726,9 @@ export async function recordAttachmentSweep(status: AttachmentSweepStatus): Prom
   }
 }
 
-export type AttachmentSweepProblem = { last_ok: string | null; reason: string | null; held: boolean };
+/** `paused`: backups are kept and their record isn't there, so the sweep
+ *  writes nothing (lib/attachment-sweep.ts): said, never silent. */
+export type AttachmentSweepProblem = { last_ok: string | null; reason: string | null; held: boolean; paused?: true };
 
 /** Something the dashboard should say about the sweep, or null: its last run
  *  failed, its breaker held a pass back in the last week, or none has
@@ -715,6 +738,9 @@ export type AttachmentSweepProblem = { last_ok: string | null; reason: string | 
 export async function attachmentSweepProblem(now: Date = new Date()): Promise<AttachmentSweepProblem | null> {
   let s: AttachmentSweepStatus | null;
   try {
+    // Paused while the backups' record isn't there (review nit 22), where
+    // files can be kept at all (a master key: lib/attachments.ts).
+    if (backupRetention()?.kept && masterKeyConfigured() && !(await backupRecordExists())) return { last_ok: null, reason: null, held: false, paused: true };
     s = await readAttachmentSweep();
   } catch {
     return null;

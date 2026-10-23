@@ -122,8 +122,11 @@ describe('a part, sealed', () => {
       const sealed = await ac.sealPart(key, ctx.container, 'a1', 0, 1, body);
       expect(contains(sealed, 'RECEIPT-MARKER-PLAINTEXT')).toBe(false);
       expect(contains(sealed, 'PDF-MARKER-PLAINTEXT')).toBe(false);
-      expect(contains(sealed, '%PDF')).toBe(false);
-      expect(contains(sealed, new Uint8Array([0xff, 0xd8, 0xff]))).toBe(false);
+      // It starts with the format byte, never as a JPEG or a PDF does (a
+      // short run of bytes anywhere in ciphertext proves nothing: review 21).
+      expect(sealed[0]).toBe(ac.PART_FORMAT);
+      expect(contains(sealed.subarray(0, 5), '%PDF')).toBe(false);
+      expect(sealed[0] === 0xff && sealed[1] === 0xd8).toBe(false);
     }
   });
 

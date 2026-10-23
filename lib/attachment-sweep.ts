@@ -36,12 +36,13 @@
 //     nor while the backups are failing or their setting is invalid;
 //   - only in an active account's folder: an object no record names (by the
 //     field names, so a record that can't be read still names its file) is
-//     deleted only once it has been seen unnamed for waitDays(), counted from
-//     when it was first seen, the longest a kept backup could bring back a
-//     record naming it (the nightly backups' longest life, the newest seven
-//     kept whatever their age, and the database host's own backups); seen
-//     named again, it is forgotten; an object whose name is no attachment id
-//     is never Nya's, and left alone;
+//     deleted only once no kept backup could bring back a record naming it:
+//     the oldest data archive still kept in the backups' folder was taken
+//     after the object was first seen unnamed (exact, whatever an outage did
+//     to the pruning: review nit 23), and the database host's own backups
+//     and a day have passed too (floorDays); seen named again, it is
+//     forgotten; an object whose name is no attachment id is never Nya's,
+//     and left alone;
 //   - a BREAKER: an account with objects and no record at all, or where more
 //     than 20 percent of its files or more than 50 would go in one pass, has
 //     nothing deleted; that is logged, recorded, and said on the dashboard;
@@ -61,7 +62,7 @@
 import type { Ctx, ContainerId } from './containers';
 import { isContainerId, listContainers } from './containers';
 import { readContainerEntries, readTombstones, ContainerKeyError } from './crypto';
-import { backupProblem, backupRecordExists, backupRetention, databaseBackupDays, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus } from './backup';
+import { backupFolder, backupProblem, backupRecordExists, backupRetention, databaseBackupDays, dataArchiveName, readAttachmentSweep, recordAttachmentSweep, type AttachmentSweepStatus } from './backup';
 import { attachmentStore, isAttachmentId, placeStore, sweepStateStore, usageStore, type Attachment, type Place, type SweepState } from './attachment-stores';
 import { attachmentObjects, containerFolder, environmentFolder, parseObjectPath, withLimit, type AttachmentObjects } from './attachment-objects';
 import { discardUpload, finishDelete, fieldOf, usageFromRecords, POSTING_WAIT_MS } from './attachments';
@@ -102,20 +103,37 @@ export type SweepResult = {
 
 const emptyState = (): SweepState => ({ version: 1, unnamed: {} });
 
-/** The days a kept backup could bring back a record: an object unnamed this
- *  long can go (review 6). The nightly backups' longest life (max_days:
- *  BACKUP_KEEP_DAYS + 1, and never under MIN_KEPT, since the newest seven are
- *  kept whatever their age), counted from when the object was first seen
- *  unnamed, after the last backup that could name it; the database host's
- *  own backups (DATABASE_BACKUP_DAYS, each a whole copy of the database,
- *  records included), and a day; and two days at the least. Null when either
- *  setting is invalid (nothing goes then). */
-export function waitDays(): number | null {
-  const b = backupRetention();
+/** The days at the least an object no record names waits, counted from
+ *  when it was first seen: the database host's own backups (each a whole
+ *  copy of the database, records included) and a day, and two days. Null
+ *  when a backup setting is invalid (nothing goes then). The nightly backups
+ *  are waited for exactly, by what is kept (oldestKeptArchive). */
+export function floorDays(): number | null {
   const host = databaseBackupDays();
-  if (b === null || host === null) return null;
-  return Math.max(b.kept ? b.max_days : 0, host + 1, 2);
+  if (backupRetention() === null || host === null) return null;
+  return Math.max(host + 1, 2);
 }
+
+/** When the oldest data archive still kept in the backups' folder was taken
+ *  (format 1's too, a rollback's), from one listing, or null when none is. */
+async function oldestKeptArchive(store: AttachmentObjects): Promise<number | null> {
+  const listed = await withLimit('a listing', 30_000, (signal) => store.list(backupFolder(), signal));
+  let oldest: number | null = null;
+  for (const o of listed) {
+    const n = dataArchiveName(o.pathname);
+    const at = n ? Date.parse(n.taken) : NaN;
+    if (!Number.isNaN(at) && (oldest === null || at < oldest)) oldest = at;
+  }
+  return oldest;
+}
+
+/** When an object first seen unnamed may go (review 6 and nit 23): once no
+ *  kept backup could name it, which is exactly when the oldest data archive
+ *  still kept was taken after it was first seen (whatever an outage did to
+ *  the pruning, and however late a cron ran), and the floor has passed. */
+export type DeleteRule = { floor_days: number; oldest_archive: number | null };
+export const mayGo = (firstSeen: number, rule: DeleteRule, now: number) =>
+  firstSeen + rule.floor_days * 86_400_000 <= now && (rule.oldest_archive === null || rule.oldest_archive > firstSeen);
 
 // ---- Per account ----
 
@@ -313,7 +331,7 @@ async function sweepContainer(ctx: Ctx, now: number, result: SweepResult): Promi
 
 /** One active account's folder: objects no record names, deleted once
  *  unnamed for the backups' window (see the header). */
-async function orphansIn(ctx: Ctx, store: AttachmentObjects, wait: number, now: number, result: SweepResult): Promise<void> {
+async function orphansIn(ctx: Ctx, store: AttachmentObjects, rule: DeleteRule, now: number, result: SweepResult): Promise<void> {
   const objects = await withLimit('a listing', 30_000, (signal) => store.list(containerFolder(ctx), signal));
   if (objects.length === 0) return;
   const named = new Set(await attachmentStore.ids(ctx));
@@ -330,11 +348,11 @@ async function orphansIn(ctx: Ctx, store: AttachmentObjects, wait: number, now: 
   const state = (await sweepStateStore.get(ctx)) ?? emptyState();
   const seen: Record<string, string> = {};
   for (const id of unnamed) seen[id] = state.unnamed[id] ?? at;
-  const due = unnamed.filter((id) => Date.parse(seen[id]) + wait * 86_400_000 <= now);
+  const due = unnamed.filter((id) => mayGo(Date.parse(seen[id]), rule, now));
   const held = (named.size === 0 && byId.size > 0 && due.length > 0) || due.length > BREAKER_FILES || due.length > Math.max(1, Math.floor(byId.size * BREAKER_SHARE));
   if (held) {
     result.held++;
-    console.error(`Receipts sweep: the breaker held account ${ctx.container} (${due.length} of ${byId.size} files unnamed for ${wait} days); nothing deleted there`);
+    console.error(`Receipts sweep: the breaker held account ${ctx.container} (${due.length} of ${byId.size} files unnamed since before every kept backup); nothing deleted there`);
   } else if (due.length > 0) {
     const paths = due.flatMap((id) => byId.get(id)!);
     await withLimit('a delete', 30_000, (signal) => store.del(paths, signal));
@@ -356,10 +374,12 @@ async function deletedFolder(store: AttachmentObjects, folder: string): Promise<
 /** The store-wide pass, when it is safe (see the header). Answers false when
  *  it was held back. */
 async function storeWide(store: AttachmentObjects, registry: { id: ContainerId; status: string }[], now: number, result: SweepResult): Promise<boolean> {
-  const wait = waitDays();
-  if (wait === null) return false;
+  const floor = floorDays();
+  if (floor === null) return false;
   if (registry.some((c) => c.status === 'restoring')) return false;
-  if (backupRetention()?.kept && (await backupProblem(new Date(now))) !== null) return false;
+  const kept = backupRetention()?.kept === true;
+  if (kept && (await backupProblem(new Date(now))) !== null) return false;
+  const rule: DeleteRule = { floor_days: floor, oldest_archive: kept ? await oldestKeptArchive(store) : null };
   const status = new Map(registry.map((c) => [c.id as string, c.status]));
   const entries = await readContainerEntries();
   const tombstoned = new Set([...(await readTombstones()).values()].map((t) => t.container));
@@ -369,7 +389,7 @@ async function storeWide(store: AttachmentObjects, registry: { id: ContainerId; 
     if (!isContainerId(id)) continue;
     const s = status.get(id);
     try {
-      if (s === 'active') await orphansIn({ container: id }, store, wait, now, result);
+      if (s === 'active') await orphansIn({ container: id }, store, rule, now, result);
       else if (s === undefined) {
         const entry = entries.get(id);
         const destroyed = (entry && !(entry instanceof ContainerKeyError) && 'destroyed' in entry) || tombstoned.has(id);

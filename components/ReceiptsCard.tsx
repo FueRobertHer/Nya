@@ -288,8 +288,8 @@ function ZipDownload({ send, needsPassword, onSaved }: ZipProps) {
           </ul>
           {plan.left_out.length > 0 && (
             <p className="stale-note">
-              {plan.left_out.length === 1 ? 'One file is' : `${plan.left_out.length} files are`} left out: not whole in storage, or can’t be opened. Each file’s list names{' '}
-              {plan.left_out.length === 1 ? 'it' : 'them'}.
+              {plan.left_out.length === 1 ? 'One file is' : `${plan.left_out.length} files are`} left out: {plan.left_out.length === 1 ? 'it isn’t' : 'they aren’t'} whole in storage. The list
+              in the last ZIP file names {plan.left_out.length === 1 ? 'it' : 'them'}.
             </p>
           )}
           {plan.unreadable > 0 && <p className="stale-note">{plan.unreadable === 1 ? 'One record' : `${plan.unreadable} records`} couldn’t be read, so not every file is here.</p>}

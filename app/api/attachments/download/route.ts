@@ -137,7 +137,11 @@ export async function POST(req: Request) {
   const plan = readPlanToken(body.plan, ctx.container, now.getTime());
   if (plan === 'expired') {
     return NextResponse.json(
-      { error: 'This download was made ready more than six hours ago. Get it ready again.', plan_expired: true },
+      {
+        error:
+          'This download was made ready more than six hours ago. Get it ready again, then save every ZIP file of the new set, and put away any you saved from this one: the new set is packed afresh, so files from the two don’t fit together.',
+        plan_expired: true,
+      },
       { status: 409, headers: NO_STORE }
     );
   }
