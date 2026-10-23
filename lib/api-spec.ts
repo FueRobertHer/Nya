@@ -330,7 +330,7 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     summary:
       'How long your cash would last at your recent spending, with your income and without it: the day it would run out, and what it is worked out from. An estimate, under a what-if when asked for one.',
     args: {
-      months: { kind: 'choice', values: ['3', '6', '12'], description: 'The full calendar months before this one the spending is read over: 3, 6 (the default) or 12.' },
+      months: { kind: 'int', min: 3, max: 12, description: 'The full calendar months before this one the spending is read over: 3, 6 (the default) or 12.' },
       spending_lower_by: { kind: 'amount', description: 'A what-if: spending lower by this much a month, in the runway’s currency. Zero or more.' },
       income_until: { kind: 'day', description: 'A what-if: the last day income comes in the line with income, YYYY-MM-DD (UTC). Without it, income keeps coming.' },
       include_planned: { kind: 'flag', description: 'Whether the expenses and income you planned are in it (true by default).' },

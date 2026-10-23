@@ -66,6 +66,7 @@ const scenariosRoute = await import('@/app/api/runway-scenarios/route');
 const apiRunway = await import('@/app/api/v1/runway/route');
 const apiYoy = await import('@/app/api/v1/year-over-year/route');
 const apiSpending = await import('@/app/api/v1/spending/route');
+const mcp = await import('@/app/api/mcp/route');
 
 const NY = 'America/New_York';
 const period = (start: string, end: string) => {
@@ -111,6 +112,17 @@ const get = async (route: { GET: (r: Request) => Promise<Response> }, path: stri
 const api = async (route: { GET: (r: Request) => Promise<Response> }, name: string, query = '') => {
   const res = await route.GET(new Request(`https://nya.test/api/v1/${name}${query ? `?${query}` : ''}`, { headers: { authorization: `Bearer ${token}` } }));
   return { res, body: (await res.json()) as any };
+};
+/** An MCP tool's result: its summary, and the JSON the REST endpoint gives. */
+const tool = async (name: string, args: Record<string, unknown>) => {
+  const res = await mcp.POST(
+    new Request('https://nya.test/api/mcp', {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+      body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/call', params: { name, arguments: args } }),
+    })
+  );
+  return ((await res.json()) as any).result;
 };
 const send = async (method: 'POST' | 'DELETE', body: unknown) => {
   const res = await (scenariosRoute as any)[method](new Request('https://nya.test/api/runway-scenarios', { method, body: typeof body === 'string' ? body : JSON.stringify(body) }));
@@ -278,6 +290,15 @@ describe('the runway from stored data', () => {
       if (withIncome) expect([query, body.with_income.runs_out]).toEqual([query, withIncome]);
     }
     expect((await quiet(() => api(apiRunway, 'runway', 'months=3&include_planned=false'))).body.planned).toEqual([]);
+    // The MCP tools answer the same, with a summary in words.
+    const t = await quiet(() => tool('get_runway', { months: 3 }));
+    expect(t.isError).toBeFalsy();
+    expect(t.content[0].text).toContain('without income it runs out on 2027-01-24, after 93 days (3.06 months); with income it runs out on 2027-06-05, after 225 days (7.39 months).');
+    expect(t.content[0].text).toContain('Some of those months may be short of transactions: see notes.');
+    expect((await quiet(() => tool('get_runway', { months: 4 }))).isError).toBe(true);
+    const y = await quiet(() => tool('get_year_over_year', {}));
+    expect(y.content[0].text).toContain('2026-01-01 to 2026-10-22: money out');
+    expect(y.content[0].text).toContain('the same days a year before.');
     // Six months by default.
     expect((await quiet(() => api(apiRunway, 'runway'))).body.spending).toMatchObject({ months: 6, from: '2026-04-01' });
     for (const query of ['months=4', 'months=3&months=6', 'spending_lower_by=-5', 'spending_lower_by=lots', 'income_until=2026-02-30', 'include_hidden=true', 'tz=UTC']) {
