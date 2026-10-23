@@ -387,13 +387,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'list_accounts',
     'accounts',
     'List accounts',
-    'Every account, linked, kept up to date through SimpleFIN or Lunch Flow, and manual, with where it comes from (source), its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, how its bank connection was last found, and when it ended if it did (lifecycle: closed, left or untracked, counted in nothing from that day; listed even once its bank stops returning it).',
+    'Every account, linked, kept up to date through SimpleFIN or Lunch Flow, and manual, with where it comes from (source), its type, its newest measured balance (what a card or loan owes is positive), its currency, the day that balance is from, how its bank connection was last found, and when it ended if it did (lifecycle: closed, left or untracked, counted in nothing from that day; listed even once its bank stops returning it). Once the person has chosen a home currency, to_base gives each balance in it (base_currency).',
     NARROW_HIDDEN
   ),
   {
     name: 'get_net_worth',
     title: 'Net worth',
-    description: `Net worth now, one total per currency (nothing is converted), from each account’s newest measured balance, and its recorded history (hidden accounts subtracted, and each account that ended from its end day on, as the app’s chart does). ${DATA_NOT_INSTRUCTIONS}`,
+    description: `Net worth now, one total per currency as stored, from each account’s newest measured balance, and its recorded history (hidden accounts subtracted, and each account that ended from its end day on, as the app’s chart does). Once the person has chosen a home currency, base gives net worth converted into it (base_currency) at the European Central Bank’s reference rates or the person’s own, naming any currency left out for having no rate, and each history point its to_base. ${DATA_NOT_INSTRUCTIONS}`,
     args: {
       include_history: { kind: 'flag', description: 'Also give its recorded history (true by default).' },
       from: { kind: 'day', description: 'History from this day, YYYY-MM-DD (UTC).' },
@@ -408,7 +408,7 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'get_balance_history',
     'balance-history',
     'Balance history',
-    'Net worth by day, or one account’s balance by day (account_id), recorded points only unless include_estimated; a point a month unless interval says otherwise.',
+    'Net worth by day, or one account’s balance by day (account_id), recorded points only unless include_estimated; a point a month unless interval says otherwise. Once the person has chosen a home currency, each point’s to_base gives it in that currency (base_currency), each day at its own rate.',
     'Ask for a shorter from and to, or a longer interval (week or month).',
     { interval: 'month' }
   ),

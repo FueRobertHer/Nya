@@ -59,6 +59,7 @@ describe('what comes back, in words', () => {
     ]);
     expect(lines.join(' ')).not.toMatch(/store:|history:|restored-/);
     expect(broughtLines({ 'store:connector-connections': 2 }, null)).toEqual(['2 connections to SimpleFIN or Lunch Flow, to connect again with a new Setup Token or an API key from Lunch Flow']);
+    expect(broughtLines({ 'store:currency-settings': 1 }, null)).toEqual(['your home currency and your own exchange rates']);
     expect(leftOutLines(p.left_out, p.collected.never)).toEqual([
       '1 pending transaction: the bank sends it again once posted',
       'what you said only about pending transactions (3)',

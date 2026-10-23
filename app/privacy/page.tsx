@@ -244,6 +244,10 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
     'The weekly summary',
     `Whether it is on, its day and your time zone: until you change them, or delete your account. Encrypted, and in your download. Beside them, encrypted too and kept until you delete your account, but not in your download: the key its links to turn it off are signed with, made anew each time you turn it on; the last week a summary went for, and one that got no answer from the email service; and which of your goals, by their ids, it last said had reached their target. Each link works for ${LINK_DAYS} days.`,
   ],
+  [
+    'Your home currency and your own exchange rates',
+    'Until you change them, or delete your account. Encrypted, and in your download. Nothing converted is kept by Nya’s server: each figure is worked out again when it is shown (your device keeps the last ones it showed, with the rest of what the app last showed). The European Central Bank’s rates are public, kept once for everyone in plain text, and left out of Nya’s nightly backups.',
+  ],
   ['Weekly summaries you asked for now, and uses of a link to turn one off', 'Counted for a day, and for an hour.'],
   ['Reads of what is shared with you, and of what someone sees of yours', `Counted for ${SHARED_READS_WINDOW_SECONDS / 60} minutes.`],
   ['Sessions with the shared password', '30 days, or until you sign out everywhere.'],
@@ -300,6 +304,10 @@ export default function PrivacyPage() {
           {mail
             ? 'Not used yet: no billing provider, since Nya charges nothing yet.'
             : 'Not used yet: no billing provider, since Nya charges nothing yet, and no email provider, since this copy of Nya sends no email of its own.'}
+        </p>
+        <p>
+          Public data Nya uses: the exchange rates a home currency converts with are the European Central Bank’s euro reference rates, which
+          Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you, and can’t tell who uses them.
         </p>
       </InfoSection>
 

@@ -61,9 +61,9 @@ A JSON download, protected or not, brings everything in it back into another cop
 
 **The file stays on your device.** It is read in the page a few megabytes at a time, never sent whole, so a file of years of transactions opens on a phone; a protected one is opened first with its passphrase, there, as on [Open a protected download](#opening-it). Every record is checked against what this version of Nya writes, and anything it doesn't know refuses the whole file: a newer version's field, a part it doesn't know, version 3, damaged JSON, a key written twice. Then the page says what comes back and what doesn't. What the file names under [`problems`](#problems) refuses it when the rest is read against it (your categories, budgets or accounts); a damaged entry you can do without (a note, a split, a day of history) is named with the transactions it affects, and left out once you confirm.
 
-**What comes back**, every id kept: your categories and their groups, tags and rules, manual accounts with their transactions and imports, transactions imported into linked accounts, what you said about transactions (categories, merchant names, notes, tags, exclusions, splits, groups, approvals), the links between earlier accounts and new ones, hidden accounts and account ends, budgets with their months and rollover, goals with their plans, the Plan, planned bills and income, timeline notes, holdings history, every layer of your balance history (each recorded day back into recorded history, unchanged: Nya measured it), and your settings. A connection to SimpleFIN or Lunch Flow comes back without its credential (the Access URL, the API key), as after an operator restore: connect it again with a new Setup Token, or an API key from Lunch Flow, and its accounts keep their history. What the download leaves out because the entries hold it (each import's summary, the holdings index) is worked out again at the end.
+**What comes back**, every id kept: your categories and their groups, tags and rules, manual accounts with their transactions and imports, transactions imported into linked accounts, what you said about transactions (categories, merchant names, notes, tags, exclusions, splits, groups, approvals), the links between earlier accounts and new ones, hidden accounts and account ends, budgets with their months and rollover, goals with their plans, the Plan, planned bills and income, timeline notes, holdings history, every layer of your balance history (each recorded day back into recorded history, unchanged: Nya measured it), your home currency and your own exchange rates (a manual account in its own currency, to the cent), and your settings. The ECB's exchange rates are in no download: they are the same for everyone and kept apart from every account, so a restore, its undo and emptying an account neither bring them nor touch them. A connection to SimpleFIN or Lunch Flow comes back without its credential (the Access URL, the API key), as after an operator restore: connect it again with a new Setup Token, or an API key from Lunch Flow, and its accounts keep their history. What the download leaves out because the entries hold it (each import's summary, the holdings index) is worked out again at the end.
 
-**Banks connected through Plaid** can't come back connected: the file holds no access token, and Plaid gives a new connection new ids. Each comes back as earlier accounts, as after a disconnect, with the bank's posted transactions kept whole, held and not counted until you connect the bank again and link each account to its new one when Nya offers (Reconnected accounts). Then they count once: the bank's own transactions take their place where its history reaches, and the older ones count under the linked account. A bank you won't connect here, stop following (from the day after its last transaction in the file, unless you choose another). Until one or the other, **no net worth total is recorded**: a total without that bank would be short for good. The total says so under it, and so does each month its transactions cover.
+**Banks connected through Plaid** can't come back connected: the file holds no access token, and Plaid gives a new connection new ids. Each comes back as earlier accounts, as after a disconnect, in its own currency (so a home currency converts its past days as before), with the bank's posted transactions kept whole, held and not counted until you connect the bank again and link each account to its new one when Nya offers (Reconnected accounts). Then they count once: the bank's own transactions take their place where its history reaches, and the older ones count under the linked account. A bank you won't connect here, stop following (from the day after its last transaction in the file, unless you choose another). Until one or the other, **no net worth total is recorded**: a total without that bank would be short for good. The total says so under it, and so does each month its transactions cover.
 
 **Never**: pending transactions (the bank sends them again once posted) and what you said only about them; credentials (bank access tokens, the SimpleFIN Access URL, the Lunch Flow API key, API tokens: make new ones); sharing, which is between two people; and the app's machinery. Investment transactions come back into a store of their own, kept for your next download, not shown yet.
 
@@ -87,6 +87,7 @@ The JSON file lists these itself, under `not_included`.
 - **Your API tokens themselves.** Nya never keeps a token's secret, only a hash of it to check it against, and the hash is credential material too, so neither is in the file, and nor is the token's id, which is part of the token. Each token's name and dates are in, under [`api_tokens`](#api_tokens).
 - **Your sign-in.** With Clerk, your email address and sign-in methods are kept by Clerk, not Nya; Clerk's account window shows them. With the shared password, the password itself.
 - **Internal ids and the app's machinery.** Your storage container's id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections, and accounts a bank stopped reporting, held while the snapshot waits to be sure). They are about running the app, not about you.
+- **The ECB's exchange rates.** Public, the same for everyone, and nobody's: they are on the European Central Bank's site. The figures converted with them are worked out when they are shown, never kept by Nya's server, so the file has every amount in its own currency, and your choice of a home currency and your own rates, under [`currency-settings`](#currency-settings).
 - **Other people's data.** What people you are connected with share with you, what they call you, and how they introduced themselves. Their record of each time what they share was shown to you is in, under `sharing`: it is about you, and the same one they see.
 - **Unused invite links.** They work for 72 hours and are then gone.
 
@@ -174,7 +175,7 @@ Every account the file mentions anywhere, apart from the manual accounts you hav
 | `name`, `official_name` | Its names at the bank. |
 | `type`, `subtype` | Plaid's kind of account: `depository`, `credit`, `loan`, `investment` or `other`, and for example `checking`. |
 | `mask` | The last digits of the account number. |
-| `currency` | Its currency code, when known. |
+| `currency` | Its currency code, when known: from its bank's latest record, or, for an account its bank no longer lists, the account directory's. |
 | `credit_limit` | A card's credit line, when known. |
 | `persistent_account_id` | Plaid's id for the account across reconnects, where the bank offers one. |
 | `first_seen`, `last_seen` | The first and last day Nya knew the account. |
@@ -188,7 +189,7 @@ One SimpleFIN or Lunch Flow keeps up to date is described from its entry in [`co
 
 ### `manual_accounts[]`
 
-`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). Manual balances carry no currency, and the app shows them in US dollars, except an account SimpleFIN or Lunch Flow kept up to date in another currency, kept as a manual account when you disconnected it: it has `currency`, its currency code. A manual account that can't be read is named under [`problems`](#problems) instead.
+`account_id`, `name`, `institution_name`, `type`, `subtype` (`cash` for one you marked as cash on hand, with the type `depository`), `balance` (as you last set it or pushed it), `updated_at` (when that was), `hidden`, `hidden_at`, and `lifecycle` (when it ended, or `null`, as in [`accounts`](#accounts)). A manual balance in US dollars carries no currency (as every one typed before a currency could be chosen); one in another has `currency`, its currency code: the one you chose for it, or, for an account SimpleFIN or Lunch Flow kept up to date and kept as a manual account when you disconnected it, the one the service gave. A manual account that can't be read is named under [`problems`](#problems) instead.
 
 ### `hidden_accounts[]`
 
@@ -343,7 +344,7 @@ When your accounts ended (`lib/lifecycle.ts`, [features.md](features.md#accounts
 | `type` | Its kind (`depository`, `credit`, `loan`, `investment`, `other`), kept so it can be taken out of the totals after its end even once its bank is gone; `null` when it wasn't known. |
 | `label` | `name`, `institution` and `mask`, as it was when it ended, so it can be named after its institution is gone. |
 | `item_id` | Its connection, or `null` for a manual account. |
-| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; US dollars for a manual account), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
+| `currency` | Its balance's currency where Nya knew it when the entry was written (an ISO code, or Plaid's code for a cryptocurrency; a manual account's own, US dollars when it names none), so it can be priced where it is still listed after its bank stops returning it. Absent when it wasn't known. |
 | `set_at` | When this was saved. |
 | `assumed` | `true` when Nya assumed it closed: its bank stopped returning it and nobody answered within three days. Absent otherwise. |
 | `answered` | `{ "kind": "missing" or "zero", "since": day }`: you said it is still open, answering the question about it going missing or sitting at zero from that day. Absent otherwise. |
@@ -505,6 +506,17 @@ The accounts SimpleFIN or Lunch Flow kept up to date that you stopped tracking o
 | `left_out[]` | Its `left_out` from `connector-accounts` when you let it go, if it had any: read as there, up to the day you let it go. |
 | `ended_at` | When you let it go. |
 | `kept` | `true` when it was kept as a manual account, its transactions with it; `false` when it was removed, with them. |
+
+#### `currency-settings`
+
+Your home currency and your own exchange rates ([features.md](features.md#a-home-currency), `lib/fx/settings.ts`), or `null` if you never chose one or set a rate. Stored but damaged, or in a form this version doesn't know, it is `null` and named under [`problems`](#problems). Nothing converted with them is stored, so nothing converted is in the file: every amount in it is in its own currency, as stored.
+
+| Field | Meaning |
+| --- | --- |
+| `v` | The shape's version: 1. |
+| `home` | The ISO code of the home currency you chose, or `null` for none: nothing is converted. |
+| `changes[]` | Each time you chose, changed or stopped it, oldest first: `on`, the UTC day; `from`, what it was (`null` for none); `to`, what it became (`null` for none). |
+| `own[]` | Your own rates: `currency`, the code it prices (an ISO code, or an unofficial one such as `BTC`); `rate`, what one unit of it is worth in `quote`, as text, as you typed it; `quote`, `EUR` or a currency the ECB publishes; `from`, the first UTC day it applies, or `null` for every day; `set_at`, when you set it. |
 
 #### `fire-plan`
 

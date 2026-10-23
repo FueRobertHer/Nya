@@ -751,9 +751,10 @@ export type ExportManualAccount = {
   type: string;
   subtype: string | null;
   balance: number;
-  /** Only on an account SimpleFIN fed in another currency, kept as a manual
-   *  account on a disconnect: its currency code. Every other manual balance
-   *  carries none, and is in US dollars. */
+  /** Only on an account in another currency than US dollars: its currency
+   *  code, the one chosen for it or the one SimpleFIN or Lunch Flow fed it
+   *  in, kept as a manual account on a disconnect (lib/manual.ts). Every
+   *  other manual balance carries none, and is in US dollars. */
   currency?: string;
   updated_at: string | null;
   hidden: boolean;
@@ -857,6 +858,7 @@ export function notIncluded(people: boolean): string[] {
       ? 'Your sign-in (email address, password, sign-in methods): kept by Clerk, the sign-in service, not by Nya. Your account window shows it.'
       : 'The app password: a credential, not your data.',
     'Internal ids and the machinery of the app: your storage container’s id, caches, locks, sync cursors, whether Plaid included transactions when each connection was linked, rate-limit counters, and the records of scheduled jobs (snapshots, backups, checks on connections and on accounts a bank stopped reporting). They are about running the app, not about you.',
+    'The European Central Bank’s exchange rates: public, the same for everyone, and on the ECB’s own site. Nya’s server keeps nothing converted with them, so every amount here is in its own currency; your home currency and your own rates are in, under currency-settings.',
     'What other people share with you, what they call you and how they introduced themselves: that is their data. Their record of each time what they share was shown to you is in, under sharing: it is about you, and they see the same one.',
     'Unused invite links: they work for 72 hours and are then gone.',
     ...(people ? [] : ['Sharing: with one shared password there are no separate people to share with.']),
@@ -1329,7 +1331,8 @@ export function buildUserExport(data: UserData, now: Date): UserExport {
         type: m?.a.type ?? d?.type ?? s?.a.type ?? v?.a.type ?? null,
         subtype: m?.a.subtype ?? d?.subtype ?? s?.a.subtype ?? v?.a.subtype ?? null,
         mask: m?.a.mask ?? d?.mask ?? s?.a.mask ?? v?.a.mask ?? null,
-        currency: m?.a.currency ?? s?.a.balances?.iso_currency_code ?? null,
+        // The directory's, for an account its bank no longer lists.
+        currency: m?.a.currency ?? s?.a.balances?.iso_currency_code ?? d?.currency ?? null,
         credit_limit: m?.a.limit ?? s?.a.balances?.limit ?? null,
         persistent_account_id: d?.persistent_account_id ?? null,
         first_seen: d?.first_seen ?? null,

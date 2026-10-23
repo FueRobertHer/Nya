@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { deflateRawSync } from 'node:zlib';
+import { crc32, deflateRawSync } from 'node:zlib';
 import { decodeFile } from '@/lib/import/text';
 import { readAppFile, type AppRead } from '@/lib/import/apps/read';
 import { detectApp } from '@/lib/import/apps/detect';
@@ -48,6 +48,7 @@ function zip(files: Record<string, string | Uint8Array>): Uint8Array {
     local.writeUInt32LE(0x04034b50, 0);
     local.writeUInt16LE(20, 4);
     local.writeUInt16LE(8, 8);
+    local.writeUInt32LE(crc32(data), 14);
     local.writeUInt32LE(packed.length, 18);
     local.writeUInt32LE(data.length, 22);
     local.writeUInt16LE(nameBytes.length, 26);
@@ -56,6 +57,7 @@ function zip(files: Record<string, string | Uint8Array>): Uint8Array {
     central.writeUInt16LE(20, 4);
     central.writeUInt16LE(20, 6);
     central.writeUInt16LE(8, 10);
+    central.writeUInt32LE(crc32(data), 16);
     central.writeUInt32LE(packed.length, 20);
     central.writeUInt32LE(data.length, 24);
     central.writeUInt16LE(nameBytes.length, 28);

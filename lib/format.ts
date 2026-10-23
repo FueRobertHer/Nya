@@ -203,6 +203,19 @@ function fullCompact(amount: number, currency?: string | null): string {
 }
 
 /**
+ * An exchange rate as a person reads it: "1 USD = 0.86573 EUR", to five
+ * significant figures, for showing only (lib/fx/rates.ts converts with the
+ * exact rate, never this). A rate is not an amount of the person's money (the
+ * ECB's are public, and a rate of their own is a price), so it shows while
+ * amounts are hidden: it is not one of the hide-amounts scan's formatters
+ * (test/amount-sources.ts FORMATTERS), and test/hide-amounts.test.tsx holds
+ * it to that.
+ */
+export function formatRate(rate: number, from: string, to: string): string {
+  return `1 ${from} = ${new Intl.NumberFormat(undefined, { maximumSignificantDigits: 5 }).format(rate)} ${to}`;
+}
+
+/**
  * Amounts as wide as the widest each short form writes in `currency` in this
  * locale (formatMoney's under ten, compactMoney's at each size), with 8s for
  * figures: nobody's amount, the same whatever the switch says. For a layout
@@ -216,8 +229,10 @@ export function amountSamples(currency?: string | null): string[] {
 
 // The most common currency across a set of amounts, used to label summed
 // figures (totals, budgets) with a single symbol. Null when nothing carries a
-// currency. Nothing converts between currencies, so a total adds up only the
-// amounts in this one and says what it left out (lib/spending.ts).
+// currency. A total adds up only the amounts in this one and says what it
+// left out (lib/spending.ts); only net worth converts, once the person has
+// chosen a home currency (lib/fx/net-worth.ts), and every other caller over
+// balances is listed in test/currency-callers.test.ts with its reason.
 export function dominantCurrency(
   items: { iso_currency_code: string | null }[]
 ): string | null {
@@ -255,4 +270,14 @@ export function plainNumber(n: number): string {
  */
 export function fieldAmount(amount: number, places = 2): string {
   return amount.toFixed(places);
+}
+
+/**
+ * An empty amount field's example: zero, to the currency's own `places`
+ * ("0.00", "0" for yen, "0.000" for dinars). No figure of anyone's, the same
+ * whatever the switch says, so it is written as text, never as an amount nor
+ * as a field's figures (test/amount-sources.ts), as a placeholder may be.
+ */
+export function zeroExample(places: number): string {
+  return places > 0 ? `0.${'0'.repeat(places)}` : '0';
 }

@@ -146,13 +146,13 @@ function parseChange(body: unknown, now: number = Date.now()): Change | string {
  *  manual account's own record; the entry it has already; the entry of an
  *  account SimpleFIN keeps up to date; the dashboard's cached payload; its
  *  institution's remembered accounts; the account directory, which outlives
- *  a disconnect (and keeps no currency). Null for an account none of them
- *  knows. */
+ *  a disconnect, and a restore (its currency where it was kept). Null for an
+ *  account none of them knows. */
 async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout | null> {
   if (isManualId(account_id)) {
     const m = await getManualAccount(ctx, account_id);
-    // A manual account's balance is in US dollars (lib/manual.ts), unless
-    // SimpleFIN fed it in another before it was kept as a manual account.
+    // A manual account's balance is in its own currency (lib/manual.ts: the
+    // one chosen for it, or kept from a connector; US dollars when none).
     if (m) return { type: m.type, label: { name: m.name, institution: m.institution_name, mask: null }, item_id: null, currency: m.currency ?? MANUAL_CURRENCY };
   }
   const existing = await lifecycleStore.get(ctx, account_id);
@@ -195,6 +195,7 @@ async function aboutAccount(ctx: Ctx, account_id: string): Promise<AccountAbout 
       type: known.type,
       label: { name: known.name ?? known.official_name ?? 'Account', institution: known.institution_name, mask: known.mask },
       item_id: known.item_id,
+      currency: known.currency ?? null,
     };
   }
   return null;

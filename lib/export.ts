@@ -129,6 +129,25 @@ export const EXCLUDED_PREFIXES = [
   'connector-claims',
 ] as const;
 
+/**
+ * Left out of every archive too, but for another reason: public data that can
+ * always be fetched again, kept once for the environment by a public store on
+ * the storage seam (lib/repo.ts definePublicMapStore): the ECB's exchange
+ * rates (lib/fx/ecb-store.ts), about 5 MB that 30 kept archives would copy.
+ * Unlike EXCLUDED_PREFIXES, an archive that holds one is not refused (the
+ * release before backs them up): restore skips such a record, writing
+ * nothing, and never deletes the running copy's, which describe the world,
+ * not the data being restored (lib/restore.ts).
+ */
+export const REFETCHED_PREFIXES = ['fx:'] as const;
+
+/** Whether a key (relative to the environment prefix) is refetched public
+ *  data (REFETCHED_PREFIXES), judged as isExcluded judges. */
+export function isRefetched(relative: string): boolean {
+  const { key } = splitScoped(relative);
+  return REFETCHED_PREFIXES.some((p) => key.startsWith(p));
+}
+
 /** Page size for HSCAN. history:accounts gains a field every day, and one
  *  HGETALL of years of it would be one oversized response. */
 const PAGE = 200;
@@ -387,8 +406,8 @@ export async function* exportLines(
     env_prefix: prefix.replace(/:$/, ''),
     container_id: null,
     taken_at: now.toISOString(),
-    // Inside a container too (isExcluded).
-    excluded: EXCLUDED_PREFIXES.flatMap((p) => [`${p}*`, `c:*:${p}*`]),
+    // Inside a container too (isExcluded), and the refetched public data.
+    excluded: [...EXCLUDED_PREFIXES, ...REFETCHED_PREFIXES].flatMap((p) => [`${p}*`, `c:*:${p}*`]),
     keys_apart: [...KEY_STORE_KEYS],
   };
   const hash = createHash('sha256');
@@ -400,7 +419,10 @@ export async function* exportLines(
   const unsupported: ExportFooter['unsupported'] = [];
   let count = 0;
 
-  const keys = (await listKeys(client, prefix)).filter((full) => !isExcluded(full.slice(prefix.length)) && !isKeyStore(full.slice(prefix.length)));
+  const keys = (await listKeys(client, prefix)).filter((full) => {
+    const relative = full.slice(prefix.length);
+    return !isExcluded(relative) && !isRefetched(relative) && !isKeyStore(relative);
+  });
   for (let i = 0; i < keys.length; i += BATCH) {
     for (const record of await readBatch(client, prefix, keys.slice(i, i + BATCH), unsupported)) {
       const line = JSON.stringify(record) + '\n';

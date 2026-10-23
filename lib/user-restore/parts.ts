@@ -78,6 +78,7 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'connector-accounts': { kind: 'map', restore: 'write', max: 100 },
   'connector-connections': { kind: 'map', restore: 'write', max: 2 },
   'connector-ended': { kind: 'map', restore: 'write' },
+  'currency-settings': { kind: 'value', restore: 'write' },
   'fire-plan': { kind: 'value', restore: 'write' },
   // MAX_GOALS (lib/goal-model.ts).
   'goal-plans': { kind: 'map', restore: 'write', max: 20 },

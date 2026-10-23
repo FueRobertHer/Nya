@@ -109,6 +109,9 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   'connector-connections': 'data',
   'connector-ended': 'data',
   'connector-secrets': 'data',
+  // The home currency and own rates (lib/fx/settings.ts): one value the
+  // rest is shown through, never referred to by what is stored.
+  'currency-settings': 'setting',
   'fire-plan': 'setting',
   'goal-plans': 'data',
   'history-import-summaries': 'data',

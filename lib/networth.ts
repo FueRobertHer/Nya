@@ -202,7 +202,11 @@ export async function fetchInstitution(ctx: Ctx, item: StoredItem): Promise<Inst
       balance: a.balances.current,
       available: a.balances.available,
       limit: a.balances.limit, // credit line, for utilization
-      currency: a.balances.iso_currency_code,
+      // What the balance is in: Plaid's ISO code, or its unofficial one (a
+      // cryptocurrency) when there is no ISO code, as holdings keep it below.
+      // Without the unofficial code, a balance in bitcoin had no currency and
+      // was added to every total as if it were in the main one.
+      currency: a.balances.iso_currency_code ?? a.balances.unofficial_currency_code ?? null,
       // Plaid's cross-Item identity for the account, where it offers one (Chase
       // in production). Strong evidence when matching a re-added account.
       persistent_account_id: a.persistent_account_id ?? null,

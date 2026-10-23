@@ -101,8 +101,9 @@ describe('a round trip', () => {
       ].sort()
     );
     // No connection: its accounts are earlier ones, each as the download had
-    // it but what only the bank's own store held (the currency, the limit);
-    // the card, which the old copy hadn't listed yet, is listed from its days.
+    // it but what only the bank's own store held (the limit), its currency
+    // kept in its directory entry; the card, which the old copy hadn't
+    // listed yet, is listed from its days.
     expect(b.institutions).toEqual([]);
     const accounts = new Map<string, any>(b.accounts.map((x: any) => [x.account_id, x]));
     for (const x of a.accounts) {
@@ -110,7 +111,7 @@ describe('a round trip', () => {
       const restored = x.account_id === 'acc_chk' || x.account_id === 'acc_card';
       expect(y).toEqual(
         restored
-          ? { ...x, connected: false, currency: null, credit_limit: null, ...(x.account_id === 'acc_card' ? { first_seen: '2025-12-30', last_seen: '2026-10-06' } : {}) }
+          ? { ...x, connected: false, credit_limit: null, ...(x.account_id === 'acc_card' ? { first_seen: '2025-12-30', last_seen: '2026-10-06' } : {}) }
           : x
       );
     }
@@ -805,5 +806,104 @@ describe('isolation', () => {
     await restoreAll(OLD.text);
     expect(snapshot(ctxKey('', OTHER))).toEqual(before);
     expect(unscopedDataKeys(fake)).toEqual([]);
+  });
+});
+
+describe('the home currency and the currencies of manual accounts', () => {
+  test('a manual account in euros, the home currency and its own rates come back to the cent; the ECB’s rates are never the account’s', async () => {
+    const { currencySettingsStore } = await import('@/lib/fx/settings');
+    const { readAccounts } = await import('@/lib/api-read');
+    const { ecbHash } = await import('./fx-fixture');
+    // Environment-wide, for everyone: never in a download, nor in a container.
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    const rates = () => JSON.stringify(Object.fromEntries(fake.hashes.get(testKey('fx:ecb'))!));
+    const ratesBefore = rates();
+    // The copy the download comes from: dollars at home, a savings account
+    // typed in euros, one in pesos priced at the person's own rate.
+    await seedOld(fake, OTHER);
+    const typed = { institution_name: 'Abroad', type: 'depository' as const, subtype: null, updated_at: '2026-09-30T10:00:00.000Z' };
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_eur', name: 'Sparkonto', balance: 12345.67, currency: 'EUR' });
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_ars', name: 'Pesos', balance: 1_000_000, currency: 'ARS' });
+    const settings = {
+      v: 1 as const,
+      home: 'USD',
+      own: [{ currency: 'ARS', rate: '0.00071', quote: 'USD', from: null, set_at: '2026-09-01T10:00:00.000Z' }],
+      changes: [{ on: '2026-09-01', from: null, to: 'USD' }],
+    };
+    await currencySettingsStore.set(OTHER, settings);
+    const text = await downloadText(EXPORTED, OTHER);
+    const typedAccounts = async (c: typeof ctx) =>
+      Object.fromEntries((await readAccounts(c, { base: true })).accounts.filter((a) => a.id === 'manual_eur' || a.id === 'manual_ars').map((a) => [a.id, [a.balance, a.currency, a.to_base]]));
+    const before = await typedAccounts(OTHER);
+    expect(before).toEqual({
+      manual_eur: [12345.67, 'EUR', 14260.48], // 12,345.67 × 1.1551
+      manual_ars: [1_000_000, 'ARS', 710], // 1,000,000 × 0.00071
+    });
+
+    // This account holds nothing of its own beside the rates everyone shares.
+    expect((await scanAccount(ctx)).found).toEqual([]);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect(await currencySettingsStore.get(ctx)).toEqual(settings);
+    expect(await typedAccounts(ctx)).toEqual(before);
+    const again = JSON.parse(await downloadText(new Date()));
+    const was = JSON.parse(text);
+    expect(again['currency-settings']).toEqual(was['currency-settings']);
+    const typedIn = (doc: any) => doc.manual_accounts.filter((m: any) => m.account_id === 'manual_eur' || m.account_id === 'manual_ars');
+    expect(typedIn(again)).toEqual(typedIn(was));
+    expect(rates()).toBe(ratesBefore);
+
+    // Undone, the account is empty again, and the rates are as they were.
+    const undone = await call('DELETE', '/api/user-restore', { restore_id: record.id, confirm: true, password: 'hunter2' });
+    expect(undone.status).toBe(200);
+    expect(await currencySettingsStore.get(ctx)).toBeNull();
+    expect(rates()).toBe(ratesBefore);
+  });
+});
+
+describe('a bank account’s currency', () => {
+  test('a dollar bank beside euro accounts converts its past days the same before the restore, after it while unlinked, and once not followed', async () => {
+    const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
+    const { readNetWorthAndHistory } = await import('@/lib/api-read');
+    const { ecbHash } = await import('./fx-fixture');
+    await fake.hset(testKey('fx:ecb'), ecbHash());
+    // The copy the download comes from: Chase in dollars, its directory
+    // entries with their currency as this release keeps them, three manual
+    // accounts in euros, and the home currency in euros.
+    await seedOld(fake, OTHER);
+    const enc = (v: unknown) => encrypt(OTHER, JSON.stringify(v));
+    const dir = { provider: 'plaid', item_id: 'item_old', institution_id: 'ins_3', institution_name: 'Chase', official_name: null, persistent_account_id: null, currency: 'USD' };
+    await fake.hset(ctxKey('accounts:directory', OTHER), {
+      acc_chk: await enc({ ...dir, name: 'Checking', official_name: 'Total Checking', mask: '1111', type: 'depository', subtype: 'checking', persistent_account_id: 'pers_1', first_seen: '2025-06-01', last_seen: '2026-10-05' }),
+      acc_card: await enc({ ...dir, name: 'Sapphire', mask: '2222', type: 'credit', subtype: 'credit card', first_seen: '2025-12-30', last_seen: '2026-10-05' }),
+    });
+    const typed = { institution_name: 'Sparkasse', type: 'depository' as const, subtype: null, updated_at: '2026-09-30T10:00:00.000Z', currency: 'EUR' };
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_house', name: 'House', institution_name: 'Zillow estimate', type: 'other', balance: 400000 });
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_giro', name: 'Giro', balance: 2500 });
+    await saveManualAccount(OTHER, { ...typed, account_id: 'manual_tages', name: 'Tagesgeld', balance: 9000 });
+    await currencySettingsStore.set(OTHER, { ...NO_SETTINGS, home: 'EUR' });
+    const text = await downloadText(EXPORTED, OTHER);
+    const past = async (c: typeof ctx) =>
+      (await readNetWorthAndHistory(c, { to: '2026-01-04', includeEstimated: true }, { base: true })).history.points.map((p: any) => [p.date, p.to_base]);
+    const before = await past(OTHER);
+    // 2026-01-01: the checking account's $1,500 at 1.175 dollars a euro.
+    expect(before).toContainEqual(['2026-01-01', 1276.6]);
+
+    const downloaded = JSON.parse(text).accounts.find((a: any) => a.account_id === 'acc_chk');
+    expect(downloaded.currency).toBe('USD');
+    await restoreAll(text);
+    // Not linked again: still dollars, from the directory entry it came back with.
+    expect(await past(ctx)).toEqual(before);
+    // Not followed from the day after the file's last: its end keeps the currency.
+    for (const account_id of ['acc_chk', 'acc_card']) {
+      const res = await lifecycleRoute.POST(new Request('http://localhost/api/account-lifecycle', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ account_id, state: 'untracked', from: '2026-01-05' }) }));
+      expect(res.status).toBe(200);
+    }
+    expect(await past(ctx)).toEqual(before);
+    const { lifecycleStore } = await import('@/lib/lifecycle');
+    expect((await lifecycleStore.get(ctx, 'acc_chk'))?.currency).toBe('USD');
+    // And the restored copy's own download says the currency, from the directory.
+    const again = JSON.parse(await downloadText(new Date()));
+    expect(again.accounts.find((a: any) => a.account_id === 'acc_chk').currency).toBe('USD');
   });
 });

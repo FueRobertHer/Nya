@@ -416,7 +416,7 @@ describe('the payoff planner', () => {
     const auto = { ...sapphire, account_id: 'auto', name: 'Auto', type: 'loan', subtype: 'auto', balance: 9000, liability: { kind: 'credit' as const, apr: 7, apr_label: 'Interest rate', minimum_payment: 250 } };
     const institutions = [chase([sapphire, auto]), { institution_name: 'N26', liabilities: 'on', accounts: [euro] }];
     const usd = panel(institutions);
-    expect(usd).toContain('Your cards and loans are in 2 currencies. Each is planned on its own: nothing is converted between currencies.');
+    expect(usd).toContain('Your cards and loans are in 2 currencies. Each debt is planned in its own currency, the one it is paid in.');
     expect(usd).toContain('aria-pressed="true">USD<');
     expect(usd).toContain('aria-pressed="false">EUR<');
     expect(usd).toContain('Sapphire');

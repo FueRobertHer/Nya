@@ -158,8 +158,15 @@ describe('account lifecycle: what it does', () => {
     const { status } = await lifecycle({ account_id: 'old', state: 'closed', on: '2026-03-12' });
     expect(status).toBe(200);
     expect(await lifecycleStore.get(ctx, 'old')).toMatchObject({ type: 'credit', label: { name: 'Freedom', institution: 'Chase' } });
-    // The directory keeps no currency: none is made up.
-    expect((await lifecycleStore.get(ctx, 'old'))?.currency).toBeUndefined();
+    // The currency the directory recorded for it; none from an entry written
+    // before it kept one: none is made up.
+    expect((await lifecycleStore.get(ctx, 'old'))?.currency).toBe('USD');
+    const { decrypt } = await import('@/lib/crypto');
+    const entry = JSON.parse(await decrypt(ctx, (await fake.hget<string>(ctxKey('accounts:directory'), 'old'))!));
+    delete entry.currency;
+    await fake.hset(ctxKey('accounts:directory'), { older: await encrypt(ctx, JSON.stringify(entry)) });
+    expect((await lifecycle({ account_id: 'older', state: 'closed', on: '2026-03-12' })).status).toBe(200);
+    expect((await lifecycleStore.get(ctx, 'older'))?.currency).toBeUndefined();
   });
 
   test('reopening clears every id the account has had, and its note', async () => {

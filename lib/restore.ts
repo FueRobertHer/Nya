@@ -46,6 +46,7 @@ import {
   byCodePoint,
   isExcluded,
   isKeyStore,
+  isRefetched,
   READABLE_FORMATS,
   SCHEMA_ERA,
   exportLines,
@@ -89,9 +90,12 @@ const MIN_RESTORED_TTL = 60;
  *  would let a later move misjudge what it copied). Judged inside containers too. */
 const PRESERVED_PREFIXES = ['ratelimit:', 'sessions:', 'snapshot:', 'move:'];
 
+/** Preserved too: the refetched public data (lib/export.ts REFETCHED_PREFIXES,
+ *  the ECB's exchange rates), which describes the world, not the data being
+ *  restored, so the running copy's is kept whatever the archive holds. */
 function isPreserved(relative: string): boolean {
   const { key } = splitScoped(relative);
-  return PRESERVED_PREFIXES.some((p) => key.startsWith(p));
+  return PRESERVED_PREFIXES.some((p) => key.startsWith(p)) || isRefetched(relative);
 }
 
 function refuse(message: string): never {
@@ -178,6 +182,9 @@ export function verifyArchive(text: string): VerifiedArchive {
   hash.update(lines[0] + '\n');
   const records: ExportRecord[] = [];
   const seen = new Set<string>();
+  // Refetched public data an archive of the release before carries (the ECB's
+  // rates): counted and hashed as the file holds it, never restored.
+  let refetched = 0;
   for (let i = 1; i < lines.length - 1; i++) {
     const n = i + 1;
     const parsed = parseLine(lines[i], n);
@@ -189,11 +196,12 @@ export function verifyArchive(text: string): VerifiedArchive {
     seen.add(record.key);
     // The raw line, exactly as read: re-serializing could reorder hash fields.
     hash.update(lines[i] + '\n');
-    records.push(record);
+    if (isRefetched(record.key)) refetched++;
+    else records.push(record);
   }
 
-  if (footer.keys !== records.length) {
-    refuse(`Footer says ${JSON.stringify(footer.keys)} keys but the file holds ${records.length}.`);
+  if (footer.keys !== records.length + refetched) {
+    refuse(`Footer says ${JSON.stringify(footer.keys)} keys but the file holds ${records.length + refetched}.`);
   }
   if (footer.sha256 !== hash.digest('hex')) refuse('Checksum mismatch: the file was damaged or edited.');
   if (!Array.isArray(footer.unsupported) || footer.unsupported.length > 0) {

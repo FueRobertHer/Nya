@@ -57,14 +57,15 @@ export function planCurrency({ flows, assets }: Pick<FiInputs, 'flows' | 'assets
   return assets.currency ?? flows?.currency ?? fallback;
 }
 
-/** What the figures can't compare, in a sentence, or null. Nothing is
- *  converted between currencies in this app: investments in one and spending
- *  in another can't be compared. Within either, only amounts in one currency
- *  are added up (lib/fire/inputs.ts), and the notes beside them name the
- *  rest (spendingLeftOut, assetsLeftOut). */
+/** What the figures can't compare, in a sentence, or null. The Plan doesn't
+ *  convert between currencies yet (a home currency converts net worth only,
+ *  lib/fx/): investments in one and spending in another can't be compared.
+ *  Within either, only amounts in one currency are added up
+ *  (lib/fire/inputs.ts), and the notes beside them name the rest
+ *  (spendingLeftOut, assetsLeftOut). */
 export function currencyNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>): string | null {
   if (assets.currency && flows?.currency && assets.currency !== flows.currency) {
-    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Nya doesn't convert currencies, so the FI number and your assets can't be compared.`;
+    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. The Plan doesn't convert currencies yet, so the FI number and your assets can't be compared.`;
   }
   return null;
 }

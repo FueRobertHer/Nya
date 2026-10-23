@@ -114,9 +114,9 @@ function monthOrRange(a: Args): { from: string; to: string } {
 const RUNS: Record<string, Operation['run']> = {
   me: async (auth) => readMe(auth),
 
-  accounts: async (auth, a) => readAccounts(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+  accounts: async (auth, a) => readAccounts(auth.ctx, { includeHidden: flag(a, 'include_hidden'), base: true }),
 
-  'net-worth': async (auth, a) => readNetWorth(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+  'net-worth': async (auth, a) => readNetWorth(auth.ctx, { includeHidden: flag(a, 'include_hidden'), base: true }),
 
   'balance-history': async (auth, a) => {
     if (str(a, 'from') && str(a, 'to') && str(a, 'from')! > str(a, 'to')!) throw new BadRequest('from is after to.');

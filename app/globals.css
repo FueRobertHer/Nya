@@ -5863,3 +5863,103 @@ button.review-keys-toggle {
   padding: 12px;
   border: 1px solid var(--line);
 }
+
+/* --- a home currency (components/CurrencyNotes.tsx, CurrencyCard.tsx) --- */
+
+/* The hero's note of what was converted: a long list of parts wraps on a
+   phone rather than widening the card. */
+.currency-note {
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.currency-chart-note p {
+  margin: 4px 0 0;
+}
+
+/* The offer's choices side by side where they fit, one per line on a
+   narrow phone, each with why it is offered under it. */
+.currency-offer-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.currency-offer-choices > button {
+  flex: 1 1 140px;
+  width: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+
+.currency-offer-why {
+  font-size: 12px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.currency-offer-more {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 12px;
+}
+
+.currency-card .button-pair {
+  flex-wrap: wrap;
+}
+
+.currency-rates-title {
+  margin-top: 16px;
+}
+
+/* The person's own rates: the rate and the ECB's beside it, its actions on
+   the right, wrapping under it when the rate is long. */
+.own-rates {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+}
+
+.own-rate-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.own-rate-row > div:first-child {
+  min-width: 0;
+}
+
+.own-rate-rate {
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.own-rate-actions {
+  display: flex;
+  gap: 12px;
+  flex-shrink: 0;
+}
+
+/* "1 BTC is [rate] in [USD]": the rate wide, its currency narrow. */
+.currency-rate-pair {
+  display: flex;
+  gap: 8px;
+}
+
+.currency-rate-pair .field:first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.currency-rate-pair .field:last-child {
+  flex: 0 0 104px;
+}

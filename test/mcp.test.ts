@@ -229,7 +229,7 @@ describe('tools', () => {
     expect(worth.structuredContent.history.interval).toBe('month');
     expect((await call('get_net_worth', { include_history: false })).structuredContent.history).toBeUndefined();
     const history = await call('get_balance_history', { account_id: 'acc_chk', interval: 'day' });
-    expect(history.structuredContent.points.at(-1)).toEqual({ date: daysAgo(1), value: 1250, estimated: false });
+    expect(history.structuredContent.points.at(-1)).toEqual({ date: daysAgo(1), value: 1250, estimated: false, to_base: null });
     expect((await call('get_budgets')).structuredContent.budgets.map((b: any) => b.category)).toEqual(['food and drink', 'housing', 'travel']);
     expect((await call('list_recurring_bills')).structuredContent.bills.map((b: any) => b.name)).toEqual(['Netflix']);
     expect((await call('get_holdings')).structuredContent.accounts[0].positions[0].ticker).toBe('VTI');

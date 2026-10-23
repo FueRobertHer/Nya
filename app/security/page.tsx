@@ -263,6 +263,11 @@ export default function SecurityPage() {
           what someone sees of yours, kept for {SHARED_READS_WINDOW_SECONDS / 60} minutes.
         </p>
         <p>Encrypting these as well is planned.</p>
+        <p>
+          The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for
+          every account, and left out of Nya’s nightly backups. Every currency the ECB publishes is kept, so which ones are there says nothing about anyone.
+          Your home currency and your own exchange rates are encrypted.
+        </p>
       </InfoSection>
 
       <InfoSection title="Who can read what">
@@ -461,8 +466,8 @@ export default function SecurityPage() {
         <p>
           Bank connections go through Plaid and work for US institutions only: Nya asks Plaid for US institutions when
           you connect. Anything else, such as a bank in another country, an institution Plaid cannot reach, or a house or
-          a car, can be tracked as a manual account: you enter the balance in US dollars, the only currency manual
-          accounts take for now, and update it when you like.
+          a car, can be tracked as a manual account: you enter the balance in the account’s own currency, which you
+          choose, and update it when you like.
         </p>
         <p>
           Your own SimpleFIN account may reach banks Plaid can’t (Redbark, a separate paid service that speaks the same

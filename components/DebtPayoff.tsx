@@ -321,8 +321,8 @@ export function PayoffPanel({
             ))}
           </div>
           <p className="panel-note">
-            Your cards and loans are in {groups.length} currencies. Each is planned on its own: nothing is
-            converted between currencies.
+            Your cards and loans are in {groups.length} currencies. Each debt is planned in its own currency,
+            the one it is paid in.
           </p>
         </section>
       )}

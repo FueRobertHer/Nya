@@ -44,7 +44,8 @@ export const MAX_BALANCE = 1e12;
  *  (lib/migration/plan.ts). */
 export const MAX_MANUAL_ACCOUNTS = 50;
 
-/** The one currency manual balances are kept in, for now (toInstitutions). */
+/** The currency of a manual account that names none: US dollars, as every
+ *  account typed before a currency could be chosen is (toInstitutions). */
 export const MANUAL_CURRENCY = 'USD';
 
 export type ManualAccount = {
@@ -55,11 +56,19 @@ export type ManualAccount = {
   subtype: string | null;
   balance: number;
   updated_at: string; // ISO
-  /** The currency the balance is in, when not US dollars: only an account a
-   *  connector fed, kept as a manual one when it was disconnected
-   *  (lib/connectors/manage.ts). One typed in the app is always in dollars. */
+  /** The currency the balance is in, when not US dollars: chosen when the
+   *  account is made or updated (app/api/manual-accounts), or the one a
+   *  connector fed it in, kept when it was disconnected
+   *  (lib/connectors/manage.ts). Absent for dollars, always (currencyField),
+   *  so a record reads the same in a release that knows only kept accounts'
+   *  currencies. Setting it never changes the balance's number. */
   currency?: string;
 };
+
+/** A manual account's `currency` field as stored: none for US dollars. */
+export function currencyField(currency: string): { currency?: string } {
+  return currency === MANUAL_CURRENCY ? {} : { currency };
+}
 
 /** Collapses whitespace and trims, so "Ally  Bank" and "Ally Bank " group into
  *  one institution card instead of two. */
@@ -248,6 +257,38 @@ export async function setManualBalance(ctx: Ctx, account_id: string, balance: nu
   return true;
 }
 
+/**
+ * Sets just the currency an account's balance is in, leaving every other
+ * field as stored, the balance's number included, as one compare-and-set on
+ * its field (as moveManualBalance does), so a balance pushed meanwhile (the
+ * ingest endpoint, another device) is never written over. For the choice of
+ * a home currency, which corrects an account's currency before it converts.
+ * Answers the currency it was in when it was set (`from`), 'same' (already
+ * in it: nothing written) or 'missing'. Throws if the account can't be read.
+ */
+export async function setManualCurrency(ctx: Ctx, account_id: string, currency: string): Promise<{ from: string } | 'same' | 'missing'> {
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    if (!raw) return 'missing';
+    const stored = raw.slice(1); // exactly as stored, past READ_ENTRIES's "v"
+    let account: ManualAccount;
+    try {
+      account = parseStoredAccount(account_id, await decrypt(ctx, stored));
+    } catch (err) {
+      throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+    }
+    const from = account.currency ?? MANUAL_CURRENCY;
+    if (from === currency) return 'same';
+    const changed: ManualAccount = { ...account };
+    delete changed.currency;
+    const next = await encrypt(ctx, JSON.stringify({ ...changed, ...currencyField(currency) }));
+    const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return { from };
+  }
+  throw new Error(`Manual account ${account_id} kept changing, so its currency wasn't set`);
+}
+
 /** What moveManualBalance did. */
 export type BalanceMove = 'moved' | 'already' | 'changed' | 'missing';
 
@@ -372,9 +413,8 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       type: a.type,
       subtype: a.subtype,
       balance: a.balance,
-      // Manual accounts are in US dollars, matching the rest of the
-      // account-level figures (net worth, balances, goals), except one a
-      // connector fed in another currency, kept on a disconnect.
+      // The currency chosen for it, or the one a connector fed it in, kept
+      // on a disconnect; US dollars when it names none.
       currency: a.currency ?? MANUAL_CURRENCY,
       updated_at: a.updated_at,
     });

@@ -258,10 +258,10 @@ describe('the security page', () => {
     expect(off).not.toContain('Every page also carries');
   });
 
-  test('says where bank connections work, and that manual accounts are in US dollars', () => {
+  test('says where bank connections work, and that a manual account is in a currency of its own', () => {
     const page = security();
     expect(page).toContain('work for US institutions only');
-    expect(page).toContain('you enter the balance in US dollars');
+    expect(page).toContain('you enter the balance in the account’s own currency, which you choose');
     expect(page).toContain('Your own SimpleFIN account may reach banks Plaid can’t');
     expect(page).toContain('Redbark, a separate paid service');
     expect(page).toContain('It brings no pending transactions, no holdings and no categories');
@@ -481,6 +481,19 @@ describe('the privacy page', () => {
     expect(page).toContain('no email provider');
   });
 
+  // Decision 6: the ECB on the public pages (for the owner's sign-off).
+  test('says where the exchange rates come from, that the ECB is sent nothing about you, and how long a home currency is kept', () => {
+    const page = privacy();
+    expect(page).toContain('the European Central Bank’s euro reference rates, which Nya’s server downloads once a day, the same for everyone. The ECB is sent nothing about you');
+    expect(page).toContain('Your home currency and your own exchange rates Until you change them, or delete your account. Encrypted, and in your download.');
+    expect(page).toContain('Nothing converted is kept by Nya’s server');
+    expect(page).toContain('left out of Nya’s nightly backups');
+    expect(page).not.toMatch(/never in a backup/);
+    const sec = security();
+    expect(sec).toContain('The database also keeps the European Central Bank’s exchange rates in plain text: public, the same for everyone, kept once for every account, and left out of Nya’s nightly backups.');
+    expect(sec).toContain('Your home currency and your own exchange rates are encrypted.');
+  });
+
   test('states the other retention figures the code uses', () => {
     const page = privacy();
     expect(page).toContain(`Invite links ${INVITE_HOURS} hours, or until used.`);
@@ -520,7 +533,7 @@ describe('getting to them', () => {
     expect(links).toContain('href="/privacy"');
     expect(links).not.toContain('aria-current');
     expect(text(renderToStaticMarkup(<CoverageNote />))).toContain(
-      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in US dollars.'
+      'Bank connections through Plaid work for US institutions only. Your own SimpleFIN account, or another service that speaks its protocol (such as Redbark, in Australia and New Zealand), or, where this copy of Nya offers it, your own Lunch Flow account may reach others. Anything else can be tracked as a manual account, with a balance you enter in its own currency.'
     );
   });
 
