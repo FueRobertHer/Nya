@@ -8,11 +8,16 @@
 // (lib/repo.ts), inside the container:
 //
 //   api-changes      a map store, one entry per change. Its id is
-//                    `<YYYYMMDD>.<token id, or app>.<12 hex>`: the UTC day it
+//                    `<YYYYMMDD>.<token ref, or app>.<12 hex>`: the UTC day it
 //                    was made, which token made it (the app, for an undo the
 //                    person made there), and a random part. So the ids alone
 //                    say which to read for a day or a token, and which are
 //                    past the window (MapStore.ids), without a value read.
+//                    A token is named by its REF (tokenRef): 16 hex of a
+//                    SHA-256 of its id, never the id or its hint, which are
+//                    part of the token and never in the download
+//                    (lib/user-export.ts); a token tells its own changes by
+//                    its ref, worked out from its id when it calls.
 //                    Encrypted; in the person's download (it is their own
 //                    record about their data) and in backups (it describes the
 //                    data a backup holds); never brought back with a download
@@ -95,9 +100,9 @@ export type Change = {
   v: 1;
   at: string;
   via: 'api' | 'mcp' | 'app';
-  /** The token that made it (its id, to tell tokens apart, never served;
-   *  its hint and its name as they were), or null for the app. */
-  token: { id: string; hint: string; label: string } | null;
+  /** The token that made it (its ref, to tell tokens apart: see the
+   *  header; its name as it was), or null for the app. */
+  token: { ref: string; label: string } | null;
   op: ChangeOp;
   target: { kind: TargetKind; id: string; account_id?: string };
   state: 'pending' | 'done' | 'failed';
@@ -133,7 +138,7 @@ export function isChange(v: unknown): v is Change {
   return (
     isInstant(v.at) &&
     (v.via === 'api' || v.via === 'mcp' || v.via === 'app') &&
-    (t === null || (isRecord(t) && Object.keys(t).every((k) => k === 'id' || k === 'hint' || k === 'label') && /^[0-9a-f]{16}$/.test(String(t.id)) && isText(t.hint, 40) && isText(t.label, 200))) &&
+    (t === null || (isRecord(t) && Object.keys(t).every((k) => k === 'ref' || k === 'label') && /^[0-9a-f]{16}$/.test(String(t.ref)) && isText(t.label, 200))) &&
     (CHANGE_OPS as readonly unknown[]).includes(v.op) &&
     isRecord(target) &&
     Object.keys(target).every((k) => k === 'kind' || k === 'id' || k === 'account_id') &&
@@ -187,12 +192,16 @@ const dayOf = (ms: number) => new Date(ms).toISOString().slice(0, 10).replaceAll
 /** The oldest day (YYYYMMDD) the record keeps at `now`. */
 export const firstKeptDay = (now: number) => dayOf(now - (CHANGES_KEEP_DAYS - 1) * DAY_MS);
 
-/** A new change's id, made `now` by `tokenId` (null: the app). */
-export function newChangeId(now: number, tokenId: string | null): string {
-  return `${dayOf(now)}.${tokenId ?? 'app'}.${randomBytes(6).toString('hex')}`;
+/** How the record names a token (see the header): never its id. */
+export const tokenRef = (tokenId: string): string => createHash('sha256').update(`nya-api-change-token:${tokenId}`, 'utf8').digest('hex').slice(0, 16);
+
+/** A new change's id, made `now` by the token with this ref (null: the app). */
+export function newChangeId(now: number, ref: string | null): string {
+  return `${dayOf(now)}.${ref ?? 'app'}.${randomBytes(6).toString('hex')}`;
 }
 
-/** Which token made a change, by its id: null for the app. */
+/** Which token made a change, by its ref from the change's id: null for the
+ *  app. */
 export function changeMaker(id: string): string | null {
   const m = ID.exec(id);
   return m && m[2] !== 'app' ? m[2] : null;
@@ -260,7 +269,7 @@ export async function claimKey(ctx: Ctx, tokenId: string, key: string, request: 
       outcome = { kind: 'found', claim: found };
       return live.length === (cur?.claims.length ?? 0) ? cur : { v: 1, claims: live };
     }
-    const change = newChangeId(now, tokenId);
+    const change = newChangeId(now, tokenRef(tokenId));
     outcome = { kind: 'new', change };
     return { v: 1, claims: [...live, { key: keyHash, request, change, at: new Date(now).toISOString() }] };
   });
@@ -280,7 +289,7 @@ export async function forgetClaims(ctx: Ctx, tokenId: string): Promise<void> {
 }
 
 /** Every change id in the window, newest day first; one token's alone
- *  (`maker`: a token's id, or 'app'), when asked. */
+ *  (`maker`: a token's ref, or 'app'), when asked. */
 export async function changeIds(ctx: Ctx, opts: { maker?: string; now?: number } = {}): Promise<string[]> {
   const now = opts.now ?? Date.now();
   return (await changeStore.ids(ctx))
@@ -352,7 +361,7 @@ export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now(
   return written !== null;
 }
 
-/** Forgets every change one token made (`maker`: its id). Answers how many. */
+/** Forgets every change one token made (`maker`: its ref). Answers how many. */
 export async function forgetTokenChanges(ctx: Ctx, maker: string, now: number = Date.now()): Promise<number> {
   let n = 0;
   for (const id of await changeIds(ctx, { maker, now })) if (await forgetChange(ctx, id, now)) n++;

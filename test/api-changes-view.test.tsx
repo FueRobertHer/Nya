@@ -17,7 +17,7 @@ type Props = Parameters<typeof ApiChangesView>[0];
 
 afterEach(() => setAmountsHidden(false));
 
-const TOKEN = { id: '0123456789abcdef', hint: 'nya_0123', label: 'Importer' };
+const TOKEN = { ref: '0123456789abcdef', label: 'Importer' };
 const change = (over: Partial<ListedChange> = {}): ListedChange => ({
   id: '20261020.0123456789abcdef.0123456789ab',
   at: '2026-10-20T12:00:00.000Z',
@@ -41,7 +41,7 @@ const ready = (changes: ListedChange[], over: Partial<Extract<Props['list'], { k
   ...over,
 });
 const view = (over: Partial<Props> = {}) =>
-  renderToStaticMarkup(<ApiChangesView list={ready([])} writes live={new Set([TOKEN.id])} act={async () => null} onMore={() => {}} loadingMore={false} {...over} />);
+  renderToStaticMarkup(<ApiChangesView list={ready([])} writes act={async () => null} onMore={() => {}} loadingMore={false} {...over} />);
 const text = (html: string) => html.replace(/<[^>]+>/g, ' ').replace(/&#x27;/g, "'").replace(/&quot;/g, '"').replace(/&amp;/g, '&').replace(/\s+/g, ' ');
 
 describe('the list', () => {
@@ -71,9 +71,8 @@ describe('the list', () => {
   test('a revoked token is named so; an assistant’s change says so; the app’s undo is yours', () => {
     const t = text(
       view({
-        live: new Set(),
         list: ready([
-          change({ via: 'mcp' }),
+          change({ via: 'mcp', revoked: true }),
           change({ id: '20261020.app.0123456789ab', token: null, via: 'app', op: 'undo', target: { kind: 'change', id: 'x' }, undoes: 'x', before: null, after: null }),
         ]),
       })

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server';
 import { dataCtx, containerUnavailable } from '@/lib/data-ctx';
 import { StoredDataUnreadableError, StoreRefusedError, UnreadableEntriesError, describeUnreadable } from '@/lib/repo';
-import { changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, pruneChanges } from '@/lib/api-changes';
+import { changeMaker, changeStore, forgetChange, forgetTokenChanges, isChangeId, listChanges, pruneChanges, tokenRef } from '@/lib/api-changes';
+import { apiTokenStore } from '@/lib/api-token-store';
 import { undoChange } from '@/lib/api-undo';
 import { ApiFailure } from '@/lib/api-spec';
 import { apiWritesEnabled } from '@/lib/api-writes-enabled';
@@ -14,16 +15,17 @@ import { getManualAccountsReport } from '@/lib/manual';
 // route. A token reads only its own, through /api/v1/changes.
 //
 //   GET     ?cursor=  a page of changes, newest first: { changes, next,
-//           unreadable, unrecognised, accounts, writes }, `accounts` the
-//           manual accounts there are now ({ id: { name, currency } }), for
-//           a balance change's sentence. The window past 30 days is pruned
-//           first.
+//           unreadable, unrecognised, accounts, writes }, each change with
+//           `revoked` (its token is gone; the record names a token by a ref,
+//           never its id), and `accounts` the manual accounts there are now
+//           ({ id: { name, currency } }), for a balance change's sentence.
+//           The window past 30 days is pruned first.
 //   POST    { action: 'undo', id }          undoes one change, any token's
 //           (lib/api-undo.ts), when what it changed is still as it left it.
 //   POST    { action: 'forget', id }        forgets one change's copies of
 //           what it changed, at once; the line stays.
-//   POST    { action: 'forget-token', token_id }  the same for every change
-//           one token made.
+//   POST    { action: 'forget-token', id }  the same for every change made
+//           by the token that made this one.
 //   DELETE  { id }  removes a change whose stored bytes are damaged, once the
 //           person confirms (only those: one unrecognised is intact data).
 //
@@ -66,11 +68,12 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: 'Invalid cursor' }, { status: 400 });
       }
     }
-    const [page, manual] = await Promise.all([listChanges(ctx, { limit: PAGE, after, now, report: true }), getManualAccountsReport(ctx)]);
+    const [page, manual, tokenIds] = await Promise.all([listChanges(ctx, { limit: PAGE, after, now, report: true }), getManualAccountsReport(ctx), apiTokenStore.ids(ctx)]);
     const accounts = Object.fromEntries(manual.accounts.map((a) => [a.account_id, { name: a.name, currency: a.currency ?? 'USD' }]));
+    const live = new Set(tokenIds.map(tokenRef));
     return NextResponse.json(
       {
-        changes: page.changes.map(([id, c]) => ({ id, ...c })),
+        changes: page.changes.map(([id, c]) => ({ id, ...c, revoked: c.token !== null && !live.has(c.token.ref) })),
         next: page.next ? Buffer.from(JSON.stringify([page.next.at, page.next.id])).toString('base64url') : null,
         unreadable: page.unreadable,
         unrecognised: page.unrecognised,
@@ -110,8 +113,9 @@ export async function POST(req: Request) {
       return NextResponse.json({ change: { id: body.id, ...change }, undo });
     }
     if (body.action === 'forget-token') {
-      if (typeof body.token_id !== 'string' || !/^[0-9a-f]{16}$/.test(body.token_id)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 });
-      return NextResponse.json({ forgotten: await forgetTokenChanges(ctx, body.token_id) });
+      const maker = isChangeId(body.id) ? changeMaker(body.id) : null;
+      if (!maker) return NextResponse.json({ error: 'Invalid change id' }, { status: 400 });
+      return NextResponse.json({ forgotten: await forgetTokenChanges(ctx, maker) });
     }
     return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
   } catch (err) {

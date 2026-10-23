@@ -192,7 +192,7 @@ function WithChanges({ t, view }: { t: ReturnType<typeof useTokens>; view: React
   return (
     <>
       {view}
-      {t.list.kind === 'ready' && <ApiChanges tokens={t.list.tokens} writes={t.list.writes === true} />}
+      {t.list.kind === 'ready' && <ApiChanges writes={t.list.writes === true} />}
     </>
   );
 }

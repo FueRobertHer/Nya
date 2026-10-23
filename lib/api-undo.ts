@@ -40,7 +40,7 @@ import type { Authenticated } from './api-tokens';
 import { hintOf } from './api-tokens';
 import { ApiFailure } from './api-spec';
 import { takeDay } from './api-run';
-import { beginChange, changeIds, changeStore, getChange, newChangeId, settleChange, type Change, type ChangeOp } from './api-changes';
+import { beginChange, changeIds, changeStore, getChange, newChangeId, settleChange, tokenRef, type Change, type ChangeOp } from './api-changes';
 import { accountVersion, categoryVersion, groupVersion, tagVersion } from './api-versions';
 import type { ResourceAnswer, ResourceInput } from './api-writes';
 import { getManualAccount, type ManualAccount } from './manual';
@@ -170,7 +170,7 @@ async function undoAccount(ctx: Ctx, c: Change, now: number): Promise<Undone> {
   if (accountVersion(cur) !== accountVersion(after) || Math.round(cur.balance * 100) !== Math.round(after.balance * 100)) refuse(CHANGED('The account'));
   if ((await getHiddenAccounts(ctx)).has(id)) refuse('The account was hidden since, so it wasn’t removed: remove it in the app.');
   if (await lifecycleStore.has(ctx, id)) refuse('The account was marked closed since, so it wasn’t removed: remove it in the app.');
-  if (!c.token || !(await rowsAllFrom(ctx, id, c.token.id))) refuse('Transactions were added to the account since in another way, so it wasn’t removed: remove it in the app.');
+  if (!c.token || !(await rowsAllFrom(ctx, id, c.token.ref))) refuse('Transactions were added to the account since in another way, so it wasn’t removed: remove it in the app.');
   await withLinksLock(ctx, async () => {
     await deleteManualAccount(ctx, id);
     await invalidate(ctx, true);
@@ -293,18 +293,18 @@ export async function undoChange(
   now: number = Date.now()
 ): Promise<{ change: Change; undo: string; headers: Record<string, string> }> {
   const c = await getChange(ctx, changeId, now);
-  if (!c || (who && c.token?.id !== who.auth.id)) throw new ApiFailure(404, 'not_found', 'No change of this token’s has that id in the last 30 days.');
+  if (!c || (who && c.token?.ref !== tokenRef(who.auth.id))) throw new ApiFailure(404, 'not_found', 'No change of this token’s has that id in the last 30 days.');
   if (c.undone_by) return { change: c, undo: c.undone_by, headers: {} };
   const why = cannotUndo(c);
   if (why) refuse(why);
   const headers = who ? await takeDay(who.auth, { create: false }, now) : {};
-  const id = newChangeId(now, who ? who.auth.id : null);
+  const id = newChangeId(now, who ? tokenRef(who.auth.id) : null);
   const op: ChangeOp = 'undo';
   await beginChange(ctx, id, {
     v: 1,
     at: new Date(now).toISOString(),
     via: who ? who.via : 'app',
-    token: who ? { id: who.auth.id, hint: hintOf(who.auth.id), label: who.auth.token.label } : null,
+    token: who ? { ref: tokenRef(who.auth.id), label: who.auth.token.label } : null,
     op,
     target: { kind: 'change', id: changeId },
     state: 'pending',
@@ -330,5 +330,5 @@ export async function undoChange(
 export async function undoForToken(auth: Authenticated, input: ResourceInput): Promise<ResourceAnswer> {
   const { change, undo, headers } = await undoChange(auth.ctx, input.id ?? '', { auth, via: input.via }, input.now ?? Date.now());
   const { servedChange } = await import('./api-writes');
-  return { status: 200, body: { change: servedChange(input.id!, change), undo }, headers };
+  return { status: 200, body: { change: servedChange(input.id!, change, hintOf(auth.id)), undo }, headers };
 }

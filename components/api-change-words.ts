@@ -18,7 +18,11 @@ export type ListedChange = {
   id: string;
   at: string;
   via: 'api' | 'mcp' | 'app';
-  token: { id: string; hint: string; label: string } | null;
+  /** The token that made it, by a ref and its name as it was; null for the
+   *  app. */
+  token: { ref: string; label: string } | null;
+  /** Its token is gone (revoked since). */
+  revoked?: boolean;
   op: string;
   target: { kind: string; id: string; account_id?: string };
   state: 'pending' | 'done' | 'failed';

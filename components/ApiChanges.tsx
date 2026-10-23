@@ -48,7 +48,7 @@ async function send(method: 'POST' | 'DELETE', body: unknown): Promise<string | 
   }
 }
 
-export default function ApiChanges({ tokens, writes }: { tokens: { id: string }[]; writes: boolean }) {
+export default function ApiChanges({ writes }: { writes: boolean }) {
   const [list, setList] = useState<ChangeList>({ kind: 'loading' });
   const [more, setMore] = useState(false);
 
@@ -84,7 +84,7 @@ export default function ApiChanges({ tokens, writes }: { tokens: { id: string }[
         : asking.kind === 'undo'
           ? await send('POST', { action: 'undo', id: asking.id })
           : all && asking.change?.token
-            ? await send('POST', { action: 'forget-token', token_id: asking.change.token.id })
+            ? await send('POST', { action: 'forget-token', id: asking.id })
             : await send('POST', { action: 'forget', id: asking.id });
     if (!failed) await load();
     return failed;
@@ -96,13 +96,12 @@ export default function ApiChanges({ tokens, writes }: { tokens: { id: string }[
     setMore(false);
   };
 
-  return <ApiChangesView list={list} writes={writes} live={new Set(tokens.map((t) => t.id))} act={act} onMore={loadMore} loadingMore={more} />;
+  return <ApiChangesView list={list} writes={writes} act={act} onMore={loadMore} loadingMore={more} />;
 }
 
 export function ApiChangesView({
   list,
   writes,
-  live,
   act,
   onMore,
   loadingMore,
@@ -110,8 +109,6 @@ export function ApiChangesView({
   list: ChangeList;
   /** Whether this copy lets tokens write, as the tokens card was told. */
   writes: boolean;
-  /** The ids of the tokens there are now: any other is since revoked. */
-  live: ReadonlySet<string>;
   act: (asking: NonNullable<Asking>, all?: boolean) => Promise<string | null>;
   onMore: (cursor: string) => void;
   loadingMore: boolean;
@@ -163,7 +160,7 @@ export function ApiChangesView({
             <ul className="api-change-list">
               {list.changes.map((c) => {
                 const why = cannotUndo(c);
-                const who = c.token ? `${c.token.label}${live.has(c.token.id) ? '' : ' (since revoked)'}` : 'You';
+                const who = c.token ? `${c.token.label}${c.revoked ? ' (since revoked)' : ''}` : 'You';
                 return (
                   <li key={c.id} className="api-change">
                     <div className="api-change-text">

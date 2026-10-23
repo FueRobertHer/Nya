@@ -46,6 +46,7 @@ import {
   reclaim,
   settleChange,
   sha256,
+  tokenRef,
   type Change,
   type ChangeOp,
   type TargetKind,
@@ -132,12 +133,12 @@ async function recorded(
   opts: { changeId?: string; keyed?: boolean } = {}
 ): Promise<string> {
   const now = input.now ?? Date.now();
-  const id = opts.changeId ?? newChangeId(now, auth.id);
+  const id = opts.changeId ?? newChangeId(now, tokenRef(auth.id));
   await beginChange(auth.ctx, id, {
     v: 1,
     at: new Date(now).toISOString(),
     via: input.via,
-    token: { id: auth.id, hint: hintOf(auth.id), label: auth.token.label },
+    token: { ref: tokenRef(auth.id), label: auth.token.label },
     op,
     target,
     state: 'pending',
@@ -244,7 +245,7 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
       fail(409, 'conflict', 'What this Idempotency-Key made has been removed since. Send a new request, with a new key, to make it again.');
     }
   }
-  const next = newChangeId(now, auth.id);
+  const next = newChangeId(now, tokenRef(auth.id));
   await reclaim(auth.ctx, auth.id, found.key, next, now);
   return fresh(next);
 }
@@ -734,13 +735,14 @@ async function updateTag(auth: Authenticated, input: ResourceInput): Promise<Res
 
 // ---- The record, for a token ----
 
-/** A change as a token reads it: its token by hint alone, never its id. */
-export function servedChange(id: string, c: Change) {
+/** A change as a token reads it, one of its own: the token by its hint (the
+ *  caller's own, `hint`) and its name as it was. */
+export function servedChange(id: string, c: Change, hint: string) {
   return {
     id,
     at: c.at,
     via: c.via,
-    token: c.token ? { hint: c.token.hint, label: c.token.label } : null,
+    token: c.token ? { hint, label: c.token.label } : null,
     op: c.op,
     target: c.target,
     state: c.state,
@@ -769,10 +771,10 @@ function decodeCursor(cursor: string): { at: string; id: string } {
 async function listOwnChanges(auth: Authenticated, input: ResourceInput): Promise<ResourceAnswer> {
   const limit = (input.args.limit as number | undefined) ?? 25;
   const after = input.args.cursor ? decodeCursor(input.args.cursor as string) : null;
-  const page = await listChanges(auth.ctx, { maker: auth.id, limit, after, now: input.now });
+  const page = await listChanges(auth.ctx, { maker: tokenRef(auth.id), limit, after, now: input.now });
   return {
     status: 200,
-    body: { changes: page.changes.map(([id, c]) => servedChange(id, c)), has_more: page.next !== null, next_cursor: page.next ? encodeCursor(page.next) : null },
+    body: { changes: page.changes.map(([id, c]) => servedChange(id, c, hintOf(auth.id))), has_more: page.next !== null, next_cursor: page.next ? encodeCursor(page.next) : null },
     headers: {},
   };
 }

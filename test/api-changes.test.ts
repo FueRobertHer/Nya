@@ -26,7 +26,7 @@ const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
 const { txnAnnotationStore } = await import('@/lib/txn-annotations');
 const { getHiddenAccounts } = await import('@/lib/hidden');
 const { recordSnapshot } = await import('@/lib/history');
-const { changeStore, claimStore, pruneChanges } = await import('@/lib/api-changes');
+const { changeStore, claimStore, pruneChanges, tokenRef } = await import('@/lib/api-changes');
 const { apiWriteCount, apiWriteDays } = await import('@/lib/api-token-store');
 const { snapshotData } = await import('@/lib/snapshot-job');
 const txnWrites = await import('@/lib/manual-txn-writes');
@@ -137,6 +137,12 @@ describe('the record', () => {
     });
     // The token's id is never served: its hint and name alone.
     expect(Object.keys(mine[0].token).sort()).toEqual(['hint', 'label']);
+    // Nor kept in the record, nor its hint: both are part of the token, and
+    // the record is in the download. A ref tells tokens apart.
+    const raw = [...fake.hashes.get(ctxKey('api-changes'))!.keys(), ...(await changeStore.getAll(ctx)).values()].map((v) => JSON.stringify(v)).join(' ');
+    expect(raw).not.toContain(writerId);
+    expect(raw).not.toContain(writerId.slice(0, 8));
+    expect((await changeStore.get(ctx, made.body.change_id))!.token).toEqual({ ref: tokenRef(writerId), label: 'Importer' });
     expect((await own(other)).map((c) => c.op)).toEqual(['tag.create']);
 
     // A token that can't write reads none, and counts nothing.
@@ -218,7 +224,7 @@ describe('the record', () => {
     expect([refused.status, refused.body.error.code]).toEqual([409, 'conflict']);
     expect(refused.body.error.message).toContain('forgotten');
 
-    expect((await app('api-changes', 'POST', { action: 'forget-token', token_id: writerId })).body).toEqual({ forgotten: 2 });
+    expect((await app('api-changes', 'POST', { action: 'forget-token', id: b })).body).toEqual({ forgotten: 2 });
     expect((await changeStore.get(ctx, b))!.forgotten_at).toBeString();
     expect((await changeStore.get(ctx, c))!.after).toBeDefined();
     expect((await app('api-changes', 'POST', { action: 'forget', id: 'nope' })).status).toBe(400);
@@ -262,6 +268,7 @@ describe('the record', () => {
     expect((await apiWriteDays.take(ctx, writerId)).count).toBe(1);
     expect((await apiWriteCount.take(ctx, writerId)).count).toBe(1);
     expect((await changeStore.get(ctx, made.body.change_id))!.state).toBe('done');
+    expect((await app('api-changes', 'GET')).body.changes[0]).toMatchObject({ id: made.body.change_id, revoked: true, token: { label: 'Importer' } });
     // The person still undoes it in the app.
     const undone = await app('api-changes', 'POST', { action: 'undo', id: made.body.change_id });
     expect(undone.status).toBe(200);
