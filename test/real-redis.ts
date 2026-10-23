@@ -157,6 +157,15 @@ export function upstashOn(client: RedisClient) {
       const [next, flat] = answer;
       return [next, flat.map((v, i) => (i % 2 === 1 ? upstashParseField(v) : v))] as [string, unknown[]];
     },
+    // A page of the keyspace, as Upstash answers SCAN: [cursor, keys].
+    scan: async (cursor: string | number, opts?: { match?: string; count?: number }) => {
+      const [next, keys] = (await call('scan', [
+        String(cursor),
+        ...(opts?.match ? ['MATCH', opts.match] : []),
+        ...(opts?.count ? ['COUNT', String(opts.count)] : []),
+      ])) as [string, string[]];
+      return [next, keys] as [string, string[]];
+    },
     eval: async (script: string, keys: string[], args: string[]) =>
       upstashParse(await call('eval', [script, String(keys.length), ...keys, ...args])),
   };
