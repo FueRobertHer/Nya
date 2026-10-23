@@ -24,9 +24,9 @@ const { forgetEpochs } = await import('@/lib/sessions');
 const { decryptJsonText } = await import('@/lib/blob');
 const spec = await import('@/lib/api-spec');
 const limits = await import('@/lib/api-limits');
-const { MANUAL_TYPES, getManualAccount, saveManualAccount } = await import('@/lib/manual');
-const { TAG_COLORS, TAG_NAME_MAX, MAX_TAGS_PER_TRANSACTION, readTagSet } = await import('@/lib/tags');
-const { NAME_MAX, ICON_MAX } = await import('@/lib/categories');
+const { MANUAL_TYPES, MAX_MANUAL_ACCOUNTS, getManualAccount, saveManualAccount } = await import('@/lib/manual');
+const { TAG_COLORS, TAG_NAME_MAX, MAX_TAGS, MAX_TAGS_PER_TRANSACTION, readTagSet } = await import('@/lib/tags');
+const { NAME_MAX, ICON_MAX, MAX_CATEGORIES, MAX_GROUPS } = await import('@/lib/categories');
 const { MAX_PAYEE_CHARS, MAX_NOTE_CHARS } = await import('@/lib/manual-txn-input');
 const { ensureTaxonomy, readTaxonomy } = await import('@/lib/category-store');
 const { manualTxnStore, findManualTxn } = await import('@/lib/manual-txns');
@@ -188,6 +188,7 @@ describe('declared once, for good', () => {
   test('the declared limits are the app’s own', () => {
     expect(spec.MANUAL_TYPE_NAMES).toEqual([...MANUAL_TYPES]);
     expect(spec.TAG_COLOR_NAMES).toEqual([...TAG_COLORS]);
+    expect(spec.APP_CAPS).toEqual({ manualAccounts: MAX_MANUAL_ACCOUNTS, categories: MAX_CATEGORIES, groups: MAX_GROUPS, tags: MAX_TAGS });
     expect(spec.FIELD_LIMITS).toMatchObject({ categoryName: NAME_MAX, icon: ICON_MAX, tagName: TAG_NAME_MAX, payee: MAX_PAYEE_CHARS, note: MAX_NOTE_CHARS, tagsPerTransaction: MAX_TAGS_PER_TRANSACTION });
   });
 });

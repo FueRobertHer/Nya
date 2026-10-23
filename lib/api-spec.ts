@@ -652,6 +652,9 @@ const TAG_ID: Arg = { kind: 'id', named: 'a tag’s id', description: 'A tag’s
  *  lib/categories.ts and lib/tags.ts set them (test/api-writes.test.ts holds
  *  these to theirs). */
 export const FIELD_LIMITS = { accountName: 60, subtype: 40, payee: 100, note: 500, categoryName: 60, icon: 16, tagName: 40, tagsPerTransaction: 20 } as const;
+/** How many of each the app keeps at most (lib/manual.ts, lib/categories.ts,
+ *  lib/tags.ts), for the developer page's room (API_ROOM). */
+export const APP_CAPS = { manualAccounts: 50, categories: 500, groups: 50, tags: 250 } as const;
 export const MANUAL_TYPE_NAMES = ['depository', 'credit', 'investment', 'loan', 'other'] as const;
 export const TAG_COLOR_NAMES = ['gray', 'red', 'orange', 'yellow', 'green', 'teal', 'blue', 'purple', 'pink'] as const;
 export const GROUP_KINDS = ['expense', 'income', 'transfer'] as const;

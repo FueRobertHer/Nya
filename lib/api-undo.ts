@@ -286,13 +286,18 @@ function cannotUndo(c: Change): string | null {
  * change, or null for the person in the app. Answers the undo's id (the one
  * already made, when asked again). Throws ApiFailure for a refusal.
  */
-export async function undoChange(ctx: Ctx, changeId: string, who: { auth: Authenticated; via: 'api' | 'mcp' } | null, now: number = Date.now()): Promise<{ change: Change; undo: string }> {
+export async function undoChange(
+  ctx: Ctx,
+  changeId: string,
+  who: { auth: Authenticated; via: 'api' | 'mcp' } | null,
+  now: number = Date.now()
+): Promise<{ change: Change; undo: string; headers: Record<string, string> }> {
   const c = await getChange(ctx, changeId, now);
   if (!c || (who && c.token?.id !== who.auth.id)) throw new ApiFailure(404, 'not_found', 'No change of this token’s has that id in the last 30 days.');
-  if (c.undone_by) return { change: c, undo: c.undone_by };
+  if (c.undone_by) return { change: c, undo: c.undone_by, headers: {} };
   const why = cannotUndo(c);
   if (why) refuse(why);
-  if (who) await takeDay(who.auth, { create: false }, now);
+  const headers = who ? await takeDay(who.auth, { create: false }, now) : {};
   const id = newChangeId(now, who ? who.auth.id : null);
   const op: ChangeOp = 'undo';
   await beginChange(ctx, id, {
@@ -318,12 +323,12 @@ export async function undoChange(ctx: Ctx, changeId: string, who: { auth: Authen
   }
   await settleChange(ctx, id, { state: 'done', before: (undone.before as object | null) ?? null, after: (undone.after as object | null) ?? null });
   await settleChange(ctx, changeId, { undone_by: id });
-  return { change: { ...c, undone_by: id }, undo: id };
+  return { change: { ...c, undone_by: id }, undo: id, headers };
 }
 
 /** The API's and MCP's undo: a token's own change alone. */
 export async function undoForToken(auth: Authenticated, input: ResourceInput): Promise<ResourceAnswer> {
-  const { change, undo } = await undoChange(auth.ctx, input.id ?? '', { auth, via: input.via }, input.now ?? Date.now());
+  const { change, undo, headers } = await undoChange(auth.ctx, input.id ?? '', { auth, via: input.via }, input.now ?? Date.now());
   const { servedChange } = await import('./api-writes');
-  return { status: 200, body: { change: servedChange(input.id!, change), undo }, headers: {} };
+  return { status: 200, body: { change: servedChange(input.id!, change), undo }, headers };
 }
