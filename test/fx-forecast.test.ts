@@ -113,6 +113,10 @@ describe('what moves it', () => {
     expect(forecastConvertedText(cashPosition(INSTITUTIONS, [], { fx: FX, today: TODAY }).conversion, out.conversion)).toBe(
       'Converted into USD at today’s ECB rates: 1 cash account in EUR, 1 expected amount in EUR and 1 in GBP.'
     );
+    // A card's payment it can't tell the card of: held in the forecast's
+    // currency, as the card's statement it is set against.
+    const autopay = rent.map((s) => ({ ...s, paysCard: true as const, paysCardOf: undefined }));
+    expect(forecastEvents({ series: autopay, planned: [], currency: 'USD', today: TODAY, until: '2026-11-08', fx: FX }).cardsPaid.unknown).toEqual([1039.59]);
     // Without one: as before.
     const before = forecastEvents({ series: rent, planned: [fee], currency: 'USD', today: TODAY, until: '2026-11-08' });
     expect(before.events).toEqual([]);

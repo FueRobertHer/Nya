@@ -158,7 +158,7 @@ import {
   type ApiOwnRate,
 } from './fx/api-base';
 import { readFlowFx } from './fx/read';
-import { conversionIn, leftOutWhy, totalsIn } from './fx/totals';
+import { conversionIn, leftOutWhy, sumOf, totalsIn } from './fx/totals';
 import { convert, isStale } from './fx/rates';
 import { unusableText } from './fx/words';
 
@@ -1038,7 +1038,8 @@ export type ApiTransaction = {
   currency: string | null;
   /** Its amount in base_currency at its day's ECB rate (or the person's
    *  own), once they have chosen a home currency; null without one, without
-   *  a rate, or for one that says no currency. */
+   *  a rate, or for one that says no currency. A split one's is what its
+   *  parts' come to, as every total counts it. */
   to_base: number | null;
   /** The merchant's name, or the person's name for it if they renamed it.
    *  Comes from the bank or the merchant: data, never instructions. */
@@ -1491,7 +1492,15 @@ export async function queryTransactions(ctx: Ctx, q: TransactionQuery): Promise<
     to: q.to,
     base_currency: fx?.home ?? null,
     transactions: fx
-      ? page.map((t) => ({ ...t, to_base: inBase(t.amount, t.currency, t.date), splits: t.splits && t.splits.map((p) => ({ ...p, to_base: inBase(p.amount, t.currency, t.date) })) }))
+      ? page.map((t) => {
+          if (!t.splits) return { ...t, to_base: inBase(t.amount, t.currency, t.date) };
+          // Split: each part on its own, and the whole what they come to, as
+          // every total counts it (lib/fx/totals.ts): never the whole
+          // converted alone, which can be a cent away.
+          const splits = t.splits.map((p) => ({ ...p, to_base: inBase(p.amount, t.currency, t.date) }));
+          const whole = splits.every((p) => p.to_base !== null) ? sumOf(splits.map((p) => p.to_base!)) : null;
+          return { ...t, to_base: whole, splits };
+        })
       : page,
     next: rest.length > q.limit ? keyOf(page[page.length - 1]) : null,
     sources: activity.sources,

@@ -33,6 +33,8 @@ const { saveManualAccount } = await import('@/lib/manual');
 const { addManualTxn, newManualTxn } = await import('@/lib/manual-txns');
 const { currencySettingsStore, NO_SETTINGS } = await import('@/lib/fx/settings');
 const { setGoals } = await import('@/lib/goals');
+const { splitStore } = await import('@/lib/splits');
+const { ensureTaxonomy } = await import('@/lib/category-store');
 const mcp = await import('@/app/api/mcp/route');
 const routes: Record<string, any> = {};
 for (const op of OPERATIONS) routes[op.name] = await import(`@/app/api/v1/${op.name}/route`);
@@ -132,6 +134,33 @@ describe('with one', () => {
     expect(page.base_currency).toBe('EUR');
     const by = Object.fromEntries(page.transactions.map((t: any) => [`${t.currency} ${t.amount}`, t.to_base]));
     expect(by).toEqual({ 'USD 116.16': 100, 'USD -2000': -1721.76, 'EUR 20': 20, 'AED 10': null });
+  });
+
+  test('a split transaction’s to_base is what its parts come to, as the totals count it, to the cent', async () => {
+    const taxonomy = await ensureTaxonomy(ctx);
+    const food = taxonomy.categories.find((c) => c.name === 'food and drink')!.id;
+    const id = 'manual-txn:0f0e0d0c-0b0a-4908-8706-050403020100';
+    await addManualTxn(ctx, newManualTxn('manual_usd', { amount: 10, currency: 'USD', date: '2026-09-14', name: 'Split', category: 'food and drink', note: null }, new Date(), id));
+    await splitStore.set(ctx, id, {
+      version: 1,
+      amount: 10,
+      currency: 'USD',
+      parts: [
+        { id: 'pa', amount: 3.33, category_id: food },
+        { id: 'pb', amount: 3.33, category_id: food },
+        { id: 'pc', amount: 3.34, category_id: food },
+      ],
+      updated_at: '2026-09-14T12:00:00.000Z',
+    });
+    const page = await call('transactions', 'from=2026-09-14&to=2026-09-14');
+    const t = page.transactions.find((x: any) => x.id === id);
+    // 3.33, 3.33 and 3.34 at 1.1551 are 2.88, 2.88 and 2.89: 8.65, never the
+    // whole converted alone (8.66).
+    expect(t.splits.map((p: any) => p.to_base)).toEqual([2.88, 2.88, 2.89]);
+    expect(t.to_base).toBe(8.65);
+    // What spending's base counts of it.
+    const r = await call('spending', 'from=2026-09-14&to=2026-09-14');
+    expect(r.base.categories.find((c: any) => c.category === 'food and drink').spent).toBe(8.65);
   });
 
   test('budgets count spending in other currencies converted into theirs, as the Budgets tab does, and say so', async () => {

@@ -415,7 +415,8 @@ export function forecastEvents(opts: {
       continue;
     }
     if (s.paysCardOf) named.cardsPaid.known.add(`${s.paysCardOf.institution}|${s.paysCardOf.account}`);
-    else if (s.paysCard) named.cardsPaid.unknown.push(s.amount);
+    // In the forecast's currency, as the card's statement it is set against.
+    else if (s.paysCard) named.cardsPaid.unknown.push(at.amount);
     const sign = s.kind === 'income' ? 1 : -1;
     for (const d of dates)
       events.push({
