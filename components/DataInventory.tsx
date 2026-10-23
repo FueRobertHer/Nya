@@ -152,11 +152,16 @@ export function InventoryView({ inv }: { inv: Inventory }) {
     <>
       <section className="card">
         <div className="inst-header">
-          <div className="inst-name">Who can read all of it</div>
+          <div className="inst-name">Who can read it</div>
         </div>
         <p className="panel-note">
-          Whoever runs this copy of Nya, and the services it runs on: Upstash, the database, and Vercel, the host, which keeps the nightly backups. The{' '}
-          <a href="/security">Security page</a> says what each of them can read. Each kind below says who else can see it.
+          Whoever runs this copy of Nya can read all of it. Upstash, the database, holds the encrypted values and the plain text each kind below names. Vercel, the
+          host, handles every request and response and keeps the app’s logs{inv.backups === 'none' ? '' : ', and stores the nightly backups'}. The{' '}
+          <a href="/security">Security page</a> says what each of them can read.
+        </p>
+        <p className="panel-note">
+          Each kind below says who else can see it: anyone shown something read from it, or worked out from it. A setting that decides what a share shows is
+          seen, in that share, by the person you share with.
         </p>
         <p className="panel-note">{keyText(inv.key)}</p>
         <p className="as-of">Counted {when(inv.as_of)}</p>

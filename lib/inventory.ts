@@ -81,13 +81,18 @@ export const GROUPS = [
 export type Group = (typeof GROUPS)[number][0];
 
 /** Who else can see a kind, beyond whoever runs this copy of Nya, the
- *  database and the host, which the page says once for everything. */
+ *  database and the host, which the page says once for everything: whoever
+ *  is shown something read from it, or worked out from it (a setting that
+ *  decides what a share shows is seen, in that share). Plaid and the
+ *  connectors are written by hand, as where a kind came from; the other three
+ *  are held to the code by test/inventory-seers.test.ts, which records every
+ *  family each of them is answered from. */
 export type Seer = 'plaid' | 'connector' | 'shared' | 'api' | 'email';
 export const SEERS: Readonly<Record<Seer, string>> = {
   plaid: 'Plaid, where it came from',
   connector: 'SimpleFIN or Lunch Flow, where it came from',
-  shared: 'People you share with, only what you choose to share',
-  api: 'Programs you give an API token to',
+  shared: 'People you share with, in what you choose to share with them',
+  api: 'Programs you give an API token to, in what the API and the MCP server answer',
   email: 'The email service, in the emails Nya sends you',
 };
 
@@ -160,12 +165,14 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'The form earlier versions of Nya read, kept beside your budgets on categories and groups.',
     unit: VALUE,
     kept: 'Your data',
+    seen: ['shared', 'api', 'email'],
   },
   'history:accounts:est:flat': {
     group: 'history',
     name: 'Balances an estimate held flat, from before they were kept by day',
     unit: VALUE,
     kept: 'Your data',
+    seen: ['shared', 'api'],
   },
   'history:net-worth': {
     group: 'history',
@@ -189,7 +196,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Each account’s balance on each recorded day',
     unit: DAY,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: DAYS_PLAIN,
   },
   'history:accounts:est': {
@@ -197,7 +204,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Each account’s estimated balance, on the estimated days',
     unit: DAY,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api'],
     plain: DAYS_PLAIN,
   },
   'history:accounts:est:ext': {
@@ -205,7 +212,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Investment accounts’ estimated balances, further back than the estimated totals',
     unit: DAY,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api'],
     plain: DAYS_PLAIN,
   },
   'history:accounts:partial': {
@@ -213,7 +220,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Accounts’ balances recorded on a day no total was',
     unit: DAY,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: DAYS_PLAIN,
   },
   'history:accounts:est:flatd': {
@@ -222,6 +229,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Part of the estimated totals, not an account’s own history.',
     unit: DAY,
     kept: 'Your data',
+    seen: ['shared', 'api'],
     plain: DAYS_PLAIN,
   },
   'accounts:vanished': {
@@ -238,7 +246,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Their names, types, masks and currencies, so a bank that can’t be reached still shows its last balances.',
     unit: CONNECTION,
     kept: 'Your data',
-    seen: ['plaid'],
+    seen: ['plaid', 'shared', 'api', 'email'],
     plain: ITEM_IDS,
   },
   'accounts:directory': {
@@ -247,7 +255,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Its name and bank, kept after you disconnect the bank, so its history still has a name.',
     unit: ACCOUNT,
     kept: 'A bank you disconnect',
-    seen: ['plaid'],
+    seen: ['plaid', 'shared'],
     plain: ACCOUNT_IDS,
   },
   'account-links': {
@@ -255,6 +263,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Links between an earlier account and the same one after you reconnected',
     unit: ['link', 'links'],
     kept: 'A bank you disconnect',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'txn-category-overrides': {
@@ -262,7 +271,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'The categories you set on transactions',
     unit: ['transaction', 'transactions'],
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['shared', 'api', 'email'],
     plain: TXN_IDS,
   },
   'txn-category-carry': {
@@ -271,6 +280,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Each with its date, amount and bank description, so the category carries across a reconnection.',
     unit: ACCOUNT,
     kept: 'A bank you disconnect',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'account-links:lock': {
@@ -286,7 +296,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'The new name you gave each one is encrypted.',
     unit: ['merchant', 'merchants'],
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['shared', 'api', 'email'],
     plain: 'Each merchant’s name as the bank sent it, as field names.',
   },
   'manual:accounts': {
@@ -295,7 +305,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Each one’s name, type, currency and balance.',
     unit: ACCOUNT,
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'hidden:accounts': {
@@ -303,6 +313,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     name: 'Accounts you hid',
     unit: ACCOUNT,
     kept: 'Your data',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'plaid:items': {
@@ -311,7 +322,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'Each bank’s name, Plaid’s ids for it, whether Plaid included transactions when it was linked, and the token that reaches it, which is encrypted and never in your download.',
     unit: CONNECTION,
     kept: 'Your data',
-    seen: ['plaid'],
+    seen: ['plaid', 'shared', 'api', 'email'],
     plain: 'Each bank’s name, Plaid’s ids, and whether Plaid included transactions: all but the token.',
   },
   'history:backfill-done': {
@@ -351,7 +362,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: 'One compressed record for each bank connection, with the details of its accounts that came with them.',
     unit: CONNECTION,
     kept: 'Your data',
-    seen: ['plaid', 'shared', 'api'],
+    seen: ['plaid', 'shared', 'api', 'email'],
     plain: ITEM_IN_NAME,
   },
   'invtxns:': {
@@ -411,6 +422,7 @@ const FAMILIES: Readonly<Record<string, Entry>> = {
     about: `How each day’s snapshot went (kept ${RUNS_KEEP_DAYS} days), when each day’s balances were taken, its checks on your bank connections, and its lock.`,
     unit: RECORD,
     kept: 'The app’s own records about your data',
+    seen: ['shared', 'api', 'email'],
     plain: 'All of it, as plain text: days, times, outcomes and Plaid’s ids for your connections.',
   },
   'cache:': {
@@ -429,7 +441,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Closed, no longer yours or not followed, with the day and any note.',
     unit: ACCOUNT,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'allocation-settings': {
@@ -468,7 +480,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your budgets by month, and what rolls over',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['shared', 'api', 'email'],
   },
   'budget-set': {
     group: 'plans',
@@ -504,7 +516,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Problems with a bank connection, and the emails about them',
     unit: CONNECTION,
     kept: 'How each bank connection is doing',
-    seen: ['email'],
+    seen: ['shared', 'api', 'email'],
     plain: ITEM_IDS,
   },
   'connection-syncs': {
@@ -512,6 +524,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'When each bank connection last answered',
     unit: CONNECTION,
     kept: 'How each bank connection is doing',
+    seen: ['shared', 'api', 'email'],
     plain: ITEM_IDS,
   },
   'connection-warnings': {
@@ -519,7 +532,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Plaid’s warnings that a connection is going to end',
     unit: CONNECTION,
     kept: 'How each bank connection is doing',
-    seen: ['plaid'],
+    seen: ['plaid', 'shared', 'api', 'email'],
     plain: ITEM_IDS,
   },
   'connector-accounts': {
@@ -528,7 +541,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'What each one is, its currency, and its balance as last reported.',
     unit: ACCOUNT,
     kept: BOTH_CONNECTORS,
-    seen: ['connector', 'shared', 'api'],
+    seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'connector-claims': {
@@ -544,7 +557,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Which one, the host it reaches, how its last request went, and the names of the accounts it offers that you don’t track.',
     unit: ['connection', 'connections'],
     kept: BOTH_CONNECTORS,
-    seen: ['connector'],
+    seen: ['connector', 'shared', 'api', 'email'],
     plain: RANDOM_IDS,
   },
   'connector-ended': {
@@ -597,7 +610,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Its allocation, monthly target, target date and whether it is archived.',
     unit: ['goal', 'goals'],
     kept: 'Your data',
-    seen: ['shared', 'api'],
+    seen: ['shared', 'api', 'email'],
     plain: 'Goal ids, as field names.',
   },
   'history-import-summaries': {
@@ -606,6 +619,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Each import’s entry without its records, which the imports themselves hold.',
     unit: IMPORT,
     kept: 'The app’s own records about your data',
+    seen: ['shared', 'api', 'email'],
     plain: RANDOM_IDS,
   },
   'history-imports': {
@@ -621,6 +635,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'What each investment account held: each position’s quantity, price and value, a month to an entry.',
     unit: ['month', 'months'],
     kept: 'Your data',
+    seen: ['shared', 'api'],
     plain: RANDOM_IDS,
   },
   'holdings:history:index': {
@@ -629,6 +644,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Which id each month is under, and the first and last day each account was recorded.',
     unit: ENTRY,
     kept: 'The app’s own records about your data',
+    seen: ['shared', 'api'],
   },
   'import-reads': {
     group: 'machinery',
@@ -664,13 +680,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'What the history worked out from imported transactions covers',
     unit: ENTRY,
     kept: 'The app’s own records about your data',
+    seen: ['shared', 'api'],
   },
   'imported-transactions': {
     group: 'transactions',
     name: 'Transactions imported into linked accounts',
     unit: ACCOUNT,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'imported-twins': {
@@ -693,13 +710,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your income carryover setting',
     unit: VALUE,
     kept: 'Your data',
+    seen: ['api', 'email'],
   },
   'manual-transactions': {
     group: 'transactions',
     name: 'Transactions on manual accounts, and those SimpleFIN or Lunch Flow brings',
     unit: ACCOUNT,
     kept: 'Your data',
-    seen: ['connector', 'shared', 'api'],
+    seen: ['connector', 'shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'planned-items': {
@@ -707,7 +725,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your planned bills and income',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['email'],
+    seen: ['api', 'email'],
   },
   'report-settings': {
     group: 'settings',
@@ -720,6 +738,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Accounts brought back from a download',
     unit: ACCOUNT,
     kept: 'A download you brought back',
+    seen: ['shared', 'api', 'email'],
     plain: ACCOUNT_IDS,
   },
   'restored-investment-transactions': {
@@ -741,13 +760,14 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your review queue settings',
     unit: VALUE,
     kept: 'Your data',
+    seen: ['shared', 'api', 'email'],
   },
   rules: {
     group: 'settings',
     name: 'Your rules',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
   },
   'sharing-access-log': {
     group: 'sharing',
@@ -770,7 +790,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your tags',
     unit: VALUE,
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
   },
   'timeline-notes': {
     group: 'history',
@@ -784,7 +804,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Notes, tags and exclusions on transactions',
     unit: ['transaction', 'transactions'],
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: TXN_IDS,
   },
   'transaction-approvals': {
@@ -792,7 +812,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Transactions you approved in the review queue',
     unit: ['transaction', 'transactions'],
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: TXN_IDS,
   },
   'transaction-groups': {
@@ -800,7 +820,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Transactions you grouped',
     unit: ['group', 'groups'],
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: RANDOM_IDS,
   },
   'transaction-splits': {
@@ -808,7 +828,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Transactions you split',
     unit: ['transaction', 'transactions'],
     kept: 'Your data',
-    seen: ['api'],
+    seen: ['shared', 'api', 'email'],
     plain: TXN_IDS,
   },
   'user-restore': {
@@ -844,6 +864,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     name: 'Your merchants’ default categories',
     unit: VALUE,
     kept: 'Your data',
+    seen: ['shared', 'api', 'email'],
   },
   'weekly-summary': {
     group: 'settings',
@@ -851,6 +872,7 @@ const STORES: Readonly<Record<string, Entry>> = {
     about: 'Whether it is on, its day and your time zone.',
     unit: VALUE,
     kept: 'The weekly summary',
+    seen: ['shared'],
   },
   'weekly-summary-sends': {
     group: 'machinery',

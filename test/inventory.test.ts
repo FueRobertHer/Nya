@@ -351,7 +351,7 @@ describe('the route', () => {
     expect(row(b, 'owners')).toMatchObject({ status: 'read', count: 1 });
     expect(row(b, 'connections')).toMatchObject({ status: 'read', count: 1, download: { included: true } });
     expect(row(b, 'invites:')).toMatchObject({ status: 'not-counted', count: null });
-    expect(row(b, 'connections').seen).toEqual(['People you share with, only what you choose to share']);
+    expect(row(b, 'connections').seen).toEqual(['People you share with, in what you choose to share with them']);
 
     clerk.signedIn = 'user_a';
     const a = await (await get()).json();

@@ -102,6 +102,9 @@ describe('Your data, in words', () => {
     expect(backupText(base, 'invalid')).toContain('retention setting is not valid');
     expect(text(renderToStaticMarkup(<InventoryView inv={{ ...inv, backups: 'none' }} />))).toContain('This copy of Nya takes no nightly backups.');
     expect(text(renderToStaticMarkup(<InventoryView inv={{ ...inv, backups: 'none' }} />))).not.toContain('Nightly backups Copied');
+    // Vercel stores backups only where they are taken.
+    expect(text(renderToStaticMarkup(<InventoryView inv={inv} />))).toContain('keeps the app’s logs, and stores the nightly backups.');
+    expect(text(renderToStaticMarkup(<InventoryView inv={{ ...inv, backups: 'none' }} />))).toContain('keeps the app’s logs. The Security page');
   });
 
   test('the data key', () => {
