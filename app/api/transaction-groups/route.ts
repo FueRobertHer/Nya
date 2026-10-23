@@ -8,6 +8,7 @@ import { changeGroup, checkGroupName, checkMemberIds, checkMembers, createGroup,
 import { splitStore } from '@/lib/splits';
 import { findTransactions, importedStoodFor, LookupUnreadableError, type FoundTxn } from '@/lib/txn-lookup';
 import { isSplitOrGroupId } from '@/lib/split-rows';
+import { carriedOnto, sharesBlock } from '@/lib/shared-expenses/edits';
 
 // Groups of transactions that count as one net amount (#39, lib/groups.ts):
 // a dinner and what a friend paid back, a trip and its reimbursement. Applied
@@ -88,6 +89,14 @@ async function checkJoining(ctx: Ctx, ids: readonly string[], found: ReadonlyMap
   const split = ids.find((id) => splits.has(id));
   if (split) {
     throw new GroupError(`${quoted(found.get(split)!)} is split, and its parts count on their own, so a group would count it twice. Unsplit it first.`, 409);
+  }
+  // A shared transaction, or one that pays something back, its own or one a
+  // re-link carried to it (lib/shared-expenses/edits.ts), says how it
+  // counts there: what applies from elsewhere is read once for all of them.
+  const fromElsewhere = await carriedOnto(ctx, ids);
+  for (const id of ids) {
+    const shared = await sharesBlock(ctx, id, 'group', [], fromElsewhere);
+    if (shared) throw new GroupError(`${quoted(found.get(id)!)}: ${shared}`, 409);
   }
   const inGroup = memberIndex(new Map([...groups].filter(([id]) => id !== group)));
   const taken = ids.find((id) => inGroup.has(id));

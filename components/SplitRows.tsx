@@ -121,7 +121,7 @@ export function groupGoneText(t: Pick<Txn, 'group_missing' | 'group_removed' | '
  *  one counted on its own, Edit split on a split one, Edit group on a
  *  group's row, and Ungroup on one of a group that no longer applies (the
  *  list has no row for it). Not on a pending one, which gets a new id when it
- *  posts. */
+ *  posts, nor on one shared whole or paying something back. */
 export function SplitActions({
   t,
   onSplit,
@@ -157,6 +157,16 @@ export function SplitActions({
   }
   if (t.split_unread) return null;
   if (t.pending) return <div className="rename-hint">Once it posts, it can be split or grouped with others.</div>;
+  // Shared whole, or paying something back, under Shared expenses (its own
+  // or carried to it across a re-link): that says how it counts, so it is
+  // changed there first, as the server asks (lib/shared-expenses/edits.ts
+  // sharesBlock).
+  if (!t.split_parts && (t.shared || t.shared_unapplied)) {
+    return <div className="rename-hint">It is shared under Shared expenses, which says how it counts: stop sharing it to split it or group it.</div>;
+  }
+  if (!t.split_parts && (t.settles || t.settles_unapplied)) {
+    return <div className="rename-hint">It pays something back under Shared expenses: reopen that payment to split it or group it.</div>;
+  }
   return (
     <div className="rename-row">
       <button className="secondary" onClick={() => onSplit(t)}>

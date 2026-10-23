@@ -112,7 +112,7 @@ import {
 } from '../recurring';
 import { forecastConverter, forecastEvents, joinConversions, minorScale, type CashPosition, type ForecastConversion, type ForecastEvent } from '../forecast';
 import { nextPlannedDate, type PlannedCadence, type PlannedItem, type PlannedKind } from '../planned';
-import { countsInTotals, currencyOf, inCurrency, isExcluded, isMoneyMovement, isTransfer, totalsCurrency, type Countable, type LeftOut } from '../spending';
+import { countsInTotals, currencyOf, inCurrency, isExcluded, isHistoryRow, isMoneyMovement, isTransfer, totalsCurrency, type Countable, type LeftOut } from '../spending';
 import { conversionIn, totalsIn, type Conversion, type WasIn } from '../fx/totals';
 import type { FxTable, OwnRate } from '../fx/rates';
 import { summarize, tidy, type TotalsRow } from '../totals';
@@ -166,12 +166,42 @@ export function runwayWindow(today: string, months: RunwayWindow): RunwaySpan {
 
 /** What the runway reads of a transaction: the Activity tab's row; with a
  *  home currency, converted into the runway's (`converted`: what it was). */
-export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null; account_id?: string; converted?: WasIn };
+export type RunwayRow = TotalsRow & RecurringRow & { transaction_id?: string; vendor_key?: string | null; account_id?: string; converted?: WasIn; shared_was?: number };
 
 /** A row as it was written, before any conversion: what its bill and the
  *  other side of a move are matched by (see WITH A HOME CURRENCY). */
 const asWritten = (t: RunwayRow): RunwayRow =>
   t.converted ? { ...t, amount: t.converted.amount, iso_currency_code: t.converted.currency, unofficial_currency_code: null } : t;
+
+/** A row as its bank wrote it, whole: a shared transaction counted at your
+ *  part (lib/shared-expenses/rows.ts) is matched to its bill by the bill,
+ *  never by your part of it, so a shared bill is still a bill. */
+const asBank = (t: RunwayRow): RunwayRow => {
+  const w = asWritten(t);
+  return t.shared_was !== undefined ? { ...w, amount: t.shared_was } : w;
+};
+
+/**
+ * Of each detected series, the part of an occurrence that counts as its row
+ * says, from its latest one: your part of a shared bill (its row at your
+ * part beside its whole, shared_was), what is left of a payment that paid
+ * something back (lib/shared-expenses/rows.ts), else 1. Its dates to come
+ * add that much, so a shared bill is never counted at its whole on its dates
+ * while its part is in the average, nor a payment that pays back an IOU,
+ * which counts on its own day, twice.
+ */
+export function countedPart(series: readonly RecurringSeries[], rows: readonly RunwayRow[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const s of series) {
+    let latest: RunwayRow | null = null;
+    for (const t of rows) {
+      if (!isHistoryRow(t) || t.pending || (latest && t.date <= latest.date)) continue;
+      if (inSeries(asBank(t), s)) latest = t;
+    }
+    if (latest && latest.shared_was !== undefined && latest.shared_was !== 0) out.set(s.id, Math.max(0, asWritten(latest).amount / latest.shared_was));
+  }
+  return out;
+}
 
 /** A single large outflow or inflow, listed (see ONE-OFFS). */
 export type OneOff = { date: string; name: string; amount: number };
@@ -471,7 +501,7 @@ export function windowSpending(
     if (countsInTotals(t, currency)) {
       // A bill or pay is matched by the row as written; what is added up is
       // the row as counted (converted, with a home currency).
-      const written = asWritten(t);
+      const written = asBank(t);
       if (t.amount < 0) {
         const isPay = pay.some((p) => inSeries(written, p));
         if (filedAsSpending(t) && !isPay) refunds += -t.amount;
@@ -553,6 +583,8 @@ export function windowSpending(
 function latestByGroup(rows: readonly (RecurringRow & Countable)[]): Map<string, RecurringRow & Countable> {
   const latest = new Map<string, RecurringRow & Countable>();
   for (const t of rows) {
+    // A transaction's own row, never one shared expenses add beside it.
+    if (!isHistoryRow(t)) continue;
     const group = seriesGroupOf(t);
     if (group === null) continue;
     const cur = latest.get(group);
@@ -797,6 +829,9 @@ export type RunwayBuilt = RunwayInputs & {
   /** Expected amounts (payments, bills and planned items) left out for their
    *  currency, by currency. */
   events_left_out: LeftOut;
+  /** How many of `outside` and `infrequent` are shared with others, so
+   *  each adds your part on its dates (countedPart). */
+  shared_bills: number;
   /** With a home currency, what was converted; null without one. */
   conversion: RunwayConversion | null;
 };
@@ -848,6 +883,15 @@ export function buildRunwayInputs(opts: {
   const live = series.filter((s) => !dismissed.has(s.id));
   const outside = paymentsOutsideSpending(series, opts.rows, dismissed);
   const infrequent = infrequentBills(series, opts.rows, dismissed);
+  // What each adds on its dates: the part of it that counts as its row says
+  // (countedPart: your part of a shared bill). Matched by the whole bill.
+  const part = countedPart([...outside, ...infrequent], opts.rows);
+  const atPart = (s: RecurringSeries): RecurringSeries => {
+    const r = part.get(s.id) ?? 1;
+    return r === 1 ? s : { ...s, amount: s.amount * r, ...(s.previousAmount !== undefined ? { previousAmount: s.previousAmount * r } : {}) };
+  };
+  const outsideAtPart = outside.map(atPart);
+  const infrequentAtPart = infrequent.map(atPart);
   // The rows as the windows count them: converted into the runway's
   // currency, each at its day's rate, with a home currency.
   const fx = opts.fx?.home && currency ? opts.fx : null;
@@ -863,7 +907,7 @@ export function buildRunwayInputs(opts: {
   });
   const until = addDays(today, HORIZON_DAYS);
   const planned = opts.planned ?? [];
-  const fromForecast = forecastEvents({ series: outside, planned, currency, today, until, fx });
+  const fromForecast = forecastEvents({ series: outsideAtPart, planned, currency, today, until, fx });
   // An amount in the runway's currency: as written, converted at the newest
   // rates with a home currency, or null (left out and named). `bills` counts
   // the bills less often than monthly converted, for the notes.
@@ -876,7 +920,7 @@ export function buildRunwayInputs(opts: {
   // The bills less often than monthly, on their dates: on a card too, whose
   // charge leaves cash with the card's payment, as the spending counts it.
   const others = new Map(fromForecast.leftOut.map((l) => [l.currency, l.count] as const));
-  const billEvents: ForecastEvent[] = infrequent.flatMap((s) => {
+  const billEvents: ForecastEvent[] = infrequentAtPart.flatMap((s) => {
     const at = inRunway(s.amount, s.currency, true);
     if (at === null) {
       others.set(s.currency!, (others.get(s.currency!) ?? 0) + 1);
@@ -906,8 +950,9 @@ export function buildRunwayInputs(opts: {
     windows,
     events: [...fromForecast.events, ...billEvents].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : b.amount - a.amount)),
     position,
-    outside: listed(outside),
-    infrequent: listed(infrequent),
+    outside: listed(outsideAtPart),
+    infrequent: listed(infrequentAtPart),
+    shared_bills: [...outside, ...infrequent].filter((s) => (part.get(s.id) ?? 1) !== 1).length,
     planned: planned
       .flatMap((p) => {
         const at = inRunway(p.amount, p.currency);

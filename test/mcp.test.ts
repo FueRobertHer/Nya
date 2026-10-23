@@ -193,6 +193,7 @@ describe('tools', () => {
       'list_tags',
       'list_rules',
       'get_goals',
+      'get_shared_expenses',
       'get_runway',
       'get_year_over_year',
       'get_holdings',

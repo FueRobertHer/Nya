@@ -51,6 +51,12 @@ export function groupCandidates(rows: readonly Txn[], opts: { currency: string |
         // In a group already, if one the list has no row for.
         !t.group_unapplied &&
         !t.group_outside &&
+        // Shared, paying something back, or a row shared expenses added
+        // (lib/shared-expenses/rows.ts): the groups route refuses them.
+        !t.shared &&
+        !t.settles &&
+        !t.shared_part &&
+        !t.shared_iou &&
         !opts.exclude.has(t.transaction_id) &&
         currencyOf(t) === opts.currency &&
         (!q || t.name.toLowerCase().includes(q) || t.account_name.toLowerCase().includes(q) || String(Math.abs(t.amount)).includes(q))

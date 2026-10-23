@@ -86,6 +86,8 @@ import { applyLayers } from './txn-layers';
 import { readSplitsForDisplay } from './splits';
 import { readGroupsForDisplay } from './groups';
 import { expandSplitsAndGroups } from './split-rows';
+import { applyShares, type ShareResult } from './shared-expenses/rows';
+import { layerInputs } from './shared-expenses/read';
 import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 import { readReviewBasics, readReviewParts } from './review-read';
@@ -128,12 +130,18 @@ const CACHED_HISTORY = { recent: 4, older: 6 };
  *  forecast reads), `category_facts` from one cached before rows carried
  *  what files them into the person's categories, and `layer_facts` from one
  *  cached before rows carried what rules and what was carried across a
- *  re-link are applied by (lib/txn-layers.ts): any is a miss. */
+ *  re-link are applied by (lib/txn-layers.ts), and `content_keys` from one
+ *  cached before posted rows carried the key a share carries across a
+ *  re-link by (lib/shared-expenses/rows.ts), with `loading`, the accounts
+ *  whose connection is still bringing its history, where such a share's row
+ *  may not have come yet: any is a miss. */
 export type PlaidPayload = {
   plaid_only: true;
   account_types: true;
   category_facts: true;
   layer_facts: true;
+  content_keys: true;
+  loading: string[];
   transactions: Txn[];
   notes: string[]; // per-institution problems, shown to the user
   // The institutions whose rows are not all here, by name: none at all this
@@ -163,6 +171,8 @@ export function isPlaidPayload(v: unknown): v is PlaidPayload {
     p.account_types === true &&
     p.category_facts === true &&
     p.layer_facts === true &&
+    p.content_keys === true &&
+    Array.isArray(p.loading) &&
     Array.isArray(p.transactions) &&
     Array.isArray(p.notes) &&
     typeof p.as_of === 'string'
@@ -407,6 +417,8 @@ export async function assembleBankRows(
       account_types: true,
       category_facts: true,
       layer_facts: true,
+      content_keys: true,
+      loading: [...new Set(results.flatMap((r) => r.loading ?? []))],
       transactions,
       notes,
       incomplete,
@@ -532,6 +544,12 @@ export async function finishActivity(
    *  row (the notes say so): for a reader that says its totals may be filed
    *  otherwise than the person files them (a share, lib/share-views.ts). */
   defaults_unread: boolean;
+  /** Shared expenses (lib/shared-expenses/rows.ts): what this read can tell
+   *  is gone, what waits on a re-link, and what is shared twice. */
+  shared_expenses: Pick<ShareResult, 'gone' | 'away' | 'coming' | 'twice' | 'moves'>;
+  /** By row id, what applies to it kept under another id (ShareResult.onto):
+   *  for the edits' checks, never sent. */
+  shared_onto: ShareResult['onto'];
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -540,7 +558,7 @@ export async function finishActivity(
   const readFrom = cutoff < since ? cutoff : since;
   // With them, the review queue's settings and the merchants' defaults; the
   // approvals once the rows are known (lib/review-read.ts).
-  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle, reviewBasics] = await Promise.all([
+  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle, reviewBasics, shared] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
@@ -549,6 +567,7 @@ export async function finishActivity(
     readGroupsForDisplay(ctx),
     opts.keepEnded ? null : getEffectiveLifecycle(ctx, new Map()),
     readReviewBasics(ctx),
+    layerInputs(ctx),
   ]);
   const ended = lifecycle ? endDays(lifecycle) : new Map<string, string>();
   const manual = { ...read, txns: read.txns.filter((t) => !(t.account_id && ended.has(t.account_id) && t.date >= ended.get(t.account_id)!)) };
@@ -588,6 +607,11 @@ export async function finishActivity(
   // there yet (lib/split-rows.ts).
   const stands = new Map<string, readonly string[]>();
   for (const t of transactions) if (t.stands_for?.length) stands.set(t.transaction_id, t.stands_for);
+  // Each row's account and content key, which the layers take off the row
+  // (never sent): what a share is found by across a re-link, and what says
+  // its transaction is gone (lib/shared-expenses/rows.ts).
+  const rowFacts = new Map<string, { account?: string; key?: string }>();
+  for (const t of transactions) rowFacts.set(t.transaction_id, { account: t.account_id ?? t.account_ref, key: t.content_key });
   // Which rows have receipts or documents, for the person's own Activity (see
   // `attached`): a row's own and those of the rows it stands for, before the
   // layers take `stands_for` off; a split's parts keep their transaction's.
@@ -635,6 +659,21 @@ export async function finishActivity(
       } else if (members.some((m) => m.attached === null)) r.attached = null;
     }
   }
+  // After them, shared expenses (lib/shared-expenses/rows.ts): a shared
+  // transaction at your part beside the others' parts, a payment that paid
+  // something back beside what it paid, and an IOU you owe for something as
+  // a row of its own; every row the bank's adds up to it.
+  const withShares = applyShares(expanded.rows, {
+    ...shared,
+    ix,
+    from: cutoff,
+    hidden,
+    rowFacts,
+    manualUnread: manual.unread,
+    loading: new Set(plaid.loading),
+    ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
+    ...(stands.size > 0 ? { stands } : {}),
+  });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that
   // couldn't be read for a rule naming one (left out whole until they can be).
@@ -648,9 +687,11 @@ export async function finishActivity(
   // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
-    transactions: expanded.rows,
-    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes],
-    unread_notes: [...plaid.notes, ...manual.notes],
+    transactions: withShares.rows,
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes, ...withShares.notes],
+    unread_notes: [...plaid.notes, ...manual.notes, ...withShares.unread_notes],
+    shared_expenses: { gone: withShares.gone, away: withShares.away, coming: withShares.coming, twice: withShares.twice, ...(withShares.moves ? { moves: withShares.moves } : {}) },
+    shared_onto: withShares.onto,
     tags_note: tagRead.note,
     review: {
       on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,

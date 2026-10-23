@@ -407,6 +407,11 @@ export const OPERATION_SPECS: readonly OperationSpec[] = [
     args: { include_hidden: INCLUDE_HIDDEN },
   },
   {
+    name: 'shared-expenses',
+    summary: 'The people you split costs with, what each owes you or you owe them per currency, every IOU and every part of a shared transaction still open, and the payments you confirmed paid something back. The only answer that names those people. Nya never moves money.',
+    args: {},
+  },
+  {
     name: 'runway',
     summary:
       'How long your cash would last at your recent spending, with your income and without it: the day it would run out, and what it is worked out from. An estimate, under a what-if when asked for one. In your cash accounts’ currency; once you choose a home currency, base gives the same with what is in other currencies converted into it, as the report page shows it.',
@@ -589,6 +594,13 @@ export const TOOL_SPECS: readonly ToolSpec[] = [
     'Savings goals',
     'Savings goals: each one’s target, what it counts as saved of the account it tracks (its allocation, or what the allocations leave, never more than the balance), its monthly target and target date, what went into the account over the last three complete months, and when it is projected to be reached: from that average, or from the monthly target when there is none (rate_from says which), and never a date for a goal nothing went into. Archived goals are listed, marked. Every amount is in the goal’s own account currency; once the person has chosen a home currency, to_base also gives its target and what it counts as saved in it (base_currency) at the newest rates.',
     NARROW_HIDDEN
+  ),
+  fromOperation(
+    'get_shared_expenses',
+    'shared-expenses',
+    'Shared expenses',
+    'Who the person splits costs with and what is left between them: each person (by name, the only answer that names them) with their balance per currency (positive: they owe the person; negative: the person owes them; null while something couldn’t be read), every IOU and every part of a shared transaction still open, and the payments the person confirmed paid something back. Under counting part, the person’s spending counts only their part of a shared transaction and their part of what someone else paid (an IOU they owe with a category), and money paid back between people counts as neither spending nor income; under bank, every transaction counts as the bank shows it. Nya never sends, receives or holds money.',
+    'It holds every IOU and the payments’ newest 100: nothing more to leave out.'
   ),
   fromOperation(
     'get_runway',

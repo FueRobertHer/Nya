@@ -360,6 +360,24 @@ describe('undo', () => {
     expect(await findManualTxn(ctx, made.body.transaction.id)).not.toBeNull();
   });
 
+  test('a row shared since, or confirmed as paying something back: refused, and the row and what is owed kept', async () => {
+    const sam = (await app('shared-expenses/people', 'POST', { name: 'Sam Lee' })).body.id;
+    // Made, then shared half with Sam in the app.
+    const shared = await send('POST', 'transactions', { body: coffee });
+    expect((await app('shared-expenses/shares', 'PUT', { transaction_id: shared.body.transaction.id, entries: [{ person: sam, amount: 2.25, how: { kind: 'half' } }] })).status).toBe(200);
+    const refused = await quietly(() => undo(shared.body.change_id));
+    expect([refused.status, refused.body.error.message]).toEqual([409, 'The transaction changed since this change was made, so it wasn’t undone. Change it back yourself if you want it as it was.']);
+    expect(await findManualTxn(ctx, shared.body.transaction.id)).not.toBeNull();
+    // Made, then confirmed as Sam paying back an IOU.
+    const iou = (await app('shared-expenses/ious', 'POST', { person: sam, direction: 'to_you', amount: 20, currency: 'USD', date: daysAgo(1, NOW), what: 'Tickets' })).body.id;
+    const paid = await send('POST', 'transactions', { body: { ...coffee, amount: -20, name: 'Sam' } });
+    expect((await app('shared-expenses/payments', 'POST', { transaction_id: paid.body.transaction.id, allocations: [{ item: iou, amount: 20 }] })).status).toBe(200);
+    expect((await quietly(() => undo(paid.body.change_id))).status).toBe(409);
+    expect(await findManualTxn(ctx, paid.body.transaction.id)).not.toBeNull();
+    const card = (await app('shared-expenses', 'GET')).body;
+    expect(card.balances[sam]).toEqual([{ currency: 'USD', amount: 2.25, open: 1, oldest: daysAgo(0, NOW), over: 0 }]);
+  });
+
   test('an account’s details and its balance set back; a balance changed since is not', async () => {
     const before = (await getManualAccount(ctx, WALLET))!;
     const details = await send('PATCH', `manual-accounts/${WALLET}`, { body: { name: 'Purse', type: 'other', subtype: null }, headers: { 'if-match': await versionOf(`manual-accounts/${WALLET}`) } });
@@ -543,6 +561,12 @@ describe('undo of an account a token made, taken out only as the token left it',
     const parts = [{ amount: 5, category_id: one.id }, { amount: 7, category_id: two.id }];
     expect((await app('transaction-splits', 'PUT', { transaction_id: c.row, parts })).status).toBe(200);
     await refusedWith(c.change, c.id, 'was split or put in a group since');
+
+    const sam = (await app('shared-expenses/people', 'POST', { name: 'Sam Lee' })).body.id;
+    const d = await made();
+    expect((await app('shared-expenses/shares', 'PUT', { transaction_id: d.row, entries: [{ person: sam, amount: 6, how: { kind: 'half' } }] })).status).toBe(200);
+    await refusedWith(d.change, d.id, `A transaction on it (${d.row}) was shared, or confirmed as paying something back, since`);
+    expect((await app('shared-expenses', 'GET')).body.balances[sam]).toEqual([{ currency: 'USD', amount: 6, open: 1, oldest: daysAgo(0, NOW), over: 0 }]);
   });
 
   /** A share of the container's owner, to someone they're connected with,

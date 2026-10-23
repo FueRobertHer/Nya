@@ -65,7 +65,7 @@ const WHOLE: ReadonlySet<string> = new Set(CORE_PARTS.filter((p) => CORE[p].whol
 /** The core parts read again to send, never held. */
 const STREAMED_CORE: ReadonlySet<string> = new Set(['transactions', 'investment_transactions']);
 /** The stores whose damaged entries are named by a transaction's id. */
-const NAMED_BY_TXN: ReadonlySet<string> = new Set(['transaction-annotations', 'transaction-splits', 'transaction-approvals']);
+const NAMED_BY_TXN: ReadonlySet<string> = new Set(['transaction-annotations', 'transaction-splits', 'transaction-approvals', 'expense-shares', 'expense-payments', 'expense-dismissed']);
 
 /** Whether the value at `path` is built whole (see the header of stream.ts). */
 function buildOf(path: JsonPath): boolean {

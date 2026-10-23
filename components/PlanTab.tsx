@@ -75,7 +75,7 @@ import {
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
 import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, spendingOff, transactionCoverage, transactionsMissing, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
-import { uncategorizedNote } from '@/lib/spending';
+import { historyCount, uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
 import type { AllocHolding } from '@/lib/allocation/allocation';
@@ -903,7 +903,7 @@ export default function PlanTab({
         flows={flows}
         unread={unread}
         withoutTransactions={txnWithout}
-        transactionCount={txns?.length ?? 0}
+        transactionCount={txns ? historyCount(txns) : 0}
         txnsLoading={txnsLoading}
         txnsFailed={txnsFailed}
         assets={assets}
@@ -1274,7 +1274,10 @@ export function FiCard({
     // Cash withdrawn and cash spending entered by hand on an account marked
     // as cash are the same money: only the larger counts, and this says which,
     // and on which accounts (lib/fire/inputs.ts).
-    const on = cashOn.length > 0 ? ` on ${names(cashOn)}` : '';
+    // An IOU you owe settled in cash (lib/shared-expenses/rows.ts) is cash
+    // spending too, the withdrawal handed over the same money.
+    const ious = flows.cashIous > 0 ? `${cashOn.length > 0 ? ' and' : ''} for what you owed others and settled in cash` : '';
+    const on = `${cashOn.length > 0 ? ` on ${names(cashOn)}` : ''}${ious}`;
     if (flows.cash > 0) {
       parts.push(
         flows.cashEntered > 0
@@ -1314,6 +1317,12 @@ export function FiCard({
         warnings={[
           leftOut.otherCurrencies,
           uncategorizedNote(flows.uncategorized ?? 0),
+          // IOUs you owe typed for days before the earliest transaction: outside
+          // the span measured, so left out here rather than scaled up (they
+          // still count in budgets and reports; lib/fire/inputs.ts).
+          flows.iousBefore
+            ? `${flows.iousBefore.count === 1 ? 'An IOU' : `${flows.iousBefore.count} IOUs`} you owe from before ${dayName(flows.from)} (${money(flows.iousBefore.amount)}) ${flows.iousBefore.count === 1 ? "isn't" : "aren't"} counted here: your spending is measured from your transactions, which begin then.`
+            : null,
           cashHint,
           // Said by where the rows came from: Plaid gives a loan's kind when it
           // knows it; a row entered, imported or from SimpleFIN has only its

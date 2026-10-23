@@ -108,6 +108,7 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
   };
   // Each split's parts as converted, to give their copies the whole they make.
   const wholes = new Map<string, { sum: number; parts: number; converted: number }>();
+  const sharedWholes = new Map<string, { sum: number; parts: number; converted: number }>();
 
   // A row that says no currency: its account's, where known, else the one
   // most rows are in (see the header).
@@ -152,8 +153,35 @@ export function totalsIn<T extends Convertible>(rows: readonly T[], fx: FxTable 
       w.converted++;
       wholes.set(of, w);
     }
+    // A shared transaction's or a payment's rows (lib/shared-expenses/rows.ts)
+    // make its whole the same way.
+    const sharedOf = of === undefined ? (t as { shared_of?: string }).shared_of : undefined;
+    if (sharedOf !== undefined) {
+      const w = sharedWholes.get(sharedOf) ?? { sum: 0, parts: 0, converted: 0 };
+      w.sum = ONE(w.sum + r.amount);
+      w.converted++;
+      sharedWholes.set(sharedOf, w);
+    }
     return copy;
   });
+  // A shared transaction's whole as the bank has it (`shared_was`, which
+  // lib/split-rows.ts bankRows puts back) is the sum of its rows' converted
+  // amounts, where every one converted: never left in its own currency on a
+  // row that says the one converted into.
+  if (sharedWholes.size > 0) {
+    const rowsOf = new Map<string, number>();
+    for (const t of rows) {
+      const r = t as { split_of?: string; shared_of?: string };
+      if (r.split_of === undefined && r.shared_of !== undefined) rowsOf.set(r.shared_of, (rowsOf.get(r.shared_of) ?? 0) + 1);
+    }
+    for (let i = 0; i < out.length; i++) {
+      const t = out[i] as T & { transaction_id?: string; shared_of?: string; shared_was?: number; converted?: WasIn };
+      if (t.shared_was === undefined || !t.converted || t.shared_of !== t.transaction_id || t.shared_of === undefined) continue;
+      const w = sharedWholes.get(t.shared_of)!;
+      if (!w || w.converted !== rowsOf.get(t.shared_of)) continue;
+      out[i] = { ...t, shared_was: w.sum } as T;
+    }
+  }
   // A whole is the sum of its parts' converted amounts (never converted on
   // its own, which could differ by a cent), where every part converted.
   if (wholes.size > 0) {

@@ -31,7 +31,7 @@ export const hasMovedOut = (w: WindowSpending) => w.transfers_out + w.cash_out >
  * what the cards owe.
  */
 export function runwayCaveats(
-  runway: Pick<RunwayReport, 'currency' | 'has_cash' | 'gaps' | 'notes' | 'stale_balances' | 'owed_on_cards'>,
+  runway: Pick<RunwayReport, 'currency' | 'has_cash' | 'gaps' | 'notes' | 'stale_balances' | 'owed_on_cards'> & Partial<Pick<RunwayReport, 'shared_bills'>>,
   projection: Pick<RunwayProjection, 'window' | 'what_if'>,
   f: RunwayFormats
 ): string[] {
@@ -53,6 +53,10 @@ export function runwayCaveats(
     );
   }
   if (hasMovedOut(w)) lines.push(movedOutWords(w, money, projection.what_if.count_moved_out));
+  // Shared expenses (lib/shared-expenses/rows.ts): a shared bill adds your
+  // part on its dates, as the spending counts your part of it.
+  const shared = runway.shared_bills ?? 0;
+  if (shared > 0) lines.push(`${shared === 1 ? '1 bill is' : `${shared} bills are`} shared with others: only your part of ${shared === 1 ? 'it' : 'each'} is added on ${shared === 1 ? 'its' : 'their'} dates, as your spending counts your part.`);
   lines.push(...runway.notes);
   for (const s of runway.stale_balances) lines.push(`${s.name} at ${s.institution} is a balance you typed, last updated ${f.time(s.updated_at)}.`);
   if (runway.owed_on_cards > 0) lines.push(`Your cards owe ${money(runway.owed_on_cards)}: their charges are in the spending as they are made, but paying them off comes out of this cash, which this doesn’t take off.`);

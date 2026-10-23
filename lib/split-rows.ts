@@ -113,6 +113,12 @@ import type { TxnGroup } from './groups';
 export const PART_PREFIX = 'split:';
 export const REMAINDER_PREFIX = 'split-rest:';
 export const GROUP_PREFIX = 'group:';
+/** The rows shared expenses add (lib/shared-expenses/rows.ts): another
+ *  person's part of a transaction, a part of a payment that paid something
+ *  back, an IOU's row. Never a transaction's either. */
+export const SHARE_PREFIX = 'share:';
+export const SETTLED_PREFIX = 'settled:';
+export const IOU_PREFIX = 'iou:';
 
 // ---- Limits (lib/splits.ts, lib/groups.ts), here so the views can read them ----
 
@@ -126,9 +132,11 @@ export const MIN_MEMBERS = 2;
 /** A group's name: as long as a category's (lib/categories.ts NAME_MAX). */
 export const GROUP_NAME_MAX = 60;
 
-/** Whether an id is a part's, a remainder's or a group's row's, not a
- *  transaction's. */
-export const isSplitOrGroupId = (id: string): boolean => id.startsWith(PART_PREFIX) || id.startsWith(REMAINDER_PREFIX) || id.startsWith(GROUP_PREFIX);
+/** Whether an id is a row the read layer made, not a transaction's: a
+ *  part's, a remainder's, a group's row's, or one shared expenses add.
+ *  Every write made by a transaction's id refuses one. */
+export const isSplitOrGroupId = (id: string): boolean =>
+  id.startsWith(PART_PREFIX) || id.startsWith(REMAINDER_PREFIX) || id.startsWith(GROUP_PREFIX) || id.startsWith(SHARE_PREFIX) || id.startsWith(SETTLED_PREFIX) || id.startsWith(IOU_PREFIX);
 
 // ---- Money ----
 
@@ -180,8 +188,23 @@ const PARENT_KEYS = [
   'excluded_by_rule',
   'paired',
 ] as const;
-/** The fields only a part has. */
-const PART_KEYS = ['split_of', 'split_index', 'split_count', 'split_excluded', 'split_remainder', 'split_parent', 'split_updated_at', 'split_carried_from'] as const;
+/** The fields only a part has: a split's, and those shared expenses put on
+ *  the part a share comes from (lib/shared-expenses/rows.ts). */
+const PART_KEYS = [
+  'split_of',
+  'split_index',
+  'split_count',
+  'split_excluded',
+  'split_remainder',
+  'split_parent',
+  'split_updated_at',
+  'split_carried_from',
+  'shared',
+  'shared_was',
+  'shared_part',
+  'shared_carried_from',
+  'shared_unapplied',
+] as const;
 
 /** A whole transaction's own values (SplitParent). */
 function parentFacts(t: Txn): SplitParent {
@@ -191,9 +214,10 @@ function parentFacts(t: Txn): SplitParent {
 }
 
 /** The fields filing a row into a category gives it (lib/category-store.ts
- *  fileRows), for a category chosen by id: a part's, a group's. One no
- *  category has is the uncategorized one, shown with no name. */
-function filedUnder(ix: CategoryIndex | null, c: Category | null): Pick<Txn, 'category' | 'category_id' | 'category_name' | 'category_kind'> {
+ *  fileRows), for a category chosen by id: a part's, a group's, an IOU's
+ *  (lib/shared-expenses/rows.ts). One no category has is the uncategorized
+ *  one, shown with no name. */
+export function filedUnder(ix: CategoryIndex | null, c: Category | null): Pick<Txn, 'category' | 'category_id' | 'category_name' | 'category_kind'> {
   if (!ix) return { category: null };
   if (c) return { category: choiceText(c), category_id: c.id, category_name: c.name, category_kind: groupOf(ix, c).kind };
   const u = uncategorizedOf(ix);
@@ -581,8 +605,10 @@ export function parentOf<T extends object>(part: T): T {
   return row as T;
 }
 
-/** A row as bankRows answers it: a split transaction whole, with its parts. */
-export type WithParts<T> = T & { split_parts?: T[] };
+/** A row as bankRows answers it: a split transaction whole, with its parts;
+ *  a shared transaction or a payment whole, with the rows shared expenses
+ *  made of it. */
+export type WithParts<T> = T & { split_parts?: T[]; shared_parts?: T[] };
 
 /**
  * Each transaction once, as the bank (or the person, entering it) has it, in
@@ -590,14 +616,46 @@ export type WithParts<T> = T & { split_parts?: T[] };
  * parts beside it (`split_parts`); a group's transactions each on its own, in
  * place of its net, each with its group_id. With `groups: 'keep'`, a group's
  * row stays as it is (the Activity tab lists its transactions under it).
+ * Shared expenses (lib/shared-expenses/rows.ts): an unsplit shared
+ * transaction, or a payment, is its own row at the amount it had
+ * (`shared_was`), with the rows made of it beside it (`shared_parts`); a split
+ * one's are among its `split_parts`; an IOU's row, which is no transaction,
+ * is left out unless `ious: 'keep'` (the Activity tab lists it).
  * Rows of any shape that carries these fields: the read layer's, the app's,
  * recurring detection's.
  */
-export function bankRows<T extends object>(rows: readonly T[], opts: { groups?: 'members' | 'keep' } = {}): WithParts<T>[] {
+export function bankRows<T extends object>(rows: readonly T[], opts: { groups?: 'members' | 'keep'; ious?: 'keep' } = {}): WithParts<T>[] {
   const out: WithParts<T>[] = [];
   const parents = new Map<string, T & { split_parts: T[] }>();
+  // A shared transaction's or a payment's own row, by its id, so it is the
+  // whole one whichever of its rows comes first.
+  const owners = new Map<string, T>();
   for (const row of rows) {
-    const r = row as { split_of?: unknown; split_parent?: unknown; group_members?: unknown };
+    const r = row as { transaction_id?: unknown; shared_of?: unknown; split_of?: unknown };
+    if (typeof r.shared_of === 'string' && r.split_of === undefined && r.transaction_id === r.shared_of) owners.set(r.shared_of, row);
+  }
+  const shared = new Map<string, T & { shared_parts: T[] }>();
+  for (const row of rows) {
+    const r = row as { split_of?: unknown; split_parent?: unknown; group_members?: unknown; shared_of?: unknown; shared_iou?: unknown; shared_was?: unknown };
+    if (r.shared_iou !== undefined) {
+      if (opts.ious === 'keep') out.push(row);
+      continue;
+    }
+    if (typeof r.shared_of === 'string' && r.split_of === undefined) {
+      let p = shared.get(r.shared_of);
+      if (!p) {
+        const owner = (owners.get(r.shared_of) ?? row) as T & { shared_was?: number; shared_of?: string; amount?: number };
+        const whole = { ...owner, shared_parts: [] as T[] } as T & { shared_parts: T[]; shared_was?: number; shared_of?: string; amount?: number };
+        if (typeof owner.shared_was === 'number') whole.amount = owner.shared_was;
+        delete whole.shared_was;
+        delete whole.shared_of;
+        p = whole;
+        shared.set(r.shared_of, p);
+        out.push(p);
+      }
+      p.shared_parts.push(row);
+      continue;
+    }
     if (Array.isArray(r.group_members) && opts.groups !== 'keep') {
       out.push(...(r.group_members as T[]));
       continue;

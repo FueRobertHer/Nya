@@ -63,6 +63,13 @@ import type { RunwayReport } from '@/lib/report/runway-read';
 import { buildYearOverYear } from '@/lib/report/year-over-year';
 import type { YearOverYearReport } from '@/lib/report/year-over-year-read';
 import { PLANNED as RUNWAY_PLANNED, ROWS as RUNWAY_ROWS, TODAY as RUNWAY_TODAY } from './runway-fixture';
+import SharedExpensesCard from '@/components/SharedExpensesCard';
+import ShareCostSheet from '@/components/ShareCostSheet';
+import { ConfirmPaymentSheet, SettleSheet } from '@/components/ConfirmPaymentSheet';
+import PersonSheet from '@/components/PersonSheet';
+import HandoffSheet from '@/components/HandoffSheet';
+import IouSheet from '@/components/IouSheet';
+import { cardOf as sharedCard, daysAgo as sharedDaysAgo, shared as sharedState, txn as sharedTxn } from './shared-expenses-fixture';
 
 // Hide amounts (components/hide-amounts.ts): the switch that shows the app's
 // structure while hiding its figures. Every money amount the main screens
@@ -1033,6 +1040,38 @@ const SCREENS: Record<string, () => React.ReactElement> = {
   'Card Mode: a transaction standing for one imported from the bank’s file, approved at the file’s amount': () => (
     <CardMode open txns={[TWIN]} taxonomy={taxonomy} tags={[]} currency="USD" review={REVIEW} onClose={() => {}} onSplit={() => {}} onGroup={() => {}} />
   ),
+  // Shared expenses (#49): the card and every sheet with a figure to hide.
+  'Shared expenses: who owes what, a payment that may be one, and one gone with where it could move': () => (
+    <SharedExpensesCard
+      shared={sharedState(sharedCard())}
+      txns={[
+        sharedTxn({ transaction_id: 't-venmo', name: 'VENMO CASHOUT ALEX SMITH', amount: -35, date: sharedDaysAgo(3), category: 'transfer in', category_kind: 'transfer', transaction_code: 'transfer' }),
+        sharedTxn({ transaction_id: 't-dinner-2', name: 'Bistro', amount: 120, date: sharedDaysAgo(9) }),
+      ]}
+      facts={{ gone: { shares: ['t-dinner'], payments: [] }, twice: [], moves: { shares: { 't-dinner': [{ transaction_id: 't-dinner-2', account_id: 'chk' }] }, payments: {} } }}
+      tags={[]}
+      taxonomy={null}
+      currency="USD"
+    />
+  ),
+  'Shared expenses: sharing a cost, and your part': () => (
+    <ShareCostSheet t={sharedTxn({ transaction_id: 't-dinner', name: 'Bistro', amount: 120 })} shared={sharedState(sharedCard())} onClose={() => {}} />
+  ),
+  'Shared expenses: what a payment paid back, chosen item by item': () => (
+    <ConfirmPaymentSheet
+      t={sharedTxn({ transaction_id: 't-venmo', name: 'VENMO CASHOUT', amount: -35, date: sharedDaysAgo(3) })}
+      person="alex"
+      preset={[
+        { item: 'e-dinner', amount: 60 },
+        { item: 'i-groceries', amount: 25 },
+      ]}
+      shared={sharedState(sharedCard())}
+      onClose={() => {}}
+    />
+  ),
+  'Shared expenses: settled outside your accounts, or let go': () => <SettleSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
+  'Shared expenses: someone you split costs with, and what is between you': () => <PersonSheet id="alex" open tags={[]} shared={sharedState(sharedCard())} onClose={() => {}} />,
+  'Shared expenses: asking for it, and the message to send': () => <HandoffSheet person="alex" currency="USD" shared={sharedState(sharedCard())} onClose={() => {}} />,
 };
 
 describe('the main screens with amounts hidden', () => {
@@ -1085,6 +1124,13 @@ describe('the main screens with amounts hidden', () => {
     expect(hidden).toContain('<span class="visually-hidden">hidden</span>');
     const meters = both(SCREENS['Budgets: the meters, opened to a group']).hidden;
     expect(meters).toContain('<span class="visually-hidden">hidden of hidden</span>');
+  });
+
+  test('the IOU sheet’s one figure is its amount, in a field the CSS hook covers', () => {
+    const { hidden, shown } = both(() => <IouSheet id="i-groceries" open currency="USD" taxonomy={null} shared={sharedState(sharedCard())} onClose={() => {}} />);
+    for (const html of [hidden, shown]) expect(AMOUNT.test(exposed(html))).toBe(false);
+    const amount = [...hidden.matchAll(/<input[^>]*>/g)].map((m) => m[0]).filter((f) => /inputmode="decimal"/i.test(f));
+    expect(amount).toHaveLength(1);
   });
 
   test('a field holding an amount is one the CSS hook covers, a percentage’s is marked to stay, and the hook is there', () => {
@@ -1175,7 +1221,12 @@ describe('every module a page can load writes its amounts through the switch (a 
   // changes with --randomize. So each has its own time, past bun's 5 s.
   const SCAN_MS = 30_000;
   const modules = clientModules(ROOT);
-  const sources = modules.filter((m) => m !== 'lib/format.ts').map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
+  // Past the formatters by design, each named with why: lib/format.ts is
+  // them; lib/shared-expenses/links.ts writes the amounts a payment app's
+  // link and the message to copy carry to the other person, whatever this
+  // screen hides (the sheet draws the message through hideAmountsIn).
+  const PAST_THE_SWITCH = new Set(['lib/format.ts', 'lib/shared-expenses/links.ts']);
+  const sources = modules.filter((m) => !PAST_THE_SWITCH.has(m)).map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
 
   test('it reaches every component and what they import', () => {
     expect(modules).toContain('components/Dashboard.tsx');

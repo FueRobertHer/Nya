@@ -102,7 +102,7 @@ describe('in the download', () => {
 
   test('the CSV gives every row’s tags, a manual row’s too, and a bank row’s note', async () => {
     const [header, ...rows] = parseCsv([...exportFile(await download(), 'transactions-csv').pieces()].join(''));
-    expect(header.slice(-8, -5)).toEqual(['tags', 'nya_name', 'excluded']);
+    expect(header.slice(-11, -8)).toEqual(['tags', 'nya_name', 'excluded']);
     const col = (r: string[], name: (typeof TRANSACTION_COLUMNS)[number]) => r[header.indexOf(name)];
     const by = Object.fromEntries(rows.map((r) => [col(r, 'transaction_id'), r]));
     expect([col(by.t_hotel, 'tags'), col(by.t_hotel, 'note')]).toEqual(['Work; Vacation 2026', 'Paid back in October']);

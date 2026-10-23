@@ -96,7 +96,7 @@ import { readGoals, type ApiGoal } from './api-goals';
 import { assembleBankRows, finishActivity, type BankSource } from './activity';
 import { readBudgetMonths } from './budget-month';
 import { summarize, tidy, type SummaryCategory } from './totals';
-import { leftOutByCurrency, type LeftOut } from './spending';
+import { isHistoryRow, leftOutByCurrency, type LeftOut } from './spending';
 import { coveredOutOfDays, noTransactionsView, spendingUnknown, type NoTransactionsView } from './no-transactions';
 import { withImportedFiles } from './history-import/without-files';
 import { categoryById, displayName, groupOf, indexTaxonomy, type CategoryIndex } from './categories';
@@ -341,7 +341,7 @@ async function spendingView(theirs: Ctx, s: SpendingShare, today: string): Promi
   const thisMonth = today.slice(0, 7);
   // No month before the first with any transaction: before it, nothing is
   // known, which is not the same as nothing spent.
-  const first = rows.reduce<string | null>((m, t) => (m === null || t.date.slice(0, 7) < m ? t.date.slice(0, 7) : m), null);
+  const first = rows.filter((t) => isHistoryRow(t)).reduce<string | null>((m, t) => (m === null || t.date.slice(0, 7) < m ? t.date.slice(0, 7) : m), null);
   const months: SpendingMonth[] = [];
   for (let i = 0; i < SPENDING_MONTHS; i++) {
     const month = addMonths(thisMonth, -i);

@@ -1,0 +1,468 @@
+import { describe, expect, test } from 'bun:test';
+import { applyShares, isLayerRow, MANUAL_ACCOUNT_PREFIX, type ShareInputs } from '@/lib/shared-expenses/rows';
+import { MANUAL_ID_PREFIX } from '@/lib/manual';
+import type { Iou, Payment, Share } from '@/lib/shared-expenses/model';
+import { bankRows, expandSplitsAndGroups } from '@/lib/split-rows';
+import { indexTaxonomy, seedTaxonomy, textKeys, type Taxonomy } from '@/lib/categories';
+import { summarize, spendingByCategory } from '@/lib/totals';
+import { countTransactions, isHistoryRow, totalsCurrency } from '@/lib/spending';
+import type { SplitRecord } from '@/lib/splits';
+import type { TxnGroup } from '@/lib/groups';
+import type { Txn } from '@/lib/transactions';
+
+// Shared expenses applied on read (lib/shared-expenses/rows.ts): your part
+// of a shared transaction counts, the others' parts and what was paid back
+// count in no total, an IOU you owe for something counts once on its day,
+// every bank row's rows add up to it, and bankRows puts each back whole.
+
+let n = 0;
+const taxonomy: Taxonomy = seedTaxonomy(textKeys(['groceries', 'household', 'restaurants', 'transfer in']), () => `c${++n}`);
+const ix = indexTaxonomy(taxonomy);
+const cat = (name: string) => taxonomy.categories.find((c) => c.name === name)!.id;
+const kindOf = (id: string) => taxonomy.groups.find((g) => g.id === taxonomy.categories.find((c) => c.id === id)!.group)!.kind;
+const AT = '2026-10-03T12:00:00.000Z';
+
+function row(id: string, over: Partial<Txn> = {}): Txn {
+  const category = over.category_id ?? cat('restaurants');
+  const c = taxonomy.categories.find((x) => x.id === category)!;
+  return {
+    transaction_id: id,
+    date: '2026-10-03',
+    name: 'Joe’s',
+    amount: 120,
+    pending: false,
+    account_name: 'Card',
+    account_type: 'credit',
+    institution_name: 'Chase',
+    category: c.provider_keys.find((k) => k.provider === 'text')!.key,
+    category_id: category,
+    category_name: c.name,
+    category_kind: kindOf(category),
+    iso_currency_code: 'USD',
+    unofficial_currency_code: null,
+    vendor_key: 'joes',
+    logo_url: null,
+    category_icon_url: null,
+    subcategory: null,
+    category_confidence: null,
+    transaction_code: null,
+    payment_channel: 'in store',
+    datetime: null,
+    website: null,
+    check_number: null,
+    account_owner: null,
+    city: null,
+    region: null,
+    counterparty: null,
+    payment_processor: null,
+    payment_reference: null,
+    account_id: 'acc-card',
+    needs_review: true,
+    ...over,
+  };
+}
+
+const venmoIn = (id: string, amount: number, over: Partial<Txn> = {}) =>
+  row(id, { name: 'VENMO CASHOUT', amount, date: '2026-10-09', category_id: cat('transfer in'), transaction_code: 'transfer', account_id: 'acc-checking', account_name: 'Checking', account_type: 'depository', ...over });
+
+const share = (entries: Share['entries'], over: Partial<Share> = {}): Share => ({ version: 1, account_id: 'acc-card', amount_was: 120, currency: 'USD', date: '2026-10-03', what: 'Dinner', entries, created_at: AT, updated_at: AT, ...over });
+const iou = (over: Partial<Iou> = {}): Iou => ({ version: 1, person: 'alex', direction: 'by_you', amount: 25, currency: 'USD', date: '2026-10-05', what: 'Groceries', category_id: cat('groceries'), created_at: AT, updated_at: AT, ...over });
+const payment = (amount: number, allocations: Payment['allocations'], over: Partial<Payment> = {}): Payment => ({ version: 1, account_id: 'acc-checking', row: { amount, currency: 'USD', date: '2026-10-09' }, allocations, confirmed_at: AT, ...over });
+
+function inputs(over: Partial<ShareInputs> = {}): ShareInputs {
+  return { counting: 'part', shares: new Map(), sharesUnknown: new Set(), payments: new Map(), paymentsUnknown: new Set(), ious: new Map(), iousUnread: 0, ix, ...over };
+}
+
+const october = (d: string) => d.startsWith('2026-10');
+const units = (rows: readonly Txn[]) => rows.reduce((s, t) => s + Math.round(t.amount * 100), 0);
+
+describe('your part counts, on the day it was bought', () => {
+  const dinner = row('t-dinner');
+  const shares = new Map([['t-dinner', share([{ id: 'e1', person: 'alex', amount: 60, how: { kind: 'half' } }])]]);
+
+  test('a shared transaction counts your part; the other part is left out, and the bank row’s rows add up to it', () => {
+    const { rows } = applyShares([dinner], inputs({ shares }));
+    expect(rows.map((t) => [t.transaction_id, t.amount, t.excluded ?? false])).toEqual([
+      ['t-dinner', 60, false],
+      ['share:e1', 60, true],
+    ]);
+    expect(units(rows)).toBe(12000);
+    expect(spendingByCategory(rows, october, 'USD')).toEqual({ [cat('restaurants')]: 60 });
+    const s = summarize(rows, october, 'USD');
+    expect([s.money_out, s.transactions, s.counted, s.excluded, s.shared]).toEqual([60, 1, 1, 0, 1]);
+    // Reviewed once: the added row carries no review mark.
+    expect(rows[1].needs_review).toBeUndefined();
+    expect(rows[0].shared).toEqual({ your_part: 60, people: [{ person: 'alex', item: 'e1', amount: 60 }], counted: true });
+  });
+
+  test('bankRows puts it back whole, at the bank’s amount, with its rows beside it', () => {
+    const { rows } = applyShares([dinner], inputs({ shares }));
+    const whole = bankRows(rows);
+    expect(whole).toHaveLength(1);
+    expect(whole[0].amount).toBe(120);
+    expect(whole[0].transaction_id).toBe('t-dinner');
+    expect(whole[0].shared_was).toBeUndefined();
+    expect(whole[0].shared_parts!.map((p) => p.amount)).toEqual([60, 60]);
+    expect(whole[0].needs_review).toBe(true);
+    expect(countTransactions(rows)).toBe(1);
+  });
+
+  test('a repayment confirmed counts its paid-back part nowhere, whatever its row is filed as', () => {
+    const paid = new Map([['t-venmo', payment(-60, [{ item: 'e1', amount: 60 }])]]);
+    // Filed as income by a rule: still not counted twice.
+    const asIncome = venmoIn('t-venmo', -60, { transaction_code: null, category_id: cat('groceries'), category_kind: 'income' });
+    for (const t of [venmoIn('t-venmo', -60), asIncome]) {
+      const { rows } = applyShares([t, dinner], inputs({ shares, payments: paid }));
+      const s = summarize(rows, october, 'USD');
+      expect([s.money_in, s.money_out]).toEqual([0, 60]);
+      expect(rows.find((r) => r.transaction_id === 't-venmo')!.amount).toBe(0);
+      expect(bankRows(rows).find((r) => r.transaction_id === 't-venmo')!.amount).toBe(-60);
+      expect(countTransactions(rows)).toBe(2);
+    }
+  });
+
+  test('an IOU you owe for something counts once, on its day, in its category, however it is settled', () => {
+    const ious = new Map([['i1', iou()]]);
+    // Settled by a payment of yours (money out): the payment counts nowhere.
+    const yours = row('t-pay', { name: 'Venmo', amount: 25, date: '2026-10-07', category_id: cat('transfer in'), transaction_code: 'transfer', account_id: 'acc-checking' });
+    const byRow = applyShares([yours], inputs({ ious, payments: new Map([['t-pay', payment(25, [{ item: 'i1', amount: 25 }])]]) }));
+    expect(spendingByCategory(byRow.rows, october, 'USD')).toEqual({ [cat('groceries')]: 25 });
+    // Settled in cash: the IOU still counts once, and says how much was cash.
+    const cash = new Map([['i1', iou({ closed: [{ event: 'ev', kind: 'outside', amount: 25, date: '2026-10-06', at: AT }] })]]);
+    const byCash = applyShares([], inputs({ ious: cash }));
+    expect(byCash.rows.map((t) => [t.transaction_id, t.amount, t.shared_iou?.cash])).toEqual([['iou:i1', 25, 25]]);
+    // Let go: they gave it to you, so it counts nothing.
+    const forgiven = new Map([['i1', iou({ closed: [{ event: 'ev', kind: 'forgiven', amount: 25, date: '2026-10-06', at: AT }] })]]);
+    expect(applyShares([], inputs({ ious: forgiven })).rows).toEqual([]);
+    // A loan (no category) and one owed to you count nothing.
+    expect(applyShares([], inputs({ ious: new Map([['i2', iou({ category_id: undefined })], ['i3', iou({ direction: 'to_you', category_id: undefined })]]) })).rows).toEqual([]);
+    // On no account, never a bank transaction, never evidence of history.
+    const t = byCash.rows[0];
+    expect(t.account_id).toBeUndefined();
+    expect(bankRows(byCash.rows)).toEqual([]);
+    expect(bankRows(byCash.rows, { ious: 'keep' })).toHaveLength(1);
+    expect(isHistoryRow(t)).toBe(false);
+    expect(isLayerRow(t)).toBe(true);
+    // Dated before the read's first day: no row here.
+    expect(applyShares([], inputs({ ious: cash, from: '2026-10-10' })).rows).toEqual([]);
+  });
+
+  test('one net payment closes both ways: their part of your dinner and your part of their groceries', () => {
+    const ious = new Map([['i1', iou()]]);
+    const net = venmoIn('t-net', -35);
+    const { rows } = applyShares([net, dinner], inputs({ shares, ious, payments: new Map([['t-net', payment(-35, [{ item: 'e1', amount: 60 }, { item: 'i1', amount: 25 }])]]) }));
+    expect(rows.filter((t) => t.shared_of === 't-net').map((t) => [t.transaction_id, t.amount])).toEqual([
+      ['t-net', 0],
+      ['settled:t-net:e1', -60],
+      ['settled:t-net:i1', 25],
+    ]);
+    const s = summarize(rows, october, 'USD');
+    // Your part of the dinner and your part of the groceries: $85, as the bank's -120 + 35 says.
+    expect([s.money_in, s.money_out]).toEqual([0, 85]);
+  });
+
+  test('a split transaction shared from one part: the share comes off that part only', () => {
+    const costco = row('t-costco', { amount: 150, name: 'Costco' });
+    const split: SplitRecord = {
+      version: 1,
+      amount: 150,
+      currency: 'USD',
+      parts: [
+        { id: 'p1', amount: 100, category_id: cat('groceries') },
+        { id: 'p2', amount: 50, category_id: cat('household') },
+      ],
+      updated_at: AT,
+    };
+    const expanded = expandSplitsAndGroups([costco], { splits: new Map([['t-costco', split]]), splitsUnknown: new Set(), groups: new Map(), groupsUnknown: 0, ix }).rows;
+    const { rows } = applyShares(expanded, inputs({ shares: new Map([['t-costco', share([{ id: 'e9', person: 'sam', amount: 50 }], { part: 'p1', amount_was: 100 })]]) }));
+    expect(spendingByCategory(rows, october, 'USD')).toEqual({ [cat('groceries')]: 50, [cat('household')]: 50 });
+    const whole = bankRows(rows);
+    expect(whole).toHaveLength(1);
+    expect(whole[0].amount).toBe(150);
+    expect(whole[0].shared).toBeUndefined();
+    expect(whole[0].split_parts!.filter((p) => !p.excluded).reduce((s, p) => s + p.amount, 0)).toBe(100);
+    expect(countTransactions(rows)).toBe(1);
+  });
+
+  test('with `bank`, every total is what it is without shared expenses', () => {
+    const paid = new Map([['t-venmo', payment(-60, [{ item: 'e1', amount: 60 }])]]);
+    const plain = [venmoIn('t-venmo', -60, { transaction_code: null, category_kind: 'income' }), dinner];
+    const { rows } = applyShares(plain, inputs({ counting: 'bank', shares, payments: paid, ious: new Map([['i1', iou()]]) }));
+    expect(rows.map((t) => t.amount)).toEqual(plain.map((t) => t.amount));
+    expect(summarize(rows, october, 'USD')).toEqual(summarize(plain, october, 'USD'));
+    expect(rows[1].shared?.counted).toBe(false);
+    // And so with a setting that can't be read, said in a note.
+    const unread = applyShares(plain, inputs({ shares, settingsUnread: true }));
+    expect(unread.rows.map((t) => t.amount)).toEqual([-60, 120]);
+    expect(unread.notes[0]).toContain('couldn’t be read');
+  });
+});
+
+describe('what no longer applies counts as the bank shows it, and says so', () => {
+  test('a share on a grouped transaction, another currency, or more than the row now', () => {
+    const dinner = row('t-dinner');
+    const payback = venmoIn('t-back', -60);
+    const group: TxnGroup = { version: 1, name: 'Dinner', category_id: cat('restaurants'), members: ['t-dinner', 't-back'], date: '2026-10-03', currency: 'USD', created_at: AT, updated_at: AT };
+    const grouped = expandSplitsAndGroups([dinner, payback], { splits: new Map(), splitsUnknown: new Set(), groups: new Map([['g1', group]]), groupsUnknown: 0, ix }).rows;
+    const shares = new Map([['t-dinner', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const inGroup = applyShares(grouped, inputs({ shares }));
+    expect(inGroup.rows.map((t) => t.amount)).toEqual([60]);
+    expect(inGroup.notes.some((x) => x.includes('changed since you shared'))).toBe(true);
+    const euro = applyShares([row('t-dinner', { iso_currency_code: 'EUR' })], inputs({ shares }));
+    expect(euro.rows.map((t) => [t.amount, t.shared_unapplied])).toEqual([[120, 'currency']]);
+    const smaller = applyShares([row('t-dinner', { amount: 50 })], inputs({ shares }));
+    expect(smaller.rows.map((t) => [t.amount, t.shared_unapplied])).toEqual([[50, 'amount']]);
+  });
+
+  test('a share and a payment on one row: the share wins, the payment is unapplied', () => {
+    const { rows, notes } = applyShares(
+      [row('t-x')],
+      inputs({ shares: new Map([['t-x', share([{ id: 'e1', person: 'alex', amount: 60 }])]]), payments: new Map([['t-x', payment(120, [{ item: 'e1', amount: 60 }], { account_id: 'acc-card' })]]) })
+    );
+    expect(rows.map((t) => [t.transaction_id, t.amount])).toEqual([
+      ['t-x', 60],
+      ['share:e1', 60],
+    ]);
+    expect(rows[0].settles_unapplied).toBe('shared');
+    expect(notes.some((x) => x.includes('no longer fit'))).toBe(true);
+  });
+
+  test('an allocation to an item since removed: that much counts as the row says', () => {
+    const { rows, notes } = applyShares([venmoIn('t-v', -60, { transaction_code: null, category_kind: 'income' })], inputs({ payments: new Map([['t-v', payment(-60, [{ item: 'gone', amount: 60 }])]]) }));
+    expect(rows.map((t) => t.amount)).toEqual([-60]);
+    expect(notes.some((x) => x.includes('removed'))).toBe(true);
+  });
+
+  test('a share whose row is gone, as this read can tell, is named and noted, never dropped', () => {
+    const others = [row('t-a', { date: '2026-10-01' }), row('t-b', { date: '2026-10-08' })];
+    const shares = new Map([['t-gone', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const r = applyShares(others, inputs({ shares }));
+    expect(r.gone.shares).toEqual(['t-gone']);
+    expect(r.notes.some((x) => x.includes('isn’t in your accounts any more'))).toBe(true);
+    // Its account hidden, or its rows not reaching its day: never called gone.
+    expect(applyShares(others, inputs({ shares, hidden: new Set(['acc-card']) })).gone.shares).toEqual([]);
+    expect(applyShares([others[1]], inputs({ shares })).gone.shares).toEqual([]);
+    // Kept by the person: not again.
+    expect(applyShares(others, inputs({ shares: new Map([['t-gone', share([{ id: 'e1', person: 'alex', amount: 60 }], { kept_gone: AT })]]) })).gone.shares).toEqual([]);
+  });
+
+  test('shared twice through an imported twin: the bank row’s own counts, and both are named', () => {
+    const bank = row('t-bank');
+    const shares = new Map([
+      ['t-bank', share([{ id: 'e1', person: 'alex', amount: 60 }])],
+      ['imported-txn:x', share([{ id: 'e2', person: 'alex', amount: 60 }])],
+    ]);
+    const r = applyShares([bank], inputs({ shares, stands: new Map([['t-bank', ['imported-txn:x']]]) }));
+    expect(r.twice).toEqual([{ bank: 't-bank', imported: ['imported-txn:x'] }]);
+    expect(r.rows[0].shared_twice).toEqual(['imported-txn:x']);
+    expect(r.rows.map((t) => t.transaction_id)).toEqual(['t-bank', 'share:e1']);
+    // Without its own, it takes the imported row's.
+    const carried = applyShares([bank], inputs({ shares: new Map([['imported-txn:x', shares.get('imported-txn:x')!]]), stands: new Map([['t-bank', ['imported-txn:x']]]) }));
+    expect(carried.rows[0].shared_carried_from).toBe('imported-txn:x');
+    expect(carried.gone.shares).toEqual([]);
+  });
+
+  test('a payment confirmed on an imported row applies to the bank row standing for it, as a share does', () => {
+    const bank = venmoIn('t-bank', -60);
+    const shares = new Map([['t-dinner', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const payments = new Map([['imported-txn:x', payment(-60, [{ item: 'e1', amount: 60 }])]]);
+    const stands = new Map([['t-bank', ['imported-txn:x']]]);
+    const r = applyShares([bank, row('t-dinner')], inputs({ shares, payments, stands }));
+    expect(r.rows.filter((t) => t.transaction_id.includes('t-bank')).map((t) => [t.transaction_id, t.amount])).toEqual([
+      ['t-bank', 0],
+      ['settled:t-bank:e1', -60],
+    ]);
+    expect(r.gone.payments).toEqual([]);
+    // Its own as well: its own applies, and the other is noted, never both.
+    const both = applyShares([bank, row('t-dinner')], inputs({ shares, payments: new Map([...payments, ['t-bank', payment(-60, [{ item: 'e1', amount: 60 }])]]), stands }));
+    expect(both.rows.filter((t) => t.shared_part?.kind === 'repaid')).toHaveLength(1);
+    expect(both.notes.join(' ')).toMatch(/payment/);
+  });
+});
+
+describe('the rows this layer adds are no evidence and no vote', () => {
+  test('they never change the totals’ currency', () => {
+    const eur = Array.from({ length: 10 }, (_, i) => row(`e${i}`, { iso_currency_code: 'EUR' }));
+    const usd = Array.from({ length: 9 }, (_, i) => row(`u${i}`));
+    const shares = new Map(usd.slice(0, 3).map((t, i) => [t.transaction_id, share([{ id: `x${i}`, person: 'alex', amount: 60 }])] as const));
+    const { rows } = applyShares([...eur, ...usd], inputs({ shares }));
+    expect(totalsCurrency([...eur, ...usd])).toBe('EUR');
+    expect(totalsCurrency(rows)).toBe('EUR');
+  });
+
+  test('money in from a payment app counted while someone owes you is noted', () => {
+    const shares = new Map([['t-dinner', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const zelle = row('t-z', { name: 'Zelle payment from ALEX SMITH', amount: -60, category_kind: 'income', account_id: 'acc-checking' });
+    const r = applyShares([zelle, row('t-dinner')], inputs({ shares }));
+    expect(r.notes.some((x) => x.includes('payment in from a payment app counts as money in'))).toBe(true);
+    // Said to be no repayment: not again.
+    expect(applyShares([zelle, row('t-dinner')], inputs({ shares, dismissed: new Set(['t-z']) })).notes.some((x) => x.includes('payment app'))).toBe(false);
+  });
+});
+
+describe('across a re-link, and what is gone or waits', () => {
+  // The old account's share and payment, their content keys recorded at the
+  // disconnect; the re-added account's rows, their keys as the read had them.
+  const keyOf = (account: string, t: { date: string; amount: number; name: string }) => `${account}|${t.date}|${Math.round(t.amount * 100)}|${t.name.toLowerCase()}`;
+  const dinner = row('n-d', { account_id: undefined, name: 'Joe’s' });
+  const cashout = venmoIn('n-v', -60, { account_id: undefined });
+  const rowFacts = new Map([
+    ['n-d', { account: 'acc-new', key: keyOf('acc-new', { date: dinner.date, amount: 120, name: 'JOES DINER' }) }],
+    ['n-v', { account: 'acc-new', key: keyOf('acc-new', { date: cashout.date, amount: -60, name: 'VENMO CASHOUT' }) }],
+  ]);
+  const shares = new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }], { account_id: 'acc-old', carry_key: keyOf('acc-old', { date: dinner.date, amount: 120, name: 'JOES DINER' }) })]]);
+  const payments = new Map([['t-v', payment(-60, [{ item: 'e1', amount: 60 }], { account_id: 'acc-old', carry_key: keyOf('acc-old', { date: cashout.date, amount: -60, name: 'VENMO CASHOUT' }) })]]);
+  const linked = { live: new Set(['acc-new']), resolve: (id: string) => (id === 'acc-old' ? 'acc-new' : id) };
+
+  test('linked: each carries to the row with its key, one to one, saying where it is kept', () => {
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accounts: linked }));
+    const d = r.rows.find((t) => t.transaction_id === 'n-d')!;
+    expect([d.amount, d.shared_was, d.shared_carried_from]).toEqual([60, 120, 't-d']);
+    const v = r.rows.find((t) => t.transaction_id === 'n-v')!;
+    expect([v.amount, v.settles?.kept_under]).toEqual([0, 't-v']);
+    expect(r.gone).toEqual({ shares: [], payments: [] });
+    expect(r.away).toEqual({ shares: [], payments: [] });
+    expect(units(r.rows.filter((t) => !t.excluded))).toBe(6000);
+  });
+
+  test('linked, but no row with its key (or two): gone, decided by the link, with where it could move', () => {
+    const changed = new Map([...rowFacts, ['n-d', { account: 'acc-new', key: 'acc-new|other' }]]);
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts: changed, accounts: linked }));
+    expect(r.rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(120);
+    expect(r.gone.shares).toEqual(['t-d']);
+    expect(r.moves?.shares['t-d']).toEqual([{ transaction_id: 'n-d', account_id: 'acc-new' }]);
+    expect(r.notes.join(' ')).toContain('isn’t in your accounts any more');
+    // Two identical rows: nothing guesses.
+    const twin = row('n-d2', { account_id: undefined, name: 'Joe’s' });
+    const both = new Map([...rowFacts, ['n-d2', rowFacts.get('n-d')!]]);
+    const r2 = applyShares([dinner, twin], inputs({ shares, rowFacts: both, accounts: linked }));
+    expect(r2.rows.filter((t) => t.shared)).toEqual([]);
+    expect(r2.gone.shares).toEqual(['t-d']);
+    // No key recorded (a disconnect that couldn't record it): nothing to
+    // carry it by, so gone once the rows reach its day, to be moved by hand.
+    const noKey = new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }], { account_id: 'acc-old' })]]);
+    expect(applyShares([dinner], inputs({ shares: noKey, rowFacts, accounts: linked })).gone.shares).toEqual(['t-d']);
+    expect(applyShares([dinner], inputs({ shares: noKey, rowFacts, accounts: linked, loading: new Set(['acc-new']) })).coming.shares).toEqual(['t-d']);
+  });
+
+  test('linked, its row not come yet: it waits while the bank brings its history or its rows don’t reach that day, and is gone once they do', () => {
+    const changed = new Map([...rowFacts, ['n-d', { account: 'acc-new', key: 'acc-new|other' }]]);
+    // Still bringing its history: it waits, said, never gone, whatever it reaches.
+    const loading = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts: changed, accounts: linked, loading: new Set(['acc-new']) }));
+    expect([loading.gone.shares, loading.coming.shares]).toEqual([[], ['t-d']]);
+    expect(loading.notes.join(' ')).toContain('1 shared transaction from before you re-linked waits for its transaction to come in from your bank: it carries across once it does. What is owed stays as it is meanwhile.');
+    expect(loading.moves).toBeUndefined();
+    // All of the history in, and it reaches the day: its words changed, so gone.
+    expect(applyShares([dinner, cashout], inputs({ shares, payments, rowFacts: changed, accounts: linked })).gone.shares).toEqual(['t-d']);
+    // All in, and it begins after the day (the bank's history doesn't reach back so far): gone.
+    expect(applyShares([cashout], inputs({ shares, payments, rowFacts, accounts: linked })).gone.shares).toEqual(['t-d']);
+    // No row on the account yet, or only from before the day: it waits.
+    const none = applyShares([], inputs({ shares, payments, rowFacts, accounts: linked }));
+    expect([none.gone, none.coming]).toEqual([{ shares: [], payments: [] }, { shares: ['t-d'], payments: ['t-v'] }]);
+    expect(none.notes.join(' ')).toContain('1 shared transaction and 1 payment you confirmed from before you re-linked wait for their transactions to come in from your bank: they carry across once they do.');
+    const older = row('n-old', { account_id: undefined, date: '2026-09-20' });
+    const before = applyShares([older], inputs({ shares, rowFacts: new Map([...rowFacts, ['n-old', { account: 'acc-new', key: 'acc-new|older' }]]), accounts: linked }));
+    expect([before.gone.shares, before.coming.shares]).toEqual([[], ['t-d']]);
+    // A hidden account's rows aren't read: neither.
+    const hidden = applyShares([], inputs({ shares, rowFacts, accounts: linked, hidden: new Set(['acc-new']) }));
+    expect([hidden.gone.shares, hidden.coming.shares]).toEqual([[], []]);
+    // Two rows with its key: gone at once, even while the history comes.
+    const twin = row('n-d2', { account_id: undefined, name: 'Joe’s' });
+    const twins = applyShares([dinner, twin], inputs({ shares, rowFacts: new Map([...rowFacts, ['n-d2', rowFacts.get('n-d')!]]), accounts: linked, loading: new Set(['acc-new']) }));
+    expect([twins.gone.shares, twins.coming.shares]).toEqual([['t-d'], []]);
+  });
+
+  test('what applies to a row from elsewhere is answered, applied or not, for the edits to check', () => {
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accounts: linked }));
+    expect([...r.onto]).toEqual([
+      ['n-d', { kind: 'share', from: 't-d' }],
+      ['n-v', { kind: 'payment', from: 't-v' }],
+    ]);
+    // In another currency now: left whole, but still where it is kept, and answered.
+    const euros = row('n-d', { account_id: undefined, name: 'Joe’s', iso_currency_code: 'EUR' });
+    const u = applyShares([euros], inputs({ shares, rowFacts, accounts: linked }));
+    const d = u.rows.find((t) => t.transaction_id === 'n-d')!;
+    expect([d.amount, d.shared_unapplied, d.shared_carried_from]).toEqual([120, 'currency', 't-d']);
+    expect(u.onto.get('n-d')).toEqual({ kind: 'share', from: 't-d' });
+    // Its own share answers nothing: it is stored under its id.
+    expect(applyShares([dinner], inputs({ shares: new Map([['n-d', share([{ id: 'e2', person: 'alex', amount: 60 }])]]), rowFacts, accounts: linked })).onto.size).toBe(0);
+  });
+
+  test('a Keep said before the link gives way to the link; one said since stays', () => {
+    const changed = new Map([...rowFacts, ['n-d', { account: 'acc-new', key: 'acc-new|other' }]]);
+    const keptAt = (at: string) => new Map([['t-d', { ...shares.get('t-d')!, kept_gone: at }]]);
+    const withTime = { ...linked, linkedAt: (id: string) => (id === 'acc-old' ? '2026-10-15T00:00:00.000Z' : null) };
+    // Kept while its bank was gone, then linked: its row isn't there, so it is said.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-12T00:00:00.000Z'), rowFacts: changed, accounts: withTime })).gone.shares).toEqual(['t-d']);
+    // It still carries where it matches.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-12T00:00:00.000Z'), rowFacts, accounts: withTime })).rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(60);
+    // Kept after the link: as the person said.
+    expect(applyShares([dinner, cashout], inputs({ shares: keptAt('2026-10-16T00:00:00.000Z'), rowFacts: changed, accounts: withTime })).gone.shares).toEqual([]);
+  });
+
+  test('links that can’t be read: nothing carries, nothing is said to be gone or waiting, and a note says why', () => {
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accountsUnread: true }));
+    expect(r.rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(120);
+    expect([r.gone, r.away, r.coming]).toEqual([
+      { shares: [], payments: [] },
+      { shares: [], payments: [] },
+      { shares: [], payments: [] },
+    ]);
+    expect(r.notes).toContain('Your account links couldn’t be read, so shared transactions and payments from before a re-link aren’t carried to their transactions, nor said to be gone, until they can be.');
+    // Said only when something isn't on its own row.
+    expect(applyShares([row('t-d')], inputs({ shares, accountsUnread: true })).notes.join(' ')).not.toContain('account links');
+  });
+
+  test('not linked yet: it waits, said, and nothing counts differently', () => {
+    const unlinked = { live: new Set(['acc-new']), resolve: (id: string) => id };
+    const r = applyShares([dinner, cashout], inputs({ shares, payments, rowFacts, accounts: unlinked }));
+    expect(r.away).toEqual({ shares: ['t-d'], payments: ['t-v'] });
+    expect(r.gone).toEqual({ shares: [], payments: [] });
+    expect(r.rows.find((t) => t.transaction_id === 'n-d')!.amount).toBe(120);
+    expect(r.notes.join(' ')).toContain('on an account you disconnected');
+    // Without the accounts read, neither is said: the rows alone decide.
+    expect(applyShares([dinner], inputs({ shares, rowFacts })).away).toEqual({ shares: [], payments: [] });
+  });
+
+  test('on a manual account that no longer has it: gone; unless that account’s book couldn’t be read', () => {
+    const manual = new Map([['manual-txn:x', share([{ id: 'e1', person: 'alex', amount: 60 }], { account_id: `${MANUAL_ACCOUNT_PREFIX}house` })]]);
+    expect(applyShares([], inputs({ shares: manual })).gone.shares).toEqual(['manual-txn:x']);
+    expect(applyShares([], inputs({ shares: manual, manualUnread: [`${MANUAL_ACCOUNT_PREFIX}house`] })).gone.shares).toEqual([]);
+    expect(applyShares([], inputs({ shares: manual, manualUnread: 'all' })).gone.shares).toEqual([]);
+    expect(MANUAL_ACCOUNT_PREFIX).toBe(MANUAL_ID_PREFIX);
+  });
+});
+
+describe('what changed, and money from a payment app', () => {
+  test('a shared row whose amount changed applies, its mark saying what it was, and is noted', () => {
+    const r = applyShares([row('t-d', { amount: 100 })], inputs({ shares: new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }])]]) }));
+    const d = r.rows.find((t) => t.transaction_id === 't-d')!;
+    expect([d.amount, d.shared?.was]).toEqual([40, 120]);
+    expect(r.notes.join(' ')).toContain('1 shared transaction’s amount has changed since you shared it');
+    // A payment whose row changed while it still holds what it paid back.
+    const shares = new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const p = applyShares([row('t-d'), venmoIn('t-v', -70)], inputs({ shares, payments: new Map([['t-v', payment(-60, [{ item: 'e1', amount: 60 }])]]) }));
+    expect(p.rows.find((t) => t.transaction_id === 't-v')!.settles?.was).toBe(-60);
+    expect(p.notes.join(' ')).toContain('1 payment you confirmed has changed amount since');
+    // Unchanged: no mark, no note.
+    const same = applyShares([row('t-d')], inputs({ shares }));
+    expect(same.rows[0].shared?.was).toBeUndefined();
+    expect(same.notes.join(' ')).not.toContain('changed since');
+  });
+
+  test('money out to a payment app while you owe someone: said, as money in is, under your part only, from the oldest open item', () => {
+    const owe = new Map([['i1', iou({ date: '2026-10-05' })]]);
+    const toAlex = row('t-out', { name: 'VENMO *ALEX SMITH', amount: 25, date: '2026-10-06' });
+    const r = applyShares([toAlex], inputs({ ious: owe }));
+    expect(r.notes.join(' ')).toContain('1 payment to a payment app counts as spending: if one paid what you owed someone, confirm it');
+    // Under bank, confirming changes no total: nothing said.
+    expect(applyShares([toAlex], inputs({ ious: owe, counting: 'bank' })).notes.join(' ')).not.toContain('payment app');
+    // Before anything was owed: not a payment of it.
+    expect(applyShares([{ ...toAlex, date: '2026-10-01' }], inputs({ ious: owe })).notes.join(' ')).not.toContain('payment app');
+    // Money in likewise only from the oldest item owed to you.
+    const owed = new Map([['t-d', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    expect(applyShares([row('t-d'), venmoIn('t-in', -20, { transaction_code: null, category_id: cat('groceries'), category_kind: 'income', date: '2026-10-09' })], inputs({ shares: owed })).notes.join(' ')).toContain('payment in from a payment app');
+    expect(applyShares([row('t-d'), venmoIn('t-in', -20, { transaction_code: null, category_id: cat('groceries'), category_kind: 'income', date: '2026-09-01' })], inputs({ shares: owed })).notes.join(' ')).not.toContain('payment in from a payment app');
+    expect(applyShares([row('t-d'), venmoIn('t-in', -20, { transaction_code: null, category_id: cat('groceries'), category_kind: 'income', date: '2026-10-09' })], inputs({ shares: owed, counting: 'bank' })).notes.join(' ')).not.toContain('payment in from a payment app');
+  });
+});

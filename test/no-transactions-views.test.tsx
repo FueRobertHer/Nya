@@ -641,6 +641,7 @@ describe('the Plan', () => {
     cashWithdrawn: 0,
     cashEntered: 0,
     cashEnteredOn: [],
+    cashIous: 0,
     unclearLoans: 0,
     largestRefund: null,
     from: '2025-10-07',
@@ -738,7 +739,7 @@ describe('the Plan', () => {
     }
     // The tab tells the card how many transactions there are.
     const source = readFileSync(join(import.meta.dir, '..', 'components', 'PlanTab.tsx'), 'utf8');
-    expect(source).toContain('transactionCount={txns?.length ?? 0}');
+    expect(source).toContain('transactionCount={txns ? historyCount(txns) : 0}');
   });
 
   test('a refused bank account and nothing else: no "yet" either', () => {

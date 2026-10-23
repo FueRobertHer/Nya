@@ -2,12 +2,15 @@
 // viewer's "Attach to another transaction" and a file not on one. Every
 // transaction the Activity tab has loaded, once each: a split transaction as
 // itself (a file goes on the transaction, never on a part), a group's
-// transactions each (a group is no transaction). Found by its merchant, its
+// transactions each (a group is no transaction), a shared one or a payment
+// as itself at the bank's amount, and never a row shared expenses add
+// (another's part, a part paid back, an IOU), which is no transaction. Found by its merchant, its
 // amount as typed ("12.5", "12,50") or its day ("2026-03-04", or "Mar 4" as
 // this browser writes it). Pure, so the viewer and the tests share it.
 
 import { currencyOf } from '@/lib/spending';
-import { amountTyped } from './receipt-filter';
+import { isLayerRow } from '@/lib/shared-expenses/rows';
+import { amountTyped, wholeAmount } from './receipt-filter';
 
 export type PickRow = {
   transaction_id: string;
@@ -19,6 +22,9 @@ export type PickRow = {
   unofficial_currency_code?: string | null;
   split_of?: string;
   split_parent?: { amount: number };
+  shared_was?: number;
+  shared_part?: unknown;
+  shared_iou?: unknown;
   group_members?: readonly PickRow[];
 };
 
@@ -30,9 +36,10 @@ export function candidates(rows: readonly PickRow[], except: string | null = nul
   const out = new Map<string, Candidate>();
   for (const t of rows) {
     for (const r of t.group_members ?? [t]) {
+      if (isLayerRow(r)) continue;
       const id = r.split_of ?? r.transaction_id;
       if (id === except || out.has(id)) continue;
-      out.set(id, { id, date: r.date, name: r.name, amount: r.split_parent ? r.split_parent.amount : r.amount, currency: currencyOf(r), pending: r.pending });
+      out.set(id, { id, date: r.date, name: r.name, amount: wholeAmount(r), currency: currencyOf(r), pending: r.pending });
     }
   }
   return [...out.values()].sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : a.name.localeCompare(b.name)));

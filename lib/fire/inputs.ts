@@ -82,7 +82,7 @@
 // what is stale or missing named.
 
 import { type Txn } from '@/components/MonthBreakdown';
-import { categoryKey, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
 import type { PlanFunding } from './plan';
 import { isCashOnHand, isInvestmentType } from '@/lib/balance';
 import { dominantCurrency } from '@/lib/format';
@@ -190,6 +190,10 @@ export type TrailingFlows = {
   cashEntered: number;
   /** The cash accounts that spending was entered on, for the label. */
   cashEnteredOn: string[];
+  /** Of cashEntered, your part of what someone else paid (an IOU you owe,
+   *  lib/shared-expenses/rows.ts) that you settled in cash: the withdrawal
+   *  you handed over is the same money, so it is counted once. */
+  cashIous: number;
   /** Loan payments NOT counted because they can't be told from card payments. */
   unclearLoans: number;
   /** Of those, the ones not from a bank Plaid reads: entered, imported, or
@@ -237,6 +241,12 @@ export type TrailingFlows = {
    *  spending or income (lib/spending.ts uncategorizedFromConnector); absent
    *  is none. */
   uncategorized?: number;
+  /** IOUs you owe dated before the bank's history begins (`from`), left out
+   *  of every figure: the year is measured from the bank's rows and scaled
+   *  up from them, so one typed for a day before would be scaled as if it
+   *  were inside (lib/shared-expenses/rows.ts). How many, and what they come
+   *  to, unscaled, in `currency`; absent is none. */
+  iousBefore?: { count: number; amount: number };
 };
 
 /** Money out (what the spending figure is made of) or money in (income). */
@@ -291,6 +301,7 @@ export function trailingFlows(
   // it holds (lib/spending.ts transactionCounter).
   const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
   let cashEntered = 0;
+  let cashIous = 0;
   let unclearElsewhere = 0;
   const cashEnteredOn = new Set<string>();
   const sums: Record<PlanFlow, number> = {
@@ -314,15 +325,28 @@ export function trailingFlows(
   const excludedCount = transactionCounter();
   const hiddenCount = transactionCounter();
   let uncategorized = 0;
+  // Where the history begins, first: never an IOU's row, dated whatever day
+  // the person typed (lib/spending.ts isHistoryRow). The figures are the
+  // span from there to today scaled up to a year, so a row the rule rejects
+  // dated before it (an IOU typed for an earlier day) is outside what is
+  // measured: left out, and said (iousBefore), never scaled up.
   let earliest = end;
+  for (const t of counting.rows) {
+    const d = dayNumber(t.date);
+    if (isHistoryRow(t) && d < earliest) earliest = d;
+  }
+  const before = { count: 0, amount: 0 };
   // Each refund whole: a split one's refunded parts added up (#39).
   const refunds = new Map<string, { amount: number; date: string; name: string }>();
   for (const t of counting.rows) {
     const d = dayNumber(t.date);
-    if (d < earliest) earliest = d;
     if (isExcluded(t)) {
-      excludedCount.add(t);
-      if (t.excluded_by_rule) hiddenCount.add(t);
+      // Another person's part, or money paid back between people, isn't an
+      // exclusion of the person's (lib/shared-expenses/rows.ts).
+      if (t.shared_part === undefined) {
+        excludedCount.add(t);
+        if (t.excluded_by_rule) hiddenCount.add(t);
+      }
       continue;
     }
     // Counted in a group on a day before what was read (lib/split-rows.ts).
@@ -344,6 +368,13 @@ export function trailingFlows(
       }
       continue;
     }
+    if (!isHistoryRow(t) && d < earliest) {
+      if (counts(flow)) {
+        before.count++;
+        before.amount += t.amount;
+      }
+      continue;
+    }
     sums[flow] += t.amount;
     if (flow === 'unclear-loan' && t.source) unclearElsewhere += t.amount;
     if (isConnectorKind(t.source) && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
@@ -352,6 +383,14 @@ export function trailingFlows(
     if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {
       cashEntered += t.amount;
       cashEnteredOn.add(t.account_id);
+    }
+    // An IOU you owe, the part of it settled in cash: spending of cash
+    // withdrawn, as the cash spending entered by hand is (counted once).
+    if (flow === 'spending' && t.shared_iou && t.shared_iou.cash > 0) {
+      const written = (t as Txn & { converted?: { amount: number } }).converted?.amount ?? t.amount;
+      const part = written > 0 ? t.amount * Math.min(1, t.shared_iou.cash / written) : 0;
+      cashEntered += part;
+      cashIous += part;
     }
     if (flow === 'refund') {
       const key = t.split_of ?? t.transaction_id;
@@ -388,6 +427,7 @@ export function trailingFlows(
     cashWithdrawn: sums.cash * scale,
     cashEntered: cashEntered * scale,
     cashEnteredOn: [...cashEnteredOn].sort(),
+    cashIous: cashIous * scale,
     unclearLoans: sums['unclear-loan'] * scale,
     unclearLoansElsewhere: unclearElsewhere * scale,
     largestRefund,
@@ -404,6 +444,7 @@ export function trailingFlows(
     volume: { spending: sideVolume(sides.spending), income: sideVolume(sides.income) },
     conversion: counting.conversion,
     uncategorized,
+    ...(before.count > 0 ? { iousBefore: before } : {}),
   };
 }
 

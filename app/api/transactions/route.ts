@@ -81,7 +81,7 @@ export async function GET(req: Request) {
       if (assembled.cacheable) await writeCache(ctx, CacheKey.Transactions, plaid);
     }
 
-    const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note }, without_transactions] = await Promise.all([
+    const [{ transactions, notes, unread_notes, tags_note, incomplete, history, taxonomy, tags, review, review_note, shared_expenses }, without_transactions] = await Promise.all([
       // With which rows have receipts or documents: this route is the
       // person's own Activity (lib/activity.ts `attached`). Read from the
       // index's field names alone; one that can't be read says so on each
@@ -119,6 +119,10 @@ export async function GET(req: Request) {
       categories: taxonomy,
       // The tags that exist (lib/tags.ts): each row's `tags` are their ids.
       tags: tags?.tags ?? [],
+      // Shared expenses (lib/shared-expenses/rows.ts): what this read can
+      // tell is gone (with the rows each could move to), what waits on a
+      // re-link, and what is shared twice, for the card to say.
+      shared_expenses: shared_expenses,
       // The review queue (lib/review-store.ts): on from a day, or off; what
       // needs review is marked on each row (lib/review-layer.ts).
       review,

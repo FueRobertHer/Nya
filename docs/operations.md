@@ -19,6 +19,7 @@ Everything under `/api/ops/*` is locked the same way (`lib/ops.ts`): it answers 
 - [Rolling back once the brokerage option is on](#rolling-back-once-the-brokerage-option-is-on)
 - [Exchange rates, and rolling back](#exchange-rates-and-rolling-back)
 - [Turning on restores](#turning-on-restores)
+- [Shared expenses: the phone check, and rolling back](#shared-expenses-the-phone-check-and-rolling-back)
 - [Receipts and documents](#receipts-and-documents)
 - [Repairing balance signs](#repairing-balance-signs)
 - [Email and the weekly summary](#email-and-the-weekly-summary)
@@ -64,7 +65,7 @@ Balances, transactions, budgets, goals and access tokens stay **encrypted** in t
 
 SimpleFIN Access URLs and Lunch Flow API keys are never in the archive. Unlike a Plaid access token, which is of no use without the Plaid secret, each works on its own: it reads a person's accounts there ([Bring your own sync](features.md#bring-your-own-sync)). So both are kept out of every backup (they are the same store, `connector-secrets`), with the counts of requests made to either, and a restore ends each person's connections there: they connect again (with a new Setup Token, or a Lunch Flow API key, which may be the one they had), and their accounts, history and transactions carry on.
 
-Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, which other kinds (net worth, spending, holdings, budgets, goals) each shares at which level, with the random ids of the goals chosen, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
+Not everything in it is encrypted, so still treat the file as private: dates, account, transaction and connection ids, the random ids of the people a person splits costs with and of their IOUs (never their names, usernames or amounts), the names of your linked banks (and whether Plaid included transactions when each connection was linked), the merchant names you have renamed, and for sharing, the names people gave each other, which accounts each shares at which level and until when, which other kinds (net worth, spending, holdings, budgets, goals) each shares at which level, with the random ids of the goals chosen, and for each connection the random id its records of showings are kept under and when they began (not what they record), are stored as plain text. The database holds the same in plain text, and the public Security page (`/security`) says so.
 
 The last line also carries a checksum, so a file damaged in storage or transit is caught before it is restored. It is not a signature: it will not stop someone who edits the file on purpose.
 
@@ -565,6 +566,18 @@ Writing through the API and the MCP server ([features.md](features.md#writing-th
 - **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the new stores, so values written by writing would stay under the keys they were written with; run them after rolling forward.
 
 Rolling forward again, everything reads as before: the tokens made to write work again, and their changes are in the record, undoable for what is left of their 30 days.
+
+## Shared expenses: the phone check, and rolling back
+
+Shared expenses ([features.md](features.md#shared-expenses)) need no variable and nothing to run: six stores on the seam (`expense-settings`, `expense-people`, `expense-shares`, `expense-ious`, `expense-payments`, `expense-dismissed`), written only when a person adds someone or shares a cost.
+
+**The phone check, before turning on more links.** Only Venmo's documented link ships on (`https://venmo.com/<username>?txn=charge&amount=35.00&note=...`, and `txn=pay`). The forms nobody documented sit behind `UNCONFIRMED_LINKS` in `lib/shared-expenses/links.ts`, a constant in the code that is `false`: Venmo's app scheme (`venmo://paycharge?txn=charge&recipients=<username>&amount=&note=`), Venmo's form without a username (`https://venmo.com/?txn=...`), and Cash App's amount path (`https://cash.app/$<cashtag>/<amount>`, to pay someone). Before setting it to `true`, check each, and the documented one, on an iPhone and on an Android phone, from the installed app (Add to Home Screen) as well as the browser, with Venmo and Cash App installed and signed in, and once with them not installed: that the app opens (or the web page does), on the request or the payment, to the right person, with the amount and the note filled in and nothing sent until you send it; that a note with a comma, an ampersand, an emoji and 200 characters arrives whole; and that coming back to Nya leaves it where it was. Then change the constant, say which forms were checked, when and on what, in its comment, and update the tests that hold it off (`test/shared-expenses-model.test.ts` and `test/shared-expenses-ui.test.tsx`) and features.md. A form that fails stays off; the message covers it.
+
+**What a rollback sees.** The release before reads none of the six stores. While it runs, every transaction counts as the bank shows it (a shared dinner whole, a friend's payment as money in), no IOU's row counts, and nothing is said about it; its storage report lists the stores' keys as ones it doesn't know, which is expected; its download leaves them out, and a download that has them is refused by its restore, which refuses a part it doesn't know. Nothing is lost: it never deletes what it can't read. Rolling forward, everything reads as before; a share on a transaction split or grouped meanwhile is left unapplied and said, until it is shared again as a part, or the group goes.
+
+- **A restore into an account with shared expenses is refused there**, since its check that an account is empty counts every key it doesn't know as data. Make it after rolling forward.
+- **Don't re-encrypt while rolled back.** Its migration pass and master rotation don't know the six stores, so their values would stay under the keys they were written with; run them after rolling forward.
+- **A cached Activity read from before the rollback** (for its lifetime, 15 minutes, or 6 hours with webhooks) can carry a field on each posted bank row that the release before doesn't take out before sending it (`content_key`: the row's account id, day, amount and the bank's words, all the person's own), so their own browser receives it, and it is shown nowhere. A disconnect while rolled back records no `carry_key`, so the shares and payments on that institution's transactions don't carry across a re-link after rolling forward: they are listed as gone, to move or keep.
 
 ## Receipts and documents
 

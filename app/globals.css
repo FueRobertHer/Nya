@@ -6295,6 +6295,66 @@ button.review-keys-toggle {
   margin-top: 8px;
 }
 
+/* --- shared expenses (#49): the card on the Activity tab
+   (components/SharedExpensesCard.tsx) and its sheets. --- */
+.shared-people,
+.shared-proposals,
+.shared-items {
+  list-style: none;
+  margin: 8px 0 12px;
+  padding: 0;
+  font-size: 14px;
+}
+
+.shared-person,
+.shared-proposal,
+.shared-items li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+
+.shared-person-name {
+  align-self: flex-start;
+  min-height: 44px;
+  font-weight: 600;
+  font-size: 15px;
+  text-align: left;
+}
+
+.shared-balance .card-actions {
+  margin-top: 6px;
+}
+
+.shared-pick {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0 10px;
+}
+
+.shared-pick .group-member {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.shared-pick .split-amount {
+  flex: 0 1 140px;
+  min-width: 0;
+}
+
+.shared-message {
+  white-space: pre-line;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
 /* --- Receipts and documents (#47): a transaction's files
    (components/AttachmentSection.tsx), the viewer over the page
    (components/AttachmentViewer.tsx), the filter by receipt on the Activity

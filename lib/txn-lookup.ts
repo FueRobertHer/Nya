@@ -30,6 +30,7 @@ import { effectiveLinks, getLinks, resolveId } from './link-core';
 import { liveAccountsReport } from './links';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
+import { expensePaymentsStore, expenseSharesStore } from './shared-expenses/store';
 
 /** A transaction as stored: what a split or a group is checked against. */
 export type FoundTxn = {
@@ -263,7 +264,7 @@ export async function importedStoodFor(ctx: Ctx, found: Iterable<FoundTxn>): Pro
  * splits or groups that can't be read throw as the seam does, never a count
  * of none.
  */
-export async function splitsAndGroupsOn(ctx: Ctx, item_id: string): Promise<{ split: number; grouped: number }> {
+export async function splitsAndGroupsOn(ctx: Ctx, item_id: string): Promise<{ split: number; grouped: number; shared: number }> {
   let ids: Set<string>;
   try {
     ids = new Set((await readStoredTxns(ctx, item_id)).map((t) => t.transaction_id));
@@ -272,11 +273,14 @@ export async function splitsAndGroupsOn(ctx: Ctx, item_id: string): Promise<{ sp
     const item = (await getItems(ctx)).find((i) => i.item_id === item_id);
     throw new LookupUnreadableError([item?.institution_name ?? 'a bank']);
   }
-  if (ids.size === 0) return { split: 0, grouped: 0 };
-  const [splits, groups] = await Promise.all([splitStore.getAll(ctx), groupStore.getAll(ctx)]);
+  if (ids.size === 0) return { split: 0, grouped: 0, shared: 0 };
+  const [splits, groups, shares, payments] = await Promise.all([splitStore.getAll(ctx), groupStore.getAll(ctx), expenseSharesStore.ids(ctx), expensePaymentsStore.ids(ctx)]);
   let split = 0;
   for (const id of splits.keys()) if (ids.has(id)) split++;
   let grouped = 0;
   for (const g of groups.values()) for (const id of g.members) if (ids.has(id)) grouped++;
-  return { split, grouped };
+  // Shared, or paying something back (lib/shared-expenses/): kept, and
+  // moved by the person to the transaction once it is back.
+  const shared = new Set([...shares, ...payments].filter((id) => ids.has(id))).size;
+  return { split, grouped, shared };
 }

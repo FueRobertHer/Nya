@@ -20,7 +20,7 @@ import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import MonthFlowChart from "./MonthFlowChart";
 import { compactMoney, formatMoney, signedMoney, spoken } from "@/lib/format";
 import { Masked } from "./HideAmounts";
-import { countsInTotals, countTransactions, currencyOf, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
+import { countsInTotals, countTransactions, currencyOf, historyCount, isExcluded, isTransfer, leftOutByCurrency, leftOutText, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote } from "@/lib/spending";
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from "@/lib/fx/totals";
 import type { FxTable } from "@/lib/fx/rates";
 import { instantDay, localDate, localMonth } from "@/lib/local-date";
@@ -42,6 +42,7 @@ import { searchEntries } from "./txn-search";
 import CashFlowSankey, { FlowShown } from "./CashFlowSankey";
 import { pickedRows, type FlowPick, type PeriodKey } from "@/lib/cash-flow";
 import { bankRows, type GroupAway, type GroupOutside, type SplitParent } from "@/lib/split-rows";
+import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from "@/lib/shared-expenses/rows";
 import SplitSheet from "./SplitSheet";
 import GroupSheet from "./GroupSheet";
 import { entryLabel, entryNotice, MemberRows, PartRows, sendChange, SplitActions, wholeSplits } from "./SplitRows";
@@ -50,6 +51,7 @@ import type { ReviewControls } from "./review-state";
 import ReviewBar from "./ReviewBar";
 import ReviewNote from "./ReviewNote";
 import CardMode from "./CardMode";
+import { SharedRowActions, SharedRowLine, type SharedRowHooks } from "./SharedRows";
 import AttachmentSection from "./AttachmentSection";
 import { receiptRows, unknownNote, type ReceiptChoice } from "./receipt-filter";
 
@@ -159,6 +161,22 @@ export type Txn = {
   group_carried_from?: string;
   // Why its transactions that aren't counted in it aren't, where known.
   group_away?: GroupAway[];
+  // As in lib/transactions.ts (#49, lib/shared-expenses/rows.ts): a shared
+  // transaction's own row and its amount before your part, a payment's, the
+  // rows that layer adds (another's part, a paid-back part, an IOU's row,
+  // on no account), their transaction (shared_of), and, on a transaction
+  // put back whole for the list (bankRows), its rows.
+  shared?: SharedMark;
+  shared_was?: number;
+  shared_of?: string;
+  shared_part?: SharedPart;
+  shared_iou?: SharedIou;
+  shared_parts?: Txn[];
+  shared_carried_from?: string;
+  shared_unapplied?: SharedUnapplied;
+  shared_twice?: string[];
+  settles?: SettlesMark;
+  settles_unapplied?: SettlesUnapplied;
   // As in lib/transactions.ts (#47): whether it has receipts or documents
   // (null when that couldn't be read), and the ids whose files it shows.
   attached?: true | null;
@@ -362,6 +380,7 @@ export default function MonthBreakdown({
   ruleSentenceOf,
   onSplitsChanged,
   review,
+  shared,
   onAttachmentsChanged,
 }: {
   txns: Txn[] | null;
@@ -421,6 +440,9 @@ export default function MonthBreakdown({
   /** The review queue (components/review-state.ts): what needs review, its
    *  filter, Card Mode and approving. Without it, none is shown. */
   review?: ReviewControls;
+  /** Shared expenses (#49, components/SharedRows.tsx): each row's line, and
+   *  sharing or confirming a payment from its detail. Without it, none. */
+  shared?: SharedRowHooks;
   /** After a receipt or document is added, moved or deleted (#47): the list
    *  read again, for its paperclips. Without it (no file store connected),
    *  no receipt is shown, offered or filtered by. */
@@ -495,17 +517,22 @@ export default function MonthBreakdown({
   // Rows the person excluded, and rows whether they did couldn't be read
   // (counted, so the total may include one): both said under the summary.
   // A split transaction is one, however many of its parts are (#39).
-  const { excludedCount, hiddenCount, unknownCount } = useMemo(() => {
+  // Another person's part of a shared transaction, or money paid back
+  // between the person and someone (lib/shared-expenses/rows.ts), is no
+  // exclusion of theirs: counted apart.
+  const { excludedCount, hiddenCount, unknownCount, sharedCount } = useMemo(() => {
     const excluded = new Set<string>();
     const hidden = new Set<string>();
     const unknown = new Set<string>();
+    const shared = new Set<string>();
     for (const t of monthTxns) {
-      const id = t.split_of ?? t.transaction_id;
-      if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
+      const id = t.split_of ?? t.shared_of ?? t.transaction_id;
+      if (t.shared_part !== undefined) shared.add(id);
+      else if (t.excluded === true && t.excluded_by_rule) hidden.add(id);
       else if (t.excluded === true) excluded.add(id);
       else if (t.excluded === null) unknown.add(id);
     }
-    return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size };
+    return { excludedCount: excluded.size, hiddenCount: hidden.size, unknownCount: unknown.size, sharedCount: shared.size };
   }, [monthTxns]);
 
   const { moneyIn, moneyOut, categories, byCategoryId } = useMemo(() => {
@@ -643,7 +670,8 @@ export default function MonthBreakdown({
     // Listed as the bank has them: a split transaction once, with its parts
     // under it; a group's row with its transactions under it (#39). The day's
     // figure above counts the parts and the nets, as every total does.
-    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep" }) }));
+    // An IOU's row (#49) is listed too, on its day, though no account has it.
+    return groups.map((g) => ({ ...g, entries: bankRows(g.txns, { groups: "keep", ious: "keep" }) }));
   }, [visible, currency]);
   // Each split transaction whole, every part of it (#39), from all the rows:
   // a pick from the cash flow lists only the parts in its node under it, but
@@ -687,7 +715,7 @@ export default function MonthBreakdown({
 
   if (!txns || (txns.length === 0 && notes.length === 0 && asideNotes.length === 0)) {
     // Connections that can't bring any in are not an empty year.
-    const none = txns ? noSpending(withoutTransactions, txns.length) : null;
+    const none = txns ? noSpending(withoutTransactions, historyCount(txns)) : null;
     const missing = txns && !none ? missingEmptyNotes(withoutTransactions) : [];
     return (
       <>
@@ -724,7 +752,7 @@ export default function MonthBreakdown({
     : [];
   // When only rows entered by hand are here, the connections that bring in
   // none are named beside the totals: where they come from, not a warning.
-  const namedWithout = withoutNote(withoutTransactions, txns.length);
+  const namedWithout = withoutNote(withoutTransactions, historyCount(txns));
 
   return (
     <>
@@ -824,6 +852,7 @@ export default function MonthBreakdown({
           {excludedCount > 0 &&
             `, and ${excludedCount} transaction${excludedCount === 1 ? "" : "s"} you left out`}
           {hiddenCount > 0 && `, and ${hiddenCount} transaction${hiddenCount === 1 ? "" : "s"} a rule hides`}
+          {sharedCount > 0 && `, and other people’s parts of ${sharedCount} shared transaction${sharedCount === 1 ? "" : "s"} or money paid back`}
           .
           {unknownCount > 0 &&
             ` Whether you excluded ${unknownCount} transaction${unknownCount === 1 ? "" : "s"} couldn't be read, so ${unknownCount === 1 ? "it counts" : "they count"} here.`}
@@ -1031,6 +1060,8 @@ export default function MonthBreakdown({
                     <tr
                       className={`acct-row${i === g.entries.length - 1 && !t.split_parts && !t.group_members ? " last-in-day" : ""}`}
                       onClick={() => {
+                        // An IOU's row is no transaction: it opens the IOU.
+                        if (t.shared_iou) return shared?.onIou(t.shared_iou.item);
                         const opening = recatId !== t.transaction_id;
                         setRecatId(opening ? t.transaction_id : null);
                         if (opening) setRenameDraft(t.name);
@@ -1083,11 +1114,12 @@ export default function MonthBreakdown({
                               <TagChips ids={t.tags} tags={tags} />
                             </div>
                             <div className="type-tag">
-                              {t.institution_name} · {t.account_name}
+                              {/* An IOU's row is on no account (#49). */}
+                              {t.shared_iou ? "An IOU, on no account" : `${t.institution_name} · ${t.account_name}`}
                               {entryLabel(whole(t)) ? ` · ${entryLabel(whole(t))}` : ""}
                               {!t.split_parts && categoryLabel(t) ? ` · ${categoryLabel(t)}` : ""}
                               {t.subcategory ? ` › ${t.subcategory}` : ""}
-                              {t.source ? ` · ${sourceLabel(t.source)}` : ""}
+                              {t.source && !t.shared_iou ? ` · ${sourceLabel(t.source)}` : ""}
                             </div>
                             {t.excluded === true && (
                               <div className="excluded-tag">
@@ -1104,6 +1136,7 @@ export default function MonthBreakdown({
                               </div>
                             )}
                             {entryNotice(whole(t)) && <div className="excluded-tag">{entryNotice(whole(t))}</div>}
+                            {shared && <SharedRowLine t={t} hooks={shared} />}
                             {/* A bank row standing for a row imported from
                                 its file, which the bank changed since (#52). */}
                             {t.imported_amount !== undefined && (
@@ -1177,6 +1210,8 @@ export default function MonthBreakdown({
                                 }}
                               />
                             )}
+                            {/* Sharing it, or what it paid back (#49). */}
+                            {shared && <SharedRowActions t={whole(t)} hooks={shared} onDone={() => setRecatId(null)} />}
                             {/* Not a row SimpleFIN brought nor one imported into
                                 a linked account: the bank's or the file's
                                 record, whose category alone is the person's. */}

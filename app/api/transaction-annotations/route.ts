@@ -6,6 +6,7 @@ import { InvalidTxnError, isManualTxnId, MANUAL_TXN_PREFIX } from '@/lib/manual-
 import { isManualId } from '@/lib/manual';
 import { storeFailure } from '@/lib/store-failure';
 import { annotateTransaction } from '@/lib/annotate';
+import { isSplitOrGroupId } from '@/lib/split-rows';
 
 // What the person says about one transaction (lib/txn-annotations.ts), one
 // transaction per request: whether it is left out of budgets and reports, the
@@ -75,6 +76,10 @@ export async function PATCH(req: Request) {
     }
     const { transaction_id, excluded, account_id } = body;
     if (!isTransactionId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
+    // A row the read layer made (a split's part, a group's row, another
+    // person's part, an IOU's row) is no transaction: what is said goes to
+    // the transaction itself, or to the IOU.
+    if (isSplitOrGroupId(transaction_id)) return NextResponse.json({ error: 'That isn’t a transaction of yours but a part of one: open the transaction itself.' }, { status: 400 });
     const manual = transaction_id.startsWith(MANUAL_TXN_PREFIX);
     if (manual && !isManualTxnId(transaction_id)) return NextResponse.json({ error: 'Invalid transaction id' }, { status: 400 });
     if (excluded !== undefined && typeof excluded !== 'boolean') return NextResponse.json({ error: 'Say whether to exclude it' }, { status: 400 });

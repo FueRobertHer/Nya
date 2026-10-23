@@ -48,6 +48,7 @@ import { RECURRING_LOOKBACK_DAYS } from './recurring';
 import type { CategoryKind } from './categories';
 import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
 import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
+import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from './shared-expenses/rows';
 import { pruneSplitsAndGroups } from './split-gone';
 import type { ReviewSuggestion } from './review-layer';
 import { carryApprovalsToPosted } from './review-store';
@@ -165,6 +166,11 @@ export type Txn = {
   carried?: CarriedRowFacts;
   own_name?: true;
   stands_for?: string[];
+  // On a posted bank row, its content key (contentKey), by which a share or
+  // a payment carries across a re-link (lib/shared-expenses/rows.ts); never
+  // sent, gone with the facts above.
+  content_key?: string;
+
   // Whether it has receipts or documents (lib/attachments.ts), for the
   // person's own Activity alone (lib/activity.ts finishActivity's
   // `attached`): true, or null when that couldn't be read; absent for none,
@@ -241,6 +247,29 @@ export type Txn = {
   group_removed?: number;
   group_unapplied?: { id: string; name: string };
   group_outside?: GroupOutside;
+
+  // Shared expenses (#49), applied on read after splits and groups
+  // (lib/shared-expenses/rows.ts), absent on every other row. A shared
+  // transaction's own row (or its split part's) says who owes which part
+  // (shared), and, where it counts at your part, the amount it had
+  // (shared_was); a payment's own row what it paid back (settles). Beside
+  // them, the rows that layer adds (shared_part: another person's part, a
+  // paid-back part) and an IOU's row (shared_iou), which no account holds;
+  // an unsplit transaction's rows carry its id (shared_of), so it is counted,
+  // and put back whole (lib/split-rows.ts bankRows: shared_parts), once. What
+  // no longer applies says why (shared_unapplied, settles_unapplied), and a
+  // bank row shared twice through an imported twin says which (shared_twice).
+  shared?: SharedMark;
+  shared_was?: number;
+  shared_of?: string;
+  shared_part?: SharedPart;
+  shared_iou?: SharedIou;
+  shared_parts?: Txn[];
+  shared_carried_from?: string;
+  shared_unapplied?: SharedUnapplied;
+  shared_twice?: string[];
+  settles?: SettlesMark;
+  settles_unapplied?: SettlesUnapplied;
 };
 
 /** A row from before the lookback, sent only for recurring detection, which
@@ -1388,6 +1417,7 @@ export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
     ...carriedFacts(t, c.carriedAnnotations),
     ...(c.withAccountIds ? { account_id: t.account_id } : {}),
     account_ref: t.account_id,
+    ...(t.pending ? {} : { content_key: contentKey(t.account_id, t) }),
     // The pending row a posted one replaced, whose approval is its own
     // (lib/review-layer.ts); never sent.
     ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
@@ -1479,7 +1509,7 @@ export async function syncItemTransactions(ctx: Ctx,
   carriedIn?: DisplayInputs['carriedIn'],
   carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
   opts: { withAccountIds?: boolean; since?: string; endedFrom?: ReadonlyMap<string, string>; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn']; withStored?: boolean } = {}
-): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn> }> {
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn>; loading?: string[] }> {
   const { state, note, importing, noTransactions } = await syncItem(ctx, item);
   // An Item with no Transactions holds all of its (no) rows: nothing is
   // missing from this load on its account, so it is never named as
@@ -1499,7 +1529,15 @@ export async function syncItemTransactions(ctx: Ctx,
   // `stored` (asked for with `withStored`): every row as the sync left it,
   // for a reader of the same rows that would otherwise read them again
   // (lib/history-import/read.ts).
-  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...(opts.withStored ? { stored: state.txns } : {}) };
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...loadingOf(state, importing), ...(opts.withStored ? { stored: state.txns } : {}) };
+}
+
+/** The Item's accounts while its history is still coming in: more pages to
+ *  bring (`importing`), or Plaid's history beyond its first days not sent yet
+ *  (`history_pending`). A shared transaction from before a re-link whose row
+ *  hasn't come waits for it there (lib/shared-expenses/rows.ts). */
+function loadingOf(state: ItemState, importing?: boolean): { loading?: string[] } {
+  return importing || state.importing || state.history_pending ? { loading: Object.keys(state.accounts) } : {};
 }
 
 /**
@@ -1558,6 +1596,7 @@ export async function storedItemTransactions(
   noTransactions?: NoTransactionsReason;
   never_synced?: true;
   stored?: Record<string, StoredTxn> | null;
+  loading?: string[];
 }> {
   // `stored` (asked for with `withStored`): every row as read, null when the
   // store can't be read, as syncItemTransactions gives it.
@@ -1593,10 +1632,11 @@ export async function storedItemTransactions(
       coverage: 'importing',
       synced_at: state.synced_at,
       first_date,
+      ...loadingOf(state),
       ...stored(state.txns),
     };
   }
-  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...stored(state.txns) };
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...loadingOf(state), ...stored(state.txns) };
 }
 
 /** The oldest day among an Item's stored rows that would be shown in some

@@ -113,7 +113,9 @@ import { exportLayers, layerBankRow, layerImportedRow, layerManualRow, type Laye
 import { carriedAnnotationStore, txnAnnotationStore } from './txn-annotations';
 import { splitStore } from './splits';
 import { groupStore } from './groups';
-import { csvLinesWithSplits, splitInputsOf, type CsvLine } from './export-splits';
+import { csvLinesWithSplits, shareInputsOf, splitInputsOf, type CsvLine } from './export-splits';
+import type { ShareInputs } from './shared-expenses/rows';
+import { expenseIousStore, expensePaymentsStore, expenseSettingsStore, expenseSharesStore } from './shared-expenses/store';
 import { rulesStore } from './rules';
 import { tagStore } from './tags';
 import { connectionsStore, connectorAccountsStore, endedAccountsStore, type ConnectorAccount, type ConnectorConnection, type EndedAccount } from './connectors/store';
@@ -1299,6 +1301,40 @@ const PART_WORDS: Record<string, PartWords> = {
     inCsv: (counts) =>
       `Not all of your ${groupStore.what} could be read: ${counts}. Their transactions are in this file on their own, each counted in nya_amount, as the app counts them until they can be read.`,
   },
+  // What shared expenses add to the transactions CSV (lib/export-splits.ts):
+  // in a CSV, the rows that show as the bank has them instead.
+  [expenseSettingsStore.name]: {
+    noun: expenseSettingsStore.what,
+    one: 'entry',
+    many: 'entries',
+    missing: missingFrom,
+    alsoInJson: 'Your shared transactions count whole in the app until it can be read.',
+    valueInCsv: (why) =>
+      `Your ${expenseSettingsStore.what} could not be read (${why}), so each shared transaction is in this file as the bank shows it, counted whole in nya_amount, with no row for anyone else’s part, as the app counts them until it can be read.`,
+  },
+  [expenseSharesStore.name]: {
+    noun: expenseSharesStore.what,
+    one: 'shared transaction',
+    many: 'shared transactions',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your ${expenseSharesStore.what} could be read: ${counts}. Those transactions are in this file whole, and nya_amount counts each whole, as the app shows them until they can be read.`,
+  },
+  [expenseIousStore.name]: {
+    noun: expenseIousStore.what,
+    one: 'IOU',
+    many: 'IOUs',
+    missing: missingFrom,
+    inCsv: (counts) => `Not all of your ${expenseIousStore.what} could be read: ${counts}. This file has no row for those, as the app counts none of them until they can be read.`,
+  },
+  [expensePaymentsStore.name]: {
+    noun: 'confirmed payments',
+    one: 'payment',
+    many: 'payments',
+    missing: missingFrom,
+    inCsv: (counts) =>
+      `Not all of your confirmed payments could be read: ${counts}. Those transactions are in this file as the bank shows them, counted in nya_amount, as the app counts them until they can be read.`,
+  },
   // What the transactions are filed by (nya_category), and the budgets named by.
   categories: {
     noun: 'categories',
@@ -1820,6 +1856,12 @@ export const TRANSACTION_COLUMNS = [
   'split_index',
   'group_id',
   'group_name',
+  // Added with shared expenses (#49), at the end too: which transaction a
+  // row shared expenses add is of, what it is, and whose, by id
+  // (lib/export-splits.ts).
+  'shared_of',
+  'shared_kind',
+  'shared_person',
 ] as const;
 
 type TransactionColumn = (typeof TRANSACTION_COLUMNS)[number];
@@ -2294,6 +2336,20 @@ export function splitFactRows(doc: UserExport, imported: readonly { row: Importe
   return [...doc.transactions.map(bankFacts), ...book.rows.map((r) => bookFacts(r, book.shown(r).l)), ...imported.map((r) => importedRowFacts(r.row, shown(r).l))];
 }
 
+/** What carries a share or payment across a re-link in the file, as the app
+ *  carries it (lib/shared-expenses/rows.ts, ACROSS A RE-LINK): each bank
+ *  row's account and, posted, its content key (lib/transactions.ts
+ *  contentKey, from the bank's own words, as the read layer has it), and
+ *  each account id as the file's links resolve it, a link whose earlier
+ *  account is connected again passed over, as the app does. */
+export function shareCarryOf(doc: UserExport): Pick<ShareInputs, 'rowFacts' | 'accounts'> {
+  const links = new Map<string, Link>(doc.account_links.links.map((l) => [l.earlier_account_id, { to: l.account_id, linked_at: l.linked_at, evidence: l.evidence }]));
+  const live = new Set(doc.accounts.filter((a) => a.connected).map((a) => a.account_id));
+  const applied = effectiveLinks(links, live);
+  const rowFacts = new Map(doc.transactions.map((t) => [t.transaction_id, { account: t.account_id, ...(t.pending ? {} : { key: contentKey(t.account_id, t) }) }]));
+  return { rowFacts, accounts: { live, resolve: (id: string) => resolveId(id, applied), linkedAt: (id: string) => applied.get(id)?.linked_at ?? null } };
+}
+
 /**
  * transactions.csv: one row per transaction, newest first: every one stored
  * from the banks, every one on a manual account (manualTransactionCells),
@@ -2364,7 +2420,9 @@ export function* transactionsCsv(doc: UserExport): Generator<string> {
     }),
   ];
   rows.sort((a, b) => byCodePoint(b.date, a.date) || byCodePoint(b.time, a.time) || byCodePoint(a.id, b.id));
-  for (const row of csvLinesWithSplits(rows, splitInputsOf((key) => doc[key], doc.problems, ix, imported.represents), blankCells)) {
+  const part = (key: string) => doc[key];
+  const shares = shareInputsOf(part, doc.problems, ix, imported.represents, shareCarryOf(doc));
+  for (const row of csvLinesWithSplits(rows, splitInputsOf(part, doc.problems, ix, imported.represents), blankCells, shares)) {
     const cells = row.cells();
     yield csvRow(TRANSACTION_COLUMNS.map((c) => cells[c]));
   }
@@ -2485,6 +2543,12 @@ export const CSV_SOURCES: Readonly<Record<Exclude<ExportFormat, 'json'>, readonl
     // rows, and nya_amount.
     splitStore.name,
     groupStore.name,
+    // Shared expenses (lib/export-splits.ts): the others' parts, what a
+    // payment paid back, an IOU's row, and nya_amount.
+    expenseSettingsStore.name,
+    expenseSharesStore.name,
+    expenseIousStore.name,
+    expensePaymentsStore.name,
   ],
   // The days, the names of the manual accounts the rows are for, the
   // accounts' ends and the notes.

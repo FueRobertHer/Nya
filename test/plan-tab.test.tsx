@@ -24,6 +24,7 @@ const flows: TrailingFlows = {
   cashWithdrawn: 0,
   cashEntered: 0,
   cashEnteredOn: [],
+  cashIous: 0,
   unclearLoans: 0,
   largestRefund: null,
   from: '2025-10-07',
@@ -156,6 +157,15 @@ describe('the FI card', () => {
       'Includes $18,000 of loan payments (principal counts as spending until the loan ends) and $1,200 of cash withdrawals, less $1,800 of refunds (the largest, $1,500 from Acme Rentals on Feb 1, 2026).'
     );
     expect(t).toContain("$400 of loan payments isn't counted: Plaid doesn't say it is a mortgage, car, student or personal loan");
+  });
+
+  test('says IOUs you owe from before your transactions begin aren’t counted here, naming the day', () => {
+    const scaled = { ...flows, scaled: true, days: 40, from: '2026-08-28' };
+    expect(card(plan(), { f: { ...scaled, iousBefore: { count: 1, amount: 25 } } })).toContain(
+      "An IOU you owe from before Aug 28, 2026 ($25) isn't counted here: your spending is measured from your transactions, which begin then."
+    );
+    expect(card(plan(), { f: { ...scaled, iousBefore: { count: 10, amount: 1_000 } } })).toContain("10 IOUs you owe from before Aug 28, 2026 ($1,000) aren't counted here");
+    expect(card(plan(), { f: scaled })).not.toContain('IOU');
   });
 
   test('says loan payments not counted by where they came from: Plaid’s, or entered, imported or categorized', () => {

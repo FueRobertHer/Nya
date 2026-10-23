@@ -111,6 +111,9 @@ describe('never promised', () => {
     /encrypted like everything/i,
     /fully encrypted/i,
     /military|bank-(?:level|grade)|unhackable|100% secure|bulletproof/i,
+    // Shared expenses (#49): Nya keeps the list, and the money moves elsewhere.
+    /\bNya (?:sends|moves|holds|transfers) (?:your |the )?money\b/i,
+    /\b(?:send|pay|request) money (?:through|with|in) Nya\b/i,
   ];
 
   test('the guard catches the phrasings it is there for', () => {
@@ -120,6 +123,9 @@ describe('never promised', () => {
       'All your data is encrypted at rest.',
       'Holds your data encrypted.',
       'Encrypted like everything else.',
+      'Nya sends money to your friends.',
+      'Nya holds money until it is claimed.',
+      'Request money with Nya.',
     ]) {
       expect(RULED_OUT.some((r) => r.test(claim))).toBe(true);
     }
@@ -192,6 +198,18 @@ describe('the security page', () => {
     expect(page).toContain(`for up to ${DEMO_WINDOW_MINUTES} minutes. These never go into backups.`);
   });
 
+  test('says Nya never moves money, and who sees the people you split costs with', () => {
+    const page = security();
+    expect(page).toContain('Nya never sends, receives or holds money, and keeps no payment app’s login, card or account number.');
+    expect(page).toContain('and of the people you split costs with and your IOUs (random, made by Nya: their names, usernames and amounts are encrypted)');
+    expect(page).toContain('Never the people you split costs with, what anyone owes, or a payment. They can never change anything.');
+    expect(page).toContain('and your shared expenses, the one answer that names the people you split costs with');
+    const priv = privacy();
+    expect(priv).toContain('The people you split costs with under Shared expenses are never shown to anyone you share with, nor named in an email');
+    expect(priv).toContain('Forget someone and their name and usernames are deleted, and the amounts stay.');
+    expect(priv).toContain('The people you split costs with, and what is owed Until you remove it, or delete your account');
+  });
+
   test('names everyone who can read anything, and what', () => {
     const page = security();
     for (const who of ['The operator', 'Upstash', 'Vercel', 'Plaid', 'Clerk', 'People you share with', 'Your device']) {
@@ -212,7 +230,7 @@ describe('the security page', () => {
     expect(page).toContain(
       'which accounts each of you shares at which level and until when, which of your net worth, spending, holdings, budgets and goals each of you shares, at which level (with the random ids of the goals chosen), and for each connection a random id, which its records of when shared accounts were shown are kept under, and when those records began (what they record is encrypted), never the balances, amounts or transactions themselves.'
     );
-    expect(page).toContain('until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.');
+    expect(page).toContain('until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. Never the people you split costs with, what anyone owes, or a payment. They can never change anything.');
     // Deleting an account deletes both sides' records, so nothing of them stays with anyone.
     expect(page).not.toContain('doesn’t name you');
     expect(page).not.toMatch(/when you looked/);
@@ -679,7 +697,7 @@ describe('API tokens, on both pages', () => {
 
   test('the security page lists what of them is plain text: ids that can’t be used, and the counts of requests', () => {
     const page = security();
-    expect(page).toContain('and of your API tokens (random, and not enough to use one);');
+    expect(page).toContain('of your API tokens (random, and not enough to use one), and of the people you split costs with');
     expect(page).toContain(
       `And for each API token, how many requests it made in the current minute, deleted when the token is revoked, or ${(2 * RATE_WINDOW_SECONDS) / 60} minutes after the last request made with any of your tokens; and for the weekly summary, how many you asked to be sent now, kept for a day, and how many times a link to turn it off was used, kept for an hour.`
     );

@@ -20,6 +20,7 @@ import { forgetConnection } from './connection-health';
 import { forgetImportedTwins, retireImportedTwins } from './history-import/twins';
 import type { Ctx } from './containers';
 import { loggable } from './log-safe';
+import { retireShares } from './shared-expenses/edits';
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
@@ -64,6 +65,15 @@ export async function disconnectItem(
     }
   } catch (err) {
     console.error('disconnect: could not record exclusions to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+  // And which of them were shared, or paid something back
+  // (lib/shared-expenses/edits.ts retireShares), the same way, so a re-link
+  // carries what someone owes to the same transactions. Best effort too:
+  // what didn't record is gone once the accounts are linked, and said.
+  try {
+    if (stored) await retireShares(ctx, stored.map((t) => ({ transaction_id: t.transaction_id, account_id: t.account_id, key: contentKey(t.account_id, t), pending: t.pending })));
+  } catch (err) {
+    console.error('disconnect: could not record shared transactions to carry across a re-link', err instanceof Error ? err.message : err);
   }
   // And which of them stood for rows imported from the bank's files, by
   // their content too (lib/history-import/twins.ts), so that once the

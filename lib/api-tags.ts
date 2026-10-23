@@ -14,6 +14,7 @@ import { firstDay, readActivity, withoutTransactionsNotes, type ApiSource } from
 import { readTagSet } from './tags';
 import { bankRows } from './split-rows';
 import { tagVersion } from './api-versions';
+import { historyCount } from './spending';
 
 export type ApiTag = {
   id: string;
@@ -53,6 +54,6 @@ export async function readTags(ctx: Ctx, opts: { includeHidden?: boolean } = {})
       version: tagVersion(t),
     })),
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, historyCount(activity.rows), 'list')],
   };
 }

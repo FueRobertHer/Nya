@@ -44,6 +44,7 @@ const flows: TrailingFlows = {
   cashWithdrawn: 0,
   cashEntered: 0,
   cashEnteredOn: [],
+  cashIous: 0,
   excludedCount: 0,
   leftOut: [],
 };

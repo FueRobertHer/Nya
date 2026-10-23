@@ -106,6 +106,10 @@ const WITHOUT_WORDS: Readonly<Record<string, string | ((n: number) => string)>> 
   'fire-plan': 'your Plan’s assumptions',
   'fire-plan-currency': 'the currency your Plan’s figures are in',
   'plan-scenarios': (n) => `${n} saved plan ${n === 1 ? 'scenario' : 'scenarios'}`,
+  'expense-shares': (n) => `${n} shared ${n === 1 ? 'transaction' : 'transactions'}: ${n === 1 ? 'it counts' : 'they count'} whole, and ${n === 1 ? 'isn’t' : 'aren’t'} in anyone’s balance`,
+  'expense-ious': (n) => `${n} ${n === 1 ? 'IOU' : 'IOUs'}`,
+  'expense-payments': (n) => `${n} ${n === 1 ? 'payment' : 'payments'} you confirmed paid something back: ${n === 1 ? 'it counts' : 'they count'} as the bank shows ${n === 1 ? 'it' : 'them'}`,
+  'expense-dismissed': (n) => `${n} ${n === 1 ? 'payment' : 'payments'} you said paid nothing back: ${n === 1 ? 'it' : 'they'} may be offered again`,
   'allocation-settings': 'your allocation settings',
   'planned-items': 'your planned bills and income',
   'report-settings': 'your report settings',
@@ -449,7 +453,7 @@ function rekeyedEntries(c: Collected, name: string): { records: unknown[]; dropp
   return { records: byId(out), dropped };
 }
 
-const TXN_KEYED = new Set(['transaction-annotations', 'transaction-splits', 'transaction-groups', 'transaction-approvals']);
+const TXN_KEYED = new Set(['transaction-annotations', 'transaction-splits', 'transaction-groups', 'transaction-approvals', 'expense-shares', 'expense-payments', 'expense-dismissed']);
 
 /** The parts written from what is held in memory, before the large parts
  *  (`before`) and after them (`after`), each part's records in a fixed order,
@@ -640,6 +644,13 @@ export function smallParts(c: Collected, restoredAt: { restored: RestoredAccount
     ...entries('runway-scenarios'),
     ...value('currency-settings'),
     ...value('weekly-summary'),
+    // Shared expenses: the people before what names them.
+    ...value('expense-settings'),
+    ...entries('expense-people'),
+    ...entries('expense-shares'),
+    ...entries('expense-ious'),
+    ...entries('expense-payments'),
+    ...entries('expense-dismissed'),
     // The accounts the file says were being turned over to match their kind
     // (lib/sign-turning.ts), last: the finish plans each one's repair from
     // the history written by then (lib/sign-repair.ts planRestoredRepairs).

@@ -13,6 +13,7 @@ import { accountLabels, firstDay, readActivity, withoutTransactionsNotes, type A
 import { bankRows } from './split-rows';
 import { readRuleSet, ruleProblem, ruleSentence, sortedRules, withCurrentCategories, withLiveTags, type RuleActions, type RuleCondition } from './rules';
 import { liveTagIds } from './tags';
+import { historyCount } from './spending';
 
 export type ApiRule = {
   id: string;
@@ -66,6 +67,6 @@ export async function readRules(ctx: Ctx, opts: { includeHidden?: boolean } = {}
         updated_at: r.updated_at,
       })),
     sources: activity.sources,
-    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, activity.rows.length, 'list')],
+    notes: [...activity.notes, ...withoutTransactionsNotes(activity.view, historyCount(activity.rows), 'list')],
   };
 }

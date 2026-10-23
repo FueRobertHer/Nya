@@ -29,7 +29,7 @@
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
-import { leftOutByCurrency, leftOutText } from '@/lib/spending';
+import { historyCount, leftOutByCurrency, leftOutText } from '@/lib/spending';
 import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
 import type { FxTable } from '@/lib/fx/rates';
 import SplitChangedNote from './SplitChangedNote';
@@ -352,9 +352,9 @@ export default function BudgetsTab({
   // (rows entered by hand count): say so, rather than "$0 of" every limit.
   // With rows entered by hand, the connections that bring in none are named
   // beside the budgets instead, as where the spending comes from.
-  const noSpending = txns ? noSpendingOf(withoutTransactions, txns.length) : null;
+  const noSpending = txns ? noSpendingOf(withoutTransactions, historyCount(txns)) : null;
   const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions, thisMonth);
-  const namedWithout = withoutNote(withoutTransactions, txns?.length ?? 0);
+  const namedWithout = withoutNote(withoutTransactions, txns ? historyCount(txns) : 0);
 
   // The currency the figures are in: this page's for this month, the
   // server's for a past one (the same rule, over the same year).

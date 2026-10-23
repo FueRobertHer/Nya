@@ -56,6 +56,13 @@ export type CalendarTxn = {
   /** One of a group counted on a day before what was read: listed, not
    *  counted (lib/split-rows.ts). */
   group_outside?: { name: string; date: string };
+  /** The rows shared expenses make of a shared transaction or a payment
+   *  (lib/shared-expenses/rows.ts), put back whole by bankRows; an IOU's
+   *  row, which is no charge, is left off the calendar. */
+  shared_of?: string;
+  shared_was?: number;
+  shared_part?: unknown;
+  shared_iou?: unknown;
 };
 
 /** A card or loan payment Plaid says is due (an account's liability). */
@@ -194,13 +201,17 @@ export function calendarMonth(opts: {
   // a group's net as one row, as every total counts it.
   for (const t of bankRows(opts.txns, { groups: 'keep' })) {
     if (!entries.has(t.date)) continue;
-    const parts = t.split_parts;
+    // A split one's parts, or the rows shared expenses made of a shared
+    // transaction or a payment (lib/shared-expenses/rows.ts): what counts of
+    // them is the day's figure, your part of a shared dinner.
+    const split = t.split_parts;
+    const parts = split ?? t.shared_parts;
     const excluded = parts ? parts.every((p) => isExcluded(p)) : isExcluded(t);
     // As the figure counts it: converted, with a home currency, when it can be.
     const c = asCounted?.get(t.transaction_id) ?? t;
     const converted = c !== t && currencyOf(c) !== currencyOf(t);
     const uncounted = excluded || !inCurrency(c, currency) || !!t.group_outside;
-    const cParts = c.split_parts;
+    const cParts = c.split_parts ?? c.shared_parts;
     // What counts of a split one: all of it, unless a part is left out on its own.
     const counted = parts && !uncounted && !converted ? -parts.filter((p) => !isExcluded(p)).reduce((n, p) => n + Math.round(p.amount * scale), 0) / scale : undefined;
     const figure =
@@ -215,7 +226,7 @@ export function calendarMonth(opts: {
       ...(t.pending ? { pending: true } : {}),
       ...(excluded ? { excluded: true } : {}),
       ...(uncounted ? { uncounted: true } : {}),
-      ...(parts ? { parts: parts.filter((p) => !p.split_remainder).length } : {}),
+      ...(split ? { parts: split.filter((p) => !p.split_remainder && p.shared_part === undefined).length } : {}),
       ...(t.group_outside ? { group: { name: t.group_outside.name, date: t.group_outside.date } } : {}),
       ...(counted !== undefined && Math.round(counted * scale) !== Math.round(-t.amount * scale) ? { counted: counted || 0 } : {}),
       ...(figure !== undefined ? { figure } : {}),

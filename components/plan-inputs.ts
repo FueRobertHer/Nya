@@ -38,6 +38,7 @@ import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transa
 import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
 import { useCurrencySettings } from './currency-state';
+import { historyCount } from '@/lib/spending';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -175,7 +176,8 @@ export function usePlanInputs({
   const unread = useMemo(() => unreadTransactions(txnNotes), [txnNotes]);
   // Every transaction counts toward "is there spending at all", entered by
   // hand included.
-  const transactionCount = txns?.length ?? 0;
+  // Rows the accounts hold, never an IOU's (lib/spending.ts isHistoryRow).
+  const transactionCount = txns ? historyCount(txns) : 0;
   const coverage = useMemo(() => transactionCoverage(without, transactionCount), [without, transactionCount]);
   const contributions = useWorkplaceContributions(institutions);
   // Payments out of the bank that may have paid for a contribution, so it
