@@ -399,6 +399,24 @@ describe('undo', () => {
     expect((await getHiddenAccounts(ctx)).has(id)).toBe(false);
   });
 
+  test('an account made is not taken out while its past balances are being turned over, and is once that is done', async () => {
+    const { signJobStore, finishSignJobs } = await import('@/lib/sign-repair');
+    const { SIGN_JOB_PENDING } = await import('@/lib/sign-repair-store');
+    const made = await send('POST', 'manual-accounts', { body: { name: 'Jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 12.5 } });
+    const id = made.body.account.id as string;
+    await recordSnapshot(ctx, 1000, { acc_chk: 987.5, [id]: 12.5 });
+    // A repair of it under way (lib/sign-repair.ts), nothing left to turn over.
+    await signJobStore.set(ctx, id, { v: 1, kind: 'repair', from: 'depository', to: 'depository', at: new Date(NOW).toISOString(), tag: 'sign-test', plan: {} });
+    const refused = await undo(made.body.change_id);
+    expect([refused.status, refused.body.error.message]).toEqual([409, `${SIGN_JOB_PENDING} It wasn’t undone.`]);
+    expect(await getManualAccount(ctx, id)).not.toBeNull();
+    const day = new Date(NOW).toISOString().slice(0, 10);
+    expect(Object.keys(JSON.parse(await decrypt(ctx, fake.hashes.get(ctxKey('history:accounts'))!.get(day)!)))).toContain(id);
+    await finishSignJobs(ctx);
+    expect((await undo(made.body.change_id)).status).toBe(200);
+    expect(await getManualAccount(ctx, id)).toBeNull();
+  });
+
   test('an account made is not taken out once anything else touched it', async () => {
     const made = await send('POST', 'manual-accounts', { body: { name: 'Jar', institution_name: 'Home', type: 'depository', subtype: 'cash', balance: 12.5 } });
     const id = made.body.account.id as string;
