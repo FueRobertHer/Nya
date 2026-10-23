@@ -41,7 +41,7 @@ const base: InventoryRow = {
   count: 1234,
   unit: ['day', 'days'],
   chars: 3 * 1024 * 1024 + 200_000,
-  encryption: { kind: 'encrypted', own: 0, shared: 1234, unclear: 0, not_ciphertext: 0 },
+  encryption: { kind: 'encrypted', own: 0, shared: 1234, unclear: 0, not_ciphertext: 0, unchecked: 0 },
   download: { included: true, text: 'In your download, under net_worth_history (recorded).' },
   backed_up: true,
   kept: ['Your data'],
@@ -87,10 +87,13 @@ describe('Your data, in words', () => {
     expect(encryptionText(row({ encryption: { kind: 'plain' } }))).toBe('No: kept as plain text.');
     expect(encryptionText(row({ encryption: { kind: 'token' } }))).toContain('The token that reaches each bank is encrypted');
     expect(encryptionText(row({ encryption: { kind: 'wrapped' } }))).toContain('locked by the master key');
-    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 0, shared: 0, unclear: 0, not_ciphertext: 0 } }))).toBe('Yes, whenever any is stored.');
-    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 4, shared: 0, unclear: 0, not_ciphertext: 0 } }))).toBe('Yes, with your account’s own key.');
+    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 0, shared: 0, unclear: 0, not_ciphertext: 0, unchecked: 0 } }))).toBe('Yes, whenever any is stored.');
+    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 4, shared: 0, unclear: 0, not_ciphertext: 0, unchecked: 0 } }))).toBe('Yes, with your account’s own key.');
     expect(encryptionText(base)).toBe('Yes, with a key this copy of Nya shares between accounts.');
-    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 1, not_ciphertext: 1 } }))).toBe(
+    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 3, shared: 0, unclear: 0, not_ciphertext: 0, unchecked: 2 } }))).toBe(
+      'Yes: 3 with your account’s own key; 2 not looked at here, for their size.'
+    );
+    expect(encryptionText(row({ encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 1, not_ciphertext: 1, unchecked: 0 } }))).toBe(
       'Yes: 2 with your account’s own key; 1 with a key this copy of Nya shares; 1 with a key whose id can’t be read; 1 that don’t look encrypted, so can’t be read.'
     );
   });

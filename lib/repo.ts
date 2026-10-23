@@ -168,11 +168,12 @@
 // MEASURING A WHOLE CONTAINER: measureContainer. How much each key of one
 // container holds (its type, entries, characters and largest value), every
 // key the container has, the older stores' and the seam's alike, for the
-// person's own list of what Nya keeps about them (lib/inventory.ts) and the
-// admin's view of storage across accounts (lib/admin-storage.ts). It never
-// hands back a value: with `heads`, only which key each value says it is
-// encrypted under, counted. It writes nothing, and builds no key: it walks
-// the container's own prefix and measures what it finds there.
+// person's own list of what Nya keeps about them (lib/inventory.ts); and
+// measureContainers, the same for several containers with one walk, for the
+// admin's view of storage across accounts (lib/admin-storage.ts). They never
+// hand back a value: with `heads`, only which key each value says it is
+// encrypted under, counted. They write nothing, and build no key: they walk
+// the containers' own prefixes and measure what they find there.
 //
 // PUBLIC DATA, THE ONE EXCEPTION TO CONTAINERS ONLY: definePublicMapStore. A
 // store of data that belongs to no one and is the same for everyone (the
@@ -578,10 +579,17 @@ return {#fields, chars, 'v' .. largest, most}`;
  * "k0" for an unversioned value of base64 long enough to be ciphertext under
  * the original key, and "-" for anything else (plain text, or damage), as
  * "<claim>=<count>" joined by commas, prefixed "v" so nothing parses it. A
- * hash's values are read inside Redis for that; only the counts leave it.
+ * string's head is read with GETRANGE, at no cost for its size; Redis has no
+ * such read of a hash field, so a hash's values are read whole inside Redis
+ * for theirs, and only the counts leave it. That is bounded: ARGV[2] is the
+ * bytes of hash values one step may read for heads (HEADS_STEP_BYTES), and a
+ * value past it is "+", not looked at, so a step never holds Redis for long
+ * whatever the values' size.
  */
 export const MEASURE_KEYS = `-- nya:repo-measure-keys
 local heads = ARGV[1] == '1'
+local budget = tonumber(ARGV[2]) or 0
+local spent = 0
 local function claim(head, n)
   local id = string.match(head, '^v2%.(k[%w%-]+)%.')
   if id then return id end
@@ -614,7 +622,11 @@ for i = 1, #KEYS do
       chars = chars + #fields[j] + n
       if n > most then most = n end
       if heads then
-        local c = claim(string.sub(redis.call('HGET', key, fields[j]), 1, 64), n)
+        local c = '+'
+        if spent + n <= budget then
+          spent = spent + n
+          c = claim(string.sub(redis.call('HGET', key, fields[j]), 1, 64), n)
+        end
         claims[c] = (claims[c] or 0) + 1
       end
     end
@@ -1440,9 +1452,10 @@ export type KeyMeasure = {
   /** With `heads`: how many of its values claim each key, by key id ("k0",
    *  the original single key, for an unversioned value), "?" for a value in
    *  the versioned shape whose key id can't be read, and "-" for one that is
-   *  not ciphertext in shape at all (plain text, or damage). A claim, read
-   *  from the value's first bytes: nothing is decrypted, so a value claiming
-   *  a key may still fail to open under it. */
+   *  not ciphertext in shape at all (plain text, or damage), and "+" for a
+   *  hash value not looked at, past the step's HEADS_STEP_BYTES. A claim,
+   *  read from the value's first bytes: nothing is decrypted, so a value
+   *  claiming a key may still fail to open under it. */
   heads?: Record<string, number>;
 };
 
@@ -1457,6 +1470,10 @@ export type ContainerMeasure = {
 /** Keys asked for per SCAN page, and measured per MEASURE_KEYS step. */
 const MEASURE_SCAN_PAGE = 500;
 const MEASURE_STEP = 100;
+/** The bytes of hash values one MEASURE_KEYS step reads inside Redis for
+ *  their heads: a few milliseconds of Redis's time at most. A value past it
+ *  is "+", not looked at. */
+export const HEADS_STEP_BYTES = 4 * 1024 * 1024;
 
 /** Reads one MEASURE_KEYS row, or null for a key gone since the walk. */
 function measured(key: string, row: unknown, heads: boolean): KeyMeasure | null {
@@ -1481,22 +1498,10 @@ function measured(key: string, row: unknown, heads: boolean): KeyMeasure | null 
   return out;
 }
 
-/**
- * How much every key of one container holds, measured now: a SCAN of the
- * container's prefix (MATCH, a page at a time, each key once however often
- * SCAN gives it), then MEASURE_KEYS on what it found, MEASURE_STEP keys a
- * step. No value leaves Redis, and nothing is decrypted or written: with
- * `heads`, the key each value claims (KeyMeasure.heads), counted. Strict about
- * the walk: a SCAN that fails throws, since what it would have found is not
- * known. A step that fails names each of its keys in `unmeasured`, never
- * leaves them out, so the rest is still measured and what was not is said.
- *
- * Its cost is the walk: SCAN reads the environment's whole keyspace, of
- * which MATCH keeps this container's, so call it where it is counted (a page
- * the person opens, a page of the admin's view), never in a hot path.
- */
-export async function measureContainer(ctx: Ctx, opts: { heads?: boolean } = {}): Promise<ContainerMeasure> {
-  const prefix = containerPrefix(ctx);
+/** Every key matching `prefix*`, once each (SCAN may repeat one), a page at
+ *  a time. Throws when a page can't be had: what it would have found is not
+ *  known. */
+async function walk(prefix: string): Promise<string[]> {
   const found = new Set<string>();
   let cursor: string | number = 0;
   do {
@@ -1504,16 +1509,19 @@ export async function measureContainer(ctx: Ctx, opts: { heads?: boolean } = {})
     for (const key of page) if (key.startsWith(prefix) && key.length > prefix.length) found.add(key);
     cursor = next;
   } while (String(cursor) !== '0');
+  return [...found].sort();
+}
 
-  const all = [...found].sort();
-  const heads = opts.heads === true;
+/** Measures one container's keys, found by a walk (full keys, under its
+ *  prefix), MEASURE_STEP a step. A step that fails names its keys. */
+async function measureKeys(ctx: Ctx, prefix: string, all: string[], heads: boolean): Promise<ContainerMeasure> {
   const keys: KeyMeasure[] = [];
   const unmeasured: string[] = [];
   for (let i = 0; i < all.length; i += MEASURE_STEP) {
     const step = all.slice(i, i + MEASURE_STEP);
     let answer: unknown;
     try {
-      answer = await redis().eval(MEASURE_KEYS, step, [heads ? '1' : '0']);
+      answer = await redis().eval(MEASURE_KEYS, step, [heads ? '1' : '0', String(HEADS_STEP_BYTES)]);
     } catch (err) {
       console.error(`repo: ${step.length} keys of container ${ctx.container} could not be measured:`, err instanceof Error ? err.name : typeof err);
       unmeasured.push(...step.map((key) => key.slice(prefix.length)));
@@ -1526,6 +1534,62 @@ export async function measureContainer(ctx: Ctx, opts: { heads?: boolean } = {})
     });
   }
   return { keys, unmeasured };
+}
+
+/**
+ * How much every key of one container holds, measured now: a SCAN of the
+ * container's prefix (MATCH, a page at a time, each key once however often
+ * SCAN gives it), then MEASURE_KEYS on what it found, MEASURE_STEP keys a
+ * step. No value leaves Redis, and nothing is decrypted or written: with
+ * `heads`, the key each value claims (KeyMeasure.heads), counted, at most
+ * HEADS_STEP_BYTES of hash values read for them a step. Strict about the
+ * walk: a SCAN that fails throws, since what it would have found is not
+ * known. A step that fails names each of its keys in `unmeasured`, never
+ * leaves them out, so the rest is still measured and what was not is said.
+ *
+ * Its cost is the walk: SCAN reads the environment's whole keyspace, of
+ * which MATCH keeps this container's, so call it where it is counted (a page
+ * the person opens, held to a count of its own), never in a hot path. For
+ * several containers at once, measureContainers walks once.
+ */
+export async function measureContainer(ctx: Ctx, opts: { heads?: boolean } = {}): Promise<ContainerMeasure> {
+  const prefix = containerPrefix(ctx);
+  return measureKeys(ctx, prefix, await walk(prefix), opts.heads === true);
+}
+
+/**
+ * measureContainer for several containers, with one walk for all of them:
+ * a SCAN of every container's keys (the prefix the containers share), each
+ * key kept for the container it is in, when that is one asked for, then
+ * each container measured as measureContainer measures it, without heads
+ * (sizes and counts only). The walk costs the same for one container or
+ * fifty. In the order asked; a container asked for twice is measured once.
+ * Strict about the walk, as measureContainer is.
+ */
+export async function measureContainers(ctxs: readonly Ctx[]): Promise<Map<Ctx['container'], ContainerMeasure>> {
+  const out = new Map<Ctx['container'], ContainerMeasure>();
+  if (ctxs.length === 0) return out;
+  // "<env>:c:", the part every container's prefix starts with.
+  const shared = containerPrefix(ctxs[0]).slice(0, -(ctxs[0].container.length + 1));
+  const prefixes = new Map<string, string>();
+  for (const ctx of ctxs) {
+    const prefix = containerPrefix(ctx);
+    if (!prefix.startsWith(shared) || prefix !== `${shared}${ctx.container}:`) throw new Error('repo: containers that do not share a prefix');
+    prefixes.set(ctx.container, prefix);
+  }
+  const found = new Map<string, string[]>([...prefixes.keys()].map((c) => [c, []]));
+  for (const key of await walk(shared)) {
+    const end = key.indexOf(':', shared.length);
+    if (end < 0) continue;
+    const container = key.slice(shared.length, end);
+    const prefix = prefixes.get(container);
+    if (prefix !== undefined && key.length > prefix.length) found.get(container)!.push(key);
+  }
+  for (const ctx of ctxs) {
+    if (out.has(ctx.container)) continue;
+    out.set(ctx.container, await measureKeys(ctx, prefixes.get(ctx.container)!, found.get(ctx.container)!, false));
+  }
+  return out;
 }
 
 /** Every public store declared so far, by name. For lib/stores.ts only, as

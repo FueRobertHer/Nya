@@ -18,7 +18,7 @@ type Encryption =
   | { kind: 'plain' }
   | { kind: 'token' }
   | { kind: 'wrapped' }
-  | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number };
+  | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number; unchecked: number };
 
 export type InventoryRow = {
   id: string;
@@ -73,7 +73,7 @@ export function encryptionText(r: InventoryRow): string {
   if (e.kind === 'token') return 'The token that reaches each bank is encrypted; the rest of each record is plain text.';
   if (e.kind === 'wrapped') return 'The key is kept locked by the master key, which is never in the database; its id and dates are plain text.';
   const parts: string[] = [];
-  const total = e.own + e.shared + e.unclear + e.not_ciphertext;
+  const total = e.own + e.shared + e.unclear + e.not_ciphertext + e.unchecked;
   if (total === 0) return 'Yes, whenever any is stored.';
   if (e.own === total) return 'Yes, with your account’s own key.';
   if (e.shared === total) return 'Yes, with a key this copy of Nya shares between accounts.';
@@ -81,6 +81,7 @@ export function encryptionText(r: InventoryRow): string {
   if (e.shared > 0) parts.push(`${plainNumber(e.shared)} with a key this copy of Nya shares`);
   if (e.unclear > 0) parts.push(`${plainNumber(e.unclear)} with a key whose id can’t be read`);
   if (e.not_ciphertext > 0) parts.push(`${plainNumber(e.not_ciphertext)} that don’t look encrypted, so can’t be read`);
+  if (e.unchecked > 0) parts.push(`${plainNumber(e.unchecked)} not looked at here, for their size`);
   return `Yes: ${parts.join('; ')}.`;
 }
 

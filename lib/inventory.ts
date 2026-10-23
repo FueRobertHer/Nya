@@ -660,6 +660,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     kept: 'Counts that limit how often you can do something',
     plain: COUNT_PLAIN,
   },
+  'inventory-reads': {
+    group: 'machinery',
+    name: 'Looks at Your data this hour',
+    unit: COUNT,
+    kept: 'Counts that limit how often you can do something',
+    plain: COUNT_PLAIN,
+  },
   'import-settings': {
     group: 'imports',
     name: 'How the last file imported into each account was read',

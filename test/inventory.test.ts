@@ -116,6 +116,19 @@ describe('the registry', () => {
     expect([...named].filter((r) => !(RETENTION_ROWS as readonly string[]).includes(r))).toEqual([]);
   });
 
+  test('the counts that limit how often are in the backups but SimpleFIN’s and Lunch Flow’s, as the privacy page says of them', async () => {
+    const { isExcluded } = await import('@/lib/export');
+    const under = declaredStores().filter(
+      (s) => (s.kind === 'counter' || s.kind === 'counter-map') && keptRows(containerEntry(s.name)!).includes('Counts that limit how often you can do something')
+    );
+    expect(under.filter((s) => !s.backedUp || isExcluded(s.name)).map((s) => s.name).sort()).toEqual(['connector-claims', 'connector-requests']);
+    process.env.BLOB_READ_WRITE_TOKEN = 'vercel_blob_rw_placeholder';
+    const html = renderToStaticMarkup(PrivacyPage());
+    expect(html).toContain('Nightly backups keep a copy of all but those of SimpleFIN and Lunch Flow up to');
+    delete process.env.BLOB_READ_WRITE_TOKEN;
+    expect(renderToStaticMarkup(PrivacyPage())).not.toContain('a copy of all but those of SimpleFIN');
+  });
+
   test('every count that limits how often is kept for an hour or a day, as the privacy page says of them', () => {
     for (const s of declaredStores()) {
       if (s.kind !== 'counter' && s.kind !== 'counter-map') continue;
@@ -176,7 +189,7 @@ describe('reading it', () => {
       status: 'read',
       count: 3,
       chars: bytesOf(ctxKey('history:net-worth')),
-      encryption: { kind: 'encrypted', own: 0, shared: 3, unclear: 0, not_ciphertext: 0 },
+      encryption: { kind: 'encrypted', own: 0, shared: 3, unclear: 0, not_ciphertext: 0, unchecked: 0 },
       download: { included: true, text: 'In your download, under net_worth_history (recorded).' },
       kept: ['Your data'],
       plain: 'The days with a balance, as field names.',
@@ -229,7 +242,7 @@ describe('reading it', () => {
     });
     const inv = await readInventory(ctx, { userId: null, now: NOW });
     expect(inv.key).toEqual({ own: true, since: '2026-02-01T00:00:00.000Z', moved: null });
-    expect(row(inv, 'manual:accounts')).toMatchObject({ status: 'read', count: 4, encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 0, not_ciphertext: 1 } });
+    expect(row(inv, 'manual:accounts')).toMatchObject({ status: 'read', count: 4, encryption: { kind: 'encrypted', own: 2, shared: 1, unclear: 0, not_ciphertext: 1, unchecked: 0 } });
     expect(row(inv, 'crypto:')).toMatchObject({ where: 'environment', status: 'read', count: 1, encryption: { kind: 'wrapped' } });
   });
 
@@ -326,6 +339,23 @@ describe('the route', () => {
       const res = await get(q);
       expect([q, res.status]).toEqual([q, q === '?' ? 200 : 400]);
     }
+  });
+
+  test('counted first, as the restore’s look at an empty account is: past the hour’s count, a 429 and no walk', async () => {
+    const { INVENTORY_READS_PER_HOUR } = await import('@/lib/inventory-limit');
+    for (let i = 0; i < INVENTORY_READS_PER_HOUR; i++) expect((await get()).status).toBe(200);
+    sent.length = 0;
+    const refused = await get();
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get('Retry-After'))).toBeGreaterThan(0);
+    expect((await refused.json()).error).toContain(`${INVENTORY_READS_PER_HOUR} times an hour`);
+    expect(sent.filter(([command]) => command === 'scan')).toEqual([]);
+    // Its own count is listed with the rest, by its window.
+    fake.reset();
+    await registerTestContainer(fake);
+    forgetEpochs();
+    const inv = await (await get()).json();
+    expect(row(inv, 'inventory-reads')).toMatchObject({ count: 1, kept_detail: 'Each count lasts an hour from the first.' });
   });
 
   test('a container that is not available is a 503, as everywhere', async () => {

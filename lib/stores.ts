@@ -34,6 +34,7 @@ import './groups';
 import './history-import/store';
 import './holdings-history';
 import './import/store';
+import './inventory-limit';
 import './lifecycle';
 import './manual-txns';
 import './migration/store';

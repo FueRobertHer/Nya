@@ -42,7 +42,8 @@ import { containerEntry, families, GROUPS, keptRows, kindOf, outsideEntries, SEE
  *  values say they are under the account's own key, under a key this copy
  *  of Nya shares (the original single key or a shared data key), under a key
  *  whose id can't be read (`unclear`), or don't look encrypted at all
- *  (`not_ciphertext`: they can't be read). Claims read from each value's
+ *  (`not_ciphertext`: they can't be read), or weren't looked at, for their
+ *  size (`unchecked`: lib/repo.ts HEADS_STEP_BYTES). Claims read from each value's
  *  first bytes, never decrypted. `token`: the Plaid Items' records, whose
  *  access token alone is encrypted; `wrapped`: the data key's record, whose
  *  key is locked by the master key. */
@@ -50,7 +51,7 @@ export type Encryption =
   | { kind: 'plain' }
   | { kind: 'token' }
   | { kind: 'wrapped' }
-  | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number };
+  | { kind: 'encrypted'; own: number; shared: number; unclear: number; not_ciphertext: number; unchecked: number };
 
 export type InventoryRow = {
   /** The key family or store name. */
@@ -167,11 +168,11 @@ function encryptionOf(name: string, heads: Record<string, number>, ownKey: strin
   let own = 0;
   let shared = 0;
   for (const [claim, n] of Object.entries(heads)) {
-    if (claim === '-' || claim === '?') continue;
+    if (claim === '-' || claim === '?' || claim === '+') continue;
     if (ownKey !== null && claim === ownKey) own += n;
     else shared += n;
   }
-  return { kind: 'encrypted', own, shared, unclear: heads['?'] ?? 0, not_ciphertext: heads['-'] ?? 0 };
+  return { kind: 'encrypted', own, shared, unclear: heads['?'] ?? 0, not_ciphertext: heads['-'] ?? 0, unchecked: heads['+'] ?? 0 };
 }
 
 const rowOf = (

@@ -831,9 +831,12 @@ export class FakeRedis {
     }
     // How much each key holds (measureContainer): its type, entries, bytes
     // and largest value, and with heads, the key each value claims from its
-    // first 64 bytes, counted, as the Lua does.
+    // first 64 bytes, counted, as the Lua does, reading at most the step's
+    // budget of hash values (ARGV[2]) and calling the rest "+".
     if (name === '-- nya:repo-measure-keys') {
       const heads = args[0] === '1';
+      const budget = Number(args[1]) || 0;
+      let spent = 0;
       const claim = (bytes: Buffer, n: number) => {
         const head = bytes.subarray(0, 64).toString('latin1');
         const id = /^v2\.(k[A-Za-z0-9-]+)\./.exec(head);
@@ -860,7 +863,11 @@ export class FakeRedis {
           chars += Buffer.byteLength(field, 'utf8') + bytes.length;
           most = Math.max(most, bytes.length);
           if (heads) {
-            const c = claim(bytes, bytes.length);
+            let c = '+';
+            if (spent + bytes.length <= budget) {
+              spent += bytes.length;
+              c = claim(bytes, bytes.length);
+            }
             claims.set(c, (claims.get(c) ?? 0) + 1);
           }
         }

@@ -189,6 +189,19 @@ function showingsRow(backups: BackupRetention): string {
   return `${kept} Nightly backups keep a copy up to ${backupDaysAtMost(backups)} days more, while the nightly backup keeps running.`;
 }
 
+/** How long the counts that limit how often something can be done last
+ *  (lib/inventory.ts lists which), backups included: all but SimpleFIN's and
+ *  Lunch Flow's are in them (test/inventory.test.ts holds that to the code). */
+function countsRow(backups: BackupRetention): string {
+  const kept =
+    'Downloads of your data, looks at Your data, file imports and reads of the list of them, restores and the steps of one, and connecting to SimpleFIN or Lunch Flow and the requests made to them: each counted for its own window, an hour or a day from its first count, and then gone.';
+  if (backups === null) {
+    return `${kept} Nightly backups already taken keep a copy of all but those of SimpleFIN and Lunch Flow until their retention setting, which is not valid on this copy of Nya, is fixed and they are deleted in turn.`;
+  }
+  if (!backups.kept) return kept;
+  return `${kept} Nightly backups keep a copy of all but those of SimpleFIN and Lunch Flow up to ${backupDaysAtMost(backups)} days more, while the nightly backup keeps running.`;
+}
+
 function backupsRow(backups: BackupRetention): string {
   if (backups === null) return 'None taken and none deleted while the retention setting is not valid.';
   if (!backups.kept) return 'None: no backup store is set up for this copy of Nya.';
@@ -238,10 +251,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys): [string
     'The app’s own records about your data',
     'Locks, notes that a bank’s transactions grew too large to save or failed to save, the daily snapshot’s record of how each recent day went, when each day’s balances were taken and its checks on your connections, summaries and indexes kept beside your data, and how far longer jobs have got: until what they are about goes, or you delete your account. Your data, under Manage, says which of them are plain text.',
   ],
-  [
-    'Counts that limit how often you can do something',
-    'Downloads of your data, file imports and reads of the list of them, restores and the steps of one, and connecting to SimpleFIN or Lunch Flow and the requests made to them: each counted for its own window, an hour or a day from its first count, and then gone.',
-  ],
+  ['Counts that limit how often you can do something', countsRow(backups)],
   [
     'API tokens',
     'Until you revoke them, or delete your account. Each is kept as its name, the sign-in account that made it (with sign-in accounts), when it was made and last used, and a hash of its secret, all encrypted; the token itself is shown once and never stored. Signing out everywhere, or a change of the shared password, doesn’t end them. They are never in backups, so restoring one ends them all.',
