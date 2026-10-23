@@ -1019,7 +1019,7 @@ describe('the store', () => {
     // Exactly as the store saved it before: lib/stored-json.ts, under the same key.
     await writeEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', saved, isFirePlan);
     expect(await firePlanStore.get(TEST_CTX)).toEqual(saved);
-    expect(await (await route.GET()).json()).toEqual({ plan: saved });
+    expect(await (await route.GET()).json()).toEqual({ plan: saved, currency: null });
     // And what the seam saves, the release before it reads: a rollback loses nothing.
     await firePlanStore.set(TEST_CTX, plan({ age: 41 }));
     expect(await readEncryptedJson(TEST_CTX, ctxKey('fire-plan'), 'plan assumptions', isFirePlan)).toEqual(plan({ age: 41 }));
@@ -1106,10 +1106,10 @@ describe('the route', () => {
   };
 
   test('loads null before anything is saved, then what was saved', async () => {
-    expect(await (await route.GET()).json()).toEqual({ plan: null });
+    expect(await (await route.GET()).json()).toEqual({ plan: null, currency: null });
     const res = await put({ plan: plan({ age: 30 }) });
     expect(res.status).toBe(200);
-    expect(await (await route.GET()).json()).toEqual({ plan: plan({ age: 30 }) });
+    expect(await (await route.GET()).json()).toEqual({ plan: plan({ age: 30 }), currency: null });
   });
 
   test('refuses an invalid plan with the reason, and stores nothing', async () => {

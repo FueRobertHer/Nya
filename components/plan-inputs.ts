@@ -128,6 +128,7 @@ export function usePlanInputs({
   planFunding,
   fx = null,
   balanceFx = null,
+  currency = null,
 }: {
   txns: Txn[] | null;
   txnNotes: string[];
@@ -142,6 +143,10 @@ export function usePlanInputs({
   fx?: FxTable | null;
   /** What balances convert with (/api/net-worth base.fx), null without one. */
   balanceFx?: PageFx | null;
+  /** The Plan's own currency, the one its figures were typed in, once it is
+   *  recorded (lib/fire/plan-currency.ts): everything measured is in it.
+   *  Null follows the accounts, as before. */
+  currency?: string | null;
 }): PlanInputs {
   // "Today" is the viewer's calendar day.
   const today = localDate();
@@ -150,10 +155,14 @@ export function usePlanInputs({
   // by name for the label.
   const cashAccounts = useMemo(() => cashAccountIds(institutions), [institutions]);
   // The accounts first: their currency is the Plan's, which the year's
-  // flows are converted into with a home currency (lib/fire/inputs.ts).
-  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx), [institutions, includeCash, balanceFx]);
+  // flows are converted into with a home currency (lib/fire/inputs.ts),
+  // unless the Plan has its own, which both are in.
+  const assets = useMemo(() => investedAssets(institutions, includeCash, balanceFx, Date.now(), currency), [institutions, includeCash, balanceFx, currency]);
   const into = assets.currency;
-  const flows = useMemo(() => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into }) : null), [txns, today, cashAccounts, fx, into]);
+  const flows = useMemo(
+    () => (txns ? trailingFlows(txns, today, { cashAccounts, fx, into, ...(currency ? { currency } : {}) }) : null),
+    [txns, today, cashAccounts, fx, into, currency]
+  );
   const accountNames = useMemo(() => new Map(institutions.flatMap((i) => i.accounts.map((a) => [a.account_id, a.name] as const))), [institutions]);
   const cashOn = useMemo(() => (flows?.cashEnteredOn ?? []).map((id) => accountNames.get(id) ?? 'a cash account'), [flows, accountNames]);
   // Spending entered by hand on a manual account not marked as cash: if it is

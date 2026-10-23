@@ -20,10 +20,25 @@
 
 import { defineValueStore } from './repo';
 import { isFirePlan, upgradePlan, type FirePlan } from './fire/plan';
+import { isPlanCurrencyRecord, type PlanCurrencyRecord } from './fire/plan-currency';
 
 export const firePlanStore = defineValueStore<FirePlan>('fire-plan', {
   what: 'plan assumptions',
   isValid: isFirePlan,
   exportable: true, // what the person chose and typed
   upgrade: upgradePlan,
+});
+
+// The currency the plan's typed figures are in (lib/fire/plan-currency.ts),
+// one encrypted value beside the plan: a store of its own because FirePlan's
+// shape is closed, and a field there would make the release before refuse
+// the whole plan. It holds the currency and the plan's typed amounts as the
+// save that wrote it left them, so a read tells it from a plan changed since
+// (by the release before after a rollback, say) and then asks instead.
+// Strict, as the plan is: a damaged record is replaced only on the person's
+// answer, and a later release's is never written over (app/api/fire-plan).
+export const planCurrencyStore = defineValueStore<PlanCurrencyRecord>('fire-plan-currency', {
+  what: 'records of your plan’s currency',
+  isValid: isPlanCurrencyRecord,
+  exportable: true, // what the person typed their figures in
 });

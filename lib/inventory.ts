@@ -608,6 +608,13 @@ const STORES: Readonly<Record<string, Entry>> = {
     unit: VALUE,
     kept: 'Your data',
   },
+  'fire-plan-currency': {
+    group: 'plans',
+    name: 'The currency your plan’s figures are in',
+    about: 'The currency you typed your plan’s amounts in, with those amounts as the save that recorded it left them, so a plan changed since is told apart.',
+    unit: VALUE,
+    kept: 'Your data',
+  },
   'goal-plans': {
     group: 'plans',
     name: 'How each goal is funded, and when it is due',
