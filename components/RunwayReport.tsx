@@ -235,6 +235,12 @@ export function RunwayView({ runway, projection }: { runway: Runway; projection:
   );
 }
 
+/** What Save sends (app/api/runway-scenarios): the name and the what-if as
+ *  worked out, its lower spending with the currency it was typed in. */
+export function scenarioToSave(name: string, whatIf: RunwayWhatIf, currency: string) {
+  return { name, ...whatIf, currency: whatIf.lower_by > 0 ? currency : null };
+}
+
 type ScenarioList = { scenarios: (RunwayScenario & { id: string })[]; unreadable_ids: string[]; unrecognised_ids: string[] };
 
 /** The browser's time zone, or UTC where it doesn't say one the server takes. */
@@ -298,6 +304,8 @@ export default function RunwayReport() {
   const change = (patch: Partial<RunwayWhatIf>) => setWhatIf((w) => ({ ...w, ...patch }));
   const typed = lowerText.trim() === '' ? 0 : parseAmountInput(lowerText, code);
   const lowerOk = typed !== null && typed <= MAX_AMOUNT;
+  // The what-if as worked out and saved: the amount as typed, once it reads.
+  const effective: RunwayWhatIf = { ...whatIf, lower_by: lowerOk ? typed! : 0 };
 
   const apply = (s: RunwayScenario) => {
     const { whatIf: next, otherCurrency: other } = scenarioWhatIf(s, runway?.currency ?? null);
@@ -313,7 +321,7 @@ export default function RunwayReport() {
       const res = await fetch('/api/runway-scenarios', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ scenario: { name, ...whatIf, currency: whatIf.lower_by > 0 ? code : null } }),
+        body: JSON.stringify({ scenario: scenarioToSave(name, effective, code) }),
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) setSavedError(typeof body.error === 'string' ? body.error : 'The scenario couldn’t be saved.');
@@ -355,7 +363,7 @@ export default function RunwayReport() {
     );
   }
 
-  const projection = projectRunway(runway, { ...whatIf, lower_by: lowerOk ? typed! : 0 });
+  const projection = projectRunway(runway, effective);
   const hasOneOffs = runway.windows.some((x) => x.one_offs.length > 0);
 
   return (
@@ -397,7 +405,7 @@ export default function RunwayReport() {
           <button className="secondary" onClick={() => window.print()}>
             Print or save as PDF
           </button>
-          <button className="secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) >= MAX_SCENARIOS}>
+          <button className="secondary" onClick={() => setNaming(true)} disabled={!lowerOk || (saved?.scenarios.length ?? 0) + (saved?.unreadable_ids.length ?? 0) + (saved?.unrecognised_ids.length ?? 0) >= MAX_SCENARIOS}>
             Save as a scenario
           </button>
           <button
@@ -431,7 +439,7 @@ export default function RunwayReport() {
         <div className="sheet-form">
           <p className="panel-note">
             Its settings are saved, never its figures: opened again, it is worked out from your data that day.{' '}
-            <Masked>{whatIfWords({ ...whatIf, lower_by: lowerOk ? typed! : 0 }, runway.currency)}</Masked>
+            <Masked>{whatIfWords(effective, runway.currency)}</Masked>
           </p>
           <label className="field">
             Name

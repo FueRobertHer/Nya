@@ -2,7 +2,8 @@ import { describe, expect, test, afterEach } from 'bun:test';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { RunwayView, SavedScenarios, lastsWords, whatIfWords } from '@/components/RunwayReport';
+import { RunwayView, SavedScenarios, lastsWords, scenarioToSave, whatIfWords } from '@/components/RunwayReport';
+import { parseRunwayScenario } from '@/lib/report/runway-scenarios';
 import { YearOverYearView, pctWords } from '@/components/YearOverYearReport';
 import { reportChoice } from '@/components/ReportsPage';
 import { cashPosition } from '@/lib/forecast';
@@ -158,6 +159,15 @@ describe('the saved scenarios', () => {
     expect(t).toContain('One more was saved by a newer version of Nya');
     expect(text(renderToStaticMarkup(<SavedScenarios list={{ scenarios: [], unreadable_ids: [], unrecognised_ids: [] }} currency="USD" busy={false} onApply={() => {}} onDelete={() => {}} />))).toContain('None yet.');
     expect(text(renderToStaticMarkup(<SavedScenarios list={null} currency="USD" busy={false} onApply={() => {}} onDelete={() => {}} />))).toContain('aren’t loaded');
+  });
+
+  test('Save sends the what-if as worked out, its lower spending with the currency it was typed in, and the server takes it', () => {
+    const lower = scenarioToSave('If I quit', three({ lower_by: 304.38, income_until: '2026-12-31' }), 'USD');
+    expect(lower).toEqual({ name: 'If I quit', months: 3, lower_by: 304.38, income_until: '2026-12-31', planned: true, leave_out_one_offs: false, currency: 'USD' });
+    expect(parseRunwayScenario(lower, 0)).toMatchObject({ ok: { lower_by: 304.38, currency: 'USD' } });
+    const none = scenarioToSave('As it is', DEFAULT_WHAT_IF, 'USD');
+    expect(none.currency).toBeNull();
+    expect('ok' in parseRunwayScenario(none, 0)).toBe(true);
   });
 
   test('a lower spending set in another currency isn’t applied to this one', () => {
