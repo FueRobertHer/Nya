@@ -31,6 +31,8 @@ import { readCashFlow } from './api-cash-flow';
 import { DEFAULT_PAGE_SIZE } from './api-limits';
 import { readTags } from './api-tags';
 import { readRules } from './api-rules';
+import { readApiRunway, readApiYearOverYear } from './api-reports';
+import type { RunwayWindow } from './report/runway';
 import { OPERATION_SPECS, BadRequest, NotFound, type Args, type OperationSpec } from './api-spec';
 
 export { argsFromQuery, argsFromJson, inputSchema, BadRequest, NotFound, type Arg, type Args } from './api-spec';
@@ -206,6 +208,20 @@ const RUNS: Record<string, Operation['run']> = {
   recurring: async (auth, a) => readRecurring(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
 
   goals: async (auth, a) => readGoals(auth.ctx, { includeHidden: flag(a, 'include_hidden') }),
+
+  runway: async (auth, a) => {
+    const lowerBy = num(a, 'spending_lower_by');
+    if (lowerBy !== undefined && lowerBy < 0) throw new BadRequest('spending_lower_by is zero or more.');
+    return readApiRunway(auth.ctx, {
+      months: str(a, 'months') === undefined ? undefined : (Number(str(a, 'months')) as RunwayWindow),
+      lowerBy,
+      incomeUntil: str(a, 'income_until') ?? null,
+      planned: a.include_planned === undefined ? true : flag(a, 'include_planned'),
+      leaveOutOneOffs: flag(a, 'leave_out_one_offs'),
+    });
+  },
+
+  'year-over-year': async (auth, a) => readApiYearOverYear(auth.ctx, { currency: str(a, 'currency') }),
 
   holdings: async (auth, a) => readHoldings(auth.ctx, { includeHidden: flag(a, 'include_hidden'), accountId: str(a, 'account_id') }),
 };

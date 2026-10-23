@@ -1221,6 +1221,7 @@ describe('stores built on the storage seam', () => {
       'restored-transactions',
       'review-settings',
       'rules',
+      'runway-scenarios',
       'tags',
       'timeline-notes',
       'transaction-annotations',

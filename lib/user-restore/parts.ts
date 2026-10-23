@@ -97,6 +97,8 @@ export const SEAM: Readonly<Record<string, SeamPart>> = {
   'restored-transactions': { kind: 'map', restore: 'write', split: { field: 'rows', as: 'list' } },
   'review-settings': { kind: 'value', restore: 'write' },
   rules: { kind: 'value', restore: 'write' },
+  // MAX_SCENARIOS (lib/report/runway-scenarios.ts).
+  'runway-scenarios': { kind: 'map', restore: 'write', max: 20 },
   tags: { kind: 'value', restore: 'write' },
   // MAX_NOTES (lib/timeline-notes.ts).
   'timeline-notes': { kind: 'map', restore: 'write', max: 500 },
