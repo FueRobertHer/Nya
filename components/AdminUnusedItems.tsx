@@ -1,6 +1,6 @@
 'use client';
 
-// Manage, on the Accounts tab, for the admin only: connections across every
+// Settings, Connections, for the admin only: connections across every
 // account that cost money and do nothing (lib/admin-items.ts). The server decides
 // who the admin is (app/page.tsx) and only mounts this for them, so nobody else
 // makes a request for it; the route refuses them as well (a 404).

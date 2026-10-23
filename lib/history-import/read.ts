@@ -426,8 +426,8 @@ export async function readImported(
     const by = heldBy.get(h.institution_name);
     notes.push(
       by
-        ? `${h.institution_name}: transactions from your download aren't counted until you say whether ${joinNames([...by].sort())} ${by.size === 1 ? 'holds' : 'hold'} them (Manage, Bring back a download)`
-        : `${h.institution_name}: transactions from your download aren't counted until you answer for that bank (Manage, Bring back a download)`
+        ? `${h.institution_name}: transactions from your download aren't counted until you say whether ${joinNames([...by].sort())} ${by.size === 1 ? 'holds' : 'hold'} them (Settings, Your data and privacy, Bring back a download)`
+        : `${h.institution_name}: transactions from your download aren't counted until you answer for that bank (Settings, Your data and privacy, Bring back a download)`
     );
   }
   if (counted.unreadable) notes.push("Some transactions brought back from your download aren't counted while what was answered about them can't be read");

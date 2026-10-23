@@ -1,4 +1,4 @@
-// Where Your data (app/your-data) is found from: Manage on the Accounts tab,
+// Where Your data (app/your-data) is found from: Settings, Your data and privacy,
 // beside Download my data. For the admin, also the way to Storage across
 // accounts (/admin/storage); the server decides who the admin is
 // (app/page.tsx), and the page and its route refuse anyone else. Links, not

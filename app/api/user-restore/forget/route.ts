@@ -8,7 +8,7 @@ import { clearCaches } from '@/lib/cache';
 import { linksChanged } from '@/lib/history-import/extend';
 
 // Forgetting, for good, a restored account whose entry can't be read and
-// that the Earlier accounts list (Manage) can't show, for having nothing to
+// that the Earlier accounts list (Settings, Connections) can't show, for having nothing to
 // list it by: no directory entry that can be read, and no balance history
 // (lib/links.ts whyUnlisted 'unknown'). Its entry holds the net worth totals
 // (lib/user-restore/restored.ts totalsHold) and nothing else can end it, so

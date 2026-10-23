@@ -1,7 +1,7 @@
 'use client';
 
 // The rule drawer (#36): a rule being made or edited (components/rules-state.ts
-// holds which), opened from the Rules screen under Manage, from "Create a rule
+// holds which), opened from the Rules screen in Settings, Transactions, from "Create a rule
 // from this" on a transaction, or from the offer after a transaction is given
 // another category. When a transaction's name, amount, account,
 // institution, category or source match every condition, then: file it under

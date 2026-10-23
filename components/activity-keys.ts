@@ -11,7 +11,7 @@
 // written still holds while the page is open.
 //
 // ONE SWITCH, TWO PLACES: in the keys' own help on the Activity tab
-// (components/ReviewBar.tsx), and on the Review queue card under Manage
+// (components/ReviewBar.tsx), and on the Review queue card in Settings, Transactions
 // (components/ReviewSettingsCard.tsx), which is always there, keyboard or
 // none: once the keys are off, "?" no longer opens their help, and a touch
 // screen shows no link to it. Both read this page's one value

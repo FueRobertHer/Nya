@@ -7,7 +7,7 @@
 // device (kept in localStorage, a convenience: where it can't be kept, it is
 // offered again on the next visit); applying one ends it anyway, since the
 // set is no longer the one Nya made. The sets stay on the Categories screen,
-// under Manage, for good.
+// in Settings, Transactions, for good.
 
 import { useEffect, useState } from 'react';
 import { Sheet } from './Sheet';

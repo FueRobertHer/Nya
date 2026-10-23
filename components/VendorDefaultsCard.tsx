@@ -1,6 +1,6 @@
 'use client';
 
-// Merchants' default categories, under Manage (lib/vendor-defaults.ts): each
+// Merchants' default categories, in Settings, Transactions (lib/vendor-defaults.ts): each
 // merchant with one, the category, since when it files its new transactions,
 // and how many of its last three categorizations agree; with a way to clear
 // one. A default is set by the person's own categorizations, two of the last

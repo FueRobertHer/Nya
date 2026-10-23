@@ -165,7 +165,7 @@ export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure
   const sides = g.what === 'spending' ? (g.sides ?? []) : [];
   const whole = sides.length === 0 ? 'what would count' : sides.length === 2 ? 'both the year’s spending and its income' : `the year’s ${sides[0]}`;
   const share = `more than a tenth of ${whole}${judged}, is in another currency than ${g.into ? `the Plan’s, ${g.into}` : 'the rest'} (${these}${when})`;
-  const convert = `Choose a home currency on the Currency card under Manage on the Accounts tab to convert ${them}`;
+  const convert = `Choose a home currency on the Currency card in Settings, Preferences to convert ${them}`;
   if (g.what === 'spending' && as === 'rate') {
     return `The savings rate isn’t measured: ${share}. Without a home currency nothing is converted, so a rate from the rest would leave that much of the year out. ${convert}.`;
   }
@@ -257,7 +257,7 @@ export function planCurrency({ flows, assets }: Pick<FiInputs, 'flows' | 'assets
  *  Plan's currency, and convertedNote says what was converted. */
 export function currencyNote({ flows, assets }: Pick<FiInputs, 'flows' | 'assets'>): string | null {
   if (assets.currency && flows?.currency && assets.currency !== flows.currency) {
-    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Without a home currency the Plan doesn't convert between them, so the FI number and your assets can't be compared. Choose one on the Currency card under Manage on the Accounts tab to convert them.`;
+    return `Your investments are in ${assets.currency} and your spending in ${flows.currency}. Without a home currency the Plan doesn't convert between them, so the FI number and your assets can't be compared. Choose one on the Currency card in Settings, Preferences to convert them.`;
   }
   return null;
 }

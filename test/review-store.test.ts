@@ -127,7 +127,7 @@ describe('approvals', () => {
     await store.approve(ctx, [input('t_mid', { category_id: 'c-household' })], day(4), 3);
     const refused = await store.approve(ctx, [input('t_more')], day(4), 3).catch((e) => e);
     expect(refused).toMatchObject({ status: 409 });
-    expect(refused.message).toContain('To make room, forget your 10,000 oldest on the Review queue card under Manage: those transactions stay, filed as ones you never approved are');
+    expect(refused.message).toContain('To make room, forget your 10,000 oldest on the Review queue card in Settings, Transactions: those transactions stay, filed as ones you never approved are');
     expect(refused.message).not.toContain('off and on');
     // The oldest by when they were made: t_mid was made again on day 4.
     expect(await store.makeRoom(ctx, 2)).toEqual({ removed: 2, through: day(3).toISOString() });

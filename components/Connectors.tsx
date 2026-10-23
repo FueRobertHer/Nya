@@ -526,7 +526,7 @@ export function uncarryWords(a: AccountView, label: string): string {
  *  counted. Pure. */
 export function countedNote(banks: readonly string[]): string {
   const names = banks.length === 1 ? banks[0] : `${banks.slice(0, -1).join(', ')} and ${banks[banks.length - 1]}`;
-  return `An account you track here could be one of the banks from your download (${names}): until you say whether it is, under Manage, Bring back a download, their transactions from your download aren’t counted.`;
+  return `An account you track here could be one of the banks from your download (${names}): until you say whether it is, in Settings, Your data and privacy, Bring back a download, their transactions from your download aren’t counted.`;
 }
 
 /**

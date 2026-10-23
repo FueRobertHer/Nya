@@ -412,7 +412,7 @@ describe('the routes', () => {
       { account_id: 'acc_card', label: 'Chase Sapphire ••2222', listed: { name: 'Chase Sapphire ••2222', first: expect.any(String), last: expect.any(String), unrecognised: true }, unlisted: null },
     ]);
     const [note] = unreadableNotes(state);
-    expect(note.words).toContain('It is listed under Earlier accounts (Manage) as Chase Sapphire ••2222');
+    expect(note.words).toContain('It is listed under Earlier accounts (Settings, Connections) as Chase Sapphire ••2222');
     expect(note.words).toContain('a newer version wrote them, or it is a fault. They are kept as they are, so it can’t be forgotten here');
     expect(note.words).not.toContain('Forget it');
     expect(note.remove).toBeUndefined();
@@ -771,7 +771,7 @@ describe('undo and emptying', () => {
     await secretsStore.set(ctx, 'conn_lf', { connector: 'lunchflow', secret: 'lf-key' });
     const connector = await call('DELETE', '/api/user-restore', { restore_id: record.id, confirm: true, password: 'hunter2' });
     expect(connector.status).toBe(409);
-    expect(connector.body.error).toBe('Disconnect your connection to Lunch Flow first (Manage), then try again: emptying the account would leave it working at Lunch Flow.');
+    expect(connector.body.error).toBe('Disconnect your connection to Lunch Flow first (on its card on the Accounts tab), then try again: emptying the account would leave it working at Lunch Flow.');
     await secretsStore.remove(ctx, 'conn_lf');
 
     const full = await userRestoreStore.get(ctx);

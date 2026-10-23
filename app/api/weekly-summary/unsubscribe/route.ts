@@ -73,7 +73,7 @@ export async function POST(req: Request) {
       return NextResponse.json(
         {
           error:
-            'Nya couldn’t read your weekly summary’s setting, so it couldn’t turn it off. No summary goes while it can’t be read; to be sure, sign in to Nya and turn it off under Manage on the Accounts tab.',
+            'Nya couldn’t read your weekly summary’s setting, so it couldn’t turn it off. No summary goes while it can’t be read; to be sure, sign in to Nya and turn it off under Settings, Preferences.',
           unreadable: true,
         },
         { status: 409, headers: NO_STORE }

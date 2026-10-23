@@ -1,7 +1,7 @@
 'use client';
 
-// Download my data (app/api/my-data, lib/user-export.ts), under Manage
-// accounts. The person picks a format, confirms it is them, and the file is
+// Download my data (app/api/my-data, lib/user-export.ts), in Settings, Your
+// data and privacy. The person picks a format, confirms it is them, and the file is
 // saved by the browser.
 //
 // THE FRESH SIGN-IN. With Clerk, the request goes through Clerk's

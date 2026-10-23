@@ -1,6 +1,6 @@
 # Rollout
 
-The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Nothing here is started; this is for when the design is approved. Effort is rough, in focused days for one person.
+The order in which to build the reorganization, as pull requests that each ship on their own and leave the app working. Phase 1 is built (`components/Settings.tsx`); the rest is not started. Effort is rough, in focused days for one person.
 
 The order puts the stated pain first. Accounts' Manage mode is what makes the app feel like a mess, so it goes before the token work, which is invisible on its own.
 
@@ -25,7 +25,9 @@ The order puts the stated pain first. Accounts' Manage mode is what makes the ap
 - The Payoff plan button stays on Accounts until phase 6.
 - Delete `manageMode`.
 
-**Decide first:** Settings as an in-app view (keeps the dashboard's loaded data, no URL) or a `/settings` route (real URLs and back button, remounts the dashboard and refetches). The in-app view is the smaller change; a route can follow.
+**Decided:** an in-app view (keeps the dashboard's loaded data, no URL), chosen over a `/settings` route (real URLs and back button, remounts the dashboard and refetches). A route can follow. With Clerk on, Settings > Account has Sign out and points to the account menu for the profile and Delete my account; embedding Clerk's profile there is left for later.
+
+**Also done in phase 1:** every message, email, page and doc that sent people "under Manage" now names the Settings section or the account's Options instead.
 
 **Risks:** an action that was only reachable under Manage becomes unreachable (check every element gated on `manageMode` has a new home; the list is in the IA doc); RestoreCard must stay mounted with its id for `#bring-back`; admin-only items must stay admin-only (they are decided on the server in `app/page.tsx`).
 

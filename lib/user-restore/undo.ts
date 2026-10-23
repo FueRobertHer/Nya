@@ -74,14 +74,14 @@ async function mayEmpty(ctx: Ctx, userId: string | null): Promise<void> {
   const [items, secrets] = await Promise.all([getItems(ctx), secretsStore.getAllReport(ctx)]);
   if (items.length > 0) {
     const names = [...new Set(items.map((i) => i.institution_name))].join(', ');
-    throw new UndoRefused(`Disconnect ${names} first (Manage), then try again: emptying the account would leave ${items.length === 1 ? 'that connection' : 'those connections'} running at Plaid.`);
+    throw new UndoRefused(`Disconnect ${names} first (Options on the Accounts tab, or Settings, Connections where every account is hidden), then try again: emptying the account would leave ${items.length === 1 ? 'that connection' : 'those connections'} running at Plaid.`);
   }
   const held = secrets.entries.size + secrets.unreadable.length + secrets.unrecognised.length;
   if (held > 0) {
     // Named by the connectors they reach, or all of them where one can't be read.
     const kinds = new Set([...secrets.entries.values()].map((s) => connectorLabel(s.connector)));
     const names = held > secrets.entries.size || kinds.size === 0 ? ANY_CONNECTOR : [...kinds].sort().join(' and ');
-    throw new UndoRefused(`Disconnect your connection to ${names} first (Manage), then try again: emptying the account would leave it working at ${names}.`);
+    throw new UndoRefused(`Disconnect your connection to ${names} first (on its card on the Accounts tab), then try again: emptying the account would leave it working at ${names}.`);
   }
   if (userId !== null && (await ownersOf(ctx.container as ContainerId)).some((other) => other !== userId)) {
     throw new UndoRefused('This account’s data belongs to another sign-in too, so it can’t be emptied from the app. Ask whoever runs this copy of Nya.');
@@ -106,7 +106,7 @@ export async function undoRestore(
   const now = opts.now ?? Date.now();
   const record = await userRestoreStore.get(ctx);
   if (!record || record.id !== id) throw new UndoRefused('There is no restore here to undo.', 404);
-  if (!undoable(record, now)) throw new UndoRefused(`This restore finished more than ${UNDO_DAYS} days ago, so it can no longer be undone. Download what is in this account first, then empty it (Manage, Bring back a download).`);
+  if (!undoable(record, now)) throw new UndoRefused(`This restore finished more than ${UNDO_DAYS} days ago, so it can no longer be undone. Download what is in this account first, then empty it (Settings, Your data and privacy, Bring back a download).`);
   await mayEmpty(ctx, opts.userId);
   // Every batch is refused from here (lib/user-restore/check.ts).
   await userRestoreStore.update(ctx, (cur) => (cur && cur.id === id ? { ...cur, status: 'undoing' } : cur));
@@ -129,7 +129,7 @@ export const EMPTY_WORDS = 'empty my account';
  */
 export async function emptyAccount(ctx: Ctx, opts: { userId: string | null }): Promise<{ deleted: number }> {
   const report = await userRestoreStore.getReport(ctx);
-  if (report.value && unfinished(report.value)) throw new UndoRefused('A restore hasn’t finished here: undo it instead (Manage, Bring back a download).');
+  if (report.value && unfinished(report.value)) throw new UndoRefused('A restore hasn’t finished here: undo it instead (Settings, Your data and privacy, Bring back a download).');
   await mayEmpty(ctx, opts.userId);
   const deleted = await sweepContainerExcept(ctx, keepMachinery);
   await clearCaches(ctx);

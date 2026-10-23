@@ -565,7 +565,7 @@ describe('a merchant’s default', () => {
   });
 });
 
-describe('the settings under Manage', () => {
+describe('the settings in Settings, Transactions', () => {
   test('off: where it starts from, never further back than a month; on: since when, and how many wait', () => {
     expect(startChoices('2026-10-17').map((c) => c.value)).toEqual(['2026-10-17', '2026-10-10', '2026-09-17']);
     const off = text(renderToStaticMarkup(<ReviewSettingsCard review={controls(false)} toReview={0} />));

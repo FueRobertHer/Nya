@@ -144,7 +144,7 @@ describe('Your data, in words', () => {
     expect(hidden).not.toContain(MASK);
   });
 
-  test('the entry under Manage: the admin alone is shown the way to storage across accounts', () => {
+  test('the entry in Settings: the admin alone is shown the way to storage across accounts', () => {
     expect(renderToStaticMarkup(<InventoryEntry />)).toContain('href="/your-data"');
     expect(renderToStaticMarkup(<InventoryEntry />)).not.toContain('/admin/storage');
     expect(renderToStaticMarkup(<InventoryEntry admin />)).toContain('href="/admin/storage"');

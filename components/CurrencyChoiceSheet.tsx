@@ -344,20 +344,19 @@ export function CurrencyChoiceBody({
       )}
       {unpriceable && (
         <p className="stale-note">
-          The ECB doesn’t publish a rate for {chosen}, so nothing can be converted into it until you set a rate of your own for it, on the Currency card under
-          Manage on the Accounts tab.
+          The ECB doesn’t publish a rate for {chosen}, so nothing can be converted into it until you set a rate of your own for it, on the Currency card in Settings, Preferences.
         </p>
       )}
       {!unpriceable && unrated.length > 0 && (
         <p className="stale-note">
           The ECB doesn’t publish {list(unrated)}, so your accounts in {unrated.length === 1 ? 'it' : 'them'} are left out of the total until you set a rate of your
-          own for {unrated.length === 1 ? 'it' : 'each'}, on the Currency card under Manage on the Accounts tab.
+          own for {unrated.length === 1 ? 'it' : 'each'}, on the Currency card in Settings, Preferences.
         </p>
       )}
       {view !== null && !fetched && (
         <p className="stale-note">Nya doesn’t have the ECB’s rates yet, so nothing in another currency can be converted until it has fetched them (it does each evening).</p>
       )}
-      {view?.problem && <p className="stale-note">Your currency settings couldn’t be read, so nothing can be saved over them. See the Currency card under Manage on the Accounts tab.</p>}
+      {view?.problem && <p className="stale-note">Your currency settings couldn’t be read, so nothing can be saved over them. See the Currency card in Settings, Preferences.</p>}
       <div className="button-pair">
         <button onClick={onSave} disabled={saving || (same && !fixing) || !!view?.problem}>
           {saving ? 'Saving…' : same && fixing ? 'Save the currencies' : `Show my net worth in ${chosen}`}

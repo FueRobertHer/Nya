@@ -422,7 +422,7 @@ export default function ManualTxnSheet({
           for (const id of files) if ('error' in (await deleteFile(id))) left++;
           if (left > 0) {
             setError(
-              `The transaction is deleted, but ${left === 1 ? 'one of its files' : `${left} of its files`} couldn’t be: ${left === 1 ? 'it is' : 'they are'} under Receipts and documents in Manage accounts, not on a transaction.`
+              `The transaction is deleted, but ${left === 1 ? 'one of its files' : `${left} of its files`} couldn’t be: ${left === 1 ? 'it is' : 'they are'} under Receipts and documents in Settings, Your data and privacy, not on a transaction.`
             );
             setDone(true);
             return;
@@ -612,7 +612,7 @@ export default function ManualTxnSheet({
                 <input type="checkbox" checked={alsoFiles} onChange={(e) => setAlsoFiles(e.target.checked)} disabled={saving} />
                 <span>{files.length === 1 ? 'Also delete the receipt or document on it' : `Also delete the ${files.length} receipts and documents on it`}</span>
               </label>
-              {!alsoFiles && <p className="panel-note">Kept, they stay under Receipts and documents in Manage accounts, not on a transaction.</p>}
+              {!alsoFiles && <p className="panel-note">Kept, they stay under Receipts and documents in Settings, Your data and privacy, not on a transaction.</p>}
             </>
           )}
           <div className="button-pair" style={{ marginTop: 12 }}>

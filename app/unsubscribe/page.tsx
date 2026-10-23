@@ -25,8 +25,7 @@ export default function UnsubscribePage() {
         <p>
           The weekly summary says what changed in your week and what needs your attention: spending against a usual week,
           budgets over or close, bills due, goals, bank connections and months that may be missing transactions. It never
-          includes balances, amounts or account numbers. Turning it off stops it; it can be turned on again under Manage on
-          the Accounts tab.
+          includes balances, amounts or account numbers. Turning it off stops it; it can be turned on again under Settings, Preferences.
         </p>
       </InfoSection>
     </InfoPage>

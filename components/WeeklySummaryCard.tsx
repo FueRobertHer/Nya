@@ -1,6 +1,6 @@
 'use client';
 
-// The Weekly summary card, under Manage on the Accounts tab (mounted in
+// The Weekly summary card, in Settings, Preferences (mounted in
 // components/Dashboard.tsx): whether the weekly summary email is on, and a
 // sheet to turn it on or off, choose its day and time zone, see what this
 // week's would say, and send one now (app/api/weekly-summary,

@@ -411,9 +411,9 @@ describe('the privacy page', () => {
   test('describes the download and the deletion receipt as they are', () => {
     const page = privacy();
     expect(page).toContain(
-      `True today Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
+      `True today Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`
     );
-    expect(page).toContain('On the Accounts tab, tap Manage, then Download my data at the bottom.');
+    expect(page).toContain('Open Settings (the account menu, or the gear), then Your data and privacy, then Download my data.');
     expect(page).toContain(`Each account can download ${DOWNLOADS_PER_WINDOW} times an hour.`);
     expect(page).toContain('Unless you protect it with a passphrase, the file itself is not encrypted, so keep it somewhere safe.');
     expect(page).toContain('Nya never keeps the passphrase, so a lost one can’t be recovered.');
@@ -877,7 +877,7 @@ describe('receipts and documents', () => {
     expect(priv).not.toContain('Adding new receipts and documents is off');
     expect(priv).toContain('Stores the receipts and documents you attach, encrypted; each file’s key is locked in the database, apart from the files.');
     expect(priv).toContain('Receipts and documents you attach Until you delete them, or delete your account.');
-    expect(priv).toContain('Your receipts and documents come as a download of their own: under Manage, Receipts and documents, as ZIP files of about 50 MB each');
+    expect(priv).toContain('Your receipts and documents come as a download of their own: in Settings, Your data and privacy, Receipts and documents, as ZIP files of about 50 MB each');
     expect(priv).toContain('Your receipts and documents are deleted from the file store (part of them by a later nightly run if the store can’t be reached), and the key that would open them is destroyed.');
     // Reading receipts is still to come.
     expect(priv).toContain('Planned Reading receipts: off unless you turn it on, and only for the receipt you choose.');

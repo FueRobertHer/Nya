@@ -374,7 +374,7 @@ async function linksNow(ctx: Ctx): Promise<Map<string, Link>> {
  *  rather than undone without them. */
 export class MigrationLinksUnreadableError extends Error {
   constructor() {
-    super('A saved account link can’t be read, so the imports that rely on this one’s transactions can’t all be found. Remove it on the Accounts tab first, then undo.');
+    super('A saved account link can’t be read, so the imports that rely on this one’s transactions can’t all be found. Remove it in Settings, Connections first, then undo.');
     this.name = 'MigrationLinksUnreadableError';
   }
 }

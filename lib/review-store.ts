@@ -295,7 +295,7 @@ export async function approve(
   const fresh = ids.filter((id) => !current.has(id)).length;
   if (fresh > 0 && (await approvalStore.count(ctx)) + fresh > max) {
     throw new ApprovalError(
-      `Nya keeps at most ${max.toLocaleString('en-US')} approvals, and approving these would pass that. To make room, forget your ${ROOM.toLocaleString('en-US')} oldest on the Review queue card under Manage: those transactions stay, filed as ones you never approved are, by your rules, your defaults and the bank.`,
+      `Nya keeps at most ${max.toLocaleString('en-US')} approvals, and approving these would pass that. To make room, forget your ${ROOM.toLocaleString('en-US')} oldest on the Review queue card in Settings, Transactions: those transactions stay, filed as ones you never approved are, by your rules, your defaults and the bank.`,
       409
     );
   }

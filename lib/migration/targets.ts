@@ -82,7 +82,7 @@ export async function readTargets(ctx: Ctx, opts: { manualIds: readonly string[]
   // offered.
   let links: Map<string, Link> | null = null;
   const [read, liveIds] = await Promise.all([readLinks(ctx), liveAccountIds(ctx, { strict: true, readOnly: true })]);
-  if (read.unreadable.size > 0) notes.push('A saved account link can’t be read, so linked accounts aren’t offered: their earlier imports couldn’t be found. Remove it on the Accounts tab first.');
+  if (read.unreadable.size > 0) notes.push('A saved account link can’t be read, so linked accounts aren’t offered: their earlier imports couldn’t be found. Remove it in Settings, Connections first.');
   else links = effectiveLinks(read.links, liveIds);
   const linked = new Map<string, LinkedAccount>(links ? [...live.accounts] : []);
 

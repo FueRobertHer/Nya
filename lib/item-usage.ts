@@ -2,7 +2,7 @@
 //
 // Finds linked Plaid Items that are costing money and doing nothing, and FLAGS
 // them. It never removes anything: flagged Items are listed for the admin in
-// Manage accounts, and each is disconnected only by their own tap and typed
+// Settings, Connections, and each is disconnected only by their own tap and typed
 // confirmation (components/AdminUnusedItems.tsx, then /api/disconnect).
 //
 // Plaid bills per connected Item per month whether or not anyone looks at it, so

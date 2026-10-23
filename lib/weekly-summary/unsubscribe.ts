@@ -58,9 +58,9 @@ export const LINK_DAYS = 90;
 /** What the link's answers say (app/api/weekly-summary/unsubscribe, and the
  *  page that asks first, app/unsubscribe): the same whatever the summary was,
  *  and, refused, whatever the reason. */
-export const OFF_MESSAGE = 'Your weekly summary from Nya is off. You can turn it on again under Manage on the Accounts tab.';
+export const OFF_MESSAGE = 'Your weekly summary from Nya is off. You can turn it on again under Settings, Preferences.';
 export const REFUSED_MESSAGE =
-  'This link doesn’t work: it may have expired. To turn off your weekly summary, sign in to Nya and turn it off under Manage on the Accounts tab.';
+  'This link doesn’t work: it may have expired. To turn off your weekly summary, sign in to Nya and turn it off under Settings, Preferences.';
 
 /** What the mac covers besides the container and the day: the one thing a
  *  link may do. */

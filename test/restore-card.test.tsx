@@ -172,8 +172,8 @@ describe('what waits, and for how long undo lasts', () => {
       { account_id: 'acc_gone', label: null, listed: { name: 'Balance history', first: '2024-01-01', last: null }, unlisted: null },
     ]);
     expect(notes.map((n) => [n.empty, n.words, n.remove])).toEqual([
-      [false, `${WHAT('Chase Sapphire ••2222')} Forget it under Earlier accounts (Manage), where it is listed as Chase Sapphire ••2222 ([2025-12-30] to [2026-10-06]), or ask whoever runs this copy of Nya.`, undefined],
-      [false, `${WHAT('an account')} Forget it under Earlier accounts (Manage), where it is listed as Balance history ([2024-01-01] to unknown), or ask whoever runs this copy of Nya.`, undefined],
+      [false, `${WHAT('Chase Sapphire ••2222')} Forget it under Earlier accounts (Settings, Connections), where it is listed as Chase Sapphire ••2222 ([2025-12-30] to [2026-10-06]), or ask whoever runs this copy of Nya.`, undefined],
+      [false, `${WHAT('an account')} Forget it under Earlier accounts (Settings, Connections), where it is listed as Balance history ([2024-01-01] to unknown), or ask whoever runs this copy of Nya.`, undefined],
     ]);
   });
 
@@ -210,13 +210,13 @@ describe('what waits, and for how long undo lasts', () => {
     ]);
     const way = (n: { words: string }) => n.words.slice(n.words.indexOf('can be. ') + 'can be. '.length);
     expect(notes.map(way)).toEqual([
-      'Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Manage). Forget it here for good, or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since it is linked to Chase Checking ••1111, whose history it is part of. To forget it, unlink it (Manage, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since Chase Old Checking ••0000 is linked to it. To forget it, unlink that one (Manage, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since 2 earlier accounts are linked to it. To forget it, unlink them (Manage, Reconnected accounts, Linked), then forget it here; or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since a link saved for it can’t be read. To forget it, remove that link (Manage, Reconnected accounts, Unreadable), then forget it here; or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since it is one of your connected accounts. To forget it, disconnect its bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
-      'It isn’t listed under Earlier accounts (Manage), since its bank is still connected. To forget it, disconnect that bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'Nya has no name it can read for it and no balance history, so it isn’t listed under Earlier accounts (Settings, Connections). Forget it here for good, or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since it is linked to Chase Checking ••1111, whose history it is part of. To forget it, unlink it (Settings, Connections, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since Chase Old Checking ••0000 is linked to it. To forget it, unlink that one (Settings, Connections, Reconnected accounts, Linked), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since 2 earlier accounts are linked to it. To forget it, unlink them (Settings, Connections, Reconnected accounts, Linked), then forget it here; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since a link saved for it can’t be read. To forget it, remove that link (Settings, Connections, Reconnected accounts, Unreadable), then forget it here; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since it is one of your connected accounts. To forget it, disconnect its bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
+      'It isn’t listed under Earlier accounts (Settings, Connections), since its bank is still connected. To forget it, disconnect that bank (Accounts tab), then forget it under Earlier accounts; or ask whoever runs this copy of Nya.',
       'It has a manual account’s id, so it can’t be forgotten as an earlier account: ask whoever runs this copy of Nya.',
     ]);
     expect(notes.every((n) => !n.words.includes('It is linked to another account'))).toBe(true);
@@ -268,7 +268,7 @@ describe('what waits, and for how long undo lasts', () => {
   test('two that would read the same are told apart by the end of each id; a link that can’t be read is said once', () => {
     const notes = damaged([unlisted('acc_aaaa1111', null, 'unknown', [], false), unlisted('acc_bbbb1111', null, 'unknown', [], false)], { broken_links: true });
     expect(notes.map((n) => n.key)).toEqual(['broken-links', 'account:acc_aaaa1111', 'account:acc_bbbb1111']);
-    expect(notes[0].words).toBe('A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Manage, Reconnected accounts, Unreadable).');
+    expect(notes[0].words).toBe('A saved link can’t be read, so no account can be forgotten until it is removed: remove it first (Settings, Connections, Reconnected accounts, Unreadable).');
     expect(notes[1].words.startsWith(WHAT('an account (…a1111)'))).toBe(true);
     expect(notes[2].words.startsWith(WHAT('an account (…b1111)'))).toBe(true);
     expect(notes[1].remove!.confirm.startsWith('Forget this account (…a1111) for good?')).toBe(true);

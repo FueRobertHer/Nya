@@ -96,7 +96,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
   },
   {
     promise: 'You can download everything stored about you, in open formats, whenever you like.',
-    today: `Download my data, under Manage on the Accounts tab, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}${
+    today: `Download my data, in Settings under Your data and privacy, gives you everything stored about you, decrypted: one JSON file, CSV files of your transactions and of your balance history, or a bank account’s or card’s transactions as an OFX file for other money apps. You can protect any of them with a passphrase of your own, which Nya never keeps. If something stored can’t be read, the file names it, apart from a few sharing and bank-account records the app itself passes over. A fresh sign-in comes first, and each account can download ${DOWNLOADS_PER_WINDOW} times an hour. ${downloadEmail(mail)}${
       restore
         ? ' Bring back a download, beside it, brings a JSON download into an empty account, in this copy of Nya or another: the file is read in your browser and never stored.'
         : ''
@@ -132,7 +132,7 @@ const commitments = (backups: BackupRetention, mail: boolean, keys: Keys, restor
     today: (
       <>
         The <a href="/security">Security page</a> lists everyone who can read your data, what each can read, and what
-        is stored without encryption. Your data, under Manage on the Accounts tab, lists each kind of thing Nya keeps
+        is stored without encryption. Your data, in Settings under Your data and privacy, lists each kind of thing Nya keeps
         about you: how much of it there is, whether it is encrypted and with which key, whether it is in your download,
         how long it is kept and who else can see it. It shows numbers only, never what is stored.
       </>
@@ -271,7 +271,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
     : []),
   [
     'A bank you disconnect',
-    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Manage accounts, Earlier accounts) or delete your account.',
+    'Its transactions are deleted at once, except that for each one you recategorized, its date, amount and bank description are kept, encrypted, so the category carries across a reconnection. Its accounts’ balance history, names and the categories you set stay too, until you Forget them (Settings, Connections, Earlier accounts) or delete your account.',
   ],
   [
     'A download you brought back',
@@ -302,7 +302,7 @@ const retention = (backups: BackupRetention, mail: boolean, keys: Keys, writes: 
   ],
   [
     'The app’s own records about your data',
-    'Locks, notes that a bank’s transactions grew too large to save or failed to save, the daily snapshot’s record of how each recent day went, when each day’s balances were taken and its checks on your connections, summaries and indexes kept beside your data, and how far longer jobs have got: until what they are about goes, or you delete your account. Your data, under Manage, says which of them are plain text.',
+    'Locks, notes that a bank’s transactions grew too large to save or failed to save, the daily snapshot’s record of how each recent day went, when each day’s balances were taken and its checks on your connections, summaries and indexes kept beside your data, and how far longer jobs have got: until what they are about goes, or you delete your account. Your data, in Settings, says which of them are plain text.',
   ],
   ['Counts that limit how often you can do something', countsRow(backups)],
   [
@@ -427,7 +427,7 @@ export default function PrivacyPage() {
 
       <InfoSection title="Download your data">
         <p>
-          On the Accounts tab, tap Manage, then Download my data at the bottom. Choose everything, as one JSON file, or
+          Open Settings (the account menu, or the gear), then Your data and privacy, then Download my data. Choose everything, as one JSON file, or
           your transactions or your balance history, each as a CSV file for a spreadsheet, or one bank account’s or
           card’s transactions as an OFX file, which other money apps import. The values come decrypted.
         </p>
@@ -449,7 +449,7 @@ export default function PrivacyPage() {
         </p>
         {files.connected && (
           <p>
-            Your receipts and documents come as a download of their own: under Manage, Receipts and documents, as ZIP
+            Your receipts and documents come as a download of their own: in Settings, Your data and privacy, Receipts and documents, as ZIP
             files of about 50 MB each, decrypted, behind the same fresh sign-in and counted as one download. Protect them
             with a passphrase, since they show what you bought. The JSON file lists them, without the files themselves.
           </p>

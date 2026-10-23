@@ -1,5 +1,5 @@
 // Where the report page (app/reports) is found from: the Activity tab, under
-// its transactions, and Manage on the Accounts tab, beside Download my data.
+// its transactions.
 // A link, not state: the page makes its own report.
 
 export default function ReportsEntry() {

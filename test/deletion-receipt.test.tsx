@@ -175,7 +175,7 @@ describe('the receipt, on screen', () => {
       <DeleteAccountView status={{ enabled: true, can_delete: true, backup_days: 31 }} typed="" busy={false} error="" onType={() => {}} onDelete={() => {}} />
     );
     expect(form).toContain('Nightly backups keep a copy for up to 31 days: encrypted, except dates, ids, bank names and the merchant names you renamed.');
-    expect(form).toContain('use Download my data under Manage accounts first');
+    expect(form).toContain('use Download my data in Settings, Your data and privacy, first');
     expect(form).toContain('you’ll get a receipt');
     const none = renderToStaticMarkup(<DeleteAccountView status={{ enabled: true, can_delete: true, backup_days: null }} typed="" busy={false} error="" onType={() => {}} onDelete={() => {}} />);
     expect(none).not.toContain('Nightly backups');

@@ -3,7 +3,7 @@
     "inlineLayoutStyles": 1
   },
   "app/globals.css": {
-    "rawColors": 47,
+    "rawColors": 46,
     "smallFonts": 38
   },
   "app/layout.tsx": {

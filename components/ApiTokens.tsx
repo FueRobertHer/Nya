@@ -1,6 +1,6 @@
 'use client';
 
-// API tokens (lib/api-tokens.ts, app/api/api-tokens), under Manage accounts:
+// API tokens (lib/api-tokens.ts, app/api/api-tokens), in Settings, Your data and privacy:
 // tokens for the programs a person chooses to let read their data, through
 // the API (/api/v1) and the MCP server (/api/mcp) that an AI assistant can
 // use. The developer page (/developers) says what each reads.
