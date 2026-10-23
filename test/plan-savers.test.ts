@@ -78,7 +78,10 @@ describe('the Plan tab saves through nothing else', () => {
 
   test('the Plan’s store is handed to the savers, and saved through nowhere else', () => {
     expect(code.match(/store\.save\b/g)).toEqual(['store.save']);
-    expect(code).toMatch(/planSavers\(\{ scenario: saveToScenario, savePlan: store\.save, plan: basePlan, repaired: repairing \? repair\.plan : null \}\)/);
+    expect(code).toMatch(/planSavers\(\{ scenario: saveToScenario, savePlan: savePlanIn, plan: basePlan, repaired: repairing \? repair\.plan : null \}\)/);
+    // savePlanIn: the store's save, but never a first typed amount without
+    // the currency its figures are in (lib/fire/plan-currency.ts).
+    expect(code).toMatch(/const savePlanIn = async \(next: FirePlan\): Promise<boolean \| string> => \{[\s\S]*?return store\.save\(next\);\n  \};/);
     // Every save the cards and forms are given comes from the savers.
     // The drawer's forms save through the savers of the plan they were
     // opened for (test/plan-tab-scenarios.test.tsx renders that lifecycle).
@@ -87,9 +90,17 @@ describe('the Plan tab saves through nothing else', () => {
     expect(code).toContain('onMethod={savers.method}');
     expect(code).toContain('onSave={savers.repair}');
     expect(code).toContain('settingsLocked={!savers.allocationSettings}');
-    // And nothing posts to the Plan's route itself.
+    // And nothing posts to the Plan's route itself (its currency alone is
+    // recorded through components/plan-currency-client.ts, below).
     expect(code.match(/['"`]\/api\/fire-plan['"`]/g)).toEqual(["'/api/fire-plan'"]);
     expect(code).not.toMatch(/fetch\(/);
+  });
+
+  test('the Plan’s currency is recorded alone, for the plan as stored, and never with a plan of the page’s', () => {
+    const text = readFileSync(join(ROOT, 'components/plan-currency-client.ts'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect(text.match(/method: '(\w+)'/g)).toEqual(["method: 'POST'"]);
+    // What it sends: the currency, the amounts it is for, and whether it is the person's answer.
+    expect(text.match(/body: JSON\.stringify\(([^\n]*)\),\n/)?.[1]).toBe('{ currency, amounts, ...(answered ? { answered: true } : {}) }');
   });
 
   test('the cards it renders save only through what they are given', () => {

@@ -27,8 +27,9 @@ const ALLOWED: Record<string, string> = {
     'The share of net worth an institution’s held balances are, in their currency when they share one; converted into the home currency when one is chosen (lib/fx/view.ts).',
   'lib/api-read.ts#netWorthCurrency':
     'The API’s version 1 fields keep their meaning: one total per currency, and the currency the recorded totals are labelled with. base converts (lib/fx/api-base.ts).',
-  'lib/fire/inputs.ts#investedAssets:currency':
-    'The Plan’s currency, the one most of its accounts are in, which what the person types in the Plan is in: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
+  'lib/fire/inputs.ts#investedAssets:most':
+    'The currency most of the Plan’s accounts are in: the Plan’s while it has none of its own, else only said beside the one its typed figures were recorded in (lib/fire/plan-currency.ts). Either way the total is in the Plan’s currency: with a home currency the rest converts into it (lib/fx/net-worth.ts balancesIn), never relabelled.',
+  'lib/fire/inputs.ts#trailingFlows:mostIn': 'Never a total: only which currency most of the year’s rows are in, said beside the Plan’s own (lib/fire/plan-currency.ts keptText).',
   'lib/forecast.ts#cashPosition:currency':
     'The forecast’s currency, its cash accounts’ main one, which the warning the person typed is in: with a home currency the rest converts into it at the newest rates, never relabelled.',
   'lib/share-views.ts#holdingsView:currency':

@@ -158,6 +158,22 @@ describe('saving', () => {
     expect(store.get()).toMatchObject({ saving: false, saveError: null });
   });
 
+  test('a load asked for while a save is in flight waits for it, so no older list lands as ready in between', async () => {
+    const { server, store } = await loaded({ Food: 300 });
+    const save = store.save({ Food: 300, Rent: 1000 });
+    const reload = store.load();
+    // Only the save is out: the load hasn't gone yet, and the list on screen is the one being saved.
+    expect(server.pending).toEqual(['PUT']);
+    expect(store.get()).toMatchObject({ saving: true, value: { Food: 300, Rent: 1000 } });
+    await server.release();
+    expect(await save).toBe(true);
+    // Now it goes, and reads what the save wrote.
+    expect(server.pending).toEqual(['GET']);
+    await server.release();
+    await reload;
+    expect(store.get()).toMatchObject({ status: 'ready', saving: false, value: { Food: 300, Rent: 1000 } });
+  });
+
   test('a second save while one is in flight is refused, not sent', async () => {
     const { server, store } = await loaded();
     const first = store.save({ Food: 300, Rent: 1000 });
@@ -403,5 +419,34 @@ describe('opted in: what the server said about a save (goals)', () => {
       { today: '2026-10-11', goals: [{ id: 'a' }] },
       { today: '2026-10-12', goals: [{ id: 'b' }] },
     ]);
+  });
+
+  test('what else the server answers beside the list (the Plan: its currency) is given on a load taken and a save that went through, never on one ignored or failed', async () => {
+    let answer: Record<string, unknown> = { plan: { a: 1 }, currency: 'USD' };
+    let status = 200;
+    const fetch = (async () => new Response(JSON.stringify(answer), { status })) as unknown as typeof globalThis.fetch;
+    const seen: unknown[] = [];
+    const store = createWholeListStore<{ a: number }>({
+      url: '/api/fire-plan',
+      field: 'plan',
+      noun: 'plan assumptions',
+      empty: { a: 0 },
+      isValid: (v): v is { a: number } => typeof v === 'object' && v !== null && typeof (v as { a?: unknown }).a === 'number',
+      onChange: () => {},
+      fetch,
+      onAnswer: (data) => seen.push(data.currency),
+    });
+    await store.load();
+    answer = { plan: { a: 2 }, currency: 'EUR' };
+    await store.save({ a: 2 });
+    // A failed save: nothing from it, then the reload's answer.
+    status = 500;
+    answer = { error: 'x' };
+    await store.save({ a: 3 });
+    expect(seen).toEqual(['USD', 'EUR']);
+    status = 200;
+    answer = { plan: { a: 2 }, currency: null };
+    await store.load();
+    expect(seen).toEqual(['USD', 'EUR', null]);
   });
 });

@@ -171,6 +171,23 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(m.cells[1].diff).toBe('runs a different number of years, so not compared');
   });
 
+  test('with no age set, a scenario that sets a retirement age and runs as long is compared by length, not said to run another', () => {
+    // The scenario starts at 50 (its retirement age), the plan at no age: both 30 years.
+    const noAge = figs(plan({ age: null, horizon: 30 }));
+    const at50 = figs(plan({ age: null, targetAge: 50, horizon: 30 }));
+    expect('sim' in at50.engine && at50.engine.startAge).toBe(50);
+    const col = (id: string, f: PlanFigures): CompareColumn => ({ id, name: id, isPlan: id === 'plan', outcome: { kind: 'figures', figures: f, result: run(f) } });
+    const r = compareRows([col('plan', noAge), col('Retire at 50', at50)], money, TODAY).rows;
+    const median = r.find((x) => x.key === 'median')!;
+    expect(median.label).toBe('Ending balance after 30 years, median');
+    expect(median.cells[1].value).toMatch(/^\$[\d,]+$/);
+    expect(median.cells[1].diff).not.toContain('different number of years');
+    // Of another length, the reason is the true one.
+    const at50long = figs(plan({ age: null, targetAge: 50, horizon: 35 }));
+    const apart = compareRows([col('plan', noAge), col('Retire at 50', at50long)], money, TODAY).rows.find((x) => x.key === 'median')!;
+    expect(apart.cells[1].diff).toBe('runs a different number of years, so not compared');
+  });
+
   test('no FI date says which kind of shortfall: a cost it can’t pay, or a year that takes out more than there is', () => {
     const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
     expect(house.short?.kind).toBe('cost');
@@ -191,6 +208,25 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(row('lasted').cells[3]).toMatchObject({ pending: true, value: null });
     // The FI date needs no simulation.
     expect(row('fi').cells[3].pending).toBe(false);
+  });
+
+  test('one that needs a figure that isn’t measured says so, for invested assets and for spending, rather than that it needs one (review round 3)', () => {
+    const noAssets = planFigures(plan({ age: 40, targetAge: 55, start: 'assets' }), { ...measured, assets: null, unmeasured: ['assets'] }, []) as PlanFigures;
+    const noSpending = planFigures(base, { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] }, []) as PlanFigures;
+    const none = planFigures(base, { spending: null, savings: null, assets: 300_000 }, []) as PlanFigures;
+    const cells = compareRows(
+      [
+        { id: 'plan', name: 'Your plan', isPlan: true, outcome: { kind: 'figures', figures: fBase, result: run(fBase) } },
+        ...[noAssets, noSpending, none].map((f, i): CompareColumn => ({ id: `m${i}`, name: `M${i}`, isPlan: false, outcome: { kind: 'figures', figures: f, result: 'sim' in f.engine ? run(f) : { missing: f.engine.missing } } })),
+      ],
+      money,
+      TODAY
+    ).rows.find((r) => r.key === 'lasted')!.cells;
+    expect(cells.slice(1).map((c) => c.value)).toEqual([
+      'needs your invested assets, which aren’t measured (the FI card above says why)',
+      'needs your annual spending, which isn’t measured (the FI card above says why)',
+      'needs your annual spending',
+    ]);
   });
 
   test('plans that start with different balances show no amount difference; the same start shows one', () => {

@@ -204,6 +204,7 @@ export function laterText(later: { amount: number; fromAge: number }[], money: M
   return `The FI number leaves out ${parts.join(' and ')}, which the simulation counts.`;
 }
 
-export function currencyText(typedIn: string, planIn: string): string {
+export function currencyText(typedIn: string, planIn: string, known = true): string {
+  if (!known) return `Its amounts were typed in ${typedIn}, and which currency your plan’s figures are in isn’t known yet (above). Nothing is converted, so it isn’t worked out until you have said.`;
   return `Its amounts were typed in ${typedIn}, and your plan is now in ${planIn}. Nothing is converted, so it isn’t worked out: check its amounts, then say they are in ${planIn}.`;
 }

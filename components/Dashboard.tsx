@@ -585,6 +585,8 @@ export default function Dashboard({
   // The balances shown are the ones saved on this device, not yet replaced
   // by a load: the forecast says when they are from.
   const [balancesSaved, setBalancesSaved] = useState(false);
+  // The last load of the balances failed (the Plan tab then asks, rather than wait).
+  const [balancesFailed, setBalancesFailed] = useState(false);
   // Connection health (components/ConnectionHealth.tsx): whether the server
   // could read Plaid's warnings, and whether a notice email's link opened it.
   const [healthUnavailable, setHealthUnavailable] = useState(false);
@@ -772,6 +774,7 @@ export default function Dashboard({
         const damage = lifecycleDamageOf(res.status, body);
         setLifecycleDamage(damage);
         setError(reason && (res.status === 503 || damage) ? `Failed to load accounts: ${reason}` : 'Failed to load accounts.');
+        setBalancesFailed(true);
         return;
       }
       const data = await res.json();
@@ -788,6 +791,7 @@ export default function Dashboard({
       setRestoreHold(data.restore_hold ?? null);
       setAsOf(data.as_of ?? null);
       setBalancesSaved(false);
+      setBalancesFailed(false);
       setBackupProblem(data.backup_problem ?? null);
       setHealthUnavailable(!!data.health_unavailable);
       setConnected(data.institutions.length > 0);
@@ -831,6 +835,7 @@ export default function Dashboard({
       // Network unreachable; keep showing whatever we have (possibly the
       // hydrated snapshot).
       setError('Could not reach the server.');
+      setBalancesFailed(true);
     } finally {
       setRefreshing(false);
       setLoading(false);
@@ -3109,6 +3114,8 @@ export default function Dashboard({
                 institutions={planInstitutions}
                 holdings={planHoldings}
                 balancesAsOf={asOf}
+                balancesSaved={balancesSaved}
+                balancesFailed={balancesFailed}
                 currency={accountCurrency}
                 txnFx={txnFx}
                 balanceFx={base?.fx ?? null}

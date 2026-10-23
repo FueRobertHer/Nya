@@ -23,13 +23,20 @@
 // Every figure is an estimate, and says so: savings from bank data miss
 // pre-tax contributions to a plan Nya can't see and an employer's match, in
 // the Plan's own words.
+//
+// IN THE PLAN'S CURRENCY: the one its typed figures were recorded in, which
+// what is measured is converted into, or, with nothing typed, the accounts'
+// (lib/fire/plan-currency.ts). A plan saved before that was recorded is
+// shown in the accounts' currency, said to be unconfirmed: the Plan tab
+// records it, or asks.
 
 import { useEffect, useMemo, useState } from 'react';
 import type { Txn } from './MonthBreakdown';
 import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs';
 import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
-import { assetsLeftOut, fiFigures, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
+import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
@@ -55,8 +62,9 @@ export type FiProgressProps = {
   onOpenPlan: () => void;
 };
 
-/** What /api/fire-plan answered: the saved plan, or null for none. */
-type Loaded = { plan: FirePlan | null } | 'failed' | null;
+/** What /api/fire-plan answered: the saved plan, or null for none, and the
+ *  currency its figures are in. */
+type Loaded = { plan: FirePlan | null; currency: CurrencyAnswer } | 'failed' | null;
 
 export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout, institutions, currency, txnFx = null, balanceFx = null, onOpenPlan }: FiProgressProps) {
   const [loaded, setLoaded] = useState<Loaded>(null);
@@ -66,7 +74,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
       .then(async (res) => {
         const body = await res.json().catch(() => null);
         const plan: unknown = body?.plan;
-        if (live) setLoaded(res.ok && (plan === null || isFirePlan(plan)) ? { plan } : 'failed');
+        if (live) setLoaded(res.ok && (plan === null || isFirePlan(plan)) ? { plan, currency: readCurrencyAnswer(body) } : 'failed');
       })
       .catch(() => {
         if (live) setLoaded('failed');
@@ -76,6 +84,7 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     };
   }, []);
   const stored = loaded && loaded !== 'failed' ? loaded.plan : null;
+  const answer = loaded && loaded !== 'failed' ? loaded.currency : NO_ANSWER;
   // As the Plan tab works from it: a value this release can't take is
   // replaced by its default there too, with the same result.
   const repair = useMemo(() => repairPlan(stored ?? DEFAULT_PLAN), [stored]);
@@ -89,7 +98,9 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
     planFunding: plan.planFunding,
     fx: txnFx,
     balanceFx,
+    currency: answer.currency,
   });
+  const figures = fiFigures(plan, inputs, currency);
   if (
     !ready({
       plan: loaded === null ? 'loading' : loaded === 'failed' ? 'failed' : 'loaded',
@@ -102,7 +113,8 @@ export default function FiProgressCard({ txns, txnsLoading, txnNotes, txnWithout
   }
   return (
     <FiProgressView
-      figures={fiFigures(plan, inputs, currency)}
+      figures={figures}
+      unconfirmed={planCurrencyState(stored, answer, figures.currency).kind === 'unknown' ? unconfirmedText(figures.currency, shownFrom(figures.currency, inputs)) : null}
       plan={plan}
       saved={stored !== null}
       repaired={repair.fixed.length > 0}
@@ -129,6 +141,7 @@ export function ready(s: { plan: 'loading' | 'failed' | 'loaded'; txns: Txn[] | 
  *  FI number to show. */
 export function FiProgressView({
   figures,
+  unconfirmed = null,
   plan,
   saved,
   repaired,
@@ -136,16 +149,48 @@ export function FiProgressView({
   onOpenPlan,
 }: {
   figures: FiFigures;
+  /** Which currency the plan's typed figures are in isn't known yet: what
+   *  to say (lib/fire/plan-currency.ts unconfirmedText). */
+  unconfirmed?: string | null;
   plan: FirePlan;
   /** A plan was saved; otherwise these are the defaults. */
   saved: boolean;
   /** The saved plan had values this release can't use (the Plan tab shows them). */
   repaired: boolean;
-  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows'>;
+  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows' | 'rates'>;
   onOpenPlan: () => void;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
-  if (view.fiNumber === null) return null;
+  // Without a home currency, a figure that would rest on a part of what it
+  // measures isn't measured (lib/fire/progress.ts): said, rather than an FI
+  // number from the rest, or none and nothing said.
+  // The year's own gap, whether spending is typed or not: savings and the
+  // savings rate come from the year too. Said for spending when spending
+  // isn't typed, else for what the year still gives.
+  const yearGap = spendingGap(inputs.flows, inputs.rates);
+  const flowsGap = view.spending.source === 'unmeasured' ? yearGap : null;
+  const yearText = yearGap && !flowsGap ? gapText(yearGap, view.savings.source === 'typed' ? 'rate' : 'year') : null;
+  const accountsGap = view.assets.source === 'unmeasured' ? assetsGap(inputs.assets, inputs.rates) : null;
+  const waitsFor = view.yearsToFi === null ? notMeasuredWhat(view) : null;
+  const notWorkedOut = waitsFor ? `Years to FI aren’t worked out: ${waitsFor} measured (above), and a figure that isn’t measured is never counted as zero.` : null;
+  if (view.fiNumber === null) {
+    if (!flowsGap) return null;
+    return (
+      <div className="card fi-card">
+        <div className="inst-header">
+          <div className="inst-name">Financial independence</div>
+          <button className="plan-edit" onClick={onOpenPlan}>
+            {saved ? 'Your plan' : 'Set up your plan'}
+          </button>
+        </div>
+        <div className="as-of stale">{gapText(flowsGap)}</div>
+        {accountsGap && (
+          <div className="as-of stale">{gapText(accountsGap)}</div>
+        )}
+        {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
+      </div>
+    );
+  }
   const money = (n: number) => wholeMoney(n, currency);
   // As the Plan's FI card warns (components/PlanTab.tsx FiCard), by the same
   // rule: transactions that couldn't be read, or that a connection doesn't
@@ -215,7 +260,7 @@ export function FiProgressView({
       {/* Transactions entered by hand only: the connections that bring in
           none are named, as the Plan names them beside its figures. */}
       {inputs.flows && inputs.coverage.named && <p className="panel-note">{inputs.coverage.named}</p>}
-      {inputs.flows && leftOut.otherCurrencies && (
+      {inputs.flows && !flowsGap && leftOut.otherCurrencies && (
         <div className="as-of stale">
           <Masked>{leftOut.otherCurrencies}</Masked>
         </div>
@@ -228,6 +273,11 @@ export function FiProgressView({
       )}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
+      {flowsGap && <div className="as-of stale">{gapText(flowsGap)}</div>}
+      {yearText && <div className="as-of stale">{yearText}</div>}
+      {accountsGap && <div className="as-of stale">{gapText(accountsGap)}</div>}
+      {notWorkedOut && <div className="as-of stale">{notWorkedOut}</div>}
+      {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
       {convertedNote && <div className="as-of">{convertedNote}</div>}
       {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}
     </div>

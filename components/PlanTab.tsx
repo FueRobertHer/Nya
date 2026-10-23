@@ -74,7 +74,7 @@ import {
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
-import { assetsLeftOut, fiFigures, measuredInputs, spendingLeftOut, transactionCoverage, transactionsMissing } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, spendingOff, transactionCoverage, transactionsMissing, unmeasuredNeed, type ShareRates } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
@@ -104,6 +104,24 @@ import { createScenarioClient, INITIAL_SCENARIOS, type ScenariosState } from './
 import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
 import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
+import {
+  NO_ANSWER,
+  askText,
+  candidates,
+  firstText,
+  hasTypedAmounts,
+  keptText,
+  planCurrencyState,
+  relabelOffer,
+  readCurrencyAnswer,
+  shownFrom,
+  shownReliably,
+  typedAmounts,
+  WAITING_TEXT,
+  type CurrencyAnswer,
+} from '@/lib/fire/plan-currency';
+import { recordPlanCurrency } from './plan-currency-client';
+import { PlanCurrencyCard, type CurrencyCardMode } from './PlanCurrency';
 import {
   applyScenario,
   changesOf,
@@ -239,6 +257,10 @@ export type PlanTabProps = {
   /** When those balances were loaded: old when the dashboard is showing its
    *  saved copy (offline, or before it refreshes). */
   balancesAsOf: string | null;
+  /** The balances are that saved copy: nothing is recorded from them. */
+  balancesSaved?: boolean;
+  /** The dashboard's last load of the balances failed. */
+  balancesFailed?: boolean;
   /** The accounts' main currency, for amounts nothing else labels. */
   currency: string | null;
   /** Every position the dashboard loaded, each with its account (hidden
@@ -262,8 +284,16 @@ export default function PlanTab({
   holdings,
   txnFx = null,
   balanceFx = null,
+  balancesSaved = false,
+  balancesFailed = false,
 }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
+  // The plan as the server last confirmed it, and the currency its typed
+  // figures are in as the route answered with it (lib/fire/plan-currency.ts):
+  // never the plan a save has yet to write, which the store shows at once.
+  // And the currency each save sends (set below, once the tab knows it).
+  const [confirmed, setConfirmed] = useState<{ plan: FirePlan | null; answer: CurrencyAnswer }>({ plan: null, answer: NO_ANSWER });
+  const sendCurrency = useRef<string | null>(null);
   const store = useMemo(
     () =>
       createWholeListStore<FirePlan | null>({
@@ -274,6 +304,11 @@ export default function PlanTab({
         isValid: (v): v is FirePlan | null => v === null || isFirePlan(v),
         onChange: setState,
         reloadHint: 'use Try again below',
+        // A save refused for what is stored now (its currency changed on
+        // another device, say) says why.
+        showRefusal: true,
+        extra: () => ({ currency: sendCurrency.current }),
+        onAnswer: (data) => setConfirmed({ plan: isFirePlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
       }),
     []
   );
@@ -309,7 +344,15 @@ export default function PlanTab({
     if (openId === null) return;
     if ((planLoaded && repairing) || (scenState.status === 'ready' && !scenState.list.some((s) => s.id === openId))) setOpenId(null);
   }, [openId, planLoaded, repairing, scenState]);
-  const editable = state.status === 'ready' && !state.saving && !repairing && (!entry || !scenState.saving);
+  // And once the currency the plan's figures are in is known (below).
+  const editableNow = state.status === 'ready' && !state.saving && !repairing && (!entry || !scenState.saving);
+
+  // Before a plan's first typed amount: the currency the person said they'll
+  // type it in, when the accounts can't tell it (lib/fire/plan-currency.ts).
+  const [picked, setPicked] = useState<string | null>(null);
+  // The currency everything measured is in: the plan's own once recorded,
+  // the one picked before its first amount, else the accounts' (null).
+  const ownCurrency = confirmed.answer.currency ?? (planLoaded && (!confirmed.plan || !hasTypedAmounts(confirmed.plan)) ? picked : null);
 
   // What Nya measures, and what may be missing from it, by the same hook and
   // arithmetic as the FI card on Home (components/plan-inputs.ts,
@@ -326,18 +369,140 @@ export default function PlanTab({
     planFunding: basePlan.planFunding,
     fx: txnFx,
     balanceFx,
+    currency: ownCurrency,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
+  // The plan's own currency once recorded, which everything above is in;
+  // otherwise the accounts' (figures.currency), and with typed amounts and no
+  // record that holds, not known until the tab can tell it reliably or the
+  // person says (lib/fire/plan-currency.ts).
+  const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
+  const currencyAnswer = confirmed.answer;
+  const currencyState = planCurrencyState(planLoaded ? confirmed.plan : null, currencyAnswer, figures.currency);
+  const reliably = shownReliably(figures.currency, inputs, { balancesAsOf, balancesSaved, balancesFailed, institutions: institutions.length, txnsLoading, txnsFailed, unread: unread.length });
+  const currencyKnown = currencyState.kind !== 'unknown';
+  const home = balanceFx?.home ?? txnFx?.home ?? null;
+  const from = shownFrom(figures.currency, inputs);
+  // A currency being recorded, by the tab or on the person's word: nothing
+  // else about the currency starts meanwhile.
+  const [recordingNow, setRecordingNow] = useState(false);
+  const currencyBusy = state.saving || recordingNow;
+  // A save records the plan's currency with it: the recorded one; for a plan
+  // with nothing typed yet, the one the person picked, else the accounts'
+  // when that can be told reliably; else none, and a save that would give
+  // the plan its first amount waits until the person says (savePlanIn).
+  sendCurrency.current =
+    currencyState.kind === 'recorded' ? currencyState.currency : currencyState.kind === 'follows' ? (picked ?? (reliably.ok ? figures.currency : null)) : null;
+  const editable = editableNow && currencyKnown;
+  const regionRef = useRef<HTMLDivElement | null>(null);
+  const [currencySaid, setCurrencySaid] = useState('');
+  // The currency before the person changed it, offered back for a while.
+  const [previous, setPrevious] = useState<string | null>(null);
+  /** Records the currency for the plan the server last confirmed; true, or
+   *  why not. `byPerson`: the person's own answer, which alone may replace a
+   *  record there. */
+  const recordCurrency = async (c: string, byPerson: boolean): Promise<true | string> => {
+    const stored = confirmed.plan;
+    if (!stored || !planLoaded) return 'Your plan hasn’t loaded yet.';
+    if (currencyBusy) return 'Still saving the last change. Try again in a moment.';
+    const before = currencyState.kind === 'recorded' ? currencyState.currency : null;
+    setRecordingNow(true);
+    const r = await recordPlanCurrency(c, typedAmounts(stored), byPerson);
+    setRecordingNow(false);
+    if (r.ok) {
+      setConfirmed({ plan: r.plan ?? stored, answer: r.answer });
+      setPrevious(byPerson && before && before !== c ? before : null);
+      setCurrencySaid(`Your plan’s figures are recorded as ${c}.`);
+      regionRef.current?.focus();
+      return true;
+    }
+    // Changed elsewhere: the plan as it is now (after any save under way,
+    // lib/whole-list-store.ts load), and the question asked of it.
+    if (r.stale) void store.load();
+    return r.error;
+  };
+  // A plan saved before the currency was recorded (no record at all), shown
+  // in one that can be told reliably: that is the one its figures were typed
+  // in, recorded once, and only while no save or answer is under way. A
+  // record that no longer fits, or can't be read, is never replaced but on
+  // the person's word. If it fails, the tab asks instead, and doesn't try
+  // again for that plan.
+  const autoCurrency =
+    currencyState.kind === 'unknown' && currencyState.problem === null && reliably.ok && !currencyBusy && confirmed.plan ? currencyState.shown : null;
+  const autoKey = autoCurrency && confirmed.plan ? `${autoCurrency}:${JSON.stringify(typedAmounts(confirmed.plan))}` : null;
+  const triedFor = useRef<string | null>(null);
+  const [autoFailed, setAutoFailed] = useState<{ for: string; error: string } | null>(null);
+  useEffect(() => {
+    if (!autoKey || !autoCurrency || triedFor.current === autoKey) return;
+    triedFor.current = autoKey;
+    void recordCurrency(autoCurrency, false).then((r) => {
+      if (r !== true) setAutoFailed({ for: autoKey, error: r });
+    });
+    // recordCurrency reads this render's plan, which autoKey names.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, autoCurrency]);
+  const waitingOnAccounts = !reliably.ok && reliably.why === 'loading';
+  const offer = candidates(figures.currency, inputs, { was: currencyState.kind === 'unknown' ? currencyState.was : null, home });
+  const currencyMode: CurrencyCardMode =
+    currencyState.kind === 'unknown'
+      ? // Nothing said while the tab records it on its own; while it waits on
+        // the accounts to tell it, that it waits (a record there is asked
+        // about at once, and a load that failed is asked about too).
+        autoKey !== null && autoFailed?.for !== autoKey
+        ? { kind: 'none' }
+        : waitingOnAccounts && currencyState.problem === null
+          ? { kind: 'waiting', text: WAITING_TEXT }
+          : { kind: 'ask', text: askText(currencyState, reliably.ok ? null : reliably.why, from), offer, was: currencyState.was, canAnswer: currencyState.problem !== 'newer' }
+      : currencyState.kind === 'recorded'
+        ? {
+            kind: 'recorded',
+            currency: currencyState.currency,
+            kept: keptText(currencyState.currency, inputs, !!(txnFx || balanceFx)),
+            relabelTo: relabelOffer(currencyState.currency, inputs),
+            previous,
+            scenariosIn: scenState.list.filter((x) => hasAmounts(x) && x.currency === currencyState.currency).length,
+            offer,
+          }
+        : // Nothing typed yet: asked only when the accounts can't tell it.
+          picked || (!reliably.ok && reliably.why !== 'loading')
+          ? { kind: 'first', text: firstText(figures.currency, reliably.ok ? 'none' : reliably.why, from), offer, picked }
+          : { kind: 'none' };
+  const currencyCard = (
+    <PlanCurrencyCard
+      mode={currencyMode}
+      failure={autoKey && autoFailed?.for === autoKey ? autoFailed.error : null}
+      disabled={currencyBusy || !planLoaded}
+      regionRef={regionRef}
+      onAnswer={(c) => recordCurrency(c, true)}
+      onPick={(c) => {
+        setPicked(c);
+        if (c) setCurrencySaid(`You’ll type your plan’s figures in ${c}.`);
+      }}
+    />
+  );
+  // Every save of the Plan itself, through its store, with the currency its
+  // figures are in: never a first typed amount without one.
+  const savePlanIn = async (next: FirePlan): Promise<boolean | string> => {
+    if (sendCurrency.current === null && currencyState.kind === 'follows' && hasTypedAmounts(next)) {
+      return waitingOnAccounts
+        ? 'Your accounts are still loading, and the currency your plan’s figures are in is taken from them: save again in a moment.'
+        : 'Say which currency you type your plan’s figures in first (above the figures), then save again: nothing was saved.';
+    }
+    return store.save(next);
+  };
+
   const measured = measuredInputs(inputs);
   // The Plan's figures by the same function a scenario's come from: with no
   // life events, fiView and enginePlan exactly (lib/fire/plan-figures.ts).
   const baseFigures = planFigures(basePlan, measured) as PlanFigures;
-  // Plan amounts are in the accounts' own currency, or the transactions'.
+  // Plan amounts are in the Plan's own currency, the one its figures were
+  // typed in, once recorded; otherwise the accounts' own, or the
+  // transactions' (lib/fire/plan-currency.ts).
   const displayCurrency = figures.currency;
   const money = (n: number) => wholeMoney(n, displayCurrency);
-  // Nothing is converted between currencies in this app: investments in one
-  // and spending in another can't be compared (lib/fire/progress.ts). Within
+  // Without a home currency nothing is converted: investments in one and
+  // spending in another can't be compared (lib/fire/progress.ts). Within
   // either, only amounts in one currency are added up, and the notes beside
   // them name the rest.
   const currencyNote = figures.currencyNote;
@@ -545,14 +710,14 @@ export default function PlanTab({
   };
   const saveToScenario: Save | null = entry
     ? async (next) => {
-        if (other && planCurrency) return currencyText(other, planCurrency);
+        if (other && planCurrency) return currencyText(other, planCurrency, currencyKnown);
         const r = recordSave(basePlan, entry, next);
         if ('error' in r) return r.error;
         return persist(r.ok);
       }
     : null;
   // Every save the tab makes, from one place (components/plan-savers.ts).
-  const savers = planSavers({ scenario: saveToScenario, savePlan: store.save, plan: basePlan, repaired: repairing ? repair.plan : null });
+  const savers = planSavers({ scenario: saveToScenario, savePlan: savePlanIn, plan: basePlan, repaired: repairing ? repair.plan : null });
   const formPlan = entry ? applyScenario(basePlan, entry).plan : basePlan;
   const saversRef = useRef(savers);
   saversRef.current = savers;
@@ -587,14 +752,21 @@ export default function PlanTab({
     if (openId !== null) headingRef.current?.focus();
   }, [openId]);
   const shownStatus = entry ? `Showing the scenario ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
-  // "They're in" is offered only once the accounts have all loaded without a
-  // problem: the Plan's currency is the one most of them are in, and may
-  // read otherwise while they load.
-  const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
+  // A scenario's "They're in" relabels its amounts into the Plan's currency.
+  // Once that is recorded it can't move, so it is offered at once. Before,
+  // for a plan with nothing typed it is the accounts', which may read
+  // otherwise while they load or tie (shownReliably): not offered until it
+  // can be told; and while not known, not until the person has said.
   const confirmWhyNot =
-    !balancesAsOf || institutions.length === 0 || txnsLoading || txnsFailed || unread.length > 0 || assets.caveats.length > 0
-      ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
-      : null;
+    currencyState.kind === 'recorded'
+      ? null
+      : currencyState.kind === 'unknown'
+        ? 'Say which currency your plan’s figures are in first (above): this is offered once you have.'
+        : reliably.ok || picked
+          ? null
+          : reliably.why === 'loading' || reliably.why === 'failed' || reliably.why === 'problem' || reliably.why === 'empty-balance'
+            ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
+            : 'Your plan’s currency can’t be told from your accounts: say which you’ll type your plan’s figures in first (above), and this is offered then.';
   const changes = entry ? scenarioChanges(basePlan, entry) : [];
   const scenarioMarks = entry
     ? {
@@ -623,6 +795,7 @@ export default function PlanTab({
       baseFigures={baseFigures}
       measured={measured}
       planCurrency={planCurrency}
+      planCurrencyKnown={currencyKnown}
       canOpen={canOpen}
       planState={state.status}
       whyNot={
@@ -654,6 +827,7 @@ export default function PlanTab({
       problem={problem}
       other={other}
       planCurrency={planCurrency}
+      planCurrencyKnown={currencyKnown}
       confirmWhyNot={confirmWhyNot}
       editable={editable}
       money={money}
@@ -689,9 +863,13 @@ export default function PlanTab({
         </div>
       )}
       {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
-      {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving} onSave={savers.repair} money={money} />}
+      {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving && currencyKnown} onSave={savers.repair} money={money} />}
+      {planLoaded && currencyCard}
       <div className="visually-hidden" role="status">
         {shownStatus}
+      </div>
+      <div className="visually-hidden" role="status">
+        {currencySaid}
       </div>
       {scenarioBar}
       {entry && !shown ? (
@@ -740,6 +918,7 @@ export default function PlanTab({
         editable={editable}
         open={open}
         savingsRate={figures.savingsRate}
+        shareRates={inputs.rates ?? null}
       />
 
       {scenariosCard}
@@ -853,7 +1032,7 @@ export default function PlanTab({
             currency={displayCurrency}
             measured={measuredInputs(inputs)[shownSheet.figure]}
             measuredText={flows ? `from ${windowText(flows)}` : ''}
-            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx)}
+            assetsFor={(includeCash) => investedAssets(institutions, includeCash, balanceFx, Date.now(), ownCurrency)}
             workplacePlans={workplacePlansOf(institutions).map((p) => ({ account_id: p.account_id, label: `${p.institution} ${p.name}` }))}
           />
         )}
@@ -998,6 +1177,7 @@ export function FiCard({
   editable,
   open,
   savingsRate = null,
+  shareRates = null,
 }: {
   /** The open scenario's name, said at the top; null with the Plan open. */
   scenarioName?: string | null;
@@ -1044,6 +1224,9 @@ export function FiCard({
   open: (s: SheetState) => void;
   /** The trailing year's savings rate (lib/fire/progress.ts), as Home shows it. */
   savingsRate?: number | null;
+  /** The ECB's rates that weigh what is left out for its currency, without
+   *  a home currency (lib/fire/progress.ts ShareRates). */
+  shareRates?: ShareRates | null;
 }) {
   const { spending, savings, assets } = view;
   // A bank account or card whose transactions don't come in (Plaid doesn't
@@ -1066,7 +1249,12 @@ export function FiCard({
   // Spending: the window, what is in it beyond the Activity tab's rule, and
   // what may be missing.
   let spendingNote: React.ReactNode;
+  // Without a home currency, a year that would rest on a part of the
+  // spending is no figure at all (lib/fire/progress.ts spendingGap); one
+  // with only its income left out still measures the spending (spendingOff).
+  const flowsGap = spendingGap(flows, shareRates);
   if (spending.source === 'typed') spendingNote = 'typed by you';
+  else if (spendingOff(flowsGap)) spendingNote = <Notes source="not measured" warnings={[gapText(flowsGap!)]} />;
   else if (!flows) {
     spendingNote = txnsLoading ? (
       'loading your transactions…'
@@ -1148,11 +1336,17 @@ export function FiCard({
   if (savings.source === 'typed') {
     // The savings rate (Home's) is from the transactions whatever is typed
     // here, so it is said here too, as what they measure.
-    savingsNote =
-      flows && savingsRate !== null
-        ? `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
-        : 'typed by you';
+    savingsNote = flowsGap ? (
+      // The rate from the year isn't measured: said, rather than left out unsaid.
+      <Notes source="typed by you" warnings={[gapText(flowsGap, 'rate')]} />
+    ) : flows && savingsRate !== null ? (
+      `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
+    ) : (
+      'typed by you'
+    );
   }
+  // The year's own reason, whether spending is typed or not.
+  else if (flowsGap) savingsNote = <Notes source="not measured" warnings={[gapText(flowsGap, 'year')]} />;
   else if (!flows) {
     savingsNote = txnsLoading
       ? 'loading your transactions…'
@@ -1207,7 +1401,9 @@ export function FiCard({
 
   // Invested assets: what was counted, as of when, and what may be missing.
   let assetsNote: React.ReactNode;
+  const accountsGap = assetsGap(measuredAssets, shareRates);
   if (assets.source === 'typed') assetsNote = 'typed by you';
+  else if (accountsGap) assetsNote = <Notes source="not measured" warnings={[gapText(accountsGap), ...assetCaveatLines(measuredAssets.caveats)]} />;
   else if (assets.source === 'none') {
     assetsNote = <Notes source="no investment accounts to measure from" warnings={assetCaveatLines(measuredAssets.caveats)} />;
   } else {
@@ -1227,6 +1423,8 @@ export function FiCard({
 
   // The same words as the FI card on Home (components/FiProgressCard.tsx).
   const yearsLine = fiShort ? 'None' : yearsToFiText(view.yearsToFi);
+  // Spending there but not measured is said so, never as none to count.
+  const spendingNeed = view.spending.source === 'unmeasured' ? 'Needs your annual spending, which isn’t measured (below).' : null;
   let yearsNote = '';
   if (fiShort) {
     yearsNote = fiShort;
@@ -1239,8 +1437,10 @@ export function FiCard({
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
   } else if (view.yearsToFi === null) {
-    yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : 'Needs your invested assets or savings.';
+    // A figure not measured is never taken as zero: what rests on it says why.
+    yearsNote = view.fiNumber === null ? (spendingNeed ?? 'Needs your annual spending.') : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
   }
+  const notWorkedOut = notWorkedOutText(view, 'below');
 
   const fiSpending = retirementSpending ?? spending.value;
   return (
@@ -1256,7 +1456,7 @@ export function FiCard({
             ? `${money(fiSpending)} a year${retirementSpending !== null ? ' in retirement' : ''}${plan.taxRate > 0 ? `, grossed up for ${pct(plan.taxRate)} tax,` : ''} ÷ ${pct(plan.withdrawalRate)} withdrawal rate`
             : !formulasTake(plan)
               ? "Can't be worked out from the saved withdrawal, tax or return rate: change them under Assumptions."
-              : 'Needs your annual spending: connect accounts with transactions, or type it below.'}
+              : (spendingNeed ?? 'Needs your annual spending: connect accounts with transactions, or type it below.')}
         </Masked>
       </div>
       {spendingMissing && <div className="as-of stale">{`May be low: spending is missing ${spendingMissing} (below).`}</div>}
@@ -1286,7 +1486,7 @@ export function FiCard({
           value={view.coast ? money(view.coast.number) : '--'}
           note={
             view.coast
-              ? `Invested today, this grows to your FI number by age ${plan.targetAge} at ${pct(plan.realReturn)} real with nothing more added. ${view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
+              ? `Invested today, this grows to your FI number by age ${plan.targetAge} at ${pct(plan.realReturn)} real with nothing more added. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
               : 'Needs your age and target age.'
           }
         />
@@ -1294,12 +1494,13 @@ export function FiCard({
           <Row
             label="Barista FI"
             value={money(view.barista.number)}
-            note={`With ${money(plan.partTimeIncome)} a year of part-time income covering part of your spending${view.barista.yearsTo !== null ? (view.barista.yearsTo === 0 ? '. You have that much.' : view.barista.yearsTo === Infinity ? '. Not reached at this rate.' : `, ${yearsText(view.barista.yearsTo)} away.`) : '.'}`}
+            note={`With ${money(plan.partTimeIncome)} a year of part-time income covering part of your spending${view.barista.yearsTo !== null ? (view.barista.yearsTo === 0 ? '. You have that much.' : view.barista.yearsTo === Infinity ? '. Not reached at this rate.' : `, ${yearsText(view.barista.yearsTo)} away.`) : notMeasuredWhat(view) ? `. How far away isn’t worked out: ${notMeasuredWhat(view)} measured (below).` : '.'}`}
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
           <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected at a steady ${pct(plan.realReturn)} real return. Real markets don't move steadily; the simulation below shows how much that matters.`} />
         )}
+        {view.atTargetAge === null && notWorkedOut && plan.age !== null && plan.targetAge !== null && <Row label={`At age ${plan.targetAge}`} value="--" note={notWorkedOut} />}
       </div>
 
       <div className="plan-subhead">From</div>
@@ -1344,6 +1545,15 @@ const MISSING_TEXT: Record<Missing, string> = {
   assets: 'The simulation starts with your invested assets, and there are none to count yet. Type them above, or start from your FI number (Change).',
   balance: 'Type the balance to start with (Change).',
 };
+
+/** Why the simulation can't run: what it needs, and when that is there but
+ *  isn't measured, said so in compare mode's words (unmeasuredNeed). */
+function missingText(missing: Missing, view: FiView): string {
+  const need = unmeasuredNeed(missing, view);
+  if (need && missing === 'assets') return `The simulation starts with ${need} (the FI card above says why). Type them above, or start from your FI number (Change).`;
+  if (need) return `The simulation withdraws ${need} (the FI card above says why). Type it above.`;
+  return MISSING_TEXT[missing];
+}
 
 export function SimulationCard({
   scenarioName = null,
@@ -1426,7 +1636,7 @@ export function SimulationCard({
     return (
       <div className="card">
         {header}
-        <p className="empty-note">{MISSING_TEXT[engine.missing]}</p>
+        <p className="empty-note">{missingText(engine.missing, view)}</p>
       </div>
     );
   }

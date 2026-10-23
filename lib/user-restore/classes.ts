@@ -118,6 +118,7 @@ export const STORE_CLASSES: Readonly<Record<string, KeyClass>> = {
   // rest is shown through, never referred to by what is stored.
   'currency-settings': 'setting',
   'fire-plan': 'setting',
+  'fire-plan-currency': 'setting',
   'goal-plans': 'data',
   'history-import-summaries': 'data',
   'history-imports': 'data',

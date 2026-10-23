@@ -190,13 +190,18 @@ describe('the FI card', () => {
   });
 
   test('names what another currency left out of spending and of assets', () => {
+    // Ten accounts counted, one left out: under a tenth, so measured from the rest, and said.
+    const ten = Array.from({ length: 10 }, (_, i) => ({ ...assets().accounts[0], account_id: `a${i}`, balance: 25_000 }));
     const t = card(plan(), {
       f: { ...flows, leftOut: [{ currency: 'JPY', count: 2 }] },
-      a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }),
+      a: assets({ accounts: ten, leftOut: [{ currency: 'EUR', count: 1 }] }),
     });
     expect(t).toContain("2 transactions in JPY aren't in your spending or savings, which are in USD.");
     expect(t).toContain("1 account in EUR isn't in this figure, which is in USD.");
     expect(card(plan())).not.toContain("aren't in your spending");
+    // More than a tenth (one of three): not measured from the rest, and why (lib/fire/progress.ts assetsGap).
+    const gap = card(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
+    expect(gap).toContain('Not measured: more than a tenth of what would count, by count, as Nya doesn’t have the ECB’s rates at hand, is in another currency than the Plan’s, USD (1 account in EUR).');
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {
@@ -418,6 +423,15 @@ describe('the simulation card', () => {
   test('explains what is missing instead of simulating nothing', () => {
     expect(read(plan(), { spending: null, savings: null, assets: null })).toContain('withdraws your annual spending, so it needs it');
     expect(read(plan({ start: 'assets' }), { spending: 40_000, savings: null, assets: null })).toContain('none to count yet');
+  });
+
+  test('what it needs and isn’t measured is said so, in compare mode’s words, never as none to count (review round 3)', () => {
+    const assets = read(plan({ start: 'assets' }), { spending: 40_000, savings: 30_000, assets: null, unmeasured: ['assets'] });
+    expect(assets).toContain('The simulation starts with your invested assets, which aren’t measured (the FI card above says why). Type them above, or start from your FI number (Change).');
+    expect(assets).not.toContain('none to count yet');
+    const spending = read(plan(), { spending: null, savings: null, assets: 300_000, unmeasured: ['spending', 'savings'] });
+    expect(spending).toContain('The simulation withdraws your annual spending, which isn’t measured (the FI card above says why). Type it above.');
+    expect(spending).not.toContain('connect accounts with transactions');
   });
 });
 
