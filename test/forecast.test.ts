@@ -609,10 +609,17 @@ describe('what it says it may be missing', () => {
       ['Sapphire Preferred', 'Chase', 'Sapphires club payment', false],
       ['CREDIT CARD', 'Chase', 'Chase auto loan', false],
       ['CREDIT CARD', 'Chase', 'Credit card', false],
+      // A payment word before the card's word is the payee's.
+      ['Delta SkyMiles Gold Card', 'American Express', 'Pay Delta Dental', false],
+      ['Southwest Rapid Rewards Plus', 'Chase', 'Pay Southwest Gas', false],
+      ['Delta SkyMiles Gold Card', 'American Express', 'Autopay Delta Dental', false],
+      ['Sapphire Preferred', 'Chase', 'Pay Sapphire', false],
+      ['Sapphire Preferred', 'Chase', 'Payment Sapphire', false],
       // Named as the card, or its payment.
       ['Sapphire Preferred', 'Chase', 'Sapphire payment', true],
       ['Sapphire Preferred', 'Chase', 'Chase Sapphire Preferred minimum', true],
-      ['Sapphire Preferred', 'Chase', 'Pay Sapphire', true],
+      ['Sapphire Preferred', 'Chase', 'Sapphire pay', true],
+      ['Delta SkyMiles Gold Card', 'American Express', 'Amex Delta', true],
       ['Delta SkyMiles Gold Card', 'American Express', 'Delta card', true],
       ['Costco Anywhere Visa Card', 'Citibank', 'Costco Visa payment', true],
       ['Capital One Quicksilver', 'Capital One', 'Quicksilver autopay', true],
