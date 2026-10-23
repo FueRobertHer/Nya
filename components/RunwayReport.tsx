@@ -18,7 +18,7 @@ import { Sheet } from './Sheet';
 import RunwayChart from './RunwayChart';
 import { Masked } from './HideAmounts';
 import { reportDay, reportTime } from './ReportView';
-import { formatMoney } from '@/lib/format';
+import { fieldAmount, formatMoney } from '@/lib/format';
 import { addDays, isTimeZone } from '@/lib/report/period';
 import { DEFAULT_WHAT_IF, MONTH_DAYS, monthsText, projectRunway, RUNWAY_WINDOWS, type RunwayLine, type RunwayProjection, type RunwayWhatIf } from '@/lib/report/runway';
 import type { RunwayReport as Runway } from '@/lib/report/runway-read';
@@ -26,7 +26,7 @@ import { MAX_SCENARIOS, SCENARIO_NAME_MAX, scenarioWhatIf, type RunwayScenario }
 import { gapSentences } from '@/lib/report/words';
 import { cadenceLabel } from '@/lib/recurring';
 import { plannedCadenceLabel } from '@/lib/planned';
-import { isCurrencyCode, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
+import { isCurrencyCode, minorDigits, parseAmountInput, DEFAULT_CURRENCY, MAX_AMOUNT } from '@/lib/manual-txn-input';
 import { joinNames } from '@/lib/month-coverage';
 
 /** "Aug 2026": a month of a window. */
@@ -310,7 +310,7 @@ export default function RunwayReport() {
   const apply = (s: RunwayScenario) => {
     const { whatIf: next, otherCurrency: other } = scenarioWhatIf(s, runway?.currency ?? null);
     setWhatIf(next);
-    setLowerText(next.lower_by > 0 ? String(next.lower_by) : '');
+    setLowerText(next.lower_by > 0 ? fieldAmount(next.lower_by, minorDigits(code)) : '');
     setOtherCurrency(other);
   };
 
@@ -428,7 +428,7 @@ export default function RunwayReport() {
           <div className="inst-name">Saved scenarios</div>
         </div>
         <SavedScenarios list={saved} currency={runway.currency} busy={busy} onApply={apply} onDelete={(id, label) => void remove(id, label)} />
-        {savedError && (
+        {savedError && !naming && (
           <p className="error" role="alert">
             {savedError}
           </p>
@@ -445,6 +445,11 @@ export default function RunwayReport() {
             Name
             <input value={name} maxLength={SCENARIO_NAME_MAX} onChange={(e) => setName(e.target.value)} placeholder="If I took a year off" />
           </label>
+          {savedError && (
+            <p className="error" role="alert">
+              {savedError}
+            </p>
+          )}
           <div className="button-pair">
             <button className="secondary" onClick={() => setNaming(false)} disabled={busy}>
               Cancel
