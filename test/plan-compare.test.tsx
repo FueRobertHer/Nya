@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import PlanCompare from '@/components/PlanCompare';
-import { compareRows, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
+import { compareRows, fiDateText, pointsText, startsLine, type CompareColumn } from '@/components/plan-compare';
 import { ScenarioBar, ScenariosCard, compareJobs, formFor, rememberResult, scenarioOutcome } from '@/components/PlanScenarios';
 import { LifeEventsCard } from '@/components/PlanEvents';
 import { FiCard, SimulationCard } from '@/components/PlanTab';
@@ -150,6 +150,34 @@ describe('what the cells say (review: retiring before the FI date)', () => {
     expect(r.find((x) => x.key === 'worst')!.cells[1].diff).toBe('ends at a different age, so not compared');
     // The same start, so spending is still set against it.
     expect(r.find((x) => x.key === 'spending')!.cells[1].diff).toBe('the same');
+  });
+
+  test('with no age set, plans that run as long end together, and are set against each other; ones that don’t, aren’t', () => {
+    const noAge = figs(plan({ age: null }));
+    const fee = figs(plan({ age: null, fee: 0.003 }));
+    const forty = figs(plan({ age: null, horizon: 40 }));
+    const col = (id: string, f: PlanFigures): CompareColumn => ({ id, name: id, isPlan: id === 'plan', outcome: { kind: 'figures', figures: f, result: run(f) } });
+    const same = compareRows([col('plan', noAge), col('fee', fee)], money, TODAY).rows;
+    const median = same.find((x) => x.key === 'median')!;
+    expect(median.label).toBe('Ending balance after 30 years, median');
+    expect(same.find((x) => x.key === 'worst')!.label).toBe('Ending balance after 30 years, the 10% worst');
+    expect(median.cells[0].value).toMatch(/^\$[\d,]+$/);
+    expect(median.cells[1].diff).toMatch(/^\$[\d,]+ (less|more)$/);
+    const apartRows = compareRows([col('plan', noAge), col('forty', forty)], money, TODAY).rows;
+    const m = apartRows.find((x) => x.key === 'median')!;
+    expect(m.label).toBe('Ending balance, median, at each plan’s end');
+    expect(m.cells[0].value).toMatch(/^\$[\d,]+ after 30 years$/);
+    expect(m.cells[1].value).toMatch(/^\$[\d,]+ after 40 years$/);
+    expect(m.cells[1].diff).toBe('runs a different number of years, so not compared');
+  });
+
+  test('no FI date says which kind of shortfall: a cost it can’t pay, or a year that takes out more than there is', () => {
+    const house = figs(plan({ age: 40, targetAge: 60 }), [{ id: 'h', kind: 'house', label: 'Our home', atAge: 42, cost: 800_000, yearly: 0, years: null }]);
+    expect(house.short?.kind).toBe('cost');
+    expect(fiDateText(house, TODAY)).toBe('none: a cost it can’t pay from its investments (below)');
+    const off = planFigures(plan({ age: 40, targetAge: 60 }), { ...measured, assets: 50_000 }, [{ id: 's', kind: 'sabbatical', label: 'Off', fromAge: 40, years: 1, savingsLost: 120_000 }]) as PlanFigures;
+    expect(off.short?.kind).toBe('savings');
+    expect(fiDateText(off, TODAY)).toBe('none: a year takes out more than there is (below)');
   });
 
   test('the FI date is the same for both, said in years, age and year', () => {

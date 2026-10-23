@@ -1300,7 +1300,7 @@ Where they count. **The FI date** keeps saving until the FI number is reached, a
 
 - **Starts with**: what the simulation starts with and where it comes from, and, starting from the FI number or a typed balance, what the plan would have at that age at the steady return, events included, and how much less ("$1,000,000, your FI number at 45: you'd have about $548,653 then, $451,347 less").
 - **Lasted**: the success rate. A plan that starts with money it wouldn't have then says so in this cell itself: retiring before the FI date, with the simulation starting from the FI number, reads safer than it is.
-- **Ending balance**, the median and the 10% worst, at the age they all end at. When they end at different ages (a scenario that sets its own length, say), each says when it ends and they aren't set against each other: the same plan measured ten years earlier would read as a worse one.
+- **Ending balance**, the median and the 10% worst, at the age they all end at (with no age set, after the years they all run). When they end at different ages, or run different numbers of years (a scenario that sets its own length, say), each says when it ends and they aren't set against each other: the same plan measured ten years earlier would read as a worse one.
 - **The FI date**: years, the age then and the year.
 - **Spending in retirement**: the first year's, after tax, and for a flexible rule the lowest year's, as the withdrawal rule spends it, before one-offs and life events (a child in retirement, a mortgage paid off), which the plan's own line under the tables names.
 

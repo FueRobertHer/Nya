@@ -103,7 +103,7 @@ export function yearsDiffText(d: number): string {
 /** The FI date in words: years, the age then, and the year it falls in. */
 export function fiDateText(f: PlanFigures, today: string): string {
   const years = f.view.yearsToFi;
-  if (f.short) return 'none: a cost it can’t pay (below)';
+  if (f.short) return f.short.kind === 'cost' ? 'none: a cost it can’t pay from its investments (below)' : 'none: a year takes out more than there is (below)';
   if (years === null || years === 0 || years === Infinity) return yearsToFiText(years);
   const year = Math.floor(Number(today.slice(0, 4)) + (Number(today.slice(5, 7)) - 1) / 12 + years);
   return `${yearsToFiText(years)}${f.view.fiAge !== null ? `, around age ${Math.round(f.view.fiAge)}` : ''} (around ${year})`;
@@ -128,18 +128,25 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     return { ...empty, value: out.value, diff: c === against ? null : (out.diff ?? null), caveat: out.caveat ?? null };
   };
 
-  // The age every plan worked out ends at, when they all end at one.
-  const ages = columns.flatMap((c) => {
+  // When every plan worked out ends, if they all end together: at an age,
+  // or, with no age to count from (the age is your plan's, so every plan has
+  // one or none), after a number of years.
+  const ends = columns.flatMap((c) => {
     if (c.outcome.kind !== 'figures' || !('sim' in c.outcome.figures.engine)) return [];
     const { startAge, sim } = c.outcome.figures.engine;
-    return [startAge === null ? null : startAge + sim.years];
+    return [{ age: startAge === null ? null : startAge + sim.years, years: sim.years }];
   });
-  const endsAt = ages.length > 0 && ages.every((a) => a !== null && a === ages[0]) ? ages[0] : null;
+  const noAge = ends.some((e) => e.age === null);
+  const endsTogether =
+    ends.length === 0 ? null
+    : !noAge && ends.every((e) => e.age === ends[0].age) ? `at ${ends[0].age}`
+    : ends.every((e) => e.age === null && e.years === ends[0].years) ? `after ${ends[0].years} years`
+    : null;
   /** When a plan ends: the age, or after how many years. */
   const endOf = (fig: PlanFigures) => ('sim' in fig.engine ? (fig.engine.startAge !== null ? `at ${fig.engine.startAge + fig.engine.sim.years}` : `after ${fig.engine.sim.years} years`) : '');
 
   // An ending balance is at the plan's end: between plans that end at
-  // different ages it is the same kind of plan measured at another time, so
+  // different times it is the same kind of plan measured at another time, so
   // each cell says when, and no amount difference is given.
   const amountRow = (key: RowKey, label: string, pick: (r: SimResult) => number, ending = false): CompareRow => ({
     key,
@@ -147,9 +154,9 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
     cells: columns.map((c) =>
       cell(c, (fig, r) => {
         const v = pick(r as SimResult);
-        const value = ending && endsAt === null ? `${money(v)} ${endOf(fig)}` : money(v);
+        const value = ending && endsTogether === null ? `${money(v)} ${endOf(fig)}` : money(v);
         if (!base || !baseFigures) return { value };
-        if (ending && endsAt === null) return { value, diff: 'ends at a different age, so not compared' };
+        if (ending && endsTogether === null) return { value, diff: noAge ? 'runs a different number of years, so not compared' : 'ends at a different age, so not compared' };
         return { value, diff: apart(fig, baseFigures) ?? amountDiffText(v - pick(base), money) };
       })
     ),
@@ -179,8 +186,8 @@ export function compareRows(columns: readonly CompareColumn[], money: Money, tod
         })
       ),
     },
-    amountRow('median', endsAt !== null ? `Ending balance at ${endsAt}, median` : 'Ending balance, median, at each plan’s end', (r) => r.ending.p50, true),
-    amountRow('worst', endsAt !== null ? `Ending balance at ${endsAt}, the 10% worst` : 'Ending balance, the 10% worst, at each plan’s end', (r) => r.ending.p10, true),
+    amountRow('median', endsTogether !== null ? `Ending balance ${endsTogether}, median` : 'Ending balance, median, at each plan’s end', (r) => r.ending.p50, true),
+    amountRow('worst', endsTogether !== null ? `Ending balance ${endsTogether}, the 10% worst` : 'Ending balance, the 10% worst, at each plan’s end', (r) => r.ending.p10, true),
     {
       key: 'fi',
       label: 'FI date',
