@@ -383,7 +383,9 @@ The changes made with your API tokens in the last 30 days (`lib/api-changes.ts`,
 | `before`, `after` | What it changed, before and after, as its own store keeps it: a manual account's record, a transaction's row with what is said about it (`{ "row", "said" }`), a balance (`{ "balance", "updated_at" }`), `{ "category" }`, `{ "group" }` or `{ "tag" }`. `null` for what there wasn't (before a create, after a delete); absent while pending, and once forgotten. |
 | `undoes`, `undone_by` | For an undo, the change it undid; for a change undone, the undo. |
 | `error` | Why it failed, as an error code. |
-| `forgotten_at` | When you forgot what it changed: `before` and `after` are gone, and it can no longer be undone. |
+| `forgotten_at` | When you forgot what it changed: `before` and `after` are gone, and it can no longer be undone. Forgetting a change forgets what its undo kept too. |
+| `undoing` | While an undo of an account made is under way: the undo's id. One cut off part way is finished by the next undo asked. |
+| `progress` | On such an undo, the step it had reached: `deleting`, `folding` (out of past totals) or `forgetting`. |
 
 Changes older than 30 days are left out, and deleted every night. Never brought back with a download: the tokens that made them aren't in it.
 
