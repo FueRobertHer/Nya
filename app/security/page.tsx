@@ -15,6 +15,7 @@ import { restoreEnabled } from '@/lib/user-restore/enabled';
 import { UNDO_DAYS } from '@/lib/user-restore/ids';
 import { apiWritesEnabled } from '@/lib/api-writes-enabled';
 import { CHANGES_KEEP_DAYS, CHANGES_PER_DAY, PERSON_CHANGES_PER_DAY, WRITES_PER_MINUTE } from '@/lib/api-limits';
+import { attachmentsMode, type AttachmentsMode } from '@/lib/attachments-mode';
 
 export const metadata: Metadata = {
   title: 'Security · Nya',
@@ -35,7 +36,10 @@ export const metadata: Metadata = {
 // offers bringing a download back (RESTORE_ENABLED, lib/user-restore/
 // enabled.ts), and whether it lets API tokens make changes
 // (API_WRITES_ENABLED, lib/api-writes-enabled.ts: off, the page says
-// nothing of writing), since each changes what is true of this copy.
+// nothing of writing), and whether receipts and documents can be kept
+// (lib/attachments-mode.ts: a file store connected, and a master key, without
+// which no account has the key of its own a file needs), since each changes
+// what is true of this copy.
 
 const LIMITS =
   'it may only run scripts that carry a one-time code issued with it, and the scripts those load, and may only load from and connect to Nya itself, Plaid and, with Clerk accounts, Clerk and the bot check it uses';
@@ -52,7 +56,10 @@ const PROGRAMS_READ =
 const PROGRAMS_WRITE =
   'What the API and the MCP server serve (the Developers page lists it): your accounts and balances, net worth and its history, the last year of transactions, budgets, recurring bills and holdings, until you revoke the token. Never your sign-in or your bank logins. A token made to read changes nothing; one made to update balances sees only your accounts and their balances and changes only a manual account’s balance; one made to make changes can add, change and delete the transactions entered on your manual accounts, add and change your manual accounts, categories and tags, and undo its own changes (an undo deletes what the change made, and an account it made goes with its transactions and its past balances), but never delete any other account, category or tag, and never change a bank’s transaction itself (though moving or renaming a category changes how every transaction in it is filed and counted). An AI assistant you connect to the MCP server reads the same, and its provider keeps what it reads under its own terms.';
 
-const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, writes: boolean): [string, string][] => [
+/** Said of those who never see receipts and documents, where they are kept. */
+const NOT_FILES = ' Never your receipts or documents.';
+
+const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, writes: boolean, files: AttachmentsMode): [string, string][] => [
   [
     'The operator, who runs this copy of Nya',
     `Everything, in practice. The ${envelope ? 'master key' : 'key'} and the database password are kept in the same hosting environment, so the encryption does not protect against whoever controls it. A managed key service that records every use of the key is planned.`,
@@ -60,7 +67,9 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, 
   ['Upstash, the database', 'The encrypted values, and the plain text listed above.'],
   [
     'Vercel, the host',
-    `Every request and response while the app handles it, and the app’s logs${backups?.kept === false ? '' : ', and the nightly backups, which it stores'}.`,
+    `Every request and response while the app handles it, and the app’s logs${backups?.kept === false ? '' : ', and the nightly backups, which it stores'}.${
+      files.connected ? ' It also stores your receipts and documents, encrypted; each file’s key is locked in the database, apart from the files.' : ''
+    }`,
   ],
   [
     'Plaid',
@@ -86,16 +95,33 @@ const whoCanRead = (envelope: boolean, backups: BackupRetention, mail: boolean, 
         ],
       ] as [string, string][])
     : []),
-  ['Programs you give an API token to', writes ? PROGRAMS_WRITE : PROGRAMS_READ],
+  ['Programs you give an API token to', `${writes ? PROGRAMS_WRITE : PROGRAMS_READ}${files.connected ? NOT_FILES : ''}`],
   [
     'People you share with',
-    'Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.',
+    `Only what you choose, account by account: that it exists, its balance, or its balance and last 30 days of transactions; and, if you choose them, your net worth, as an amount, with only the accounts in it whose balances you share, and your spending by category, holdings, budgets or goals you pick, each as percentages or amounts, worked out from your data each time it is shown to them, never the transactions behind them; until the end date you set, if you set one. And your record of each time it was shown to them, the same one you see. They can never change anything.${files.connected ? NOT_FILES : ''}`,
   ],
   [
     'Your device',
-    'Your accounts, their balances and your net-worth history, as the app last showed them, kept in the browser so it opens at once and works offline. Anyone using the unlocked device can read them. They are cleared when you sign out.',
+    `Your accounts, their balances and your net-worth history, as the app last showed them, kept in the browser so it opens at once and works offline. Anyone using the unlocked device can read them. They are cleared when you sign out.${files.connected ? NOT_FILES : ''}`,
   ],
 ];
+
+/** Receipts and documents (lib/attachments.ts), where this copy can keep them. */
+function Files({ files }: { files: AttachmentsMode }): ReactNode {
+  if (!files.connected) return null;
+  return (
+    <p>
+      Receipts and documents you attach to transactions are encrypted on Nya’s server before they are stored, each with a
+      key of its own, and kept in a private Vercel Blob store. The store never holds those keys: each is kept only in the
+      database and its backups, locked with your account’s own data key. So the file store, or a copy of it, holds nothing
+      readable on its own. A photo is made smaller and re-encoded in your browser before it is sent, which drops what the
+      camera saved with it, such as where it was taken, and the server refuses a photo that still carries a location; a
+      PDF is kept as you chose it, with what it carries, such as its author. They are shown only through the app itself,
+      to you signed in: no link to a file works without signing in, and none is ever public. Whoever runs this copy of Nya
+      can read them, as they can read the rest of your data.{files.uploads ? '' : ' Adding new ones is off on this copy of Nya.'}
+    </p>
+  );
+}
 
 function Encryption({ envelope, writes }: { envelope: boolean; writes: boolean }): ReactNode {
   return (
@@ -213,6 +239,9 @@ export default function SecurityPage() {
   const keys = keyDeletionText({ envelope, backups, databaseDays: databaseBackupDays() });
   const restore = restoreEnabled();
   const writes = apiWritesEnabled();
+  // Receipts and documents: only with a master key, which gives each account
+  // the data key of its own a file is locked with.
+  const files: AttachmentsMode = envelope ? attachmentsMode() : { connected: false, uploads: false, quota_bytes: null };
   return (
     <InfoPage page="security" title="Security" intro="How Nya protects your data, and who can read it, including the limits.">
       <InfoSection title="In short">
@@ -239,6 +268,7 @@ export default function SecurityPage() {
 
       <InfoSection title="What is encrypted, and how">
         <Encryption envelope={envelope} writes={writes} />
+        <Files files={files} />
       </InfoSection>
 
       <InfoSection title="What is stored as plain text">
@@ -260,6 +290,12 @@ export default function SecurityPage() {
             they record is encrypted), never the balances, amounts or transactions themselves.
           </li>
           {writes && <li>for the record of changes made with API tokens: the day each change was made and which token made it (what it changed is encrypted).</li>}
+          {files.connected && (
+            <li>
+              for receipts and documents: a random id for each, and which of your transactions have one, by their ids; in
+              the file store, each encrypted file’s size and when it was uploaded.
+            </li>
+          )}
         </ul>
         <p>
           The database also holds the IP address of a device that typed a wrong password, for up to 15 minutes; of a
@@ -296,7 +332,7 @@ export default function SecurityPage() {
             </tr>
           </thead>
           <tbody>
-            {whoCanRead(envelope, backups, mail, writes).map(([who, what]) => (
+            {whoCanRead(envelope, backups, mail, writes, files).map(([who, what]) => (
               <tr key={who}>
                 <th scope="row">{who}</th>
                 <td>{what}</td>
@@ -322,6 +358,12 @@ export default function SecurityPage() {
         {keys.key.map((line) => (
           <p key={line}>{line}</p>
         ))}
+        {files.connected && (
+          <p>
+            Your receipts and documents are deleted from the file store, part of them by a later nightly run if the store
+            can’t be reached, and the key that would open any copy left of them is destroyed with your account’s key.
+          </p>
+        )}
         <p>What it does not reach:</p>
         <ul>
           <DeletedInBackups backups={backups} />
@@ -411,6 +453,13 @@ export default function SecurityPage() {
             : 'This copy of Nya sends no email, so a download isn’t emailed to you.'}{' '}
           The file is made as it is sent to your browser and never written anywhere on the way.
         </p>
+        {files.connected && (
+          <p>
+            Receipts and documents download the same way, as ZIP files of about 50 MB each, each behind a fresh sign-in and
+            a set of them counted as one download: each file in them is decrypted on Nya’s server as it is sent, and the
+            ZIP file is never written anywhere on the way.
+          </p>
+        )}
         <p>
           You can protect it with a passphrase. It is then encrypted as it is sent, in the age format
           (age-encryption.org): a key made from your passphrase with scrypt, at the setting age itself uses, which makes
