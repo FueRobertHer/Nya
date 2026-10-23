@@ -71,6 +71,7 @@ const { projectViews } = await import('@/lib/share-views');
 const { collectUserData, buildUserExport } = await import('@/lib/user-export');
 const { signJobStore, finishSignJobs, runSignJob, retypeWithHistory, SETTLE_AFTER_MS } = await import('@/lib/sign-repair');
 const { saveManualAccount } = await import('@/lib/manual');
+const { pendingWords, SIGN_JOB_STOPPED } = await import('@/lib/sign-repair-store');
 const { snapshotData } = await import('@/lib/snapshot-job');
 
 const ctx = TEST_CTX;
@@ -650,5 +651,63 @@ describe('a retype, in a large household or asked twice', () => {
     await quiet(() => finishSignJobs(ctx, { nightly: true }));
     expect(await stored('history:accounts', DAY)).toEqual({ chk: 1000, [card]: 300 });
     expect(await signJobStore.ids(ctx)).toEqual([]);
+  });
+});
+
+describe('a stuck retype and the half-budget rule', () => {
+  /** The history read taking `ms` on the clock, each time. */
+  const slowHistory = (ms: number) => {
+    const real = history.readSignLayers;
+    return spyOn(history, 'readSignLayers').mockImplementation(async (...args) => {
+      setSystemTime(new Date(Date.now() + ms));
+      return real(...args);
+    });
+  };
+
+  test('stuck with its fair share of the night: counted each night, stopped after three, then the words point to the operator', async () => {
+    expect((await retypeWithHistory(ctx, card, 'credit', { until: 0 })).job).toMatchObject({ pending: true, stalled: true });
+    const slow = slowHistory(500);
+    const tries: number[] = [];
+    try {
+      for (let night = 1; night <= 4; night++) {
+        await quiet(() => finishSignJobs(ctx, { budgetMs: 400, nightly: true }));
+        tries.push(slow.mock.calls.length);
+        expect((await signJobStore.get(ctx, card))?.failures).toBe(Math.min(night, 3));
+      }
+    } finally {
+      slow.mockRestore();
+    }
+    // Read three nights, and not the fourth.
+    expect(tries).toEqual([1, 2, 3, 3]);
+    const job = (await signJobStore.get(ctx, card))!;
+    expect([job.kind, job.plan, job.error]).toEqual(['retype', undefined, 'Stalled']);
+    expect(pendingWords(job)).toBe(SIGN_JOB_STOPPED);
+  });
+
+  test('stuck, but with more than half the night gone before it is reached: that night isn’t counted', async () => {
+    expect((await retypeWithHistory(ctx, card, 'credit', { until: 0 })).job).toMatchObject({ pending: true, stalled: true });
+    const slow = slowHistory(500);
+    // Something before it takes 250 of the night's 400.
+    const get = signJobStore.get.bind(signJobStore);
+    let first = true;
+    const before = spyOn(signJobStore, 'get').mockImplementation(async (...args: Parameters<typeof get>) => {
+      if (first) {
+        first = false;
+        setSystemTime(new Date(Date.now() + 250));
+      }
+      return get(...args);
+    });
+    let read = 0;
+    try {
+      await quiet(() => finishSignJobs(ctx, { budgetMs: 400, nightly: true }));
+      read = slow.mock.calls.length;
+    } finally {
+      before.mockRestore();
+      slow.mockRestore();
+    }
+    // Tried, and out of time reading the history, as each night before.
+    expect(read).toBe(1);
+    const job = (await signJobStore.get(ctx, card))!;
+    expect([job.kind, job.plan, job.failures]).toEqual(['retype', undefined, undefined]);
   });
 });

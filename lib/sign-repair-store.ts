@@ -49,7 +49,8 @@ export type SignJob = {
   plan?: SignPlan;
   /** The days it left as they were, each with why nothing says how it was counted. */
   left?: [string, Why][];
-  /** Nights it failed (or turned nothing over, out of time: 'Stalled'), and
+  /** Nights in a row it failed (or turned nothing over, out of time:
+   *  'Stalled'; a run that gets through any of it sets them back), and
    *  the last failure's kind: past MAX_FAILED_NIGHTS
    *  the nightly job leaves it to the operator, whose dry run names it. */
   failures?: number;
