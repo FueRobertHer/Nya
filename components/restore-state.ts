@@ -475,9 +475,10 @@ export function turningLines(turning: readonly { name: string }[]): string[] {
 }
 
 /** What became of each of those accounts here (RestoredRepairView), as the
- *  card says it: under way, waiting for whoever runs Nya with the first days
- *  nothing tells, or not looked at yet. A list that couldn't be read is said
- *  once. */
+ *  card says it: under way, under way but stopped (the nightly job no longer
+ *  tries it, so whoever runs Nya has to finish it), waiting for whoever runs
+ *  Nya with the first days nothing tells, or not looked at yet. A list that
+ *  couldn't be read is said once. */
 export function signRepairLines(list: readonly RestoredRepairView[] | null | undefined): { text: string; warn: boolean }[] {
   if (list === undefined) return [];
   if (list === null) return [{ text: 'Whether the accounts your download was turning over to match their kind are done can’t be read right now.', warn: true }];
@@ -488,6 +489,10 @@ export function signRepairLines(list: readonly RestoredRepairView[] | null | und
         text: `${a.name}’s balance history was being turned over to match its kind in your other copy, and nothing says how it was counted on ${joinWords(days)}${a.days.length >= 10 ? ' and other days' : ''}: so nothing was turned over, and some of its earlier days may count the other way. Whoever runs your Nya can repair it, after looking at what it would change.`,
         warn: true,
       };
+    }
+    if (a.state === 'planned' && a.stopped) {
+      // As the download's note says of a job stopped (lib/sign-turning.ts).
+      return { text: `${a.name}’s balance history is being turned over to match its kind, as your other copy had begun, and Nya’s daily update has stopped trying, so whoever runs your Nya has to finish it.`, warn: true };
     }
     if (a.state === 'planned') return { text: `${a.name}’s balance history is being turned over to match its kind, as your other copy had begun: Nya’s next daily update finishes it.`, warn: false };
     return { text: `${a.name}’s balance history was being turned over to match its kind in your other copy: Nya looks at it with its next daily update.`, warn: false };
