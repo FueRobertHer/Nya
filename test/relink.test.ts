@@ -78,7 +78,7 @@ async function addItem(item_id: string, account_id: string, txns: any[], seenOn 
   plaidTxns[token] = txns;
   plaidAccounts[token] = [account(account_id)];
   await fake.hset(ctxKey('plaid:items'), {
-    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(token) }),
+    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token) }),
   });
   const inst = { item_id, institution_name: 'Chase', institution_id: 'ins_3', error: null, accounts: [{ ...account(account_id), balance: 100 }] };
   await rememberAccounts(ctx, [inst as any]);
@@ -93,6 +93,9 @@ const route = async (path: string, method: string, body?: unknown) => {
 };
 const categoryOf = async (name: string) =>
   (await route('transactions', 'GET')).body.transactions.find((t: any) => t.transaction_id === name)?.category;
+const excludedOf = async (name: string) =>
+  (await route('transactions', 'GET')).body.transactions.find((t: any) => t.transaction_id === name)?.excluded;
+const excludeRow = (transaction_id: string, excluded: boolean) => route('transaction-annotations', 'PATCH', { transaction_id, excluded });
 
 beforeEach(async () => {
   fake.reset();
@@ -159,6 +162,74 @@ describe('a re-link, end to end', () => {
     ]);
   });
 
+  test('exclusions carry across once linked, as categories do, and unlinking undoes it', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_b', 'acct_old', { date: daysAgo(5), amount: 6 })], Date.now() - DAY);
+    await route('transactions', 'GET');
+    expect((await excludeRow('t_a', true)).status).toBe(200);
+    expect(await excludedOf('t_a')).toBe(true);
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    // The old ids die with the Item, and so do their records: what carries is
+    // kept by content, encrypted, under the earlier account.
+    expect(await fake.hgetall(ctxKey('transaction-annotations'))).toBeNull();
+    expect(await fake.hget(ctxKey('carried-annotations'), 'acct_old')).not.toBeNull();
+    await readd();
+
+    // Not the same account until the person says so.
+    expect(await excludedOf('n_a')).toBeUndefined();
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' })).status).toBe(200);
+    expect(await excludedOf('n_a')).toBe(true);
+    expect(await excludedOf('n_b')).toBeUndefined(); // never excluded
+
+    await route('account-links', 'DELETE', { old: 'acct_old' });
+    expect(await excludedOf('n_a')).toBeUndefined();
+  });
+
+  test('a disconnect that fails part way keeps every exclusion the Item had; the next one prunes them once it is gone', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    // The carry is recorded, then removing the Item fails.
+    fake.failNext('hdel');
+    const quiet = console.error;
+    console.error = () => {};
+    try {
+      expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(500);
+    } finally {
+      console.error = quiet;
+    }
+    expect(await fake.hget(ctxKey('plaid:items'), 'item_old')).not.toBeNull();
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_a')).not.toBeNull();
+    expect(await excludedOf('t_a')).toBe(true);
+    // Disconnected for good: pruned after the Item went, the carry recorded once.
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    expect(await fake.hgetall(ctxKey('transaction-annotations'))).toBeNull();
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBe(true);
+  });
+
+  test('what the person says on the new row itself wins over a carried exclusion', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    await route('disconnect', 'POST', { item_id: 'item_old' });
+    await readd();
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBe(true);
+    expect((await excludeRow('n_a', false)).body).toEqual({ transaction_id: 'n_a', excluded: false, tags: [], untagged: [], note: null });
+    expect(await excludedOf('n_a')).toBeUndefined();
+  });
+
+  test('identical rows excluded one way and not the other carry nothing, rather than guess', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_a2', 'acct_old')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    await excludeRow('t_a', true);
+    await route('disconnect', 'POST', { item_id: 'item_old' });
+    await addItem('item_new', 'acct_new', [row('n_a', 'acct_new')]);
+    await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' });
+    expect(await excludedOf('n_a')).toBeUndefined();
+  });
+
   test('a category set on the new row itself wins over a carried one', async () => {
     await before();
     await route('disconnect', 'POST', { item_id: 'item_old' });
@@ -223,6 +294,25 @@ describe('a re-link, end to end', () => {
     }
     expect(await fake.hget(ctxKey('plaid:items'), 'item_old')).toBeNull();
     expect(removed).toEqual(['token-item_old']);
+  });
+
+  test('a split and a group don’t carry across (#39): the disconnect takes them with it, and the re-added transactions show whole once linked', async () => {
+    await addItem('item_old', 'acct_old', [row('t_a', 'acct_old'), row('t_b', 'acct_old', { date: daysAgo(5), amount: 6 }), row('t_c', 'acct_old', { date: daysAgo(4), amount: -2 })], Date.now() - DAY);
+    await route('transactions', 'GET');
+    const categories = (await route('categories', 'GET')).body.categories;
+    const id = (name: string) => categories.categories.find((c: any) => c.name === name).id;
+    expect((await route('transaction-splits', 'PUT', { transaction_id: 't_a', parts: [{ amount: 3, category_id: id('food and drink') }, { amount: 1.5, category_id: id('travel') }] })).status).toBe(200);
+    expect((await route('transaction-groups', 'POST', { name: 'Coffee, paid back', category_id: id('food and drink'), members: ['t_b', 't_c'] })).status).toBe(200);
+    expect((await route('transactions', 'GET')).body.transactions.filter((t: any) => t.split_of || t.group_members)).toHaveLength(3);
+
+    expect((await route('disconnect', 'POST', { item_id: 'item_old' })).status).toBe(200);
+    expect(await fake.hgetall(ctxKey('transaction-splits'))).toBeNull();
+    expect(await fake.hgetall(ctxKey('transaction-groups'))).toBeNull();
+
+    await addItem('item_new', 'acct_new', [row('n_a', 'acct_new'), row('n_b', 'acct_new', { date: daysAgo(5), amount: 6 }), row('n_c', 'acct_new', { date: daysAgo(4), amount: -2 })]);
+    expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_new' })).status).toBe(200);
+    const rows = (await route('transactions', 'GET')).body.transactions;
+    expect(rows.map((t: any) => t.transaction_id).sort()).toEqual(['n_a', 'n_b', 'n_c']);
   });
 });
 
@@ -330,11 +420,11 @@ describe('carry-over edge cases', () => {
 });
 
 describe('forgetting an earlier account', () => {
-  const enc = async (m: unknown) => encrypt(JSON.stringify(m));
+  const enc = async (m: unknown) => encrypt(TEST_CTX, JSON.stringify(m));
   const layers = ['history:accounts', 'history:accounts:est', 'history:accounts:est:ext', 'history:accounts:partial', 'history:accounts:est:flatd'];
   const readMap = async (key: string, date: string) => {
     const { decrypt } = await import('@/lib/crypto');
-    return JSON.parse(await decrypt((await fake.hget<string>(ctxKey(key), date))!));
+    return JSON.parse(await decrypt(TEST_CTX, (await fake.hget<string>(ctxKey(key), date))!));
   };
   const forget = (old: string) => route('account-links', 'POST', { action: 'forget', old });
 
@@ -344,11 +434,12 @@ describe('forgetting an earlier account', () => {
     await addItem('item_old', 'acct_old', [row('t_a', 'acct_old')], Date.now() - DAY);
     await route('transactions', 'GET');
     await route('recategorize', 'POST', { transaction_id: 't_a', category: 'treats' });
+    await route('transaction-annotations', 'PATCH', { transaction_id: 't_a', excluded: true });
     await route('disconnect', 'POST', { item_id: 'item_old' });
     await addItem('item_new', 'acct_other', []);
     for (const key of layers) await fake.hset(ctxKey(key), { '2026-01-01': await enc({ acct_old: 100, acct_other: 5 }) });
     await fake.set(ctxKey('history:accounts:est:flat'), await enc({ acct_old: 7, acct_other: 1 }));
-    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('105') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '105') });
     await links.dismissPair(ctx, 'acct_old', 'acct_other');
   };
 
@@ -363,15 +454,58 @@ describe('forgetting an earlier account', () => {
     expect((await forget('acct_old')).body).toEqual({ forgotten: true, unreadable_days: 0 });
     for (const key of layers) expect(await readMap(key, '2026-01-01')).toEqual({ acct_other: 5 });
     const { decrypt } = await import('@/lib/crypto');
-    expect(JSON.parse(await decrypt((await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
+    expect(JSON.parse(await decrypt(TEST_CTX, (await fake.get<string>(ctxKey('history:accounts:est:flat')))!))).toEqual({ acct_other: 1 });
     expect(await fake.hget(ctxKey('accounts:directory'), 'acct_old')).toBeNull();
     expect(await fake.hget(ctxKey('txn-category-carry'), 'acct_old')).toBeNull();
+    expect(await fake.hget(ctxKey('carried-annotations'), 'acct_old')).toBeNull();
     expect(await fake.hgetall(ctxKey('account-links:dismissed'))).toBeNull();
     expect(await fake.hget(ctxKey('accounts:meta'), 'item_old')).toBeNull();
     expect(await fake.hget(ctxKey('accounts:meta'), 'item_new')).not.toBeNull();
     expect(await fake.hget<string>(ctxKey('history:net-worth'), '2026-01-01')).toBe(totalBefore!);
     expect(await fake.get(ctxKey('account-links:lock'))).toBeNull(); // released
     expect((await route('account-links', 'GET')).body.earlier).toEqual([]);
+  });
+
+  // A disconnect whose cleanup failed leaves behind what was said about its
+  // transactions; a forget finishes it, for exclusions as for categories.
+  test('prunes what was said about transactions no stored Item holds, as it prunes their categories', async () => {
+    await setup();
+    const { setExcluded } = await import('@/lib/txn-annotations');
+    await overrides.setOverride(ctx, 't_left', 'treats');
+    await setExcluded(ctx, 't_left', true);
+    expect((await forget('acct_old')).status).toBe(200);
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_left')).toBeNull();
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_left')).toBeNull();
+  });
+
+  // Linking a bank takes no lock. One linked while a forget runs, with a row
+  // excluded and recategorized meanwhile, keeps both: the prunes at the end
+  // read the Items then, never the list read when the forget started.
+  test('a bank linked while it runs keeps what was said about its transactions', async () => {
+    await setup();
+    const hdel = fake.hdel.bind(fake);
+    let linked = false;
+    fake.hdel = (async (key: string, ...fields: string[]) => {
+      // Just before the directory entry goes: the last step before the prunes.
+      if (!linked && key === ctxKey('accounts:directory') && fields.includes('acct_old')) {
+        linked = true;
+        await addItem('item_late', 'acct_late', [row('t_late', 'acct_late')]);
+        await route('transactions', 'GET');
+        expect((await excludeRow('t_late', true)).status).toBe(200);
+        expect((await route('recategorize', 'POST', { transaction_id: 't_late', category: 'treats' })).status).toBe(200);
+      }
+      return hdel(key, ...fields);
+    }) as typeof fake.hdel;
+    try {
+      expect((await forget('acct_old')).status).toBe(200);
+    } finally {
+      fake.hdel = hdel;
+    }
+    expect(linked).toBe(true);
+    expect(await fake.hget(ctxKey('transaction-annotations'), 't_late')).not.toBeNull();
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 't_late')).not.toBeNull();
+    expect(await excludedOf('t_late')).toBe(true);
+    expect(await categoryOf('t_late')).toBe('treats');
   });
 
   // The bank stopped returning a card, but the institution is still
@@ -417,14 +551,14 @@ describe('forgetting an earlier account', () => {
     return getHistory(ctx, (await links.getEffectiveHidden(ctx)).hidden);
   };
   const withEstimated = async () => {
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt('50') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-01': await encrypt(TEST_CTX, '50') });
     await fake.hset(ctxKey('history:accounts:est'), { '2025-12-01': await enc({ acct_old: 40, acct_other: 10 }) });
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-01': await enc({}) });
   };
   const storedTotal = async (key: string, date: string) => {
     const { decrypt } = await import('@/lib/crypto');
     const blob = await fake.hget<string>(ctxKey(key), date);
-    return blob ? Number(await decrypt(blob)) : null;
+    return blob ? Number(await decrypt(TEST_CTX, blob)) : null;
   };
   const leftovers = async () => {
     const keys = [...(fake as any).strings.keys(), ...(fake as any).hashes.keys()] as string[];
@@ -501,7 +635,7 @@ describe('forgetting an earlier account', () => {
   // folded before the stop keeps its place on the chart, and isn't redone.
   test('a retry skips the points already folded', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt('40') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-12-15': await encrypt(TEST_CTX, '40') });
     await fake.hset(ctxKey('history:accounts:est:flatd'), { '2025-12-15': await enc({ acct_old: 40 }) });
     await withEstimated();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
@@ -548,7 +682,7 @@ describe('forgetting an earlier account', () => {
   // per date first, so each can be folded on its own.
   test('points that read the old single flat record are folded too', async () => {
     await setup(); // the legacy record holds acct_old: 7
-    await fake.hset(ctxKey('history:net-worth:est'), { '2025-11-01': await encrypt('20') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2025-11-01': await encrypt(TEST_CTX, '20') });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const before = await series();
     expect(before.find((p) => p.date === '2025-11-01')!.value).toBe(13);
@@ -562,9 +696,9 @@ describe('forgetting an earlier account', () => {
   // deleted within the account's life, kept outside it, where it can't be.
   test('a point dropped while hidden is deleted within its life, and kept outside it', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt('999'), '2025-06-01': await encrypt('77') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-02-01': await encrypt(TEST_CTX, '999'), '2025-06-01': await encrypt(TEST_CTX, '77') });
     // An estimate the real point hid: it can't show once the real one goes.
-    await fake.hset(ctxKey('history:net-worth:est'), { '2026-02-01': await encrypt('888') });
+    await fake.hset(ctxKey('history:net-worth:est'), { '2026-02-01': await encrypt(TEST_CTX, '888') });
     await fake.hset(ctxKey('history:accounts:est'), { '2026-02-01': await enc({ acct_other: 888 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const dates = (h: { date: string }[]) => h.map((p) => p.date);
@@ -581,7 +715,7 @@ describe('forgetting an earlier account', () => {
   test('today recorded again after a forget is right', async () => {
     await setup();
     const today = new Date().toISOString().slice(0, 10);
-    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt('105') });
+    await fake.hset(ctxKey('history:net-worth'), { [today]: await encrypt(TEST_CTX, '105') });
     await fake.hset(ctxKey('history:accounts'), { [today]: await enc({ acct_old: 100, acct_other: 5 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await forget('acct_old');
@@ -594,7 +728,7 @@ describe('forgetting an earlier account', () => {
   test('two forgotten hidden accounts on one day are both folded out', async () => {
     await setup();
     await fake.hset(ctxKey('history:accounts'), { '2026-01-01': await enc({ acct_old: 100, acct_two: 30, acct_other: 5 }) });
-    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt('135') });
+    await fake.hset(ctxKey('history:net-worth'), { '2026-01-01': await encrypt(TEST_CTX, '135') });
     await links.recordDirectory(ctx, [{ item_id: 'item_two', institution_name: 'Ally', institution_id: 'ins_9', error: null, accounts: [{ ...account('acct_two'), mask: '2222' }] } as any], Date.now() - DAY);
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await setAccountHidden(ctx, 'acct_two', 'depository', true);
@@ -614,7 +748,7 @@ describe('forgetting an earlier account', () => {
     await setup();
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     await fake.hset(ctxKey('history:accounts'), { '2025-12-30': 'v2.k99-00000000.-.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' });
-    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt('7') });
+    await fake.hset(ctxKey('history:net-worth'), { '2025-12-30': await encrypt(TEST_CTX, '7') });
     expect((await forget('acct_old')).status).toBe(500);
     expect(await storedTotal('history:net-worth', '2026-01-01')).toBe(105);
   });
@@ -703,7 +837,7 @@ describe('forgetting an earlier account', () => {
   // stop must still count toward it, or a day inside it reads as outside.
   test('a retry sees the same life, so a day it can’t tell inside it is still deleted', async () => {
     await setup();
-    await fake.hset(ctxKey('history:net-worth'), { '2025-10-01': await encrypt('11'), '2025-10-15': await encrypt('99') });
+    await fake.hset(ctxKey('history:net-worth'), { '2025-10-01': await encrypt(TEST_CTX, '11'), '2025-10-15': await encrypt(TEST_CTX, '99') });
     await fake.hset(ctxKey('history:accounts'), { '2025-10-01': await enc({ acct_old: 10, acct_other: 1 }) });
     await setAccountHidden(ctx, 'acct_old', 'depository', true);
     const evalOrig = fake.eval.bind(fake);
@@ -798,7 +932,7 @@ describe('forgetting an earlier account', () => {
     // The other side of a link, too.
     await setAccountHidden(ctx, 'acct_other', 'depository', true);
     await markForgetting(ctx, 'acct_other', (await getHiddenAccounts(ctx)).get('acct_other')!, 'tag-2');
-    await fake.hset(ctxKey('hidden:accounts'), { acct_old: await encrypt(JSON.stringify({ type: 'depository', hidden_at: 'x' })) });
+    await fake.hset(ctxKey('hidden:accounts'), { acct_old: await encrypt(TEST_CTX, JSON.stringify({ type: 'depository', hidden_at: 'x' })) });
     expect((await route('account-links', 'POST', { action: 'link', old: 'acct_old', to: 'acct_other' })).status).toBe(409);
   });
 
@@ -889,9 +1023,9 @@ describe('forgetting an earlier account', () => {
     const oldBlob = (await fake.hget<string>(ctxKey('history:accounts'), '2026-01-01'))!;
     const hiddenOther = (await links.getEffectiveHidden(ctx)).hidden;
     expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
-    expect(isDecryptedCached(oldBlob)).toBe(true);
+    expect(isDecryptedCached(TEST_CTX, oldBlob)).toBe(true);
     await forget('acct_old');
-    expect(isDecryptedCached(oldBlob)).toBe(false);
+    expect(isDecryptedCached(TEST_CTX, oldBlob)).toBe(false);
     expect((await getHistory(ctx, hiddenOther)).find((p) => p.date === '2026-01-01')!.value).toBe(100);
     const { getAccountHistory } = await import('@/lib/history');
     expect(await getAccountHistory(ctx, 'acct_old', [])).toEqual([]);
@@ -901,9 +1035,9 @@ describe('forgetting an earlier account', () => {
 describe('the decrypted-map cache', () => {
   test('keeps what was used most recently within its byte budget', async () => {
     const { getHistory, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
-    const enc = async (m: unknown) => encrypt(JSON.stringify(m));
+    const enc = async (m: unknown) => encrypt(TEST_CTX, JSON.stringify(m));
     for (const d of ['2026-01-01', '2026-01-02', '2026-01-03']) {
-      await fake.hset(ctxKey('history:net-worth'), { [d]: await encrypt('10') });
+      await fake.hset(ctxKey('history:net-worth'), { [d]: await encrypt(TEST_CTX, '10') });
       await fake.hset(ctxKey('history:accounts'), { [d]: await enc({ a: 1, [d]: 1 }) });
     }
     const blob = async (d: string) => (await fake.hget<string>(ctxKey('history:accounts'), d))!;
@@ -912,7 +1046,7 @@ describe('the decrypted-map cache', () => {
     try {
       const hidden = new Map([['a', { type: 'depository', hidden_at: 'x' }]]);
       await getHistory(ctx, hidden);
-      const cached = await Promise.all(['2026-01-01', '2026-01-02', '2026-01-03'].map(async (d) => isDecryptedCached(await blob(d))));
+      const cached = await Promise.all(['2026-01-01', '2026-01-02', '2026-01-03'].map(async (d) => isDecryptedCached(TEST_CTX, await blob(d))));
       expect(cached.filter(Boolean).length).toBe(2);
     } finally {
       setDecryptedBudget(16 * 1024 * 1024);
@@ -923,14 +1057,14 @@ describe('the decrypted-map cache', () => {
 describe('the decrypted-map cache order', () => {
   test('a map used again is kept over one used longer ago', async () => {
     const { decryptMapForTest, isDecryptedCached, setDecryptedBudget } = await import('@/lib/history');
-    const [a, b, c] = await Promise.all([1, 2, 3].map((n) => encrypt(JSON.stringify({ x: n }))));
+    const [a, b, c] = await Promise.all([1, 2, 3].map((n) => encrypt(TEST_CTX, JSON.stringify({ x: n }))));
     setDecryptedBudget(a.length * 6 * 2 + 10); // room for two
     try {
-      await decryptMapForTest(a);
-      await decryptMapForTest(b);
-      await decryptMapForTest(a); // used again
-      await decryptMapForTest(c);
-      expect([isDecryptedCached(a), isDecryptedCached(b), isDecryptedCached(c)]).toEqual([true, false, true]);
+      await decryptMapForTest(TEST_CTX, a);
+      await decryptMapForTest(TEST_CTX, b);
+      await decryptMapForTest(TEST_CTX, a); // used again
+      await decryptMapForTest(TEST_CTX, c);
+      expect([isDecryptedCached(TEST_CTX, a), isDecryptedCached(TEST_CTX, b), isDecryptedCached(TEST_CTX, c)]).toEqual([true, false, true]);
     } finally {
       setDecryptedBudget(16 * 1024 * 1024);
     }
@@ -1007,6 +1141,8 @@ describe('overrides on rows not yet stored', () => {
   test('a category set while a prune runs is kept', async () => {
     await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
     await route('transactions', 'GET');
+    // With none, there is nothing to check, and no store is read.
+    await overrides.setOverride(ctx, 'a1', 'coffee');
     const get = fake.get.bind(fake);
     let once = true;
     fake.get = (async (key: string) => {
@@ -1017,11 +1153,38 @@ describe('overrides on rows not yet stored', () => {
       return get(key);
     }) as typeof fake.get;
     try {
-      await overrides.pruneOrphanOverrides(ctx, ['item_a']);
+      await overrides.pruneOrphanOverrides(ctx);
     } finally {
       fake.get = get;
     }
+    expect(once).toBe(false);
     expect(await fake.hget(ctxKey('txn-category-overrides'), 'just_now')).not.toBeNull();
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'a1')).not.toBeNull();
+  });
+
+  // Linking takes no lock: the Items are read after the categories, so a
+  // bank linked meanwhile, and a row of it categorized, are among them.
+  test('a bank linked while a prune runs keeps its categories', async () => {
+    await addItem('item_a', 'acct_a', [row('a1', 'acct_a')], Date.now() - DAY);
+    await route('transactions', 'GET');
+    const hkeys = fake.hkeys.bind(fake);
+    let once = true;
+    fake.hkeys = (async (key: string) => {
+      if (once && key === ctxKey('txn-category-overrides')) {
+        once = false;
+        await addItem('item_b', 'acct_b', [row('b1', 'acct_b')]);
+        await route('transactions', 'GET');
+        await overrides.setOverride(ctx, 'b1', 'treats');
+      }
+      return hkeys(key);
+    }) as typeof fake.hkeys;
+    try {
+      await overrides.pruneOrphanOverrides(ctx);
+    } finally {
+      fake.hkeys = hkeys;
+    }
+    expect(once).toBe(false);
+    expect(await fake.hget(ctxKey('txn-category-overrides'), 'b1')).not.toBeNull();
   });
 });
 

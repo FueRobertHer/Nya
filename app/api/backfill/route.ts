@@ -6,7 +6,7 @@ import { decrypt } from '@/lib/crypto';
 import { getItems } from '@/lib/storage';
 import { readItemTransactions, LOOKBACK_DAYS } from '@/lib/transactions';
 import { syncInvestments } from '@/lib/invstore';
-import { getManualAccounts } from '@/lib/manual';
+import { getKeptAccounts } from '@/lib/kept-accounts';
 import { isInvestmentType, signedContribution } from '@/lib/balance';
 import { addInvestmentFlows, isoDaysAgo, loadItemInvestments, reconstruct, type WalkType } from '@/lib/backfill';
 import {
@@ -21,6 +21,14 @@ import {
   markBackfillDone,
 } from '@/lib/history';
 import { clearCaches } from '@/lib/cache';
+import { loggable } from '@/lib/log-safe';
+import { classifyFailure, CAUSES } from '@/lib/connection-state';
+import { drawImportedHistory, drawIsStale, importedFlowsForBackfill, rowsUnchangedSince, rowsVersion, yieldToBackfill } from '@/lib/history-import/extend';
+import { liveAccountIds } from '@/lib/links';
+import { holdsTotals, totalsHold } from '@/lib/user-restore/restored';
+
+/** The calendar day after `day`. */
+const dayAfter = (day: string) => new Date(Date.parse(`${day}T00:00:00Z`) + 86_400_000).toISOString().slice(0, 10);
 
 // Reconstructs up to a year of ESTIMATED history from transaction data, the same
 // trick Monarch/Copilot use. Plaid has no historical balances, but it has
@@ -42,7 +50,25 @@ import { clearCaches } from '@/lib/cache';
 //                        zero rather than dropped (see reconstruct in
 //                        lib/backfill.ts).
 //   loans / manual       Flat at today's value: amortization isn't in the
-//                        transaction stream and typed balances have no stream.
+//                        transaction stream and typed balances have no stream
+//                        (rows entered by hand need not add up to one).
+//   depository / credit  Flat too, on an Item with no Transactions at all (one
+//   without a stream     linked as a brokerage, see lib/item-products.ts): there
+//                        is nothing to walk. It still counts as a cash account
+//                        for where the total series may stop (below).
+//
+// An Item with no Transactions is not a reason to wait: readItemTransactions
+// answers it with no rows and no note, and its investment accounts are walked
+// from their own flows like any other.
+//
+// Transactions imported into a bank account or card from its bank's files
+// (#52, lib/history-import/) are walked with the bank's, where they count (no
+// bank row stands for them) and fall in the window: a card whose bank gives
+// Plaid 90 days, beside a bank that gives a year, is walked through its
+// imported rows rather than held at its balance on its first row. What is
+// before the window is drawn from the earliest point back, afterwards
+// (lib/history-import/extend.ts). A run during which the imported rows
+// changed isn't recorded as done, so the next load runs it again.
 //
 // Plaid's sign convention: a positive amount is money leaving the account. For
 // the net-worth total every transaction's effect is exactly -amount for both
@@ -76,10 +102,83 @@ async function settleDoneFlag(ctx: Ctx, invPending: boolean): Promise<boolean> {
   return false;
 }
 
+/**
+ * The estimated history drawn back through transactions imported into linked
+ * accounts (#52, lib/history-import/extend.ts), when it is marked to draw:
+ * after an import or an undo, a link or a forget, and after every run here,
+ * whose earliest point it joins. Only once the backfill is done (it waits
+ * otherwise). Answers how many points it wrote. Never fails the run: a
+ * drawing that fails stays marked, and a later load draws it.
+ */
+async function drawIfMarked(ctx: Ctx): Promise<number> {
+  try {
+    if (!(await drawIsStale(ctx))) return 0;
+    return (await drawImportedHistory(ctx)).points;
+  } catch (err) {
+    console.error('Backfill: the history drawn from imports was not drawn', loggable(err));
+    return 0;
+  }
+}
+
+/**
+ * A balance read that failed for now (see balancesFailure): Plaid gave no
+ * answer, or Plaid or the bank is failing, which a later load tries again.
+ * Every estimate starts from every institution's balance today, so the run
+ * stops, saves nothing and is not marked done: answered 503, in words that
+ * name the institution for the person (the log gets only the call's code and
+ * endpoint, loggable).
+ */
+class BalancesUnavailable extends Error {
+  constructor(
+    message: string,
+    readonly cause: unknown
+  ) {
+    super(message);
+    this.name = 'BalancesUnavailable';
+  }
+}
+
+/**
+ * A balance read that failed because the person has to act on the connection
+ * first (reconnect it, or remove it), which no retry fixes. The run stops as
+ * above, and is skipped, as it is when the transactions read finds a
+ * connection in that state, with the same answer and nothing more: nothing
+ * shows a backfill's answer (the dashboard asks for one and only reloads when
+ * history was built), and the Connection health card already says what the
+ * connection needs and why, so no message is made for it here.
+ */
+class NeedsTheirAction extends Error {
+  constructor() {
+    super();
+    this.name = 'NeedsTheirAction';
+  }
+}
+
+/** A failed balance call, by the mapping the dashboard uses
+ *  (lib/connection-state.ts): BalancesUnavailable or NeedsTheirAction, or the
+ *  error itself when the fault is on Nya's side (its Plaid keys or settings,
+ *  or a stored token Plaid doesn't accept), which neither a retry nor the
+ *  person can fix, for the route's logged 500. */
+function balancesFailure(institution: string, err: any): unknown {
+  const data = err?.response?.data;
+  const { cause, side, code } = classifyFailure({ code: data?.error_code, type: data?.error_type, responded: err?.response !== undefined });
+  if (side === 'nya') return err;
+  // What the health view waits out is waited out here too; the rest is the
+  // person's to act on.
+  if (CAUSES[cause].action !== 'wait') return new NeedsTheirAction();
+  const named = code ? ` (${code})` : '';
+  const why = cause === 'unreachable' ? `Plaid couldn't be reached for ${institution}'s balances` : `Plaid couldn't give ${institution}'s balances${named}`;
+  return new BalancesUnavailable(`${why}, so no estimated history was saved. It is tried again on a later load.`, err);
+}
+
 export async function POST() {
   try {
     const ctx = await dataCtx();
     if (await isBackfillDone(ctx)) {
+      // The backfill's own points are built; history from imports may still
+      // be marked to draw (an import, an undo, a link since).
+      const drawn = await drawIfMarked(ctx);
+      if (drawn > 0) return NextResponse.json({ backfilled: drawn, from_imports: drawn });
       return NextResponse.json({ skipped: true, reason: 'already backfilled' });
     }
 
@@ -87,6 +186,16 @@ export async function POST() {
     if (items.length === 0) {
       return NextResponse.json({ skipped: true, reason: 'no linked institutions' });
     }
+    // Held while a restore is being written or undone, or a bank it brought
+    // back waits to be linked or stopped (lib/user-restore/restored.ts): every
+    // estimated day would be short by that bank. Not done, so a later load
+    // runs it once the hold lifts. And never over the balance history it
+    // brought back (`floor`), which is the old copy's own.
+    const hold = await totalsHold(ctx, () => liveAccountIds(ctx, { strict: true, readOnly: true }));
+    if (holdsTotals(hold)) return NextResponse.json({ skipped: true, reason: 'restore waiting' });
+    const floor = hold.history_last;
+    // Which imported rows this run walks, as of now (see the header).
+    const rowsSeen = await rowsVersion(ctx);
 
     // Fetch every institution's balances + transactions concurrently.
     // Transactions come from the shared cursor-based store (lib/transactions), so
@@ -94,12 +203,20 @@ export async function POST() {
     // the Promise.all and aborts in the catch without marking done; a transaction
     // read that isn't clean comes back as a `note` (handled below). Either way a
     // partial reconstruction is never persisted, and the next attempt retries.
+    // A balance read Plaid didn't answer says why (balancesFailure).
     const perItem = await Promise.all(
       items.map(async (item) => {
-        const access_token = await decrypt(item.encrypted_access_token);
+        const access_token = await decrypt(ctx, item.encrypted_access_token);
         // Stored balances, not the billed live balance call: see lib/networth.ts.
-        const bal = await plaidClient.accountsGet({ access_token });
-        const { txns, note } = await readItemTransactions(ctx, item, LOOKBACK_DAYS);
+        let bal: Awaited<ReturnType<typeof plaidClient.accountsGet>>;
+        try {
+          bal = await plaidClient.accountsGet({ access_token });
+        } catch (err) {
+          throw balancesFailure(item.institution_name, err);
+        }
+        // The accounts just fetched decide whether an Item Plaid doesn't bill
+        // Transactions on is worth a first call (lib/item-products.ts).
+        const { txns, note, hasTransactions } = await readItemTransactions(ctx, item, LOOKBACK_DAYS, bal.data.accounts);
 
         // Investment activity, only where there's an investment account to
         // explain, and only as a bonus: its failure is NOT a `note`. Most Items
@@ -126,6 +243,7 @@ export async function POST() {
           accounts: bal.data.accounts,
           txns,
           note,
+          hasTransactions,
           invTxns: inv?.walkRows ?? [],
           invCoveredIds: inv?.coveredIds ?? new Set<string>(),
           invPending: inv?.pending ?? false,
@@ -142,6 +260,7 @@ export async function POST() {
     let totalNow = 0; // current net worth across all accounts
     const walkType: Record<string, WalkType> = {}; // reconstructable
     const cashIds = new Set<string>(); // depository/credit only -- see the txn loop below
+    const cashCurrency = new Map<string, string | null>(); // each one's currency, for its imported rows
     const balances: Record<string, number> = {}; // running raw balances for the walk
     const dailyByAccount: Record<string, Record<string, number>> = {}; // date -> account -> txn sum
     let oldestTxn: string | null = null;
@@ -154,13 +273,24 @@ export async function POST() {
     // unset, the client's next load recomputes.
     const invPending = perItem.some((p) => p.invPending);
 
-    for (const { accounts, txns, invTxns, invCoveredIds } of perItem) {
+    // Whether some cash account had no stream to walk (an Item with no
+    // Transactions): held flat, and never given a series of its own, since an
+    // empty stream would read as a balance that didn't move.
+    let streamlessCash = false;
+
+    for (const { accounts, txns, hasTransactions, invTxns, invCoveredIds } of perItem) {
       for (const a of accounts) {
         const current = a.balances.current ?? 0;
         totalNow += signedContribution(a.type, current);
         if (a.type === 'depository' || a.type === 'credit') {
+          // Not walked, so it falls into the flat-held `rest` below.
+          if (!hasTransactions) {
+            streamlessCash = true;
+            continue;
+          }
           walkType[a.account_id] = a.type;
           cashIds.add(a.account_id);
+          cashCurrency.set(a.account_id, a.balances.iso_currency_code ?? a.balances.unofficial_currency_code ?? null);
           balances[a.account_id] = current;
         } else if (isInvestmentType(a.type) && invCoveredIds.has(a.account_id)) {
           walkType[a.account_id] = 'investment';
@@ -187,6 +317,18 @@ export async function POST() {
       if (oldestHere && (!oldestInvTxn || oldestHere < oldestInvTxn)) oldestInvTxn = oldestHere;
     }
 
+    // The imported rows that count, of the cash accounts walked, in the window
+    // (see the header). An account whose imported rows can't be read is
+    // walked without them; the drawing from imports then waits, and says why.
+    if (cashIds.size > 0) {
+      const imported = await importedFlowsForBackfill(ctx, { items, walked: cashCurrency, since: isoDaysAgo(LOOKBACK_DAYS), today: isoDaysAgo(0) });
+      for (const f of imported.flows) {
+        const day = (dailyByAccount[f.date] ??= {});
+        day[f.account_id] = (day[f.account_id] ?? 0) + f.amount;
+      }
+      if (imported.unreadable.length > 0) console.error('Backfill: transactions imported into some accounts could not be read, and were not walked');
+    }
+
     // A brokerage-only user has no cash balances to freeze past their data, so
     // their investment history is the whole series, totals included.
     //
@@ -194,12 +336,15 @@ export async function POST() {
     // account with no activity all year also leaves oldestTxn null, and walking
     // a real cash balance past its horizon would freeze it. That case gets today
     // as its cash horizon: no total points, but the investment accounts still get
-    // their own series.
-    if (!oldestTxn && cashIds.size === 0) oldestTxn = oldestInvTxn;
+    // their own series. So does a cash account with no stream at all, for the
+    // same reason: its past balance is just as unknown.
+    if (!oldestTxn && cashIds.size === 0 && !streamlessCash) oldestTxn = oldestInvTxn;
     else if (!oldestTxn && oldestInvTxn) oldestTxn = isoDaysAgo(0);
 
-    // Manual accounts have no transactions, so they can't be walked backward, but
-    // they must land in totalNow or every estimated point would sit short by
+    // Manual accounts can't be walked backward: their balances are typed, and
+    // the transactions entered on them (lib/manual-txns.ts) needn't add up to
+    // what was typed, so they are never read here. But they must land in
+    // totalNow or every estimated point would sit short by
     // their whole total, with a visible step at the estimated/real seam. Never
     // entering cashType, they fall into the flat-held `rest` below (as
     // investments and loans do), so today's manual balance applies retroactively
@@ -207,17 +352,22 @@ export async function POST() {
     // Read once and reused: two reads could disagree, and an account created
     // between them would land in the flat record without being in totalNow, so
     // hiding it later would subtract a contribution these points never contained.
-    const manualAccounts = await getManualAccounts(ctx);
+    // The accounts SimpleFIN feeds are held flat the same way (lib/kept-accounts.ts):
+    // their transactions are the bank's, but walking a balance back through them
+    // is left for when their history is known to be complete.
+    const manualAccounts = await getKeptAccounts(ctx);
     for (const a of manualAccounts) {
       totalNow += signedContribution(a.type, a.balance);
     }
 
     if (!oldestTxn) {
-      await settleDoneFlag(ctx, invPending);
+      if (await rowsUnchangedSince(ctx, rowsSeen)) await settleDoneFlag(ctx, invPending);
+      // Imported history may still reach back from the earliest point there is.
+      const drawn = await drawIfMarked(ctx);
       // Clears the cached payload too, or its `backfill_stale: true` would
       // outlive the flag and re-POST this route on every load for the TTL.
       await clearCaches(ctx);
-      return NextResponse.json({ backfilled: 0, reason: 'no transaction history' });
+      return NextResponse.json({ backfilled: drawn, reason: 'no transaction history', ...(drawn > 0 ? { from_imports: drawn } : {}) });
     }
 
     // Everything not being walked is held flat at today's value.
@@ -259,12 +409,14 @@ export async function POST() {
       lookbackDays: LOOKBACK_DAYS,
     });
 
-    // Real snapshots always win -- never overwrite one with an estimate.
+    // Real snapshots always win -- never overwrite one with an estimate. Nor
+    // does it estimate over the balance history a restore brought back.
     const realDates = await getRealSnapshotDates(ctx);
+    const ours = (date: string) => !realDates.has(date) && (floor === null || date > floor);
     const estimatedTotals = totalPoints
-      .filter((p) => !realDates.has(p.date))
+      .filter((p) => ours(p.date))
       .map((p) => ({ date: p.date, value: p.walked + rest }));
-    const estimatedAccounts = accountPoints.filter((p) => !realDates.has(p.date));
+    const estimatedAccounts = accountPoints.filter((p) => ours(p.date));
 
     // An institution disconnected while this ran (the Plaid pulls are slow) may
     // have had an account forgotten since, and writing its balances back would
@@ -273,6 +425,13 @@ export async function POST() {
     if (items.some((i) => !stillConnected.has(i.item_id))) {
       return NextResponse.json({ skipped: true, reason: 'institutions changed' });
     }
+
+    // Every estimate from this run's oldest point on is this run's own: history
+    // drawn from imports there (lib/history-import/extend.ts) stops claiming
+    // those days, and is drawn again from the new earliest point once the run
+    // is done. Before the writes, so a drawing can't take them for its own.
+    const baseFrom = [...estimatedTotals, ...estimatedAccounts.filter((p) => p.date >= oldestTxn)].reduce<string | null>((min, p) => (!min || p.date < min ? p.date : min), null);
+    await yieldToBackfill(ctx, baseFrom);
 
     // Breakdowns before totals (the order recordSnapshot keeps, for the same
     // reason): a forget of a hidden account reading between the writes must see
@@ -286,18 +445,23 @@ export async function POST() {
     await replaceEstimatedAccounts(ctx, estimatedAccounts.filter((p) => p.date >= oldestTxn));
     await replaceEstimatedExtension(ctx, 
       estimatedAccounts.filter((p) => p.date < oldestTxn),
-      oldestTxn
+      floor !== null && oldestTxn <= floor ? dayAfter(floor) : oldestTxn
     );
     // One map per date, over exactly the dates this run wrote. The balances are
     // identical across them; what varies is which run a date belongs to, so a
     // date retained from an earlier run keeps that run's flat balances.
     await replaceEstimatedFlat(ctx, estimatedTotals.map((p) => ({ date: p.date, balances: flat })));
     await replaceEstimated(ctx, estimatedTotals);
-    const waiting = await settleDoneFlag(ctx, invPending);
+    // Imported rows that changed while it ran (an import, an undo, a link)
+    // aren't in these points: not done, so the next load runs it again.
+    const waiting = (await rowsUnchangedSince(ctx, rowsSeen)) ? await settleDoneFlag(ctx, invPending) : invPending;
+    const drawn = await drawIfMarked(ctx);
     await clearCaches(ctx); // cached payloads don't include the new history yet
 
     return NextResponse.json({
-      backfilled: estimatedTotals.length,
+      backfilled: estimatedTotals.length + drawn,
+      // Of them, the days drawn back through imported transactions (#52).
+      ...(drawn > 0 ? { from_imports: drawn } : {}),
       from: estimatedTotals.length > 0 ? estimatedTotals[estimatedTotals.length - 1].date : null,
       // Investment accounts whose flows out-ran their balance and were floored at
       // zero partway back. Reported, not silent: a number that stays high run
@@ -311,7 +475,14 @@ export async function POST() {
   } catch (err: any) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
-    console.error(err?.response?.data || err);
+    // A connection the person has to act on first: skipped, as a
+    // transaction read in that state is (above).
+    if (err instanceof NeedsTheirAction) return NextResponse.json({ skipped: true, reason: 'institutions not ready' });
+    if (err instanceof BalancesUnavailable) {
+      console.error('Backfill stopped: an institution\'s balances did not come from Plaid', loggable(err.cause));
+      return NextResponse.json({ error: err.message }, { status: 503 });
+    }
+    console.error(loggable(err));
     return NextResponse.json({ error: 'Backfill failed' }, { status: 500 });
   }
 }

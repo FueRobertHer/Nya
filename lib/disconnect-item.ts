@@ -6,15 +6,21 @@
 
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
-import { getItems, removeItem, type StoredItem } from './storage';
+import { removeItem, type StoredItem } from './storage';
 import { clearCaches } from './cache';
-import { clearItemTransactions, readStoredTxns } from './transactions';
+import { clearItemTransactions, contentKey, readStoredTxns, storedTransactionIds, type StoredTxn } from './transactions';
 import { clearInvestmentStore } from './invstore';
 import { retireOverrides, pruneOrphanOverrides } from './overrides';
+import { pruneOrphanAnnotations, retireAnnotations } from './txn-annotations';
+import { pruneSplitsAndGroups } from './split-gone';
 import { forgetItem } from './last-known';
 import { forgetVanished } from './vanished';
 import { clearNewAccounts } from './new-accounts';
+import { forgetConnection } from './connection-health';
+import { forgetImportedTwins, retireImportedTwins } from './history-import/twins';
 import type { Ctx } from './containers';
+import { loggable } from './log-safe';
+import { retireShares } from './shared-expenses/edits';
 
 /**
  * `item` is the stored Item, or undefined when only a stale id is being
@@ -27,12 +33,12 @@ export async function disconnectItem(
 ): Promise<void> {
   if (item) {
     try {
-      const access_token = await decrypt(item.encrypted_access_token);
+      const access_token = await decrypt(ctx, item.encrypted_access_token);
       await plaidClient.itemRemove({ access_token });
     } catch (err) {
       // If Plaid-side removal fails (e.g. already revoked), still remove
       // our local record so the broken entry doesn't linger.
-      console.error('Plaid item removal failed, removing local record anyway', err);
+      console.error('Plaid item removal failed, removing local record anyway', loggable(err));
     }
   }
 
@@ -40,24 +46,91 @@ export async function disconnectItem(
   // re-link, BEFORE its store is deleted, so linking the re-added account
   // later carries the categories across (lib/overrides.ts). Best effort: a
   // failure costs that convenience, never the disconnect.
+  let stored: StoredTxn[] | null = null;
   try {
-    await retireOverrides(ctx, await readStoredTxns(ctx, item_id));
+    stored = await readStoredTxns(ctx, item_id);
+    await retireOverrides(ctx, stored);
   } catch (err) {
     console.error('disconnect: could not record categories to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+  // And which of them were excluded from budgets and reports, the same way
+  // (lib/txn-annotations.ts), so a re-link doesn't quietly put a one-off back
+  // in every total. Best effort too.
+  try {
+    if (stored) {
+      await retireAnnotations(
+        ctx,
+        stored.map((t) => ({ transaction_id: t.transaction_id, account_id: t.account_id, key: contentKey(t.account_id, t), pending: t.pending }))
+      );
+    }
+  } catch (err) {
+    console.error('disconnect: could not record exclusions to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+  // And which of them were shared, or paid something back
+  // (lib/shared-expenses/edits.ts retireShares), the same way, so a re-link
+  // carries what someone owes to the same transactions. Best effort too:
+  // what didn't record is gone once the accounts are linked, and said.
+  try {
+    if (stored) await retireShares(ctx, stored.map((t) => ({ transaction_id: t.transaction_id, account_id: t.account_id, key: contentKey(t.account_id, t), pending: t.pending })));
+  } catch (err) {
+    console.error('disconnect: could not record shared transactions to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+  // And which of them stood for rows imported from the bank's files, by
+  // their content too (lib/history-import/twins.ts), so that once the
+  // re-added account is linked its bank's rows stand for those again rather
+  // than count beside them. Best effort too.
+  try {
+    if (stored) await retireImportedTwins(ctx, item_id, stored);
+  } catch (err) {
+    console.error('disconnect: could not record which transactions stood for imported ones to carry across a re-link', err instanceof Error ? err.message : err);
+  }
+
+  // And its receipts and documents wait on their accounts, by content, so
+  // that linking a re-added account places them again (lib/attachments.ts).
+  // Never deleted here. Best effort: a failure marks the account for the
+  // nightly check, which places them from what was kept when they were added.
+  try {
+    if (stored) await (await import('./attachments')).retireAttachments(ctx, stored);
+  } catch (err) {
+    console.error('disconnect: could not record which receipts wait for a re-link', err instanceof Error ? err.name : err);
+    await (await import('./attachments')).markForCheck(ctx);
   }
 
   await removeItem(ctx, item_id);
   // Drop this Item's persisted sync cursor + transactions.
   await clearItemTransactions(ctx, item_id);
+  // And which of them stood for imported rows, carried above: no sync of it
+  // runs again (best effort: an entry left behind is inert, its connection
+  // gone).
+  try {
+    await forgetImportedTwins(ctx, item_id);
+  } catch (err) {
+    console.error('disconnect: could not forget which of its transactions stood for imported ones', err instanceof Error ? err.message : err);
+  }
   // And its stored investment transactions. A sync still running writes, then
   // sees the Item gone and deletes what it wrote (lib/invstore.ts).
   await clearInvestmentStore(ctx, item_id);
   // And any override left behind for a transaction no stored Item has any
   // more (best effort: a user's categories are theirs to be rid of too).
   try {
-    await pruneOrphanOverrides(ctx, (await getItems(ctx)).map((i) => i.item_id));
+    await pruneOrphanOverrides(ctx);
   } catch (err) {
     console.error('disconnect: could not prune old category overrides', err instanceof Error ? err.message : err);
+  }
+  // And what was said about them, this Item's own exclusions among them, now
+  // that it is gone: the ones to carry were recorded above (best effort too).
+  try {
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx));
+  } catch (err) {
+    console.error('disconnect: could not prune old exclusions', err instanceof Error ? err.message : err);
+  }
+  // And their splits and their places in groups, which are not carried
+  // across a re-link (lib/split-gone.ts; best effort too): the confirmation
+  // said how many first (lib/txn-lookup.ts splitsAndGroupsOn).
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx));
+  } catch (err) {
+    console.error('disconnect: could not prune old splits and groups', err instanceof Error ? err.message : err);
   }
   // Hidden accounts STAY hidden (#46). Their history is kept, so dropping the
   // entry would put the account back into every past total the moment it
@@ -71,6 +144,15 @@ export async function disconnectItem(
   // And any "new accounts available" prompt, which could only offer to add
   // accounts to an Item that no longer exists.
   await clearNewAccounts(ctx, item_id);
+  // And its health: Plaid's warnings, its last sync, and the email bookkeeping
+  // of a break (lib/connection-health.ts), so no email follows a removal. Best
+  // effort: a record left behind is inert, and the daily job drops records of
+  // connections that are gone (lib/connection-notices.ts).
+  try {
+    await forgetConnection(ctx, item_id);
+  } catch (err) {
+    console.error('disconnect: could not forget the connection’s health records', err instanceof Error ? err.name : typeof err);
+  }
   // Its accounts stay in the account directory, so that if the same
   // institution is added back, even months later, they can be matched to
   // the new ones (lib/links.ts): nothing to do here.

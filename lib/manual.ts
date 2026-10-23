@@ -16,9 +16,12 @@
 // (lib/history.ts), which nothing rewrites for a past date. Callers rely on the
 // throw to mark the read as failed (see computeNetWorth() in lib/networth.ts).
 
+import { createHash } from 'node:crypto';
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
+import { encrypt, decrypt, sealedAway } from './crypto';
+import { READ_ENTRIES, UPDATE_ENTRY, openStored, type Opened } from './repo';
+import { isOwedType } from './balance';
 
 const ACCOUNTS_HASH = (ctx: Ctx) => kc(ctx, 'manual:accounts');
 
@@ -37,6 +40,15 @@ export type ManualType = (typeof MANUAL_TYPES)[number];
  *  every write path so the UI, the PUT and the ingest route agree. */
 export const MAX_BALANCE = 1e12;
 
+/** Manual accounts one person may have: the Add form's limit
+ *  (app/api/manual-accounts), and an import's that makes them
+ *  (lib/migration/plan.ts). */
+export const MAX_MANUAL_ACCOUNTS = 50;
+
+/** The currency of a manual account that names none: US dollars, as every
+ *  account typed before a currency could be chosen is (toInstitutions). */
+export const MANUAL_CURRENCY = 'USD';
+
 export type ManualAccount = {
   account_id: string;
   name: string;
@@ -45,7 +57,19 @@ export type ManualAccount = {
   subtype: string | null;
   balance: number;
   updated_at: string; // ISO
+  /** The currency the balance is in, when not US dollars: chosen when the
+   *  account is made or updated (app/api/manual-accounts), or the one a
+   *  connector fed it in, kept when it was disconnected
+   *  (lib/connectors/manage.ts). Absent for dollars, always (currencyField),
+   *  so a record reads the same in a release that knows only kept accounts'
+   *  currencies. Setting it never changes the balance's number. */
+  currency?: string;
 };
+
+/** A manual account's `currency` field as stored: none for US dollars. */
+export function currencyField(currency: string): { currency?: string } {
+  return currency === MANUAL_CURRENCY ? {} : { currency };
+}
 
 /** Collapses whitespace and trims, so "Ally  Bank" and "Ally Bank " group into
  *  one institution card instead of two. */
@@ -91,6 +115,7 @@ function parseStoredAccount(id: string, plaintext: string): ManualAccount {
     subtype: typeof raw.subtype === 'string' ? raw.subtype : null,
     balance: raw.balance,
     updated_at: typeof raw.updated_at === 'string' ? raw.updated_at : new Date(0).toISOString(),
+    ...(typeof raw.currency === 'string' && /^[A-Z]{3}$/.test(raw.currency) && raw.currency !== 'USD' ? { currency: raw.currency } : {}),
   };
 }
 
@@ -107,7 +132,7 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   const accounts = await Promise.all(
     Object.entries(map).map(async ([id, blob]) => {
       try {
-        return parseStoredAccount(id, await decrypt(blob));
+        return parseStoredAccount(id, await decrypt(ctx, blob));
       } catch (err) {
         throw new Error(`Manual account ${id} could not be read`, { cause: err });
       }
@@ -116,12 +141,96 @@ export async function getManualAccounts(ctx: Ctx): Promise<ManualAccount[]> {
   return accounts.sort((a, b) => a.name.localeCompare(b.name));
 }
 
+/** Every manual account that can be read, and the ids of those that can't,
+ *  by why (getManualAccountsReport). */
+export type ManualAccountsReport = {
+  accounts: ManualAccount[];
+  /** Damaged: the stored bytes aren't ciphertext, or fail to authenticate
+   *  under a data key. */
+  unreadable: string[];
+  /** Stored intact, in a form this code does not know: not JSON, not an
+   *  account's shape, a later version's format. */
+  unrecognised: string[];
+  /** Sealed under a key this deployment can't use: a failed decrypt under k0,
+   *  which a replaced PLAID_ENCRYPTION_KEY looks exactly like, or a data key
+   *  the key store lacks. The deployment's problem, never the account's, so
+   *  never called damage and never offered for removal. */
+  unavailable: string[];
+};
+
+/**
+ * Every manual account that can be read, and the ids of those that can't, for
+ * a reader that names what it can't show rather than stopping: the read-only
+ * API's accounts and net worth (lib/api-read.ts) and the download of my data
+ * (lib/user-export.ts), which stops on `unavailable` (the deployment's
+ * problem, which a file must never be shaped around). Never for a figure that
+ * is recorded or written on, which must use getManualAccounts (see the file
+ * header). By the storage seam's rules (lib/repo.ts openStored), as its stores
+ * report entries, with the one addition of `unavailable` (see the type). What
+ * says nothing about any one account throws as it is: storage out of reach,
+ * a master key that can't open the data keys. The accounts in name order, the
+ * ids in id order.
+ */
+export async function getManualAccountsReport(ctx: Ctx): Promise<ManualAccountsReport> {
+  // Deliberately uncaught: a Redis error is never "no accounts".
+  const map = (await redis().hgetall<Record<string, unknown>>(ACCOUNTS_HASH(ctx))) ?? {};
+  const accounts: ManualAccount[] = [];
+  const unreadable: string[] = [];
+  const unrecognised: string[] = [];
+  const unavailable: string[] = [];
+  await Promise.all(
+    Object.entries(map).map(async ([id, blob]) => {
+      let opened: Opened;
+      try {
+        opened = await openStored(ctx, blob);
+      } catch (err) {
+        // The seam throws these rather than call them damage (see the type).
+        if (sealedAway(err)) {
+          unavailable.push(id);
+          return;
+        }
+        throw err;
+      }
+      if (!opened.ok) {
+        (opened.flaw === 'unreadable' ? unreadable : unrecognised).push(id);
+        return;
+      }
+      try {
+        accounts.push(parseStoredAccount(id, opened.text));
+      } catch {
+        unrecognised.push(id); // intact, but not JSON or not an account's shape
+      }
+    })
+  );
+  return {
+    accounts: accounts.sort((a, b) => a.name.localeCompare(b.name)),
+    unreadable: unreadable.sort(),
+    unrecognised: unrecognised.sort(),
+    unavailable: unavailable.sort(),
+  };
+}
+
+/** Manual accounts this deployment can't decrypt (ManualAccountsReport
+ *  `unavailable`), for a reader that must stop on them, as the download does:
+ *  a file without them would look complete, and they aren't damaged. */
+export class ManualAccountsUnavailableError extends Error {
+  constructor(readonly ids: string[]) {
+    super(`${ids.length === 1 ? 'A manual account is' : `${ids.length} manual accounts are`} sealed under a key this deployment can't use`);
+    this.name = 'ManualAccountsUnavailableError';
+  }
+}
+
+/** Whether a manual account by this id is stored, without reading it. */
+export async function manualAccountExists(ctx: Ctx, account_id: string): Promise<boolean> {
+  return Number(await redis().hexists(ACCOUNTS_HASH(ctx), account_id)) === 1;
+}
+
 /** One account by id, or null if it doesn't exist. Throws on read failure, same as above. */
 export async function getManualAccount(ctx: Ctx, account_id: string): Promise<ManualAccount | null> {
   const blob = await redis().hget<string>(ACCOUNTS_HASH(ctx), account_id);
   if (!blob) return null;
   try {
-    return parseStoredAccount(account_id, await decrypt(blob));
+    return parseStoredAccount(account_id, await decrypt(ctx, blob));
   } catch (err) {
     throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
   }
@@ -130,23 +239,160 @@ export async function getManualAccount(ctx: Ctx, account_id: string): Promise<Ma
 /** Creates or replaces one account. Single-field HSET, so concurrent writes to
  *  *different* accounts can't clobber each other. */
 export async function saveManualAccount(ctx: Ctx, account: ManualAccount): Promise<void> {
-  await redis().hset(ACCOUNTS_HASH(ctx), { [account.account_id]: await encrypt(JSON.stringify(account)) });
+  await redis().hset(ACCOUNTS_HASH(ctx), { [account.account_id]: await encrypt(ctx, JSON.stringify(account)) });
 }
 
 export async function removeManualAccount(ctx: Ctx, account_id: string): Promise<void> {
   await redis().hdel(ACCOUNTS_HASH(ctx), account_id);
 }
 
+/** What changeManualAccount did: the account as it was read on the attempt
+ *  that settled (null: there was none), and what it wrote (null: nothing). */
+export type AccountChange = { before: ManualAccount | null; written: ManualAccount | null };
+
+/**
+ * Changes one account's record as one compare-and-set on its field (the
+ * storage seam's scripts, lib/repo.ts: read exactly, then write only if
+ * unchanged since), so a balance pushed or a rename saved at the same moment
+ * is read again, never written over. `fn` is given the account as stored
+ * (null when there is none) and answers the record to write, or null to
+ * write nothing; it may run more than once, so it only computes, and it may
+ * throw to refuse. Writing where there was none only ever creates: a field
+ * filled meanwhile is read again. Throws if the account can't be read, and
+ * after a few tries if it kept changing.
+ */
+export async function changeManualAccount(ctx: Ctx, account_id: string, fn: (current: ManualAccount | null) => ManualAccount | null): Promise<AccountChange> {
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    const stored = raw ? raw.slice(1) : null; // exactly as stored, past READ_ENTRIES's "v"
+    let current: ManualAccount | null = null;
+    if (stored !== null) {
+      try {
+        current = parseStoredAccount(account_id, await decrypt(ctx, stored));
+      } catch (err) {
+        throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+      }
+    }
+    const next = fn(current);
+    if (next === null) return { before: current, written: null };
+    if (next.account_id !== account_id) throw new Error('A manual account is written under its own id');
+    const sealed = await encrypt(ctx, JSON.stringify(next));
+    const seen = stored === null ? '' : createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, sealed])) === 1) return { before: current, written: next };
+  }
+  throw new Error(`Manual account ${account_id} kept changing, so it wasn't saved`);
+}
+
+/** What setManualBalance did. */
+export type BalanceSet = 'set' | 'missing' | 'owed-negative';
+
 /**
  * Updates just the balance, leaving every other field alone, so an automated push
- * (the ingest endpoint) can't rewrite the name or type. Returns false if the
- * account doesn't exist, for the caller to report.
+ * (the ingest endpoint) can't rewrite the name or type: one compare-and-set
+ * (changeManualAccount), so a rename saved at the same moment is never lost.
+ * A negative balance on a card or a loan is refused against the type as read
+ * in that same step ('owed-negative'), so a type changed meanwhile can't let
+ * one through. 'missing' when the account doesn't exist, for the caller to
+ * report.
  */
-export async function setManualBalance(ctx: Ctx, account_id: string, balance: number): Promise<boolean> {
-  const existing = await getManualAccount(ctx, account_id);
-  if (!existing) return false;
-  await saveManualAccount(ctx, { ...existing, balance, updated_at: new Date().toISOString() });
-  return true;
+export async function setManualBalance(ctx: Ctx, account_id: string, balance: number, now: Date = new Date()): Promise<BalanceSet> {
+  let refused = false;
+  const { before } = await changeManualAccount(ctx, account_id, (current) => {
+    refused = false; // this may run more than once
+    if (!current) return null;
+    if (isOwedType(current.type) && balance < 0) {
+      refused = true;
+      return null;
+    }
+    return { ...current, balance, updated_at: now.toISOString() };
+  });
+  if (!before) return 'missing';
+  return refused ? 'owed-negative' : 'set';
+}
+
+/**
+ * Sets just the currency an account's balance is in, leaving every other
+ * field as stored, the balance's number included, as one compare-and-set on
+ * its field (as moveManualBalance does), so a balance pushed meanwhile (the
+ * ingest endpoint, another device) is never written over. For the choice of
+ * a home currency, which corrects an account's currency before it converts.
+ * Answers the currency it was in when it was set (`from`), 'same' (already
+ * in it: nothing written) or 'missing'. Throws if the account can't be read.
+ */
+export async function setManualCurrency(ctx: Ctx, account_id: string, currency: string): Promise<{ from: string } | 'same' | 'missing'> {
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    if (!raw) return 'missing';
+    const stored = raw.slice(1); // exactly as stored, past READ_ENTRIES's "v"
+    let account: ManualAccount;
+    try {
+      account = parseStoredAccount(account_id, await decrypt(ctx, stored));
+    } catch (err) {
+      throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+    }
+    const from = account.currency ?? MANUAL_CURRENCY;
+    if (from === currency) return 'same';
+    const changed: ManualAccount = { ...account };
+    delete changed.currency;
+    const next = await encrypt(ctx, JSON.stringify({ ...changed, ...currencyField(currency) }));
+    const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return { from };
+  }
+  throw new Error(`Manual account ${account_id} kept changing, so its currency wasn't set`);
+}
+
+/** What moveManualBalance did. */
+export type BalanceMove = 'moved' | 'already' | 'changed' | 'missing';
+
+/**
+ * Moves an account's balance from the figure a form showed (`from`) to the one
+ * it said it would become (`to`), to the cent, for the transaction `mover`
+ * (a manual row's id), as one compare-and-set on this hash's field (the
+ * storage seam's scripts, lib/repo.ts: read exactly, then write only if
+ * unchanged since). The write stamps the record with the mover's id
+ * (`balance_moved_by`), and only the move writes it: any other save of the
+ * account (the Update form, a scripted push) writes the record without it.
+ * Answers 'moved' when it held `from` and now holds `to`, stamped now;
+ * 'already' when this mover's own move is the last write, as when the same
+ * add is sent again (another add of the same amount, which leaves the same
+ * figure, is not this one: 'changed'); 'changed' when it holds anything else,
+ * left as it is; 'missing' when the account is gone. A write landing between
+ * the read and the write (a scripted push, another device) is read again,
+ * never overwritten. Throws if the account can't be read.
+ */
+export async function moveManualBalance(
+  ctx: Ctx,
+  account_id: string,
+  from: number,
+  to: number,
+  mover: string,
+  now: Date = new Date()
+): Promise<BalanceMove> {
+  const cents = (n: number) => Math.round(n * 100);
+  const key = ACCOUNTS_HASH(ctx);
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const [raw] = (await redis().eval(READ_ENTRIES, [key], [account_id])) as string[];
+    if (!raw) return 'missing';
+    const stored = raw.slice(1); // exactly as stored, past READ_ENTRIES's "v"
+    let account: ManualAccount;
+    let movedBy: unknown;
+    try {
+      const plaintext = await decrypt(ctx, stored);
+      account = parseStoredAccount(account_id, plaintext);
+      movedBy = (JSON.parse(plaintext) as { balance_moved_by?: unknown }).balance_moved_by;
+    } catch (err) {
+      throw new Error(`Manual account ${account_id} could not be read`, { cause: err });
+    }
+    if (cents(account.balance) === cents(to) && movedBy === mover) return 'already';
+    if (cents(account.balance) !== cents(from)) return 'changed';
+    const next = await encrypt(ctx, JSON.stringify({ ...account, balance: to, updated_at: now.toISOString(), balance_moved_by: mover }));
+    const seen = createHash('sha1').update(stored, 'utf8').digest('hex');
+    if (Number(await redis().eval(UPDATE_ENTRY, [key], [account_id, seen, next])) === 1) return 'moved';
+  }
+  // It kept changing: whatever it holds now, it isn't what the form showed.
+  return 'changed';
 }
 
 // The synthetic-institution shape mirrors InstitutionResult in lib/networth.ts.
@@ -221,12 +467,19 @@ export function toInstitutions(accounts: ManualAccount[]): ManualInstitution[] {
       type: a.type,
       subtype: a.subtype,
       balance: a.balance,
-      // Manual accounts are USD-only for now, matching the rest of the
-      // account-level figures (net worth, balances, goals).
-      currency: 'USD',
+      // The currency chosen for it, or the one a connector fed it in, kept
+      // on a disconnect; US dollars when it names none.
+      currency: a.currency ?? MANUAL_CURRENCY,
       updated_at: a.updated_at,
     });
   }
 
   return [...byInstitution.values()];
+}
+
+/** The ids of the manual accounts stored, readable or not, without reading
+ *  any: what a restore counts before it writes more (lib/user-restore/
+ *  commit.ts). */
+export async function manualAccountIds(ctx: Ctx): Promise<string[]> {
+  return (await redis().hkeys(ACCOUNTS_HASH(ctx))) ?? [];
 }

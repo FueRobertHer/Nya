@@ -38,7 +38,7 @@
 
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
-import { encrypt, decrypt } from './crypto';
+import { encrypt, decrypt, sealedAway, DecryptFailedError, KeyNotForContainerError, MalformedCiphertextError } from './crypto';
 import { getLatestAccountSnapshot, snapshotTakenAt } from './history';
 import { getLinks, effectiveLinks, sameAccountIds, type Link } from './link-core';
 
@@ -80,7 +80,35 @@ type Fillable = {
   stale_too_old?: string;
   stale_too_old_at?: string;
   stale_missing?: number;
+  unshown_accounts?: UnshownAccount[];
+  /** Accounts missing from this healthy answer and held for the person's
+   *  answer (lib/lifecycle-questions.ts): their records are kept. */
+  missing_ids?: string[];
 };
+
+/** A remembered account a broken institution's card can't show. */
+export type UnshownAccount = {
+  account_id: string;
+  name: string;
+  mask: string | null;
+  /** Its kind and currency, as remembered: allocation over time
+   *  (components/AllocationCard.tsx) still expects an investment account it
+   *  can't show, and counts it in its own currency on the days it was
+   *  recorded. Absent on a payload from before they were sent. */
+  type?: string;
+  currency?: string | null;
+};
+
+/** Names the remembered accounts a broken institution's card can't show, so
+ *  the connection health view can say which accounts are affected. Ids,
+ *  names, masks, kinds and currencies only, as every healthy card already
+ *  shows them: no balance. The id is so a hidden one can be left out
+ *  (applyHidden in lib/hidden.ts). */
+function noteUnshown(inst: Fillable, accounts: RememberedAccount[]): void {
+  if (accounts.length > 0) {
+    inst.unshown_accounts = accounts.map((a) => ({ account_id: a.account_id, name: a.name, mask: a.mask, type: a.type, currency: a.currency ?? null }));
+  }
+}
 
 /**
  * Records how to draw every account of every institution that answered.
@@ -96,6 +124,27 @@ type Fillable = {
  */
 export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Promise<void> {
   const fields: Record<string, string> = {};
+  // An account missing from a healthy answer and held until the person says
+  // whether it closed (#50, lib/lifecycle-questions.ts) keeps its entry in
+  // its Item's record: as far as anyone knows it is still theirs, and the
+  // record is what draws it at its last known balance (its currency, its
+  // limit). Once answered it is no longer held, and the next record is the
+  // fetch's alone. Read only for an Item holding one.
+  const held = new Map<string, RememberedAccount[]>();
+  await Promise.all(
+    institutions
+      .filter((inst) => !inst.error && !inst.manual && (inst.missing_ids?.length ?? 0) > 0)
+      .map(async (inst) => {
+        try {
+          const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), inst.item_id);
+          const parsed = blob ? (JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[]) : [];
+          const ids = new Set(inst.missing_ids);
+          if (Array.isArray(parsed)) held.set(inst.item_id, parsed.filter((a) => ids.has(a?.account_id) && typeof a?.type === 'string'));
+        } catch {
+          // Unreadable: the held account is drawn from the directory instead.
+        }
+      })
+  );
 
   for (const inst of institutions) {
     // Manual institutions have no Plaid Item to fail (their balances live in
@@ -119,10 +168,13 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
         currency: a.currency ?? null,
       });
     }
+    for (const kept of held.get(inst.item_id) ?? []) {
+      if (!accounts.some((a) => a.account_id === kept.account_id)) accounts.push(kept);
+    }
     if (accounts.length === 0) continue;
 
     try {
-      fields[inst.item_id] = await encrypt(JSON.stringify(accounts));
+      fields[inst.item_id] = await encrypt(ctx, JSON.stringify(accounts));
     } catch {
       // Skip this Item rather than lose the whole batch.
     }
@@ -137,18 +189,43 @@ export async function rememberAccounts(ctx: Ctx, institutions: Fillable[]): Prom
   }
 }
 
+/** Whether a record that failed to open holds nothing this code can use, as
+ *  the storage seam tells it (lib/repo.ts openStored): bytes that are damaged
+ *  or in a form this code doesn't know, a value under another container's
+ *  key, text that isn't JSON, or a value that isn't text at all. Anything
+ *  else (a master key that can't open the data keys, the key store out of
+ *  reach) says nothing about the record: the deployment's problem. A value
+ *  under a key this deployment can't use is neither (sealedAway). */
+const flawedRecord = (err: unknown, blob: unknown) =>
+  typeof blob !== 'string' ||
+  err instanceof MalformedCiphertextError ||
+  err instanceof KeyNotForContainerError ||
+  err instanceof DecryptFailedError ||
+  err instanceof SyntaxError;
+
 /** Every Item's remembered accounts. An unreadable record costs only that Item:
  *  a single rotated-key entry shouldn't take the rest down with it.
  *
  *  `strict` throws instead, on a failed read or any unreadable record, for a
  *  caller that writes on the strength of the answer (lib/links.ts
- *  liveAccountIds). */
-async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, RememberedAccount[]>> {
+ *  liveAccountIds). `tidy` (the default) also deletes the fields left in the
+ *  old shape; a reader that must change nothing passes false (the download
+ *  of my data, and the count an account deletion takes for its receipt).
+ *  `report`, when given, collects the Items whose record couldn't be read
+ *  instead, by why (sealed under a key this deployment can't use, or at
+ *  fault itself: flawedRecord), and a failed read, or a record stopped by
+ *  anything else, throws, as with `strict` (rememberedAccountsReport). */
+async function recallByItem(
+  ctx: Ctx,
+  strict = false,
+  tidy = true,
+  report?: { unreadable: string[]; unavailable: string[] }
+): Promise<Record<string, RememberedAccount[]>> {
   let map: Record<string, string> | null;
   try {
     map = await redis().hgetall<Record<string, string>>(ACCOUNT_META_HASH(ctx));
   } catch (err) {
-    if (strict) throw err;
+    if (strict || report) throw err;
     return {};
   }
   if (!map) return {};
@@ -163,7 +240,7 @@ async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, Re
   await Promise.all(
     Object.entries(map).map(async ([item_id, blob]) => {
       try {
-        const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+        const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
         if (!Array.isArray(parsed)) {
           legacy.push(item_id);
           return;
@@ -176,11 +253,17 @@ async function recallByItem(ctx: Ctx, strict = false): Promise<Record<string, Re
         if (strict) throw err;
         // Undecryptable: that Item just won't be recoverable. Left in place
         // rather than deleted, since a rotated key is fixed by restoring the key.
+        // Under a key this deployment can't use, it isn't damaged at all; a
+        // master key or key store failing says nothing of the record.
+        if (!report) return;
+        if (sealedAway(err)) report.unavailable.push(item_id);
+        else if (flawedRecord(err, blob)) report.unreadable.push(item_id);
+        else throw err;
       }
     })
   );
 
-  if (legacy.length > 0) {
+  if (tidy && legacy.length > 0) {
     try {
       await redis().hdel(ACCOUNT_META_HASH(ctx), ...legacy);
     } catch {
@@ -218,7 +301,7 @@ export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<s
   try {
     const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
     if (!blob) return [];
-    const parsed = JSON.parse(await decrypt(blob)) as RememberedAccount[];
+    const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
     if (!Array.isArray(parsed)) return [];
     return parsed.map((a) => a?.account_id).filter((id): id is string => typeof id === 'string');
   } catch {
@@ -227,17 +310,73 @@ export async function rememberedIdsForItem(ctx: Ctx, item_id: string): Promise<s
 }
 
 /**
+ * The ids and types of one Item's remembered accounts, or null when none are
+ * remembered or the record can't be read. For the transactions sync, deciding
+ * whether a first call is worth making on an Item Plaid doesn't bill
+ * Transactions on, and whether a refusal is about every bank account and card
+ * it has (lib/item-products.ts). Lenient on purpose: nothing is written or
+ * deleted on the answer, and on a null the sync asks Plaid for a fresh account
+ * list instead (/accounts/get, which Plaid doesn't bill); only when that fails
+ * too does it say it could not check, leaving the load uncached.
+ */
+export async function rememberedKindsForItem(ctx: Ctx, item_id: string): Promise<{ account_id?: string; type: string }[] | null> {
+  try {
+    const blob = await redis().hget<string>(ACCOUNT_META_HASH(ctx), item_id);
+    if (!blob) return null;
+    const parsed = JSON.parse(await decrypt(ctx, blob)) as RememberedAccount[];
+    if (!Array.isArray(parsed)) return null;
+    return parsed.flatMap((a) =>
+      a && typeof a.type === 'string' ? [{ ...(typeof a.account_id === 'string' ? { account_id: a.account_id } : {}), type: a.type }] : []
+    );
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Every Item's remembered account ids, in ONE read: the batch form of
  * rememberedIdsForItem (lib/vanished.ts). Upstash is HTTP, so per-Item reads
  * cost a round trip each on the uncached dashboard path.
  */
-export async function rememberedIdsByItem(ctx: Ctx, strict = false): Promise<Record<string, string[]>> {
-  const byItem = await recallByItem(ctx, strict);
+export async function rememberedIdsByItem(ctx: Ctx, strict = false, tidy = true): Promise<Record<string, string[]>> {
+  const byItem = await recallByItem(ctx, strict, tidy);
   const out: Record<string, string[]> = {};
   for (const [item_id, accounts] of Object.entries(byItem)) {
     out[item_id] = accounts.map((a) => a.account_id);
   }
   return out;
+}
+
+/** Every Item's remembered accounts, for the read-only API's list of accounts
+ *  (lib/api-read.ts): a display that names what it can't show. Only reads (a
+ *  field in the old shape is left where it is), a failed read throws, and an
+ *  Item whose record can't be read is named rather than read as having no
+ *  accounts: in `unavailable` when it is sealed under a key this deployment
+ *  can't use (a failed decrypt under k0, a data key the key store lacks:
+ *  lib/crypto.ts sealedAway), the deployment's problem and never damage, as
+ *  a manual account's is (lib/manual.ts ManualAccountsReport); in
+ *  `unreadable` when the record itself is at fault (damaged, not JSON:
+ *  flawedRecord). Either way its accounts can't be known: a reader that only
+ *  needs that reads both (couldNotRead). What says nothing about any one
+ *  record (a master key that can't open the data keys, the key store out of
+ *  reach) throws, as getManualAccountsReport's does, so no connection is
+ *  called damaged for it. */
+export async function rememberedAccountsReport(ctx: Ctx): Promise<{ byItem: Record<string, RememberedAccount[]>; unreadable: string[]; unavailable: string[] }> {
+  const report = { unreadable: [] as string[], unavailable: [] as string[] };
+  const byItem = await recallByItem(ctx, false, false, report);
+  return { byItem, unreadable: report.unreadable.sort(), unavailable: report.unavailable.sort() };
+}
+
+/** The Items a report (rememberedAccountsReport) couldn't read the record
+ *  of, for whatever reason: those whose accounts aren't known. */
+export const couldNotRead = (report: { unreadable: readonly string[]; unavailable: readonly string[] }): string[] => [...report.unreadable, ...report.unavailable].sort();
+
+/** Every Item's remembered accounts, whole, for the download of my data
+ *  (lib/user-export.ts). Strict: throws on a failed read or any record that
+ *  can't be read, rather than leaving that Item's accounts out. And it only
+ *  reads: a field in the old shape is left where it is. */
+export async function rememberedAccountsByItem(ctx: Ctx): Promise<Record<string, RememberedAccount[]>> {
+  return recallByItem(ctx, true, false);
 }
 
 /**
@@ -292,7 +431,11 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     // account known by an earlier id isn't found under it.
     getLinks(ctx).catch(() => new Map<string, Link>()),
   ]);
-  if (!last) return [];
+  if (!last) {
+    // Nothing to recover from, but which accounts are missing is still known.
+    for (const inst of broken) noteUnshown(inst, byItem[inst.item_id] ?? []);
+    return [];
+  }
   // A link whose old id is live again is paused (see effectiveLinks): following
   // it would give that account the new id's balance and count one twice.
   const liveIds = new Set(
@@ -320,6 +463,7 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     const remembered = byItem[inst.item_id] ?? [];
 
     const accounts = [];
+    const unshown: RememberedAccount[] = [];
     for (const m of remembered) {
       // An account this Item has but the snapshot doesn't. The reason is
       // unknowable from here:
@@ -339,7 +483,10 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
       const balance = sameAccountIds(m.account_id, activeLinks)
         .map((id) => last.balances[id])
         .find((b) => typeof b === 'number');
-      if (typeof balance !== 'number') continue;
+      if (typeof balance !== 'number') {
+        unshown.push(m);
+        continue;
+      }
       accounts.push({
         account_id: m.account_id,
         name: m.name,
@@ -363,13 +510,17 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     }
     const missing = remembered.length - accounts.length;
 
-    if (accounts.length === 0) continue;
+    if (accounts.length === 0) {
+      noteUnshown(inst, remembered);
+      continue;
+    }
 
     if (tooOld) {
       // Balances exist but are past the age limit. Say so instead of a bare
       // $0.00 card, which would look like never having had them.
       inst.stale_too_old = last.date;
       if (takenAt) inst.stale_too_old_at = takenAt;
+      noteUnshown(inst, remembered);
       continue;
     }
 
@@ -377,6 +528,7 @@ export async function fillFromLastKnown(ctx: Ctx, institutions: Fillable[]): Pro
     inst.stale_as_of = last.date;
     if (takenAt) inst.stale_as_of_at = takenAt;
     if (missing > 0) inst.stale_missing = missing;
+    noteUnshown(inst, unshown);
     filled.push({ item_id: inst.item_id, as_of: last.date, accounts: accounts.length, missing });
   }
 

@@ -7,33 +7,96 @@
 import { redis, kc } from './storage';
 import type { Ctx } from './containers';
 import { encrypt, decrypt } from './crypto';
-import { contentKey, readStoredTxns, storeIsBehind, type StoredTxn } from './transactions';
+import { contentKey, storedTransactionIds, type StoredTxn } from './transactions';
 import { resolveId, type Link } from './link-core';
+import { IMPORTED_TXN_PREFIX } from './history-import/store';
 
 const OVERRIDES_HASH = (ctx: Ctx) => kc(ctx, 'txn-category-overrides');
 
 export async function getOverrides(ctx: Ctx): Promise<Record<string, string>> {
+  return (await readOverridesReport(ctx)).overrides;
+}
+
+/**
+ * The overrides getOverrides gives, and whether they were all read (`ok`):
+ * false when the hash couldn't be read or an override couldn't be decrypted,
+ * both of which getOverrides passes over. For a report, which says when the
+ * person's own categories are missing from it (lib/report/read.ts); the app
+ * goes on as it always has.
+ */
+export async function readOverridesReport(ctx: Ctx): Promise<{ overrides: Record<string, string>; ok: boolean }> {
   try {
     const map = await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx));
-    if (!map) return {};
+    if (!map) return { overrides: {}, ok: true };
     const out: Record<string, string> = {};
+    let ok = true;
     await Promise.all(
       Object.entries(map).map(async ([id, blob]) => {
         try {
-          out[id] = await decrypt(blob);
+          out[id] = await decrypt(ctx, blob);
         } catch {
           // undecryptable override (rotated key) -- drop it
+          ok = false;
         }
       })
     );
-    return out;
+    return { overrides: out, ok };
   } catch {
-    return {};
+    return { overrides: {}, ok: false };
   }
 }
 
+/**
+ * Every override, transaction_id -> category, for the download of my data
+ * (lib/user-export.ts). Strict where getOverrides is lenient: a failed read,
+ * or any value that can't be decrypted, throws instead of being dropped, so a
+ * download never leaves out a category the user set without saying so.
+ */
+export async function readOverridesStrict(ctx: Ctx): Promise<Map<string, string>> {
+  const map = (await redis().hgetall<Record<string, string>>(OVERRIDES_HASH(ctx))) ?? {};
+  const out = new Map<string, string>();
+  for (const [id, category] of await Promise.all(
+    Object.entries(map).map(async ([id, blob]) => [id, await decrypt(ctx, String(blob))] as const)
+  )) {
+    out.set(id, category);
+  }
+  return out;
+}
+
 export async function setOverride(ctx: Ctx, transaction_id: string, category: string): Promise<void> {
-  await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(category) });
+  await redis().hset(OVERRIDES_HASH(ctx), { [transaction_id]: await encrypt(ctx, category) });
+}
+
+/** Sets many overrides at once, a thousand to a request: the categories an
+ *  import from another app says on rows a linked account's bank also has
+ *  (lib/migration/commit.ts), which its bank rows show (lib/activity.ts
+ *  categoriesFromImports). Each id is a new imported row's, so nothing set
+ *  by the person is written over. */
+export async function setOverrides(ctx: Ctx, categories: ReadonlyMap<string, string>): Promise<void> {
+  const entries = [...categories];
+  for (let i = 0; i < entries.length; i += 1000) {
+    const chunk = entries.slice(i, i + 1000);
+    const fields: Record<string, string> = {};
+    for (const [id, category] of chunk) fields[id] = await encrypt(ctx, category);
+    if (chunk.length > 0) await redis().hset(OVERRIDES_HASH(ctx), fields);
+  }
+}
+
+/** One transaction's override, or null when it has none: what a
+ *  recategorization replaces, which its undo puts back (app/api/recategorize,
+ *  Card Mode). Strict: one that can't be read throws, never reads as none. */
+export async function getOverride(ctx: Ctx, transaction_id: string): Promise<string | null> {
+  const blob = await redis().hget<unknown>(OVERRIDES_HASH(ctx), transaction_id);
+  return blob === null || blob === undefined ? null : decrypt(ctx, String(blob));
+}
+
+/** Deletes the overrides of rows that are gone (an undone import's rows into
+ *  a linked account, lib/history-import/commit.ts), readable or not. */
+export async function forgetOverrides(ctx: Ctx, transaction_ids: string[]): Promise<void> {
+  for (let i = 0; i < transaction_ids.length; i += 1000) {
+    const ids = transaction_ids.slice(i, i + 1000);
+    if (ids.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...ids);
+  }
 }
 
 // Carrying categories across a re-link (#46)
@@ -90,7 +153,7 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
     let category: string | undefined;
     if (raw[t.transaction_id] !== undefined) {
       try {
-        category = await decrypt(raw[t.transaction_id]);
+        category = await decrypt(ctx, raw[t.transaction_id]);
       } catch {
         category = undefined; // unreadable: it isn't shown today either
       }
@@ -117,7 +180,7 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
 
   // Merged with anything already recorded for the account (the same id seen
   // under an earlier Item): a key recorded both ways becomes ambiguous.
-  const existing = await readCarried(ctx, [...byAccount.keys()]);
+  const existing = (await readCarried(ctx, [...byAccount.keys()])).carried;
   const writes: Record<string, string> = {};
   let n = 0;
   for (const [account_id, rows] of byAccount) {
@@ -126,16 +189,16 @@ export async function retireOverrides(ctx: Ctx, txns: StoredTxn[]): Promise<numb
       merged[key] = key in merged && merged[key] !== category ? null : category;
     }
     n += Object.keys(rows).length;
-    writes[account_id] = await encrypt(JSON.stringify(merged));
+    writes[account_id] = await encrypt(ctx, JSON.stringify(merged));
   }
   await redis().hset(CARRY_HASH(ctx), writes);
   await dropDead();
   return n;
 }
 
-async function parseRows(blob: string): Promise<CarriedRows | null> {
+async function parseRows(ctx: Ctx, blob: string): Promise<CarriedRows | null> {
   try {
-    const rows = JSON.parse(await decrypt(blob));
+    const rows = JSON.parse(await decrypt(ctx, blob));
     if (!rows || typeof rows !== 'object' || Array.isArray(rows)) return null;
     for (const v of Object.values(rows)) if (typeof v !== 'string' && v !== null) return null;
     return rows as CarriedRows;
@@ -144,17 +207,36 @@ async function parseRows(blob: string): Promise<CarriedRows | null> {
   }
 }
 
-/** Some accounts' records, read strictly (throws on a failed read). */
-async function readCarried(ctx: Ctx, account_ids: string[]): Promise<Carried> {
+/** Some accounts' records, read strictly (throws on a failed read); a record
+ *  that can't be parsed is skipped, and said in `ok`. */
+async function readCarried(ctx: Ctx, account_ids: string[]): Promise<{ carried: Carried; ok: boolean }> {
   const out: Carried = new Map();
+  let ok = true;
   const blobs = await Promise.all(account_ids.map((id) => redis().hget<string>(CARRY_HASH(ctx), id)));
   await Promise.all(
     account_ids.map(async (id, i) => {
-      const rows = blobs[i] ? await parseRows(blobs[i]!) : null;
+      const rows = blobs[i] ? await parseRows(ctx, blobs[i]!) : null;
       if (rows) out.set(id, rows);
+      else if (blobs[i]) ok = false;
     })
   );
-  return out;
+  return { carried: out, ok };
+}
+
+/**
+ * The records of the given earlier accounts, as getCarried reads them, and
+ * whether they were all read (`ok`): false when the read failed or a record
+ * couldn't be parsed. For a report (lib/report/read.ts), which says so; the
+ * app shows Plaid's categories, as it always has.
+ */
+export async function getCarriedReport(ctx: Ctx, account_ids: string[]): Promise<{ carried: Carried; ok: boolean }> {
+  if (account_ids.length === 0) return { carried: new Map(), ok: true };
+  try {
+    return await readCarried(ctx, account_ids);
+  } catch (err) {
+    console.warn('overrides: could not read carried categories', err instanceof Error ? err.message : err);
+    return { carried: new Map(), ok: false };
+  }
 }
 
 /**
@@ -164,12 +246,12 @@ async function readCarried(ctx: Ctx, account_ids: string[]): Promise<Carried> {
  */
 export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carried> {
   try {
-    if (account_ids) return account_ids.length === 0 ? new Map() : await readCarried(ctx, account_ids);
+    if (account_ids) return account_ids.length === 0 ? new Map() : (await readCarried(ctx, account_ids)).carried;
     const raw = (await redis().hgetall<Record<string, string>>(CARRY_HASH(ctx))) ?? {};
     const out: Carried = new Map();
     await Promise.all(
       Object.entries(raw).map(async ([id, blob]) => {
-        const rows = await parseRows(blob);
+        const rows = await parseRows(ctx, blob);
         if (rows) out.set(id, rows);
       })
     );
@@ -181,27 +263,44 @@ export async function getCarried(ctx: Ctx, account_ids?: string[]): Promise<Carr
 }
 
 /**
+ * Every earlier account's record, for the download of my data
+ * (lib/user-export.ts). Strict where getCarried is lenient: a failed read, or
+ * a record that can't be decrypted or parsed, throws instead of being skipped.
+ */
+export async function readCarriedStrict(ctx: Ctx): Promise<Carried> {
+  const raw = (await redis().hgetall<Record<string, string>>(CARRY_HASH(ctx))) ?? {};
+  const out: Carried = new Map();
+  for (const [id, rows] of await Promise.all(
+    Object.entries(raw).map(async ([id, blob]) => [id, await parseRows(ctx, String(blob))] as const)
+  )) {
+    if (!rows) throw new Error('The categories carried for an earlier account could not be read');
+    out.set(id, rows);
+  }
+  return out;
+}
+
+/**
  * Deletes overrides whose transaction no longer exists in any stored Item (rows
  * the bank removed, pending rows replaced by their posted ones, rows of an Item
  * disconnected before categories were carried): they can never be shown again.
- * Only when every store could be read; otherwise nothing.
+ * Only when the Items and every store could be read, and no store is behind
+ * (rows shown from a store too large to save aren't in it, and their
+ * overrides are live); otherwise nothing (lib/transactions.ts
+ * storedTransactionIds). A row imported into a linked account is in no Item's
+ * store: its override goes with the row (lib/history-import/commit.ts).
+ * `among` keeps it to the overrides of those transactions (the ones a sync
+ * just saved the bank's removal of, lib/transactions.ts), and the stores are
+ * read only if one of them has an override.
  */
-export async function pruneOrphanOverrides(ctx: Ctx, item_ids: string[]): Promise<number> {
-  // The overrides first, then the stores: a category set on a row saved
-  // meanwhile is then always checked against a store read that has the row.
-  const ids = await redis().hkeys(OVERRIDES_HASH(ctx));
-  const known = new Set<string>();
-  try {
-    for (const item_id of item_ids) {
-      // Rows shown from a store too large to save aren't in it: their
-      // overrides are live, so nothing is pruned while any Item is like that.
-      if (await storeIsBehind(ctx, item_id)) return 0;
-      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
-    }
-  } catch {
-    return 0; // a store we couldn't read might hold them
-  }
-  const orphans = ids.filter((id) => !known.has(id));
+export async function pruneOrphanOverrides(ctx: Ctx, opts: { among?: ReadonlySet<string> } = {}): Promise<number> {
+  // The overrides first, then the Items and their stores: a category set on a
+  // row saved meanwhile, of an Item linked meanwhile too, is then always
+  // checked against a read that has the row.
+  const ids = (await redis().hkeys(OVERRIDES_HASH(ctx))).filter((id) => !opts.among || opts.among.has(id));
+  if (ids.length === 0) return 0;
+  const known = await storedTransactionIds(ctx);
+  if (!known) return 0;
+  const orphans = ids.filter((id) => !known.has(id) && !id.startsWith(IMPORTED_TXN_PREFIX));
   if (orphans.length > 0) await redis().hdel(OVERRIDES_HASH(ctx), ...orphans);
   return orphans.length;
 }
@@ -270,4 +369,23 @@ export function carryCounts(
     }
   }
   return out;
+}
+
+// ---- Bringing a download back (lib/user-restore/commit.ts) ----
+
+/** Categories chosen for transactions, as a restore brings them back. */
+export async function restoreOverrides(ctx: Ctx, entries: readonly (readonly [string, string])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, category] of entries) fields[id] = await encrypt(ctx, category);
+  await redis().hset(OVERRIDES_HASH(ctx), fields);
+}
+
+/** Categories carried for earlier accounts, as a restore brings them back:
+ *  each account's record whole. */
+export async function restoreCarried(ctx: Ctx, entries: readonly (readonly [string, CarriedRows])[]): Promise<void> {
+  if (entries.length === 0) return;
+  const fields: Record<string, string> = {};
+  for (const [id, rows] of entries) fields[id] = await encrypt(ctx, JSON.stringify(rows));
+  await redis().hset(CARRY_HASH(ctx), fields);
 }

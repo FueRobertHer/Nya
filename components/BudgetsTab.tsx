@@ -1,29 +1,102 @@
 'use client';
 
-// Budgets tab -- the Mint core loop: monthly budgets per spending category
-// with progress meters (fill carries severity: accent -> warning -> over),
-// plus detected recurring bills. Spending is the current month's non-transfer
-// outflows, from the already-loaded transactions.
+// Budgets tab -- the Mint core loop: monthly budgets per category or per
+// category group, rolled up to your groups (components/BudgetsCard.tsx), with
+// progress meters (fill carries severity: accent -> warning -> over),
+// then savings goals, and what is coming: the cash forecast with its what-if
+// (components/ForecastCard.tsx), the calendar (components/CalendarView.tsx),
+// the recurring bills and income detected (components/RecurringCard.tsx) and
+// the items planned (components/PlannedCard.tsx). Spending is the current
+// month's outflows that count in totals (lib/spending.ts: not transfers or
+// loan payments, not excluded, and in the totals' currency, naming what is in
+// others), from the already-loaded transactions: the same rule as the
+// Activity tab and the Home insights, so a budget agrees with both.
+//
+// BY MONTH, WITH ROLLOVER (#37). The month's budgets as the server works them
+// out (components/budget-month-state.ts, app/api/budgets/month): what rolls
+// into each budget and what is available, read from the stored history back
+// to the first month a carry counts, beyond the year this page loads, with
+// which months may be incomplete; and the income pool, when "My income is
+// irregular" is on, above the meters (components/IncomePool.tsx). A month
+// picker shows a past month as it was: its budgets then, its spending, and
+// what rolled into it. Until the month has loaded, or when it can't be, this
+// month shows as it always has, with a note. This month's answer carries the
+// budget suggestions from history the editor offers (lib/budget-suggestions.ts).
+//
+// While your categories are still the ones Nya made, the starter sets are
+// offered here once, above the budgets (components/TemplateOffer.tsx).
 
 import { useMemo, useState } from 'react';
 import type { ListStatus } from '@/lib/whole-list-store';
 import { type Txn } from './MonthBreakdown';
-import { detectRecurring } from '@/lib/recurring';
-import { localMonth } from '@/lib/local-date';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { historyCount, leftOutByCurrency, leftOutText } from '@/lib/spending';
+import { conversionIn, convertedText, leftOutWhy, totalsIn } from '@/lib/fx/totals';
+import type { FxTable } from '@/lib/fx/rates';
+import SplitChangedNote from './SplitChangedNote';
+import type { Budgets } from '@/lib/budget-set';
+import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import BudgetsCard, { budgetTotals, type RolloverChange, type Target } from './BudgetsCard';
+import { changeRollover, useBudgetMonth, NOT_LOADED as NOT_LOADED_TEXT, type BudgetMonthState } from './budget-month-state';
+import { IncomePoolHeader, IncomeSetting } from './IncomePool';
+import { addMonths, gapText, monthName as nameOfMonth, monthsFrom, monthsText, MAX_MONTHS_BACK, type MonthGap } from '@/lib/rollover';
+import { dismissedSeries, type RecurringSeries } from '@/lib/recurring';
+import { localDate, localMonth, instantDay } from '@/lib/local-date';
+import { cashPosition, type ForecastInstitution } from '@/lib/forecast';
+import { EMPTY_PLANNED, type Planned, type PlannedItem } from '@/lib/planned';
+import { formatMoney } from '@/lib/format';
+import { spendingByCategory } from '@/lib/totals';
+import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
+import { missingMonthNotes, noSpending as noSpendingOf, withoutNote, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import GoalsCard, { type Goal, type GoalAccount } from './GoalsCard';
+import type { GoalPlansDamage } from './GoalPlansRepair';
+import ForecastCard from './ForecastCard';
+import CalendarView from './CalendarView';
+import RecurringCard from './RecurringCard';
+import PlannedCard from './PlannedCard';
+import { Masked } from './HideAmounts';
+import TemplateOffer from './TemplateOffer';
 
-export type Budgets = Record<string, number>;
+// Stable empty defaults, as in Insights.
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
+const NO_SERIES: RecurringSeries[] = [];
+const NO_INSTITUTIONS: ForecastInstitution[] = [];
+const NO_ITEMS: PlannedItem[] = [];
+const NO_DISMISSED: string[] = [];
+const NOT_LOADED: BudgetMonthState = { status: 'idle', view: null, error: null, reload: () => {} };
 
-function fmtDay(iso: string): string {
-  return new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
+/** A reason a month may be incomplete, in words: an instant as the local
+ *  day it fell on, a calendar day as it is. */
+const reasonText = (g: MonthGap) => {
+  const text = gapText(g, (at) => (at.length > 10 ? (instantDay(at) ?? at.slice(0, 10)) : (instantDay(`${at}T12:00:00Z`, 'UTC') ?? at)));
+  return `${text[0].toUpperCase()}${text.slice(1)}`;
+};
+
+/** Reasons months may be incomplete, each with the months it touches:
+ *  "Chase hasn’t synced since Mar 5 (March and April)". */
+function gapReasons(gaps: { month: string; gaps: MonthGap[] }[], months: ReadonlySet<string>, today: string): string[] {
+  const by = new Map<string, string[]>();
+  for (const g of gaps) {
+    if (!months.has(g.month)) continue;
+    for (const x of g.gaps) by.set(reasonText(x), [...(by.get(reasonText(x)) ?? []), g.month]);
+  }
+  return [...by].map(([text, ms]) => `${text} (${monthsText(ms, today)})`);
 }
 
-function isTransfer(t: Txn): boolean {
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
+export type { Budgets };
+
+/** A month gone by that isn't shown yet: loading, or why it couldn't be
+ *  loaded, with a way to try again (choosing it again loads nothing new). */
+export function PastMonthPending({ state, name }: { state: BudgetMonthState; name: string }) {
+  if (state.status !== 'error') return <p className="empty-note">Loading {name}…</p>;
+  return (
+    <>
+      <p className="stale-note">{state.error && state.error !== NOT_LOADED_TEXT ? state.error : `${name} couldn’t be loaded.`}</p>
+      <button className="secondary" style={{ marginTop: 8 }} onClick={state.reload}>
+        Try again
+      </button>
+    </>
+  );
 }
 
 function meterState(ratio: number): '' | ' warn' | ' over' {
@@ -34,7 +107,10 @@ function meterState(ratio: number): '' | ' warn' | ' over' {
 
 export default function BudgetsTab({
   txns,
+  fx = null,
   budgets,
+  taxonomy = null,
+  categoriesError = null,
   budgetsStatus = 'ready',
   budgetsError = null,
   budgetsSaveError = null,
@@ -43,12 +119,37 @@ export default function BudgetsTab({
   goalsStatus = 'ready',
   goalsError = null,
   goalsSaveError = null,
+  goalsDamage,
+  onGoalsRepaired,
   onSaveGoals,
   accounts,
   loading,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  series: detected = null,
+  txnsFailed = false,
+  institutions = NO_INSTITUTIONS,
+  balancesAsOf = null,
+  balancesSaved = false,
+  planned = EMPTY_PLANNED,
+  plannedStatus = 'ready',
+  plannedError = null,
+  plannedSaveError = null,
+  onSavePlanned,
+  budgetMonth = NOT_LOADED,
+  onCategories,
 }: {
   txns: Txn[] | null;
+  /** What spending in other currencies converts with, once a home currency
+   *  is chosen (app/api/transactions `fx`); null without one. */
+  fx?: FxTable | null;
   budgets: Budgets;
+  /** Your categories (components/categories-state.ts): what budgets are set
+   *  on, and the groups they roll up to. Null until loaded. */
+  taxonomy?: Taxonomy | null;
+  /** Why they couldn't be loaded. */
+  categoriesError?: string | null;
   /** Until 'ready', the list is unknown: shown as loading, never as "none",
    *  and not editable (lib/whole-list-store.ts). */
   budgetsStatus?: ListStatus;
@@ -63,59 +164,175 @@ export default function BudgetsTab({
   goalsStatus?: ListStatus;
   goalsError?: string | null;
   goalsSaveError?: string | null;
+  /** When goals can't load for plans that can't be read, how many (the
+   *  repair the card offers: components/GoalPlansRepair.tsx). */
+  goalsDamage?: GoalPlansDamage;
+  /** Loads the goals again once damaged plans are removed. */
+  onGoalsRepaired?: () => void;
   onSaveGoals: (next: Goal[]) => Promise<boolean>;
   accounts: GoalAccount[];
   loading: boolean;
+  /** What may leave this month's spending short, as Activity says it
+   *  (lib/month-coverage.ts): a spent figure that looks finished but isn't
+   *  makes a budget look safer than it is. */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
+  /** Connections that bring in no transactions (lib/no-transactions.ts). When
+   *  none can bring in spending, a budget shows its limit and why there is
+   *  nothing against it, never "$0 of" it; a bank account Plaid doesn't
+   *  provide transactions for is named under the month. */
+  withoutTransactions?: NoTransactionsView;
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs; null until transactions load. */
+  series?: RecurringSeries[] | null;
+  /** Transactions couldn't be loaded: said, never shown as "nothing". */
+  txnsFailed?: boolean;
+  /** Every institution as the dashboard last loaded it, for the forecast's
+   *  cash accounts and the calendar's payments due. */
+  institutions?: ForecastInstitution[];
+  /** When those balances were loaded, and whether they are the ones saved on
+   *  this device from an earlier visit (components/Dashboard.tsx). */
+  balancesAsOf?: string | null;
+  balancesSaved?: boolean;
+  /** The planned items, dismissals and warning (lib/planned.ts), loaded and
+   *  saved whole like the budgets. */
+  planned?: Planned;
+  plannedStatus?: ListStatus;
+  plannedError?: string | null;
+  plannedSaveError?: string | null;
+  onSavePlanned?: (next: Planned) => Promise<boolean>;
+  /** This month's budgets as the server works them out, with rollover
+   *  (components/budget-month-state.ts), loaded once for the dashboard. */
+  budgetMonth?: BudgetMonthState;
+  /** Takes the set a starter template made (components/TemplateOffer.tsx),
+   *  offered here once while your categories are still the ones Nya made. */
+  onCategories?: (t: unknown) => void;
 }) {
-  const [editing, setEditing] = useState<string | null>(null); // category being edited
-  const [editAmount, setEditAmount] = useState('');
-  const [newCategory, setNewCategory] = useState('');
-  const [newAmount, setNewAmount] = useState('');
-
   const thisMonth = localMonth();
-  const monthName = new Date().toLocaleDateString(undefined, { month: 'long' });
+  // The month shown: this month, or one picked to look back on.
+  const [picked, setPicked] = useState<string | null>(null);
+  const shownMonth = picked && picked < thisMonth ? picked : thisMonth;
+  const past = shownMonth !== thisMonth;
+  const pastMonth = useBudgetMonth(past && budgetsStatus === 'ready' ? shownMonth : null, [budgets, txns, taxonomy]);
+  const month = past ? pastMonth : budgetMonth;
+  // The view of the month shown, once loaded (kept while it loads again).
+  const view = month.view && month.view.month === shownMonth ? month.view : null;
+  const [rolloverError, setRolloverError] = useState<string | null>(null);
+  const monthName = past
+    ? nameOfMonth(shownMonth, thisMonth)
+    : new Date().toLocaleDateString(undefined, { month: 'long' });
 
-  // Current-month spending per category.
+  // Budgets are plain numbers with no currency; they count, and are shown in,
+  // the currency most transactions are in (lib/spending.ts), as the server
+  // reads them (lib/budget-month.ts). With a home currency chosen, they stay
+  // in it, never relabelled, and spending in other currencies counts against
+  // them converted into it at each day's rate (lib/fx/totals.ts).
+  const budgeted = useMemo(() => totalsIn(txns ?? [], fx, { into: 'most' }), [txns, fx]);
+  const displayCurrency = budgeted.currency;
+  const monthCounted = useMemo(() => budgeted.rows.filter((t) => t.date.slice(0, 7) === thisMonth), [budgeted, thisMonth]);
+
+  // Current-month spending per category id (lib/totals.ts, which the API's
+  // budgets share).
   const spendByCat = useMemo(() => {
-    const map: Record<string, number> = {};
-    (txns ?? []).forEach((t) => {
-      if (t.date.slice(0, 7) !== thisMonth || t.amount <= 0 || isTransfer(t)) return;
-      const cat = t.category ?? 'other';
-      map[cat] = (map[cat] ?? 0) + t.amount;
-    });
-    return map;
-  }, [txns, thisMonth]);
+    const ix = taxonomy ? indexTaxonomy(taxonomy) : null;
+    return spendingByCategory(monthCounted, () => true, displayCurrency, ix ? (t) => filedId(ix, t) : undefined);
+  }, [monthCounted, displayCurrency, taxonomy]);
 
-  // Categories seen anywhere in the window, offered when adding a budget.
-  const availableCategories = useMemo(() => {
-    const seen = new Set<string>();
-    (txns ?? []).forEach((t) => {
-      if (t.amount > 0 && !isTransfer(t)) seen.add(t.category ?? 'other');
-    });
-    return [...seen].filter((c) => !(c in budgets)).sort();
-  }, [txns, budgets]);
-
-  const budgetedCategories = useMemo(
+  // This month's spending in other currencies with no rate, named rather
+  // than added, and what was converted.
+  const leftOut = useMemo(
     () =>
-      Object.keys(budgets).sort(
-        (a, b) => (spendByCat[b] ?? 0) / budgets[b] - (spendByCat[a] ?? 0) / budgets[a]
+      leftOutWhy(
+        leftOutText(
+          leftOutByCurrency(
+            monthCounted.filter((t) => t.amount > 0),
+            displayCurrency
+          ),
+          displayCurrency,
+          { where: 'these budgets' }
+        ),
+        conversionIn(monthCounted, budgeted.conversion)
       ),
-    [budgets, spendByCat]
+    [monthCounted, displayCurrency, budgeted]
+  );
+  const converted = useMemo(() => convertedText(conversionIn(monthCounted, budgeted.conversion), { budgets: true }), [monthCounted, budgeted]);
+
+  // What the meters show: this month's budgets and spending as this page
+  // holds them, or a past month's as the server read them; with what rolled
+  // into each, once the month has loaded.
+  const shownBudgets = past ? (view?.budgets ?? null) : budgets;
+  const shownSpent = past ? (view?.spent ?? null) : spendByCat;
+  const carries = view?.carries ?? null;
+
+  // Every limit and what counts against it, each group's once (lib/budget-set.ts).
+  const totals = useMemo(
+    () => (taxonomy && shownBudgets && shownSpent ? budgetTotals(taxonomy, shownBudgets, shownSpent, carries) : { budget: 0, spent: 0, any: false }),
+    [taxonomy, shownBudgets, shownSpent, carries]
   );
 
-  const recurring = useMemo(() => (txns ? detectRecurring(txns) : []), [txns]);
+  // The months a carry or the pool counts that may be incomplete, and why.
+  const carryNotes = useMemo(() => {
+    if (!view) return [];
+    const counted = new Set<string>([
+      ...Object.values(view.carries.categories).flatMap((c) => c.uncertain),
+      ...Object.values(view.carries.groups).flatMap((c) => c.uncertain),
+      ...(view.pool?.uncertain ?? []),
+    ]);
+    counted.delete(shownMonth);
+    return gapReasons(view.gaps, counted, thisMonth);
+  }, [view, shownMonth, thisMonth]);
+  // A past month's own gaps, as this month's notes are said below.
+  const shownGaps = useMemo(() => (view && past ? (view.gaps.find((g) => g.month === shownMonth)?.gaps ?? []).map(reasonText) : []), [view, past, shownMonth]);
+  // Months to look back on: back to the first with transactions, ten years at most.
+  const earliest = budgetMonth.view?.earliest ?? null;
+  const pickable = useMemo(() => {
+    const floor = addMonths(thisMonth, -MAX_MONTHS_BACK);
+    return earliest && earliest < thisMonth ? monthsFrom(earliest > floor ? earliest : floor, thisMonth).reverse() : [thisMonth];
+  }, [earliest, thisMonth]);
+  // Carries or amounts from before budgets were kept by month are assumed.
+  const assumedNote =
+    view &&
+    (view.assumed.categories.length > 0 ||
+      view.assumed.groups.length > 0 ||
+      [...Object.values(view.carries.categories), ...Object.values(view.carries.groups)].some((c) => c.from < view.recorded_since))
+      ? `Nya began keeping budgets by month in ${nameOfMonth(view.recorded_since, thisMonth)}, so before then each budget counts its amount in ${nameOfMonth(view.recorded_since, thisMonth)}.`
+      : null;
 
-  // Budgets are plain numbers with no currency; label summed figures with the
-  // user's dominant transaction currency (defaults to $ when unknown).
-  const displayCurrency = useMemo(() => dominantCurrency(txns ?? []), [txns]);
+  async function onRollover(t: Target, change: RolloverChange): Promise<boolean> {
+    const body =
+      'reset' in change
+        ? { action: 'reset', kind: t.kind, id: t.id }
+        : change.on
+          ? { action: 'rollover', kind: t.kind, id: t.id, on: true, from: change.from }
+          : { action: 'rollover', kind: t.kind, id: t.id, on: false };
+    const error = await changeRollover(body);
+    setRolloverError(error);
+    budgetMonth.reload();
+    return error === null;
+  }
+  async function onIncome(change: { enabled: true; start: string } | { enabled: false }): Promise<boolean> {
+    const error = await changeRollover({ action: 'income', ...change });
+    setRolloverError(error);
+    budgetMonth.reload();
+    return error === null;
+  }
 
-  // Summing across currencies isn't meaningful without FX; flag it (same as the
-  // Activity summary) so the single-currency-labelled totals aren't read as exact.
-  const mixedCurrency = useMemo(() => {
-    const seen = new Set<string>();
-    for (const t of txns ?? []) if (t.iso_currency_code) seen.add(t.iso_currency_code);
-    return seen.size > 1;
-  }, [txns]);
+  // Bills and income detected (lib/recurring.ts), for the recurring list, the
+  // forecast and the calendar alike.
+  const series = detected ?? NO_SERIES;
+  // Until the planned items load, no item counts and nothing is dismissed: the
+  // forecast says so. A dismissal follows its series as amounts move
+  // (lib/recurring.ts dismissedSeries): the series' ids, and what each was
+  // saved as, to restore it.
+  const ready = plannedStatus === 'ready';
+  const items = ready ? planned.items : NO_ITEMS;
+  const dismissedIds = ready ? planned.dismissed : NO_DISMISSED;
+  const gone = useMemo(() => dismissedSeries(series, dismissedIds), [series, dismissedIds]);
+  const dismissed = useMemo(() => new Set(gone.keys()), [gone]);
+  // A planned item starts in the forecast's currency: the cash accounts'.
+  const plannedCurrency = useMemo(() => cashPosition(institutions).currency ?? displayCurrency, [institutions, displayCurrency]);
+  const today = localDate();
 
   if (loading) {
     return (
@@ -125,49 +342,51 @@ export default function BudgetsTab({
     );
   }
 
-  const totalBudget = Object.values(budgets).reduce((a, b) => a + b, 0);
-  const totalSpent = budgetedCategories.reduce((sum, c) => sum + (spendByCat[c] ?? 0), 0);
-  const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : 0;
-  const monthlyBills = recurring.reduce((sum, b) => sum + b.amount, 0);
+  const totalBudget = totals.budget;
+  const totalSpent = totals.spent;
+  // With rollover, what is available in all can be nothing or less (an
+  // overspent carry): there are budgets all the same, said in words.
+  const hasTotal = totals.any;
+  const totalRatio = totalBudget > 0 ? totalSpent / totalBudget : totalBudget < 0 || totalSpent > 0 ? 1 : 0;
+  // No connection can bring in spending, and none came from anywhere else
+  // (rows entered by hand count): say so, rather than "$0 of" every limit.
+  // With rows entered by hand, the connections that bring in none are named
+  // beside the budgets instead, as where the spending comes from.
+  const noSpending = txns ? noSpendingOf(withoutTransactions, historyCount(txns)) : null;
+  const missingNotes = noSpending ? [] : missingMonthNotes(withoutTransactions, thisMonth);
+  const namedWithout = withoutNote(withoutTransactions, txns ? historyCount(txns) : 0);
 
-  function startEdit(category: string) {
-    setEditing(category);
-    setEditAmount(String(budgets[category]));
-  }
-
-  async function saveEdit(category: string) {
-    const value = Number(editAmount);
-    if (!Number.isFinite(value) || value <= 0) return;
-    if (await onSave({ ...budgets, [category]: value })) setEditing(null);
-  }
-
-  async function removeBudget(category: string) {
-    const next = { ...budgets };
-    delete next[category];
-    if (await onSave(next)) setEditing(null);
-  }
-
-  async function addBudget() {
-    const value = Number(newAmount);
-    if (!newCategory || !Number.isFinite(value) || value <= 0) return;
-    if (await onSave({ ...budgets, [newCategory]: value })) {
-      setNewCategory('');
-      setNewAmount('');
-    }
-  }
+  // The currency the figures are in: this page's for this month, the
+  // server's for a past one (the same rule, over the same year).
+  const shownCurrency = past ? (view?.currency ?? displayCurrency) : displayCurrency;
+  const shownLeftOut = past ? (view?.left_out_text ?? null) : leftOut;
+  const shownConverted = past ? (view?.converted_text ?? null) : converted;
 
   return (
     <>
+      {onCategories && <TemplateOffer taxonomy={taxonomy} onTaxonomy={onCategories} />}
       <div className="card">
         <div className="inst-header">
           <div className="inst-name">{monthName} budgets</div>
-          {totalBudget > 0 && budgetsStatus === 'ready' && (
+          {hasTotal && budgetsStatus === 'ready' && !noSpending && (
             <div className="inst-total">
-              {formatMoney(totalSpent, displayCurrency)} of{' '}
-              {formatMoney(totalBudget, displayCurrency)}
+              <Masked>
+                {totalBudget > 0
+                  ? `${formatMoney(totalSpent, shownCurrency)} of ${formatMoney(totalBudget, shownCurrency)}`
+                  : `${formatMoney(totalSpent, shownCurrency)} spent, nothing left`}
+              </Masked>
             </div>
           )}
         </div>
+        {pickable.length > 1 && budgetsStatus === 'ready' && (
+          <select className="text-input budget-select month-picker" value={shownMonth} onChange={(e) => setPicked(e.target.value)} aria-label="Month to show">
+            {pickable.map((m) => (
+              <option key={m} value={m}>
+                {m === thisMonth ? `${nameOfMonth(m, thisMonth)} (this month)` : nameOfMonth(m, thisMonth)}
+              </option>
+            ))}
+          </select>
+        )}
 
         {budgetsStatus === 'loading' ? (
           <p className="empty-note">Loading budgets…</p>
@@ -176,7 +395,15 @@ export default function BudgetsTab({
         ) : (
           <>
         {budgetsSaveError && <p className="stale-note">{budgetsSaveError}</p>}
-        {totalBudget > 0 && (
+        {rolloverError && <p className="stale-note">{rolloverError}</p>}
+        {!past && month.status === 'error' && month.error && <p className="stale-note">{month.error}</p>}
+        {noSpending && (
+          <p className="empty-note">
+            {noSpending.lead}, so there&apos;s no spending to count against budgets. To track them, {noSpending.remedy}.
+          </p>
+        )}
+        {view?.pool && <IncomePoolHeader pool={view.pool} currency={shownCurrency} month={shownMonth} today={thisMonth} />}
+        {hasTotal && !noSpending && (
           <div className={`meter-track${meterState(totalRatio)}`}>
             <div
               className={`meter-fill${meterState(totalRatio)}`}
@@ -185,99 +412,55 @@ export default function BudgetsTab({
           </div>
         )}
 
-        {budgetedCategories.length === 0 && (
-          <p className="empty-note">
-            No budgets yet — add one below to start tracking spending against a monthly limit.
+        {!taxonomy ? (
+          <p className={categoriesError ? 'stale-note' : 'empty-note'}>
+            {categoriesError ? `${categoriesError} Budgets are shown once they are.` : 'Loading your categories…'}
           </p>
-        )}
-
-        {budgetedCategories.map((cat) => {
-          const spent = spendByCat[cat] ?? 0;
-          const budget = budgets[cat];
-          const ratio = spent / budget;
-          return (
-            <div className="budget-row" key={cat}>
-              {editing === cat ? (
-                <div className="budget-edit">
-                  <span className="budget-name">{cat}</span>
-                  <input
-                    className="text-input budget-input"
-                    type="number"
-                    min="1"
-                    step="1"
-                    value={editAmount}
-                    onChange={(e) => setEditAmount(e.target.value)}
-                    aria-label={`Monthly budget for ${cat}`}
-                  />
-                  <div className="card-actions">
-                    <button onClick={() => saveEdit(cat)}>Save</button>
-                    <button className="secondary" onClick={() => removeBudget(cat)}>
-                      Remove
-                    </button>
-                    <button className="secondary" onClick={() => setEditing(null)}>
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <button className="budget-summary" onClick={() => startEdit(cat)}>
-                  <div className="budget-line">
-                    <span className="budget-name">{cat}</span>
-                    <span className="budget-amounts">
-                      {formatMoney(spent, displayCurrency)} of{' '}
-                      {formatMoney(budget, displayCurrency)}
-                      {ratio >= 1 && <span className="over-tag"> · over</span>}
-                    </span>
-                  </div>
-                  <div className={`meter-track${meterState(ratio)}`}>
-                    <div
-                      className={`meter-fill${meterState(ratio)}`}
-                      style={{ width: `${Math.min(ratio * 100, 100)}%` }}
-                    />
-                  </div>
-                </button>
-              )}
-            </div>
-          );
-        })}
-
-        <div className="budget-add">
-          <select
-            className="text-input budget-select"
-            value={newCategory}
-            onChange={(e) => setNewCategory(e.target.value)}
-            aria-label="Category to budget"
-          >
-            <option value="">Choose a category…</option>
-            {availableCategories.map((c) => (
-              <option key={c} value={c}>
-                {c}
-                {spendByCat[c]
-                  ? ` (${formatMoney(spendByCat[c], displayCurrency)} this month)`
-                  : ''}
-              </option>
-            ))}
-          </select>
-          <input
-            className="text-input budget-input"
-            type="number"
-            min="1"
-            step="1"
-            placeholder="Monthly limit"
-            value={newAmount}
-            onChange={(e) => setNewAmount(e.target.value)}
-            aria-label="Monthly limit"
+        ) : past && !view ? (
+          <PastMonthPending state={month} name={monthName} />
+        ) : (
+          <BudgetsCard
+            key={shownMonth}
+            taxonomy={taxonomy}
+            budgets={shownBudgets!}
+            spent={shownSpent!}
+            currency={shownCurrency}
+            editable={budgetsStatus === 'ready' && !past}
+            noSpending={!!noSpending}
+            onSave={onSave}
+            carries={carries}
+            month={shownMonth}
+            past={past}
+            rollover={!past && view ? { rolling: view.rollover, starts: view.starts, ended: view.ended, earliest: view.earliest } : null}
+            onRollover={!past && view ? onRollover : undefined}
+            suggestions={!past ? (view?.suggestions ?? null) : null}
           />
-          <button onClick={addBudget} disabled={!newCategory || !newAmount}>
-            Add Budget
-          </button>
-        </div>
+        )}
+        {!past && view && (
+          <IncomeSetting setting={view.income} today={thisMonth} earliest={view.earliest} disabled={budgetsStatus !== 'ready'} onChange={onIncome} />
+        )}
           </>
         )}
 
-        {mixedCurrency && (
-          <div className="chart-note">Totals mix currencies and aren&apos;t converted.</div>
-        )}
+        {shownConverted && <div className="chart-note">{shownConverted}</div>}
+        {shownLeftOut && <div className="chart-note">{shownLeftOut}</div>}
+        {view?.counted_left_out_text && <div className="chart-note">{view.counted_left_out_text}</div>}
+        {/* A split whose amount changed since counts as split until edited (#39). */}
+        {hasTotal && <SplitChangedNote txns={txns} month={shownMonth} />}
+        {hasTotal && namedWithout && <div className="chart-note">{namedWithout}</div>}
+        {carryNotes.length > 0 && <div className="stale-note">Rollover may be off where a month is incomplete: {carryNotes.join('; ')}.</div>}
+        {assumedNote && <div className="chart-note">{assumedNote}</div>}
+        {/* With no spending to count at all, nothing can be missing from it. */}
+        {hasTotal &&
+          !noSpending &&
+          (past
+            ? shownGaps.map((n) => `${monthName} may be incomplete: ${n}.`)
+            : [...monthGapNotes(thisMonth, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingNotes]
+          ).map((n) => (
+            <div className="stale-note" key={n}>
+              {n}
+            </div>
+          ))}
       </div>
 
       <GoalsCard
@@ -285,58 +468,73 @@ export default function BudgetsTab({
         status={goalsStatus}
         error={goalsError}
         saveError={goalsSaveError}
+        damage={goalsDamage}
+        onRepaired={onGoalsRepaired}
         accounts={accounts}
         onSave={onSaveGoals}
       />
 
-      <div className="card">
-        <div className="inst-header">
-          <div className="inst-name">Recurring bills</div>
-          {recurring.length > 0 && (
-            <div className="inst-total">
-              ~{formatMoney(monthlyBills, displayCurrency)}/mo
-            </div>
-          )}
-        </div>
+      <ForecastCard
+        institutions={institutions}
+        series={series}
+        planned={planned}
+        plannedStatus={plannedStatus}
+        dismissed={dismissed}
+        onSavePlanned={onSavePlanned}
+        today={today}
+        txns={txns ?? undefined}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
+        balancesAsOf={balancesAsOf}
+        balancesSaved={balancesSaved}
+        incomplete={incomplete}
+        stopped={stopped}
+        withoutTransactions={withoutTransactions}
+        fx={fx}
+      />
 
-        {recurring.length === 0 ? (
-          <p className="empty-note">
-            No recurring charges detected yet — they show up once a merchant has billed a
-            consistent amount for three months.
-          </p>
-        ) : (
-          <table>
-            <tbody>
-              {recurring.map((b) => (
-                <tr key={`${b.institution}-${b.name}`}>
-                  <td>
-                    <div className="txn-main">
-                      {b.logo_url ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img className="txn-logo" src={b.logo_url} alt="" loading="lazy" />
-                      ) : (
-                        <span className="txn-logo txn-logo-fallback" aria-hidden="true">
-                          {b.name.slice(0, 1).toUpperCase()}
-                        </span>
-                      )}
-                      <div className="txn-text">
-                        {b.name}
-                        <div className="type-tag">
-                          {b.institution} · {b.monthsSeen} months · next ~{fmtDay(b.nextDate)}
-                        </div>
-                      </div>
-                    </div>
-                  </td>
-                  <td className="num">
-                    {formatMoney(b.amount, b.currency ?? displayCurrency)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-        <div className="chart-note">Detected from repeating charges of a consistent amount.</div>
-      </div>
+      <CalendarView
+        txns={txns}
+        failed={txnsFailed}
+        series={series}
+        planned={items}
+        dismissed={dismissed}
+        institutions={institutions}
+        today={today}
+        currency={displayCurrency}
+        fx={fx}
+      />
+
+      <RecurringCard
+        series={series}
+        today={today}
+        currency={displayCurrency}
+        fx={fx}
+        dismissed={dismissed}
+        status={plannedStatus}
+        saveError={plannedSaveError}
+        onDismiss={
+          onSavePlanned &&
+          ((s, dismiss) => {
+            const saved = gone.get(s.id);
+            const rest = planned.dismissed.filter((d) => d !== saved && d !== s.id);
+            return onSavePlanned({ ...planned, dismissed: dismiss ? [...rest, s.id] : rest });
+          })
+        }
+        noSpending={noSpending}
+        loading={txns === null && !txnsFailed}
+        failed={txnsFailed}
+      />
+
+      <PlannedCard
+        planned={planned}
+        status={plannedStatus}
+        error={plannedError}
+        saveError={plannedSaveError}
+        onSave={onSavePlanned}
+        today={today}
+        currency={plannedCurrency}
+      />
     </>
   );
 }

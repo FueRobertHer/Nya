@@ -1,0 +1,1095 @@
+// lib/ofx-export.ts
+//
+// One account's transactions as an OFX statement, a format of the download of
+// my data (app/api/my-data, docs/data-export.md): for another money app, or to
+// bring them back into Nya through its own file import (lib/import/).
+//
+// OFX 1.0.2, IN SGML. It is what most banks' downloads are (QFX, Quicken's
+// Web Connect, is the same with a tag of Quicken's), so it is what money
+// apps' importers are built and tested against: GnuCash (libofx), Actual
+// Budget and YNAB read it, and so does Nya's own parser (lib/import/ofx.ts).
+// An app that reads OFX 2 (XML) reads 1.x too, while some readers only take
+// 1.x. Written as banks write it: the headers, then one tag a line, leaf
+// elements without an end tag, aggregates with one, lines ending CRLF.
+//
+// THE STATEMENT. A depository account is a bank statement (STMTRS), a credit
+// account a card statement (CCSTMTRS); loans and investment accounts have no
+// statement here (lib/download-options.ts ofxRefusal). It lists the account's
+// posted transactions, oldest first:
+//   - FITID is the transaction's own id: Plaid's transaction id, or a manual
+//     row's "manual-txn:..." id (a row SimpleFIN brought is one too: an
+//     account SimpleFIN keeps up to date has its rows in a book, as a manual
+//     account has), or an "imported-txn:..." id. It never changes, so
+//     importing the same file twice, into Nya's import or any app that
+//     honours FITIDs, adds nothing.
+//   - A linked account's statement holds the transactions imported into it
+//     from its bank's files (#52) that count as its own, as the CSV and JSON
+//     files have them: not one standing for a transaction already there, nor
+//     one the bank's own now stands for, so none is in it twice; counted as
+//     posted rows are, so one whose only look-alike at the bank is pending is
+//     in it (the pending one isn't). A bank row standing for imported ones
+//     takes what you said about them (an exclusion or an include, a note,
+//     tags), as the app reads it. Where the bank later sends the same
+//     transaction, a later statement lists the bank's in its place, with the
+//     bank's id, which a note says.
+//   - Pending transactions are left out, and a note says how many: the bank
+//     gives a transaction a new id when it posts, so an app holding the
+//     pending one would count it twice.
+//   - TRNAMT is the account holder's sign, OFX's: positive is money in, on a
+//     card as on a bank account. Nya keeps Plaid's (positive is money out), so
+//     each amount is negated. Written with the currency's own decimals, or
+//     more where the amount has them: never rounded.
+//   - TRNTYPE is CREDIT or DEBIT by that sign, unless the bank said more
+//     through Plaid's transaction code (an ATM withdrawal, a fee, a transfer,
+//     a check, interest): what it says outright, never a guess from a
+//     category. One side of a payment or a move Nya works out between two of
+//     the person's SimpleFIN accounts (lib/manual-txns.ts connectorTransfers)
+//     is written as a bank's file writes it: a card's or a loan's payment
+//     PAYMENT, any other move XFER, as the transactions CSV files them (loan
+//     payments, transfer out or in), and as Nya's own import reads them back.
+//   - Dates are the days as the bank gave them (Plaid's are days at the bank,
+//     not instants), written at 10:59 with no time zone. OFX reads that as
+//     10:59 GMT, which is the same day in every time zone from UTC-10 to
+//     UTC+13, so an app that turns it into its own time still shows the
+//     bank's day from Hawaii to New Zealand, Tonga and Samoa (noon would move
+//     it a day at UTC+12 and beyond). Only at UTC-11 (American Samoa, Niue)
+//     or past UTC+13 (Kiribati's Line Islands, the Chatham Islands in summer)
+//     would such an app move it a day; one that reads the date as written
+//     shows it everywhere. DTUSER is when it happened, where Plaid says and
+//     that differs from when it posted.
+//   - Each transaction is as the app shows it, by the same read layer
+//     (lib/txn-layers.ts, through the document: the bank's rows as
+//     buildUserExport made them, the books' by lib/user-export.ts
+//     layeredBookRows, and those imported into a linked account by
+//     layeredImportedRows): your rules, tags, notes and exclusions on it.
+//   - NAME is the payee as the app shows it (your name for the merchant, else
+//     a rule's, else Plaid's, else the bank's words), within OFX's 32
+//     characters; a longer one is cut, and given whole in the memo. MEMO (255
+//     characters) holds, in order: "Excluded from budgets and reports in
+//     Nya" for a transaction you left out, or "Hidden from budgets and
+//     reports by a rule in Nya" for one a rule hides (either is still
+//     listed: the money moved, and the statement must add up to the
+//     balance), the whole name if it was cut, the bank's own words where
+//     they aren't the name (an imported row's file's, where the app shows
+//     another), your note (on a bank's, a SimpleFIN or an imported row too,
+//     kept beside it), and its tags ("Tags: Work, Trip"). A memo longer than
+//     that is cut, and a note says how many were, since the end of one (a
+//     note, its tags) is then missing. Categories have no field in OFX; they
+//     are in the CSV and JSON files.
+//   - A transaction in another currency than the account's is in a statement
+//     of its own, for the same account, in that currency: OFX has one
+//     currency per statement, and a rate to convert at isn't Nya's to invent.
+//   - The ledger balance (LEDGERBAL) is the latest balance Nya knows and the
+//     day it is as of, a day where the person is (the time zone their device
+//     sends; UTC without one): for a linked account, its newest recorded
+//     balance, never an estimate, on the day Nya recorded it; for an account
+//     SimpleFIN keeps up to date, the balance it last gave, as of the bank's
+//     own date for it (balance-date), and none while Nya holds it (a card
+//     whose sign you haven't said, a bank whose latest answer isn't whole and
+//     current: lib/connectors/institutions.ts); for a manual account, the
+//     balance as set, in its currency, on the day it was set. History is
+//     kept by UTC day, so a linked account's is that UTC day where Nya didn't
+//     keep the moment (lib/history.ts snapshotTakenAt), or the balance was
+//     measured on a day the snapshot was partial. A card's is negative while
+//     money is owed, as OFX writes it. Without one known, in the statement's
+//     currency, there is none, and a note says so; OFX asks for one, and an
+//     app that insists on it may refuse the file.
+//   - ACCTID is an id made for the account (Nya never has its full number):
+//     "NYA-", 12 characters derived from the id Nya first knew it by, and its
+//     last digits where the bank gave them. The first id is where the
+//     account's links start (lib/link-core.ts), so a bank reconnected, and
+//     its new account linked to the old, still writes the same ACCTID. Its
+//     transactions come back with new ids from the bank then, though, so
+//     their FITIDs change: an app that matches by FITID may add again what a
+//     file from before the reconnection gave it.
+//   - ACCTTYPE is SAVINGS or MONEYMRKT where Plaid's subtype says so, else
+//     CHECKING: a manual account, or one SimpleFIN keeps up to date, says
+//     only that it is a bank account (you chose "Checking or savings"), and
+//     Nya doesn't guess which from its name.
+//   - BANKID is "NYA". It is not a routing number, which Nya doesn't know,
+//     but OFX requires the element in a bank statement, and a strict reader
+//     refuses a statement without it. A card statement has none.
+//
+// TEXT. The file is Windows-1252, as its header says and as US banks write
+// it, which every reader takes. A character it lacks is written as its plain
+// letter where it has one (an accent it lacks dropped, "ł" as "l") and as "?"
+// otherwise, and a note counts the transactions that touched; the JSON and CSV
+// files have every character. Control characters are spaces, and &, < and >
+// are escaped.
+//
+// NOTHING MISSING WITHOUT A WORD (lib/user-export.ts, rule 1). Built from the
+// document the route already read, so whatever couldn't be read is known: a
+// manual account's transactions, a linked account's imported ones, whether a
+// transaction was excluded (with the tags you put on it, and your note on a
+// bank's, a SimpleFIN one or one imported into a linked account: a note
+// written with a transaction entered or imported into a manual account is
+// its own), what a bank's row takes from a row imported from a file it
+// stands for, what was carried from an earlier account, and the rules and
+// tags, are said in a note and in the parts the file is short of
+// (`incomplete`), never left out quietly. So are an account SimpleFIN keeps
+// up to date whose older transactions may still be arriving, a few months a
+// night (in a note: nothing stored is short), its balance while held, and
+// the record of its connection when that can't be read (`incomplete` too).
+//
+// AN ACCOUNT THAT ENDED (#50, lib/lifecycle.ts) is a statement like any other:
+// every transaction Nya stored, its later ones too (the money moved, and an
+// app reconciling the account needs them), and the newest balance. A note
+// says when it ended in Nya, how many of its transactions are dated from
+// then (which Nya counts in nothing), and the day the balance is from, which
+// for a closure Nya noticed by the account's absence is from before it. One
+// SimpleFIN keeps up to date gives the balance SimpleFIN last gave for it,
+// even once SimpleFIN stops returning it: an account that ended holds no
+// bank's balances (lib/connectors/institutions.ts). Its connection's history
+// then moves on without it, so the days SimpleFIN left it out of, until an
+// answer held it again, may be missing its transactions; and those of one
+// let go and kept by hand that its connection's history reached back to
+// after it was let go. Its statement says so, as a report does
+// (lib/report/read.ts connectorMissed).
+
+import { createHash } from 'node:crypto';
+import { cleanText } from './import/normalize';
+import { txnAnnotationStore, carriedAnnotationStore } from './txn-annotations';
+import { rulesStore } from './rules';
+import { tagStore } from './tags';
+import { effectiveLinks, resolveId, sameAccountIds, type Link } from './link-core';
+import { knownPairs, manualTxnStore, type PairKind } from './manual-txns';
+import { MANUAL_CURRENCY } from './manual';
+import { addDays, minorDigits } from './manual-txn-input';
+import { ofxFilename, ofxKindOf, ofxRefusal, type OfxKind } from './download-options';
+import {
+  bookAccountTypes,
+  docFiling,
+  importedTransactionsIn,
+  layeredBookRows,
+  layeredImportedRows,
+  missingIds,
+  manualTransactionsIn,
+  restoredBanksIn,
+  restoredRowsNote,
+  shareCarryOf,
+  splitFactRows,
+  type ExportFile,
+  type ExportLifecycle,
+  type UserData,
+  type UserExport,
+} from './user-export';
+import { anySplitsOrGroups, appliedSharesOf, appliedSplitsOf, shareInputsOf, splitInputsOf, splitMemoOf } from './export-splits';
+import { expensePaymentsStore, expenseSharesStore } from './shared-expenses/store';
+import { splitFor } from './split-rows';
+import { splitStore } from './splits';
+import { groupStore } from './groups';
+import { importedTwinsStore, importedTxnStore } from './history-import/store';
+import { connectionsStore, connectorAccountsStore, type LeftOut } from './connectors/store';
+import { ANY_CONNECTOR, connectorLabel, isConnectorKind, type ConnectorKind } from './connectors/types';
+import { buildConnectorInstitutions, needsSign, nyaBalance } from './connectors/institutions';
+import { lastEndDay } from './lifecycle';
+import { formatMoney } from './format';
+
+// ---- Text ----
+
+/** Windows-1252's bytes for the characters it puts at 0x80 to 0x9F; from
+ *  0xA0 to 0xFF it is Latin-1. Code points, not characters, so no dash or
+ *  quote is written here. */
+const CP1252: ReadonlyMap<number, number> = new Map([
+  [0x20ac, 0x80], [0x201a, 0x82], [0x0192, 0x83], [0x201e, 0x84], [0x2026, 0x85], [0x2020, 0x86], [0x2021, 0x87],
+  [0x02c6, 0x88], [0x2030, 0x89], [0x0160, 0x8a], [0x2039, 0x8b], [0x0152, 0x8c], [0x017d, 0x8e], [0x2018, 0x91],
+  [0x2019, 0x92], [0x201c, 0x93], [0x201d, 0x94], [0x2022, 0x95], [0x2013, 0x96], [0x2014, 0x97], [0x02dc, 0x98],
+  [0x2122, 0x99], [0x0161, 0x9a], [0x203a, 0x9b], [0x0153, 0x9c], [0x017e, 0x9e], [0x0178, 0x9f],
+]);
+
+/** A character's byte in Windows-1252, or -1. */
+function byteOf(cp: number): number {
+  if (cp < 0x80) return cp;
+  if (cp >= 0xa0 && cp <= 0xff) return cp;
+  return CP1252.get(cp) ?? -1;
+}
+
+/** Letters Unicode doesn't decompose, as their plain letter. */
+const PLAIN: Record<string, string> = { Ł: 'L', ł: 'l', Đ: 'D', đ: 'd', Ħ: 'H', ħ: 'h', ı: 'i', Ŀ: 'L', ŀ: 'l', Ŧ: 'T', ŧ: 't', Ŋ: 'N', ŋ: 'n', ĸ: 'k', ſ: 's' };
+
+/** Text in Windows-1252's characters (see TEXT in the header), and whether
+ *  any had to be written as "?". */
+export function to1252(text: string): { text: string; lossy: boolean } {
+  let out = '';
+  let lossy = false;
+  for (const ch of cleanText(text)) {
+    if (byteOf(ch.codePointAt(0)!) >= 0) {
+      out += ch;
+      continue;
+    }
+    const plain = PLAIN[ch] ?? ch.normalize('NFKD').replace(/\p{M}/gu, '');
+    if (plain && [...plain].every((c) => byteOf(c.codePointAt(0)!) >= 0)) out += plain;
+    else {
+      out += '?';
+      lossy = true;
+    }
+  }
+  return { text: out, lossy };
+}
+
+/** The file's bytes: every character is in Windows-1252 by now (to1252, and
+ *  the tags are ASCII). */
+export function encode1252(text: string): Uint8Array {
+  const out = new Uint8Array(text.length);
+  for (let i = 0; i < text.length; i++) {
+    const b = byteOf(text.charCodeAt(i));
+    if (b < 0) throw new Error('A character of the OFX file is not in Windows-1252');
+    out[i] = b;
+  }
+  return out;
+}
+
+const escape = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+/** At most `max` characters, the end trimmed. */
+const cut = (s: string, max: number) => (s.length <= max ? s : s.slice(0, max).trimEnd());
+
+/** OFX's limits (1.0.2): a payee's name, a memo, a check number. */
+export const NAME_MAX = 32;
+export const MEMO_MAX = 255;
+const CHECKNUM_MAX = 12;
+
+// ---- Values ----
+
+/** A day (YYYY-MM-DD) as OFX writes it, at 10:59 (see the header). */
+export const ofxDate = (day: string) => `${day.slice(0, 4)}${day.slice(5, 7)}${day.slice(8, 10)}105900`;
+
+/** BANKID, where a bank statement needs one (see the header). */
+export const BANK_ID = 'NYA';
+
+/** The day an instant falls on in `timeZone`. */
+export function dayIn(iso: string, timeZone: string): string {
+  const parts: Record<string, string> = {};
+  for (const p of new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date(iso))) parts[p.type] = p.value;
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
+/** The id an account was first known by: where its chain of links starts
+ *  (lib/link-core.ts), its own when it was never linked to an earlier one.
+ *  Of two that both start it (two earlier accounts linked into one), the
+ *  first by id, so the choice is the same in every file. */
+export function firstIdOf(account_id: string, links: Map<string, Link>): string {
+  const same = sameAccountIds(account_id, links);
+  const linkedTo = new Set(same.map((id) => links.get(id)?.to));
+  return same.filter((id) => !linkedTo.has(id)).sort()[0] ?? account_id;
+}
+
+/** An instant, in GMT, as OFX writes one. */
+function ofxInstant(at: Date): string {
+  const iso = at.toISOString();
+  return `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}${iso.slice(11, 13)}${iso.slice(14, 16)}${iso.slice(17, 19)}.${iso.slice(20, 23)}[0:GMT]`;
+}
+
+/** An amount as OFX writes it: a point, the currency's decimals at least, as
+ *  many as the amount has, never an exponent. */
+export function ofxAmount(value: number, currency: string): string {
+  const digits = minorDigits(currency);
+  const abs = Math.abs(value);
+  let text = String(abs);
+  if (/e/i.test(text)) text = abs.toFixed(20).replace(/0+$/, '').replace(/\.$/, '');
+  const [whole, fraction = ''] = text.split('.');
+  const decimals = fraction.padEnd(digits, '0');
+  const sign = value < 0 && abs > 0 ? '-' : '';
+  return decimals ? `${sign}${whole}.${decimals}` : `${sign}${whole}`;
+}
+
+/** What the bank said a transaction was, through Plaid's transaction code,
+ *  as OFX's type: only where the code says it outright. */
+const BANK_CODES: Record<string, string> = {
+  atm: 'ATM',
+  'bank charge': 'FEE',
+  cheque: 'CHECK',
+  'direct debit': 'DIRECTDEBIT',
+  interest: 'INT',
+  transfer: 'XFER',
+  'standing order': 'REPEATPMT',
+};
+
+/** One side of a pair Nya worked out between two SimpleFIN accounts, as a
+ *  bank's file types it (see the header). */
+const PAIR_TYPES: Readonly<Record<PairKind, string>> = { card: 'PAYMENT', loan: 'PAYMENT', transfer: 'XFER' };
+
+// ---- The statement ----
+
+/** One transaction as a statement lists it. */
+export type OfxRow = {
+  /** FITID: the transaction's own id. */
+  id: string;
+  /** The day it posted. */
+  date: string;
+  /** The day it happened, where the bank says. */
+  user_date: string | null;
+  /** Plaid's sign: positive is money out. */
+  amount: number;
+  /** Its currency, or null for the account's. */
+  currency: string | null;
+  /** The payee, as the app shows it. */
+  name: string;
+  /** The bank's own words, when they aren't the name. */
+  description: string | null;
+  note: string | null;
+  check_number: string | null;
+  /** Plaid's code for what the bank said it was ("atm"). */
+  transaction_code: string | null;
+  /** Left out of budgets and reports, as the app reads it, and whether a
+   *  rule's hide is why (lib/rules.ts). */
+  excluded: boolean;
+  hidden_by_rule?: boolean;
+  /** Whether it is excluded couldn't be read (what was said about it, or
+   *  about a row imported from a file it stands for): marked neither way. */
+  unmarked?: boolean;
+  /** Its tags' names, as the app shows them. */
+  tags?: string[];
+  /** One side of a pair Nya worked out between two SimpleFIN accounts
+   *  (lib/manual-txns.ts), and what it is. */
+  paired?: PairKind;
+  /** How it is split, or the group it is in, in words for its memo
+   *  (lib/export-splits.ts splitMemoOf). */
+  split?: string;
+};
+
+/** One account, ready to be written as statements. */
+export type OfxAccount = {
+  account_id: string;
+  /** The id ACCTID is made from (firstIdOf): `account_id` when not given. */
+  first_id?: string;
+  kind: OfxKind;
+  subtype: string | null;
+  mask: string | null;
+  /** The account's own currency, where something stored says. */
+  currency: string | null;
+  /** The latest balance known, as Nya keeps it (owed is positive on a
+   *  card), the day it is as of, and its currency (null when unknown). */
+  balance: { amount: number; as_of: string; currency: string | null } | null;
+  /** Why there is no balance, when there is none. */
+  no_balance?: string;
+  rows: OfxRow[];
+};
+
+/** One statement of the file: one currency of one account. */
+export type OfxStatement = {
+  currency: string;
+  rows: OfxRow[];
+  /** The ledger balance as OFX writes it (a card's negative while owed). */
+  ledger: { amount: number; as_of: string } | null;
+};
+
+const ISO_CODE = /^[A-Z]{3}$/;
+/** "EUR", "EUR and JPY", "EUR, GBP and JPY". */
+const listed = (items: readonly string[]) => (items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`);
+const plural = (n: number, one: string, many: string) => `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+
+/** The account's id in the file (see the header). */
+export function ofxAccountId(account_id: string, mask: string | null): string {
+  const token = createHash('sha256').update(`nya-ofx:${account_id}`).digest('hex').slice(0, 12).toUpperCase();
+  const digits = (mask ?? '').replace(/[^A-Za-z0-9]/g, '').slice(-4);
+  return digits ? `NYA-${token}-${digits}` : `NYA-${token}`;
+}
+
+/**
+ * The account's statements, one per currency its transactions are in (its
+ * own first, always, even with no transactions), and what the person should
+ * know about them. Pure.
+ */
+export function statementsOf(account: OfxAccount): { statements: OfxStatement[]; notes: string[] } {
+  const notes: string[] = [];
+  const counts = new Map<string, number>();
+  for (const r of account.rows) if (r.currency && ISO_CODE.test(r.currency)) counts.set(r.currency, (counts.get(r.currency) ?? 0) + 1);
+  let common: string | null = null;
+  for (const [c, n] of counts) if (common === null || n > counts.get(common)! || (n === counts.get(common)! && c < common)) common = c;
+  const own = account.currency && ISO_CODE.test(account.currency) ? account.currency : null;
+  const primary = own ?? common ?? account.balance?.currency ?? 'USD';
+  if (!own && !common && !account.balance?.currency) {
+    notes.push('Nothing stored says which currency this account is in, so the statement says US dollars (USD): check that this is right before you import it.');
+  }
+  const groups = new Map<string, OfxRow[]>([[primary, []]]);
+  for (const r of account.rows) {
+    const c = r.currency && ISO_CODE.test(r.currency) ? r.currency : primary;
+    if (!groups.has(c)) groups.set(c, []);
+    groups.get(c)!.push(r);
+  }
+  const order = [primary, ...[...groups.keys()].filter((c) => c !== primary).sort()];
+  if (order.length > 1) {
+    const others = order.slice(1);
+    notes.push(
+      groups.get(primary)!.length > 0
+        ? `This account’s transactions are in more than one currency (${order.join(', ')}), and an OFX statement has one, so the file has a statement for each, in that order. Nothing is converted.`
+        : // None of them in its own currency: said so, rather than its own
+          // listed among theirs.
+          `This account’s transactions are in ${listed(others)}, not its own currency (${primary}), and an OFX statement has one currency, so the file has a statement for each, in this order: ${primary} (the account’s own, with no transactions), then ${others.join(', then ')}. Nothing is converted.`
+    );
+  }
+  const balance = account.balance;
+  const ledgerIn = balance && balance.currency === primary ? primary : null;
+  if (!balance) {
+    notes.push(`The statement has no balance: ${account.no_balance ?? 'Nya has no balance for this account.'}`);
+  } else if (!ledgerIn) {
+    notes.push(
+      balance.currency
+        ? `The statement has no balance: the account’s balance is in ${balance.currency}, and its transactions are in ${primary}.`
+        : 'The statement has no balance: nothing stored says which currency the account’s balance is in.'
+    );
+  }
+  const statements = order.map(
+    (currency): OfxStatement => ({
+      currency,
+      rows: [...groups.get(currency)!].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : a.id < b.id ? -1 : a.id > b.id ? 1 : 0)),
+      // OFX's sign: a card's balance is owed, so negative.
+      ledger: currency === ledgerIn && balance ? { amount: account.kind === 'creditcard' ? -balance.amount : balance.amount, as_of: balance.as_of } : null,
+    })
+  );
+  return { statements, notes };
+}
+
+const ACCOUNT_TYPES: Record<string, string> = { savings: 'SAVINGS', 'money market': 'MONEYMRKT' };
+
+/**
+ * The file's text, a piece at a time, and what the person should know about
+ * how it was written. Pure but for `now`, the time the file says it was made.
+ */
+export function ofxDocument(account: OfxAccount, now: Date): { pieces: string[]; notes: string[] } {
+  const { statements, notes } = statementsOf(account);
+  const bank = account.kind === 'bank';
+  const acctId = ofxAccountId(account.first_id ?? account.account_id, account.mask);
+  let lossy = 0;
+  let shortened = 0;
+  let memosCut = 0;
+  let splitsLeftOut = 0;
+  const line = (tag: string, value: string) => `<${tag}>${escape(value)}\r\n`;
+  const status = '<STATUS>\r\n<CODE>0\r\n<SEVERITY>INFO\r\n</STATUS>\r\n';
+  const pieces: string[] = [
+    'OFXHEADER:100\r\nDATA:OFXSGML\r\nVERSION:102\r\nSECURITY:NONE\r\nENCODING:USASCII\r\nCHARSET:1252\r\nCOMPRESSION:NONE\r\nOLDFILEUID:NONE\r\nNEWFILEUID:NONE\r\n\r\n',
+    `<OFX>\r\n<SIGNONMSGSRSV1>\r\n<SONRS>\r\n${status}${line('DTSERVER', ofxInstant(now))}${line('LANGUAGE', 'ENG')}</SONRS>\r\n</SIGNONMSGSRSV1>\r\n`,
+    bank ? '<BANKMSGSRSV1>\r\n' : '<CREDITCARDMSGSRSV1>\r\n',
+  ];
+  statements.forEach((s, index) => {
+    const from = bank
+      ? `<BANKACCTFROM>\r\n${line('BANKID', BANK_ID)}${line('ACCTID', acctId)}${line('ACCTTYPE', ACCOUNT_TYPES[account.subtype ?? ''] ?? 'CHECKING')}</BANKACCTFROM>\r\n`
+      : `<CCACCTFROM>\r\n${line('ACCTID', acctId)}</CCACCTFROM>\r\n`;
+    pieces.push(`<${bank ? 'STMTTRNRS' : 'CCSTMTTRNRS'}>\r\n${line('TRNUID', String(index + 1))}${status}<${bank ? 'STMTRS' : 'CCSTMTRS'}>\r\n${line('CURDEF', s.currency)}${from}`);
+    if (s.rows.length > 0) {
+      pieces.push(`<BANKTRANLIST>\r\n${line('DTSTART', ofxDate(s.rows[0].date))}${line('DTEND', ofxDate(s.rows[s.rows.length - 1].date))}`);
+      for (const r of s.rows) {
+        const amount = -r.amount;
+        const name = to1252(r.name);
+        const shownName = cut(name.text, NAME_MAX);
+        const memo: string[] = [];
+        let touched = name.lossy;
+        if (r.excluded) memo.push(r.hidden_by_rule ? 'Hidden from budgets and reports by a rule in Nya' : 'Excluded from budgets and reports in Nya');
+        if (shownName !== name.text) {
+          memo.push(name.text);
+          shortened++;
+        }
+        for (const extra of [r.description, r.note, r.tags?.length ? `Tags: ${r.tags.join(', ')}` : null]) {
+          if (!extra) continue;
+          const t = to1252(extra);
+          if (!t.text || t.text.toLowerCase() === name.text.toLowerCase()) continue;
+          memo.push(t.text);
+          touched ||= t.lossy;
+        }
+        // How it is split, or its group, last, and only whole: cut, a part's
+        // amount could be read as another.
+        if (r.split) {
+          const t = to1252(r.split);
+          if ([...memo, t.text].join('; ').length <= MEMO_MAX) {
+            memo.push(t.text);
+            touched ||= t.lossy;
+          } else splitsLeftOut++;
+        }
+        if (touched) lossy++;
+        const memoText = memo.join('; ');
+        if (memoText.length > MEMO_MAX) memosCut++;
+        const check = r.check_number ? to1252(r.check_number).text.slice(0, CHECKNUM_MAX) : '';
+        const type =
+          (r.paired && PAIR_TYPES[r.paired]) ||
+          (r.transaction_code && BANK_CODES[r.transaction_code]) ||
+          (check ? 'CHECK' : amount > 0 ? 'CREDIT' : amount < 0 ? 'DEBIT' : 'OTHER');
+        pieces.push(
+          '<STMTTRN>\r\n' +
+            line('TRNTYPE', type) +
+            line('DTPOSTED', ofxDate(r.date)) +
+            (r.user_date && r.user_date !== r.date ? line('DTUSER', ofxDate(r.user_date)) : '') +
+            line('TRNAMT', ofxAmount(amount, s.currency)) +
+            line('FITID', r.id) +
+            (check ? line('CHECKNUM', check) : '') +
+            (shownName ? line('NAME', shownName) : '') +
+            (memoText ? line('MEMO', memoText.length > MEMO_MAX ? `${memoText.slice(0, MEMO_MAX - 3).trimEnd()}...` : memoText) : '') +
+            '</STMTTRN>\r\n'
+        );
+      }
+      pieces.push('</BANKTRANLIST>\r\n');
+    }
+    if (s.ledger) {
+      pieces.push(`<LEDGERBAL>\r\n${line('BALAMT', ofxAmount(s.ledger.amount, s.currency))}${line('DTASOF', ofxDate(s.ledger.as_of))}</LEDGERBAL>\r\n`);
+    }
+    pieces.push(`</${bank ? 'STMTRS' : 'CCSTMTRS'}>\r\n</${bank ? 'STMTTRNRS' : 'CCSTMTTRNRS'}>\r\n`);
+  });
+  pieces.push(bank ? '</BANKMSGSRSV1>\r\n</OFX>\r\n' : '</CREDITCARDMSGSRSV1>\r\n</OFX>\r\n');
+  if (shortened > 0) {
+    notes.push(`${plural(shortened, 'payee’s name is', 'payees’ names are')} longer than OFX’s ${NAME_MAX} characters, so each is cut there and given whole in its memo.`);
+  }
+  if (memosCut > 0) {
+    notes.push(
+      `${plural(memosCut, 'transaction’s memo is', 'transactions’ memos are')} longer than OFX’s ${MEMO_MAX} characters, so each is cut there, and its end (your note, its tags) may be missing. The CSV and JSON downloads have them whole.`
+    );
+  }
+  if (splitsLeftOut > 0) {
+    notes.push(
+      `${plural(splitsLeftOut, 'transaction is', 'transactions are')} split or in a group in Nya, and saying how doesn’t fit OFX’s ${MEMO_MAX}-character memo with the rest, so ${splitsLeftOut === 1 ? 'its memo leaves it' : 'their memos leave it'} out. Each is listed whole, as the bank has it; the CSV and JSON downloads have the parts and groups.`
+    );
+  }
+  if (lossy > 0) {
+    notes.push(
+      `${plural(lossy, 'transaction has', 'transactions have')} characters OFX’s character set (Windows-1252) doesn’t have, such as letters of non-Latin scripts, written as ?. The JSON and CSV downloads have them as they are.`
+    );
+  }
+  return { pieces, notes };
+}
+
+// ---- From the download's document ----
+
+/** Why an account can't be written as OFX, and the route's status for it. */
+export type OfxRefused = { refused: string; status: 400 | 404 | 409 };
+
+const UNCHANGED = 'Nothing was changed: what could not be read is still stored as it was.';
+
+/** A day (YYYY-MM-DD) in words for a note: "Jul 12, 2026". */
+const shownDay = (day: string) => new Date(`${day}T12:00:00Z`).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+
+/** Pieces joined up to about 64K characters, as the other formats hand them
+ *  to the stream (lib/user-export.ts): one per transaction would be
+ *  thousands of tiny writes. */
+function* gathered(pieces: readonly string[]): Generator<string> {
+  let buffer = '';
+  for (const piece of pieces) {
+    buffer += piece;
+    if (buffer.length >= 64 * 1024) {
+      yield buffer;
+      buffer = '';
+    }
+  }
+  if (buffer) yield buffer;
+}
+
+/** "Sep 1, 2026": a calendar day as a note says it, never moved by a time
+ *  zone. */
+const noteDay = (day: string) => new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' }).format(new Date(`${day}T00:00:00Z`));
+
+/**
+ * What the statement of an account that ended says (see AN ACCOUNT THAT
+ * ENDED): when it ended in Nya, that the statement still lists every
+ * transaction Nya stored for it, with how many are dated from then, and the
+ * day of the balance it gives, when it gives one (`ledger`), with where that
+ * comes from: set by hand, the newest Nya recorded, or the latest its
+ * connector (SimpleFIN, Lunch Flow) gave. Pure.
+ */
+export function endedNote(
+  lifecycle: Pick<ExportLifecycle, 'state' | 'date' | 'assumed'>,
+  rows: readonly Pick<OfxRow, 'date'>[],
+  ledger: { as_of: string; from: 'set' | 'recorded' | ConnectorKind } | null
+): string {
+  const when = noteDay(lifecycle.date);
+  const what =
+    lifecycle.state === 'closed'
+      ? lifecycle.assumed
+        ? `Nya assumed this account closed on ${when}, when its bank stopped returning it`
+        : `This account was closed in Nya on ${when}`
+      : lifecycle.state === 'left'
+        ? `This account is no longer yours in Nya from ${when}`
+        : `This account isn’t followed in Nya from ${when}`;
+  const after = rows.filter((r) => r.date >= lifecycle.date).length;
+  const listed =
+    after > 0
+      ? `the statement still lists every transaction Nya stored for it, ${after.toLocaleString('en-US')} of them dated from then, which Nya leaves out of every total`
+      : 'the statement lists every transaction Nya stored for it, none dated from then';
+  const from =
+    ledger?.from === 'set' ? 'the one last set, on' : ledger && isConnectorKind(ledger.from) ? `the latest ${connectorLabel(ledger.from)} gave, from` : 'the newest Nya recorded, from';
+  const balance = ledger ? `, and its balance is ${from} ${noteDay(ledger.as_of)}` : '';
+  return `${what}: ${listed}${balance}.`;
+}
+
+/**
+ * What a SimpleFIN or Lunch Flow account's statement may be missing although
+ * its connection's history covers it (see AN ACCOUNT THAT ENDED): the days
+ * answers left it out of (`windows`, lib/connectors/store.ts LeftOut), one
+ * still open running to `until` when it was let go, else said as since its
+ * first day; and, for one let go and kept by hand, the days its connection's
+ * history reached back to after (`letGo`). `label` is its connector's name.
+ * Pure.
+ */
+export function leftOutNotes(windows: readonly LeftOut[] | undefined, until: string | null, letGo: { from: string; to: string } | null, label = 'SimpleFIN'): string[] {
+  const days = (from: string, to: string) => (from === to ? shownDay(from) : `${shownDay(from)} to ${shownDay(to)}`);
+  const out: string[] = [];
+  for (const w of windows ?? []) {
+    const to = w.to === null || (until !== null && w.to > until) ? until : w.to;
+    if (to === null) {
+      out.push(`${label} has left this account out of its answers since ${shownDay(w.from)}, so the statement may be missing its transactions from then.`);
+    } else if (w.from <= to) {
+      out.push(`${label} left this account out of its answers about ${days(w.from, to)}, so the statement may be missing its transactions from ${w.from === to ? 'that day' : 'those days'}.`);
+    }
+  }
+  if (letGo && letGo.from <= letGo.to) {
+    const span = letGo.from === letGo.to ? `on ${shownDay(letGo.from)}` : `from ${shownDay(letGo.from)} to ${shownDay(letGo.to)}`;
+    out.push(`You stopped tracking this account through ${label} before its transactions ${span} came in, so the statement may be missing them.`);
+  }
+  return out;
+}
+
+/** Where the person is, and what the route read for the balance's day. */
+export type OfxOptions = {
+  /** The time zone the person's device sent (lib/access-log.ts timeZoneOf),
+   *  or null: then days are UTC days. */
+  timeZone: string | null;
+  /** When the snapshot of a linked account's newest recorded balance was
+   *  taken (lib/history.ts snapshotTakenAt), where Nya kept it. */
+  balanceTakenAt: string | null;
+};
+
+/**
+ * The account's statement as a file of the download (lib/user-export.ts
+ * ExportFile), from what the route read (`data`) and the document built from
+ * it (`doc`), or why it can't be one: an account that isn't among the
+ * person's, one whose record couldn't be read, or one of a kind OFX has no
+ * statement for.
+ */
+export function ofxFile(
+  data: UserData,
+  doc: UserExport,
+  account_id: string,
+  now: Date,
+  opts: OfxOptions = { timeZone: null, balanceTakenAt: null }
+): { file: ExportFile } | OfxRefused {
+  const linked = doc.accounts.find((a) => a.account_id === account_id);
+  const manual = doc.manual_accounts.find((m) => m.account_id === account_id);
+  // An account SimpleFIN or Lunch Flow keeps up to date (or kept until it was
+  // let go): its rows are in a book, as a manual account's are, and its
+  // balance is the one its connector last gave (see the header).
+  const fed = linked && isConnectorKind(linked.provider) ? linked : null;
+  // Its connector, by name, for the statement's words.
+  const via = fed && isConnectorKind(fed.provider) ? connectorLabel(fed.provider) : ANY_CONNECTOR;
+  if (!manual && missingIds(doc.problems, connectorAccountsStore.name).includes(account_id)) {
+    return {
+      refused: `What Nya keeps about this account from ${ANY_CONNECTOR} couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.`,
+      status: 409,
+    };
+  }
+  if (!linked && !manual) {
+    if (missingIds(doc.problems, 'manual_accounts').includes(account_id)) {
+      return { refused: 'This manual account couldn’t be read, so Nya can’t tell what kind of account it is, and nothing was written. Its transactions are in the JSON download.', status: 409 };
+    }
+    return { refused: 'That account isn’t among yours: it may have been removed. Choose it again.', status: 404 };
+  }
+  if (fed && !data.connected.has(account_id)) {
+    return {
+      refused: `You stopped tracking this account through ${via} and removed it, with its transactions, so it has no statement. Its balance history is in the JSON download.`,
+      status: 400,
+    };
+  }
+  const type = linked ? linked.type : manual!.type;
+  const kind = ofxKindOf(type);
+  if (!kind) return { refused: ofxRefusal(type)!, status: 400 };
+
+  // The rows a restore brought back for this account (lib/user-restore/),
+  // which a statement doesn't list yet: said.
+  const notes: string[] = restoredRowsNote(restoredBanksIn(doc, account_id), 'this statement');
+  const incomplete = new Set<string>();
+  // A moment as the day it was where the person is (see the header); a
+  // stored day, or any moment without a time zone sent, as it is.
+  const dayOf = (iso: string) => (opts.timeZone && iso.length > 10 ? dayIn(iso, opts.timeZone) : iso.slice(0, 10));
+  // What was said about each transaction, what was carried to it and what
+  // the rules do, as the app applies them (lib/txn-layers.ts): on the bank's
+  // rows, as the document has them; on a book's, by layeredBookRows; on one
+  // imported into a linked account, by layeredImportedRows. A record that
+  // couldn't be read leaves its transaction unmarked, and said.
+  const links = effectiveLinks(data.links, data.live);
+  // The rows whose note is their own, written with them (entered by hand or
+  // imported into a manual account): an unreadable record leaves it in the
+  // memo. A bank's, or one SimpleFIN brought, has the person's note in its
+  // record, and so has one imported into a linked account (`fileNote`), whose
+  // file's own note shows in the memo while that record can't be read.
+  const ownNote = new Set<string>();
+  const fileNote = new Set<string>();
+  // The transactions whose own record of what was said can't be read, and
+  // the bank's rows standing for a row imported from a file whose record
+  // can't be read (`standsForUnread`), which miss what was said about that
+  // one.
+  const unknown = new Set(missingIds(doc.problems, txnAnnotationStore.name));
+  const standsForUnread = new Set<string>();
+  // The rows imported into linked accounts from files that count as their
+  // own, as posted rows count (see the header), and the bank's rows standing
+  // for the rest, read once.
+  const imported = importedTransactionsIn(doc, { pending: false });
+  // Splits and groups, from the file's own parts, as the app applies them
+  // (lib/export-splits.ts): each transaction listed whole, how it is split or
+  // its group in its memo, a bank's row standing for imported ones split and
+  // grouped as they were.
+  const splitInputs = splitInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents);
+  // How they apply, from every row of the file, once: a group across
+  // accounts, a transaction in two, a split on a row pending or in another
+  // currency now, each as the app has it.
+  const applied = anySplitsOrGroups(splitInputs) ? appliedSplitsOf(splitFactRows(doc, imported.rows), splitInputs) : null;
+  // And shared expenses after them (lib/export-splits.ts appliedSharesOf):
+  // your part and the others', and what a payment paid back, never a name.
+  const shareInputs = shareInputsOf((key) => doc[key], doc.problems, docFiling(doc), imported.represents, shareCarryOf(doc));
+  const sharedWords = shareInputs ? appliedSharesOf(splitFactRows(doc, imported.rows), splitInputs, shareInputs) : null;
+  const splitWords = (r: { id: string; amount: number; currency: string | null; bank?: boolean }) => {
+    const words = [applied && splitMemoOf(r, splitInputs, applied), sharedWords?.get(r.id)].filter((w): w is string => !!w).join('. ');
+    return words ? { split: words } : {};
+  };
+
+  // The rows a book holds for the account (a manual account's own, or those
+  // SimpleFIN brought), as the app shows them, each side of a pair the app
+  // works out between two SimpleFIN accounts typed as a bank's file types
+  // it, and what couldn't be read said.
+  const bookRows = (): OfxRow[] => {
+    const pairs = knownPairs(manualTransactionsIn(doc), bookAccountTypes(doc));
+    const book = layeredBookRows(doc);
+    if (missingIds(doc.problems, manualTxnStore.name).includes(account_id)) {
+      notes.push(`This account’s transactions could not be read, so the statement has none of them. The JSON download lists them under problems. ${UNCHANGED}`);
+      incomplete.add(manualTxnStore.name);
+    }
+    return book.rows
+      .filter((r) => r.account_id === account_id)
+      .map((r): OfxRow => {
+        const { l } = book.shown(r);
+        const paired = pairs.get(r.id);
+        if (!isConnectorKind(r.source)) ownNote.add(r.id);
+        return {
+          id: r.id,
+          date: r.date,
+          user_date: null,
+          amount: r.amount,
+          currency: r.currency,
+          name: l.name,
+          // The name it came with, where a rule shows another.
+          description: l.name !== r.name ? r.name : null,
+          note: l.note,
+          check_number: null,
+          transaction_code: r.transaction_code ?? null,
+          excluded: l.excluded === true,
+          hidden_by_rule: l.excluded_by_rule,
+          unmarked: l.excluded === null,
+          tags: l.tags,
+          ...(paired ? { paired } : {}),
+          ...splitWords({ id: r.id, amount: r.amount, currency: r.currency, bank: isConnectorKind(r.source) }),
+        };
+      });
+  };
+
+  let rows: OfxRow[];
+  let pending = 0;
+  let account: Omit<OfxAccount, 'rows'>;
+  if (fed) {
+    rows = bookRows();
+    const entry = data.connected.get(account_id)!;
+    const conn = data.connections.get(entry.connection_id);
+    // The record of the connection it comes through can't be read: how its
+    // bank is doing isn't known (the Accounts tab says so), nor whether older
+    // transactions are still arriving, and the file is short of it.
+    const unreadConnection = missingIds(doc.problems, connectionsStore.name).includes(entry.connection_id);
+    if (unreadConnection) {
+      notes.push(
+        `What Nya keeps about the ${via} connection this account comes through could not be read, so whether its older transactions are still arriving isn’t known, and the statement may be missing some. The JSON download lists it under problems. ${UNCHANGED}`
+      );
+      incomplete.add(connectionsStore.name);
+    } else if (conn && !conn.history) {
+      notes.push(`${via} hasn’t brought in this account’s transactions yet, so the statement may be missing them. Download it again once they are in.`);
+    } else if (conn?.history && !conn.history.complete) {
+      // Older transactions still arriving, a few months a night
+      // (lib/connectors/sync.ts). The day is the connection's, which starts
+      // again when another account is tracked, so this account's statement
+      // may already go back further: it may be missing some, never "has none".
+      notes.push(
+        `${via} is still bringing in older transactions, ${fed.provider === 'lunchflow' ? 'with its next daily update' : 'a few months each night'}, so the statement may be missing some from before ${shownDay(conn.history.from)}. Download it again once they are all in.`
+      );
+    }
+    // The days answers left it out of once it had ended (see AN ACCOUNT THAT
+    // ENDED).
+    notes.push(...leftOutNotes(entry.left_out, null, null, via));
+    // The balance SimpleFIN last gave, in Nya's sign, as of the bank's own
+    // date for it, where the person is: none while Nya holds it, as the
+    // Accounts tab does (lib/connectors/institutions.ts), for which an
+    // account that ended holds nothing.
+    const endedIds = new Set(doc.accounts.flatMap((a) => (a.lifecycle && a.lifecycle.date <= lastEndDay(now.getTime()) ? [a.account_id] : [])));
+    const bank = buildConnectorInstitutions(
+      data.connections,
+      [...data.connected.values()].filter((a) => a.connection_id === entry.connection_id && a.institution_ref === entry.institution_ref),
+      now.getTime(),
+      endedIds
+    )[0];
+    const waiting = needsSign(entry);
+    const amount = nyaBalance(entry);
+    const at = entry.balance_at ?? entry.fetched_at;
+    let no_balance = `${via} hasn’t given a balance for this account yet.`;
+    if (unreadConnection) {
+      no_balance = `Nya holds ${entry.institution_name}’s balances while what it keeps about the bank’s ${via} connection can’t be read, as the Accounts tab does.`;
+    } else if (waiting) {
+      no_balance = `${via} reports this card’s balance as money held (+${formatMoney(entry.reported_balance!, entry.currency)}), and until you say on the Accounts tab which way it goes, Nya counts no balance for it.`;
+    } else if (bank?.error) {
+      no_balance = `Nya holds ${entry.institution_name}’s balances while ${via}’s latest answer about it isn’t whole and current (${bank.error}), as the Accounts tab does.`;
+    }
+    account = {
+      account_id,
+      kind,
+      subtype: fed.subtype,
+      mask: fed.mask,
+      currency: entry.currency,
+      balance: !unreadConnection && !waiting && !bank?.error && amount !== null && at ? { amount, as_of: dayOf(at), currency: entry.currency } : null,
+      no_balance,
+    };
+  } else if (linked) {
+    rows = [];
+    // The transactions imported into it from its bank's files that count as
+    // its own (`imported`, above). A bank's row standing for imported ones
+    // has what was said about them in the document's layered fields already
+    // (lib/user-export.ts buildUserExport).
+    for (const t of doc.transactions) {
+      if (t.account_id !== account_id) continue;
+      if (t.pending) {
+        pending++;
+        continue;
+      }
+      // As the app shows it (the document's layered fields): the name, your
+      // note, its tags, and left out by you, by an exclusion carried from an
+      // earlier account or from the imported rows it stands for, or by a
+      // rule's hide.
+      const shown = t.nya_name || t.your_merchant_name || t.merchant_name || t.name || '';
+      if (imported.represents.get(t.transaction_id)?.some((id) => unknown.has(id))) standsForUnread.add(t.transaction_id);
+      rows.push({
+        id: t.transaction_id,
+        date: t.date,
+        user_date: t.authorized_date ?? null,
+        amount: t.amount,
+        currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null,
+        name: shown,
+        description: t.name && t.name !== shown ? t.name : null,
+        note: t.your_note ?? null,
+        check_number: t.check_number ?? null,
+        transaction_code: t.transaction_code ?? null,
+        excluded: t.excluded === true,
+        hidden_by_rule: t.excluded_by_rule === true,
+        unmarked: t.excluded === null,
+        tags: t.tags ?? [],
+        ...splitWords({ id: t.transaction_id, amount: t.amount, currency: t.iso_currency_code ?? t.unofficial_currency_code ?? null }),
+      });
+    }
+    // Each as the app shows it: its name (yours for its merchant, else a
+    // rule's, else the file's, which is then the description), your note,
+    // else the file's, its tags, and left out by you or by a rule's hide.
+    const fromFiles = imported.rows.filter((r) => r.account_id === account_id);
+    const shownImported = layeredImportedRows(doc, imported.rows);
+    for (const r of fromFiles) {
+      const { row } = r;
+      const { l } = shownImported(r);
+      fileNote.add(row.id);
+      rows.push({
+        id: row.id,
+        date: row.date,
+        user_date: null,
+        amount: row.amount,
+        currency: row.currency,
+        name: l.name,
+        description: l.name !== row.name ? row.name : null,
+        note: l.note,
+        check_number: null,
+        transaction_code: row.transaction_code ?? null,
+        excluded: l.excluded === true,
+        hidden_by_rule: l.excluded_by_rule,
+        unmarked: l.excluded === null,
+        tags: l.tags,
+        // How it is split, or its group, as a bank's row's: its amount is
+        // the file's, changed only by importing it again.
+        ...splitWords({ id: row.id, amount: row.amount, currency: row.currency, bank: false }),
+      });
+    }
+    if (fromFiles.length > 0) {
+      notes.push(
+        `${plural(fromFiles.length, 'transaction you imported from files is', 'transactions you imported from files are')} in it, with Nya’s own ids. Where the bank later sends the same ${fromFiles.length === 1 ? 'one' : 'ones'}, a later statement lists the bank’s in ${fromFiles.length === 1 ? 'its' : 'their'} place, with the bank’s ids: an app that matches by FITID may add ${fromFiles.length === 1 ? 'it' : 'them'} again.`
+      );
+    }
+    if (missingIds(doc.problems, importedTxnStore.name).some((id) => resolveId(id, links) === account_id)) {
+      notes.push(
+        `The transactions imported into this account from files could not be read, so the statement has none of them, and a transaction the bank sent that stands for one of them doesn’t show what you said about it. The JSON download lists them under problems. ${UNCHANGED}`
+      );
+      incomplete.add(importedTxnStore.name);
+    }
+    // Which of its bank rows stand for which imported rows, kept by the sync
+    // (lib/history-import/twins.ts): unread, those rows are matched by what
+    // each says now, as importedTransactionsIn does.
+    if (fromFiles.length > 0 && missingIds(doc.problems, importedTwinsStore.name).includes(linked.item_id ?? '')) {
+      notes.push(
+        `Which of the bank’s transactions stand for the ones you imported into this account could not be read, so they are matched by what each says now: one the bank changed since they were paired may be in this statement beside the bank’s own. The JSON download lists it under problems. ${UNCHANGED}`
+      );
+      incomplete.add(importedTwinsStore.name);
+    }
+    if (missingIds(doc.problems, carriedAnnotationStore.name).some((old) => old !== account_id && resolveId(old, links) === account_id)) {
+      notes.push(
+        `Notes, tags and exclusions carried to this account from an earlier one linked to it could not be read, so the transactions they carry to are in this statement without them (an exclusion, tags, a note), as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+      );
+      incomplete.add(carriedAnnotationStore.name);
+    }
+    const store = data.stores.find((s) => s.item_id === linked.item_id);
+    if (store?.behind) {
+      notes.push(
+        `Nya could not save the newest transactions from ${linked.institution_name ?? 'this institution'} (a storage limit, or a write that failed), so ones the app showed recently may be missing from this file. They are saved again once a sync can store them.`
+      );
+    }
+    // The newest recorded balance's day: the UTC day it is kept under, or
+    // the day where the person is of the moment its snapshot was taken, when
+    // Nya kept that and it is this balance's (inside that UTC day, and not a
+    // partial measurement made after it).
+    const latest = linked.latest_balance;
+    const newest = (data.history.accounts.get(account_id) ?? []).findLast((p) => !p.estimated);
+    const taken = opts.balanceTakenAt;
+    const asOf = latest && taken && taken.slice(0, 10) === latest.date && newest?.date === latest.date && !newest.partial ? dayOf(taken) : latest?.date;
+    account = {
+      account_id,
+      first_id: firstIdOf(account_id, links),
+      kind,
+      subtype: linked.subtype,
+      mask: linked.mask,
+      currency: linked.currency,
+      balance: latest && asOf ? { amount: latest.balance, as_of: asOf, currency: linked.currency } : null,
+      no_balance: 'Nya has no recorded balance for this account.',
+    };
+  } else {
+    const m = manual!;
+    rows = bookRows();
+    // Let go from SimpleFIN or Lunch Flow and kept by hand: what it may be
+    // missing from then (see AN ACCOUNT THAT ENDED).
+    const letGo = data.ended.get(account_id);
+    if (letGo?.kept) {
+      const history = data.connections.get(letGo.connection_id)?.history;
+      const before = letGo.history_from && history && history.from < letGo.history_from ? { from: history.from, to: addDays(letGo.history_from, -1) } : null;
+      notes.push(...leftOutNotes(letGo.left_out, addDays(dayOf(letGo.ended_at), -1), before, connectorLabel(letGo.connector)));
+    }
+    // Its own currency (lib/manual.ts: chosen for it, or kept from a
+    // connector; US dollars when it names none).
+    const currency = m.currency ?? MANUAL_CURRENCY;
+    account = {
+      account_id,
+      kind,
+      subtype: m.subtype,
+      mask: null,
+      currency,
+      // As set, and when.
+      balance: m.updated_at ? { amount: m.balance, as_of: dayOf(m.updated_at), currency } : null,
+      no_balance: 'Nya doesn’t know when this account’s balance was set.',
+    };
+  }
+  // What was said about a transaction can't be read. Its own record: whether
+  // it is excluded isn't known, so it is marked neither way, the tags put on
+  // it are missing (a rule's and carried ones still show), and so is a note
+  // kept in the record (on a bank's or a SimpleFIN row, or one imported into
+  // a linked account, which shows its file's own note instead), while one
+  // written with a row entered by hand or imported into a manual account is
+  // its own, and still in its memo. Or, on a bank's row standing for a row
+  // imported from a file, that one's record: the tags and note put on it are
+  // missing, and so is whether it is excluded, unless the bank's row's own
+  // record says.
+  const theirs = rows.filter((r) => unknown.has(r.id));
+  const standing = rows.filter((r) => !unknown.has(r.id) && standsForUnread.has(r.id));
+  if (theirs.length + standing.length > 0) {
+    const said: string[] = [];
+    if (theirs.length > 0) {
+      const one = theirs.length === 1;
+      const own = theirs.filter((r) => ownNote.has(r.id)).length;
+      const files = theirs.filter((r) => fileNote.has(r.id)).length;
+      const instead =
+        files === 0
+          ? ''
+          : files === theirs.length
+            ? one
+              ? ' (its file’s own note, if it had one, is there instead)'
+              : ' (their files’ own notes, where they had one, are there instead)'
+            : ' (one you imported from a file has its file’s own note there instead, where it had one)';
+      const note =
+        own === 0
+          ? `${one ? ', nor is your note on it' : ', nor are your notes on them'}${instead}`
+          : own === theirs.length
+            ? one
+              ? ' (its note, written with it, is)'
+              : ' (their notes, written with them, are)'
+            : `, nor are your notes on those the bank, ${ANY_CONNECTOR} brought (a note written with one you entered, or imported into this account, is there)`;
+      said.push(
+        `Whether ${plural(theirs.length, 'of these transactions is', 'of these transactions are')} excluded from budgets and reports could not be read, so ${one ? 'it isn’t' : 'they aren’t'} marked either way, and ${one ? 'the tags you put on it aren’t in its memo' : 'the tags you put on them aren’t in their memos'}${note}.`
+      );
+    }
+    if (standing.length > 0) {
+      const one = standing.length === 1;
+      const unsure = standing.filter((r) => r.unmarked).length;
+      const marked =
+        unsure === 0
+          ? ''
+          : unsure === standing.length
+            ? `, and whether ${one ? 'it is' : 'they are'} excluded from budgets and reports isn’t marked either way`
+            : `, and whether ${plural(unsure, 'of them is', 'of them are')} excluded from budgets and reports isn’t marked either way`;
+      said.push(
+        `${plural(standing.length, 'of the bank’s transactions stands', 'of the bank’s transactions stand')} for one you imported from a file whose record of what you said could not be read, so the tags and note you put on ${one ? 'that one aren’t in its memo' : 'those aren’t in their memos'}${marked}.`
+      );
+    }
+    notes.push(`${said.join(' ')} The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(txnAnnotationStore.name);
+  }
+  // Its own split, or that of the row imported from a file it stands for,
+  // which it would show (lib/split-rows.ts splitFor).
+  const unreadSplits = rows.filter((r) => splitFor(splitInputs, r.id, splitInputs.stands?.get(r.id)) === 'unread').length;
+  if (unreadSplits > 0) {
+    notes.push(
+      `How ${plural(unreadSplits, 'of these transactions is', 'of these transactions are')} split couldn’t be read, so ${unreadSplits === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadSplits === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
+    );
+    incomplete.add(splitStore.name);
+  }
+  // A share or a payment that couldn't be read (lib/export-splits.ts
+  // appliedSharesOf): the transaction is whole here anyway, its memo silent.
+  const unreadShared = shareInputs ? rows.filter((r) => shareInputs.sharesUnknown.has(r.id) || shareInputs.paymentsUnknown.has(r.id)).length : 0;
+  if (shareInputs && unreadShared > 0) {
+    notes.push(
+      `Whether ${plural(unreadShared, 'of these transactions is', 'of these transactions are')} shared, or paid something back, couldn’t be read, so ${unreadShared === 1 ? 'its memo doesn’t' : 'their memos don’t'} say. The JSON download lists ${unreadShared === 1 ? 'it' : 'them'} under problems. ${UNCHANGED}`
+    );
+    if (rows.some((r) => shareInputs.sharesUnknown.has(r.id))) incomplete.add(expenseSharesStore.name);
+    if (rows.some((r) => shareInputs.paymentsUnknown.has(r.id))) incomplete.add(expensePaymentsStore.name);
+  }
+  if (rows.length > 0 && splitInputs.groupsUnknown > 0) {
+    notes.push(`Some of your groups couldn’t be read, so a transaction’s memo may not say the group it is in. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(groupStore.name);
+  }
+  // Rules and tags that couldn't be read: none applied, none shown, as the
+  // app does until they can be; said, as every part the file is short of.
+  const unread = (store: string) => doc.problems.some((p) => p.section === store);
+  if (rows.length > 0 && unread(rulesStore.name)) {
+    notes.push(
+      `Your rules could not be read, so none is applied to this statement: its names, and which transactions are marked as left out, are as the bank and you have them, as the app shows them until they can be read. The JSON download lists them under problems. ${UNCHANGED}`
+    );
+    incomplete.add(rulesStore.name);
+  }
+  if (rows.length > 0 && unread(tagStore.name)) {
+    notes.push(`Your tags could not be read, so no transaction’s memo has its tags, as the app shows none until they can be read. The JSON download lists them under problems. ${UNCHANGED}`);
+    incomplete.add(tagStore.name);
+  }
+  if (pending > 0) {
+    notes.push(
+      `${plural(pending, 'pending transaction is', 'pending transactions are')} left out: the bank gives a transaction a new id when it posts, so an app that imported ${pending === 1 ? 'it' : 'them'} now would count ${pending === 1 ? 'it' : 'them'} twice. Download again once ${pending === 1 ? 'it has' : 'they have'} posted.`
+    );
+  }
+
+  // An account that ended: said first, as what the rest is read by.
+  const ended = linked ? linked.lifecycle : manual!.lifecycle;
+  if (ended) {
+    const ledger = statementsOf({ ...account, rows }).statements.find((s) => s.ledger !== null)?.ledger ?? null;
+    notes.unshift(endedNote(ended, rows, ledger ? { as_of: ledger.as_of, from: manual ? 'set' : fed && isConnectorKind(fed.provider) ? fed.provider : 'recorded' } : null));
+  }
+
+  const written = ofxDocument({ ...account, rows }, now);
+  const name = linked ? { institution_name: linked.institution_name, name: linked.name, mask: linked.mask } : { institution_name: manual!.institution_name, name: manual!.name, mask: null };
+  return {
+    file: {
+      filename: ofxFilename(name, dayOf(now.toISOString())),
+      contentType: 'application/x-ofx',
+      pieces: () => gathered(written.pieces),
+      notes: [...notes, ...written.notes],
+      incomplete: [...incomplete],
+      encode: encode1252,
+    },
+  };
+}

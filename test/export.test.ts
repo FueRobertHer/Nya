@@ -25,7 +25,7 @@ describe('the archive', () => {
     const [header] = parse(await collect());
 
     expect(header).toEqual({
-      nya_export: 1,
+      nya_export: 2,
       schema_era: 'containers',
       env_prefix: 'test',
       container_id: null,
@@ -51,8 +51,38 @@ describe('the archive', () => {
         'c:*:backups:*',
         'invites:*',
         'c:*:invites:*',
+        // API tokens and their counts: a restore must never revive a revoked token.
+        'api-tokens*',
+        'c:*:api-tokens*',
+        'api-requests*',
+        'c:*:api-requests*',
+        'api-write-requests*',
+        'c:*:api-write-requests*',
+        'api-write-days*',
+        'c:*:api-write-days*',
+        'api-change-keys*',
+        'c:*:api-change-keys*',
+        'connector-secrets*',
+        'c:*:connector-secrets*',
+        'connector-requests*',
+        'c:*:connector-requests*',
+        'connector-claims*',
+        'c:*:connector-claims*',
+        'fx:*',
+        'c:*:fx:*',
       ],
+      // Format 2: the key store goes in key archives (lib/key-archive.ts).
+      keys_apart: ['crypto:active', 'crypto:destroyed', 'crypto:key-seq', 'crypto:keys', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock'],
     });
+  });
+
+  test('leaves the key store out, and keeps the map of container keys', async () => {
+    for (const name of ['crypto:active', 'crypto:key-seq', 'crypto:master', 'crypto:rotation', 'crypto:rotation-lock']) await fake.set(testKey(name), 'x');
+    await fake.hset(testKey('crypto:keys'), { 'k1-0123abcd': '{}' });
+    await fake.hset(testKey('crypto:destroyed'), { 'k2-0123abcd': '{}' });
+    await fake.hset(testKey('crypto:container-keys'), { '0b6f5a52-3c1d-4e2f-8a9b-1c2d3e4f5a6b': '{"key":"k3-0123abcd","since":"2026-01-01T00:00:00.000Z"}' });
+    const keys = parse(await collect()).slice(1, -1).map((r: any) => r.key);
+    expect(keys).toEqual(['crypto:container-keys']);
   });
 
   test('carries strings and hashes exactly, with the prefix stripped', async () => {
@@ -94,6 +124,34 @@ describe('the archive', () => {
 
     const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
     expect(keys).toEqual(['goals']);
+  });
+
+  test('leaves out a connector’s credential and its counters, which a restore must never bring back', async () => {
+    const c = 'c:00000000-0000-4000-8000-000000000000';
+    await fake.hset(testKey(`${c}:connector-secrets`), { conn_1: 'encrypted-access-url' });
+    await fake.set(testKey(`${c}:connector-requests`), '5');
+    await fake.set(testKey(`${c}:connector-claims`), '1');
+    // The connection and its accounts are the person's data: backed up.
+    await fake.hset(testKey(`${c}:connector-connections`), { conn_1: 'encrypted-connection' });
+    await fake.hset(testKey(`${c}:connector-accounts`), { manual_1: 'encrypted-account' });
+
+    const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
+    expect(keys).toEqual([`${c}:connector-accounts`, `${c}:connector-connections`]);
+  });
+
+  test('leaves out API tokens and their counts, so restoring a backup can never bring back a revoked token', async () => {
+    const container = '00000000-0000-4000-8000-000000000000';
+    await fake.hset(testKey(`c:${container}:api-tokens`), { '0123456789abcdef': 'v1-ciphertext' });
+    await fake.hset(testKey(`c:${container}:api-requests`), { '0123456789abcdef': '3:1760000000' });
+    await fake.set(testKey(`c:${container}:goals`), 'kept');
+
+    const keys = parse(await collect()).slice(1, -1).map((r) => r.key);
+    expect(keys).toEqual([`c:${container}:goals`]);
+    // And a restore refuses an archive that holds one.
+    const { verifyArchive } = await import('@/lib/restore');
+    const lines = await collect();
+    const forged = [lines[0], JSON.stringify({ key: `c:${container}:api-tokens`, type: 'hash', ttl: null, value: { '0123456789abcdef': 'v1-ciphertext' } }) + '\n', ...lines.slice(1)];
+    expect(() => verifyArchive(forged.join(''))).toThrow('which exports never include');
   });
 
   test('never reaches another environment', async () => {

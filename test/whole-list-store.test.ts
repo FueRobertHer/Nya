@@ -103,8 +103,31 @@ describe('before a load has succeeded', () => {
       expect(store.get().error).toContain(text);
       expect(await store.save({ Rent: 1000 })).toBe(false);
       expect(server.calls.filter((c) => c.method === 'PUT')).toEqual([]);
+      // Never "still loading": nothing is.
+      expect(store.get().saveError).toBe('Budgets could not be loaded, so they can’t be saved yet; press Refresh to try again.');
     });
   }
+
+  test('says how to try again: Refresh by default, or what the screen offers instead', async () => {
+    const failing = (async () => new Response('{}', { status: 500 })) as unknown as typeof fetch;
+    const make = (reloadHint?: string) =>
+      createWholeListStore<Budgets>({
+        url: '/api/budgets',
+        field: 'budgets',
+        noun: 'budgets',
+        empty: {},
+        isValid: (v): v is Budgets => typeof v === 'object' && v !== null && !Array.isArray(v),
+        onChange: () => {},
+        fetch: failing,
+        reloadHint,
+      });
+    const plain = make();
+    await plain.load();
+    expect(plain.get().error).toBe('Budgets could not be loaded. Editing is paused until they are; press Refresh to try again.');
+    const own = make('use Try again below');
+    await own.load();
+    expect(own.get().error).toBe('Budgets could not be loaded. Editing is paused until they are; use Try again below.');
+  });
 
   test('a response of the wrong shape is an error, not an empty list', async () => {
     const server = fakeServer({});
@@ -133,6 +156,22 @@ describe('saving', () => {
     expect(await p).toBe(true);
     expect(server.stored).toEqual({ Food: 300, Rent: 1000 });
     expect(store.get()).toMatchObject({ saving: false, saveError: null });
+  });
+
+  test('a load asked for while a save is in flight waits for it, so no older list lands as ready in between', async () => {
+    const { server, store } = await loaded({ Food: 300 });
+    const save = store.save({ Food: 300, Rent: 1000 });
+    const reload = store.load();
+    // Only the save is out: the load hasn't gone yet, and the list on screen is the one being saved.
+    expect(server.pending).toEqual(['PUT']);
+    expect(store.get()).toMatchObject({ saving: true, value: { Food: 300, Rent: 1000 } });
+    await server.release();
+    expect(await save).toBe(true);
+    // Now it goes, and reads what the save wrote.
+    expect(server.pending).toEqual(['GET']);
+    await server.release();
+    await reload;
+    expect(store.get()).toMatchObject({ status: 'ready', saving: false, value: { Food: 300, Rent: 1000 } });
   });
 
   test('a second save while one is in flight is refused, not sent', async () => {
@@ -248,5 +287,166 @@ describe('loading', () => {
     await server.release();
     await retry;
     expect(store.get()).toMatchObject({ status: 'ready', error: null, value: { Food: 300 } });
+  });
+});
+
+describe('opted in: what the server said about a save (goals)', () => {
+  /** A server that answers a PUT as given, at once. */
+  const answering = (status: number, body: unknown) => {
+    const calls: string[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      calls.push(init?.method ?? 'GET');
+      if ((init?.method ?? 'GET') === 'GET') return new Response(JSON.stringify({ goals: [{ id: 'a' }] }), { status: 200 });
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof globalThis.fetch;
+    return { fetch, calls };
+  };
+  const goals = async (server: ReturnType<typeof answering>, opts: { adoptSaved?: boolean; showRefusal?: boolean }) => {
+    const store = createWholeListStore<{ id: string; worked_out?: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch: server.fetch,
+      ...opts,
+    });
+    await store.load();
+    return store;
+  };
+
+  test('the list the server answered with is kept, with what it worked out', async () => {
+    const store = await goals(answering(200, { goals: [{ id: 'a', worked_out: 'by the server' }] }), { adoptSaved: true });
+    expect(await store.save([{ id: 'a' }])).toBe(true);
+    expect(store.get().value).toEqual([{ id: 'a', worked_out: 'by the server' }]);
+  });
+
+  test('without it, or with an answer that isn’t a list, the list sent is kept', async () => {
+    expect(await (await goals(answering(200, { goals: [{ id: 'x' }] }), {})).save([{ id: 'a' }])).toBe(true);
+    const store = await goals(answering(200, { goals: 'nope' }), { adoptSaved: true });
+    await store.save([{ id: 'a' }]);
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('a refusal says why, and the list goes back to what is saved', async () => {
+    const store = await goals(answering(400, { error: 'Allocations on Savings would come to $10.01, more than its balance of $10.00.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: Allocations on Savings would come to $10.01, more than its balance of $10.00.');
+    expect(store.get().value).toEqual([{ id: 'a' }]);
+  });
+
+  test('a 409 not flagged unreadable is a refusal too: what is stored stops it just now, and why', async () => {
+    const store = await goals(answering(409, { error: 'A saved account link can’t be read.' }), { showRefusal: true });
+    expect(await store.save([{ id: 'b' }])).toBe(false);
+    expect(store.get().saveError).toBe('Not saved: A saved account link can’t be read.');
+    // Flagged unreadable, it is the list that can't be read: the plain message.
+    const flagged = await goals(answering(409, { error: 'x', unreadable: true }), { showRefusal: true });
+    await flagged.save([{ id: 'b' }]);
+    expect(flagged.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+
+  test('anything but a refusal keeps the plain message', async () => {
+    const store = await goals(answering(500, { error: 'Failed to save goals' }), { showRefusal: true });
+    await store.save([{ id: 'b' }]);
+    expect(store.get().saveError).toBe('Could not save goals. Showing what is saved.');
+  });
+
+  test('a load stopped by entries the screen can remove keeps how many, and only for the repair it was told of', async () => {
+    const answers: [number, unknown][] = [];
+    const fetch = (async () => {
+      const [status, body] = answers.shift()!;
+      return new Response(JSON.stringify(body), { status });
+    }) as unknown as typeof globalThis.fetch;
+    const store = (repair?: string) =>
+      createWholeListStore<{ id: string }[]>({
+        url: '/api/goals',
+        field: 'goals',
+        noun: 'goals',
+        empty: [],
+        isValid: (v): v is { id: string }[] => Array.isArray(v),
+        onChange: () => {},
+        fetch,
+        ...(repair ? { repair } : {}),
+      });
+    const damaged = { error: 'x', unreadable: true, unreadable_ids: ['g1', 'g2'], unrecognised_ids: ['g3'], repair: 'goal-plans' };
+    const goalsStore = store('goal-plans');
+    answers.push([409, damaged]);
+    await goalsStore.load();
+    expect(goalsStore.get()).toMatchObject({ status: 'error', damage: { unreadable: 2, unrecognised: 1 } });
+    expect(goalsStore.get().error).toContain('could not be read');
+    // Loaded again once repaired, the count goes.
+    answers.push([200, { goals: [{ id: 'g1' }] }]);
+    await goalsStore.load();
+    expect(goalsStore.get()).toMatchObject({ status: 'ready', value: [{ id: 'g1' }] });
+    expect(goalsStore.get().damage).toBeUndefined();
+    // Another repair's name, no repair asked for, or a 409 naming none: no count.
+    for (const [s, body] of [
+      [store('budget-set'), damaged],
+      [store(), damaged],
+      [store('goal-plans'), { error: 'x', unreadable: true, unreadable_ids: ['g1'], unrecognised_ids: [] }],
+      [store('goal-plans'), { error: 'x', repair: 'goal-plans', unreadable_ids: ['g1'] }],
+    ] as const) {
+      answers.push([body === damaged || 'unreadable' in body ? 409 : 500, body]);
+      await s.load();
+      expect(s.get().status).toBe('error');
+      expect(s.get().damage).toBeUndefined();
+    }
+  });
+
+  test('what a save sends beside the list is read as each one is sent, and never takes the list’s place', async () => {
+    const bodies: unknown[] = [];
+    const fetch = (async (_url: string, init?: RequestInit) => {
+      if (init?.method === 'PUT') bodies.push(JSON.parse(String(init.body)));
+      return new Response(JSON.stringify({ goals: [] }), { status: 200 });
+    }) as unknown as typeof globalThis.fetch;
+    let day = '2026-10-11';
+    const store = createWholeListStore<{ id: string }[]>({
+      url: '/api/goals',
+      field: 'goals',
+      noun: 'goals',
+      empty: [],
+      isValid: (v): v is { id: string }[] => Array.isArray(v),
+      onChange: () => {},
+      fetch,
+      extra: () => ({ today: day, goals: 'not the list' }),
+    });
+    await store.load();
+    await store.save([{ id: 'a' }]);
+    day = '2026-10-12';
+    await store.save([{ id: 'b' }]);
+    expect(bodies).toEqual([
+      { today: '2026-10-11', goals: [{ id: 'a' }] },
+      { today: '2026-10-12', goals: [{ id: 'b' }] },
+    ]);
+  });
+
+  test('what else the server answers beside the list (the Plan: its currency) is given on a load taken and a save that went through, never on one ignored or failed', async () => {
+    let answer: Record<string, unknown> = { plan: { a: 1 }, currency: 'USD' };
+    let status = 200;
+    const fetch = (async () => new Response(JSON.stringify(answer), { status })) as unknown as typeof globalThis.fetch;
+    const seen: unknown[] = [];
+    const store = createWholeListStore<{ a: number }>({
+      url: '/api/fire-plan',
+      field: 'plan',
+      noun: 'plan assumptions',
+      empty: { a: 0 },
+      isValid: (v): v is { a: number } => typeof v === 'object' && v !== null && typeof (v as { a?: unknown }).a === 'number',
+      onChange: () => {},
+      fetch,
+      onAnswer: (data) => seen.push(data.currency),
+    });
+    await store.load();
+    answer = { plan: { a: 2 }, currency: 'EUR' };
+    await store.save({ a: 2 });
+    // A failed save: nothing from it, then the reload's answer.
+    status = 500;
+    answer = { error: 'x' };
+    await store.save({ a: 3 });
+    expect(seen).toEqual(['USD', 'EUR']);
+    status = 200;
+    answer = { plan: { a: 2 }, currency: null };
+    await store.load();
+    expect(seen).toEqual(['USD', 'EUR', null]);
   });
 });

@@ -1,0 +1,865 @@
+// lib/fire/inputs.ts
+//
+// The Plan tab's automatic inputs, measured from what Nya already has, each
+// with what it was measured from and what may be missing from it, for the
+// label beside it. The person can override every one (lib/fire/plan.ts).
+//
+// SPENDING starts from the Activity tab's rule (lib/spending.ts isTransfer,
+// unchanged there) and puts back what that rule leaves out for a reason that
+// doesn't hold for planning. The Activity tab drops every loan
+// payment and every ATM withdrawal so that paying a card off isn't counted as
+// spending twice; but a mortgage, car or student loan payment, or cash taken
+// out and spent, is money the person needs every year, and nothing else
+// counts it. So here (planFlow):
+//   - a payment Plaid's detail says is on a mortgage, car, student or
+//     personal loan counts as spending. Its principal is really saving, but
+//     it is spending until the loan ends, which is the year a plan starting
+//     today has to fund; the label says so.
+//   - a card payment never counts, whatever the row has been recategorized
+//     as: it settles purchases already counted on the card. Anything else
+//     filed under loan payments (no detail, Plaid's "other payment", which can
+//     be a store card, or a row recategorized there whose detail says
+//     something else, a card payoff among them) can't be told from one, so it
+//     is left out and reported, never guessed.
+//   - the loan account's side of a payment (money in, negative) stays out, so
+//     a payment from a linked checking account to a linked loan counts once.
+//   - cash withdrawals count (an ATM, or Plaid's "withdrawal" with no code):
+//     cash taken out is spent. Unless the person enters what they spend in
+//     cash by hand (or imports it from a file), on a manual account they
+//     marked as cash on hand (lib/balance.ts isCashOnHand: cashAccountIds):
+//     then the withdrawals and those rows are the same money, so only the
+//     larger counts, never both.
+//     Only an account marked so: a manual checking account at a bank Plaid
+//     can't reach is not cash, and its debit spending never cancels a
+//     withdrawal. Cash spending entered by hand always counts (it is spending
+//     like any other); withdrawals count only for what is beyond it. Over the
+//     whole window, so a withdrawal at the end of one month spent in the next
+//     isn't counted twice, and someone who has just begun entering cash keeps
+//     the year of withdrawals before that. The label says which it did, and
+//     on which accounts;
+//   - money back in a spending category (a refund) is taken off spending
+//     rather than counted as income, which would overstate both. Only in a
+//     spending category: money in under income, a transfer or anything else
+//     is never a refund. The total, and the largest one, are shown beside
+//     spending, so an odd large one (a deposit returned) can be seen.
+// Pending rows count, as they do on the Activity tab; a pending row whose
+// posted row has arrived was already dropped by /api/transactions
+// (lib/transactions.ts supersededPendingIds), so nothing counts twice. A
+// transaction the person excluded from budgets and reports (lib/spending.ts
+// isExcluded: a car bought outright, say) counts in none of the year's
+// figures; it still marks how far back the history goes, and the label says
+// how many were left out.
+//
+// ONE CURRENCY. Invested assets are in the currency most of the accounts are
+// in, and the year's spending, income and savings are in the currency most of
+// its counted transactions are in (lib/spending.ts totalsCurrency): the
+// Plan's currency is the accounts' (lib/fire/progress.ts planCurrency) until
+// the currency its typed figures are in is recorded (lib/fire/plan-currency.ts),
+// and then that one, which both are in (`own`, `currency`), whatever most
+// accounts or rows are in. Without a home currency, one in another currency
+// counts in none of them (nothing is converted), and the label names how
+// many there were. WITH ONE (lib/fx/), the Plan keeps its
+// currency, as budgets keep theirs (its typed figures are never relabelled),
+// and what is in other currencies is converted into it: each transaction at
+// its own day's rate (lib/fx/totals.ts totalsIn), each currency's accounts
+// at the newest rates, its subtotal converted once (lib/fx/net-worth.ts
+// balancesIn), as net worth is. What has no rate is still left out and
+// named, with why.
+//
+// SAVINGS is a year of income minus spending from bank data, plus what was
+// contributed to workplace retirement plans (401(k) and the like), which
+// usually comes out of a paycheck before it reaches a bank, measured from
+// Nya's verified investment transactions. Contributions to brokerages and
+// IRAs are not added: they are usually paid from a bank account, where
+// income minus spending has already counted them. Nothing is counted twice:
+// the person can say how each plan is paid into (through payroll: every
+// contribution is added; from a bank: none is), and for a plan they haven't
+// said, a contribution that a transfer to investment and retirement funds
+// paid for (the same amount within days) is not added.
+//
+// INVESTED ASSETS are the balances of investment accounts (and, if asked,
+// checking and savings), not hidden, as the Accounts tab shows them, with
+// what is stale or missing named.
+
+import { type Txn } from '@/components/MonthBreakdown';
+import { categoryKey, currencyOf, inCurrency, isExcluded, isHistoryRow, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '@/lib/spending';
+import type { PlanFunding } from './plan';
+import { isCashOnHand, isInvestmentType } from '@/lib/balance';
+import { dominantCurrency } from '@/lib/format';
+import { isConnectorKind } from '@/lib/connectors/types';
+import { totalsIn, type Conversion } from '@/lib/fx/totals';
+import type { FxTable, NoRate } from '@/lib/fx/rates';
+import { balancesIn } from '@/lib/fx/net-worth';
+import { tableOf, type PageFx } from '@/lib/fx/view';
+
+/** The trailing window, in days (today included). */
+export const TRAILING_DAYS = 365;
+/** Less history than this is too little to estimate a year from. */
+export const MIN_DAYS = 28;
+
+/** How a transaction counts toward the plan's yearly figures. */
+export type PlanFlow =
+  /** Goods, services, bills and fees. */
+  | 'spending'
+  /** A payment on a mortgage, car, student or other loan that isn't a card. */
+  | 'loan'
+  /** Cash taken out, at an ATM or a teller. */
+  | 'cash'
+  /** Money back on spending: taken off spending. */
+  | 'refund'
+  | 'income'
+  /** Pays a card off, settling spending already counted on the card. */
+  | 'card-payment'
+  /** A loan payment Plaid gives no detail for: it may be a card payment. */
+  | 'unclear-loan'
+  /** Between your own accounts. */
+  | 'transfer';
+
+/** Plaid's details (its personal finance category, humanized) for a payment
+ *  on a loan that isn't a card: the only loan payments counted as spending. */
+const LOAN_DETAILS = new Set(['mortgage payment', 'car payment', 'student loan payment', 'personal loan payment']);
+/** Plaid's detail for paying a card off. */
+const CARD_PAYMENT = 'credit card payment';
+/** The categories money is spent in (Plaid's personal finance categories,
+ *  humanized): money back in one of them is a refund. Not income, transfers,
+ *  loan payments or "other". */
+const SPENDING_CATEGORIES = new Set([
+  'food and drink',
+  'general merchandise',
+  'general services',
+  'entertainment',
+  'personal care',
+  'medical',
+  'travel',
+  'transportation',
+  'rent and utilities',
+  'home improvement',
+  'bank fees',
+]);
+
+/** How one transaction counts for planning (see the top of this file). */
+export function planFlow(t: Txn): PlanFlow {
+  // The category words the row carries, never its name (lib/spending.ts
+  // categoryKey): renaming a category moves nothing here.
+  const category = categoryKey(t);
+  // Plaid's own detail: a recategorized row keeps it (only the category is
+  // replaced), so it still says what the row really was.
+  const sub = (t.subcategory ?? '').toLowerCase();
+  if (sub === CARD_PAYMENT) return t.amount > 0 ? 'card-payment' : 'transfer';
+  if (category === 'loan payments') {
+    if (t.amount <= 0) return 'transfer'; // the loan's side of a payment
+    // A payment Nya paired from cash into an account the person called a
+    // loan (lib/manual-txns.ts connectorTransfers): a loan's, never a card's.
+    if (t.paired === 'loan') return 'loan';
+    return LOAN_DETAILS.has(sub) ? 'loan' : 'unclear-loan';
+  }
+  if (t.amount > 0) {
+    // Plaid's transaction code, where the institution reports one, is the
+    // better signal; without one, its category "transfer out" with the detail
+    // "withdrawal" is cash taken out.
+    if (t.transaction_code === 'atm') return 'cash';
+    if (!t.transaction_code && category === 'transfer out' && sub === 'withdrawal') return 'cash';
+  }
+  if (isTransfer(t)) return 'transfer';
+  // Income by the kind of the person's category once filed (a category in an
+  // income group, lib/categories.ts), as transfers are; seeded, that is the
+  // "income" category alone, as before.
+  if (t.category_kind ? t.category_kind === 'income' : category === 'income') return 'income';
+  if (t.amount > 0) return 'spending';
+  // Money in: back on something bought only in a spending category. Anything
+  // else (no category, "other") stays income, as it always was.
+  return category !== null && SPENDING_CATEGORIES.has(category) ? 'refund' : 'income';
+}
+
+export type TrailingFlows = {
+  /** A year's spending: spending, loan payments and cash, less refunds. */
+  spending: number;
+  /** A year's income. */
+  income: number;
+  /** income - spending, from bank data alone. */
+  savings: number;
+  /** Parts of `spending`, a year's: loan payments and cash withdrawals
+   *  included (those beyond the cash spending entered by hand), refunds
+   *  taken off. */
+  loanPayments: number;
+  cash: number;
+  refunds: number;
+  /** All the cash withdrawn, and the spending entered by hand on manual cash
+   *  accounts, a year's: when both are there, only the larger counts. */
+  cashWithdrawn: number;
+  cashEntered: number;
+  /** The cash accounts that spending was entered on, for the label. */
+  cashEnteredOn: string[];
+  /** Of cashEntered, your part of what someone else paid (an IOU you owe,
+   *  lib/shared-expenses/rows.ts) that you settled in cash: the withdrawal
+   *  you handed over is the same money, so it is counted once. */
+  cashIous: number;
+  /** Loan payments NOT counted because they can't be told from card payments. */
+  unclearLoans: number;
+  /** Of those, the ones not from a bank Plaid reads: entered, imported, or
+   *  from SimpleFIN, with nothing but a category to say what they pay, so
+   *  the words say so rather than that Plaid didn't. Absent is none. */
+  unclearLoansElsewhere?: number;
+  /** The largest single refund taken off, as it was (not scaled), so an odd
+   *  large one can be seen. */
+  largestRefund: { amount: number; date: string; name: string } | null;
+  /** The earliest transaction in the window, and today. */
+  from: string;
+  to: string;
+  /** Days of history behind the figures, the first one and today included. */
+  days: number;
+  /** True when that history was under a year and the totals were scaled up. */
+  scaled: boolean;
+  /** Transactions counted (transfers and card payments left out). */
+  count: number;
+  /** Transactions in the window the person excluded or a rule hides
+   *  (lib/rules.ts), counted in none of the figures; and of them, how many a
+   *  rule hides (absent: none). */
+  excludedCount: number;
+  hiddenCount?: number;
+  /** The currency the figures are in: the one most of them are in, or the
+   *  Plan's, converted into (see the top of this file). */
+  currency: string | null;
+  /** The currency most of the counted transactions are in themselves,
+   *  whatever the figures are in (lib/fire/plan-currency.ts says when the
+   *  two differ). Absent is `currency`. */
+  mostIn?: string | null;
+  /** Transactions that would count but are in another currency (with a home
+   *  currency, one with no rate): in none of the figures, by currency. */
+  leftOut: LeftOut;
+  /** How much money the counted rows and the ones left out moved, each in
+   *  its own currency, unscaled, and how many transactions they are: money
+   *  out (spending, loan payments, cash and refunds) apart from money in
+   *  (income), so a large income can't hide spending in another currency,
+   *  nor large spending income in one. Only to judge how much of the year is
+   *  left out (lib/fire/progress.ts spendingGap), never a figure. */
+  volume?: Record<FlowSide, SideVolume>;
+  /** What was converted into `currency`, for the label; null (or absent)
+   *  without a home currency. */
+  conversion?: Conversion | null;
+  /** Transactions from SimpleFIN or Lunch Flow with no category, counted as
+   *  spending or income (lib/spending.ts uncategorizedFromConnector); absent
+   *  is none. */
+  uncategorized?: number;
+  /** IOUs you owe dated before the bank's history begins (`from`), left out
+   *  of every figure: the year is measured from the bank's rows and scaled
+   *  up from them, so one typed for a day before would be scaled as if it
+   *  were inside (lib/shared-expenses/rows.ts). How many, and what they come
+   *  to, unscaled, in `currency`; absent is none. */
+  iousBefore?: { count: number; amount: number };
+};
+
+/** Money out (what the spending figure is made of) or money in (income). */
+export type FlowSide = 'spending' | 'income';
+
+/** One side of the year, only to weigh what is left out (TrailingFlows
+ *  volume): the money its counted rows moved and how many transactions they
+ *  are, and the same for each currency left out. */
+export type SideVolume = { counted: number; count: number; leftOut: { currency: string; amount: number; count: number }[] };
+
+const DAY_MS = 86_400_000;
+const dayNumber = (iso: string) => Date.parse(`${iso}T00:00:00Z`) / DAY_MS;
+const isoDay = (n: number) => new Date(n * DAY_MS).toISOString().slice(0, 10);
+
+/** A flow summed into the figures: not one left out as a transfer, a card
+ *  payment or a loan payment that may be one. */
+const counts = (flow: PlanFlow) => flow !== 'transfer' && flow !== 'card-payment' && flow !== 'unclear-loan';
+
+/**
+ * Spending, income and savings over the trailing year, from the transactions
+ * the dashboard loaded. `today` is the viewer's local calendar day
+ * (lib/local-date.ts). History shorter than a year (measured from its
+ * earliest row) is scaled up to a year and flagged. Null when there is too
+ * little to go on: no countable transaction, or under MIN_DAYS of history.
+ * `cashAccounts` are the manual accounts cash is kept on, whose rows entered
+ * by hand are the cash withdrawals' spending (see the top of this file).
+ * `fx` (with a home currency) converts what is in another currency than
+ * `into`, the Plan's (its accounts'), or with none given than the one most
+ * counted rows are in. `currency`, the Plan's own (lib/fire/plan-currency.ts),
+ * is what the figures are in whatever most rows are in: converted into it
+ * with a home currency, and without one only the rows in it count, the rest
+ * left out and named.
+ */
+export function trailingFlows(
+  txns: Txn[],
+  today: string,
+  opts: { cashAccounts?: ReadonlySet<string>; fx?: FxTable | null; into?: string | null; currency?: string | null } = {}
+): TrailingFlows | null {
+  const end = dayNumber(today);
+  const start = end - (TRAILING_DAYS - 1);
+  const inWindow = txns.filter((t) => {
+    const d = dayNumber(t.date);
+    return d >= start && d <= end; // also skips a malformed date
+  });
+  const over = inWindow.filter((t) => !isExcluded(t) && !t.group_outside && counts(planFlow(t)));
+  const into = opts.currency ?? opts.into;
+  const counting = totalsIn(inWindow, opts.fx, { into: into ? { currency: into } : 'most', over });
+  // Without a home currency totalsIn converts nothing and answers the one
+  // most rows are in: the Plan's own currency still decides what counts.
+  const currency = opts.currency ?? counting.currency;
+  // Transactions, not rows: a split one's parts are one, a group as many as
+  // it holds (lib/spending.ts transactionCounter).
+  const leftOutBy = new Map<string, ReturnType<typeof transactionCounter>>();
+  let cashEntered = 0;
+  let cashIous = 0;
+  let unclearElsewhere = 0;
+  const cashEnteredOn = new Set<string>();
+  const sums: Record<PlanFlow, number> = {
+    spending: 0,
+    loan: 0,
+    cash: 0,
+    refund: 0,
+    income: 0,
+    'card-payment': 0,
+    'unclear-loan': 0,
+    transfer: 0,
+  };
+  const counted = transactionCounter();
+  // Only to weigh how much is left out for its currency (volume), each side
+  // of the year on its own.
+  const weigh = () => ({ amount: 0, n: transactionCounter() });
+  const sides = { spending: { counted: weigh(), leftOut: new Map<string, ReturnType<typeof weigh>>() }, income: { counted: weigh(), leftOut: new Map<string, ReturnType<typeof weigh>>() } };
+  const sideOf = (flow: PlanFlow) => sides[flow === 'income' ? 'income' : 'spending'];
+  // Only to say what most rows are in, beside the Plan's own currency.
+  const mostIn = totalsCurrency(over);
+  const excludedCount = transactionCounter();
+  const hiddenCount = transactionCounter();
+  let uncategorized = 0;
+  // Where the history begins, first: never an IOU's row, dated whatever day
+  // the person typed (lib/spending.ts isHistoryRow). The figures are the
+  // span from there to today scaled up to a year, so a row the rule rejects
+  // dated before it (an IOU typed for an earlier day) is outside what is
+  // measured: left out, and said (iousBefore), never scaled up.
+  let earliest = end;
+  for (const t of counting.rows) {
+    const d = dayNumber(t.date);
+    if (isHistoryRow(t) && d < earliest) earliest = d;
+  }
+  const before = { count: 0, amount: 0 };
+  // Each refund whole: a split one's refunded parts added up (#39).
+  const refunds = new Map<string, { amount: number; date: string; name: string }>();
+  for (const t of counting.rows) {
+    const d = dayNumber(t.date);
+    if (isExcluded(t)) {
+      // Another person's part, or money paid back between people, isn't an
+      // exclusion of the person's (lib/shared-expenses/rows.ts).
+      if (t.shared_part === undefined) {
+        excludedCount.add(t);
+        if (t.excluded_by_rule) hiddenCount.add(t);
+      }
+      continue;
+    }
+    // Counted in a group on a day before what was read (lib/split-rows.ts).
+    if (t.group_outside) continue;
+    const flow = planFlow(t);
+    if (!inCurrency(t, currency)) {
+      if (flow !== 'transfer' && flow !== 'card-payment') {
+        const c = currencyOf(t)!;
+        const counter = leftOutBy.get(c) ?? transactionCounter();
+        counter.add(t);
+        leftOutBy.set(c, counter);
+        if (counts(flow)) {
+          const away = sideOf(flow).leftOut;
+          const w = away.get(c) ?? weigh();
+          w.amount += Math.abs(t.amount);
+          w.n.add(t);
+          away.set(c, w);
+        }
+      }
+      continue;
+    }
+    if (!isHistoryRow(t) && d < earliest) {
+      if (counts(flow)) {
+        before.count++;
+        before.amount += t.amount;
+      }
+      continue;
+    }
+    sums[flow] += t.amount;
+    if (flow === 'unclear-loan' && t.source) unclearElsewhere += t.amount;
+    if (isConnectorKind(t.source) && t.category === null && (flow === 'spending' || flow === 'income')) uncategorized++;
+    // A row on the cash account, typed or imported (any source but a bank's,
+    // which has none): spending of the cash withdrawn.
+    if (flow === 'spending' && t.source && t.account_id && opts.cashAccounts?.has(t.account_id)) {
+      cashEntered += t.amount;
+      cashEnteredOn.add(t.account_id);
+    }
+    // An IOU you owe, the part of it settled in cash: spending of cash
+    // withdrawn, as the cash spending entered by hand is (counted once).
+    if (flow === 'spending' && t.shared_iou && t.shared_iou.cash > 0) {
+      const written = (t as Txn & { converted?: { amount: number } }).converted?.amount ?? t.amount;
+      const part = written > 0 ? t.amount * Math.min(1, t.shared_iou.cash / written) : 0;
+      cashEntered += part;
+      cashIous += part;
+    }
+    if (flow === 'refund') {
+      const key = t.split_of ?? t.transaction_id;
+      const r = refunds.get(key) ?? { amount: 0, date: t.date, name: t.name };
+      r.amount += -t.amount;
+      refunds.set(key, r);
+    }
+    if (counts(flow)) {
+      counted.add(t);
+      const side = sideOf(flow).counted;
+      side.amount += Math.abs(t.amount);
+      side.n.add(t);
+    }
+  }
+  let largestRefund: TrailingFlows['largestRefund'] = null;
+  for (const r of refunds.values()) if (largestRefund === null || r.amount > largestRefund.amount) largestRefund = r;
+  const count = counted.n;
+  const days = end - earliest + 1;
+  if (count === 0 || days < MIN_DAYS) return null;
+  const scale = days < TRAILING_DAYS ? TRAILING_DAYS / days : 1;
+  // Cash withdrawn counts beyond the cash spending entered by hand, which is
+  // in sums.spending already: the same money, counted once.
+  const cash = Math.max(0, sums.cash - cashEntered);
+  // Plaid's sign: positive is money out. Refunds and income are negative.
+  const spending = Math.max(0, sums.spending + sums.loan + cash + sums.refund);
+  const income = -sums.income || 0; // never -0, which shows as "-$0"
+  return {
+    spending: spending * scale,
+    income: income * scale,
+    savings: (income - spending) * scale,
+    loanPayments: sums.loan * scale,
+    cash: cash * scale,
+    refunds: -sums.refund * scale,
+    cashWithdrawn: sums.cash * scale,
+    cashEntered: cashEntered * scale,
+    cashEnteredOn: [...cashEnteredOn].sort(),
+    cashIous: cashIous * scale,
+    unclearLoans: sums['unclear-loan'] * scale,
+    unclearLoansElsewhere: unclearElsewhere * scale,
+    largestRefund,
+    from: isoDay(earliest),
+    to: today,
+    days,
+    scaled: scale !== 1,
+    count,
+    excludedCount: excludedCount.n,
+    hiddenCount: hiddenCount.n,
+    currency,
+    mostIn,
+    leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    volume: { spending: sideVolume(sides.spending), income: sideVolume(sides.income) },
+    conversion: counting.conversion,
+    uncategorized,
+    ...(before.count > 0 ? { iousBefore: before } : {}),
+  };
+}
+
+function sideVolume(side: { counted: { amount: number; n: { n: number } }; leftOut: Map<string, { amount: number; n: { n: number } }> }): SideVolume {
+  return {
+    counted: side.counted.amount,
+    count: side.counted.n.n,
+    leftOut: [...side.leftOut].map(([currency, w]) => ({ currency, amount: w.amount, count: w.n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+  };
+}
+
+/** The manual accounts marked as cash on hand: the ones whose spending
+ *  entered by hand is what cash withdrawals went on (trailingFlows). Never a
+ *  bank's account, and never a manual checking or savings account the person
+ *  hasn't marked. */
+export function cashAccountIds(institutions: AssetInstitution[]): Set<string> {
+  return new Set(institutions.filter((i) => i.item_id === null).flatMap((i) => i.accounts.filter(isCashOnHand).map((a) => a.account_id)));
+}
+
+/** An institution whose transactions could not all be read, from
+ *  /api/transactions' notes that say so (unreadNotesOf: "Chase: needs to be
+ *  reconnected"). A note that names no institution ("Could not load
+ *  transactions.") has none. */
+export type UnreadTransactions = { institution: string | null; reason: string };
+
+/**
+ * Of an /api/transactions answer, the notes that say transactions couldn't
+ * all be read or aren't all in (`unread_notes`: an institution's, the rows
+ * imported into a linked account that can't be shown, a manual account's),
+ * which the Plan weighs its figures by. Never the others, which say how
+ * something applies when part of it can't be read (a rule, a category, a
+ * split, a group) while every transaction is there. An answer made before
+ * the server sent them has `notes` only, each then taken as one.
+ */
+export function unreadNotesOf(payload: unknown): string[] {
+  const p = typeof payload === 'object' && payload !== null ? (payload as { notes?: unknown; unread_notes?: unknown }) : {};
+  const list = Array.isArray(p.unread_notes) ? p.unread_notes : Array.isArray(p.notes) ? p.notes : [];
+  return list.filter((n): n is string => typeof n === 'string');
+}
+
+export function unreadTransactions(notes: string[]): UnreadTransactions[] {
+  return notes.map((note) => {
+    const at = note.indexOf(': ');
+    return at > 0 ? { institution: note.slice(0, at), reason: note.slice(at + 2) } : { institution: null, reason: note };
+  });
+}
+
+/** The account fields this needs, as the dashboard has them. */
+export type AssetAccount = {
+  account_id: string;
+  name: string;
+  type: string;
+  subtype?: string | null;
+  balance: number | null;
+  currency: string | null;
+  hidden?: boolean;
+  /** The holdings call failed for it this time (/api/net-worth's
+   *  `holdings_unanswered`): read by the allocation, not here. */
+  positionsFailed?: boolean;
+};
+
+/** An institution as the dashboard last loaded it, with what went wrong. */
+export type AssetInstitution = {
+  name: string;
+  /** Plaid's Item id, for its investment activity; null for manual accounts. */
+  item_id: string | null;
+  /** Its last fetch failed (an error, or it needs reconnecting). */
+  error: boolean;
+  /** When its shown balances were last observed, if they were recovered after
+   *  a failed fetch: a UTC day, and the instant when the server knew it. */
+  staleAsOf: string | null;
+  staleAsOfAt: string | null;
+  /** Accounts it is known to have that could not be shown: recovered short,
+   *  or stopped reporting. */
+  missing: number;
+  accounts: AssetAccount[];
+  /** Accounts it is known to have that it can't show (lib/last-known.ts
+   *  `unshown_accounts`): read by allocation over time, not here. */
+  unshown?: { account_id: string; name: string; type: string | null; currency: string | null }[];
+};
+
+export type CountedAccount = AssetAccount & { institution: string; item_id: string | null; balance: number };
+
+/** Why invested assets may be short or out of date. */
+export type AssetCaveat =
+  /** It failed and nothing was recovered, so none of it is counted. */
+  | { kind: 'unreachable'; institution: string }
+  /** It failed and is counted at its last-known balances. */
+  | { kind: 'stale'; institution: string; asOf: string; at: string | null }
+  /** Some of its accounts could not be shown. */
+  | { kind: 'missing'; institution: string; count: number };
+
+export type InvestedAssets = {
+  /** Null when no account counts. */
+  total: number | null;
+  /** The accounts summed, for the list under the figure. */
+  accounts: CountedAccount[];
+  /** Accounts that would count but have no balance to count. */
+  unknown: number;
+  /** Institutions whose problems may make the total short or old. */
+  caveats: AssetCaveat[];
+  /** The currency the total is in: the one most of the accounts are in, or
+   *  the Plan's own when it has one (lib/fire/plan-currency.ts). */
+  currency: string | null;
+  /** Every account with a balance that would count, by the currency it is
+   *  in itself (whatever the total is in), most first, then by code; an
+   *  account that names none is in none of them. Absent is not known. */
+  byCurrency?: { currency: string; count: number }[];
+  /** Accounts that would count but are in another currency (with a home
+   *  currency, one with no rate): not in the total, by currency. */
+  leftOut: LeftOut;
+  /** Their balances, each currency's in its own: only to judge how much is
+   *  left out (lib/fire/progress.ts assetsGap), never a figure. */
+  leftOutBalances?: { currency: string; amount: number }[];
+  /** With a home currency, what was converted into `currency` at the newest
+   *  rates, and why what wasn't has no rate; null (or absent) without one,
+   *  or with nothing in another currency. */
+  conversion?: AssetsConversion | null;
+};
+
+/** What invested assets converted (see the top of this file). */
+export type AssetsConversion = {
+  into: string;
+  /** The day of the rates: the newest publication's, or today. */
+  day: string;
+  /** Each currency converted, and how many accounts in it. */
+  from: { currency: string; count: number }[];
+  /** The currencies a rate of the person's own priced. */
+  own: string[];
+  /** Each currency left out for having no rate, and why. */
+  unrated: { currency: string; why: NoRate; unrated: string }[];
+};
+
+const holds = (a: AssetAccount, includeCash: boolean) => isInvestmentType(a.type) || (includeCash && a.type === 'depository');
+
+/**
+ * Invested assets: every investment account that is not hidden, plus
+ * checking and savings when `includeCash`. Credit and loan balances are not
+ * subtracted: the FI number is about what can be invested and drawn on, not
+ * net worth.
+ *
+ * An institution that failed with nothing recovered might hold investments,
+ * so it is named whatever it holds, unless its accounts are known and none of
+ * them would count; one counted at last-known balances is named with their
+ * date. `fx` (with a home currency, /api/net-worth's base.fx) converts the
+ * accounts in another currency into the one most of them are in, the Plan's,
+ * at the newest rates (see the top of this file). `own`, the Plan's own
+ * currency (lib/fire/plan-currency.ts), is the total's whatever most
+ * accounts are in: converted into it with a home currency, and without one
+ * only the accounts in it count, the rest left out and named.
+ */
+export function investedAssets(institutions: AssetInstitution[], includeCash: boolean, fx: PageFx | null = null, now: number = Date.now(), own: string | null = null): InvestedAssets {
+  const measured: CountedAccount[] = [];
+  const caveats: AssetCaveat[] = [];
+  let unknown = 0;
+  for (const inst of institutions) {
+    const relevant = inst.accounts.filter((a) => !a.hidden && holds(a, includeCash));
+    for (const a of relevant) {
+      if (a.balance === null || !Number.isFinite(a.balance)) {
+        unknown++;
+        continue;
+      }
+      measured.push({ ...a, institution: inst.name, item_id: inst.item_id, balance: a.balance });
+    }
+    const mightHold = relevant.length > 0 || inst.accounts.length === 0;
+    if (inst.error && !inst.staleAsOf && mightHold) caveats.push({ kind: 'unreachable', institution: inst.name });
+    if (inst.staleAsOf && relevant.length > 0) caveats.push({ kind: 'stale', institution: inst.name, asOf: inst.staleAsOf, at: inst.staleAsOfAt });
+    if (inst.missing > 0 && mightHold) caveats.push({ kind: 'missing', institution: inst.name, count: inst.missing });
+  }
+  // Summed in one currency, as every total is (lib/spending.ts): an account
+  // that names none is taken to be in it.
+  const most = dominantCurrency(measured.map((a) => ({ iso_currency_code: a.currency })));
+  const currency = own ?? most;
+  const tally = new Map<string, number>();
+  for (const a of measured) if (a.currency) tally.set(a.currency, (tally.get(a.currency) ?? 0) + 1);
+  const byCurrency = [...tally].map(([c, count]) => ({ currency: c, count })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1));
+  if (fx && currency && measured.some((a) => a.currency && a.currency !== currency)) {
+    // Each currency's subtotal converted once, as net worth is: never a day
+    // before the newest publication (this device's clock may be behind).
+    const today = new Date(now).toISOString().slice(0, 10);
+    const day = fx.latest && fx.latest.date > today ? fx.latest.date : today;
+    const b = balancesIn(
+      measured.map((a) => ({ amount: a.balance, currency: a.currency })),
+      tableOf(fx),
+      currency,
+      day,
+      currency
+    );
+    const rated = new Set(b.parts.filter((p) => p.converted !== null).map((p) => p.currency));
+    const counted = measured.filter((a) => !a.currency || rated.has(a.currency));
+    const from = b.parts.filter((p) => p.currency !== currency && p.converted !== null);
+    return {
+      total: counted.length > 0 ? b.total : null,
+      accounts: counted,
+      unknown,
+      caveats,
+      currency,
+      byCurrency,
+      leftOut: b.left_out.map((l) => ({ currency: l.currency, count: l.accounts })),
+      conversion: {
+        into: currency,
+        day: from.some((p) => p.rate?.source === 'ecb') && fx.latest ? fx.latest.date : day,
+        from: from.map((p) => ({ currency: p.currency, count: p.accounts })),
+        own: from.filter((p) => p.rate?.source === 'own').map((p) => p.currency).sort(),
+        unrated: b.left_out.map((l) => ({ currency: l.currency, why: l.why, unrated: l.unrated })),
+      },
+    };
+  }
+  const counted = measured.filter((a) => !a.currency || !currency || a.currency === currency);
+  const others = new Map<string, number>();
+  const otherBalances = new Map<string, number>();
+  for (const a of measured) {
+    if (!a.currency || !currency || a.currency === currency) continue;
+    others.set(a.currency, (others.get(a.currency) ?? 0) + 1);
+    otherBalances.set(a.currency, (otherBalances.get(a.currency) ?? 0) + Math.abs(a.balance));
+  }
+  return {
+    total: counted.length > 0 ? counted.reduce((s, a) => s + a.balance, 0) : null,
+    accounts: counted,
+    unknown,
+    caveats,
+    currency,
+    byCurrency,
+    leftOut: [...others].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    leftOutBalances: [...otherBalances].map(([c, amount]) => ({ currency: c, amount })),
+    conversion: null,
+  };
+}
+
+// Workplace retirement plans, by Plaid's account subtype: contributions to
+// these are usually taken from pay before it reaches a bank account (and an
+// employer's match never does), so bank income minus spending misses them.
+// IRAs, brokerages and HSAs are left out: money paid into them usually comes
+// from a bank account, where it has already been counted as saved.
+const WORKPLACE_PLAN_SUBTYPES = new Set([
+  '401a',
+  '401k',
+  'roth 401k',
+  '403b',
+  '457b',
+  'thrift savings plan',
+  'tsp',
+  'simple ira',
+  'sarsep',
+  'profit sharing plan',
+]);
+
+export function isWorkplacePlan(subtype: string | null | undefined): boolean {
+  return WORKPLACE_PLAN_SUBTYPES.has((subtype ?? '').toLowerCase());
+}
+
+/** One payment into a plan, or out of a bank account: its day and amount. */
+export type Payment = { date: string; amount: number };
+
+/** One workplace plan's contributions over the trailing year, as
+ *  /api/investment-activity measured them (contributions_12m and friends). */
+export type PlanContributions = {
+  account_id: string;
+  name: string;
+  institution: string;
+  /** Null when they couldn't be measured (the request failed, or Nya has
+   *  no verified activity for the account). */
+  amount: number | null;
+  /** The first day the amount covers: a year ago, or later when Nya's
+   *  verified activity starts later. */
+  from: string | null;
+  /** The route found its verified record starts after the trailing year's
+   *  first day, so the amount covers less than a year. Decided there, on the
+   *  record's own days, never by comparing one of its days with the
+   *  viewer's (an evening in the Americas is already tomorrow in UTC). */
+  partial: boolean;
+  /** Each contribution the amount sums, to tell which a bank transfer paid for. */
+  rows: Payment[];
+  /** The first day the institution has any activity for the account, when
+   *  that is inside the year although the record covers all of it: the
+   *  institution may keep less history than that (lib/invstore.ts). */
+  activityFrom: string | null;
+  /** A problem reading its activity (lib/invstore.ts), shown as is. */
+  note: string | null;
+};
+
+/** One workplace plan's part of savings. */
+export type PlanSavings = {
+  /** "Institution name". */
+  name: string;
+  /** As the person set it; null when not set (contributions are matched
+   *  against transfers to investment and retirement funds). */
+  paidFrom: 'payroll' | null;
+  /** Added to savings, from this many contributions, the largest named so
+   *  the person can see what counted. */
+  added: number;
+  count: number;
+  largest: Payment | null;
+  /** Paid for by a transfer to investment and retirement funds: already
+   *  counted as saved, so not added again (only when not set). */
+  matched: number;
+};
+
+export type WorkplaceSavings = {
+  /** What is added to savings, summed. */
+  total: number;
+  /** Each plan measured and not set as paid from a bank, in order. */
+  plans: PlanSavings[];
+  /** Plans the person set as paid from a bank: nothing of theirs is added. */
+  fromBank: string[];
+  /** Plans measured over less than the whole year, with the day they start. */
+  partial: { name: string; from: string }[];
+  /** Plans whose institution has activity only from a day inside the year
+   *  (it may keep less history): said, since some may be missing. */
+  shortHistory: { name: string; from: string }[];
+  /** Plans measured, but whose activity was read with a problem: may be short. */
+  problems: { name: string; note: string }[];
+  /** Plans that couldn't be measured at all. */
+  unmeasured: string[];
+};
+
+/** A transfer pays for a contribution when the amounts agree to within a
+ *  dollar or 1%, whichever is more, and the days to within this many. */
+export const MATCH_DAYS = 5;
+const sameAmount = (a: number, b: number) => Math.abs(a - b) <= Math.max(1, 0.01 * Math.max(a, b));
+
+/** Plaid's detail for money moved to investment and retirement funds: the
+ *  only transfers out that can have paid for a contribution. A move to
+ *  savings, or to another person, never did. */
+const RETIREMENT_TRANSFER = 'investment and retirement funds';
+
+/** Transfers out of your accounts to investment and retirement funds over
+ *  the trailing year: where a payment into a plan from a bank account shows
+ *  on the bank's side. Counted as transfers (planFlow), so already saved. */
+export function transfersOut(txns: Txn[], today: string): Payment[] {
+  const end = dayNumber(today);
+  const start = end - (TRAILING_DAYS - 1);
+  return txns
+    .filter((t) => {
+      const d = dayNumber(t.date);
+      return (
+        d >= start &&
+        d <= end &&
+        t.amount > 0 &&
+        (t.subcategory ?? '').toLowerCase() === RETIREMENT_TRANSFER &&
+        planFlow(t) === 'transfer'
+      );
+    })
+    .map((t) => ({ date: t.date, amount: t.amount }));
+}
+
+/**
+ * The trailing year's contributions to workplace plans, as added to savings,
+ * with what was left out and what is short named.
+ *
+ * A plan set as paid from a bank adds nothing; one set as paid through
+ * payroll adds every contribution. For a plan not set, a contribution that a
+ * transfer to investment and retirement funds paid for (see MATCH_DAYS) is not
+ * added. A transfer the plan records as several contributions on one day (a
+ * deferral and an employer share) is matched by their sum. Each transfer pays
+ * for one contribution, or one day's, at most, across every plan.
+ */
+export function workplaceSavings(plans: PlanContributions[], bank: { transfersOut: Payment[]; funding: PlanFunding[] }): WorkplaceSavings {
+  const out: WorkplaceSavings = { total: 0, plans: [], fromBank: [], partial: [], shortHistory: [], problems: [], unmeasured: [] };
+  const used = new Set<number>();
+  const transfers = bank.transfersOut.map((t, i) => ({ ...t, i, day: dayNumber(t.date) }));
+  /** The nearest unused transfer of this amount within MATCH_DAYS, taken. */
+  const take = (amount: number, day: number): boolean => {
+    let best: (typeof transfers)[number] | null = null;
+    for (const t of transfers) {
+      if (used.has(t.i) || !sameAmount(amount, t.amount) || !(Math.abs(t.day - day) <= MATCH_DAYS)) continue;
+      if (!best || Math.abs(t.day - day) < Math.abs(best.day - day)) best = t;
+    }
+    if (best) used.add(best.i);
+    return !!best;
+  };
+  for (const p of plans) {
+    const label = `${p.institution} ${p.name}`;
+    const paidFrom = bank.funding.find((f) => f.account_id === p.account_id)?.paidFrom ?? null;
+    if (paidFrom === 'bank') {
+      out.fromBank.push(label);
+      continue;
+    }
+    if (p.amount === null || !Number.isFinite(p.amount)) {
+      out.unmeasured.push(label);
+      continue;
+    }
+    const rows = p.rows.filter((r) => r.amount > 0);
+    const kept: Payment[] = [];
+    let matched = 0;
+    if (paidFrom === 'payroll') kept.push(...rows);
+    else {
+      // One by one, then what is left of each day together.
+      const left: Payment[] = [];
+      for (const row of rows) {
+        if (take(row.amount, dayNumber(row.date))) matched += row.amount;
+        else left.push(row);
+      }
+      const byDay = new Map<string, Payment[]>();
+      for (const row of left) byDay.set(row.date, [...(byDay.get(row.date) ?? []), row]);
+      for (const [date, group] of byDay) {
+        const sum = group.reduce((t, r) => t + r.amount, 0);
+        if (group.length > 1 && take(sum, dayNumber(date))) matched += sum;
+        else kept.push(...group);
+      }
+    }
+    let added = kept.reduce((t, r) => t + r.amount, 0);
+    let largest = kept.reduce<Payment | null>((m, r) => (m === null || r.amount > m.amount ? r : m), null);
+    let count = kept.length;
+    // A total with no contributions listed (an older answer): added as it is.
+    if (rows.length === 0 && p.amount > 0) {
+      added = p.amount;
+      largest = null;
+      count = 0;
+    }
+    out.total += added;
+    out.plans.push({ name: label, paidFrom, added, count, largest, matched });
+    if (p.note) out.problems.push({ name: label, note: p.note });
+    if (p.partial && p.from) out.partial.push({ name: label, from: p.from });
+    else if (p.activityFrom) out.shortHistory.push({ name: label, from: p.activityFrom });
+  }
+  return out;
+}

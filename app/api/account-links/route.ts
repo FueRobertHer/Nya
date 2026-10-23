@@ -22,12 +22,18 @@ import {
   unlinkAccount,
 } from '@/lib/links';
 import { clearCaches } from '@/lib/cache';
+import { linksChanged } from '@/lib/history-import/extend';
 import { contentKey, readStoredTxns } from '@/lib/transactions';
 import { carriedCategories, carryCounts, getCarried, getOverrides } from '@/lib/overrides';
 import { rememberedIdsByItem } from '@/lib/last-known';
 import type { Link } from '@/lib/link-core';
 import { getHiddenAccounts } from '@/lib/hidden';
 import { getItems } from '@/lib/storage';
+import { StoredDataUnreadableError, UnreadableEntriesError, StoreRefusedError, describeUnreadable } from '@/lib/repo';
+import { restoredRefusals } from '@/lib/user-restore/forget';
+import { endedAccountsStore } from '@/lib/connectors/store';
+import { afterUnlink, beforeLink } from '@/lib/user-restore/answering';
+import { endsALinkWouldCarry, type CarriedEnd } from '@/lib/link-ends';
 
 // Must match LINKS_LOCK_REQUEST_SECONDS (lib/links.ts): a request never
 // outlives the lock it holds. A literal, as route segment config requires.
@@ -38,7 +44,10 @@ export const maxDuration = 120;
 // GET lists what to offer (suggestions with evidence, balance-only history the
 // user can assign), every earlier account that can be linked by hand (`manual`),
 // the links already made with how many categories each carried across, and any
-// saved link that can't be read (`broken`) so the user can remove it. POST links
+// saved link that can't be read (`broken`) so the user can remove it. With
+// ?earlier=1 (asked once the Earlier accounts list is opened) it also says of
+// each earlier account whether forgetting it would be refused, which reads what
+// a restore brought back for it (`earlier_checked`). POST links
 // or dismisses, DELETE unlinks. Everything reads stored state only: opening the
 // Accounts tab must not fan out to every institution's Plaid endpoints.
 //
@@ -92,26 +101,75 @@ async function categoryCounts(ctx: Ctx, links: Map<string, Link>, liveIds: Set<s
 /**
  * The earlier accounts to offer for forgetting. Empty when what decides it
  * can't be read: with the live accounts unreadable every account would look
- * like an earlier one.
+ * like an earlier one. Asked to `check`, one whose forget would be refused
+ * for what a restore brought back for it (in a form this version doesn't
+ * know, a newer version's or a fault: lib/user-restore/forget.ts
+ * restoredRefusals) is listed with those words (`refused`), and one that
+ * couldn't be checked says so, and why (`unchecked`, 'sealed' or 'failed');
+ * neither is offered Forget, and
+ * the rest are listed as they are. That reads the restored books, so it is
+ * done only once the list is opened.
  */
-async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs']) {
+async function earlierAccounts(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs'], check: boolean) {
+  let earlier: ReturnType<typeof forgettableAccounts>;
   try {
     const [live, hidden, items] = await Promise.all([liveAccountIds(ctx, { strict: true }), getHiddenAccounts(ctx), getItems(ctx)]);
-    return forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
+    earlier = forgettableAccounts({ ...inputs, liveIds: live }, new Set(hidden.keys()), new Set(items.map((i) => i.item_id)));
   } catch {
+    return [];
+  }
+  if (!check || earlier.length === 0) return earlier;
+  const ids = earlier.map((e) => e.id);
+  const { refused, unchecked } = await restoredRefusals(ctx, ids).catch(() => ({
+    refused: new Map<string, string>(),
+    unchecked: new Map(ids.map((id) => [id, 'failed' as const])),
+  }));
+  return earlier.map((e) => (refused.has(e.id) ? { ...e, refused: refused.get(e.id)! } : unchecked.has(e.id) ? { ...e, unchecked: unchecked.get(e.id)! } : e));
+}
+
+/** The links on offer (suggested, picked or by hand) that would end the
+ *  live account they link to (lib/link-ends.ts), for the sheet's warning.
+ *  LENIENT, for those words only: what can't be read warns of nothing. */
+async function carriedEnds(ctx: Ctx, inputs: Awaited<ReturnType<typeof offered>>['inputs'], offer: Awaited<ReturnType<typeof offered>>['offer'], manual: Awaited<ReturnType<typeof offered>>['manual']): Promise<CarriedEnd[]> {
+  const pairs = [
+    ...offer.suggestions.map((s) => ({ old: s.old, to: s.to })),
+    ...[...offer.unclaimed, ...manual].flatMap((u) => u.candidates.map((c) => ({ old: u.old, to: c.id }))),
+  ];
+  const unique = [...new Map(pairs.map((p) => [`${p.old}>${p.to}`, p])).values()];
+  try {
+    return await endsALinkWouldCarry(ctx, unique, effectiveLinks(inputs.links, inputs.liveIds));
+  } catch (err) {
+    console.warn('Account links: the ends a link would carry could not be read', err instanceof Error ? err.name : typeof err);
     return [];
   }
 }
 
-export async function GET() {
+/** How many accounts a SimpleFIN or Lunch Flow connection fed were let go, as
+ *  the Reports page lists them (app/api/connectors/ended: those it can read,
+ *  and those whose record is damaged, which it offers to forget), for a
+ *  pointer there. LENIENT, for that pointer only: a count that can't be had
+ *  is none. */
+async function stoppedCount(ctx: Ctx): Promise<number> {
+  try {
+    const { entries, unreadable } = await endedAccountsStore.getAllReport(ctx);
+    return entries.size + unreadable.length;
+  } catch {
+    return 0;
+  }
+}
+
+export async function GET(req?: Request) {
   try {
     const ctx = await dataCtx();
     const { inputs, offer, manual } = await offered(ctx);
     const ids = [...inputs.links].flatMap(([old, l]) => [old, l.to]);
-    const [labels, counts, forgettable] = await Promise.all([
+    const check = !!req && new URL(req.url).searchParams.get('earlier') === '1';
+    const [labels, counts, forgettable, stopped, ends] = await Promise.all([
       directoryLabels(ctx, ids),
       categoryCounts(ctx, inputs.links, inputs.liveIds),
-      earlierAccounts(ctx, inputs),
+      earlierAccounts(ctx, inputs, check),
+      stoppedCount(ctx),
+      carriedEnds(ctx, inputs, offer, manual),
     ]);
     const links = [...inputs.links].map(([old, l]) => ({
       old,
@@ -133,10 +191,17 @@ export async function GET() {
       suggestions: offer.suggestions,
       unclaimed: offer.unclaimed,
       manual,
-      // Earlier accounts the user can forget for good (hidden ones say so).
+      // Earlier accounts the user can forget for good (hidden ones say so),
+      // and whether each was checked for a forget that would be refused.
       earlier: forgettable,
+      earlier_checked: check,
       links,
       broken: [...inputs.unreadableLinks],
+      stopped,
+      // The links on offer that would end the live account they link to, an
+      // earlier account's end carried across (lib/link-ends.ts): the sheet
+      // says so before the link is made.
+      ends,
     });
   } catch (err) {
     const unavailable = containerUnavailable(err);
@@ -186,6 +251,9 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
     old_provider: inputs.directory[old]?.provider ?? PROVIDER,
     to_provider: inputs.directory[to]?.provider ?? PROVIDER,
   };
+  // A restored account counted before this link loses the end its answer
+  // wrote, first (lib/user-restore/answering.ts beforeLink).
+  await beforeLink(ctx, old);
   await linkAccounts(ctx, 
     old,
     to,
@@ -202,6 +270,10 @@ async function linkPair(ctx: Ctx, old: string, to: string) {
   );
   // Cached payloads carry per-account history and hidden subtraction.
   await clearCaches(ctx);
+  // An import into the earlier account is matched against this one's bank
+  // rows now, and walks with it (#52): the backfill runs again, then the
+  // drawing.
+  await linksChanged(ctx);
   return NextResponse.json({ linked: true });
 }
 
@@ -213,19 +285,27 @@ export async function POST(req: Request) {
     const to = id(body?.to);
     const action = body?.action;
 
-    // Forget an earlier account for good: its balances, name and carried
-    // categories (lib/links.ts forgetEarlierAccount re-checks it may).
+    // Forget an earlier account for good: its balances, holdings history, name
+    // and carried categories (lib/links.ts forgetEarlierAccount re-checks it may).
     if (action === 'forget') {
       if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
       return await locked(ctx, async () => {
         try {
-          const { unreadableDates } = await forgetEarlierAccount(ctx, old);
-          // Days whose records are damaged beyond reading, left as they are.
-          return NextResponse.json({ forgotten: true, unreadable_days: unreadableDates.length });
+          const { unreadableDates, holdingsDamaged } = await forgetEarlierAccount(ctx, old);
+          // Days whose records are damaged beyond reading, and whether
+          // holdings records that could hold the account are: left as they
+          // are. The second only when it is so, so the usual answer is what
+          // it always was.
+          return NextResponse.json({
+            forgotten: true,
+            unreadable_days: unreadableDates.length,
+            ...(holdingsDamaged ? { damaged_holdings: true } : {}),
+          });
         } finally {
           // Even a forget that stopped part way changed totals: a payload
           // cached before it (or while it ran) must not outlive it.
           await clearCaches(ctx).catch(() => {});
+          await linksChanged(ctx);
         }
       });
     }
@@ -261,6 +341,22 @@ export async function POST(req: Request) {
   } catch (err) {
     const unavailable = containerUnavailable(err);
     if (unavailable) return unavailable;
+    // What a store refused, in its own words (lib/repo.ts): for a forget,
+    // holdings records this version can't read that could hold the account,
+    // or a month that kept changing while it was being forgotten. Running the
+    // forget again finishes it once they can be read.
+    if (err instanceof StoredDataUnreadableError) {
+      console.error('Account links: stored data unreadable:', describeUnreadable(err));
+      return NextResponse.json(
+        {
+          error: err.message,
+          unreadable: true,
+          ...(err instanceof UnreadableEntriesError ? { unreadable_ids: err.unreadable, unrecognised_ids: err.unrecognised } : {}),
+        },
+        { status: 409 }
+      );
+    }
+    if (err instanceof StoreRefusedError) return NextResponse.json({ error: err.message }, { status: err.status });
     console.error(err);
     return NextResponse.json({ error: 'Failed to update account links' }, { status: 500 });
   }
@@ -274,7 +370,12 @@ export async function DELETE(req: Request) {
     if (!old) return NextResponse.json({ error: 'Expected { old }' }, { status: 400 });
     return await locked(ctx, async () => {
       await unlinkAccount(ctx, old);
+      // A restored account counted before its link gets back the end its
+      // answer wrote (lib/user-restore/answering.ts afterUnlink). Unlinked
+      // without it, it waits and holds the totals, said: never wrong.
+      await afterUnlink(ctx, old).catch((err) => console.warn('Account links: the end a restored account was counted to could not be written back', err instanceof Error ? err.name : typeof err));
       await clearCaches(ctx);
+      await linksChanged(ctx);
       return NextResponse.json({ unlinked: true });
     });
   } catch (err) {

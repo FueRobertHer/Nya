@@ -1,4 +1,4 @@
-import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
+import { describe, expect, test, mock, beforeEach, afterEach, afterAll } from 'bun:test';
 import { FakeRedis, storageMock, testKey, TEST_CTX, ctxKey, TEST_CONTAINER, unscopedDataKeys } from './fake-redis';
 
 const ctx = TEST_CTX;
@@ -10,12 +10,21 @@ const ctx = TEST_CTX;
 process.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');
 
 // A ceiling a fixture can actually cross. The real one is 8M characters, which
-// would take roughly a hundred megabytes of JSON to reach after gzip — far too
+// would take roughly a hundred megabytes of JSON to reach after gzip, far too
 // slow to build in a unit test. A one-row blob encodes to about 800 characters,
 // so this sits well clear of the ordinary fixtures and is crossed only by the
-// deliberately bulky one. Read at import time, so it must be set before the
-// module below is imported.
-process.env.MAX_TXN_BLOB_CHARS = '5000';
+// deliberately bulky one. lib/blob.ts reads it each time it is used, so it is
+// set before each test here (test/preload.ts puts it back before every test),
+// and put back as it was once this file is done: every test file runs in one
+// process, and a ceiling left lowered refuses the next files' saves.
+const BLOB_CEILING_BEFORE = process.env.MAX_TXN_BLOB_CHARS;
+beforeEach(() => {
+  process.env.MAX_TXN_BLOB_CHARS = '5000';
+});
+afterAll(() => {
+  if (BLOB_CEILING_BEFORE === undefined) delete process.env.MAX_TXN_BLOB_CHARS;
+  else process.env.MAX_TXN_BLOB_CHARS = BLOB_CEILING_BEFORE;
+});
 
 // Drives /transactions/sync deterministically. Declared before mock.module
 // because that call is hoisted above the imports below it (same hazard as
@@ -59,6 +68,8 @@ afterEach(() => expect(unscopedDataKeys(fake)).toEqual([]));
 mock.module('@/lib/storage', () => storageMock(fake));
 
 const { encrypt } = await import('@/lib/crypto');
+const { setExcluded } = await import('@/lib/txn-annotations');
+const { setOverride, getOverrides } = await import('@/lib/overrides');
 const {
   syncItemTransactions,
   readItemTransactions,
@@ -71,7 +82,7 @@ const {
 const ITEM = {
   item_id: 'item_a',
   institution_name: 'Test Bank',
-  encrypted_access_token: await encrypt('access-token'),
+  encrypted_access_token: await encrypt(TEST_CTX, 'access-token'),
 };
 
 function acct(over: Record<string, unknown> = {}) {
@@ -116,12 +127,12 @@ async function seedState(item_id: string, state: unknown): Promise<void> {
   const bytes = new Uint8Array(await new Response(gz).arrayBuffer());
   let binary = '';
   bytes.forEach((b) => (binary += String.fromCharCode(b)));
-  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(btoa(binary)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(TEST_CTX, btoa(binary)));
 }
 
 /** Writes a blob in the pre-compression encoding: JSON straight into encrypt. */
 async function seedUncompressedState(item_id: string, state: unknown): Promise<void> {
-  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(JSON.stringify(state)));
+  await fake.set(ctxKey(`txns:${item_id}`), await encrypt(TEST_CTX, JSON.stringify(state)));
 }
 
 beforeEach(() => {
@@ -302,6 +313,19 @@ describe('hard stops leave the stored blob alone', () => {
 
     expect(res.note).toContain('needs to be reconnected');
     expect(await fake.get<string>(ctxKey('txns:item_a'))).toBe(stored as string);
+    // None of its rows came back, which Activity's month totals say (#51).
+    expect(res.txns).toEqual([]);
+    expect(res.coverage).toBe('missing');
+  });
+
+  test('says how much of the history it returned: all, or older rows still arriving', async () => {
+    pages = [{ added: [txn()] }];
+    expect((await syncItemTransactions(ctx, ITEM)).coverage).toBe('complete');
+    calls = [];
+    pages = Array.from({ length: 50 }, (_, i) => ({ added: [txn({ transaction_id: `p${i}` })], has_more: true, next_cursor: `c${i}` }));
+    const importing = await syncItemTransactions(ctx, ITEM);
+    expect(importing.note).toContain('still importing older transactions');
+    expect(importing.coverage).toBe('importing');
   });
 });
 
@@ -325,7 +349,7 @@ describe('a blob too large to persist', () => {
     const res = await readItemTransactions(ctx, ITEM, 1000);
 
     // THE point of the change. The old code trimmed oldest-first until the blob
-    // fit, mutating the caller's state in place — and syncItem returns that same
+    // fit, mutating the caller's state in place, and syncItem returns that same
     // object, so the trimmed set reached lib/backfill.ts through this very
     // function and reconstructed balances from a set with a hole in it.
     expect(res.txns).toHaveLength(140);
@@ -395,8 +419,8 @@ describe('a blob too large to persist', () => {
   test('raising the ceiling unblocks the item', async () => {
     // The legitimate fix is a bigger plan and a bigger limit. Before this was
     // handled, the short-circuit fired before any size was computed, so raising
-    // the limit did nothing and reconnecting — which discards the stored
-    // history — was the only way out.
+    // the limit did nothing and reconnecting (which discards the stored
+    // history) was the only way out.
     await blockedAt(1000); // under the 5000 ceiling now in force
 
     pages = [{ added: [txn()] }];
@@ -492,5 +516,156 @@ describe('unreadable stored blob', () => {
     // sits outside the try rather than inside it.
     expect(res.note).toBeNull();
     expect(res.txns.map((t) => t.transaction_id)).toEqual(['t1']);
+  });
+});
+
+// What the person said about a transaction (lib/txn-annotations.ts) goes once
+// the bank removes the transaction and a sync saves that, as a category goes
+// once no stored Item holds its row: by the same rules, so never while a
+// store can't be read or is behind, never a record this release doesn't
+// recognise, and never a manual row's.
+describe('what was said about a transaction the bank removed', () => {
+  const MANUAL = 'manual-txn:00000000-0000-4000-8000-000000000001';
+  const recordOf = (id: string) => fake.hashes.get(ctxKey('transaction-annotations'))?.get(id);
+  /** item_a stored with t1 to t4 and t6; t1 and t2 excluded, t3's record
+   *  from a later version, t4's damaged, t6 with none, and a manual row's. */
+  const seed = async () => {
+    await fake.hset(ctxKey('plaid:items'), { item_a: JSON.stringify(ITEM) });
+    pages = [{ added: ['t1', 't2', 't3', 't4', 't6'].map((transaction_id) => txn({ transaction_id })) }];
+    await syncItemTransactions(ctx, ITEM);
+    for (const id of ['t1', 't2', MANUAL]) await setExcluded(ctx, id, true);
+    await fake.hset(ctxKey('transaction-annotations'), { t3: await encrypt(TEST_CTX, '{"excluded":"a later version’s"}'), t4: 'damaged' });
+    calls = [];
+  };
+  const removing = (...ids: string[]) => {
+    pages = [{ removed: ids.map((transaction_id) => ({ transaction_id })) }];
+  };
+
+  test('goes once a sync saves its removal; a record this release doesn’t recognise, and a manual row’s, stay', async () => {
+    await seed();
+    removing('t2', 't3', 't4', 'never_stored');
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id).sort()).toEqual(['t1', 't6']);
+    expect(recordOf('t2')).toBeUndefined();
+    // Damaged, and its transaction gone: nothing in it can be read or shown.
+    expect(recordOf('t4')).toBeUndefined();
+    // Intact as far as this release can tell: left for the release that wrote it.
+    expect(recordOf('t3')).toBeDefined();
+    expect(recordOf('t1')).toBeDefined();
+    expect(recordOf(MANUAL)).toBeDefined();
+  });
+
+  test('nothing goes while another Item’s store can’t be read, or is behind what it showed', async () => {
+    await seed();
+    const item_b = { ...ITEM, item_id: 'item_b' };
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify(item_b) });
+    await fake.set(ctxKey('txns:item_b'), 'not-ciphertext');
+    removing('t2');
+    await syncItemTransactions(ctx, ITEM);
+    expect(recordOf('t2')).toBeDefined();
+
+    // Readable, but its last save failed: rows it showed may not be stored.
+    await fake.del(ctxKey('txns:item_b'));
+    await fake.set(ctxKey('txns-unsaved:item_b'), new Date().toISOString());
+    pages = [{ added: [txn({ transaction_id: 't5' })] }, { removed: [{ transaction_id: 't5' }] }];
+    calls = [];
+    await syncItemTransactions(ctx, ITEM);
+    await setExcluded(ctx, 't5', true);
+    await syncItemTransactions(ctx, ITEM);
+    expect(recordOf('t5')).toBeDefined();
+  });
+
+  test('nothing goes when the sync’s own save fails: the removed rows are still stored', async () => {
+    await seed();
+    removing('t2');
+    fake.failNext('set');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await syncItemTransactions(ctx, ITEM);
+    } finally {
+      console.warn = warn;
+    }
+    expect(recordOf('t2')).toBeDefined();
+  });
+
+  test('the stores are read again only when a removed transaction has a record', async () => {
+    await seed();
+    let reads = 0;
+    const get = fake.get.bind(fake);
+    fake.get = (async (key: string) => {
+      if (key === ctxKey('txns:item_a')) reads++;
+      return get(key);
+    }) as typeof fake.get;
+    try {
+      // Nothing was said about t6: the sync's own read of its store, and no other.
+      removing('t6');
+      await syncItemTransactions(ctx, ITEM);
+      expect(reads).toBe(1);
+      // t1 was excluded: the stores are read once more, to be sure none holds it.
+      reads = 0;
+      calls = [];
+      removing('t1');
+      await syncItemTransactions(ctx, ITEM);
+      expect(reads).toBe(2);
+      expect(recordOf('t1')).toBeUndefined();
+    } finally {
+      fake.get = get;
+    }
+  });
+
+  test('a category chosen for it goes too, by the same rules; one of a transaction still stored, or of a row imported from a file, stays', async () => {
+    await seed();
+    const IMPORTED = 'import:00000000-0000-4000-8000-000000000002';
+    for (const id of ['t1', 't2', 't6', IMPORTED]) await setOverride(ctx, id, 'travel');
+    removing('t2', 'never_stored');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual([IMPORTED, 't1', 't6'].sort());
+    // Not while another Item's store can't be read: it may hold the row.
+    await fake.hset(ctxKey('plaid:items'), { item_b: JSON.stringify({ ...ITEM, item_id: 'item_b' }) });
+    await fake.set(ctxKey('txns:item_b'), 'not-ciphertext');
+    removing('t6');
+    await syncItemTransactions(ctx, ITEM);
+    expect(Object.keys(await getOverrides(ctx))).toContain('t6');
+    // Nor when the sync's own save fails.
+    await fake.del(ctxKey('txns:item_b'));
+    await fake.hdel(ctxKey('plaid:items'), 'item_b');
+    removing('t1');
+    fake.failNext('set');
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      await syncItemTransactions(ctx, ITEM);
+    } finally {
+      console.warn = warn;
+    }
+    expect(Object.keys(await getOverrides(ctx))).toContain('t1');
+  });
+
+  // The removal and the row's return in one sync: the store it saves has the
+  // row, so the record is on a transaction still shown.
+  test('removed on one page and added back on a later page of the same sync: it stays', async () => {
+    await seed();
+    pages = [
+      { removed: [{ transaction_id: 't1' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    expect(recordOf('t1')).toBeDefined();
+  });
+
+  test('and the category chosen for it stays with it, as its other records do', async () => {
+    await seed();
+    await setOverride(ctx, 't1', 'travel');
+    await setOverride(ctx, 't2', 'travel');
+    pages = [
+      { removed: [{ transaction_id: 't1' }, { transaction_id: 't2' }], has_more: true, next_cursor: 'c-1' },
+      { added: [txn({ transaction_id: 't1', amount: 2 })] },
+    ];
+    const res = await syncItemTransactions(ctx, ITEM);
+    expect(res.txns.map((t) => t.transaction_id)).toContain('t1');
+    // t1 came back in the store the sync saved; t2 didn't.
+    expect(Object.keys(await getOverrides(ctx)).sort()).toEqual(['t1']);
   });
 });

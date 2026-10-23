@@ -2,13 +2,78 @@
 
 // Small computed observations for the Home tab -- the "is this normal?"
 // glance the big trackers lead with. Everything derives from data already
-// loaded (history + transactions), no extra API calls.
+// loaded (history + transactions), no extra API calls. Spending is what counts
+// in totals (lib/spending.ts), as on the Activity and Budgets tabs: in one
+// currency, with what is in others named under the list, and so is a month
+// that may be missing a connection's transactions, in their words
+// (lib/month-coverage.ts).
 
 import { useMemo } from 'react';
 import { type Txn } from './MonthBreakdown';
-import { detectRecurring, upcomingBills } from '@/lib/recurring';
-import { localMonth } from '@/lib/local-date';
-import { formatMoney, dominantCurrency } from '@/lib/format';
+import { countsInTotals, currencyOf, leftOutByCurrency, leftOutText } from '@/lib/spending';
+import { leftOutWhy, totalsIn } from '@/lib/fx/totals';
+import type { FxTable } from '@/lib/fx/rates';
+import { dismissedSeries, upcomingBills, type RecurringSeries } from '@/lib/recurring';
+import { instantDay, localDate, localMonth } from '@/lib/local-date';
+import { formatMoney } from '@/lib/format';
+import { useAmountsHidden } from './hide-amounts';
+import { Masked } from './HideAmounts';
+import { isCashOnHand } from '@/lib/balance';
+import { RECONNECT_ALERT_DAYS } from '@/lib/connection-state';
+import { missingMonthNotes, NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
+import { monthGapNotes, type Incomplete, type Stopped } from '@/lib/month-coverage';
+import { spendingByCategory } from '@/lib/totals';
+import { budgetMeters, placeBudgets, EMPTY_BUDGETS, type Budgets } from '@/lib/budget-set';
+import { withCarry, type Carries } from '@/lib/rollover';
+import { filedId, indexTaxonomy, type Taxonomy } from '@/lib/categories';
+import { bankRows } from '@/lib/split-rows';
+
+/**
+ * A connection Plaid says will end on a date (lib/connection-state.ts,
+ * "reconnect soon"). Its card says so from the day Plaid warns; Home raises it
+ * too once the date is RECONNECT_ALERT_DAYS away.
+ */
+export type ReconnectSoon = {
+  item_id: string;
+  institution_name: string;
+  /** When it ends (an ISO time). */
+  ends_at: string;
+  /** True when that is an estimate rather than Plaid's own figure. */
+  ends_estimated?: boolean;
+};
+
+const NO_RECONNECTS: ReconnectSoon[] = [];
+const NO_SERIES: RecurringSeries[] = [];
+const NO_DISMISSED: string[] = [];
+const NO_GAPS: Incomplete[] = [];
+const NO_STOPPED: Stopped[] = [];
+
+/** The Home alerts for connections ending within RECONNECT_ALERT_DAYS, soonest
+ *  first, at most two: calendar days on the viewer's own calendar, as the
+ *  due-date alerts below count them. */
+export function reconnectAlerts(soon: ReconnectSoon[], now: Date = new Date()): { key: string; text: string; days: number }[] {
+  const midnight = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  const out: { key: string; text: string; days: number }[] = [];
+  for (const s of soon) {
+    const end = new Date(s.ends_at);
+    if (Number.isNaN(end.getTime())) continue;
+    const days = Math.round((new Date(end.getFullYear(), end.getMonth(), end.getDate()).getTime() - midnight) / 86_400_000);
+    if (days > RECONNECT_ALERT_DAYS) continue;
+    // An estimate (Plaid gave no time) is said as one.
+    const day = end.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    const when = days === 0 ? 'today' : days === 1 ? 'tomorrow' : `in ${s.ends_estimated ? 'about ' : ''}${days} days`;
+    const said =
+      days < 0
+        ? s.ends_estimated
+          ? `Plaid expected its connection to end around ${day}`
+          : `Plaid said its connection would end on ${day}`
+        : s.ends_estimated
+          ? `Plaid expects its connection to end ${when}`
+          : `Plaid says its connection ends ${when}`;
+    out.push({ key: `reconnect-${s.item_id}`, text: `Reconnect ${s.institution_name}: ${said}`, days });
+  }
+  return out.sort((a, b) => a.days - b.days).slice(0, 2);
+}
 
 /**
  * An investment account with more cash sitting in it than looks deliberate,
@@ -41,6 +106,8 @@ const NO_IDLE_CASH: IdleCashAccount[] = [];
 export type InsightAccount = {
   name: string;
   type: string;
+  /** Plaid's, or a manual account's: `cash` marks cash on hand (lib/balance.ts). */
+  subtype?: string | null;
   balance: number | null;
   currency: string | null;
   liability?: {
@@ -53,12 +120,6 @@ export type InsightAccount = {
 const LOW_BALANCE_THRESHOLD = 100;
 const MAX_INSIGHTS = 6;
 
-const TRANSFER_CODES = new Set(['transfer', 'atm', 'bank charge']);
-function isTransfer(t: Txn): boolean {
-  if (t.transaction_code && TRANSFER_CODES.has(t.transaction_code)) return true;
-  return !!t.category && (t.category.startsWith('transfer') || t.category === 'loan payments');
-}
-
 // 'warn' is the amber the Accounts tab uses for idle cash: worth doing
 // something about, but nothing has gone wrong, which is what separates it from
 // the red 'down' of an overdue payment.
@@ -66,49 +127,120 @@ type Insight = { key: string; text: string; tone: 'up' | 'down' | 'neutral' | 'w
 
 export default function Insights({
   txns,
-  budgets,
+  fx = null,
+  budgets = EMPTY_BUDGETS,
+  taxonomy = null,
   accounts,
   idleCash = NO_IDLE_CASH,
+  reconnectSoon = NO_RECONNECTS,
+  withoutTransactions = NO_CONNECTIONS_WITHOUT,
+  series = NO_SERIES,
+  dismissed = NO_DISMISSED,
+  incomplete = NO_GAPS,
+  stopped = NO_STOPPED,
+  budgetCarries = null,
 }: {
   txns: Txn[] | null;
-  budgets: Record<string, number>;
+  /** What the figures convert with, once a home currency is chosen
+   *  (app/api/transactions `fx`); null without one. */
+  fx?: FxTable | null;
+  /** By category and group id (lib/budget-set.ts), against your categories
+   *  (components/categories-state.ts): no alert until both have loaded. */
+  budgets?: Budgets;
+  taxonomy?: Taxonomy | null;
   accounts: InsightAccount[];
   idleCash?: IdleCashAccount[];
+  reconnectSoon?: ReconnectSoon[];
+  /** Connections that bring in no transactions (lib/no-transactions.ts): a
+   *  bank account or card whose transactions don't come in leaves the budget
+   *  alerts and the pace short, as on the Activity and Budgets tabs. */
+  withoutTransactions?: NoTransactionsView;
+  /** The bills and income detected (lib/recurring.ts), once for the whole
+   *  dashboard, from the year loaded and the rows before it a yearly charge
+   *  needs. */
+  series?: RecurringSeries[];
+  /** Detected bills the person said aren't recurring, as saved
+   *  (lib/planned.ts), matched to series by dismissedSeries. */
+  dismissed?: string[];
+  /** What may leave this month's spending short, as Activity and Budgets say
+   *  it (lib/month-coverage.ts): an institution whose transactions didn't
+   *  load or are still importing, and connections that stopped syncing. A
+   *  pace or a budget alert that looks finished but isn't misleads. */
+  incomplete?: Incomplete[];
+  stopped?: Stopped[];
+  /** What rolled into this month's budgets (lib/rollover.ts), once the
+   *  Budgets tab's month has loaded: an alert weighs what is available, as
+   *  that tab's meters do. Null meanwhile: each budget's amount alone. */
+  budgetCarries?: Carries | null;
 }) {
-  const insights = useMemo<Insight[]>(() => {
+  // The texts name amounts, so they are written again when hiding amounts is
+  // turned on or off (components/hide-amounts.ts).
+  const hidden = useAmountsHidden();
+  const { insights, leftOut, missing } = useMemo(() => {
     const out: Insight[] = [];
     const now = new Date();
     const thisMonthKey = localMonth(now);
-    // One display currency for summed/budget figures (budgets carry no currency
-    // of their own). Per-item amounts below use their own currency where known.
-    const displayCurrency = dominantCurrency(txns ?? []);
+    // Budgets carry no currency of their own: they are in the one most of
+    // the transactions are in, as the Budgets tab reads them, with spending
+    // in others converted into it at each day's rate once a home currency is
+    // chosen (lib/fx/totals.ts). The pace and the biggest purchase are in the
+    // home currency then, every row converted at its day's rate. What has no
+    // rate counts in neither, and is named. Per-item amounts use their own
+    // currency where known.
+    const budgeted = totalsIn(txns ?? [], fx, { into: 'most' });
+    const displayCurrency = budgeted.currency;
+    const counted = totalsIn(txns ?? [], fx);
+    const figures = counted.currency;
 
     // --- alerts first: they're the actionable ones ---
 
-    // Over / approaching budget (worst offenders first, max 2).
-    if (txns) {
-      const spendByCat: Record<string, number> = {};
-      for (const t of txns) {
-        if (t.date.slice(0, 7) !== thisMonthKey || t.amount <= 0 || isTransfer(t)) continue;
-        const cat = t.category ?? 'other';
-        spendByCat[cat] = (spendByCat[cat] ?? 0) + t.amount;
-      }
-      const flagged = Object.entries(budgets)
-        .map(([cat, budget]) => ({ cat, budget, spent: spendByCat[cat] ?? 0 }))
-        .filter(({ spent, budget }) => spent / budget >= 0.9)
-        .sort((a, b) => b.spent / b.budget - a.spent / a.budget)
+    // A connection about to end, first of all: missed, it stops syncing and
+    // every number from that bank goes stale.
+    for (const a of reconnectAlerts(reconnectSoon, now)) out.push({ key: a.key, text: a.text, tone: 'warn' });
+
+    // Over / approaching budget (worst offenders first, max 2): each
+    // category's, and the limit of each group with a budget of its own
+    // (lib/budget-set.ts), as the Budgets tab meters them, by name as the
+    // category or group is named. A group without one only adds up its
+    // categories' budgets, which alert on their own: alerting on the sum too
+    // would say the same overspending twice, and could push out the alert for
+    // a budget the person set.
+    if (txns && taxonomy) {
+      const ix = indexTaxonomy(taxonomy);
+      const spendByCat = spendingByCategory(budgeted.rows, (date) => date.slice(0, 7) === thisMonthKey, displayCurrency, (t) => filedId(ix, t));
+      const meters = budgetMeters(ix, withCarry(placeBudgets(budgets, ix), budgetCarries), new Map(Object.entries(spendByCat)));
+      const candidates = [
+        ...meters.groups.filter((m) => m.limit !== null && m.own !== null).map((m) => ({ key: `group-${m.group.id}`, name: m.group.name, budget: m.limit!, spent: m.spent })),
+        ...meters.groups.flatMap((m) => m.categories.filter((c) => c.budget !== null).map((c) => ({ key: `category-${c.category.id}`, name: c.category.name, budget: c.budget!, spent: c.spent }))),
+      ];
+      // With rollover, what is available can be nothing or less (an
+      // overspent carry): over at once, first among the over.
+      const ratio = ({ spent, budget }: { spent: number; budget: number }) => (budget > 0 ? spent / budget : Infinity);
+      const flagged = candidates
+        .filter(({ spent, budget }) => (budget > 0 ? spent / budget >= 0.9 : budget < 0 || spent > 0))
+        .sort((a, b) => (ratio(a) === ratio(b) ? 0 : ratio(b) > ratio(a) ? 1 : -1))
         .slice(0, 2);
-      for (const { cat, budget, spent } of flagged) {
+      for (const { key, name, budget, spent } of flagged) {
         out.push(
-          spent >= budget
+          budget <= 0
             ? {
-                key: `budget-${cat}`,
-                text: `Over your ${cat} budget — ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
+                // Nothing available: said as what was carried over, never "of" a limit of zero or less.
+                key: `budget-${key}`,
+                text:
+                  budget < 0
+                    ? `Over your ${name} budget: overspending carried over left it ${formatMoney(-budget, displayCurrency)} over before this month${spent > 0 ? `, and ${formatMoney(spent, displayCurrency)} is spent` : ''}`
+                    : `Over your ${name} budget: overspending carried over left nothing of it this month, and ${formatMoney(spent, displayCurrency)} is spent`,
+                tone: 'down',
+              }
+            : spent >= budget
+            ? {
+                key: `budget-${key}`,
+                text: `Over your ${name} budget: ${formatMoney(spent, displayCurrency)} of ${formatMoney(budget, displayCurrency)}`,
                 tone: 'down',
               }
             : {
-                key: `budget-${cat}`,
-                text: `Approaching your ${cat} budget (${Math.round((spent / budget) * 100)}%)`,
+                key: `budget-${key}`,
+                text: `Approaching your ${name} budget (${Math.round((spent / budget) * 100)}%)`,
                 tone: 'neutral',
               }
         );
@@ -118,8 +250,10 @@ export default function Insights({
     // Low balance on any checking/savings account. Keyed by position as well as
     // name: two accounts can share a name (a manual account tracking the same
     // institution as a linked one), and a duplicate React key would drop an alert.
+    // Not cash on hand (lib/balance.ts): a wallet running low is no risk of an
+    // overdraft.
     for (const [i, a] of accounts.entries()) {
-      if (a.type === 'depository' && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
+      if (a.type === 'depository' && !isCashOnHand(a) && a.balance != null && a.balance < LOW_BALANCE_THRESHOLD) {
         out.push({
           key: `low-${i}-${a.name}`,
           text: `Low balance: ${a.name} at ${formatMoney(a.balance, a.currency)}`,
@@ -143,7 +277,7 @@ export default function Insights({
       if (l.is_overdue) {
         overdue.push({
           key: `overdue-${i}-${a.name}`,
-          text: `${a.name} is overdue${l.minimum_payment != null ? ` — ${formatMoney(l.minimum_payment, a.currency)} minimum` : ''}`,
+          text: `${a.name} is overdue${l.minimum_payment != null ? ` (${formatMoney(l.minimum_payment, a.currency)} minimum)` : ''}`,
           tone: 'down',
         });
         continue;
@@ -190,30 +324,49 @@ export default function Insights({
       });
     }
 
-    // Recurring bills expected within a week (soonest first, max 2,
-    // deduped by name -- the same bill on two linked accounts is one bill).
+    // Recurring bills expected within a week, on the dates their cadence
+    // names (lib/recurring.ts): soonest first, max 2, deduped by name (the
+    // same bill on two linked accounts is one bill), none the person said
+    // isn't recurring. One due before today and not in yet says so.
     if (txns) {
       const seen = new Set<string>();
-      for (const b of upcomingBills(detectRecurring(txns), 7)) {
+      const day = (iso: string) => new Date(`${iso}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+      const gone = new Set(dismissedSeries(series, dismissed).keys());
+      for (const { series: b, due, late } of upcomingBills(series, 7, localDate(now), gone)) {
         if (seen.has(b.name)) continue;
         seen.add(b.name);
+        const amount = `~${formatMoney(b.amount, b.currency ?? displayCurrency)}`;
         out.push({
           key: `bill-${b.name}`,
-          text: `Upcoming: ${b.name} (~${formatMoney(b.amount, b.currency ?? displayCurrency)}) around ${new Date(`${b.nextDate}T00:00:00`).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}`,
+          text: late ? `Expected: ${b.name} (${amount}), due ${day(due)} and not in yet` : `Upcoming: ${b.name} (${amount}) around ${day(due)}`,
           tone: 'neutral',
         });
         if (seen.size >= 2) break;
       }
     }
 
+    // Spending in another currency than these figures', this month and last
+    // (what the budgets and the pace read): named under the list.
+    let leftOut: string | null = null;
     if (txns && txns.length > 0) {
       const thisMonth = localMonth(now);
       const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
       const lastMonth = `${lastMonthDate.getFullYear()}-${String(lastMonthDate.getMonth() + 1).padStart(2, '0')}`;
+      leftOut = leftOutWhy(
+        leftOutText(
+          leftOutByCurrency(
+            counted.rows.filter((t) => (t.date.slice(0, 7) === thisMonth || t.date.slice(0, 7) === lastMonth) && t.amount > 0),
+            figures
+          ),
+          figures,
+          { where: 'these figures' }
+        ),
+        counted.conversion
+      );
 
       const spend = (month: string) =>
-        txns
-          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && !isTransfer(t))
+        counted.rows
+          .filter((t) => t.date.slice(0, 7) === month && t.amount > 0 && countsInTotals(t, figures))
           .reduce((sum, t) => sum + t.amount, 0);
 
       // --- spending pace vs last month, prorated to the same day-of-month ---
@@ -244,21 +397,39 @@ export default function Insights({
       }
 
       // --- biggest purchase this month ---
-      const purchases = txns.filter(
-        (t) => t.date.slice(0, 7) === thisMonth && t.amount > 0 && !isTransfer(t)
+      // A split transaction is one purchase, whole, as the bank charged it,
+      // when any of its parts counts; a group, its net (#39, lib/split-rows.ts).
+      // Ranked by what each came to in the home currency, and said in its own.
+      const purchases = bankRows(counted.rows, { groups: 'keep' }).filter(
+        (t) =>
+          t.date.slice(0, 7) === thisMonth &&
+          t.amount > 0 &&
+          (t.split_parts ? t.split_parts.some((p) => countsInTotals(p, figures)) : countsInTotals(t, figures))
       );
       if (purchases.length > 0) {
         const biggest = purchases.reduce((a, b) => (b.amount > a.amount ? b : a));
+        const own = bankRows(txns, { groups: 'keep' }).find((t) => t.transaction_id === biggest.transaction_id) ?? biggest;
         out.push({
           key: 'biggest',
-          text: `Biggest purchase this month: ${biggest.name}, ${formatMoney(biggest.amount, biggest.iso_currency_code)}`,
+          text: `Biggest purchase this month: ${own.name}, ${formatMoney(own.amount, currencyOf(own) ?? figures)}`,
           tone: 'neutral',
         });
       }
     }
 
-    return out.slice(0, MAX_INSIGHTS);
-  }, [txns, budgets, accounts, idleCash]);
+    const shown = out.slice(0, MAX_INSIGHTS);
+    // Said only beside a figure it is missing from.
+    const fromSpending = shown.some((i) => i.key.startsWith('budget-') || i.key === 'pace' || i.key === 'biggest');
+    return {
+      insights: shown,
+      leftOut: fromSpending ? leftOut : null,
+      missing: fromSpending
+        ? [...monthGapNotes(thisMonthKey, incomplete, stopped, (at) => instantDay(at) ?? at.slice(0, 10)), ...missingMonthNotes(withoutTransactions, thisMonthKey)]
+        : [],
+    };
+    // `hidden` isn't read inside: it changes what formatMoney writes there.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [txns, fx, budgets, taxonomy, accounts, idleCash, reconnectSoon, withoutTransactions, series, dismissed, incomplete, stopped, budgetCarries, hidden]);
 
   if (insights.length === 0) return null;
 
@@ -270,10 +441,16 @@ export default function Insights({
       <ul className="insight-list">
         {insights.map((i) => (
           <li key={i.key} className={`insight insight-${i.tone}`}>
-            {i.text}
+            <Masked>{i.text}</Masked>
           </li>
         ))}
       </ul>
+      {leftOut && <div className="chart-note">{leftOut}</div>}
+      {missing.map((n) => (
+        <div className="stale-note" key={n}>
+          {n}
+        </div>
+      ))}
     </div>
   );
 }

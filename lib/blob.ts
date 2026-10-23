@@ -7,6 +7,7 @@
 // fails stays with the store.
 
 import { encrypt, decrypt } from './crypto';
+import type { Ctx } from './containers';
 
 // Max size of a stored (compressed + encrypted) blob. Upstash's free-plan
 // *request-size* ceiling is 10 MB, and a get/set of an Item's blob is one
@@ -26,6 +27,8 @@ import { encrypt, decrypt } from './crypto';
 //
 // Read when used, not at module load: two stores import it, and whichever loads
 // first would otherwise fix the value before anything else (tests do) set it.
+// So a value a test sets holds until something sets it back: every test file
+// runs in one process, and test/preload.ts puts it back before each test.
 const DEFAULT_MAX_BLOB_CHARS = 8 * 1024 * 1024;
 let resolved: { raw: string | undefined; value: number } | null = null;
 export function maxBlobChars(): number {
@@ -84,15 +87,22 @@ function base64ToBytes(b64: string): Uint8Array {
   return out;
 }
 
-/** JSON, gzipped, base64-wrapped and encrypted: what a store writes. */
-export async function encodeJsonBlob(value: unknown): Promise<string> {
-  return encrypt(bytesToBase64(await gzipString(JSON.stringify(value))));
+/** JSON, gzipped, base64-wrapped and encrypted for the container it is
+ *  stored in: what a store writes. */
+export async function encodeJsonBlob(ctx: Ctx, value: unknown): Promise<string> {
+  return encodeJsonText(ctx, JSON.stringify(value));
+}
+
+/** The same for JSON text already serialized, so a writer that checked that
+ *  text (lib/repo.ts) stores exactly what it checked. */
+export async function encodeJsonText(ctx: Ctx, json: string): Promise<string> {
+  return encrypt(ctx, bytesToBase64(await gzipString(json)));
 }
 
 /** The reverse. Throws on anything it can't decrypt or parse; the caller
  *  decides what an unreadable blob means, and it must never mean "empty". */
-export async function decodeJsonBlob<T>(blob: string): Promise<T> {
-  const inner = await decrypt(blob);
+export async function decodeJsonBlob<T>(ctx: Ctx, blob: string): Promise<T> {
+  const inner = await decrypt(ctx, blob);
   // Legacy blobs (written before compression) stored the JSON string directly.
   // base64-decoding real JSON throws (it starts with '{', not a base64 char),
   // so a failed unwrap means legacy: parse the decrypted string as-is.
@@ -103,4 +113,23 @@ export async function decodeJsonBlob<T>(blob: string): Promise<T> {
     json = inner;
   }
   return JSON.parse(json) as T;
+}
+
+/** Base64 of the first bytes of every gzip stream (1f 8b 08). No JSON text can
+ *  start with it: JSON starts with a brace, a bracket, a quote, a digit, a minus
+ *  sign, a space or t, f or n. */
+const GZIP_BASE64 = 'H4sI';
+
+/**
+ * The JSON text a blob holds, compressed or not, for a store whose blobs were
+ * all written by encodeJsonText or as encrypted JSON (lib/repo.ts). Text that
+ * starts like gzip is decompressed, and a failure to decompress is thrown as it
+ * is: decryption has already authenticated the bytes, so it is never the data's
+ * fault (memory, or a runtime without the API). decodeJsonBlob instead retries
+ * whatever it cannot decompress as JSON, which would turn such a failure into a
+ * parse error that looks like damaged data.
+ */
+export async function decryptJsonText(ctx: Ctx, blob: string): Promise<string> {
+  const inner = await decrypt(ctx, blob);
+  return inner.startsWith(GZIP_BASE64) ? gunzipToString(base64ToBytes(inner)) : inner;
 }

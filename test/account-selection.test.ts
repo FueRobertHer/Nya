@@ -60,7 +60,7 @@ async function addItem(item_id: string, account_ids: string[], extra: Record<str
   const token = `token-${item_id}`;
   plaidAccounts[token] = account_ids.map(account);
   await fake.hset(ctxKey('plaid:items'), {
-    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(token), ...extra }),
+    [item_id]: JSON.stringify({ item_id, institution_name: 'Chase', encrypted_access_token: await encrypt(TEST_CTX, token), ...extra }),
   });
   const inst = { item_id, institution_name: 'Chase', error: null, accounts: account_ids.map((id) => ({ ...account(id), balance: 100 })) };
   await rememberAccounts(ctx, [inst as any]);
@@ -136,22 +136,24 @@ describe('after the picker', () => {
     const picker = await openPicker('item_1');
     plaidAccounts['token-item_1'] = [account('acct_0001')];
     // A load between Link closing and the route: 0002 goes into the vanished
-    // record, and the remembered list is rewritten without it.
+    // record, and is held for an answer, its remembered entry kept (#50).
     const { institutions } = await computeNetWorth(ctx);
     expect(institutions[0].unconfirmed_missing).toBe(1);
     await rememberAccounts(ctx, institutions);
-    expect(await rememberedIdsForItem(ctx, 'item_1')).toEqual(['acct_0001']);
+    expect(await rememberedIdsForItem(ctx, 'item_1')).toEqual(['acct_0001', 'acct_0002']);
 
     const res = await route('item-accounts-updated', 'POST', picker);
     expect(res.body).toEqual({ added: 0, removed: 1 });
     expect(await missingOn('item_1')).toBe(0);
+    // Removed, so no longer remembered either.
+    expect(await rememberedIdsForItem(ctx, 'item_1')).toEqual(['acct_0001']);
   });
 
   test('an account already missing before the picker opened keeps its grace window', async () => {
     await addItem('item_1', ['acct_0001', 'acct_0002']);
     // 0002 dropped out of Plaid's answers on its own, a day ago.
     await fake.hset(ctxKey('accounts:vanished'), {
-      item_1: await encrypt(JSON.stringify({ acct_0002: new Date(Date.now() - 86_400_000).toISOString() })),
+      item_1: await encrypt(TEST_CTX, JSON.stringify({ acct_0002: new Date(Date.now() - 86_400_000).toISOString() })),
     });
     plaidAccounts['token-item_1'] = [account('acct_0001')];
     await rememberAccounts(ctx, (await computeNetWorth(ctx)).institutions);
@@ -162,6 +164,8 @@ describe('after the picker', () => {
     expect(res.body).toEqual({ added: 1, removed: 0 });
     // Still held as missing: the picker didn't remove it, so history stays paused.
     expect(await missingOn('item_1')).toBe(1);
+    // And still remembered, so it is drawn as it was while held.
+    expect((await rememberedIdsForItem(ctx, 'item_1')).sort()).toEqual(['acct_0001', 'acct_0002', 'acct_0003']);
   });
 
   test('without the picker time only remembered accounts count as removed', async () => {
@@ -223,7 +227,7 @@ describe('the institution id', () => {
     await addItem('item_1', ['acct_0001'], { institution_id: 'ins_3' });
     failing.add('token-item_1');
     const [item] = await getItems(ctx);
-    const inst = await fetchInstitution(item);
+    const inst = await fetchInstitution(TEST_CTX, item);
     expect(inst.needs_reauth).toBe(true);
     expect(inst.institution_id).toBe('ins_3');
   });

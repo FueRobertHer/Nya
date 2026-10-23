@@ -28,6 +28,10 @@ export type ListState<T> = {
   /** Why the last save did not go through. Cleared by the next success. */
   saveError: string | null;
   saving: boolean;
+  /** When the load failed on stored entries the screen can offer to remove
+   *  (a 409 naming the store's `repair`): how many are damaged, which can
+   *  be, and how many a later version saved, which can't. Absent otherwise. */
+  damage?: { unreadable: number; unrecognised: number };
 };
 
 /** The state before the first load: loading, so the empty value is never
@@ -55,20 +59,56 @@ export function createWholeListStore<T>(opts: {
   isValid: (v: unknown) => v is T;
   onChange: (state: ListState<T>) => void;
   fetch?: Fetcher;
+  /** How to try loading again, for the message when a load fails: the
+   *  dashboard's Refresh button unless the screen offers its own. */
+  reloadHint?: string;
+  /** Keep the list the server answered a save with, when it is a valid one,
+   *  rather than the list sent: for a store whose server works out fields of
+   *  its own on a save (goals: where a target date's line starts). */
+  adoptSaved?: boolean;
+  /** Say why the server refused a save, for a store whose server checks
+   *  what the screen can't be sure of (goals: an allocation against the
+   *  balance the server knows): the `error` of a 400 (what was sent can't be
+   *  taken), or of a 409 not flagged `unreadable` (what is stored stops it
+   *  just now, and the server says what and what still works). */
+  showRefusal?: boolean;
+  /** More for the server beside the list on a save, read when it is sent
+   *  (goals: the person's own day, which the server dates an archive by;
+   *  budgets: the month they are changed in, as the page has it). */
+  extra?: () => Record<string, unknown>;
+  /** The repair the server names on a 409 for entries the screen can offer
+   *  to remove (goals: "goal-plans"): kept in `damage` when it does. */
+  repair?: string;
+  /** What else the server answered beside the list, for a store whose
+   *  answer carries more (the Plan: the currency its figures are in): given
+   *  the whole body of a load that is taken and of a save that went through. */
+  onAnswer?: (data: Record<string, unknown>) => void;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
+  const reloadHint = opts.reloadHint ?? 'press Refresh to try again';
   let state: ListState<T> = initialListState(opts.empty);
   let loadSeq = 0;
+  // The save under way, if any: a load asked for meanwhile waits for it.
+  let saveRun: Promise<boolean> | null = null;
 
   const set = (patch: Partial<ListState<T>>) => {
     state = { ...state, ...patch };
     opts.onChange(state);
   };
 
+  // A load asked for while a save runs waits until it ends: the save's answer,
+  // or the reload after a failed one, is what the server holds, and a load
+  // taken in between could show an older list as ready mid-save, from which
+  // the next save would overwrite what the first one wrote.
   async function load(): Promise<void> {
+    while (saveRun) await saveRun;
+    return loadNow();
+  }
+
+  async function loadNow(): Promise<void> {
     const mine = ++loadSeq;
-    set({ status: 'loading', error: null });
+    set({ status: 'loading', error: null, damage: undefined });
     let res: Response;
     let data: Record<string, unknown> | null = null;
     try {
@@ -76,27 +116,45 @@ export function createWholeListStore<T>(opts: {
       data = await res.json().catch(() => null);
     } catch {
       if (mine === loadSeq) {
-        set({ status: 'error', error: `${Noun} could not be loaded. Editing is paused until they are; press Refresh to try again.` });
+        set({ status: 'error', error: `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.` });
       }
       return;
     }
     if (mine !== loadSeq) return; // a newer load has started; its answer wins
     const value = data?.[opts.field];
     if (!res.ok || !opts.isValid(value)) {
+      const count = (v: unknown) => (Array.isArray(v) ? v.length : 0);
       set({
         status: 'error',
         error: data?.unreadable
           ? `Your saved ${opts.noun} could not be read, so they have been left untouched and editing is paused.`
-          : `${Noun} could not be loaded. Editing is paused until they are; press Refresh to try again.`,
+          : `${Noun} could not be loaded. Editing is paused until they are; ${reloadHint}.`,
+        ...(res.status === 409 && opts.repair && data?.repair === opts.repair
+          ? { damage: { unreadable: count(data.unreadable_ids), unrecognised: count(data.unrecognised_ids) } }
+          : {}),
       });
       return;
     }
     set({ status: 'ready', value, error: null });
+    if (data) opts.onAnswer?.(data);
   }
 
-  async function save(next: T): Promise<boolean> {
+  function save(next: T): Promise<boolean> {
+    const run = saving(next);
+    // Started (and not refused): what a load waits for until it ends.
+    if (state.saving && !saveRun) {
+      saveRun = run;
+      void run.finally(() => {
+        if (saveRun === run) saveRun = null;
+      });
+    }
+    return run;
+  }
+
+  async function saving(next: T): Promise<boolean> {
     if (state.status !== 'ready') {
-      set({ saveError: `${Noun} are still loading. Try again in a moment.` });
+      // Loading, or a load that failed: only the first is a matter of waiting.
+      set({ saveError: state.status === 'error' ? `${Noun} could not be loaded, so they can’t be saved yet; ${reloadHint}.` : `${Noun} are still loading. Try again in a moment.` });
       return false;
     }
     if (state.saving) {
@@ -106,24 +164,31 @@ export function createWholeListStore<T>(opts: {
     const before = state.value;
     set({ saving: true, value: next, saveError: null }); // optimistic
     let ok = false;
+    let answer: Record<string, unknown> | null = null;
+    let refusal: string | null = null;
     try {
       const res = await doFetch(opts.url, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ [opts.field]: next }),
+        body: JSON.stringify({ ...(opts.extra?.() ?? {}), [opts.field]: next }),
       });
       ok = res.ok;
+      if (opts.adoptSaved || opts.showRefusal || opts.onAnswer) answer = await res.json().catch(() => null);
+      const refused = res.status === 400 || (res.status === 409 && !answer?.unreadable);
+      if (!ok && opts.showRefusal && refused && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
       ok = false;
     }
     if (ok) {
-      set({ saving: false });
+      const saved = answer?.[opts.field];
+      set({ saving: false, ...(opts.adoptSaved && opts.isValid(saved) ? { value: saved } : {}) });
+      if (answer && typeof answer === 'object') opts.onAnswer?.(answer);
       return true;
     }
     // Back to the last list the server confirmed straight away, so even if
     // the reload below fails too, nothing on the page shows an unsaved list.
-    set({ value: before, saveError: `Could not save ${opts.noun}. Showing what is saved.` });
-    await load(); // still marked saving, so nothing else starts meanwhile
+    set({ value: before, saveError: refusal ? `Not saved: ${refusal}` : `Could not save ${opts.noun}. Showing what is saved.` });
+    await loadNow(); // still marked saving, so nothing else starts meanwhile
     set({ saving: false });
     return false;
   }

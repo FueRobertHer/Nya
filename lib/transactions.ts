@@ -16,17 +16,49 @@
 // would still exceed Upstash's request-size ceiling, writeState REFUSES to write
 // it rather than trimming. Trimming oldest-first would drop precisely the rows
 // no bank will re-serve, silently; refusing is recoverable.
+//
+// Not every Item has Transactions. One linked as a brokerage or retirement
+// account often doesn't, and calling /transactions/sync on it would add the
+// product and start Plaid billing it, so syncItem first checks whether that call
+// is worth making (lib/item-products.ts). An Item without the product is a known,
+// quiet state: no rows and no note, never a failure.
 
 import { TransactionsUpdateStatus, type Transaction, type AccountBase } from 'plaid';
 import { plaidClient } from './plaid';
 import { decrypt } from './crypto';
 import { encodeJsonBlob, decodeJsonBlob, maxBlobChars, blobWarnChars } from './blob';
-import { redis, kc, type StoredItem } from './storage';
+import { redis, kc, getItems, type StoredItem } from './storage';
 import type { Ctx } from './containers';
+import { loggable } from './log-safe';
+import {
+  holdsTransactionAccounts,
+  noTransactionsReason,
+  refusalReason,
+  refusalStands,
+  CONSENT_REQUIRED,
+  transactionAccountIds,
+  transactionsBilled,
+  REFUSAL_RECHECK_DAYS,
+  TRANSACTIONS_DAYS_REQUESTED,
+  type NoTransactionsReason,
+  type Refusal,
+} from './item-products';
+import { rememberedKindsForItem } from './last-known';
+import { RECURRING_LOOKBACK_DAYS } from './recurring';
+import type { CategoryKind } from './categories';
+import { pruneOrphanAnnotations, carriedExtras, type CarriedAnnotation, type CarriedRowFacts } from './txn-annotations';
+import type { GroupAway, GroupOutside, SplitParent } from './split-rows';
+import type { SettlesMark, SettlesUnapplied, SharedIou, SharedMark, SharedPart, SharedUnapplied } from './shared-expenses/rows';
+import { pruneSplitsAndGroups } from './split-gone';
+import type { ReviewSuggestion } from './review-layer';
+import { carryApprovalsToPosted } from './review-store';
 
 // Bump when a persisted row gains a field historical rows can't satisfy. A blob
 // at an older version is upgraded in place on read (see readState / migrateLegacyState).
 export const TXN_SCHEMA_VERSION = 2;
+
+/** How much of an institution's history a sync returned (syncItemTransactions). */
+export type TxnCoverage = 'complete' | 'importing' | 'missing';
 
 // Display shape sent to the client: a flat set of scalars projected from
 // StoredTxn (`name` is merchant_name || raw name), so the Activity views get
@@ -39,9 +71,38 @@ export type Txn = {
   amount: number; // Plaid convention: positive = money leaving the account
   pending: boolean;
   account_name: string;
+  // Plaid's type for the account (depository | credit | loan | investment |
+  // other), or a manual account's own, so the cash forecast counts only what
+  // leaves or reaches checking and savings (lib/forecast.ts). Null when the
+  // account's type isn't known; absent on a row built before it was sent.
+  account_type?: string | null;
   institution_name: string;
+  // The category the row carries, as words: the one the person chose for it,
+  // else carried across a re-link, else Plaid's primary in words, or a manual
+  // or imported row's own. What the spending rules read (lib/spending.ts
+  // categoryKey), and the key that files it into one of the person's
+  // categories (lib/categories.ts); what to show is category_name.
   category: string | null;
+  // Filed into the person's categories (lib/category-store.ts fileRows), on
+  // every row an answer sends: the category's id (provisional, with a ":", for
+  // one not stored yet), the name to show (null when the row says nothing of
+  // its category, which shows none and counts under the uncategorized one),
+  // and the kind it counts as. Absent on a row not yet filed.
+  category_id?: string;
+  category_name?: string | null;
+  category_kind?: CategoryKind;
+  // What a bank's row is filed by, until it is (never sent): whether
+  // `category` is the person's choice (chosen for it, or carried across a
+  // re-link), and Plaid's own values; on any row, the category a rule files
+  // it under (lib/rules.ts), by id.
+  category_set?: boolean;
+  pfc_primary?: string | null;
+  pfc_detailed?: string | null;
+  rule_category?: string;
   iso_currency_code: string | null; // so amounts aren't blindly rendered as USD
+  // Plaid's code for a currency with no ISO one (a cryptocurrency); absent on
+  // a payload cached before it was sent.
+  unofficial_currency_code?: string | null;
   vendor_key: string; // stable per-merchant key for vendor renames (see vendorKey)
   logo_url: string | null; // merchant logo for the row
   category_icon_url: string | null; // Plaid category icon
@@ -59,7 +120,199 @@ export type Txn = {
   counterparty: string | null; // real merchant behind a processor, when it differs
   payment_processor: string | null; // e.g. the PayPal/Square in front of the merchant
   payment_reference: string | null; // payment_meta reference number, for "what is this charge?"
+
+  // Set by /api/transactions on rows that aren't a bank's, and on any row the
+  // person excluded; absent otherwise, so a payload cached before they existed
+  // reads the same.
+  source?: string; // a manual row's source: 'manual' for one entered by hand (lib/manual-txns.ts)
+  account_id?: string; // a manual row's account, for editing it
+  note?: string | null; // a manual row's own note, or a bank row's (lib/txn-annotations.ts)
+  excluded?: boolean | null; // left out of budgets and reports (lib/spending.ts); null: couldn't be read
+  // One side of a pair Nya worked out from the amounts between two of the
+  // person's SimpleFIN accounts (lib/manual-txns.ts connectorTransfers): a
+  // card's payment, a loan's or a transfer, shown with the category a bank
+  // gives the same, filed into the person's categories as a bank's row is.
+  // Never the bank's word or the person's.
+  paired?: 'card' | 'loan' | 'transfer';
+
+  // Applied on read (lib/txn-layers.ts), absent when there is nothing to say:
+  // the tags it carries (ids of tags that exist, lib/tags.ts), put on by the
+  // person, carried across a re-link or added by a rule; the rules that match
+  // it (lib/rules.ts), in the order they run; whether its exclusion is a
+  // rule's hide rather than the person's own; whether its category is a
+  // rule's rather than its own (an edit of a manual row never takes it for
+  // the row's: components/ManualTxnSheet.tsx); and, when a rule named it, the
+  // name it had before (what rules match, so a rule made from it matches it).
+  tags?: string[];
+  rule_ids?: string[];
+  excluded_by_rule?: true;
+  category_by_rule?: true;
+  name_before_rules?: string;
+  // What a row is assembled with until lib/txn-layers.ts applies it (never
+  // sent): the account it is on, for a rule's account condition (a bank
+  // row's account_id isn't sent to the Activity tab, nor an older manual
+  // row's); a bank row's name as the bank gives it when the person renamed
+  // its merchant (lib/renames.ts), which a rule's name condition also reads
+  // and a rule's name never replaces; what a bank row carries from an
+  // earlier account's row besides an exclusion; and on an imported or
+  // SimpleFIN row, that its name is one the person gave it in the app
+  // (lib/manual-txns.ts ManualTxn.named), which a rule's name never replaces.
+  // And on a bank row standing for rows imported into its account (#52,
+  // lib/history-import/read.ts importedForActivity's `represents`), those
+  // rows' ids, earlier imports first: what was said about them carries to it
+  // once it has posted (a pending one stands in for them until it posts).
+  account_ref?: string;
+  renamed_from?: string;
+  carried?: CarriedRowFacts;
+  own_name?: true;
+  stands_for?: string[];
+  // On a posted bank row, its content key (contentKey), by which a share or
+  // a payment carries across a re-link (lib/shared-expenses/rows.ts); never
+  // sent, gone with the facts above.
+  content_key?: string;
+
+  // Whether it has receipts or documents (lib/attachments.ts), for the
+  // person's own Activity alone (lib/activity.ts finishActivity's
+  // `attached`): true, or null when that couldn't be read; absent for none,
+  // and on every row the API or a share answers. `attached_on`: the ids whose
+  // files it shows (its own, and the imported rows it stands for).
+  attached?: true | null;
+  attached_on?: string[];
+  // On a posted bank row, the pending one it replaced (Plaid's
+  // pending_transaction_id), whose approval is its own until the sync that
+  // removes the pending one moves it (lib/review-store.ts). Never sent.
+  pending_from?: string;
+
+  // The review queue and merchants' defaults (lib/review-layer.ts), applied
+  // on read, absent when there is nothing to say: it needs review; when it
+  // was approved, and where that approval is kept when it isn't its own
+  // (the pending row it replaced, a row imported from a file it stands for);
+  // whether its approval or the queue couldn't be read; the amount it was
+  // approved at, when the bank changed it since; the category a rule, a
+  // default or the bank would give it now, offered while it stays where it
+  // was approved; the name it was approved under, when another shows now;
+  // and the merchant's default that filed it.
+  needs_review?: true;
+  reviewed_at?: string;
+  review_unknown?: true;
+  review_changed?: { amount: number; currency: string | null };
+  review_via?: string;
+  review_suggestion?: ReviewSuggestion;
+  approved_name?: string;
+  filed_by_default?: { id: string; agree: number; earlier?: true };
+
+  // Sent: on a posted bank row standing for a row imported from the bank's
+  // file whose amount it no longer says (the bank changed its own after the
+  // two were paired, and the pair was kept: lib/history-import/match.ts KEPT
+  // ONCE MADE), that row's amount, in Plaid's sign, for the Activity tab to
+  // say. The bank's row is the one that counts.
+  imported_amount?: number;
+
+  // Splits and groups (#39), applied last on read (lib/split-rows.ts),
+  // absent on every other row. A part of a split transaction, in its place:
+  // the transaction's id, the part's place among its parts (from 0) and how
+  // many there are, whether the part alone is left out of budgets and
+  // reports, on the part that holds what the bank changed since the split the
+  // amount it was split from, and the whole transaction's own values. A
+  // transaction whose split couldn't be read, or no longer fits (its
+  // currency changed), is shown whole and marked. A group's row, in its
+  // transactions' place: the group's id, its transactions as they are, and
+  // how many of them aren't here or were taken out when they went. A part
+  // carries when its split was saved (split_updated_at), so an edit says
+  // what it saw; a transaction of a group that no longer applies (its
+  // transactions' currencies differ now) says which (group_unapplied), and
+  // one of a group counted on a day before what was read says which, and
+  // counts in no total (group_outside). A bank row standing for a row
+  // imported from a file (#52) takes that row's split, its parts naming the
+  // row it is kept under (split_carried_from), and its place in a group, its
+  // row there naming it the same way (group_carried_from), where an edit of
+  // them is made. A group's row says why its transactions that aren't
+  // counted in it aren't, where that is known (group_away: in another group,
+  // or a bank row standing for one still pending).
+  split_of?: string;
+  split_index?: number;
+  split_count?: number;
+  split_excluded?: true;
+  split_remainder?: { was: number };
+  split_parent?: SplitParent;
+  split_updated_at?: string;
+  split_carried_from?: string;
+  split_unread?: true;
+  split_unapplied?: 'currency';
+  group_id?: string;
+  group_members?: Txn[];
+  group_carried_from?: string;
+  group_away?: GroupAway[];
+  group_missing?: number;
+  group_removed?: number;
+  group_unapplied?: { id: string; name: string };
+  group_outside?: GroupOutside;
+
+  // Shared expenses (#49), applied on read after splits and groups
+  // (lib/shared-expenses/rows.ts), absent on every other row. A shared
+  // transaction's own row (or its split part's) says who owes which part
+  // (shared), and, where it counts at your part, the amount it had
+  // (shared_was); a payment's own row what it paid back (settles). Beside
+  // them, the rows that layer adds (shared_part: another person's part, a
+  // paid-back part) and an IOU's row (shared_iou), which no account holds;
+  // an unsplit transaction's rows carry its id (shared_of), so it is counted,
+  // and put back whole (lib/split-rows.ts bankRows: shared_parts), once. What
+  // no longer applies says why (shared_unapplied, settles_unapplied), and a
+  // bank row shared twice through an imported twin says which (shared_twice).
+  shared?: SharedMark;
+  shared_was?: number;
+  shared_of?: string;
+  shared_part?: SharedPart;
+  shared_iou?: SharedIou;
+  shared_parts?: Txn[];
+  shared_carried_from?: string;
+  shared_unapplied?: SharedUnapplied;
+  shared_twice?: string[];
+  settles?: SettlesMark;
+  settles_unapplied?: SettlesUnapplied;
 };
+
+/** A row from before the lookback, sent only for recurring detection, which
+ *  needs two years to see a yearly charge twice (lib/recurring.ts
+ *  olderRowsForDetection): what detection reads, and what the assembly
+ *  (lib/activity.ts) needs to apply a category, a rename and an exclusion to
+ *  it. Always posted. */
+export type OlderTxn = Pick<
+  Txn,
+  | 'transaction_id'
+  | 'date'
+  | 'name'
+  | 'amount'
+  | 'account_name'
+  | 'account_type'
+  | 'institution_name'
+  | 'category'
+  | 'category_id'
+  | 'category_name'
+  | 'category_kind'
+  | 'category_set'
+  | 'pfc_primary'
+  | 'pfc_detailed'
+  | 'rule_category'
+  | 'subcategory'
+  | 'iso_currency_code'
+  | 'unofficial_currency_code'
+  | 'transaction_code'
+  | 'vendor_key'
+  | 'logo_url'
+  | 'excluded'
+  | 'source'
+  | 'excluded_by_rule'
+  | 'rule_ids'
+  | 'account_ref'
+  | 'renamed_from'
+  | 'carried'
+  | 'own_name'
+  | 'stands_for'
+> &
+  // The merchant behind a payment processor, where it differs from the name
+  // (a rule's name condition reads it); absent when it doesn't.
+  Partial<Pick<Txn, 'counterparty'>>;
 
 // Full-fidelity persisted form: nearly everything Plaid returns per transaction.
 // Adding a field later would cost a full re-sync (see TXN_SCHEMA_VERSION), and
@@ -128,6 +381,27 @@ type ItemState = {
   cursor: string; // '' = never synced → pull full history
   accounts: Record<string, StoredAccount>; // account_id → metadata, merged over time
   txns: Record<string, StoredTxn>; // keyed by transaction_id
+  // When Plaid last answered a sync whose rows were then saved: how current the
+  // stored rows are, for readers that never sync (storedItemTransactions, the
+  // read-only API). Null on a store last saved before this was kept. Optional
+  // and needing no version bump: a release without it drops it on its next
+  // save, which only makes the next reader say "not known".
+  synced_at: string | null;
+  // A first call Plaid refused (lib/item-products.ts), on an Item never synced:
+  // remembered, with the bank accounts and cards it was about, so the next
+  // loads don't ask again. Gone once a sync succeeds.
+  refused?: Refusal;
+  // The first pull stopped at the page cap, older rows still to come: saved
+  // with the progress, so a reader that never syncs (storedItemTransactions)
+  // says the rows aren't all here yet, as the sync's own `importing` does.
+  // Gone once a sync gets to the end.
+  importing?: true;
+  // Plaid said its first pull for the Item is done and its full history
+  // (the rest of the days asked for) is still on the way
+  // (INITIAL_UPDATE_COMPLETE): a fresh connection holds about a month until
+  // then. Gone once Plaid says the history is complete. Read by importing
+  // history into a linked account (lib/history-import/), which says so.
+  history_pending?: true;
 };
 
 // Trailing window callers display / reconstruct by default.
@@ -189,6 +463,13 @@ function resolveCounterparty(t: StoredTxn): string | null {
   return name && name.toLowerCase().trim() !== display ? name : null;
 }
 
+/** An older row's counterparty, only when there is one: older rows are kept
+ *  compact (OlderTxn). */
+function counterpartyOf(t: StoredTxn): { counterparty?: string } {
+  const c = resolveCounterparty(t);
+  return c ? { counterparty: c } : {};
+}
+
 function resolveProcessor(t: StoredTxn): string | null {
   if (t.payment_meta?.payment_processor) return t.payment_meta.payment_processor;
   const app = t.counterparties.find((c) => c.type === 'payment_app');
@@ -198,8 +479,9 @@ function resolveProcessor(t: StoredTxn): string | null {
 // Ids of pending rows that a later posted row supersedes: a posted row carries
 // the pending one's id in pending_transaction_id (and usually removes the
 // original, but the two can briefly coexist). Suppressing the pending original
-// avoids counting a purchase twice.
-function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
+// avoids counting a purchase twice. Exported for the download of my data
+// (lib/user-export.ts), which keeps such rows but marks them.
+export function supersededPendingIds(txns: Record<string, StoredTxn>): Set<string> {
   const superseded = new Set<string>();
   for (const t of Object.values(txns)) {
     if (t.pending_transaction_id && txns[t.pending_transaction_id]) {
@@ -260,13 +542,39 @@ function parseBlocked(raw: string): BlockedMarker | null {
   return null;
 }
 
+/**
+ * Forgets a remembered refusal once the person has been through update mode
+ * on the Item, a Reconnect or "Allow transactions" (app/api/item-reconnected):
+ * a consent given, or a sign-in that changed what Plaid offers, is asked about
+ * on the next load rather than up to REFUSAL_RECHECK_DAYS later. Only a state holding nothing but the refusal
+ * (never synced, no rows) is removed. A read that fails removes nothing: the
+ * refusal stands until it lapses.
+ */
+export async function forgetRefusal(ctx: Ctx, item_id: string): Promise<void> {
+  try {
+    const state = await readState(ctx, item_id);
+    if (!state.refused || state.cursor !== '' || Object.keys(state.txns).length > 0) return;
+    await redis().del(stateKey(ctx, item_id));
+  } catch (err) {
+    console.error(loggable(err));
+  }
+}
+
+/** A remembered refusal as written; anything else is not one, and is dropped
+ *  (the next first call asks Plaid again, which is all a refusal saves). */
+function isRefusal(v: unknown): v is Refusal {
+  if (!v || typeof v !== 'object') return false;
+  const r = v as Refusal;
+  return typeof r.at === 'string' && typeof r.code === 'string' && Array.isArray(r.accounts) && r.accounts.every((id) => typeof id === 'string');
+}
+
 function emptyState(): ItemState {
-  return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {} };
+  return { schema_version: TXN_SCHEMA_VERSION, cursor: '', accounts: {}, txns: {}, synced_at: null };
 }
 
 // Encoding and the size ceiling live in lib/blob.ts, shared with lib/invstore.ts.
-const encodeState = (state: ItemState) => encodeJsonBlob(state);
-const decodeState = (blob: string) => decodeJsonBlob<Partial<ItemState>>(blob);
+const encodeState = (ctx: Ctx, state: ItemState) => encodeJsonBlob(ctx, state);
+const decodeState = (ctx: Ctx, blob: string) => decodeJsonBlob<Partial<ItemState>>(ctx, blob);
 
 // Shape of a pre-v2 stored blob: an account_id→name map and the lean 9-field
 // rows. Kept only for the one-time in-place upgrade in readState.
@@ -349,6 +657,7 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
     cursor: typeof old.cursor === 'string' ? old.cursor : '',
     accounts,
     txns,
+    synced_at: null,
   };
 }
 
@@ -357,7 +666,7 @@ function migrateLegacyState(old: LegacyItemState): ItemState {
  * than swallowed: carrying on with an empty state would have the next writeState
  * persist that emptiness over the real thing. See readState.
  */
-class StateUnreadableError extends Error {
+export class StateUnreadableError extends Error {
   constructor(
     readonly item_id: string,
     readonly kind: 'read' | 'decode',
@@ -383,7 +692,7 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
   if (!blob) return emptyState();
 
   try {
-    const parsed = await decodeState(blob);
+    const parsed = await decodeState(ctx, blob);
     const version = typeof parsed.schema_version === 'number' ? parsed.schema_version : 0;
     if (version >= TXN_SCHEMA_VERSION) {
       // Current or newer. A newer blob (read by an older deploy after a
@@ -394,6 +703,10 @@ async function readState(ctx: Ctx, item_id: string): Promise<ItemState> {
         cursor: typeof parsed.cursor === 'string' ? parsed.cursor : '',
         accounts: parsed.accounts ?? {},
         txns: parsed.txns ?? {},
+        synced_at: typeof parsed.synced_at === 'string' && !Number.isNaN(Date.parse(parsed.synced_at)) ? parsed.synced_at : null,
+        ...(isRefusal(parsed.refused) ? { refused: parsed.refused } : {}),
+        ...(parsed.importing === true ? { importing: true as const } : {}),
+        ...(parsed.history_pending === true ? { history_pending: true as const } : {}),
       };
     }
     // Older or unversioned: upgrade in place, keeping every row and the cursor.
@@ -417,7 +730,7 @@ type WriteOutcome = { persisted: true } | { persisted: false; reason: 'oversize'
 
 async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<WriteOutcome> {
   try {
-    const encoded = await encodeState(state);
+    const encoded = await encodeState(ctx, state);
 
     // OVER THE CEILING: refuse, and do not touch `state`.
     //
@@ -470,6 +783,71 @@ async function writeState(ctx: Ctx, item_id: string, state: ItemState): Promise<
 }
 
 /**
+ * Every transaction id the Items stored now hold, or null when the Items or
+ * a store couldn't be read or a store is behind (rows shown from a store too
+ * large to save, or whose last save failed, aren't in it), so that nothing is
+ * pruned on a partial answer: for the prunes of what was said about
+ * transactions no Item holds any more (lib/overrides.ts pruneOrphanOverrides,
+ * lib/txn-annotations.ts pruneOrphanAnnotations). The Items are read when it
+ * is called, never passed in: a prune reads its records first and this after,
+ * so an Item linked meanwhile, and every row it stored before a record was
+ * set on it, are among those read. A list read earlier (when a forget or a
+ * disconnect started) would take that Item's records for orphans.
+ */
+export async function storedTransactionIds(ctx: Ctx): Promise<Set<string> | null> {
+  const known = new Set<string>();
+  try {
+    for (const { item_id } of await getItems(ctx)) {
+      if (await storeIsBehind(ctx, item_id)) return null;
+      for (const t of await readStoredTxns(ctx, item_id)) known.add(t.transaction_id);
+    }
+  } catch {
+    return null;
+  }
+  return known;
+}
+
+/**
+ * After a sync saved an Item's store without rows the bank removed: what the
+ * person said about those transactions (an exclusion, a category) can never
+ * be shown again, so it goes, by the rules every such prune keeps (nothing
+ * while a store can't be read or is behind, nor a record this release doesn't
+ * recognise; lib/txn-annotations.ts pruneOrphanAnnotations, lib/overrides.ts
+ * pruneOrphanOverrides). Only those transactions' records, and the stores
+ * are read only when one has one. Never fails the sync: a record left is
+ * pruned by the next disconnect or forget, and is never shown meanwhile, its
+ * transaction being gone. A split of one goes the same way, and one in a
+ * group leaves it (lib/split-gone.ts), and so does its approval, but a
+ * pending one's, which first moves to the posted row that replaced it among
+ * `rows` (the store as just saved), being the same transaction
+ * (lib/review-store.ts carryApprovalsToPosted).
+ */
+async function pruneRemovedAnnotations(ctx: Ctx, removed: Set<string>, rows: Iterable<StoredTxn>): Promise<void> {
+  try {
+    await pruneOrphanAnnotations(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget what was said about transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    // Imported here, when needed, as lib/overrides.ts reads this module's
+    // rows itself (the sync imports lib/history-import/twins.ts so too).
+    await (await import('./overrides')).pruneOrphanOverrides(ctx, { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the categories of transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+  try {
+    await carryApprovalsToPosted(ctx, removed, rows);
+  } catch (err) {
+    console.warn('transactions: could not move the approvals of pending transactions that posted', err instanceof Error ? err.name : err);
+  }
+  try {
+    await pruneSplitsAndGroups(ctx, () => storedTransactionIds(ctx), { among: removed });
+  } catch (err) {
+    console.warn('transactions: could not forget the splits and groups of transactions the bank removed', err instanceof Error ? err.name : err);
+  }
+}
+
+/**
  * An Item's stored transactions, read without syncing (no Plaid call), for
  * the paths that must not reach Plaid: a disconnect (the Item is already
  * removed there) and the Accounts tab. Throws when the store can't be read.
@@ -482,6 +860,22 @@ export async function readStoredTxns(ctx: Ctx, item_id: string, opts: { shown?: 
   const cutoff = daysAgoIso(LOOKBACK_DAYS);
   const superseded = supersededPendingIds(txns);
   return Object.values(txns).filter((t) => t.date >= cutoff && !superseded.has(t.transaction_id));
+}
+
+/**
+ * Everything an Item's store holds, for the download of my data
+ * (lib/user-export.ts): its accounts as last synced and every stored row,
+ * read without syncing, all of history rather than the lookback, pending rows
+ * a posted row replaced included. The sync cursor is left out: it is Plaid's
+ * bookmark, not data. Strict: throws when the store can't be read, since a
+ * download must never pass off an unreadable store as an empty one.
+ */
+export async function readStoredItem(
+  ctx: Ctx,
+  item_id: string
+): Promise<{ accounts: Record<string, StoredAccount>; txns: Record<string, StoredTxn>; history_pending?: true }> {
+  const { accounts, txns, history_pending } = await readState(ctx, item_id);
+  return { accounts, txns, ...(history_pending ? { history_pending } : {}) };
 }
 
 /**
@@ -585,20 +979,75 @@ function toStoredAccount(a: AccountBase): StoredAccount {
   };
 }
 
+/** What a sync of one Item came to (see syncItem). */
+type SyncOutcome = {
+  state: ItemState | null;
+  note: string | null;
+  /** Set when the Item has no Transactions to sync, with why
+   *  (lib/item-products.ts): nothing to show and nothing wrong, so there is no
+   *  note. */
+  noTransactions?: NoTransactionsReason;
+  /** The initial pull hit the page cap: older rows are still arriving. */
+  importing?: boolean;
+};
+
+/** An account as the check before a first call reads it (accountKinds). */
+type AccountKind = { account_id?: unknown; type?: unknown };
+
+type SyncOptions = {
+  /** The Item's accounts as the caller has just fetched them, for deciding
+   *  whether a first call is worth making (see `starting` in syncItem).
+   *  Without them, see accountKinds. */
+  accounts?: readonly AccountKind[];
+};
+
+/** Plaid's answers to a first call on an Item that can't have Transactions:
+ *  the institution doesn't offer it for these accounts, or the person never
+ *  consented to it. A retry changes neither. */
+const NO_TRANSACTIONS_CODES = new Set(['PRODUCTS_NOT_SUPPORTED', CONSENT_REQUIRED]);
+
+/**
+ * An Item's accounts (their ids and types), for deciding whether a first call
+ * is worth making: the ones the caller just fetched; else the ones a dashboard
+ * load remembered (lib/last-known.ts), which costs no Plaid call; else, for an
+ * Item no load has remembered yet (one linked a moment ago, whose first
+ * transactions load can run beside its first balance load), a fresh
+ * /accounts/get, which Plaid doesn't bill. Null when none answers: not
+ * knowing is neither "no transactions" nor a reason to call, so the sync says
+ * it could not check, and the load isn't cached as complete.
+ */
+async function accountKinds(
+  ctx: Ctx,
+  item: StoredItem,
+  access_token: string,
+  given?: readonly AccountKind[]
+): Promise<readonly AccountKind[] | null> {
+  if (given) return given;
+  const remembered = await rememberedKindsForItem(ctx, item.item_id);
+  if (remembered) return remembered;
+  try {
+    return (await plaidClient.accountsGet({ access_token })).data.accounts;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Sync one Item from Plaid and persist the reconciled set + cursor. Returns the
  * full retained `state` (callers slice to the window they need), plus a `note`
  * when something is off. `state` is null only on a hard stop (reauth, fresh
- * Item still syncing, unrecoverable error); a non-null `state` with a `note`
- * means usable-but-partial (e.g. the initial pull hit the page cap). Prior
- * stored state is left untouched on a hard stop.
+ * Item still syncing, unrecoverable error) or for an Item with no Transactions
+ * (`noTransactions`, with no note); a non-null `state` with a `note` means
+ * usable-but-partial (e.g. the initial pull hit the page cap, which also sets
+ * `importing`). Prior stored state is left untouched on a hard stop.
  */
-async function syncItem(ctx: Ctx, 
-  item: StoredItem
-): Promise<{ state: ItemState | null; note: string | null }> {
+async function syncItem(ctx: Ctx,
+  item: StoredItem,
+  opts: SyncOptions = {}
+): Promise<SyncOutcome> {
   let access_token: string;
   try {
-    access_token = await decrypt(item.encrypted_access_token);
+    access_token = await decrypt(ctx, item.encrypted_access_token);
   } catch {
     return { state: null, note: `${item.institution_name}: could not decrypt stored credentials` };
   }
@@ -624,7 +1073,7 @@ async function syncItem(ctx: Ctx,
       } else {
         return {
           state: null,
-          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}) — raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
+          note: `${item.institution_name}: stored history is too large to save (since ${marker.at.slice(0, 10)}); raise the storage limit to resume, or reconnect to start over, which discards this institution's saved history`,
         };
       }
     }
@@ -644,16 +1093,42 @@ async function syncItem(ctx: Ctx,
       console.error(err.message, err.reason);
       return {
         state: null,
-        note: `${item.institution_name}: stored history could not be read — refusing to re-sync over it`,
+        note: `${item.institution_name}: stored history could not be read (refusing to re-sync over it)`,
       };
     }
     throw err;
+  }
+
+  // A call that may start Plaid billing Transactions (lib/item-products.ts):
+  // Plaid isn't known to bill it on this Item, and Nya has never synced it, so
+  // the first call would add the product. Made only for an Item holding a bank
+  // account or a card. Any other (a 401(k), an IRA, a brokerage account) would
+  // gain a monthly charge and nothing to show, so it simply has no
+  // transactions: no rows, no note, nothing stored, and no Transactions call.
+  const starting = !transactionsBilled(item) && stored.cursor === '';
+  // The bank accounts and cards a first call is for, which a refusal names.
+  let cash: string[] = [];
+  if (starting) {
+    const accounts = await accountKinds(ctx, item, access_token, opts.accounts);
+    if (accounts === null) {
+      return { state: null, note: `${item.institution_name}: could not check its accounts for transactions` };
+    }
+    const types = accounts.map((a) => a.type);
+    if (!holdsTransactionAccounts(types)) return { state: null, note: null, noTransactions: noTransactionsReason(types) };
+    // Plaid refused this first call lately, for these same accounts: asking
+    // again would only be refused again, a call and a log line on every load,
+    // until it may answer otherwise. One added since is asked about.
+    cash = transactionAccountIds(accounts);
+    if (stored.refused && refusalStands(stored.refused, cash)) return { state: null, note: null, noTransactions: refusalReason(stored.refused) };
   }
 
   for (let attempt = 0; attempt < MAX_MUTATION_RETRIES; attempt++) {
     // Fresh working copy per attempt so a mid-pagination restart can't apply a
     // page's deltas onto an already-mutated set.
     const state: ItemState = JSON.parse(JSON.stringify(stored));
+    // The rows the bank removed that this store held, or that an earlier page
+    // of this sync added.
+    const removed = new Set<string>();
     let cursor: string | undefined = state.cursor || undefined;
     let hasMore = true;
     let pages = 0;
@@ -661,7 +1136,15 @@ async function syncItem(ctx: Ctx,
 
     try {
       while (hasMore && pages < MAX_PAGES) {
-        const res = await plaidClient.transactionsSync({ access_token, cursor, count: 500 });
+        const res = await plaidClient.transactionsSync({
+          access_token,
+          cursor,
+          count: 500,
+          // The call that initializes the product is the only place left to say
+          // how much history to fetch: the link token's days_requested applies
+          // only where Link initialized it. Plaid ignores it on any other call.
+          ...(starting && !cursor ? { options: { days_requested: TRANSACTIONS_DAYS_REQUESTED } } : {}),
+        });
         pages++;
         lastStatus = res.data.transactions_update_status;
         res.data.accounts.forEach((a) => (state.accounts[a.account_id] = toStoredAccount(a)));
@@ -672,7 +1155,9 @@ async function syncItem(ctx: Ctx,
           state.txns[t.transaction_id] = toStored(t, state.accounts, item.institution_name);
         }
         for (const r of res.data.removed) {
-          if (r.transaction_id) delete state.txns[r.transaction_id];
+          if (!r.transaction_id || !state.txns[r.transaction_id]) continue;
+          delete state.txns[r.transaction_id];
+          removed.add(r.transaction_id);
         }
         hasMore = res.data.has_more;
         cursor = res.data.next_cursor;
@@ -686,7 +1171,7 @@ async function syncItem(ctx: Ctx,
         if (attempt < MAX_MUTATION_RETRIES - 1) continue;
         return {
           state: null,
-          note: `${item.institution_name}: could not fetch transactions (data kept changing — try again)`,
+          note: `${item.institution_name}: could not fetch transactions (the data kept changing); try again`,
         };
       }
       if (code === 'ITEM_LOGIN_REQUIRED') {
@@ -695,10 +1180,27 @@ async function syncItem(ctx: Ctx,
       if (code === 'PRODUCT_NOT_READY') {
         return {
           state: null,
-          note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
+          note: `${item.institution_name}: transactions are still syncing; try again in a minute`,
         };
       }
-      console.error(err?.response?.data || err);
+      // The first call found the Item can't have Transactions after all (an
+      // institution that doesn't provide it for these accounts, or no consent
+      // for it). No note: nothing is wrong that a retry or the person could
+      // fix, and the views that count spending say what it leaves out
+      // (lib/no-transactions.ts). Remembered in the Item's own state
+      // (refusalStands), so the next loads don't ask again. Only on that first
+      // call: on an Item that has the product, these would be a real fault and
+      // get the note below.
+      if (starting && NO_TRANSACTIONS_CODES.has(code)) {
+        const refused = { at: new Date().toISOString(), code, accounts: cash };
+        console.warn(
+          `transactions: ${refusalReason(refused) === 'no_consent' ? "the person didn't consent to sharing an Item's transactions" : "Plaid doesn't provide Transactions for an Item's accounts"} (${code}); asking again in ${REFUSAL_RECHECK_DAYS} days, after a reconnect, or when a bank account or card is added`
+        );
+        // Best effort: a write that fails costs one more refused call later.
+        await writeState(ctx, item.item_id, { ...stored, refused });
+        return { state: null, note: null, noTransactions: refusalReason(refused) };
+      }
+      console.error(loggable(err));
       return { state: null, note: `${item.institution_name}: could not fetch transactions` };
     }
 
@@ -711,14 +1213,44 @@ async function syncItem(ctx: Ctx,
     ) {
       return {
         state: null,
-        note: `${item.institution_name}: transactions are still syncing — try again in a minute`,
+        note: `${item.institution_name}: transactions are still syncing; try again in a minute`,
       };
     }
 
     // Advance the cursor and persist. writeState refuses, rather than dropping
-    // rows, if the blob would exceed the request-size ceiling.
+    // rows, if the blob would exceed the request-size ceiling. A refusal that
+    // a later first call outlived is over.
     if (cursor) state.cursor = cursor;
+    state.synced_at = new Date().toISOString();
+    delete state.refused;
+    if (hasMore) state.importing = true;
+    else delete state.importing;
+    if (lastStatus === TransactionsUpdateStatus.InitialUpdateComplete) state.history_pending = true;
+    else if (lastStatus === TransactionsUpdateStatus.HistoricalUpdateComplete) delete state.history_pending;
+    // Before the rows change: which of them stood for rows imported from the
+    // bank's files, kept when this sync changes one (a new amount, a
+    // corrected name, a removal), so that a row it modifies keeps standing
+    // for the one it stood for and never lets it count beside it; which a
+    // pending row it replaces with a posted one stood in for, under the
+    // posted one, which may be dated later or say another amount; and the
+    // pairs carried across a re-link made again (lib/history-import/twins.ts).
+    // Best effort: it never fails the sync. Imported here, when needed, as it
+    // reads this module's rows itself.
+    await (await import('./history-import/twins')).keepImportedTwins(ctx, item, stored.txns, state.txns);
     const write = await writeState(ctx, item.item_id, state);
+    // The receipts and documents on rows this sync removed follow them (to the
+    // posted row a pending one became, now or in a later sync, or a re-post
+    // among the rows it added), and those waiting on an
+    // earlier account linked to this one are placed once its history is in
+    // (lib/attachments.ts). Before the prune below, as approvals move. Never
+    // fails the sync. Imported here, when needed, as it reads this module.
+    if (write.persisted) {
+      const added = new Set(Object.keys(state.txns).filter((id) => !Object.hasOwn(stored.txns, id)));
+      await (await import('./attachments')).settleAfterSync(ctx, { removed, added, rows: Object.values(state.txns), historyIn: !state.history_pending && !hasMore });
+    }
+    // Saved without them: what was said about them goes too. Not when the
+    // write was refused or failed, which leaves them stored.
+    if (write.persisted && removed.size > 0) await pruneRemovedAnnotations(ctx, removed, Object.values(state.txns));
 
     // Too large to persist. `state` is still complete (nothing was trimmed), so
     // return it: accurate figures this request plus a note that they won't
@@ -726,7 +1258,7 @@ async function syncItem(ctx: Ctx,
     if (!write.persisted && write.reason === 'oversize') {
       return {
         state,
-        note: `${item.institution_name}: too much stored history to save an update — showing live data, but it won't persist until this is resolved`,
+        note: `${item.institution_name}: too much stored history to save an update; showing live data, but it won't persist until this is resolved`,
       };
     }
 
@@ -736,7 +1268,8 @@ async function syncItem(ctx: Ctx,
     if (hasMore) {
       return {
         state,
-        note: `${item.institution_name}: still importing older transactions — refresh again shortly`,
+        note: `${item.institution_name}: still importing older transactions; refresh again shortly`,
+        importing: true,
       };
     }
     return { state, note: null };
@@ -747,67 +1280,376 @@ async function syncItem(ctx: Ctx,
   return { state: null, note: `${item.institution_name}: could not fetch transactions` };
 }
 
+/** A bank row's category, and what files it into the person's categories
+ *  (lib/categories.ts resolveCategory): a category carried across a re-link
+ *  is the person's choice and wins over Plaid's, as before; Plaid's own
+ *  values go beside it. */
+function categoryFacts(t: StoredTxn, carried: Map<string, string> | undefined): Pick<Txn, 'category' | 'category_set' | 'pfc_primary' | 'pfc_detailed'> {
+  const carriedCategory = carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined;
+  return {
+    category: carriedCategory ?? t.category,
+    ...(carriedCategory !== undefined ? { category_set: true } : {}),
+    pfc_primary: t.personal_finance_category?.primary ?? null,
+    pfc_detailed: t.personal_finance_category?.detailed ?? null,
+  };
+}
+
+/** What the display rows of one Item are built with, besides its state. */
+type DisplayInputs = {
+  hiddenAccountIds?: Set<string>;
+  /** Accounts that ended (lib/lifecycle.ts), by every id, to the day each
+   *  stops counting: their rows dated on or after it are left out, as a
+   *  hidden account's are, and filtered here for the same reason. */
+  endedFrom?: ReadonlyMap<string, string>;
+  /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
+   *  Applied here because this is the last place account_id exists; a
+   *  category set on the row itself still wins, in /api/transactions. */
+  carriedIn?: Map<string, string> | Promise<Map<string, string>>;
+  /** Exclusions carried across a re-link, by contentKey
+   *  (lib/txn-annotations.ts), marked `excluded` on posted rows here for the
+   *  same reason; what the person says on the row itself still wins. */
+  carriedExclusionsIn?: Set<string> | Promise<Set<string>>;
+  /** Everything else carried across a re-link, by contentKey
+   *  (lib/txn-annotations.ts carriedAnnotations): an include, tags, a note,
+   *  put on posted rows here as `carried` (never sent) for lib/txn-layers.ts
+   *  to apply, below what the person says on the row itself. */
+  carriedAnnotationsIn?: Map<string, CarriedAnnotation> | Promise<Map<string, CarriedAnnotation>>;
+  /** Puts each row's account_id on it, for a reader that filters by account
+   *  (the read-only API). The Activity tab's rows go without, as before: on
+   *  them it marks a manual row. */
+  withAccountIds?: boolean;
+  /** The first day of rows to keep (YYYY-MM-DD), in place of the trailing
+   *  LOOKBACK window: for a report on an earlier period (lib/report/read.ts).
+   *  The store keeps every row, so nothing else changes. */
+  since?: string;
+};
+
+/** Whether a row is dated on or after its account's end (lib/lifecycle.ts). */
+const afterEnd = (endedFrom: ReadonlyMap<string, string> | undefined, t: { account_id: string; date: string }) => {
+  const end = endedFrom?.get(t.account_id);
+  return end !== undefined && t.date >= end;
+};
+
+/**
+ * An Item's rows as the Activity tab shows a transaction: inside the trailing
+ * LOOKBACK window (or from `since`), a pending row its posted row replaced
+ * left out, and the hidden accounts' rows too (`hiddenAccountIds`, filtered
+ * here: the display row has no account_id afterwards). Account names are
+ * re-resolved from the merged map (an account can arrive on a later page than
+ * a transaction referencing it). The one projection, for a sync
+ * (syncItemTransactions) and for a read without one (storedItemTransactions),
+ * so both show a row alike.
+ */
+async function displayRows(state: ItemState, inputs: DisplayInputs): Promise<Txn[]> {
+  const { hiddenAccountIds, endedFrom } = inputs;
+  const carried = await inputs.carriedIn;
+  const carriedExclusions = await inputs.carriedExclusionsIn;
+  const carriedAnnotations = await inputs.carriedAnnotationsIn;
+  const cutoff = inputs.since ?? daysAgoIso(LOOKBACK_DAYS);
+  const superseded = supersededPendingIds(state.txns);
+  return Object.values(state.txns)
+    .filter(
+      (t) =>
+        t.date >= cutoff &&
+        !superseded.has(t.transaction_id) &&
+        !hiddenAccountIds?.has(t.account_id) &&
+        !afterEnd(endedFrom, t)
+    )
+    .map((t) =>
+      bankRowDisplay(t, {
+        account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+        account_type: state.accounts[t.account_id]?.type ?? null,
+        carried,
+        carriedExclusions,
+        carriedAnnotations,
+        withAccountIds: inputs.withAccountIds,
+      })
+    );
+}
+
+/** What a stored bank row is shown with besides itself: the account it is
+ *  shown on, and what was carried to it across a re-link (DisplayInputs). */
+export type BankRowContext = {
+  account_name: string;
+  account_type: string | null;
+  carried?: Map<string, string>;
+  carriedExclusions?: Set<string>;
+  carriedAnnotations?: Map<string, CarriedAnnotation>;
+  withAccountIds?: boolean;
+};
+
+/**
+ * One stored bank row as the Activity tab shows it (displayRows). Also how a
+ * bank row brought back from a download is shown (lib/history-import/read.ts),
+ * so the two can never differ: `name` is merchant_name || raw name, which
+ * recurring detection and search depend on, and StoredTxn keeps both parts.
+ */
+export function bankRowDisplay(t: StoredTxn, c: BankRowContext): Txn {
+  return {
+    transaction_id: t.transaction_id,
+    date: t.date,
+    name: t.merchant_name || t.name,
+    amount: t.amount,
+    pending: t.pending,
+    account_name: c.account_name,
+    account_type: c.account_type,
+    institution_name: t.institution_name,
+    ...categoryFacts(t, c.carried),
+    iso_currency_code: t.iso_currency_code,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+    vendor_key: vendorKey(t),
+    logo_url: t.logo_url,
+    category_icon_url: t.personal_finance_category_icon_url,
+    subcategory: humanizeSubcategory(t.personal_finance_category),
+    category_confidence: t.personal_finance_category?.confidence_level ?? null,
+    transaction_code: t.transaction_code ?? null,
+    payment_channel: t.payment_channel,
+    datetime: t.datetime ?? t.authorized_datetime,
+    website: t.website,
+    check_number: t.check_number,
+    account_owner: t.account_owner,
+    city: t.location?.city ?? null,
+    region: t.location?.region ?? null,
+    counterparty: resolveCounterparty(t),
+    payment_processor: resolveProcessor(t),
+    payment_reference: t.payment_meta?.reference_number ?? null,
+    ...(c.carriedExclusions?.size && !t.pending && c.carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    ...carriedFacts(t, c.carriedAnnotations),
+    ...(c.withAccountIds ? { account_id: t.account_id } : {}),
+    account_ref: t.account_id,
+    ...(t.pending ? {} : { content_key: contentKey(t.account_id, t) }),
+    // The pending row a posted one replaced, whose approval is its own
+    // (lib/review-layer.ts); never sent.
+    ...(!t.pending && t.pending_transaction_id ? { pending_from: t.pending_transaction_id } : {}),
+  };
+}
+
+/** What a posted row carries from an earlier account's row besides an
+ *  exclusion (`carried`, never sent), or nothing. */
+function carriedFacts(t: StoredTxn, carried: Map<string, CarriedAnnotation> | undefined): { carried?: CarriedRowFacts } {
+  if (!carried?.size || t.pending) return {};
+  const facts = carriedExtras(carried.get(contentKey(t.account_id, t)));
+  return facts ? { carried: facts } : {};
+}
+
+/**
+ * The rows before the lookback, back to RECURRING_LOOKBACK_DAYS, that
+ * recurring detection may need, as it needs two years to see a yearly charge
+ * twice: posted rows of the accounts shown, compact (OlderTxn), with the
+ * categories and exclusions carried across a re-link, as displayRows gives
+ * the year's. lib/activity.ts keeps those detection can use.
+ */
+async function olderRows(state: ItemState, inputs: DisplayInputs): Promise<OlderTxn[]> {
+  // A reader that sets its own first day (a report) reads every row from it
+  // in displayRows, and needs none before it.
+  if (inputs.since !== undefined) return [];
+  const { hiddenAccountIds, endedFrom } = inputs;
+  const carried = await inputs.carriedIn;
+  const carriedExclusions = await inputs.carriedExclusionsIn;
+  const carriedAnnotations = await inputs.carriedAnnotationsIn;
+  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  const since = daysAgoIso(RECURRING_LOOKBACK_DAYS);
+  return Object.values(state.txns)
+    .filter((t) => t.date < cutoff && t.date >= since && !t.pending && !hiddenAccountIds?.has(t.account_id) && !afterEnd(endedFrom, t))
+    .map((t) =>
+      bankRowOlder(t, {
+        account_name: state.accounts[t.account_id]?.name || t.account_name || '',
+        account_type: state.accounts[t.account_id]?.type ?? null,
+        carried,
+        carriedExclusions,
+        carriedAnnotations,
+      })
+    );
+}
+
+/** One posted bank row before the lookback, compact, as olderRows gives it
+ *  (and a restored bank row, lib/history-import/read.ts). */
+export function bankRowOlder(t: StoredTxn, c: BankRowContext): OlderTxn {
+  return {
+    transaction_id: t.transaction_id,
+    date: t.date,
+    name: t.merchant_name || t.name,
+    amount: t.amount,
+    account_name: c.account_name,
+    account_type: c.account_type,
+    institution_name: t.institution_name,
+    ...categoryFacts(t, c.carried),
+    subcategory: humanizeSubcategory(t.personal_finance_category),
+    iso_currency_code: t.iso_currency_code,
+    unofficial_currency_code: t.unofficial_currency_code ?? null,
+    transaction_code: t.transaction_code ?? null,
+    vendor_key: vendorKey(t),
+    logo_url: t.logo_url,
+    ...(c.carriedExclusions?.size && c.carriedExclusions.has(contentKey(t.account_id, t)) ? { excluded: true } : {}),
+    ...carriedFacts(t, c.carriedAnnotations),
+    ...counterpartyOf(t),
+    account_ref: t.account_id,
+  };
+}
+
 /**
  * Sync + return the display-shaped transactions for the Activity tab, sliced to
- * the trailing LOOKBACK window. Account names are re-resolved from the merged
- * map (an account can arrive on a later page than a transaction referencing it).
+ * the trailing LOOKBACK window (displayRows), and the rows before it recurring
+ * detection may need (`older`, olderRows).
  *
  * `hiddenAccountIds` drops rows of hidden accounts (lib/hidden.ts). It has to be
  * filtered here: Txn has no `account_id` afterwards. Hidden rows are then never
  * sent to the client, and everything derived from the array (Activity list,
  * month totals, budgets, insights, recurring bills) follows. The persisted store
  * is untouched, so unhiding brings every row back.
+ *
+ * `coverage` says how much of the institution's history the rows are, for the
+ * months Activity totals (#51): all of it; `importing`, older rows still
+ * arriving; or `missing`, none at all this time (a hard stop above), so every
+ * month is short by whatever it holds.
  */
-export async function syncItemTransactions(ctx: Ctx, 
+export async function syncItemTransactions(ctx: Ctx,
   item: StoredItem,
   hiddenAccountIds?: Set<string>,
-  /** Categories carried across a re-link, by contentKey (lib/overrides.ts).
-   *  Applied here because this is the last place account_id exists; a
-   *  category set on the row itself still wins, in /api/transactions. */
-  carriedIn?: Map<string, string> | Promise<Map<string, string>>
-): Promise<{ txns: Txn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
-  const carried = await carriedIn;
-  const cutoff = daysAgoIso(LOOKBACK_DAYS);
+  carriedIn?: DisplayInputs['carriedIn'],
+  carriedExclusionsIn?: DisplayInputs['carriedExclusionsIn'],
+  opts: { withAccountIds?: boolean; since?: string; endedFrom?: ReadonlyMap<string, string>; carriedAnnotationsIn?: DisplayInputs['carriedAnnotationsIn']; withStored?: boolean } = {}
+): Promise<{ txns: Txn[]; older: OlderTxn[]; note: string | null; coverage: TxnCoverage; noTransactions?: NoTransactionsReason; stored?: Record<string, StoredTxn>; loading?: string[] }> {
+  const { state, note, importing, noTransactions } = await syncItem(ctx, item);
+  // An Item with no Transactions holds all of its (no) rows: nothing is
+  // missing from this load on its account, so it is never named as
+  // incomplete. Why it has none goes back beside the rows: the views that
+  // count spending say so, and a refused bank account leaves spending unknown.
+  if (!state) return noTransactions ? { txns: [], older: [], note, coverage: 'complete', noTransactions } : { txns: [], older: [], note, coverage: 'missing' };
+  const inputs: DisplayInputs = {
+    hiddenAccountIds,
+    carriedIn,
+    carriedExclusionsIn,
+    carriedAnnotationsIn: opts.carriedAnnotationsIn,
+    withAccountIds: opts.withAccountIds,
+    since: opts.since,
+    endedFrom: opts.endedFrom,
+  };
+  const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
+  // `stored` (asked for with `withStored`): every row as the sync left it,
+  // for a reader of the same rows that would otherwise read them again
+  // (lib/history-import/read.ts).
+  return { txns, older, note, coverage: importing ? 'importing' : 'complete', ...loadingOf(state, importing), ...(opts.withStored ? { stored: state.txns } : {}) };
+}
+
+/** The Item's accounts while its history is still coming in: more pages to
+ *  bring (`importing`), or Plaid's history beyond its first days not sent yet
+ *  (`history_pending`). A shared transaction from before a re-link whose row
+ *  hasn't come waits for it there (lib/shared-expenses/rows.ts). */
+function loadingOf(state: ItemState, importing?: boolean): { loading?: string[] } {
+  return importing || state.importing || state.history_pending ? { loading: Object.keys(state.accounts) } : {};
+}
+
+/**
+ * Why an Item that was never synced has no transactions, by syncItem's own
+ * check made from what is stored, never asking Plaid: Plaid isn't known to
+ * bill Transactions on it, and the accounts a load remembered
+ * (lib/last-known.ts) hold no bank account or card, or a refusal Plaid gave
+ * its first call still stands for them. Null when that isn't so, or isn't
+ * known (no accounts remembered): the next sync decides.
+ */
+async function storedNoTransactions(ctx: Ctx, item: StoredItem, state: ItemState): Promise<NoTransactionsReason | null> {
+  if (transactionsBilled(item)) return null;
+  const accounts = await rememberedKindsForItem(ctx, item.item_id);
+  if (!accounts) return null;
+  const types = accounts.map((a) => a.type);
+  if (!holdsTransactionAccounts(types)) return noTransactionsReason(types);
+  if (state.refused && refusalStands(state.refused, transactionAccountIds(accounts))) return refusalReason(state.refused);
+  return null;
+}
+
+/**
+ * The same rows as syncItemTransactions (and the same rows before them,
+ * `older`), from what is stored, never calling Plaid: for the read-only API
+ * (lib/api-read.ts), which must not reach Plaid (no cost, no rate-limit
+ * pressure). As current as the last sync that saved
+ * (`synced_at`, null when not known: a store saved before it was kept). A
+ * store that can't be read is a note and no rows (`missing`), never an empty
+ * institution passed off as one with no transactions; one never synced is
+ * `missing` too, with a note saying so, unless it has no Transactions
+ * (storedNoTransactions), which a sync would answer the same way, without a
+ * note (`noTransactions`). Storage failing is a store that can't be read
+ * here, as it is for a sync.
+ *
+ * `first_date` is the oldest day among the rows the store holds, the hidden
+ * accounts' and the replaced pending ones left out, whatever the window: how
+ * far back this institution's history in Nya reaches, as far as its rows
+ * show, so a report on an earlier period can say when it doesn't reach back
+ * that far (lib/report/build.ts). Null with no rows.
+ *
+ * `never_synced` marks a `missing` that is known to hold nothing: the store
+ * was read and no transactions were ever stored in it. Never on a store that
+ * couldn't be read, which may hold rows from any day.
+ */
+export async function storedItemTransactions(
+  ctx: Ctx,
+  item: StoredItem,
+  inputs: DisplayInputs = {},
+  opts: { withStored?: boolean } = {}
+): Promise<{
+  txns: Txn[];
+  older: OlderTxn[];
+  note: string | null;
+  coverage: TxnCoverage;
+  synced_at: string | null;
+  first_date: string | null;
+  noTransactions?: NoTransactionsReason;
+  never_synced?: true;
+  stored?: Record<string, StoredTxn> | null;
+  loading?: string[];
+}> {
+  // `stored` (asked for with `withStored`): every row as read, null when the
+  // store can't be read, as syncItemTransactions gives it.
+  const stored = (rows: Record<string, StoredTxn> | null) => (opts.withStored ? { stored: rows } : {});
+  let state: ItemState;
+  try {
+    state = await readState(ctx, item.item_id);
+  } catch (err) {
+    if (!(err instanceof StateUnreadableError)) throw err;
+    console.error(err.message, err.kind);
+    return { txns: [], older: [], note: `${item.institution_name}: stored transactions could not be read`, coverage: 'missing', synced_at: null, first_date: null, ...stored(null) };
+  }
+  if (state.cursor === '' && Object.keys(state.txns).length === 0) {
+    const noTransactions = await storedNoTransactions(ctx, item, state);
+    if (noTransactions) return { txns: [], older: [], note: null, coverage: 'complete', synced_at: null, first_date: null, noTransactions };
+    return {
+      txns: [],
+      older: [],
+      note: `${item.institution_name}: no transactions stored yet; open the app to load them`,
+      coverage: 'missing',
+      synced_at: null,
+      first_date: null,
+      never_synced: true,
+    };
+  }
+  const [txns, older] = await Promise.all([displayRows(state, inputs), olderRows(state, inputs)]);
+  const first_date = firstStoredDate(state, inputs.hiddenAccountIds);
+  if (state.importing) {
+    return {
+      txns,
+      older,
+      note: `${item.institution_name}: older transactions are still being brought in; open the app to go on`,
+      coverage: 'importing',
+      synced_at: state.synced_at,
+      first_date,
+      ...loadingOf(state),
+      ...stored(state.txns),
+    };
+  }
+  return { txns, older, note: null, coverage: 'complete', synced_at: state.synced_at, first_date, ...loadingOf(state), ...stored(state.txns) };
+}
+
+/** The oldest day among an Item's stored rows that would be shown in some
+ *  window: not a pending row its posted row replaced, nor a hidden account's.
+ *  Null with none. */
+function firstStoredDate(state: ItemState, hiddenAccountIds?: Set<string>): string | null {
   const superseded = supersededPendingIds(state.txns);
-  // `name` is merchant_name || raw name, which recurring detection and search
-  // depend on; StoredTxn keeps both parts.
-  const txns: Txn[] = Object.values(state.txns)
-    .filter(
-      (t) =>
-        t.date >= cutoff &&
-        !superseded.has(t.transaction_id) &&
-        !hiddenAccountIds?.has(t.account_id)
-    )
-    .map((t) => ({
-      transaction_id: t.transaction_id,
-      date: t.date,
-      name: t.merchant_name || t.name,
-      amount: t.amount,
-      pending: t.pending,
-      account_name: state.accounts[t.account_id]?.name || t.account_name || '',
-      institution_name: t.institution_name,
-      category: (carried?.size ? carried.get(contentKey(t.account_id, t)) : undefined) ?? t.category,
-      iso_currency_code: t.iso_currency_code,
-      vendor_key: vendorKey(t),
-      logo_url: t.logo_url,
-      category_icon_url: t.personal_finance_category_icon_url,
-      subcategory: humanizeSubcategory(t.personal_finance_category),
-      category_confidence: t.personal_finance_category?.confidence_level ?? null,
-      transaction_code: t.transaction_code ?? null,
-      payment_channel: t.payment_channel,
-      datetime: t.datetime ?? t.authorized_datetime,
-      website: t.website,
-      check_number: t.check_number,
-      account_owner: t.account_owner,
-      city: t.location?.city ?? null,
-      region: t.location?.region ?? null,
-      counterparty: resolveCounterparty(t),
-      payment_processor: resolveProcessor(t),
-      payment_reference: t.payment_meta?.reference_number ?? null,
-    }));
-  return { txns, note };
+  let first: string | null = null;
+  for (const t of Object.values(state.txns)) {
+    if (superseded.has(t.transaction_id) || hiddenAccountIds?.has(t.account_id)) continue;
+    if (first === null || t.date < first) first = t.date;
+  }
+  return first;
 }
 
 /**
@@ -815,13 +1657,19 @@ export async function syncItemTransactions(ctx: Ctx,
  * window, defaulting to LOOKBACK days. Used by the estimated-history backfill,
  * which walks balances per account. Reads straight from the same persisted
  * store, so the two features share one Plaid pull.
+ *
+ * `hasTransactions` is false for an Item with no Transactions (see syncItem):
+ * no stream at all, so its cash accounts can't be walked, which an empty list
+ * from an Item that has one (a dormant account) can. `accounts` are the Item's
+ * accounts as the caller just fetched them.
  */
-export async function readItemTransactions(ctx: Ctx, 
+export async function readItemTransactions(ctx: Ctx,
   item: StoredItem,
-  sinceDays: number = LOOKBACK_DAYS
-): Promise<{ txns: StoredTxn[]; note: string | null }> {
-  const { state, note } = await syncItem(ctx, item);
-  if (!state) return { txns: [], note };
+  sinceDays: number = LOOKBACK_DAYS,
+  accounts?: readonly AccountKind[]
+): Promise<{ txns: StoredTxn[]; note: string | null; hasTransactions: boolean }> {
+  const { state, note, noTransactions } = await syncItem(ctx, item, { accounts });
+  if (!state) return { txns: [], note, hasTransactions: !noTransactions };
   const cutoff = daysAgoIso(sinceDays);
   const superseded = supersededPendingIds(state.txns);
   return {
@@ -829,5 +1677,6 @@ export async function readItemTransactions(ctx: Ctx,
       (t) => t.date >= cutoff && !superseded.has(t.transaction_id)
     ),
     note,
+    hasTransactions: true,
   };
 }
