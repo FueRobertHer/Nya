@@ -339,8 +339,10 @@ export default function DevelopersPage() {
               ASCII characters) with a POST that makes something. Sent again within {IDEMPOTENCY_HOURS} hours with the same
               body, it answers what the first made, as it is now, with <code>Idempotent-Replayed: true</code>, and makes
               nothing; if that was deleted since, the answer says so (<code>deleted: true</code>, with its{' '}
-              <code>change_id</code>, or 409 when the first never finished), and nothing is made again. Another body
-              under the same key is refused (422).
+              <code>change_id</code>), and nothing is made again. When the first stopped part way, what it made is
+              answered once it can’t still be running; if nothing of it is there, 409, since it may have been made and
+              deleted, and it is never made again (only a first that stopped before it began anything is made, once).
+              Another body under the same key is refused (422).
             </li>
             <li>
               <strong>Transactions</strong> are written only on manual accounts, and only those entered in the app or by a

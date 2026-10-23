@@ -576,40 +576,68 @@ describe('idempotency keys', () => {
     expect([refused.status, refused.body.error.code]).toEqual([409, 'conflict']);
   });
 
-  test('made again, under a new id, only when nothing says the first ever made it', async () => {
-    // The first stopped before it wrote its change: its key claimed alone.
-    const { claimKey } = await import('@/lib/api-changes');
-    const digest = (await import('@/lib/api-changes')).sha256;
-    const spec2 = spec.resourceSpec('transactions.create');
+  test('stopped after its row landed, before its key was marked made, then deleted in the app: refused, never made again', async () => {
+    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
+    expect(first.status).toBe(201);
+    await stopped(first.body.change_id, { unmade: true });
+    expect((await app('manual-transactions', 'DELETE', { id: first.body.transaction.id, account_id: WALLET })).status).toBe(200);
+    setSystemTime(new Date(LATER));
+    const again = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
+    expect([again.status, again.body.error.code, again.body.error.message]).toEqual([
+      409,
+      'conflict',
+      'What this Idempotency-Key began may have been made and removed since, so nothing was made again. Check, and if you still want it, send the request with a new key.',
+    ]);
+    expect(await rows()).toHaveLength(0);
+    expect((await changeStore.get(ctx, first.body.change_id))!).toMatchObject({ state: 'failed', error: 'stopped' });
+    // Sent again, still refused: the failed change is begun all the same.
+    const third = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-crash' } });
+    expect([third.status, third.body.error.code]).toEqual([409, 'conflict']);
+    // One that failed before anything of it was found, the same.
+    const failed = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-failed' } });
+    await manualTxnStore.update(ctx, WALLET, (b) => ({ ...b!, rows: b!.rows.filter((r) => r.id !== failed.body.transaction.id) }));
+    await stopped(failed.body.change_id, { unmade: true });
+    await changeStore.update(ctx, failed.body.change_id, (c) => (c ? { ...c, state: 'failed', error: 'internal' } : null));
+    const retried = await send('POST', 'transactions', { body: { ...coffee, name: 'Tea' }, headers: { 'idempotency-key': 'k-failed' } });
+    expect([retried.status, retried.body.error.code]).toEqual([409, 'conflict']);
+    expect((await manualTxnStore.get(ctx, WALLET))!.rows.some((r) => r.name === 'Tea')).toBe(false);
+    expect((await changeStore.get(ctx, failed.body.change_id))!).toMatchObject({ state: 'failed', error: 'internal' });
+  });
+
+  /** A key claimed alone, as a first attempt that stopped before it wrote
+   *  its change leaves it: the change id the claim names. */
+  const claimedAlone = async (key: string): Promise<string> => {
+    const { claimKey, sha256 } = await import('@/lib/api-changes');
     const args = { account_id: WALLET, amount: 4.5, date: coffee.date, name: 'Coffee' };
-    const request = digest(JSON.stringify([spec2.name, Object.keys(args).sort().map((k) => [k, (args as Record<string, unknown>)[k]])]));
-    const claim = await claimKey(ctx, writerId, 'k-6', request, NOW);
+    const request = sha256(JSON.stringify([spec.resourceSpec('transactions.create').name, Object.keys(args).sort().map((k) => [k, (args as Record<string, unknown>)[k]])]));
+    const claim = await claimKey(ctx, writerId, key, request, NOW);
     expect(claim.kind).toBe('new');
+    return (claim as { change: string }).change;
+  };
+
+  test('made again, under a new id, only when no change was ever begun under its key', async () => {
+    const first = await claimedAlone('k-6');
     setSystemTime(new Date(LATER));
     const made = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-6' } });
     expect(made.status).toBe(201);
-    expect(made.body.change_id).not.toBe((claim as { change: string }).change);
+    expect(made.body.change_id).not.toBe(first);
     expect(await rows()).toHaveLength(1);
   });
 
   test('two takeovers at once make it once: the claim moves to one of them alone', async () => {
-    const first = await send('POST', 'transactions', { body: coffee, headers: { 'idempotency-key': 'k-7' } });
-    const oldId = first.body.transaction.id;
-    // As if it stopped before its row landed: no row, change pending, key not marked made.
-    await manualTxnStore.update(ctx, WALLET, (b) => ({ ...b!, rows: b!.rows.filter((r) => r.id !== oldId) }));
-    await stopped(first.body.change_id, { unmade: true });
+    const first = await claimedAlone('k-7');
     setSystemTime(new Date(LATER));
-    // Each takeover's look for the first's row slowed, as a network round
-    // trip would, so both look before either moves the claim.
-    const txns = await import('@/lib/manual-txns');
-    const real = txns.findManualTxn;
+    // Each takeover's read of the first's change slowed, as a network round
+    // trip would, so both read before either moves the claim.
+    const changes = await import('@/lib/api-changes');
+    const real = changes.getChange;
     let looked = 0;
-    const slow = spyOn(txns, 'findManualTxn').mockImplementation(async (c, id, from) => {
-      if (id === oldId) {
+    const slow = spyOn(changes, 'getChange').mockImplementation(async (c, id, now) => {
+      if (id === first) {
         looked++;
         await new Promise((r) => setTimeout(r, 30));
       }
-      return real(c, id, from);
+      return real(c, id, now);
     });
     try {
       const [x, y] = await Promise.all([
@@ -623,7 +651,6 @@ describe('idempotency keys', () => {
       slow.mockRestore();
     }
     expect(await rows()).toHaveLength(1);
-    expect((await rows())[0].id).not.toBe(oldId);
   });
 
   test('every route that can run a create stops before a takeover would begin', async () => {

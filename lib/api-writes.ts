@@ -19,9 +19,10 @@
 //     thing. Ids are minted as the app mints them, and a create taken over
 //     from one that stopped part way never reuses the first's id: the first's
 //     target is looked for everywhere it could be, replayed when it is there,
-//     refused when it was made and removed since (its claim says it was made,
-//     or a trace of it is left), and made again under a new id only when
-//     nothing says it ever was; two takeovers at once make it once;
+//     and refused when it isn't (made and removed since, or perhaps made: a
+//     function can stop between the write and the key's `made` mark); it is
+//     made again, under a new id, only when no change was ever begun under
+//     the claim, and two takeovers at once make it once;
 //   - THE RECORD of each change, written before it is made and settled after
 //     (lib/api-changes.ts), and the day's limits, checked before a change and
 //     counted once it is made (lib/api-run.ts checkDay, countDay);
@@ -216,6 +217,7 @@ type Create = {
 export const PENDING_MS = 150_000;
 
 const REMOVED_SINCE = 'What this Idempotency-Key made has been removed since, so nothing was made again. If you still want it, send the request with a new key.';
+const MAYBE_REMOVED = 'What this Idempotency-Key began may have been made and removed since, so nothing was made again. Check, and if you still want it, send the request with a new key.';
 
 /**
  * A create, safe to send again with its Idempotency-Key (see the header):
@@ -276,11 +278,16 @@ async function keyedCreate(auth: Authenticated, spec: ResourceSpec, input: Resou
       await settleChange(auth.ctx, found.change, { state: 'failed', error: 'removed' });
       fail(409, 'conflict', REMOVED_SINCE);
     }
-  } else if (found.made) {
-    fail(409, 'conflict', REMOVED_SINCE);
+    // Begun, and nowhere now: it may have been made and removed before its
+    // key was marked made (a function stopped between the two), so it is
+    // never made again either.
+    if (change.state === 'pending') await settleChange(auth.ctx, found.change, { state: 'failed', error: 'stopped' });
+    fail(409, 'conflict', MAYBE_REMOVED);
   }
-  // Nothing says it was ever made: made now, under a new id, by one takeover
-  // alone (the claim is pointed at it only while it still names the first).
+  if (found.made) fail(409, 'conflict', REMOVED_SINCE);
+  // No change was ever begun under the claim (the first stopped before it
+  // wrote one): made now, under a new id, by one takeover alone (the claim is
+  // pointed at it only while it still names the first).
   const next = newChangeId(now, tokenRef(auth.id));
   if (!(await reclaim(auth.ctx, auth.id, found.key, found.change, next, now))) {
     fail(409, 'in_progress', 'A request with this Idempotency-Key is still being made. Send it again in a moment.', { 'Retry-After': '2' });
