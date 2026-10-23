@@ -1,6 +1,6 @@
 import { describe, expect, test, mock, beforeEach, afterEach } from 'bun:test';
-import { FakeRedis, storageMock, TEST_CTX, registerTestContainer, unscopedDataKeys } from './fake-redis';
-import { seedOld } from './restore-fixture';
+import { FakeRedis, storageMock, TEST_CTX, ctxKey, registerTestContainer, unscopedDataKeys } from './fake-redis';
+import { seedOld, bankTxn } from './restore-fixture';
 
 // A file imported into an account before the account a restore brought back
 // is linked to it (lib/user-restore/restored.ts, PAIRED ON READ): its review
@@ -30,6 +30,10 @@ const { linkAccounts, unlinkAccount } = await import('@/lib/links');
 const { taxonomyStore } = await import('@/lib/category-store');
 const { rulesStore } = await import('@/lib/rules');
 const { historyImportStore, historyImportSummaryStore } = await import('@/lib/history-import/store');
+const { undoHistoryImport } = await import('@/lib/history-import/commit');
+const { saveItem, removeItem } = await import('@/lib/storage');
+const { encrypt } = await import('@/lib/crypto');
+const { encodeJsonBlob } = await import('@/lib/blob');
 const { importedForShare } = await import('@/lib/history-import/read');
 const { queryTransactions, readSpending, readBudgets } = await import('@/lib/api-read');
 const { readCashFlow } = await import('@/lib/api-cash-flow');
@@ -76,6 +80,7 @@ const statement = (row: string) =>
 ${row}
 </BANKTRANLIST></STMTRS></STMTTRNRS></BANKMSGSRSV1></OFX>`;
 const GROCER = '<STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20251120120000[-5:EST]</DTPOSTED><TRNAMT>-61.20</TRNAMT><FITID>F_grocer</FITID><NAME>GROCER 9</NAME></STMTTRN>';
+const OLDER = '<STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20251105120000[-5:EST]</DTPOSTED><TRNAMT>-12.00</TRNAMT><FITID>F_older</FITID><NAME>OLDER GROCER</NAME></STMTTRN>';
 // The same amount two days later, under another name: a likely duplicate the
 // person is asked about, not one found already there.
 const LOOKALIKE = '<STMTTRN><TRNTYPE>DEBIT</TRNTYPE><DTPOSTED>20251122120000[-5:EST]</DTPOSTED><TRNAMT>-61.20</TRNAMT><FITID>F_lookalike</FITID><NAME>RAINBOW GROCERY</NAME></STMTTRN>';
@@ -184,6 +189,119 @@ describe('an import whose review read the restored rows', () => {
     // Linked again later than the import was made: still both, as the person
     // said, never re-paired by the amount rule.
     expect(await november()).toEqual(every(122.4));
+  });
+});
+
+/** A third Chase connection, new ids again: what a second disconnect and
+ *  connect gives. */
+async function connectThird() {
+  await saveItem(ctx, { item_id: 'item_third', institution_name: 'Chase', institution_id: 'ins_3', encrypted_access_token: await encrypt(ctx, 'access-sandbox-c') } as never);
+  await fake.hset(ctxKey('accounts:meta', ctx), {
+    item_third: await encrypt(ctx, JSON.stringify([{ account_id: 'third_chk', name: 'Checking', official_name: 'Total Checking', mask: '1111', type: 'depository', subtype: 'checking', limit: null, currency: 'USD' }])),
+  });
+  await fake.set(
+    ctxKey('txns:item_third', ctx),
+    await encodeJsonBlob(ctx, {
+      schema_version: 2,
+      cursor: 'c-third',
+      accounts: { third_chk: { name: 'Checking', official_name: 'Total Checking', type: 'depository', subtype: 'checking', mask: '1111', balances: { available: 1700, current: 1700, limit: null, iso_currency_code: 'USD', unofficial_currency_code: null } } },
+      txns: { t3_new: bankTxn({ transaction_id: 't3_new', account_id: 'third_chk', amount: 9.99, date: '2026-03-01', name: 'THIRD ROW', merchant_name: null, merchant_entity_id: null }) },
+    })
+  );
+}
+
+/** The second connection removed, as a disconnect leaves it. */
+async function disconnectSecond() {
+  await removeItem(ctx, 'item_new');
+  await fake.del(ctxKey('txns:item_new', ctx));
+}
+
+/** The grocery's day, as Activity, the API and spending count it, and the
+ *  food budget's month. */
+async function groceryDay() {
+  const shown = rowsOf(await activity()).filter((r) => r[1] === '2025-11-20');
+  const page = await queryTransactions(ctx, { from: '2025-11-20', to: '2025-11-20', limit: 100 });
+  const spending = await readSpending(ctx, { from: '2025-11-20', to: '2025-11-20' });
+  const food = await foodId();
+  const budget = (await readBudgets(ctx, { month: '2025-11' })).budgets.find((b) => b.category_id === food)!;
+  return {
+    activity: cents(shown.reduce((s, r) => s + Number(r[2]), 0)),
+    api: cents(page.transactions.reduce((s, t) => s + t.amount, 0)),
+    spending: cents(spending.money_out),
+    budget: cents(budget.spent),
+  };
+}
+const day = (n: number) => ({ activity: n, api: n, spending: n, budget: n });
+
+describe('the edges the review probed', () => {
+  test('two restored accounts linked to one new account, the import between the two links: paired with the second’s rows, never the first’s', async () => {
+    // The card shown, so its rows count where it is linked.
+    await fake.hdel(ctxKey('hidden:accounts', ctx), 'acc_card');
+    await linkAccounts(ctx, 'acc_card', 'new_chk', {}, later(-2));
+    const { import_id } = await importInto('new_chk', GROCER);
+    // Its review read the card's restored rows, not the checking account's.
+    expect((await historyImportStore.get(ctx, import_id!))!.matched_restored).toEqual(['acc_card']);
+    expect(await groceryDay()).toEqual(day(61.2));
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {}, later(1));
+    expect(rowsOf(await activity()).filter((r) => r[1] === '2025-11-20').map((r) => r[0])).toEqual(['split:p1', 'split:p2']);
+    expect(await groceryDay()).toEqual(day(61.2));
+  });
+
+  test('an import into a second connection, disconnected and linked on to a third, the restored one linked straight to the third', async () => {
+    await importInto('new_chk', GROCER);
+    await connectThird();
+    await disconnectSecond();
+    await linkAccounts(ctx, 'new_chk', 'third_chk', {}, later(1));
+    await linkAccounts(ctx, 'acc_chk', 'third_chk', {}, later(2));
+    expect(rowsOf(await activity()).filter((r) => r[1] === '2025-11-20').map((r) => r[0])).toEqual(['split:p1', 'split:p2']);
+    expect(await groceryDay()).toEqual(day(61.2));
+  });
+
+  test('through a chain, the import into the second before the restored one was linked to it, and after an unlink and a relink inside it', async () => {
+    await importInto('new_chk', GROCER);
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {}, later(1));
+    await connectThird();
+    await disconnectSecond();
+    await linkAccounts(ctx, 'new_chk', 'third_chk', {}, later(2));
+    expect(await groceryDay()).toEqual(day(61.2));
+    await unlinkAccount(ctx, 'acc_chk');
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {}, later(3));
+    expect(await groceryDay()).toEqual(day(61.2));
+  });
+});
+
+describe('the record of what a review read', () => {
+  test('goes into the download, and comes back with a restore, on the entry and the summary rebuilt from it', async () => {
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {}, later(-1));
+    const { import_id } = await importInto('new_chk', LOOKALIKE, { proposals: { all: 'new' } });
+    const text = await downloadText(new Date());
+    const doc = JSON.parse(text);
+    const inFile = (doc['history-imports'] as { id: string; value: { matched_restored?: string[] } }[]).find((e) => e.id === import_id)!;
+    expect(inFile.value.matched_restored).toEqual(['acc_chk']);
+    // Into a new, empty account.
+    fake.reset();
+    forgetEpochs();
+    await registerTestContainer(fake);
+    const record = await restoreAll(text);
+    expect(record.status).toBe('finished');
+    expect((await historyImportStore.get(ctx, import_id!))!.matched_restored).toEqual(['acc_chk']);
+    expect((await historyImportSummaryStore.get(ctx, import_id!))!.matched_restored).toEqual(['acc_chk']);
+  });
+
+  test('stays on a summary an undo rewrites, when it hands rows on to that import', async () => {
+    await linkAccounts(ctx, 'acc_chk', 'new_chk', {}, later(-1));
+    const first = await importInto('new_chk', LOOKALIKE, { proposals: { all: 'new' } });
+    // A second statement holding the same row (found there already, as the
+    // first's) and one more.
+    const second = await importInto('new_chk', `${LOOKALIKE}\n${OLDER}`, { proposals: { all: 'new' } });
+    expect(second.counts).toMatchObject({ present: 1, new: 1 });
+    await undoHistoryImport(ctx, ['new_chk'], first.import_id!);
+    const summary = (await historyImportSummaryStore.get(ctx, second.import_id!))!;
+    // The row the second found there is kept for it, and the summary that
+    // says so (taken_over) keeps what its review read: the release before
+    // writes it the same way, spreading what is stored.
+    expect(summary.taken_over).toBe(1);
+    expect(summary.matched_restored).toEqual(['acc_chk']);
   });
 });
 
