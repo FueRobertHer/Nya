@@ -17,7 +17,7 @@
 //
 // Arithmetic only: no engine, no market history.
 
-import { fiView, type FirePlan, type FiView, type Measured } from './plan';
+import { fiView, unmeasuredOf, type FirePlan, type FiView, type Measured } from './plan';
 import type { InvestedAssets, TrailingFlows, UnreadTransactions, WorkplaceSavings } from './inputs';
 import { missingWhat, noSpending, withoutNote, type NoSpending, type NoTransactionsView } from '@/lib/no-transactions';
 import { leftOutText, type LeftOut } from '@/lib/spending';
@@ -30,48 +30,119 @@ export type FiInputs = {
   /** Workplace plan contributions, null while they load. */
   workplace: WorkplaceSavings | null;
   assets: InvestedAssets;
+  /** The ECB's newest rates, without a home currency, only for weighing what
+   *  is left out (ShareRates); absent or null weighs by count. */
+  rates?: ShareRates | null;
 };
 
 /** More than this share of what would count left out for its currency, and
- *  a measured figure isn't measured from the rest (currencyGap). */
+ *  a measured figure isn't measured from the rest (CurrencyGap). */
 export const MATERIAL_SHARE = 0.1;
 
-/** A measured figure that, without a home currency, would rest on a part of
- *  what it measures: more than a tenth of the transactions (or accounts) that
- *  would count are in another currency than the figure's, which nothing
- *  converts. By count: amounts in other currencies can't be set against the
- *  rest without a rate, which is what is missing. With a home currency what
- *  has a rate is converted, and what has none is named (convertedNote). */
-export type CurrencyGap = { what: 'spending' | 'assets'; counted: number; leftOut: LeftOut; into: string | null };
+/** The ECB's newest rates as the page has them (GET /api/currency `ecb.rates`:
+ *  units of each currency per euro), even without a home currency. Only for
+ *  weighing a share; never to show or work out a figure. */
+export type ShareRates = Record<string, string>;
 
-const gapOf = (what: CurrencyGap['what'], counted: number, leftOut: LeftOut, into: string | null): CurrencyGap | null => {
-  const left = leftOut.reduce((n, l) => n + l.count, 0);
-  return left > 0 && left > MATERIAL_SHARE * (counted + left) ? { what, counted, leftOut, into } : null;
+/** A measured figure that, without a home currency, would rest on a part of
+ *  what it measures: more than a tenth of what would count is in another
+ *  currency than the figure's, which nothing converts. A share is a matter
+ *  of money, so it is weighed by amount where the ECB's newest rates price
+ *  every currency in it (`judged: 'amount'`): the rates weigh the share and
+ *  nothing else. Where one has no rate, or the rates aren't there, by count
+ *  of transactions or accounts (`judged: 'count'`, `unrated` naming those
+ *  with none). With a home currency what has a rate is converted, and what
+ *  has none is named (convertedNote). */
+export type CurrencyGap = {
+  what: 'spending' | 'assets';
+  counted: number;
+  leftOut: LeftOut;
+  into: string | null;
+  judged: 'amount' | 'count';
+  unrated: string[];
 };
 
+/** Units of `currency` per euro, from the ECB's rates, or NaN. */
+const perEuro = (rates: ShareRates, currency: string) => (currency === 'EUR' ? 1 : Object.hasOwn(rates, currency) ? Number(rates[currency]) : NaN);
+
+function gapOf(
+  what: CurrencyGap['what'],
+  counted: number,
+  leftOut: LeftOut,
+  into: string | null,
+  money: { counted: number; leftOut: { currency: string; amount: number }[] } | null,
+  rates: ShareRates | null | undefined
+): CurrencyGap | null {
+  const left = leftOut.reduce((n, l) => n + l.count, 0);
+  if (left === 0) return null;
+  const unrated = rates && into ? [into, ...leftOut.map((l) => l.currency)].filter((c) => !(perEuro(rates, c) > 0)) : [];
+  if (rates && into && money && unrated.length === 0) {
+    // Each currency left out, in the figure's at the newest rates: weighed,
+    // never added to it.
+    const away = money.leftOut.reduce((n, l) => n + (l.amount * perEuro(rates, into)) / perEuro(rates, l.currency), 0);
+    const total = money.counted + away;
+    return total > 0 && away > MATERIAL_SHARE * total ? { what, counted, leftOut, into, judged: 'amount', unrated: [] } : null;
+  }
+  return left > MATERIAL_SHARE * (counted + left) ? { what, counted, leftOut, into, judged: 'count', unrated: [...new Set(unrated)] } : null;
+}
+
 /** The year's spending, income and savings, when they would rest on a part. */
-export function spendingGap(flows: TrailingFlows | null): CurrencyGap | null {
+export function spendingGap(flows: TrailingFlows | null, rates?: ShareRates | null): CurrencyGap | null {
   if (!flows || flows.conversion) return null;
-  return gapOf('spending', flows.count, flows.leftOut, flows.currency);
+  return gapOf('spending', flows.count, flows.leftOut, flows.currency, flows.volume ?? null, rates);
 }
 
 /** Invested assets, when they would rest on a part. */
-export function assetsGap(assets: InvestedAssets): CurrencyGap | null {
+export function assetsGap(assets: InvestedAssets, rates?: ShareRates | null): CurrencyGap | null {
   if (assets.conversion) return null;
-  return gapOf('assets', assets.accounts.length, assets.leftOut, assets.currency);
+  const money = assets.leftOutBalances ? { counted: assets.total ?? 0, leftOut: assets.leftOutBalances } : null;
+  return gapOf('assets', assets.accounts.length, assets.leftOut, assets.currency, money, rates);
 }
 
-/** Why a figure isn't measured, and what to do: never an amount. */
-export function gapText(g: CurrencyGap): string {
+const joinAnd = (parts: readonly string[]) => (parts.length <= 1 ? (parts[0] ?? '') : `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}`);
+
+/** Why a figure isn't measured, and what to do: never an amount. `as`:
+ *  the year's figures said for savings and the savings rate (`year`), or the
+ *  savings rate alone (`rate`, savings typed), rather than for spending, so
+ *  the words never point at a spending figure that was typed. */
+export function gapText(g: CurrencyGap, as: 'figure' | 'year' | 'rate' = 'figure'): string {
   const left = g.leftOut.reduce((n, l) => n + l.count, 0);
   const noun = g.what === 'spending' ? 'transaction' : 'account';
-  const list = g.leftOut.map((l, i) => (i === 0 ? `${l.count} ${noun}${l.count === 1 ? '' : 's'}` : `${l.count}`) + ` in ${l.currency}`);
-  const these = list.length === 1 ? list[0] : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`;
+  const these = joinAnd(g.leftOut.map((l, i) => (i === 0 ? `${l.count} ${noun}${l.count === 1 ? '' : 's'}` : `${l.count}`) + ` in ${l.currency}`));
   const when = g.what === 'spending' ? ' this year' : '';
+  const them = left === 1 ? 'it' : 'them';
+  const judged =
+    g.judged === 'amount'
+      ? ', by amount at the ECB’s newest rates (used only to weigh it)'
+      : g.unrated.length > 0
+        ? `, by count, as the ECB publishes no rate for ${joinAnd(g.unrated)}`
+        : ', by count';
+  const share = `more than a tenth of what would count${judged}, is in another currency than ${g.into ? `the Plan’s, ${g.into}` : 'the rest'} (${these}${when})`;
+  const convert = `Choose a home currency on the Currency card under Manage on the Accounts tab to convert ${them}`;
+  if (g.what === 'spending' && as === 'rate') {
+    return `The savings rate isn’t measured: ${share}. Without a home currency nothing is converted, so a rate from the rest would leave that much of the year out. ${convert}.`;
+  }
+  if (g.what === 'spending' && as === 'year') {
+    return `The year’s income and savings aren’t measured: ${share}. Without a home currency nothing is converted, so figures from the rest would leave that much of the year out. ${convert}, or type your savings.`;
+  }
   const of = g.what === 'spending' ? 'your spending' : 'your investments';
   const type = g.what === 'spending' ? 'your spending' : 'your invested assets';
-  const them = left === 1 ? 'it' : 'them';
-  return `Not measured: more than a tenth of what would count is in another currency than ${g.into ? `the Plan’s, ${g.into}` : 'the rest'} (${these}${when}). Without a home currency nothing is converted, so a figure from the rest would leave that much of ${of} out. Choose a home currency on the Currency card under Manage on the Accounts tab to convert ${them}, or type ${type}.`;
+  return `Not measured: ${share}. Without a home currency nothing is converted, so a figure from the rest would leave that much of ${of} out. ${convert}, or type ${type}.`;
+}
+
+/** What isn't worked out because an input isn't measured, and why: the
+ *  figures that rest on it are left out, never worked out from zero. */
+export function notWorkedOutText(view: Pick<FiView, 'spending' | 'savings' | 'assets'>, where: 'below' | 'above'): string | null {
+  const what = notMeasuredWhat(view);
+  return what ? `Not worked out: ${what} measured (${where}), and a figure that isn’t measured is never counted as zero.` : null;
+}
+
+/** "your invested assets aren’t", "your savings aren’t", or both: what a
+ *  figure resting on them waits for, or null. */
+export function notMeasuredWhat(view: Pick<FiView, 'spending' | 'savings' | 'assets'>): string | null {
+  const off = unmeasuredOf(view).filter((k) => k !== 'spending');
+  if (off.length === 0) return null;
+  return off.length === 2 ? 'your invested assets and savings aren’t' : off[0] === 'assets' ? 'your invested assets aren’t' : 'your savings aren’t';
 }
 
 /** The measured inputs a plan's figures start from (each can be typed over
@@ -79,20 +150,23 @@ export function gapText(g: CurrencyGap): string {
  *  with workplace plan contributions added, and invested assets. None from
  *  a part of what it measures (spendingGap, assetsGap): the FI number,
  *  progress and years to FI then wait for a home currency or a typed figure. */
-export function measuredInputs({ flows, workplace, assets }: FiInputs): Measured {
-  const spendingKnown = flows !== null && !spendingGap(flows);
+export function measuredInputs({ flows, workplace, assets, rates }: FiInputs): Measured {
+  const yearGap = spendingGap(flows, rates) !== null;
+  const assetsOff = assetsGap(assets, rates) !== null;
+  const unmeasured = [...(yearGap ? (['spending', 'savings'] as const) : []), ...(assetsOff ? (['assets'] as const) : [])];
   return {
-    spending: spendingKnown ? flows.spending : null,
-    savings: spendingKnown ? flows.savings + (workplace?.total ?? 0) : null,
-    assets: assetsGap(assets) ? null : assets.total,
+    spending: flows && !yearGap ? flows.spending : null,
+    savings: flows && !yearGap ? flows.savings + (workplace?.total ?? 0) : null,
+    assets: assetsOff ? null : assets.total,
+    ...(unmeasured.length > 0 ? { unmeasured } : {}),
   };
 }
 
 /** The trailing year's savings rate (see the top of this file), or null
  *  with no year of transactions or no income to take a share of, or when
  *  the year would rest on a part of it (spendingGap). */
-export function savingsRate({ flows, workplace }: Pick<FiInputs, 'flows' | 'workplace'>): number | null {
-  if (!flows || spendingGap(flows)) return null;
+export function savingsRate({ flows, workplace, rates }: Pick<FiInputs, 'flows' | 'workplace' | 'rates'>): number | null {
+  if (!flows || spendingGap(flows, rates)) return null;
   const contributions = workplace?.total ?? 0;
   const income = flows.income + contributions;
   if (!(income > 0)) return null;

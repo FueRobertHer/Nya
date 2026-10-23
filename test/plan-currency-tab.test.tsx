@@ -177,11 +177,12 @@ describe('a plan saved before its currency was recorded', () => {
     await tab.unmount();
   });
 
-  test('while the accounts load: nothing recorded, nothing asked yet, nothing saved', async () => {
+  test('while the accounts load: nothing recorded, nothing asked yet, nothing saved, and it says it waits', async () => {
     const calls = serve(planServer({ plan: PLAN }).answers);
     const tab = await render({ balancesAsOf: null, txns: null, txnsLoading: true });
     expect(posts(calls).length).toBe(0);
-    expect(tab.region()).toBeNull();
+    expect(tab.said()).toBe('Nya is waiting for your accounts to load to tell which currency your plan’s figures are in. Nothing on the Plan is saved until it can.');
+    expect(tab.region()!.findAll((e) => e.tagName === 'BUTTON').length).toBe(0);
     expect(tab.byLabel('Edit your ages')?.disabled).toBe(true);
     await tab.unmount();
   });
@@ -487,6 +488,81 @@ describe('scenarios against the Plan’s currency', () => {
   });
 });
 
+
+describe('a figure not measured is never counted as zero (review round 2)', () => {
+  let n = 0;
+  const row = (over: Partial<Txn>): Txn => ({ transaction_id: `y${++n}`, date: '2026-09-01', name: 'Shop', amount: 100, pending: false, account_name: 'Konto', institution_name: 'Bank', category: 'food and drink', iso_currency_code: 'EUR', ...over }) as Txn;
+  const months = Array.from({ length: 12 }, (_, m) => `${m < 3 ? 2025 : 2026}-${String(m < 3 ? m + 10 : m - 2).padStart(2, '0')}-05`);
+  const euroYear = months.flatMap((d) => [row({ date: d, amount: 4_000 }), row({ date: d, amount: -6_000, category: 'income' })]);
+  const euros = broker([EUR({ account_id: 'e1', balance: 600_000 }), EUR({ account_id: 'e2', balance: 300_000 }), USD({ balance: 5_000 })]);
+  const AGED = { ...DEFAULT_PLAN, age: 40, targetAge: 55 };
+  const ECB = { home: null, own: [], changes: [], problem: null, removable: false, ecb: { date: '2026-09-14', rates: { USD: '1.1551', CAD: '1.6012' }, stale: false, fetch_ok: true } };
+
+  test('the Plan tab: assets not measured by count, so years to FI, Coast FI and the balance at the target age say why, never from zero', async () => {
+    serve(planServer({ plan: AGED }).answers);
+    const tab = await render({ institutions: euros, txns: euroYear, currency: 'EUR' });
+    expect(tab.text()).toContain('Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, EUR (1 account in USD).');
+    expect(tab.text()).toContain('Years to FI--Not worked out: your invested assets aren’t measured (below), and a figure that isn’t measured is never counted as zero.');
+    expect(tab.text()).toContain('Your invested assets aren’t measured (below), so whether you have that much isn’t said.');
+    expect(tab.text()).toContain('At age 55--Not worked out: your invested assets aren’t measured (below)');
+    expect(tab.text()).not.toMatch(/Years to FIabout/);
+    await tab.unmount();
+  });
+
+  test('the Plan tab: weighed by amount at the ECB’s rates, the small dollar account leaves the euros measured, and the years are worked out', async () => {
+    const calls = serve({ ...planServer({ plan: AGED }).answers, 'GET /api/currency': [200, ECB] });
+    const tab = await render({ institutions: euros, txns: euroYear, currency: 'EUR' });
+    expect(calls.some((c) => c.url === '/api/currency')).toBe(true);
+    expect(tab.text()).toContain('€900,000');
+    expect(tab.text()).not.toContain('Not measured');
+    expect(tab.text()).toMatch(/Years to FIabout/);
+    await tab.unmount();
+  });
+
+  test('the Plan tab: spending typed and the year not measured, savings say so in the year’s own words', async () => {
+    const typed = { ...AGED, spending: 40_000 };
+    serve(planServer({ plan: typed, record: { currency: 'USD', amounts: typedAmounts(typed) } }).answers);
+    const year = months.flatMap((d) => [row({ date: d, amount: 3_000, iso_currency_code: 'USD' }), row({ date: d, amount: -5_000, category: 'income', iso_currency_code: 'USD' }), row({ date: d, amount: 20, iso_currency_code: 'CAD' })]);
+    const tab = await render({ institutions: broker([USD({ balance: 400_000 })]), txns: year });
+    expect(tab.text()).toContain('Annual spending$40,000typed by you');
+    expect(tab.text()).toMatch(/Annual savings--not measuredThe year’s income and savings aren’t measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD \(\d+ transactions in CAD this year\)\./);
+    expect(tab.text()).toContain('Not worked out: your savings aren’t measured (below)');
+    await tab.unmount();
+  });
+});
+
+describe('a failed load of the balances, and a refused save (review round 2)', () => {
+  test('the saved copy showing and its load failed: asked, with an answer to give, never locked as still loading', async () => {
+    const calls = serve(planServer({ plan: PLAN }).answers);
+    const tab = await render({ balancesSaved: true, balancesFailed: true });
+    expect(tab.said()).toContain('your accounts couldn’t be loaded just now, so what is shown may be out of date');
+    await press(tab.buttons('They’re in USD')[0]);
+    expect(posts(calls).map((c) => [c.body.currency, c.body.answered])).toEqual([['USD', true]]);
+    await tab.unmount();
+  });
+
+  test('a plan with nothing typed: a first amount can be given a currency, rather than refused as still loading', async () => {
+    const calls = serve(planServer({ plan: UNTYPED }).answers);
+    const tab = await render({ balancesSaved: true, balancesFailed: true });
+    expect(tab.said()).toContain('Which currency will you type your plan’s figures in?');
+    await press(tab.buttons('In USD')[0]);
+    await saveSpending(tab, '40000');
+    expect(puts(calls).map((c) => [c.body.currency, c.body.plan.spending])).toEqual([['USD', 40_000]]);
+    await tab.unmount();
+  });
+
+  test('a save refused for another currency says why, not that it couldn’t save', async () => {
+    const reason = 'The currency your plan’s figures are in was changed since this page loaded it, so nothing was saved: load it again.';
+    serve({ ...planServer({ plan: PLAN, record: { currency: 'USD', amounts: typedAmounts(PLAN) } }).answers, 'PUT /api/fire-plan': [409, { error: reason, stale: true }] });
+    const tab = await render();
+    await press(tab.byLabel('Edit your ages'));
+    await press(tab.buttons('Save')[0]);
+    await settle(400);
+    expect(tab.text()).toContain(`Not saved: ${reason}`);
+    expect(tab.text()).not.toContain('Could not save plan assumptions');
+    await tab.unmount();
+  });
+});
 
 describe('with amounts hidden', () => {
   test('what the tab says about the currency names currencies, never an amount', async () => {

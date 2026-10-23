@@ -37,6 +37,7 @@ import { transactionCoverage, type FiInputs, type TransactionCoverage } from '@/
 import { NO_CONNECTIONS_WITHOUT, type NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
 import type { PageFx } from '@/lib/fx/view';
+import { useCurrencySettings } from './currency-state';
 
 /** The workplace plans whose contributions are measured: linked (not manual)
  *  and not hidden. */
@@ -184,5 +185,11 @@ export function usePlanInputs({
     () => (contributions ? workplaceSavings(contributions, { transfersOut: bankOut, funding: planFunding }) : null),
     [contributions, bankOut, planFunding]
   );
-  return { today, flows, unread, coverage, assets, contributions, workplace, cashOn, cashUnmarked };
+  // Without a home currency, what is left out for its currency is weighed by
+  // amount at the ECB's newest rates where they price it (lib/fire/progress.ts
+  // CurrencyGap): read only when something is left out, and only to weigh.
+  const weigh = !fx && !balanceFx && ((flows?.leftOut.length ?? 0) > 0 || assets.leftOut.length > 0);
+  const { load } = useCurrencySettings(weigh);
+  const rates = weigh && load.kind === 'ready' ? load.view.ecb.rates : null;
+  return { today, flows, unread, coverage, assets, contributions, workplace, cashOn, cashUnmarked, rates };
 }

@@ -23,6 +23,7 @@ const { encrypt, decrypt } = await import('@/lib/crypto');
 const { readEncryptedJson } = await import('@/lib/stored-json');
 const { firePlanStore, planCurrencyStore } = await import('@/lib/fire-plan');
 const { declaredStore } = await import('@/lib/stores');
+const { UnreadableValueError } = await import('@/lib/repo');
 const { DEFAULT_PLAN, isFirePlan } = await import('@/lib/fire/plan');
 const { currencyRecord, typedAmounts } = await import('@/lib/fire/plan-currency');
 const { classify } = await import('@/lib/reencrypt');
@@ -161,34 +162,55 @@ describe('each save', () => {
     expect(await fake.get(recordKey)).toBeNull();
   });
 
-  test('the record is written first: a plan’s write that fails puts the record back, and a save stopped between the two reads as no longer fitting, never as no record', async () => {
+  test('the record is written first, and put back only when the plan was refused before it was written', async () => {
     await put({ plan: TYPED, currency: 'USD' });
     const changed = { ...TYPED, spending: 60_000 };
-    // The plan's write fails: the record goes back to what it was.
-    const res = await failing(firePlanStore, 'set', () => put({ plan: changed, currency: 'USD' }));
-    expect(res.status).toBe(500);
-    expect(await get()).toEqual({ plan: TYPED, currency: 'USD' });
-    // Stopped between the two (the put back fails too): the record is of the
-    // new amounts, the plan of the old, so it asks with USD first.
-    const store = planCurrencyStore as unknown as Record<string, unknown>;
-    const set = store.set as typeof planCurrencyStore.set;
-    let writes = 0;
-    store.set = async (...a: Parameters<typeof planCurrencyStore.set>) => {
-      if (++writes > 1) throw new Error('connection reset');
-      return set(...a);
+    const plans = firePlanStore as unknown as Record<string, unknown>;
+    const realSet = plans.set as typeof firePlanStore.set;
+    const withPlanSet = async <T>(set: typeof firePlanStore.set, f: () => Promise<T>) => {
+      plans.set = set;
+      try {
+        return await quiet(f);
+      } finally {
+        plans.set = realSet;
+      }
     };
-    try {
-      expect((await failing(firePlanStore, 'set', () => put({ plan: changed, currency: 'USD' }))).status).toBe(500);
-    } finally {
-      store.set = set;
-    }
-    expect(await get()).toEqual({ plan: TYPED, currency: null, currency_problem: 'stale', currency_was: 'USD' });
-    // A first record whose plan never got written: the plan has nothing
-    // typed, so nothing is asked, and the next save records again.
+    // Refused before anything was written (over a value the seam can't read):
+    // the record goes back to what it was.
+    const refused = await withPlanSet(async () => {
+      throw new UnreadableValueError('plan assumptions', false);
+    }, () => put({ plan: changed, currency: 'USD' }));
+    expect(refused.status).toBe(409);
+    expect(await get()).toEqual({ plan: TYPED, currency: 'USD' });
+    // Written, and the reply lost: the new record stays, and fits.
+    const lost = await withPlanSet(async (ctx, v) => {
+      await realSet(ctx, v);
+      throw new Error('timed out');
+    }, () => put({ plan: changed, currency: 'USD' }));
+    expect(lost.status).toBe(500);
+    expect(await get()).toEqual({ plan: changed, currency: 'USD' });
+    // Never written, the connection dropped: the record is of the new
+    // amounts, the plan of the old, so it asks, USD first.
+    const again = { ...TYPED, spending: 70_000 };
+    expect((await failing(firePlanStore, 'set', () => put({ plan: again, currency: 'USD' }))).status).toBe(500);
+    expect(await get()).toEqual({ plan: changed, currency: null, currency_problem: 'stale', currency_was: 'USD' });
+    // A first record: with the plan written and the reply lost, it stays and
+    // fits, so the tab never records another on its own.
     fake.reset();
     await registerTestContainer(fake);
     await put({ plan: plan({ age: 40 }) });
-    await failing(firePlanStore, 'set', () => put({ plan: TYPED, currency: 'USD' }));
+    await withPlanSet(async (ctx, v) => {
+      await realSet(ctx, v);
+      throw new Error('timed out');
+    }, () => put({ plan: TYPED, currency: 'EUR' }));
+    expect(await get()).toEqual({ plan: TYPED, currency: 'EUR' });
+    // Refused before writing: taken away again, the plan with nothing typed.
+    fake.reset();
+    await registerTestContainer(fake);
+    await put({ plan: plan({ age: 40 }) });
+    await withPlanSet(async () => {
+      throw new UnreadableValueError('plan assumptions', false);
+    }, () => put({ plan: TYPED, currency: 'EUR' }));
     expect(await get()).toEqual({ plan: plan({ age: 40 }), currency: null });
     expect(await fake.get(recordKey)).toBeNull();
   });

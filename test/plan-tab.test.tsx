@@ -201,7 +201,7 @@ describe('the FI card', () => {
     expect(card(plan())).not.toContain("aren't in your spending");
     // More than a tenth (one of three): not measured from the rest, and why (lib/fire/progress.ts assetsGap).
     const gap = card(plan(), { m: { spending: 40_000, savings: 30_000, assets: null }, a: assets({ leftOut: [{ currency: 'EUR', count: 1 }] }) });
-    expect(gap).toContain('Not measured: more than a tenth of what would count is in another currency than the Plan’s, USD (1 account in EUR).');
+    expect(gap).toContain('Not measured: more than a tenth of what would count, by count, is in another currency than the Plan’s, USD (1 account in EUR).');
   });
 
   test('says how many transactions the person excluded were left out of spending', () => {

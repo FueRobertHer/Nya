@@ -74,7 +74,7 @@ import {
   type UnreadTransactions,
   type WorkplaceSavings,
 } from '@/lib/fire/inputs';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, spendingGap, spendingLeftOut, transactionCoverage, transactionsMissing } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, measuredInputs, notMeasuredWhat, notWorkedOutText, spendingGap, spendingLeftOut, transactionCoverage, transactionsMissing, type ShareRates } from '@/lib/fire/progress';
 import { uncategorizedNote } from '@/lib/spending';
 import { usePlanInputs, workplacePlansOf } from './plan-inputs';
 import AllocationCard, { mixToOffer, useAllocation } from './AllocationCard';
@@ -117,6 +117,7 @@ import {
   shownFrom,
   shownReliably,
   typedAmounts,
+  WAITING_TEXT,
   type CurrencyAnswer,
 } from '@/lib/fire/plan-currency';
 import { recordPlanCurrency } from './plan-currency-client';
@@ -258,6 +259,8 @@ export type PlanTabProps = {
   balancesAsOf: string | null;
   /** The balances are that saved copy: nothing is recorded from them. */
   balancesSaved?: boolean;
+  /** The dashboard's last load of the balances failed. */
+  balancesFailed?: boolean;
   /** The accounts' main currency, for amounts nothing else labels. */
   currency: string | null;
   /** Every position the dashboard loaded, each with its account (hidden
@@ -282,6 +285,7 @@ export default function PlanTab({
   txnFx = null,
   balanceFx = null,
   balancesSaved = false,
+  balancesFailed = false,
 }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
   // The plan as the server last confirmed it, and the currency its typed
@@ -300,6 +304,9 @@ export default function PlanTab({
         isValid: (v): v is FirePlan | null => v === null || isFirePlan(v),
         onChange: setState,
         reloadHint: 'use Try again below',
+        // A save refused for what is stored now (its currency changed on
+        // another device, say) says why.
+        showRefusal: true,
         extra: () => ({ currency: sendCurrency.current }),
         onAnswer: (data) => setConfirmed({ plan: isFirePlan(data.plan) ? data.plan : null, answer: readCurrencyAnswer(data) }),
       }),
@@ -373,7 +380,7 @@ export default function PlanTab({
   const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
   const currencyAnswer = confirmed.answer;
   const currencyState = planCurrencyState(planLoaded ? confirmed.plan : null, currencyAnswer, figures.currency);
-  const reliably = shownReliably(figures.currency, inputs, { balancesAsOf, balancesSaved, institutions: institutions.length, txnsLoading, txnsFailed, unread: unread.length });
+  const reliably = shownReliably(figures.currency, inputs, { balancesAsOf, balancesSaved, balancesFailed, institutions: institutions.length, txnsLoading, txnsFailed, unread: unread.length });
   const currencyKnown = currencyState.kind !== 'unknown';
   const home = balanceFx?.home ?? txnFx?.home ?? null;
   const from = shownFrom(figures.currency, inputs);
@@ -439,11 +446,14 @@ export default function PlanTab({
   const offer = candidates(figures.currency, inputs, { was: currencyState.kind === 'unknown' ? currencyState.was : null, home });
   const currencyMode: CurrencyCardMode =
     currencyState.kind === 'unknown'
-      ? // Nothing said while the tab records it on its own, or waits on the
-        // accounts to tell it (a record there is asked about at once).
-        (autoKey !== null && autoFailed?.for !== autoKey) || (waitingOnAccounts && currencyState.problem === null)
+      ? // Nothing said while the tab records it on its own; while it waits on
+        // the accounts to tell it, that it waits (a record there is asked
+        // about at once, and a load that failed is asked about too).
+        autoKey !== null && autoFailed?.for !== autoKey
         ? { kind: 'none' }
-        : { kind: 'ask', text: askText(currencyState, reliably.ok ? null : reliably.why, from), offer, was: currencyState.was, canAnswer: currencyState.problem !== 'newer' }
+        : waitingOnAccounts && currencyState.problem === null
+          ? { kind: 'waiting', text: WAITING_TEXT }
+          : { kind: 'ask', text: askText(currencyState, reliably.ok ? null : reliably.why, from), offer, was: currencyState.was, canAnswer: currencyState.problem !== 'newer' }
       : currencyState.kind === 'recorded'
         ? {
             kind: 'recorded',
@@ -754,7 +764,7 @@ export default function PlanTab({
         ? 'Say which currency your plan’s figures are in first (above): this is offered once you have.'
         : reliably.ok || picked
           ? null
-          : reliably.why === 'loading' || reliably.why === 'problem' || reliably.why === 'empty-balance'
+          : reliably.why === 'loading' || reliably.why === 'failed' || reliably.why === 'problem' || reliably.why === 'empty-balance'
             ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
             : 'Your plan’s currency can’t be told from your accounts: say which you’ll type your plan’s figures in first (above), and this is offered then.';
   const changes = entry ? scenarioChanges(basePlan, entry) : [];
@@ -908,6 +918,7 @@ export default function PlanTab({
         editable={editable}
         open={open}
         savingsRate={figures.savingsRate}
+        shareRates={inputs.rates ?? null}
       />
 
       {scenariosCard}
@@ -1166,6 +1177,7 @@ export function FiCard({
   editable,
   open,
   savingsRate = null,
+  shareRates = null,
 }: {
   /** The open scenario's name, said at the top; null with the Plan open. */
   scenarioName?: string | null;
@@ -1212,6 +1224,9 @@ export function FiCard({
   open: (s: SheetState) => void;
   /** The trailing year's savings rate (lib/fire/progress.ts), as Home shows it. */
   savingsRate?: number | null;
+  /** The ECB's rates that weigh what is left out for its currency, without
+   *  a home currency (lib/fire/progress.ts ShareRates). */
+  shareRates?: ShareRates | null;
 }) {
   const { spending, savings, assets } = view;
   // A bank account or card whose transactions don't come in (Plaid doesn't
@@ -1236,7 +1251,7 @@ export function FiCard({
   let spendingNote: React.ReactNode;
   // Without a home currency, a year that would rest on a part of the
   // spending is no figure at all (lib/fire/progress.ts spendingGap).
-  const flowsGap = spendingGap(flows);
+  const flowsGap = spendingGap(flows, shareRates);
   if (spending.source === 'typed') spendingNote = 'typed by you';
   else if (flowsGap) spendingNote = <Notes source="not measured" warnings={[gapText(flowsGap)]} />;
   else if (!flows) {
@@ -1320,12 +1335,17 @@ export function FiCard({
   if (savings.source === 'typed') {
     // The savings rate (Home's) is from the transactions whatever is typed
     // here, so it is said here too, as what they measure.
-    savingsNote =
-      flows && savingsRate !== null
-        ? `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
-        : 'typed by you';
+    savingsNote = flowsGap ? (
+      // The rate from the year isn't measured: said, rather than left out unsaid.
+      <Notes source="typed by you" warnings={[gapText(flowsGap, 'rate')]} />
+    ) : flows && savingsRate !== null ? (
+      `typed by you. Measured from ${windowText(flows)} instead, your savings rate is ${savingsRateText(savingsRate)} of income.`
+    ) : (
+      'typed by you'
+    );
   }
-  else if (flowsGap) savingsNote = <Notes source="not measured, as spending isn’t (above)" />;
+  // The year's own reason, whether spending is typed or not.
+  else if (flowsGap) savingsNote = <Notes source="not measured" warnings={[gapText(flowsGap, 'year')]} />;
   else if (!flows) {
     savingsNote = txnsLoading
       ? 'loading your transactions…'
@@ -1380,7 +1400,7 @@ export function FiCard({
 
   // Invested assets: what was counted, as of when, and what may be missing.
   let assetsNote: React.ReactNode;
-  const accountsGap = assetsGap(measuredAssets);
+  const accountsGap = assetsGap(measuredAssets, shareRates);
   if (assets.source === 'typed') assetsNote = 'typed by you';
   else if (accountsGap) assetsNote = <Notes source="not measured" warnings={[gapText(accountsGap), ...assetCaveatLines(measuredAssets.caveats)]} />;
   else if (assets.source === 'none') {
@@ -1414,8 +1434,10 @@ export function FiCard({
   } else if (view.yearsToFi !== null && view.yearsToFi > 0) {
     yearsNote = `${view.fiAge !== null ? `Around age ${Math.round(view.fiAge)}, saving` : 'Saving'} ${money(savings.value ?? 0)} a year at a steady ${pct(plan.realReturn)} real return.`;
   } else if (view.yearsToFi === null) {
-    yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : 'Needs your invested assets or savings.';
+    // A figure not measured is never taken as zero: what rests on it says why.
+    yearsNote = view.fiNumber === null ? 'Needs your annual spending.' : (notWorkedOutText(view, 'below') ?? 'Needs your invested assets or savings.');
   }
+  const notWorkedOut = notWorkedOutText(view, 'below');
 
   const fiSpending = retirementSpending ?? spending.value;
   return (
@@ -1461,7 +1483,7 @@ export function FiCard({
           value={view.coast ? money(view.coast.number) : '--'}
           note={
             view.coast
-              ? `Invested today, this grows to your FI number by age ${plan.targetAge} at ${pct(plan.realReturn)} real with nothing more added. ${view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
+              ? `Invested today, this grows to your FI number by age ${plan.targetAge} at ${pct(plan.realReturn)} real with nothing more added. ${view.coast.reached === null ? 'Your invested assets aren’t measured (below), so whether you have that much isn’t said.' : view.coast.reached ? 'You have that much.' : `You have ${money(assets.value ?? 0)}.`}`
               : 'Needs your age and target age.'
           }
         />
@@ -1469,12 +1491,13 @@ export function FiCard({
           <Row
             label="Barista FI"
             value={money(view.barista.number)}
-            note={`With ${money(plan.partTimeIncome)} a year of part-time income covering part of your spending${view.barista.yearsTo !== null ? (view.barista.yearsTo === 0 ? '. You have that much.' : view.barista.yearsTo === Infinity ? '. Not reached at this rate.' : `, ${yearsText(view.barista.yearsTo)} away.`) : '.'}`}
+            note={`With ${money(plan.partTimeIncome)} a year of part-time income covering part of your spending${view.barista.yearsTo !== null ? (view.barista.yearsTo === 0 ? '. You have that much.' : view.barista.yearsTo === Infinity ? '. Not reached at this rate.' : `, ${yearsText(view.barista.yearsTo)} away.`) : notMeasuredWhat(view) ? `. How far away isn’t worked out: ${notMeasuredWhat(view)} measured (below).` : '.'}`}
           />
         )}
         {view.atTargetAge !== null && plan.targetAge !== null && (
           <Row label={`At age ${plan.targetAge}`} value={money(view.atTargetAge)} note={`Projected at a steady ${pct(plan.realReturn)} real return. Real markets don't move steadily; the simulation below shows how much that matters.`} />
         )}
+        {view.atTargetAge === null && notWorkedOut && plan.age !== null && plan.targetAge !== null && <Row label={`At age ${plan.targetAge}`} value="--" note={notWorkedOut} />}
       </div>
 
       <div className="plan-subhead">From</div>

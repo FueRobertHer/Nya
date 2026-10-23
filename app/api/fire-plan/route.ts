@@ -102,13 +102,19 @@ export async function PUT(req: Request) {
     // The record first, then the plan: a save stopped between the two leaves
     // a record of other amounts than the plan's, which reads as stale and asks,
     // never as no record (which the tab may fill in on its own). A plan the
-    // seam refuses puts the record back as it was.
+    // seam refused before writing it (too large, or over a value it can't
+    // read) puts the record back as it was. Any other failure may have come
+    // after the plan was written (a reply lost), so the new record stays: it
+    // then fits the plan, or reads as stale, and never leaves typed amounts
+    // with no record at all.
     const record = currencyRecord(parsed.plan, currency);
     await planCurrencyStore.set(ctx, record);
     try {
       await firePlanStore.set(ctx, parsed.plan);
     } catch (err) {
-      await (before.record ? planCurrencyStore.set(ctx, before.record) : planCurrencyStore.remove(ctx)).catch(() => {});
+      if (err instanceof StoreRefusedError || err instanceof StoredDataUnreadableError) {
+        await (before.record ? planCurrencyStore.set(ctx, before.record) : planCurrencyStore.remove(ctx)).catch(() => {});
+      }
       throw err;
     }
     return NextResponse.json(answer(parsed.plan, record, null));

@@ -164,6 +164,8 @@ export type LoadState = {
   /** The balances are the dashboard's saved copy, shown until its own load
    *  answers: possibly from before an account was added elsewhere. */
   balancesSaved: boolean;
+  /** That load failed: no longer waited for, but a problem, which asks. */
+  balancesFailed?: boolean;
   institutions: number;
   txnsLoading: boolean;
   /** The transactions failed to load. */
@@ -173,7 +175,7 @@ export type LoadState = {
 };
 
 /** Why the currency the Plan is shown in can't be told reliably now. */
-export type NotReliable = 'loading' | 'problem' | 'empty-balance' | 'tie' | 'mixed' | 'spending' | 'none';
+export type NotReliable = 'loading' | 'failed' | 'problem' | 'empty-balance' | 'tie' | 'mixed' | 'spending' | 'none';
 
 /**
  * Whether the currency the Plan is shown in now (lib/fire/progress.ts
@@ -194,6 +196,7 @@ export function shownReliably(
   load: LoadState
 ): { ok: true } | { ok: false; why: NotReliable } {
   const { assets, flows } = inputs;
+  if (load.balancesFailed && (!load.balancesAsOf || load.balancesSaved)) return { ok: false, why: 'failed' };
   if (!load.balancesAsOf || load.balancesSaved || load.txnsLoading) return { ok: false, why: 'loading' };
   if (load.institutions === 0 && !flows) return { ok: false, why: 'none' };
   if (load.txnsFailed || load.unread > 0 || assets.caveats.length > 0) return { ok: false, why: 'problem' };
@@ -259,6 +262,7 @@ const FROM_TEXT = { accounts: 'the currency most of your invested accounts are i
 /** Why the shown currency can't be taken for the figures', after "They're
  *  shown in USD, ...". */
 const UNRELIABLE_TEXT: Record<Exclude<NotReliable, 'loading'>, string> = {
+  failed: 'your accounts couldn’t be loaded just now, so what is shown may be out of date',
   problem: 'your accounts haven’t all loaded without a problem, so it may read otherwise for now',
   'empty-balance': 'an account’s balance reads empty just now, so it may read otherwise once it doesn’t',
   tie: 'as many of your invested accounts are in another currency, so it could as well be that one',
@@ -298,6 +302,9 @@ export function unconfirmedText(shown: string | null, from: ReturnType<typeof sh
   const lead = shown && from ? `Shown in ${shown}, ${FROM_TEXT[from]}: which currency your plan’s figures were typed in isn’t known yet.` : 'Which currency your plan’s figures were typed in isn’t known yet.';
   return `${lead} The Plan tab settles it, or asks you.`;
 }
+
+/** While the tab waits on the accounts to tell the currency. */
+export const WAITING_TEXT = 'Nya is waiting for your accounts to load to tell which currency your plan’s figures are in. Nothing on the Plan is saved until it can.';
 
 /** Once recorded, the line the tab always shows. */
 export const recordedText = (currency: string) => `Your plan’s figures are in ${currency}, the currency they were typed in.`;

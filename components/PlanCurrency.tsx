@@ -25,6 +25,7 @@ import { recordedText, relabelText } from '@/lib/fire/plan-currency';
 export type CurrencyCardMode =
   | { kind: 'ask'; text: string; offer: string[]; was: string | null; canAnswer: boolean }
   | { kind: 'first'; text: string; offer: string[]; picked: string | null }
+  | { kind: 'waiting'; text: string }
   | { kind: 'recorded'; currency: string; kept: string | null; relabelTo: string | null; previous: string | null; scenariosIn: number; offer: string[] }
   | { kind: 'none' };
 
@@ -104,6 +105,14 @@ export function PlanCurrencyCard({
       {body}
     </div>
   );
+
+  if (mode.kind === 'waiting') {
+    return region(
+      <p className="panel-note" style={{ marginTop: 0 }} role="status">
+        {mode.text}
+      </p>
+    );
+  }
 
   if (mode.kind === 'ask') {
     return region(

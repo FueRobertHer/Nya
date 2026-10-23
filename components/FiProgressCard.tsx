@@ -36,7 +36,7 @@ import { usePlanInputs, workplacePlansOf, type PlanInputs } from './plan-inputs'
 import { PAYROLL_NOTE, dayName, pct, progressText, savingsRateText, wholeMoney, yearsToFiText } from './plan-text';
 import { DEFAULT_PLAN, isFirePlan, repairPlan, type FirePlan } from '@/lib/fire/plan';
 import { NO_ANSWER, planCurrencyState, readCurrencyAnswer, shownFrom, unconfirmedText, type CurrencyAnswer } from '@/lib/fire/plan-currency';
-import { assetsGap, assetsLeftOut, fiFigures, gapText, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
+import { assetsGap, assetsLeftOut, fiFigures, gapText, notMeasuredWhat, spendingGap, spendingLeftOut, transactionsMissing, type FiFigures } from '@/lib/fire/progress';
 import type { AssetInstitution } from '@/lib/fire/inputs';
 import type { NoTransactionsView } from '@/lib/no-transactions';
 import type { FxTable } from '@/lib/fx/rates';
@@ -157,15 +157,22 @@ export function FiProgressView({
   saved: boolean;
   /** The saved plan had values this release can't use (the Plan tab shows them). */
   repaired: boolean;
-  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows'>;
+  inputs: Pick<PlanInputs, 'unread' | 'coverage' | 'assets' | 'workplace' | 'flows' | 'rates'>;
   onOpenPlan: () => void;
 }) {
   const { view, savingsRate, currency, currencyNote, convertedNote } = figures;
   // Without a home currency, a figure that would rest on a part of what it
   // measures isn't measured (lib/fire/progress.ts): said, rather than an FI
   // number from the rest, or none and nothing said.
-  const flowsGap = view.spending.source === 'typed' ? null : spendingGap(inputs.flows);
-  const accountsGap = view.assets.source === 'typed' ? null : assetsGap(inputs.assets);
+  // The year's own gap, whether spending is typed or not: savings and the
+  // savings rate come from the year too. Said for spending when spending
+  // isn't typed, else for what the year still gives.
+  const yearGap = spendingGap(inputs.flows, inputs.rates);
+  const flowsGap = view.spending.source === 'unmeasured' ? yearGap : null;
+  const yearText = yearGap && !flowsGap ? gapText(yearGap, view.savings.source === 'typed' ? 'rate' : 'year') : null;
+  const accountsGap = view.assets.source === 'unmeasured' ? assetsGap(inputs.assets, inputs.rates) : null;
+  const waitsFor = view.yearsToFi === null ? notMeasuredWhat(view) : null;
+  const notWorkedOut = waitsFor ? `Years to FI aren’t worked out: ${waitsFor} measured (above), and a figure that isn’t measured is never counted as zero.` : null;
   if (view.fiNumber === null) {
     if (!flowsGap) return null;
     return (
@@ -266,12 +273,10 @@ export function FiProgressView({
       )}
       {assetsShort && <div className="as-of stale">Invested assets may be low: some couldn&apos;t be counted. The Plan tab says which.</div>}
       {currencyNote && <div className="as-of stale">{currencyNote}</div>}
-      {flowsGap && (
-        <div className="as-of stale">{gapText(flowsGap)}</div>
-      )}
-      {accountsGap && (
-        <div className="as-of stale">{gapText(accountsGap)}</div>
-      )}
+      {flowsGap && <div className="as-of stale">{gapText(flowsGap)}</div>}
+      {yearText && <div className="as-of stale">{yearText}</div>}
+      {accountsGap && <div className="as-of stale">{gapText(accountsGap)}</div>}
+      {notWorkedOut && <div className="as-of stale">{notWorkedOut}</div>}
       {unconfirmed && <div className="as-of stale">{unconfirmed}</div>}
       {convertedNote && <div className="as-of">{convertedNote}</div>}
       {repaired && <div className="as-of stale">Your saved plan has values this version of Nya can&apos;t use, so these use the defaults for them. The Plan tab says which.</div>}

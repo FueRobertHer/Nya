@@ -223,6 +223,10 @@ export type TrailingFlows = {
   /** Transactions that would count but are in another currency (with a home
    *  currency, one with no rate): in none of the figures, by currency. */
   leftOut: LeftOut;
+  /** How much money the counted rows and the ones left out moved, each in
+   *  its own currency, unscaled: only to judge how much of the year is left
+   *  out (lib/fire/progress.ts spendingGap), never a figure. */
+  volume?: { counted: number; leftOut: { currency: string; amount: number }[] };
   /** What was converted into `currency`, for the label; null (or absent)
    *  without a home currency. */
   conversion?: Conversion | null;
@@ -289,6 +293,9 @@ export function trailingFlows(
     transfer: 0,
   };
   const counted = transactionCounter();
+  // Only to weigh how much is left out for its currency (volume).
+  let countedVolume = 0;
+  const leftOutVolume = new Map<string, number>();
   // Only to say what most rows are in, beside the Plan's own currency.
   const mostIn = totalsCurrency(over);
   const excludedCount = transactionCounter();
@@ -314,6 +321,7 @@ export function trailingFlows(
         const counter = leftOutBy.get(c) ?? transactionCounter();
         counter.add(t);
         leftOutBy.set(c, counter);
+        if (counts(flow)) leftOutVolume.set(c, (leftOutVolume.get(c) ?? 0) + Math.abs(t.amount));
       }
       continue;
     }
@@ -332,7 +340,10 @@ export function trailingFlows(
       r.amount += -t.amount;
       refunds.set(key, r);
     }
-    if (counts(flow)) counted.add(t);
+    if (counts(flow)) {
+      counted.add(t);
+      countedVolume += Math.abs(t.amount);
+    }
   }
   let largestRefund: TrailingFlows['largestRefund'] = null;
   for (const r of refunds.values()) if (largestRefund === null || r.amount > largestRefund.amount) largestRefund = r;
@@ -369,6 +380,7 @@ export function trailingFlows(
     currency,
     mostIn,
     leftOut: [...leftOutBy].map(([c, n]) => ({ currency: c, count: n.n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    volume: { counted: countedVolume, leftOut: [...leftOutVolume].map(([currency, amount]) => ({ currency, amount })) },
     conversion: counting.conversion,
     uncategorized,
   };
@@ -474,6 +486,9 @@ export type InvestedAssets = {
   /** Accounts that would count but are in another currency (with a home
    *  currency, one with no rate): not in the total, by currency. */
   leftOut: LeftOut;
+  /** Their balances, each currency's in its own: only to judge how much is
+   *  left out (lib/fire/progress.ts assetsGap), never a figure. */
+  leftOutBalances?: { currency: string; amount: number }[];
   /** With a home currency, what was converted into `currency` at the newest
    *  rates, and why what wasn't has no rate; null (or absent) without one,
    *  or with nothing in another currency. */
@@ -570,7 +585,12 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
   }
   const counted = measured.filter((a) => !a.currency || !currency || a.currency === currency);
   const others = new Map<string, number>();
-  for (const a of measured) if (a.currency && currency && a.currency !== currency) others.set(a.currency, (others.get(a.currency) ?? 0) + 1);
+  const otherBalances = new Map<string, number>();
+  for (const a of measured) {
+    if (!a.currency || !currency || a.currency === currency) continue;
+    others.set(a.currency, (others.get(a.currency) ?? 0) + 1);
+    otherBalances.set(a.currency, (otherBalances.get(a.currency) ?? 0) + Math.abs(a.balance));
+  }
   return {
     total: counted.length > 0 ? counted.reduce((s, a) => s + a.balance, 0) : null,
     accounts: counted,
@@ -579,6 +599,7 @@ export function investedAssets(institutions: AssetInstitution[], includeCash: bo
     currency,
     byCurrency,
     leftOut: [...others].map(([c, n]) => ({ currency: c, count: n })).sort((a, b) => b.count - a.count || (a.currency < b.currency ? -1 : 1)),
+    leftOutBalances: [...otherBalances].map(([c, amount]) => ({ currency: c, amount })),
     conversion: null,
   };
 }
