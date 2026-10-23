@@ -645,6 +645,127 @@ describe('undo of an account a token made, taken out only as the token left it',
     expect((await changeStore.get(ctx, original.undoing!))!).toMatchObject({ state: 'done' });
     expect((await changeStore.get(ctx, original.undoing!))!.progress).toBeUndefined();
   });
+
+  /** An undo of `change` cut off as it folds the account out of past
+   *  totals: the undo's id. */
+  const cutInFold = async (change: string) => {
+    const history = await import('@/lib/history');
+    const cut = spyOn(history, 'foldHiddenAccount').mockRejectedValueOnce(new Error('the function was stopped'));
+    try {
+      expect((await quietly(() => undo(change))).status).toBe(500);
+    } finally {
+      cut.mockRestore();
+    }
+    return (await changeStore.get(ctx, change))!.undoing!;
+  };
+
+  test('one cut off inside its delete, its rows gone: a resume refused meanwhile says so, and the undo is kept to finish later', async () => {
+    const md = await import('@/lib/manual');
+    const a = await made();
+    const cut = spyOn(md, 'removeManualAccount').mockRejectedValueOnce(new Error('the function was stopped'));
+    try {
+      expect((await quietly(() => undo(a.change))).status).toBe(500);
+    } finally {
+      cut.mockRestore();
+    }
+    const undoing = (await changeStore.get(ctx, a.change))!.undoing!;
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ op: 'undo', state: 'failed', progress: 'deleting', before: { account_id: a.id, name: 'Cash jar' } });
+    expect(await findManualTxn(ctx, a.row)).toBeNull();
+    expect(await getManualAccount(ctx, a.id)).not.toBeNull();
+    // The person adds a row to the account, still listed.
+    expect((await app('manual-transactions', 'POST', { account_id: a.id, date: daysAgo(0, NOW), amount: 3, currency: 'USD', name: 'Mine' })).status).toBe(200);
+    const mine = (await manualTxnStore.get(ctx, a.id))!.rows.find((r) => r.name === 'Mine')!;
+    const second = await quietly(() => undo(a.change));
+    expect([second.status, second.body.error.code, second.body.error.message]).toEqual([
+      409,
+      'conflict',
+      `A transaction on it (${mine.id}) was added since in another way, so the account wasn’t removed: remove it in the app if you want it gone. An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is kept, and is finished by the next undo asked once nothing else names the account.`,
+    ]);
+    expect((await changeStore.get(ctx, a.change))!.undoing).toBe(undoing);
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'failed', progress: 'deleting', error: 'conflict' });
+    expect(await findManualTxn(ctx, mine.id)).not.toBeNull();
+    // Once the person's row is gone, the next undo finishes it, under the same id.
+    expect((await app('manual-transactions', 'DELETE', { id: mine.id, account_id: a.id })).status).toBe(200);
+    const third = await undo(a.change);
+    expect([third.status, third.body.undo]).toEqual([200, undoing]);
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+    expect((await changeStore.get(ctx, undoing))!.state).toBe('done');
+    expect((await changeStore.get(ctx, a.change))!.undone_by).toBe(undoing);
+  });
+
+  test('two undos at once: one is named on the change and runs, the other is told so, or answered as it once done, and leaves nothing', async () => {
+    const a = await made();
+    // Each undo held after its first write until both have made theirs, so
+    // both have read the change before either names itself on it.
+    const changes = await import('@/lib/api-changes');
+    const real = changes.beginChange;
+    let begun = 0;
+    let release = () => {};
+    const both = new Promise<void>((r) => (release = r));
+    const slow = spyOn(changes, 'beginChange').mockImplementation(async (c, id, change) => {
+      await real(c, id, change);
+      if (change.op !== 'undo') return;
+      if (++begun === 2) release();
+      await Promise.race([both, new Promise((r) => setTimeout(r, 2000))]);
+    });
+    let answers: Sent[];
+    try {
+      answers = await Promise.all([undo(a.change), undo(a.change)]);
+    } finally {
+      slow.mockRestore();
+    }
+    const won = answers.find((r) => r.status === 200)!;
+    const lost = answers.find((r) => r !== won)!;
+    expect([200, 409]).toContain(lost.status);
+    if (lost.status === 409) expect(lost.body.error.message).toBe('An undo of this change is under way. Ask again in a moment.');
+    else expect(lost.body.undo).toBe(won.body.undo);
+    expect(await getManualAccount(ctx, a.id)).toBeNull();
+    const undos = [...(await changeStore.getAll(ctx)).entries()].filter(([, c]) => c.op === 'undo');
+    expect(undos.map(([id, c]) => [id, c.state])).toEqual([[won.body.undo, 'done']]);
+    expect((await changeStore.get(ctx, a.change))!.undone_by).toBe(won.body.undo);
+    expect(begun).toBe(2);
+  });
+
+  test('a resume refused never takes the name of the undo under way off the change, and one still pending isn’t run beside', async () => {
+    const a = await made();
+    const undoing = await cutInFold(a.change);
+    // Refused at the lock (another change to accounts holds it): untouched.
+    fake.strings.set(ctxKey('account-links:lock'), 'someone-else');
+    const locked = await quietly(() => undo(a.change));
+    fake.strings.delete(ctxKey('account-links:lock'));
+    expect([locked.status, locked.body.error.message]).toEqual([409, 'Another change to your accounts is in progress. Try again in a moment.']);
+    expect((await changeStore.get(ctx, a.change))!.undoing).toBe(undoing);
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'failed', progress: 'folding' });
+    // As if its function were stopped outright, never settled: pending, and
+    // may still be running until every route that could run it has stopped.
+    await changeStore.update(ctx, undoing, (c) => (c ? { ...c, state: 'pending' } : null));
+    const soon = await undo(a.change);
+    expect([soon.status, soon.body.error.message]).toEqual([409, 'An undo of this change is under way. Ask again in a moment.']);
+    expect((await changeStore.get(ctx, undoing))!).toMatchObject({ state: 'pending', progress: 'folding' });
+    setSystemTime(new Date(NOW + PENDING_MS + 1000));
+    const later = await undo(a.change);
+    expect([later.status, later.body.undo]).toEqual([200, undoing]);
+    expect((await getHiddenAccounts(ctx)).has(a.id)).toBe(false);
+  });
+
+  test('forget is refused while an undo of the change is under way or cut off, which needs what it kept; once finished, it forgets', async () => {
+    const a = await made();
+    const undoing = await cutInFold(a.change);
+    const one = 'An undo of this change is under way, or stopped part way, and needs what the change kept to finish: undo the change again, then forget it.';
+    const all = 'An undo of one of this token’s changes is under way, or stopped part way, and needs what that change kept to finish: undo it again, then forget them.';
+    for (const [body, words] of [
+      [{ action: 'forget', id: a.change }, one],
+      [{ action: 'forget', id: undoing }, one],
+      [{ action: 'forget-token', id: a.change }, all],
+    ] as const) {
+      const r = await app('api-changes', 'POST', body);
+      expect([body.action, body.id, r.status, r.body.error]).toEqual([body.action, body.id, 409, words]);
+    }
+    expect([...(await changeStore.getAll(ctx)).values()].some((c) => c.forgotten_at)).toBe(false);
+    expect((await undo(a.change)).status).toBe(200);
+    expect((await app('api-changes', 'POST', { action: 'forget-token', id: a.change })).status).toBe(200);
+    expect((await changeStore.get(ctx, a.change))!.forgotten_at).toBeString();
+  });
 });
 
 describe('recorded as it happened', () => {

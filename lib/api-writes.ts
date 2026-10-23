@@ -38,7 +38,7 @@ import { hintOf } from './api-tokens';
 import type { Ctx } from './containers';
 import { ApiFailure, BadRequest, NotFound, type Args, type ResourceSpec } from './api-spec';
 import { checkDay, countDay, passedGate, type Gated } from './api-run';
-import { API_ROOM, IDEMPOTENCY_HOURS } from './api-limits';
+import { API_ROOM, IDEMPOTENCY_HOURS, PENDING_MS } from './api-limits';
 import {
   beginChange,
   claimKey,
@@ -58,14 +58,14 @@ import {
 import { accountVersion, categoryVersion, groupVersion, rowVersion, saidVersion, tagVersion, txnParts, txnVersion } from './api-versions';
 import { withAccountVersions, withTxnVersions } from './api-versioned';
 import { firstDay, readAccounts, queryTransactions } from './api-read';
-import { apiWriteDays } from './api-token-store';
+import { rebuildForPush } from './api-rebuilds';
 import { getManualAccount, getManualAccounts, isManualId, MAX_MANUAL_ACCOUNTS, newManualId, type ManualAccount } from './manual';
 import { isOwedType } from './balance';
 import { connectorAccountsStore } from './connectors/store';
 import { AccountEditRefused, createManualAccount, saveAccountEdit, setAccountBalance, type AccountFields } from './manual-account-writes';
 import { addDays, readTxnFields, type TxnFields } from './manual-txn-input';
 import { findManualTxn, InvalidTxnError, MANUAL_TXN_PREFIX, newManualTxnId, type ManualTxn, type ManualTxnChanges } from './manual-txns';
-import { addRow, changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
+import { ACCOUNT_WENT, addRow, changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
 import { annotateTransaction } from './annotate';
 import { AnnotationError, TooManyAnnotationsError, txnAnnotationStore, type TxnAnnotation } from './txn-annotations';
 import { splitStore } from './splits';
@@ -115,13 +115,26 @@ function appRefusal(err: unknown): ApiFailure | null {
   return null;
 }
 
+/** A refusal that comes after a write (a row moved into an account deleted
+ *  meanwhile, gone with it): answered as `answer`, and the change settled
+ *  failed with `code`, never dropped. */
+class RefusedAfterWrite extends Error {
+  constructor(
+    readonly answer: ApiFailure,
+    readonly code: string
+  ) {
+    super(answer.message);
+    this.name = 'RefusedAfterWrite';
+  }
+}
+
 /** Whether a failure means nothing was changed: one of the app's refusals or
  *  the API's own, each thrown before anything is written or inside the
  *  compare-and-set that would have written (which then writes nothing). What
  *  storage throws can come after a write (a read after it), so it never says
  *  nothing was changed: the change is settled failed, "may not have been
  *  made". */
-const changedNothing = (err: unknown) => appRefusal(err) !== null || err instanceof BadRequest || err instanceof NotFound;
+const changedNothing = (err: unknown) => !(err instanceof RefusedAfterWrite) && (appRefusal(err) !== null || err instanceof BadRequest || err instanceof NotFound);
 
 /** A failure's code for the record. */
 const failureCode = (err: unknown) => (err instanceof StoredDataUnreadableError ? 'unreadable' : err instanceof StoreRefusedError ? 'refused' : 'internal');
@@ -174,8 +187,8 @@ async function recorded(
     made = await make();
   } catch (err) {
     if (changedNothing(err)) await dropChange(auth.ctx, id, opts.keyHash ? auth.id : null);
-    else await settleChange(auth.ctx, id, { state: 'failed', error: failureCode(err) });
-    throw err;
+    else await settleChange(auth.ctx, id, { state: 'failed', error: err instanceof RefusedAfterWrite ? err.code : failureCode(err) });
+    throw err instanceof RefusedAfterWrite ? err.answer : err;
   }
   if (opts.keyHash) await markMade(auth.ctx, auth.id, opts.keyHash, id);
   const day = await countDay(auth, { create }, now);
@@ -208,13 +221,7 @@ type Create = {
   answer: (id: string) => Promise<Record<string, unknown>>;
 };
 
-/**
- * How long a create's first attempt may still be running: past every route
- * that can run one (the REST writes' maxDuration of 30 seconds, the MCP
- * server's 120), with room, so a takeover never runs beside a first attempt
- * that is still making it (test/api-writes.test.ts holds the routes to it).
- */
-export const PENDING_MS = 150_000;
+export { PENDING_MS };
 
 const REMOVED_SINCE = 'What this Idempotency-Key made has been removed since, so nothing was made again. If you still want it, send the request with a new key.';
 const MAYBE_REMOVED = 'What this Idempotency-Key began may have been made and removed since, so nothing was made again. Check, and if you still want it, send the request with a new key.';
@@ -451,7 +458,7 @@ async function setBalance(auth: Authenticated, input: ResourceInput): Promise<Re
   if (Math.round(account.balance * 100) === Math.round(balance * 100)) return { status: 200, body: { ...(await accountAnswer(auth.ctx, account.account_id)), changed: false }, headers: {} };
   let changed = true;
   const done = await recorded(auth, input, 'manual-account.balance', { kind: 'manual-account', id: account.account_id }, async () => {
-    const set = await setAccountBalance(auth.ctx, account.account_id, balance, { now: new Date(input.now ?? Date.now()), rebuild: () => firstPushToday(auth, account.account_id, input.now) });
+    const set = await setAccountBalance(auth.ctx, account.account_id, balance, { now: new Date(input.now ?? Date.now()), rebuild: () => rebuildForPush(auth.ctx, account.account_id, input.now) });
     if (set.kind === 'missing') fail(404, 'not_found', 'No manual account has that id.');
     if (set.kind === 'same') {
       changed = false;
@@ -464,25 +471,6 @@ async function setBalance(auth: Authenticated, input: ResourceInput): Promise<Re
     throw err;
   });
   return { status: 200, body: { ...(await accountAnswer(auth.ctx, account.account_id)), changed, ...(done ? { change_id: done.change } : {}) }, headers: done?.day ?? {} };
-}
-
-/**
- * Whether a balance set through the API should have the estimated history
- * rebuilt: the first time in a day for each account, never on every push.
- * The estimate holds a manual account flat at its balance across the days
- * before any was recorded; a script pushing a balance every few minutes would
- * otherwise have the app open into a full rebuild (Plaid's transactions
- * pulled again) nearly every time, for a flat term that moves by that day's
- * change at most. The app's own Update form rebuilds every time, as before.
- * Counted in api-write-days under the account's id; one that can't be
- * counted rebuilds.
- */
-async function firstPushToday(auth: Authenticated, accountId: string, now?: number): Promise<boolean> {
-  try {
-    return (await apiWriteDays.take(auth.ctx, `balance.${accountId}`, now)).count === 1;
-  } catch {
-    return true;
-  }
 }
 
 // ---- Transactions ----
@@ -579,7 +567,8 @@ async function updateTransaction(auth: Authenticated, input: ResourceInput): Pro
           before = row;
         },
       });
-      if (done === 'gone' || done === 'account-gone') fail(404, 'not_found', 'That transaction, or the account it was moved to, no longer exists.');
+      if (done === 'gone') fail(404, 'not_found', 'That transaction, or the account it was moved to, no longer exists.');
+      if (done === 'account-gone') throw new RefusedAfterWrite(new ApiFailure(404, 'not_found', ACCOUNT_WENT), 'account-gone');
       const saved = (done as { saved: ManualTxn }).saved;
       return { before: txnState(before!, said), after: txnState(saved, said), target: { kind: 'transaction', id, account_id: saved.account_id } };
     });

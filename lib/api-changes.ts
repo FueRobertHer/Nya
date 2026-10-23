@@ -60,6 +60,7 @@ import { createHash, randomBytes } from 'node:crypto';
 import { defineMapStore, UnreadableEntriesError } from './repo';
 import type { Ctx } from './containers';
 import { CHANGES_KEEP_DAYS, IDEMPOTENCY_HOURS } from './api-limits';
+import { ApiFailure } from './api-spec';
 
 export type ChangeOp =
   | 'manual-account.create'
@@ -381,10 +382,22 @@ export async function listChanges(
   return { changes: out, next: more && last ? { at: last[1].at, id: last[0] } : null, unreadable, unrecognised };
 }
 
-/** Forgets one entry's copies, alone. */
+const UNDO_UNDER_WAY = 'An undo of this change is under way, or stopped part way, and needs what the change kept to finish: undo the change again, then forget it.';
+const UNDO_UNDER_WAY_TOKEN = 'An undo of one of this token’s changes is under way, or stopped part way, and needs what that change kept to finish: undo it again, then forget them.';
+
+/** Whether an undo of this change, or this undo, is under way or stopped
+ *  part way (Change.undoing): what the change kept is what it finishes with. */
+async function undoUnderWay(ctx: Ctx, id: string, c: Change, now: number): Promise<boolean> {
+  if (c.undoing) return true;
+  if (c.op !== 'undo' || !c.undoes || !kept(c.undoes, now)) return false;
+  return (await changeStore.get(ctx, c.undoes))?.undoing === id;
+}
+
+/** Forgets one entry's copies, alone; never one an undo under way needs. */
 async function forgetOne(ctx: Ctx, id: string, now: number): Promise<Change | null> {
   return changeStore.update(ctx, id, (cur) => {
     if (!cur) return null;
+    if (cur.undoing) throw new ApiFailure(409, 'conflict', UNDO_UNDER_WAY);
     if (cur.forgotten_at) return cur;
     const next: Change = { ...cur, forgotten_at: new Date(now).toISOString() };
     delete next.before;
@@ -396,9 +409,13 @@ async function forgetOne(ctx: Ctx, id: string, now: number): Promise<Change | nu
 /** Forgets one change's copies of what it changed (see the header), and the
  *  copies kept by its undo, or by the change it undid: an undo keeps what it
  *  took back (all of a created row, say), so forgetting either forgets both.
- *  False when there is no such change. */
+ *  False when there is no such change; refused (409) while an undo of it is
+ *  under way or stopped part way, which needs those copies to finish. */
 export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now()): Promise<boolean> {
   if (!isChangeId(id)) return false;
+  const c = await changeStore.get(ctx, id);
+  if (!c) return false;
+  if (await undoUnderWay(ctx, id, c, now)) throw new ApiFailure(409, 'conflict', UNDO_UNDER_WAY);
   const written = await forgetOne(ctx, id, now);
   if (!written) return false;
   for (const linked of [written.undone_by, written.undoes, written.undoing]) {
@@ -410,8 +427,13 @@ export async function forgetChange(ctx: Ctx, id: string, now: number = Date.now(
 /** Forgets every change one token made (`maker`: its ref), and the copies
  *  their undos keep, whoever made those. Answers how many of the token's. */
 export async function forgetTokenChanges(ctx: Ctx, maker: string, now: number = Date.now()): Promise<number> {
+  const ids = await changeIds(ctx, { maker, now });
+  // Refused before any is forgotten while an undo of one is under way.
+  for (const [id, c] of await changeStore.getMany(ctx, ids)) {
+    if (await undoUnderWay(ctx, id, c, now)) throw new ApiFailure(409, 'conflict', UNDO_UNDER_WAY_TOKEN);
+  }
   let n = 0;
-  for (const id of await changeIds(ctx, { maker, now })) if (await forgetChange(ctx, id, now)) n++;
+  for (const id of ids) if (await forgetChange(ctx, id, now)) n++;
   return n;
 }
 

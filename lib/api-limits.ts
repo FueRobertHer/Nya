@@ -75,6 +75,14 @@ export const API_ROOM = 0.9;
 export const CHANGES_KEEP_DAYS = 30;
 /** How long an Idempotency-Key names its create. */
 export const IDEMPOTENCY_HOURS = 24;
+/**
+ * How long a create's first attempt, or an undo, may still be running: past
+ * every route that can run one (the REST writes' maxDuration of 30 seconds,
+ * the MCP server's and the undo routes' 120), with room, so a takeover never
+ * runs beside a first attempt that is still running (test/api-writes.test.ts
+ * holds the routes to it).
+ */
+export const PENDING_MS = 150_000;
 /** The largest body a write takes, in characters. */
 export const WRITE_BODY_MAX = 8 * 1024;
 

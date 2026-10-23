@@ -51,6 +51,10 @@ export async function addRow(
 /** What changeManualTransaction did. */
 export type RowChange = { saved: ManualTxn; on: KeptAccount } | 'gone' | 'account-gone';
 
+/** What a program is told of 'account-gone': its change was written, then
+ *  went with the account (lib/api-writes.ts, lib/api-undo.ts). */
+export const ACCOUNT_WENT = 'Its account was deleted meanwhile, and the transaction went with it.';
+
 /**
  * Changes one row: any of its fields, or the account it is on (`target`, an
  * account the caller has read). `from` is the account the page shows it on,

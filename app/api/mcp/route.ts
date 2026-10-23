@@ -52,7 +52,7 @@ async function refused(res: NextResponse): Promise<NextResponse> {
 // A write tool runs the same write as its endpoint, and undo_change can take
 // an account out of past totals under the links lock (sized to it: lib/
 // links.ts LINKS_LOCK_REQUEST_SECONDS); a create's key is taken over only
-// after every route that can run one has stopped (lib/api-writes.ts
+// after every route that can run one has stopped (lib/api-limits.ts
 // PENDING_MS).
 export const maxDuration = 120;
 

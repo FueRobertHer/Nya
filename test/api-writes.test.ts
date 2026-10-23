@@ -745,6 +745,49 @@ describe('versions', () => {
     expect(await isBackfillDone(ctx)).toBe(false);
   });
 
+  test('a push that skipped its rebuild is caught up the next night, so the estimate is never more than a day behind', async () => {
+    const { markBackfillDone, isBackfillDone } = await import('@/lib/history');
+    const { snapshotData } = await import('@/lib/snapshot-job');
+    await markBackfillDone(ctx);
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 200 } })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(false);
+    await markBackfillDone(ctx); // the app opened, and the estimate was rebuilt on 200
+    // Two hours on, the same window: the push skips its rebuild.
+    setSystemTime(new Date(NOW + 2 * 3_600_000));
+    expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance: 5000 } })).status).toBe(200);
+    expect(await isBackfillDone(ctx)).toBe(true);
+    // The night after, within a day of that push, with none since: rebuilt
+    // on the next visit.
+    setSystemTime(new Date(NOW + 2 * 3_600_000 + 86_400_000 - 60_000));
+    await quietly(() => snapshotData(ctx, []));
+    expect(await isBackfillDone(ctx)).toBe(false);
+    // Caught up once: the next night leaves the rebuilt estimate alone.
+    await markBackfillDone(ctx);
+    setSystemTime(new Date(NOW + 2 * 3_600_000 + 2 * 86_400_000));
+    await quietly(() => snapshotData(ctx, []));
+    expect(await isBackfillDone(ctx)).toBe(true);
+  });
+
+  test('each skipped push keeps its mark a day past it, so one late in a window is caught up too', async () => {
+    const { markBackfillDone, isBackfillDone } = await import('@/lib/history');
+    const { catchUpRebuilds } = await import('@/lib/api-rebuilds');
+    const push = async (balance: number, at: number) => {
+      setSystemTime(new Date(at));
+      expect((await send('POST', `manual-accounts/${WALLET}/balance`, { token: balancer, body: { balance } })).status).toBe(200);
+    };
+    await push(100, NOW);
+    await markBackfillDone(ctx); // rebuilt on 100
+    await push(101, NOW + 3_600_000); // skipped: marked
+    await push(102, NOW + 23 * 3_600_000); // skipped too, its mark started again
+    // The next night falls past a day from the first skip, within a day of the last.
+    await catchUpRebuilds(ctx, NOW + 26 * 3_600_000);
+    expect(await isBackfillDone(ctx)).toBe(false);
+    // A night with no mark leaves the estimate alone.
+    await markBackfillDone(ctx);
+    await catchUpRebuilds(ctx, NOW + 50 * 3_600_000);
+    expect(await isBackfillDone(ctx)).toBe(true);
+  });
+
   test('a stale version is refused and nothing is written; none is 428; a weak one never matches', async () => {
     const { transaction } = await versionOf(`transactions/${MARKET}`);
     // The person edits it in the app meanwhile.
@@ -787,6 +830,52 @@ describe('versions', () => {
     const txns = (await send('GET', 'transactions', { token: reader })).body.transactions;
     for (const t of txns) expect([t.id, typeof t.version]).toEqual([t.id, t.source === 'manual' ? 'string' : 'object']);
     expect((await send('GET', 'tags', { token: reader })).body.tags.every((t: any) => typeof t.version === 'string')).toBe(true);
+  });
+});
+
+describe('a write that something else takes away meanwhile', () => {
+  /** The person deleting `account` in the app while a row is written into
+   *  it: just after the row's book is written. */
+  const deletedDuring = async (account: string) => {
+    const txns = await import('@/lib/manual-txns');
+    const { removeManualAccount } = await import('@/lib/manual');
+    const real = txns.editManualTxn;
+    return spyOn(txns, 'editManualTxn').mockImplementationOnce(async (c, id, changes, opts) => {
+      const saved = await real(c, id, changes, opts);
+      await removeManualAccount(c, account);
+      return saved;
+    });
+  };
+
+  test('a row moved into an account deleted at the same moment: answered 404, and the change recorded failed, never dropped', async () => {
+    const { transaction } = await versionOf(`transactions/${MARKET}`);
+    const racing = await deletedDuring('manual_house');
+    let moved: Sent;
+    try {
+      moved = await send('PATCH', `transactions/${MARKET}`, { body: { account_id: 'manual_house' }, headers: { 'if-match': transaction.version } });
+    } finally {
+      racing.mockRestore();
+    }
+    expect([moved.status, moved.body.error.code, moved.body.error.message]).toEqual([404, 'not_found', 'Its account was deleted meanwhile, and the transaction went with it.']);
+    expect(await findManualTxn(ctx, MARKET)).toBeNull();
+    const recorded = [...(await changeStore.getAll(ctx)).values()].filter((c) => c.op === 'transaction.update');
+    expect(recorded.map((c) => [c.target.id, c.state, c.error])).toEqual([[MARKET, 'failed', 'account-gone']]);
+  });
+
+  test('an undo moving a row back into an account deleted at the same moment: refused, and the undo recorded failed', async () => {
+    const { transaction } = await versionOf(`transactions/${MARKET}`);
+    const moved = await send('PATCH', `transactions/${MARKET}`, { body: { account_id: 'manual_house' }, headers: { 'if-match': transaction.version } });
+    expect(moved.status).toBe(200);
+    const racing = await deletedDuring(WALLET);
+    let undone: Sent;
+    try {
+      undone = await send('POST', `changes/${moved.body.change_id}/undo`);
+    } finally {
+      racing.mockRestore();
+    }
+    expect([undone.status, undone.body.error.code, undone.body.error.message]).toEqual([409, 'conflict', 'Its account was deleted meanwhile, and the transaction went with it. It wasn’t undone.']);
+    const undos = [...(await changeStore.getAll(ctx)).values()].filter((c) => c.op === 'undo');
+    expect(undos.map((c) => [c.state, c.error])).toEqual([['failed', 'conflict']]);
   });
 });
 

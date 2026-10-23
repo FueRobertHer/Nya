@@ -50,6 +50,7 @@ import type { Ctx } from './containers';
 import type { Authenticated } from './api-tokens';
 import { hintOf } from './api-tokens';
 import { ApiFailure } from './api-spec';
+import { PENDING_MS } from './api-limits';
 import { checkDay, countDay } from './api-run';
 import { beginChange, changeIds, changeStore, getChange, newChangeId, settleChange, tokenRef, type Change, type ChangeOp } from './api-changes';
 import { accountVersion, categoryVersion, groupVersion, rowVersion, saidVersion, tagVersion } from './api-versions';
@@ -58,7 +59,7 @@ import { getManualAccount, type ManualAccount } from './manual';
 import { AccountEditRefused, invalidate, saveAccountEdit, setAccountBalance } from './manual-account-writes';
 import { deleteManualAccount } from './manual-account-delete';
 import { addManualTxn, findManualTxn, manualTxnStore, type ManualTxn } from './manual-txns';
-import { changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
+import { ACCOUNT_WENT, changeManualTransaction, removeManualTransaction } from './manual-txn-writes';
 import { restoreAnnotation, txnAnnotationStore, type TxnAnnotation } from './txn-annotations';
 import { splitStore } from './splits';
 import { groupStore, memberIndex } from './groups';
@@ -102,11 +103,15 @@ type Step = NonNullable<Change['progress']>;
 
 /**
  * One undo as it runs: whether it takes up one cut off part way (`resume`,
- * with the step it had reached), and whether it has written anything yet,
- * in this run or the one cut off (`began`): a refusal before that leaves
- * nothing to record, one after it is recorded as the failure it is.
+ * with the step it had reached), whether it has written anything yet, in
+ * this run or the one cut off (`began`, from the moment a step is named: a
+ * delete cut off may have taken the rows already), and whether this run
+ * holds the account's lock (`held`, so no other run of the same undo is
+ * under way). A refusal before anything was written leaves nothing to
+ * record; one after it is recorded as the failure it is, by a run that holds
+ * the lock (another run of a resumed undo may be writing it meanwhile).
  */
-type Run = { resume: boolean; began: boolean; progress: Step | undefined; step: (s: Step) => Promise<void> };
+type Run = { resume: boolean; began: boolean; held: boolean; progress: Step | undefined; step: (s: Step, before?: unknown) => Promise<void> };
 
 /** The app's own refusal, in the API's shape. */
 function refusalOf(err: unknown): unknown {
@@ -156,7 +161,11 @@ async function undoTransaction(ctx: Ctx, c: Change, now: number, run: Run): Prom
         expect: (row) => (same(row, after!.row) ? undefined : refuse(CHANGED('The transaction'))),
       }
     );
-    if (done === 'gone' || done === 'account-gone') refuse(CHANGED('The transaction'));
+    if (done === 'gone') refuse(CHANGED('The transaction'));
+    if (done === 'account-gone') {
+      run.began = true; // written, then gone with the account: recorded failed
+      refuse(`${ACCOUNT_WENT} It wasn’t undone.`);
+    }
     return { before: after, after: { row: (done as { saved: ManualTxn }).saved, said } };
   }
   await restoreAnnotation(ctx, id, before!.said, (cur) => (same(cur, after!.said) ? undefined : refuse(CHANGED('What was said about it'))));
@@ -292,15 +301,23 @@ async function undoAccountMade(ctx: Ctx, c: Change, now: number, run: Run): Prom
   const id = c.target.id;
   const life = { first: c.at.slice(0, 10), last: new Date(now).toISOString().slice(0, 10) };
   return withLinksLock(ctx, async () => {
+    run.held = true;
     const cur = await getManualAccount(ctx, id);
     const reached = run.resume ? run.progress : undefined;
     if (cur) {
-      // There: nothing of it was taken out yet (a resume that hadn't got past
-      // its delete is checked again too, as nothing was written).
-      await checkUntouched(ctx, c, cur);
-      await run.step('deleting');
-      await deleteManualAccount(ctx, id);
+      // There: checked again, a resume too. One cut off inside its delete
+      // may have taken the rows already (they go before the account), so a
+      // refusal now says so, and the undo is kept, failed, to be finished
+      // once nothing names the account.
+      try {
+        await checkUntouched(ctx, c, cur);
+      } catch (err) {
+        if (reached === 'deleting' && err instanceof ApiFailure) throw new ApiFailure(err.status, err.code, `${err.message} ${CUT_IN_DELETE}`);
+        throw err;
+      }
+      await run.step('deleting', cur);
       run.began = true;
+      await deleteManualAccount(ctx, id);
       await invalidate(ctx, true);
     } else if (!reached) {
       refuse('The account no longer exists.');
@@ -406,16 +423,29 @@ function cannotUndo(c: Change): string | null {
   return null;
 }
 
-/** Notes on a change that an undo of it is under way, or that none is. */
-async function markUndoing(ctx: Ctx, changeId: string, undo: string | null): Promise<void> {
+/**
+ * Notes on a change which undo of it is under way (`to`), or that none is
+ * (null), only while it still names `from` (none, or the undo it named when
+ * read) and, for a new one, isn't undone, in one compare-and-set: of two
+ * undos begun at once one is named, and a refused one never takes another's
+ * name off. True when it was set.
+ */
+async function markUndoing(ctx: Ctx, changeId: string, from: string | undefined, to: string | null): Promise<boolean> {
+  let set = false;
   await changeStore.update(ctx, changeId, (cur) => {
-    if (!cur) return null;
+    set = false; // this may run more than once
+    if (!cur || cur.undoing !== from || (to && cur.undone_by)) return cur;
+    set = true;
     const next: Change = { ...cur };
-    if (undo) next.undoing = undo;
+    if (to) next.undoing = to;
     else delete next.undoing;
     return next;
   });
+  return set;
 }
+
+const UNDER_WAY = 'An undo of this change is under way. Ask again in a moment.';
+const CUT_IN_DELETE = 'An earlier undo of it stopped part way through taking it out, so transactions this token added to it may be gone already; that undo is kept, and is finished by the next undo asked once nothing else names the account.';
 
 /**
  * Undoes one change and records the undo: `who` is the token undoing its own
@@ -440,6 +470,8 @@ export async function undoChange(
   if (why) refuse(why);
   if (who) await checkDay(who.auth, { create: false }, now);
   const earlier = c.undoing ? await getChange(ctx, c.undoing, now).catch(() => null) : null;
+  // One still pending may still be running: never run beside it.
+  if (earlier?.state === 'pending' && now - Date.parse(earlier.at) < PENDING_MS) refuse(UNDER_WAY);
   const resume = !!earlier && earlier.state !== 'done';
   const id = resume ? c.undoing! : newChangeId(now, who ? tokenRef(who.auth.id) : null);
   if (!resume) {
@@ -454,15 +486,23 @@ export async function undoChange(
       state: 'pending',
       undoes: changeId,
     });
-    if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, id);
+    if (c.op === 'manual-account.create' && !(await markUndoing(ctx, changeId, c.undoing, id))) {
+      // Another undo of it began first: answered as that one, once it is done.
+      await changeStore.remove(ctx, id).catch(() => {});
+      const settled = await getChange(ctx, changeId, now);
+      if (settled?.undone_by) return { change: settled, undo: settled.undone_by, headers: {} };
+      refuse(UNDER_WAY);
+    }
   }
   const run: Run = {
     resume,
-    // Past its delete, an undo cut off had written; before it, nothing.
-    began: resume && (earlier?.progress === 'folding' || earlier?.progress === 'forgetting'),
+    // Once a step was named, an undo cut off may have written: its delete
+    // takes the rows before the account. Before any, nothing.
+    began: resume && earlier?.progress !== undefined,
+    held: false,
     progress: earlier?.progress,
-    step: async (s) => {
-      await changeStore.update(ctx, id, (cur) => (cur ? { ...cur, state: 'pending', progress: s } : null));
+    step: async (s, before) => {
+      await changeStore.update(ctx, id, (cur) => (cur ? { ...cur, state: 'pending', progress: s, ...(before !== undefined ? { before: before as object } : {}) } : null));
       run.progress = s;
     },
   };
@@ -470,9 +510,12 @@ export async function undoChange(
   try {
     undone = await reverse(ctx, c, now, run);
   } catch (err) {
-    if (!run.began && err instanceof ApiFailure) {
+    if (resume && !run.held) {
+      // Refused before it held the account's lock: another run of this undo
+      // may hold it, and its record is that run's to write.
+    } else if (!run.began && err instanceof ApiFailure) {
       await changeStore.remove(ctx, id).catch(() => {});
-      if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, null).catch(() => {});
+      if (c.op === 'manual-account.create') await markUndoing(ctx, changeId, id, null).catch(() => {});
     } else {
       await settleChange(ctx, id, { state: 'failed', error: err instanceof ApiFailure ? err.code : 'internal' });
     }
