@@ -1169,6 +1169,11 @@ describe('never the server, the API or a download', () => {
 // ---- Nothing writes an amount past the switch ----
 
 describe('every module a page can load writes its amounts through the switch (a scan of the source)', () => {
+  // The scans that read the whole model of the source (modelOf) take about
+  // two seconds for the first of them on an idle four-core machine, which
+  // builds it, and several times that on a loaded one; which goes first
+  // changes with --randomize. So each has its own time, past bun's 5 s.
+  const SCAN_MS = 30_000;
   const modules = clientModules(ROOT);
   const sources = modules.filter((m) => m !== 'lib/format.ts').map((m) => ({ path: m, text: readFileSync(join(ROOT, m), 'utf8') }));
 
@@ -1193,12 +1198,12 @@ describe('every module a page can load writes its amounts through the switch (a 
     // (useAmountsHidden()) among its dependencies; a component in memo()
     // that writes one reads it; no useState starts from one.
     expect(staleMemos(ROOT, modules)).toEqual([]);
-  });
+  }, SCAN_MS);
 
   test('a label a screen reader reads alone is said through spoken(), and an amount drawn as text through <Masked>', () => {
     expect(unspokenLabels(ROOT, modules)).toEqual([]);
     expect(unmaskedChildren(ROOT, modules)).toEqual([]);
-  });
+  }, SCAN_MS);
 
   test('the scan finds what it is for: a formatter of its own, a memo, a label and a figure past the switch', () => {
     const dir = mkdtempSync(join(tmpdir(), 'nya-amounts-'));

@@ -80,4 +80,34 @@ describe('the test preload', () => {
       rmSync(dir, { recursive: true, force: true });
     }
   }, 30_000);
+
+  test('a container’s key one file cached is never used for the next file’s data', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'nya-key-cache-'));
+    try {
+      // Every file keeps its data in TEST_CONTAINER. The first gives it a key
+      // of its own under a MASTER_KEY it sets, uses it (lib/crypto keeps the
+      // entry for a minute), and takes the MASTER_KEY away again, as
+      // test/account-deletion.test.ts does; the second stores its data with
+      // the environment's key.
+      // By path: the repo's aliases don't reach a file outside it.
+      const at = (...p: string[]) => JSON.stringify(join(ROOT, ...p));
+      const head = `import { afterEach, expect, mock, test } from 'bun:test';\nimport { FakeRedis, storageMock, registerTestContainer, TEST_CTX } from ${at('test', 'fake-redis.ts')};\nprocess.env.PLAID_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString('base64');\nconst fake = new FakeRedis({ deserialize: true });\nmock.module(${at('lib', 'storage.ts')}, () => storageMock(fake));\n`;
+      writeFileSync(
+        join(dir, 'a.test.ts'),
+        `${head}afterEach(() => { delete process.env.MASTER_KEY; });\ntest('a1', async () => {\n  await registerTestContainer(fake);\n  process.env.MASTER_KEY = Buffer.alloc(32, 93).toString('base64');\n  const crypto = await import(${at('lib', 'crypto.ts')});\n  const p = (await crypto.prepareContainerKey(TEST_CTX.container, { born: false }))!;\n  expect((await crypto.claimContainerKey(p)).outcome).toBe('made');\n  expect(await crypto.decrypt(TEST_CTX, await crypto.encrypt(TEST_CTX, 'x'))).toBe('x');\n});\n`
+      );
+      writeFileSync(
+        join(dir, 'b.test.ts'),
+        `${head}test('b1', async () => {\n  await registerTestContainer(fake);\n  const crypto = await import(${at('lib', 'crypto.ts')});\n  expect(await crypto.decrypt(TEST_CTX, await crypto.encrypt(TEST_CTX, 'y'))).toBe('y');\n});\n`
+      );
+      const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => /^(?:PATH|HOME|TMPDIR|TZ|LANG|LC_\w+|BUN_\w+)$/.test(k)));
+      // Files in the order given (a, then b), as bun runs them by name.
+      const run = Bun.spawnSync([process.execPath, 'test', join(dir, 'a.test.ts'), join(dir, 'b.test.ts')], { cwd: ROOT, env, stdout: 'pipe', stderr: 'pipe' });
+      const said = `${run.stdout.toString()}${run.stderr.toString()}`;
+      expect(said).not.toContain('MASTER_KEY is not set');
+      expect(said).toContain(' 2 pass');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 30_000);
 });
