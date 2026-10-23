@@ -579,6 +579,10 @@ describe('names', () => {
     for (const bad of ['Verify at evil.example', 'https://x', 'www.bank-login', 'Pay me@there', 'St.Louis trip', 'Login.SECURE']) {
       expect([bad, safeName(bad)]).toEqual([bad, null]);
     }
+    // The look-alikes a browser or a mail client reads as a dot, an @ or ://.
+    for (const bad of ['Verify at evil\u3002example', 'evil\uFF0Eexample', 'evil\uFF61example', 'www\uFF0Ebank', 'Pay me\uFF20there', 'https\uFF1A\uFF0F\uFF0Fx']) {
+      expect([bad, safeName(bad)]).toEqual([bad, null]);
+    }
     for (const fine of ['Dr. Smith', 'e.g. snacks', 'Food & drink', 'A. B. Groceries']) expect([fine, safeName(fine)]).toEqual([fine, fine]);
   });
 

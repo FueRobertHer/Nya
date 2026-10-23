@@ -137,8 +137,11 @@ const FIGURE_WORDS = new Set([...NUMBER_WORDS, ...MONEY_WORDS, ...OTHER_NUMBER_W
 const FIGURE_CHARS = /[\p{N}\p{Sc}%‰‱٪﹪％]/u;
 /** A letter outside the Latin alphabet. */
 const NOT_LATIN = /[^\P{L}\p{sc=Latin}]/u;
-/** The shape of a link or an address (see NAMES). */
-const LINK_SHAPE = /:\/\/|www\.|@|[\p{L}\p{N}-]\.\p{L}{2,}/iu;
+/** The shape of a link or an address (see NAMES), with the look-alikes a
+ *  browser or a mail client reads as its marks: the ideographic, full-width
+ *  and half-width ideographic full stops for a dot, the full-width at sign
+ *  for an @, and the full-width colon and solidus for :// . */
+const LINK_SHAPE = /[:\uFF1A][/\uFF0F]{2}|www[.\u3002\uFF0E\uFF61]|[@\uFF20]|[\p{L}\p{N}-][.\u3002\uFF0E\uFF61]\p{L}{2,}/iu;
 
 /** One of the words, or its plural ("tens", "twenties", "pennies"). */
 function isFigureWord(w: string): boolean {
