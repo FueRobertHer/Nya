@@ -247,27 +247,46 @@ export function askText(state: Extract<PlanCurrencyState, { kind: 'unknown' }>, 
   return `${start} ${shownAs}${reason}. Which currency are they in? Nothing on the Plan can be saved until you say, and once you do they stay in it, whatever your accounts are in.`;
 }
 
+const join = (list: readonly string[]) => (list.length <= 1 ? (list[0] ?? '') : `${list.slice(0, -1).join(', ')} and ${list[list.length - 1]}`);
+
+/** Whether most of what is measured is in `currency` already: the accounts
+ *  by a clear count (or none), and most of the year's rows (or none). */
+function measuredIn(currency: string, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }) {
+  const counts = inputs.assets.byCurrency ?? [];
+  const top = counts[0];
+  const accounts = counts.length === 0 || (top.currency === currency && (counts.length === 1 || counts[1].count < top.count));
+  const spending = inputs.flows?.mostIn ?? null;
+  return { counts, accounts, spending, spendingIn: spending === null || spending === currency };
+}
+
 /**
- * What the Plan tab says about its currency once it is recorded and differs
- * from what the accounts or transactions are in, or null: the figures you
- * typed stay in theirs, and what Nya measures is converted into it (with a
- * home currency) or left out (without one). Never an amount.
+ * What the Plan tab says about its currency once it is recorded and what Nya
+ * measures isn't mostly in it, or null: the figures you typed stay in
+ * theirs, and what is measured is converted into it (with a home currency)
+ * or left out (without one). Never an amount.
  */
 export function keptText(currency: string, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }, converts: boolean): string | null {
-  const accounts = inputs.assets.byCurrency?.[0]?.currency ?? null;
-  const spending = inputs.flows?.mostIn ?? null;
-  const others = [...new Set([accounts, spending].filter((c): c is string => c !== null && c !== currency))];
-  if (others.length === 0) return null;
-  const what =
-    accounts && accounts !== currency && spending && spending !== currency
-      ? accounts === spending
-        ? `your accounts and spending are mostly in ${accounts}`
-        : `your accounts are mostly in ${accounts} and your spending in ${spending}`
-      : accounts && accounts !== currency
-        ? `your accounts are mostly in ${accounts}`
-        : `your spending is mostly in ${spending}`;
+  const m = measuredIn(currency, inputs);
+  if (m.accounts && m.spendingIn) return null;
+  const otherAccounts = m.accounts ? [] : m.counts.filter((c) => c.currency !== currency).map((c) => c.currency);
+  const someIn = m.counts.some((c) => c.currency === currency);
+  const parts = [
+    ...(otherAccounts.length > 0 ? [`${someIn ? 'some of your accounts are' : 'your accounts are'} in ${join(otherAccounts)}`] : []),
+    ...(!m.spendingIn ? [`your spending is mostly in ${m.spending}`] : []),
+  ];
+  const others = [...new Set([...otherAccounts, ...(!m.spendingIn && m.spending ? [m.spending] : [])])];
+  const what = join(parts);
   const then = converts
-    ? `what is in ${others.join(' and ')} is converted into ${currency} (below)`
-    : `without a home currency nothing is converted, so what is in ${others.join(' and ')} isn’t counted (below): choose one on the Currency card under Manage on the Accounts tab to convert it`;
-  return `Your plan’s figures are in ${currency}, the currency they were typed in, and stay in it: ${what}, so ${then}.`;
+    ? `what is in ${join(others)} is converted into ${currency} (below).`
+    : `without a home currency nothing is converted, so what is in ${join(others)} isn’t counted (below). Choose one on the Currency card under Manage on the Accounts tab to convert it.`;
+  return `Your plan’s figures are in ${currency}, the currency they were typed in, and stay in it. ${what[0].toUpperCase()}${what.slice(1)}: ${then}`;
+}
+
+/** Once recorded, the one other currency everything measured is in, if
+ *  there is one (no account in the Plan's, and the rest in one other), to
+ *  offer for saying the figures were typed in it after all. */
+export function relabelOffer(currency: string, inputs: { assets: InvestedAssets; flows: TrailingFlows | null }): string | null {
+  const m = measuredIn(currency, inputs);
+  const elsewhere = [...new Set([...m.counts.map((c) => c.currency), ...(m.spending ? [m.spending] : [])])];
+  return elsewhere.length === 1 && elsewhere[0] !== currency ? elsewhere[0] : null;
 }

@@ -79,6 +79,10 @@ export function createWholeListStore<T>(opts: {
   /** The repair the server names on a 409 for entries the screen can offer
    *  to remove (goals: "goal-plans"): kept in `damage` when it does. */
   repair?: string;
+  /** What else the server answered beside the list, for a store whose
+   *  answer carries more (the Plan: the currency its figures are in): given
+   *  the whole body of a load that is taken and of a save that went through. */
+  onAnswer?: (data: Record<string, unknown>) => void;
 }): WholeListStore<T> {
   const doFetch: Fetcher = opts.fetch ?? ((input, init) => fetch(input, init));
   const Noun = opts.noun[0].toUpperCase() + opts.noun.slice(1);
@@ -121,6 +125,7 @@ export function createWholeListStore<T>(opts: {
       return;
     }
     set({ status: 'ready', value, error: null });
+    if (data) opts.onAnswer?.(data);
   }
 
   async function save(next: T): Promise<boolean> {
@@ -145,7 +150,7 @@ export function createWholeListStore<T>(opts: {
         body: JSON.stringify({ ...(opts.extra?.() ?? {}), [opts.field]: next }),
       });
       ok = res.ok;
-      if (opts.adoptSaved || opts.showRefusal) answer = await res.json().catch(() => null);
+      if (opts.adoptSaved || opts.showRefusal || opts.onAnswer) answer = await res.json().catch(() => null);
       const refused = res.status === 400 || (res.status === 409 && !answer?.unreadable);
       if (!ok && opts.showRefusal && refused && typeof answer?.error === 'string') refusal = answer.error;
     } catch {
@@ -154,6 +159,7 @@ export function createWholeListStore<T>(opts: {
     if (ok) {
       const saved = answer?.[opts.field];
       set({ saving: false, ...(opts.adoptSaved && opts.isValid(saved) ? { value: saved } : {}) });
+      if (answer && typeof answer === 'object') opts.onAnswer?.(answer);
       return true;
     }
     // Back to the last list the server confirmed straight away, so even if

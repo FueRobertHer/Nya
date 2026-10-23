@@ -105,6 +105,20 @@ import { planSavers, type Save } from './plan-savers';
 import { currencyText, laterText, resolveErrorText, retirementText, shortText, startsWithText } from './plan-scenario-text';
 import { planFigures, type PlanFigures, type StartsWith } from '@/lib/fire/plan-figures';
 import {
+  NO_ANSWER,
+  askText,
+  candidates,
+  keptText,
+  planCurrencyState,
+  relabelOffer,
+  readCurrencyAnswer,
+  shownReliably,
+  typedAmounts,
+  type CurrencyAnswer,
+} from '@/lib/fire/plan-currency';
+import { recordPlanCurrency } from './plan-currency-client';
+import { PlanCurrencyCard } from './PlanCurrency';
+import {
   applyScenario,
   changesOf,
   currencyFor,
@@ -264,6 +278,11 @@ export default function PlanTab({
   balanceFx = null,
 }: PlanTabProps) {
   const [state, setState] = useState<ListState<FirePlan | null>>(initialListState<FirePlan | null>(null));
+  // The currency the plan's typed figures are in, as the route answers it
+  // beside the plan (lib/fire/plan-currency.ts), and the one each save sends
+  // with it (set below, once the tab knows it).
+  const [currencyAnswer, setCurrencyAnswer] = useState<CurrencyAnswer>(NO_ANSWER);
+  const sendCurrency = useRef<string | null>(null);
   const store = useMemo(
     () =>
       createWholeListStore<FirePlan | null>({
@@ -274,6 +293,8 @@ export default function PlanTab({
         isValid: (v): v is FirePlan | null => v === null || isFirePlan(v),
         onChange: setState,
         reloadHint: 'use Try again below',
+        extra: () => ({ currency: sendCurrency.current }),
+        onAnswer: (data) => setCurrencyAnswer(readCurrencyAnswer(data)),
       }),
     []
   );
@@ -309,7 +330,8 @@ export default function PlanTab({
     if (openId === null) return;
     if ((planLoaded && repairing) || (scenState.status === 'ready' && !scenState.list.some((s) => s.id === openId))) setOpenId(null);
   }, [openId, planLoaded, repairing, scenState]);
-  const editable = state.status === 'ready' && !state.saving && !repairing && (!entry || !scenState.saving);
+  // And once the currency the plan's figures are in is known (below).
+  const editableNow = state.status === 'ready' && !state.saving && !repairing && (!entry || !scenState.saving);
 
   // What Nya measures, and what may be missing from it, by the same hook and
   // arithmetic as the FI card on Home (components/plan-inputs.ts,
@@ -326,9 +348,65 @@ export default function PlanTab({
     planFunding: basePlan.planFunding,
     fx: txnFx,
     balanceFx,
+    currency: currencyAnswer.currency,
   });
   const { flows, unread, assets, contributions, workplace, cashOn, cashUnmarked } = inputs;
   const figures = fiFigures(basePlan, inputs, currency);
+  // The plan's own currency once recorded, which everything above is in;
+  // otherwise the accounts' (figures.currency), and with typed amounts and no
+  // record that holds, not known until the tab can tell it reliably or the
+  // person says (lib/fire/plan-currency.ts).
+  const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
+  const currencyState = planCurrencyState(planLoaded ? state.value : null, currencyAnswer, figures.currency);
+  const reliably = shownReliably(figures.currency, inputs, { balancesAsOf, institutions: institutions.length, txnsLoading, txnsFailed, unread: unread.length });
+  const currencyKnown = currencyState.kind !== 'unknown';
+  // A save records the plan's currency with it: the recorded one, or for a
+  // plan with nothing typed yet the accounts' when it can be told reliably
+  // (else none, and the tab asks once the plan holds an amount).
+  sendCurrency.current = currencyState.kind === 'recorded' ? currencyState.currency : currencyState.kind === 'follows' && reliably.ok ? figures.currency : null;
+  const editable = editableNow && currencyKnown;
+  /** Records the currency for the plan as stored; true, or why not. */
+  const recordCurrency = async (c: string, byPerson: boolean): Promise<true | string> => {
+    const stored = state.value;
+    if (!stored) return 'Your plan hasn’t loaded yet.';
+    const r = await recordPlanCurrency(c, typedAmounts(stored), byPerson && currencyAnswer.problem === 'unreadable');
+    if (r.ok) {
+      setCurrencyAnswer(r.answer);
+      return true;
+    }
+    if (r.stale) void store.load();
+    return r.error;
+  };
+  // A plan saved before the currency was recorded, shown in one that can be
+  // told reliably: that is the one its figures were typed in, recorded once.
+  // If that fails, the tab asks instead, and doesn't try again for that plan.
+  const autoCurrency = currencyState.kind === 'unknown' && !currencyState.problem && reliably.ok && state.value ? currencyState.shown : null;
+  const autoKey = autoCurrency && state.value ? `${autoCurrency}:${JSON.stringify(typedAmounts(state.value))}` : null;
+  const triedFor = useRef<string | null>(null);
+  const [autoFailed, setAutoFailed] = useState<{ for: string; error: string } | null>(null);
+  useEffect(() => {
+    if (!autoKey || !autoCurrency || triedFor.current === autoKey) return;
+    triedFor.current = autoKey;
+    void recordCurrency(autoCurrency, false).then((r) => {
+      if (r !== true) setAutoFailed({ for: autoKey, error: r });
+    });
+    // recordCurrency reads this render's plan, which autoKey names.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoKey, autoCurrency]);
+  const recording = autoKey !== null && autoFailed?.for !== autoKey;
+  const waitingOnAccounts = !reliably.ok && reliably.why === 'loading';
+  const currencyCard = (
+    <PlanCurrencyCard
+      state={currencyState}
+      ask={currencyState.kind === 'unknown' && !recording && (!waitingOnAccounts || currencyState.problem) ? askText(currencyState, reliably.ok ? null : reliably.why) : null}
+      failure={autoKey && autoFailed?.for === autoKey ? autoFailed.error : null}
+      kept={currencyState.kind === 'recorded' ? keptText(currencyState.currency, inputs, !!(txnFx || balanceFx)) : null}
+      offer={candidates(figures.currency, inputs)}
+      relabelTo={currencyState.kind === 'recorded' ? relabelOffer(currencyState.currency, inputs) : null}
+      onAnswer={(c) => recordCurrency(c, true)}
+    />
+  );
+
   const measured = measuredInputs(inputs);
   // The Plan's figures by the same function a scenario's come from: with no
   // life events, fiView and enginePlan exactly (lib/fire/plan-figures.ts).
@@ -587,14 +665,19 @@ export default function PlanTab({
     if (openId !== null) headingRef.current?.focus();
   }, [openId]);
   const shownStatus = entry ? `Showing the scenario ${entry.name}.` : everOpened.current ? 'Showing your plan.' : '';
-  // "They're in" is offered only once the accounts have all loaded without a
-  // problem: the Plan's currency is the one most of them are in, and may
-  // read otherwise while they load.
-  const txnsFailed = txns === null && !txnsLoading && txnNotes.length > 0;
+  // A scenario's "They're in" relabels its amounts into the Plan's currency.
+  // Once that is recorded it can't move, so it is offered at once. Before,
+  // for a plan with nothing typed it is the accounts', which may read
+  // otherwise while they load or tie (shownReliably): not offered until it
+  // can be told; and while not known, not until the person has said.
   const confirmWhyNot =
-    !balancesAsOf || institutions.length === 0 || txnsLoading || txnsFailed || unread.length > 0 || assets.caveats.length > 0
-      ? 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.'
-      : null;
+    currencyState.kind === 'recorded'
+      ? null
+      : currencyState.kind === 'unknown'
+        ? 'Say which currency your plan’s figures are in first (above): this is offered once you have.'
+        : reliably.ok
+          ? null
+          : 'Your plan’s currency is the one most of your invested accounts are in, and your accounts haven’t all loaded without a problem, so it may read otherwise for now: this isn’t offered until they have.';
   const changes = entry ? scenarioChanges(basePlan, entry) : [];
   const scenarioMarks = entry
     ? {
@@ -689,7 +772,8 @@ export default function PlanTab({
         </div>
       )}
       {state.saveError && <div className="error plan-save-error">{state.saveError}</div>}
-      {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving} onSave={savers.repair} money={money} />}
+      {repairing && savers.repair && <RepairCard fixed={repair.fixed} editable={state.status === 'ready' && !state.saving && currencyKnown} onSave={savers.repair} money={money} />}
+      {planLoaded && currencyCard}
       <div className="visually-hidden" role="status">
         {shownStatus}
       </div>

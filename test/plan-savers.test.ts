@@ -87,9 +87,17 @@ describe('the Plan tab saves through nothing else', () => {
     expect(code).toContain('onMethod={savers.method}');
     expect(code).toContain('onSave={savers.repair}');
     expect(code).toContain('settingsLocked={!savers.allocationSettings}');
-    // And nothing posts to the Plan's route itself.
+    // And nothing posts to the Plan's route itself (its currency alone is
+    // recorded through components/plan-currency-client.ts, below).
     expect(code.match(/['"`]\/api\/fire-plan['"`]/g)).toEqual(["'/api/fire-plan'"]);
     expect(code).not.toMatch(/fetch\(/);
+  });
+
+  test('the Plan’s currency is recorded alone, for the plan as stored, and never with a plan of the page’s', () => {
+    const text = readFileSync(join(ROOT, 'components/plan-currency-client.ts'), 'utf8').replace(/\/\/.*$/gm, '');
+    expect(text.match(/method: '(\w+)'/g)).toEqual(["method: 'POST'"]);
+    expect(text).toContain('JSON.stringify({ currency, amounts, ');
+    expect(text).not.toMatch(/\bplan\b\s*:/);
   });
 
   test('the cards it renders save only through what they are given', () => {

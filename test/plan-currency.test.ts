@@ -14,6 +14,7 @@ import {
   planCurrencyState,
   readCurrencyAnswer,
   recordedCurrency,
+  relabelOffer,
   shownReliably,
   typedAmounts,
   type LoadState,
@@ -224,13 +225,36 @@ describe('what the tab says', () => {
 
   test('kept in its currency, the tab says so when what is measured is in another: converted, or, without a home currency, not counted', () => {
     const eurAccounts = { assets: investedAssets([inst([acct({ currency: 'EUR' })])], false, null, Date.now(), 'USD'), flows: null };
-    expect(keptText('USD', eurAccounts, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it: your accounts are mostly in EUR, so what is in EUR is converted into USD (below).');
-    expect(keptText('USD', eurAccounts, false)).toContain('without a home currency nothing is converted, so what is in EUR isn’t counted (below)');
-    const usdAccounts = { assets: investedAssets([inst([acct()])], false, null, Date.now(), 'USD'), flows: null };
+    expect(keptText('USD', eurAccounts, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Your accounts are in EUR: what is in EUR is converted into USD (below).');
+    expect(keptText('USD', eurAccounts, false)).toContain('Your accounts are in EUR: without a home currency nothing is converted, so what is in EUR isn’t counted (below).');
+    expect(relabelOffer('USD', eurAccounts)).toBe('EUR');
+    // Mostly in its own currency, as before: nothing more to say, and nothing to offer.
+    const usdAccounts = { assets: investedAssets([inst([acct(), acct(), acct({ currency: 'EUR' })])], false, null, Date.now(), 'USD'), flows: null };
     expect(keptText('USD', usdAccounts, false)).toBeNull();
+    expect(relabelOffer('USD', usdAccounts)).toBeNull();
+    // A tie with one other: some are in it, and both are in sight.
+    const tied = { assets: investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false, null, Date.now(), 'USD'), flows: null };
+    expect(keptText('USD', tied, true)).toBe('Your plan’s figures are in USD, the currency they were typed in, and stay in it. Some of your accounts are in EUR: what is in EUR is converted into USD (below).');
+    expect(relabelOffer('USD', tied)).toBeNull();
   });
 
   test('a record’s amounts are the plan’s own, as typed', () => {
     expect(typedAmounts(TYPED)).toEqual({ spending: 40_000, savings: 30_000, assets: null, startBalance: null, partTimeIncome: 0, income: [{ id: 'ss', amount: 20_000 }], expenses: [] });
+  });
+});
+
+describe('Home’s FI card', () => {
+  test('says when the currency its figures are shown in is not yet known to be the one they were typed in', async () => {
+    const { renderToStaticMarkup } = await import('react-dom/server');
+    const React = await import('react');
+    const { FiProgressView } = await import('@/components/FiProgressCard');
+    const { transactionCoverage } = await import('@/lib/fire/progress');
+    const { NO_CONNECTIONS_WITHOUT } = await import('@/lib/no-transactions');
+    const assets = investedAssets([inst([acct({ currency: 'EUR' }), acct()])], false);
+    const inputs = { flows: null, assets, workplace: null, unread: [], coverage: transactionCoverage(NO_CONNECTIONS_WITHOUT, 0) };
+    const view = (unconfirmed: boolean) =>
+      renderToStaticMarkup(React.createElement(FiProgressView, { figures: fiFigures(TYPED, inputs, null), unconfirmed, plan: TYPED, saved: true, repaired: false, inputs, onOpenPlan: () => {} }));
+    expect(view(true)).toContain('Shown in EUR, the currency most of your accounts are in: which one your plan’s figures were typed in isn’t known yet. Opening the Plan tab settles it.');
+    expect(view(false)).not.toContain('isn’t known yet');
   });
 });
