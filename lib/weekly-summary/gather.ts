@@ -39,6 +39,7 @@ import { monthOf } from '../rollover';
 import { readFlowFx } from '../fx/read';
 import { totalsIn } from '../fx/totals';
 import { noSpending } from '../no-transactions';
+import { historyCount } from '../spending';
 import { canonicalTimeZone } from '../report/period';
 import type { Weekday } from './settings';
 import { sendDayOn, todayIn, weekBefore } from './week';
@@ -130,7 +131,7 @@ export async function gatherWeekly(ctx: Ctx, opts: GatherOptions): Promise<Weekl
           time_zone: zone,
           sources: activity.sources.map((s) => ({ name: s.institution, brings: s.no_transactions === null, synced_at: s.synced_at, complete: s.complete })),
           facts,
-          none_come_in: noSpending(activity.view, activity.rows.length) !== null,
+          none_come_in: noSpending(activity.view, historyCount(activity.rows)) !== null,
         });
 
   const bills =

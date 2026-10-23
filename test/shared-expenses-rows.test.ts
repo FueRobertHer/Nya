@@ -260,6 +260,23 @@ describe('what no longer applies counts as the bank shows it, and says so', () =
     expect(carried.rows[0].shared_carried_from).toBe('imported-txn:x');
     expect(carried.gone.shares).toEqual([]);
   });
+
+  test('a payment confirmed on an imported row applies to the bank row standing for it, as a share does', () => {
+    const bank = venmoIn('t-bank', -60);
+    const shares = new Map([['t-dinner', share([{ id: 'e1', person: 'alex', amount: 60 }])]]);
+    const payments = new Map([['imported-txn:x', payment(-60, [{ item: 'e1', amount: 60 }])]]);
+    const stands = new Map([['t-bank', ['imported-txn:x']]]);
+    const r = applyShares([bank, row('t-dinner')], inputs({ shares, payments, stands }));
+    expect(r.rows.filter((t) => t.transaction_id.includes('t-bank')).map((t) => [t.transaction_id, t.amount])).toEqual([
+      ['t-bank', 0],
+      ['settled:t-bank:e1', -60],
+    ]);
+    expect(r.gone.payments).toEqual([]);
+    // Its own as well: its own applies, and the other is noted, never both.
+    const both = applyShares([bank, row('t-dinner')], inputs({ shares, payments: new Map([...payments, ['t-bank', payment(-60, [{ item: 'e1', amount: 60 }])]]), stands }));
+    expect(both.rows.filter((t) => t.shared_part?.kind === 'repaid')).toHaveLength(1);
+    expect(both.notes.join(' ')).toMatch(/payment/);
+  });
 });
 
 describe('the rows this layer adds are no evidence and no vote', () => {

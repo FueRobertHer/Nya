@@ -103,8 +103,17 @@ export type Countable = {
  * count in totals. test/history-rows.test.ts finds such readers in the
  * source and holds each to it.
  */
-export function isHistoryRow(t: Pick<Countable, 'shared_part' | 'shared_iou'>): boolean {
+export function isHistoryRow(t: Partial<Pick<Countable, 'shared_part' | 'shared_iou'>>): boolean {
   return t.shared_part === undefined && t.shared_iou === undefined;
+}
+
+/** How many rows are evidence of what the accounts hold (isHistoryRow): the
+ *  count every "are there any transactions" reads (lib/no-transactions.ts
+ *  noSpending, withoutTransactionsNotes). */
+export function historyCount(rows: Iterable<Partial<Pick<Countable, 'shared_part' | 'shared_iou'>>>): number {
+  let n = 0;
+  for (const t of rows) if (isHistoryRow(t)) n++;
+  return n;
 }
 
 /**

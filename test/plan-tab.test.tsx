@@ -24,6 +24,7 @@ const flows: TrailingFlows = {
   cashWithdrawn: 0,
   cashEntered: 0,
   cashEnteredOn: [],
+  cashIous: 0,
   unclearLoans: 0,
   largestRefund: null,
   from: '2025-10-07',

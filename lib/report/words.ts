@@ -347,6 +347,7 @@ export function reportConvertedText(report: Pick<Report, 'conversion'>, day: (is
 /** Where an appendix row came from: a bank's, or a manual row's source as
  *  the Activity tab names it. */
 export function sourceName(source: string): string {
+  if (source === 'shared') return 'an IOU: your part of what someone else paid';
   return source === 'plaid' ? 'from the bank' : sourceLabel(source);
 }
 
@@ -354,7 +355,7 @@ export function sourceName(source: string): string {
  *  counts as any other. */
 export function appendixStatus(
   row: {
-    not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
+    not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | 'shared' | 'repaid' | null;
     pending: boolean;
     exclusion_unknown: boolean;
     currency: string | null;
@@ -371,6 +372,8 @@ export function appendixStatus(
   if (row.not_counted === 'transfer') parts.push('Not counted: a transfer or loan payment');
   if (row.not_counted === 'currency') parts.push(`Not counted: in ${row.currency}`);
   if (row.not_counted === 'group') parts.push('Not counted: in a group counted before this period');
+  if (row.not_counted === 'shared') parts.push('Not counted: another person’s part');
+  if (row.not_counted === 'repaid') parts.push('Not counted: paid back between you and someone');
   if (row.pending) parts.push('Pending');
   if (row.exclusion_unknown) parts.push('Whether you excluded it couldn’t be read');
   return parts.length > 0 ? parts.join('; ') : null;

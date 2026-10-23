@@ -75,7 +75,7 @@
 // transaction with only its parts in the node under it, a group's row with
 // its transactions.
 
-import { countTransactions, countsInTotals, transactionCounter, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote, type LeftOut } from './spending';
+import { countTransactions, countsInTotals, historyCount, isHistoryRow, transactionCounter, uncategorizedFrom, uncategorizedFromConnector, uncategorizedNote, type Countable, type LeftOut } from './spending';
 import { summarize, tidy, type TotalsRow } from './totals';
 import { categoryById, displayName, filedId, groupOf, uncategorizedOf, type CategoryIndex, type CategoryKind } from './categories';
 import { addMonths, monthName, monthsFrom, monthsText } from './rollover';
@@ -517,11 +517,12 @@ export const dayText = (day: string): string =>
  * period's first months may be missing what came before it. Null when
  * neither.
  */
-export function historyNote(p: Pick<Period, 'from'>, rows: readonly { date: string }[], now: number = Date.now()): string | null {
+export function historyNote(p: Pick<Period, 'from'>, rows: readonly ({ date: string } & Partial<Pick<Countable, 'shared_part' | 'shared_iou'>>)[], now: number = Date.now()): string | null {
   const start = windowStart(now);
   if (p.from < start) return `The Activity tab loads the last ${WINDOW_DAYS} days of transactions, from ${dayText(start)} on, so this period's first days aren't in it.`;
+  // Where the history begins: never an IOU's row (lib/spending.ts isHistoryRow).
   let earliest: string | null = null;
-  for (const t of rows) if (earliest === null || t.date < earliest) earliest = t.date;
+  for (const t of rows) if (isHistoryRow(t) && (earliest === null || t.date < earliest)) earliest = t.date;
   if (earliest !== null && earliest > p.from && earliest > daysAfter(start, QUIET_DAYS)) {
     return `The earliest transaction here is from ${dayText(earliest)}, so this period may be missing what came before it.`;
   }
@@ -647,7 +648,7 @@ export function cashFlowNotes(input: {
   }
   if (flow.left_out_text) counted.push(flow.left_out_text);
   if (flow.payers.some((p) => p.refund)) counted.push("A refund counts as money in, as in the month's totals, never as less spending in its category.");
-  const named = withoutNote(view, input.rows.length);
+  const named = withoutNote(view, historyCount(input.rows));
   if (named) counted.push(named);
   // Last, as under the month's totals: the period's rows that came from
   // files, imported into linked accounts, rather than from the bank.

@@ -150,7 +150,7 @@ import type { HealthState } from '../connection-state';
 import { TRANSACTIONS_DAYS_REQUESTED, type NoTransactionsReason } from '../item-products';
 import { noSpending, type NoSpending } from '../no-transactions';
 import { isInvestmentType } from '../balance';
-import { countTransactions, currencyOf, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
+import { countTransactions, currencyOf, historyCount, inCurrency, isExcluded, isTransfer, totalsCurrency, transactionCounter, type LeftOut } from '../spending';
 import { bankRows } from '../split-rows';
 import { categoryOf, categoryTotals, summarize, type CategoryTotal } from '../totals';
 import { categoryById, categoryForKey, choiceText, indexTaxonomy, textKey, TEXT, type Taxonomy } from '../categories';
@@ -445,7 +445,10 @@ export type AppendixRow = {
    *  transfer or loan payment; another currency), or null when it is. */
   /** Why the totals don't count it: 'group' for one of a group counted on a
    *  day before the period (lib/split-rows.ts group_outside). */
-  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | null;
+  /** 'shared' for another person's part of a shared transaction, 'repaid'
+   *  for money paid back between the person and someone
+   *  (lib/shared-expenses/rows.ts): never named, as the report names nobody. */
+  not_counted: 'excluded' | 'hidden' | 'transfer' | 'currency' | 'group' | 'shared' | 'repaid' | null;
   /** Whether the person excluded it couldn't be read, so it counts. */
   exclusion_unknown: boolean;
   note: string | null;
@@ -1018,7 +1021,21 @@ export function buildReport(input: ReportInput): Report {
           institution: t.institution_name,
           source: t.source ?? 'plaid',
           pending: t.pending,
-          not_counted: isExcluded(t) ? (t.excluded_by_rule ? 'hidden' : 'excluded') : t.group_outside ? 'group' : isTransfer(t) ? 'transfer' : !inCurrency(c, currency) ? 'currency' : null,
+          not_counted: t.shared_part
+            ? t.shared_part.kind === 'theirs'
+              ? 'shared'
+              : 'repaid'
+            : isExcluded(t)
+              ? t.excluded_by_rule
+                ? 'hidden'
+                : 'excluded'
+              : t.group_outside
+                ? 'group'
+                : isTransfer(t)
+                  ? 'transfer'
+                  : !inCurrency(c, currency)
+                    ? 'currency'
+                    : null,
           exclusion_unknown: t.excluded === null,
           note: t.note ?? null,
           ...(t.split_of !== undefined
@@ -1030,7 +1047,8 @@ export function buildReport(input: ReportInput): Report {
       total: countTransactions(listed),
       shown: countTransactions(listed.slice(0, limit)),
       limit,
-      excluded: countTransactions(listed.filter((t) => isExcluded(t))),
+      // Another person's part, or a part paid back, isn't the person's exclusion.
+      excluded: countTransactions(listed.filter((t) => isExcluded(t) && t.shared_part === undefined)),
     };
   }
 
@@ -1123,6 +1141,6 @@ export function buildReport(input: ReportInput): Report {
       notes: [...(input.caveatNotes ?? [])],
     },
     empty: rows.length === 0,
-    no_spending: noSpending(view, rows.length),
+    no_spending: noSpending(view, historyCount(rows)),
   };
 }

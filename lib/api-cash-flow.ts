@@ -36,7 +36,7 @@ import type { Ctx } from './containers';
 import { firstDay, importedNote, readActivity, withoutTransactionsNotes, type ApiSource } from './api-read';
 import { coveredOutOfDays } from './no-transactions';
 import { cashFlow, inPeriod } from './cash-flow';
-import { totalsCurrency, type LeftOut } from './spending';
+import { historyCount, totalsCurrency, type LeftOut } from './spending';
 import { isProvisionalId, type CategoryIndex, type CategoryKind } from './categories';
 import type { Txn } from './transactions';
 import { readFlowFx } from './fx/read';
@@ -101,7 +101,7 @@ export async function readCashFlow(ctx: Ctx, opts: { from: string; to: string; c
   // range in its place is counted.
   const notes = [
     ...activity.notes.filter((n) => n !== activity.tags_note),
-    ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), activity.rows.length, 'totals'),
+    ...withoutTransactionsNotes(coveredOutOfDays(activity.view, opts.from, opts.to), historyCount(activity.rows), 'totals'),
   ];
   if (opts.from < firstDay()) notes.push(`Only transactions from ${firstDay()} on are read`);
   const imported = importedNote(activity.rows, opts);

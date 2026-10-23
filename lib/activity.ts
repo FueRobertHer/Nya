@@ -86,6 +86,8 @@ import { applyLayers } from './txn-layers';
 import { readSplitsForDisplay } from './splits';
 import { readGroupsForDisplay } from './groups';
 import { expandSplitsAndGroups } from './split-rows';
+import { applyShares, type ShareResult } from './shared-expenses/rows';
+import { layerInputs } from './shared-expenses/read';
 import { compileRules, ruleCategories, rulesForDisplay, type RuleSet, type RuleSubject } from './rules';
 import { effectiveLinks, getLinks, resolveId } from './link-core';
 import { readReviewBasics, readReviewParts } from './review-read';
@@ -526,6 +528,10 @@ export async function finishActivity(
    *  row (the notes say so): for a reader that says its totals may be filed
    *  otherwise than the person files them (a share, lib/share-views.ts). */
   defaults_unread: boolean;
+  /** Shared expenses (lib/shared-expenses/rows.ts): what this read can tell
+   *  is gone, shared twice, and how many shared transactions and IOUs
+   *  counted at your part. */
+  shared_expenses: Pick<ShareResult, 'gone' | 'twice' | 'counted'>;
 }> {
   const cutoff = opts.since ?? new Date(Date.now() - LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
   const since = new Date(Date.now() - RECURRING_LOOKBACK_DAYS * 86_400_000).toISOString().slice(0, 10);
@@ -534,7 +540,7 @@ export async function finishActivity(
   const readFrom = cutoff < since ? cutoff : since;
   // With them, the review queue's settings and the merchants' defaults; the
   // approvals once the rows are known (lib/review-read.ts).
-  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle, reviewBasics] = await Promise.all([
+  const [read, annotations, tagRead, ruleRead, splitRead, groupRead, lifecycle, reviewBasics, shared] = await Promise.all([
     readManualTxnsForDisplay(ctx, { hidden, cutoff: readFrom }),
     readAnnotations(ctx),
     tagsForDisplay(ctx),
@@ -543,6 +549,7 @@ export async function finishActivity(
     readGroupsForDisplay(ctx),
     opts.keepEnded ? null : getEffectiveLifecycle(ctx, new Map()),
     readReviewBasics(ctx),
+    layerInputs(ctx),
   ]);
   const ended = lifecycle ? endDays(lifecycle) : new Map<string, string>();
   const manual = { ...read, txns: read.txns.filter((t) => !(t.account_id && ended.has(t.account_id) && t.date >= ended.get(t.account_id)!)) };
@@ -613,6 +620,18 @@ export async function finishActivity(
     ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
     ...(stands.size > 0 ? { stands } : {}),
   });
+  // After them, shared expenses (lib/shared-expenses/rows.ts): a shared
+  // transaction at your part beside the others' parts, a payment that paid
+  // something back beside what it paid, and an IOU you owe for something as
+  // a row of its own; every row the bank's adds up to it.
+  const withShares = applyShares(expanded.rows, {
+    ...shared,
+    ix,
+    from: cutoff,
+    hidden,
+    ...(opts.keepEnded && opts.endedFrom ? { ended: opts.endedFrom } : {}),
+    ...(stands.size > 0 ? { stands } : {}),
+  });
   // What keeps rules from applying as they say, beside the rules' own note:
   // links that couldn't be read for a rule on an account, and categories that
   // couldn't be read for a rule naming one (left out whole until they can be).
@@ -626,9 +645,10 @@ export async function finishActivity(
   // SimpleFIN connection whose older history is still arriving (a manual
   // account has no connection, so it is never incomplete).
   return {
-    transactions: expanded.rows,
-    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes],
-    unread_notes: [...plaid.notes, ...manual.notes],
+    transactions: withShares.rows,
+    notes: [...plaid.notes, ...manual.notes, ...(ruleRead.note ? [ruleRead.note] : []), ...ruleNotes, ...filed.notes, ...review.notes, ...expanded.notes, ...withShares.notes],
+    unread_notes: [...plaid.notes, ...manual.notes, ...withShares.unread_notes],
+    shared_expenses: { gone: withShares.gone, twice: withShares.twice, counted: withShares.counted },
     tags_note: tagRead.note,
     review: {
       on: !reviewParts.settingsUnread && !!reviewParts.settings?.on,

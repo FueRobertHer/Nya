@@ -16,8 +16,10 @@
 // transactions, by id (lib/splits.ts, lib/groups.ts: every one, of any
 // date); a transaction approved under it, by id (lib/review-store.ts: every
 // one, of any date, since an approved transaction stays filed where it was
-// approved); and a merchant's default category, by id
-// (lib/vendor-defaults.ts), which is cleared first. Every id is followed
+// approved); an IOU you owe, by id (lib/shared-expenses/model.ts: your
+// part of what someone else paid counts in it on its day, of any date); and a
+// merchant's default category, by id (lib/vendor-defaults.ts), which is
+// cleared first. Every id is followed
 // through a merge to where it went. Every read here is strict: a store that
 // can't be read refuses the delete rather than letting a category go that
 // something may use.
@@ -37,6 +39,7 @@ import { groupStore } from './groups';
 import { bankRows, GROUP_PREFIX, PART_PREFIX } from './split-rows';
 import { approvalStore } from './review-store';
 import { vendorDefaultsStore } from './vendor-default-store';
+import { expenseIousStore } from './shared-expenses/store';
 import { defaultUses } from './vendor-defaults';
 
 /** How many transactions are filed under the category, and whether it has a
@@ -56,7 +59,7 @@ export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly
   for (const id of ids) if (!wanted.includes(id)) out.set(id, { transactions: 0, budget: false });
   if (wanted.length === 0) return out;
 
-  const [bank, overrides, carried, books, imported, restored, budgets, rules, splits, groups, approvals, defaults] = await Promise.all([
+  const [bank, overrides, carried, books, imported, restored, budgets, rules, splits, groups, approvals, defaults, ious] = await Promise.all([
     assembleBankRows(ctx, { sync: false, readOnly: true, includeHidden: true, keepEnded: true }),
     readOverridesStrict(ctx),
     readCarriedStrict(ctx),
@@ -69,6 +72,7 @@ export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly
     groupStore.getAll(ctx),
     approvalStore.getAll(ctx),
     vendorDefaultsStore.get(ctx),
+    expenseIousStore.getAll(ctx),
   ]);
   const shown = await finishActivity(ctx, bank.payload, new Set(), { keepEnded: true });
   const ix = indexTaxonomy(taxonomy);
@@ -92,6 +96,8 @@ export async function categoryUsages(ctx: Ctx, taxonomy: Taxonomy, ids: readonly
     for (const [gid, g] of groups) if (isIt(g.category_id)) counted.add(`${GROUP_PREFIX}${gid}`);
     // Every transaction approved under it, of any date: it stays filed there.
     for (const [tid, a] of approvals) if (a.category_id && isIt(a.category_id)) counted.add(tid);
+    // Every IOU you owe under it, of any date: its row counts there.
+    for (const [iid, iou] of ious) if (iou.category_id && isIt(iou.category_id)) counted.add(`iou:${iid}`);
     for (const book of imported.values()) for (const row of book.rows) if (uses(row.category)) counted.add(row.id);
     // A restored bank row is filed by its own words where Plaid's values
     // don't file it, as the bank's are.

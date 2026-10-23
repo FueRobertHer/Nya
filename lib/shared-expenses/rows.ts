@@ -285,14 +285,23 @@ export function applyShares(rows: readonly Txn[], inputs: ShareInputs): ShareRes
     if (share && !shareWhy && (rowUnits <= 0 || lentUnits > rowUnits)) shareWhy = 'amount';
     if (shareWhy) {
       unappliedShares++;
-      out.push({ ...t, shared_unapplied: shareWhy });
+      // Who owes what still shows, counted as unshared.
+      const mark: SharedMark | undefined = share
+        ? { ...(share.part ? { part: share.part } : {}), your_part: t.amount, people: lent.map((l) => ({ person: l.entry.person, item: l.entry.id, amount: l.units / scale })), counted: false }
+        : undefined;
+      out.push({ ...t, shared_unapplied: shareWhy, ...(mark ? { shared: mark } : {}) });
       continue;
     }
 
     // ---- Which payment applies ----
     const paymentKey = t.split_of === undefined ? t.transaction_id : null;
-    const payment = paymentKey ? (inputs.payments.get(paymentKey) ?? null) : null;
-    if (!payment && paymentKey && inputs.paymentsUnknown.has(paymentKey)) unknownPayments++;
+    // Its own, or that of a row imported from a file it stands for, as a
+    // share is; both, and the imported row's isn't applied (noted).
+    const carriedPayments = paymentKey ? (standsFor.get(paymentKey) ?? []).filter((id) => inputs.payments.has(id)) : [];
+    const own = paymentKey ? inputs.payments.get(paymentKey) : undefined;
+    const payment = own ?? (carriedPayments.length > 0 ? inputs.payments.get(carriedPayments[0])! : null);
+    if (own && carriedPayments.length > 0) unappliedPayments += carriedPayments.length;
+    if (!payment && paymentKey && [paymentKey, ...(standsFor.get(paymentKey) ?? [])].some((id) => inputs.paymentsUnknown.has(id))) unknownPayments++;
     if (t.split_of !== undefined && inputs.payments.has(t.split_of) && t.split_index === 0) {
       unappliedPayments++;
       out.push({ ...t, settles_unapplied: 'split' });
